@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-12 | 当前版本：v0.97.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-12 | 当前版本：v0.97.0-rc2（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 TUI 流式输出期间输入默认排队，活动区持续显示待发条数和摘要；`Ctrl+Q` / `/queue` 查看列表并编辑、删除或主动立即插话。管理期间暂停自动发送，编辑保留附件和原草稿，发送失败保留消息供手动处理；已送达 Runtime 的插话不可撤回。
 
