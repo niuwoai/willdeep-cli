@@ -66,6 +66,7 @@ use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use willdeep_runtime_protocol::schedule;
 use willdeep_runtime_protocol::{
     AgentPromptParams, AgentWaitParams, AnswerQuestionParams, ApiRequest, ApiResponse,
     ArchiveSessionParams, CreateSessionParams, DeleteSessionParams, DiffAttribution,
@@ -219,6 +220,108 @@ impl RuntimeClient {
 
     pub async fn workspaces(&self) -> Result<ApiResponse<Vec<RuntimeWorkspace>>, ClientError> {
         self.call("workspace.list", &EmptyParams::default(), None)
+            .await
+    }
+
+    pub async fn schedules(
+        &self,
+    ) -> Result<ApiResponse<Vec<schedule::ScheduledTaskView>>, ClientError> {
+        self.call("schedule.list", &EmptyParams::default(), None)
+            .await
+    }
+    pub async fn schedule(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduledTaskView>, ClientError> {
+        self.call("schedule.get", &IdParams { id }, None).await
+    }
+    pub async fn create_schedule(
+        &self,
+        task: &schedule::ScheduleDraft,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduledTaskView>, ClientError> {
+        self.call("schedule.create", task, Some(request_id)).await
+    }
+    pub async fn update_schedule(
+        &self,
+        update: &schedule::ScheduleUpdate,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduledTaskView>, ClientError> {
+        self.call("schedule.update", update, Some(request_id)).await
+    }
+    pub async fn schedule_action(
+        &self,
+        action: &schedule::ScheduleAction,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduleActionOutcome>, ClientError> {
+        self.call("schedule.action", action, Some(request_id)).await
+    }
+    pub async fn run_schedule(
+        &self,
+        params: &schedule::ScheduleRunRequest,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduleRun>, ClientError> {
+        self.call("schedule.run", params, Some(request_id)).await
+    }
+    pub async fn schedule_history(
+        &self,
+        query: &schedule::ScheduleHistoryQuery,
+    ) -> Result<ApiResponse<schedule::ScheduleHistoryPage>, ClientError> {
+        self.call("schedule.history", query, None).await
+    }
+    pub async fn schedule_run(
+        &self,
+        key: &schedule::ScheduleRunRef,
+    ) -> Result<ApiResponse<schedule::ScheduleRun>, ClientError> {
+        self.call("schedule.run.get", key, None).await
+    }
+    pub async fn stop_schedule_run(
+        &self,
+        key: &schedule::ScheduleRunRef,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduleRun>, ClientError> {
+        self.call("schedule.run.stop", key, Some(request_id)).await
+    }
+    pub async fn schedule_preview(
+        &self,
+        params: &schedule::SchedulePreview,
+    ) -> Result<ApiResponse<Vec<u64>>, ClientError> {
+        self.call("schedule.preview", params, None).await
+    }
+    pub async fn resolve_schedule_time(
+        &self,
+        params: &schedule::ScheduleLocalTime,
+    ) -> Result<ApiResponse<u64>, ClientError> {
+        self.call("schedule.resolve_time", params, None).await
+    }
+    pub async fn schedule_timezones(&self) -> Result<ApiResponse<Vec<String>>, ClientError> {
+        self.call("schedule.timezones", &EmptyParams::default(), None)
+            .await
+    }
+    pub async fn deleted_schedules(
+        &self,
+    ) -> Result<ApiResponse<Vec<schedule::DeletedScheduledTask>>, ClientError> {
+        self.call("schedule.deleted", &EmptyParams::default(), None)
+            .await
+    }
+    pub async fn session_attachments(
+        &self,
+        params: &willdeep_runtime_protocol::SessionAttachmentsParams,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::SessionAttachments>, ClientError> {
+        self.call("session.attachments", params, None).await
+    }
+    pub async fn format_schedule_time(
+        &self,
+        params: &schedule::ScheduleFormatTime,
+    ) -> Result<ApiResponse<String>, ClientError> {
+        self.call("schedule.format_time", params, None).await
+    }
+    pub async fn cleanup_schedule_history(
+        &self,
+        params: &schedule::ScheduleCleanup,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<schedule::ScheduleCleanupOutcome>, ClientError> {
+        self.call("schedule.cleanup", params, Some(request_id))
             .await
     }
 

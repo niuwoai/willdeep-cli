@@ -504,6 +504,12 @@ impl TaskManager {
         ));
         // 用户在本轮进行中的插话由此送达：turn.steer 按会话找到这个收件箱。
         request.instruction_inbox = Some(self.steering.register(id, request.session_id));
+        let schedule_timeout =
+            super::schedule_engine::policy_for_origin(&home, request.origin_client.as_deref())?
+                .and_then(|policy| policy.timeout_seconds);
+        let schedule_origin = request.origin_client.clone();
+        let schedule_deadline = schedule_timeout
+            .map(|seconds| tokio::time::Instant::now() + Duration::from_secs(seconds));
         let checkpoint_target = task.session_id.zip(task.turn_id);
         let checkpoint_workspace = request.workspace.clone();
         tokio::spawn(async move {
@@ -540,6 +546,10 @@ impl TaskManager {
                 });
             let (result, cancelled) = tokio::select! {
                 result = execution => (Some(result), false),
+                _ = async {
+                    if let Some(deadline) = schedule_deadline { tokio::time::sleep_until(deadline).await; }
+                    else { std::future::pending::<()>().await; }
+                } => (Some(Err(anyhow::anyhow!("scheduled run exceeded its configured wall-clock budget"))), false),
                 _ = cancellation.notified() => {
                     (None, true)
                 }
@@ -569,6 +579,22 @@ impl TaskManager {
             let (final_status, error, failure_domain) = match result {
                 _ if cancelled => (RuntimeTaskStatus::Cancelled, None, None),
                 Some(Ok(outcome)) => {
+                    if let Err(error) = super::schedule_engine::record_output(
+                        &home,
+                        schedule_origin.as_deref(),
+                        &outcome.final_text,
+                        &manager.agents,
+                        id,
+                        task.agent_id,
+                    ) {
+                        let _ = manager.events.append(
+                            "schedule.warning",
+                            format!(
+                                "task_id={id} reason=output_record_failed error={}",
+                                willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+                            ),
+                        );
+                    }
                     let completed = serde_json::json!({
                         "type":if outcome.stop_reason.is_complete() { "completed" } else { "partial" },
                         "stop_reason":outcome.stop_reason.as_str(),

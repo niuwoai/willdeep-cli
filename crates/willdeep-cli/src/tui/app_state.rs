@@ -20,7 +20,9 @@ impl App {
             tools_expanded: false,
             activity_rect: Rect::default(),
             attachments: Vec::new(),
+            sent_attachments: Vec::new(),
             selected_attachment: 0,
+            attachment_panel: None,
             prompt_rect: Rect::default(),
             prompt_scroll: 0,
             composer_expanded: false,
@@ -195,6 +197,8 @@ impl App {
         self.tools = ToolActivity::default();
         self.tools_expanded = false;
         self.attachments.clear();
+        self.sent_attachments.clear();
+        self.attachment_panel = None;
         self.selected_attachment = 0;
         self.composer_expanded = false;
         self.notice = None;
@@ -1607,13 +1611,13 @@ impl App {
     pub(super) fn handle_paste(&mut self, value: String) {
         if value.contains('\n') || value.chars().count() > 200 {
             let n = self.attachments.len() + 1;
-            self.attachments.push(DraftAttachment {
+            self.append_draft_attachment(DraftAttachment {
+                id: uuid::Uuid::new_v4(),
                 message: MessageAttachment::Text {
                     name: format!("paste-{n}.txt"),
                     content: value,
                 },
             });
-            self.selected_attachment = self.attachments.len() - 1;
         } else {
             self.input.insert(&value);
         }
@@ -1630,9 +1634,9 @@ impl App {
     pub(super) fn paste_clipboard_image(&mut self) {
         match clipboard_image() {
             Ok(value) => {
-                self.attachments.push(value);
-                self.selected_attachment = self.attachments.len() - 1;
-                self.notice = Some("Clipboard image attached".to_owned());
+                if self.append_draft_attachment(value) {
+                    self.notice = Some("Clipboard image attached".to_owned());
+                }
             }
             Err(e) => self.notice = Some(format!("Clipboard image unavailable: {e}")),
         }

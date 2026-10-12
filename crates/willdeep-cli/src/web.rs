@@ -21,6 +21,8 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use willdeep_core::{MessageAttachment, Role, Session, SessionStore, SkillCatalog};
 
+mod runtime_chat;
+mod schedules;
 mod setup;
 
 const MAX_PROMPT_CHARS: usize = 100_000;
@@ -65,6 +67,8 @@ struct WebState {
 
 #[derive(Clone, Deserialize)]
 struct ChatRequest {
+    #[serde(default)]
+    request_id: Option<uuid::Uuid>,
     prompt: String,
     session_id: Option<String>,
     workspace: Option<String>,
@@ -126,6 +130,7 @@ struct ForkSessionResponse {
 #[derive(Serialize)]
 struct SessionDetail {
     id: String,
+    workspace: String,
     messages: Vec<willdeep_core::conversation::ConversationItem>,
 }
 
@@ -363,6 +368,7 @@ pub async fn serve(config: WebConfig) -> Result<()> {
         settings_write_lock: Mutex::new(()),
     });
     let app = Router::new()
+        .merge(schedules::routes())
         .route("/health", get(health))
         .route("/api/setup", get(setup::setup_status))
         .route("/api/chat/stream", post(chat_stream))
@@ -1148,6 +1154,7 @@ async fn session_detail(
         willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
     Ok(Json(SessionDetail {
         id: session.id.to_string(),
+        workspace: session.workspace.display().to_string(),
         messages,
     }))
 }
@@ -1534,7 +1541,7 @@ async fn run_runtime_turn(
     profile: Option<String>,
     tx: mpsc::Sender<Result<Event, Infallible>>,
 ) {
-    let result = run_runtime_turn_inner(state, input, workspace, profile, &tx).await;
+    let result = runtime_chat::run_runtime_turn_inner(state, input, workspace, profile, &tx).await;
     if let Err(error) = result {
         send_event(
             &tx,
@@ -1542,106 +1549,6 @@ async fn run_runtime_turn(
         )
         .await;
     }
-}
-
-async fn run_runtime_turn_inner(
-    state: Arc<WebState>,
-    input: ChatRequest,
-    workspace: PathBuf,
-    profile: Option<String>,
-    tx: &mpsc::Sender<Result<Event, Infallible>>,
-) -> Result<(), WebError> {
-    let _slot = state
-        .harness_slots
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|error| WebError::internal(error.to_string()))?;
-    let store = SessionStore::new(&state.home);
-    let mut session = if let Some(raw_id) = input.session_id.as_deref() {
-        let id = uuid::Uuid::parse_str(raw_id)
-            .map_err(|_| WebError::bad_request("session_id must be a UUID"))?;
-        store
-            .load(id)
-            .map_err(|_| WebError::bad_request("session_id was not found"))?
-    } else {
-        Session::new(workspace.clone(), profile.clone(), input.prompt.trim())
-    };
-    let event_head = crate::daemon::runtime_event_head(&state.home)
-        .await
-        .map_err(WebError::from_anyhow)?;
-    let needs_adoption_save = !session.runtime_managed;
-    if session.config.is_none() {
-        session.config = Some(state.config_path.clone());
-    }
-    session.runtime_managed = true;
-    if session.runtime_event_cursor == 0 {
-        session.runtime_event_cursor = event_head;
-    }
-    if needs_adoption_save {
-        store
-            .save(&mut session)
-            .map_err(|error| WebError::internal(error.to_string()))?;
-    }
-    let language = Language::parse(input.language.as_deref()).unwrap_or(state_language(&state));
-    let session_profile = session.profile.clone().or(profile);
-    let prompt = input.prompt.trim().to_owned();
-    // 领养会话与提交都可能撞上旧 Runtime 的排空闸门；两步一起重来，
-    // 领养本身幂等，不会多建会话。
-    let (remote_session, turn) =
-        retry_through_runtime_handoff(tx, language, RUNTIME_HANDOFF_RETRY, || {
-            // 每次重试都拿自己的一份：借用捕获的 async 闭包过不了 tokio::spawn 的 Send 推导。
-            let home = state.home.clone();
-            let workspace = workspace.clone();
-            let session_id = session.id;
-            let session_profile = session_profile.clone();
-            let prompt = prompt.clone();
-            let attachments = input.attachments.clone();
-            async move {
-                let remote_session = crate::daemon::ensure_runtime_session(
-                    &home,
-                    session_id,
-                    &workspace,
-                    session_profile,
-                    None,
-                )
-                .await?;
-                let turn = crate::daemon::submit_runtime_turn(
-                    &home,
-                    remote_session.id,
-                    prompt,
-                    attachments,
-                    crate::Surface::Web,
-                )
-                .await?;
-                Ok((remote_session, turn))
-            }
-        })
-        .await?;
-    send_event(
-        tx,
-        serde_json::json!({
-            "type":"submitted",
-            "session_id":remote_session.id,
-            "turn_id":turn.id,
-            "root_agent_id":remote_session.root_agent_id,
-            "cursor":event_head,
-        }),
-    )
-    .await;
-    relay_runtime_turn(
-        &state,
-        &workspace,
-        RuntimeTurnRelay {
-            cursor: event_head,
-            session_id: remote_session.id,
-            turn_id: turn.id,
-            task_id: None,
-            language,
-        },
-        tx,
-    )
-    .await
 }
 
 struct RuntimeTurnRelay {

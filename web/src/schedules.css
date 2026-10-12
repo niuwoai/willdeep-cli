@@ -1,0 +1,41 @@
+.schedule-manager { flex: 1; min-width: 0; padding: 24px; height: 100vh; overflow: auto; background: var(--bg-page); }
+.schedule-manager header { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 24px; }
+.schedule-manager > header p { font-size: 12px; color: var(--text-muted); line-height: 1.65; max-width: 560px; }
+.schedule-manager button.schedule-new { display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; font-size: 12px; }
+.schedule-manager h1 { font-size: 24px; font-weight: 650; }
+.schedule-manager h2 { font-size: 20px; font-weight: 600; }
+.schedule-manager h3, .schedule-manager h4 { font-weight: 600; margin: 16px 0 8px; }
+.schedule-manager p { margin: 8px 0; }
+.schedule-manager input, .schedule-manager textarea, .schedule-manager select { width: 100%; border: 1px solid var(--bg-panel-hover); border-radius: 7px; padding: 8px; background: var(--bg-surface); color: var(--text); }
+.schedule-manager button { border: 1px solid var(--bg-panel-hover); border-radius: 7px; background: var(--bg-surface); padding: 8px 12px; text-align: start; }
+.schedule-manager button:hover, .schedule-manager button.active, .schedule-manager button[aria-pressed=true] { background: var(--bg-panel-hover); }
+.schedule-manager button:disabled { opacity: .5; cursor: default; }
+.schedule-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 24px; }
+.schedule-layout aside { display: flex; flex-direction: column; gap: 10px; }
+.schedule-task { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.schedule-task > span { align-self: flex-start; padding: 2px 6px; border-radius: 5px; background: var(--bg-panel-strong); color: var(--text-muted); font-size: 10px; }
+.schedule-task small { overflow-wrap: anywhere; opacity: .7; }
+.schedule-content { max-width: 950px; min-width: 0; }
+.schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; border: 0; padding: 0; }
+.schedule-fields label { display: flex; flex-direction: column; gap: 6px; }
+.schedule-wide { grid-column: 1 / -1; }
+.schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.schedule-task-actions { align-items: center; gap: 5px; }
+.schedule-manager .management-icon-action { width: 34px; height: 34px; padding: 0; border: 0; background: transparent; }
+.schedule-manager .management-icon-action:hover:not(:disabled) { background: var(--bg-panel-hover); }
+.schedule-manager .schedule-run-primary { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; font-size: 12px; }
+.schedule-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--border); margin: 20px 0 10px; }
+.schedule-manager .schedule-tabs button { border: 0; border-radius: 0; padding: 9px 1px; background: transparent; font-size: 12px; color: var(--text-muted); border-bottom: 2px solid transparent; }
+.schedule-manager .schedule-tabs button[aria-pressed=true] { color: var(--text); border-bottom-color: var(--accent); }
+.schedule-notice { padding: 12px; background: var(--bg-panel-hover); border-radius: 8px; }
+.schedule-error { color: var(--color-danger, #c54545); }
+.schedule-run-list { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.schedule-run-list button { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.schedule-run-detail dl { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
+.schedule-run-detail pre { padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-surface); border-radius: 8px; max-height: 350px; overflow: auto; }
+.schedule-manager summary { cursor: pointer; padding: 10px 0; }
+.schedule-layout { grid-template-columns: 1fr; }
+.schedule-layout > aside { max-height: 270px; overflow: auto; }
+.schedule-fields { grid-template-columns: 1fr; }
+.schedule-manager { padding: 16px; }
+@media (min-width: 801px) { .schedule-layout { grid-template-columns: 250px minmax(0, 1fr); } .schedule-layout > aside { max-height: none; overflow: visible; } .schedule-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .schedule-manager { padding: 24px; } }

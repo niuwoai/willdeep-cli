@@ -123,6 +123,8 @@ pub struct ConversationItem {
     pub content: String,
     pub attachment_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment_reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<Plan>,
     pub details: Vec<String>,
     /// 这条 assistant 消息发起的工具调用，按发起顺序；回放时逐条落成工具行。
@@ -171,6 +173,7 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
             }
         }
         let mut entry = item(role, message.content.clone(), message.attachments.len());
+        entry.attachment_reference = attachment_reference(&message.attachments);
         if role == "user"
             && let Some(authored) = user_authored_text(&message.content)
         {
@@ -225,8 +228,9 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
     items
 }
 
-const ATTACHED_CONTEXT_HEADER: &str = "The user attached the following context for this turn — treat it as task setup, not verbatim user text:";
-const USER_TEXT_BOUNDARY: &str = "<<<willdeep:user-message:v1>>>";
+use willdeep_runtime_protocol::{
+    ATTACHED_CONTEXT_HEADER, USER_MESSAGE_BOUNDARY as USER_TEXT_BOUNDARY,
+};
 
 /// The desktop composer escapes this boundary inside attachments. Require the
 /// exact protocol header and a standalone boundary, never guess from skill names
@@ -252,10 +256,32 @@ fn item(role: &'static str, content: String, attachment_count: usize) -> Convers
         role,
         content,
         attachment_count,
+        attachment_reference: None,
         plan: None,
         details: Vec::new(),
         tools: Vec::new(),
     }
+}
+
+/// Content-addressed references cannot silently select another message after compression or rewind.
+pub fn attachment_reference(attachments: &[crate::types::MessageAttachment]) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if attachments.is_empty() {
+        return None;
+    }
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, attachments).ok()?;
+    Some(format!("{:x}", writer.0.finalize()))
 }
 
 /// Parse only complete, explicitly typed fences. Ordinary prose, user-pasted

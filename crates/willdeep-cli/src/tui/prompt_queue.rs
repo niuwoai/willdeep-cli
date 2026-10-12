@@ -31,14 +31,21 @@ impl App {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
+        let delivered_hint = if delivered > 0 {
+            format!(
+                " · {} {delivered}",
+                self.language.text(
+                    "已送达待读取",
+                    "Delivered, awaiting next step",
+                    "送達済み・次のステップ待ち"
+                )
+            )
+        } else {
+            String::new()
+        };
         Some(format!(
-            "{} {queued} · {} {delivered} · Ctrl+Q /queue · {}",
+            "{} {queued} · Ctrl+Q /queue{delivered_hint} · {}",
             self.language.text("待发", "Queued", "送信待ち"),
-            self.language.text(
-                "已送达待读取",
-                "Delivered, awaiting next step",
-                "送達済み・次のステップ待ち"
-            ),
             preview.chars().take(48).collect::<String>()
         ))
     }
@@ -180,9 +187,9 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
     let mut lines = vec![
         app.language
             .text(
-                "↑/↓ 选择 · Enter/E 编辑 · D 删除 · S 立即插话 · Esc 关闭",
-                "↑/↓ select · Enter/E edit · D delete · S steer now · Esc close",
-                "↑/↓ 選択 · Enter/E 編集 · D 削除 · S 即時送達 · Esc 閉じる",
+                "↑/↓ 选择 · Enter/E 编辑 · A 附件 · D 删除 · S 立即插话 · Esc 关闭",
+                "↑/↓ select · Enter/E edit · A attachments · D delete · S steer now · Esc close",
+                "↑/↓ 選択 · Enter/E 編集 · A 添付 · D 削除 · S 即時送達 · Esc 閉じる",
             )
             .to_owned(),
         app.language
@@ -244,9 +251,9 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
             lines.push(format!(
                 "\n{}\n{}",
                 app.language.text(
-                    "所选消息全文（Enter 编辑）",
-                    "Selected message (Enter to edit)",
-                    "選択メッセージ（Enter で編集）"
+                    "所选消息全文 · Enter 编辑 · A 查看附件",
+                    "Selected message · Enter edits · A opens attachments",
+                    "選択メッセージ · Enter 編集 · A 添付"
                 ),
                 terminal_safe_text(&item.text)
             ));

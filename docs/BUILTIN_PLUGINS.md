@@ -35,11 +35,12 @@ willdeep plugin builtin install roundtable --enable   # 或者一步批准并启
 | 工具 | 作用 |
 |---|---|
 | `schedule_task` | 建一个定时任务。`prompt` 必填，而且必须自给自足：每次运行都在一个看不到别的上下文的新会话里。调度方式四选一：`interval_minutes`、`daily_at`（`HH:MM`）、`weekdays_at`、`weekly_at` + `weekday`（1 = 周日 … 7 = 周六）。可选参数：`goal`、`approval_mode`（`strict` / `smart` / `workspace-write` / `full-access`，默认跟随工作区）、`workspace`（默认为当前目录）、`title`。调用时不会立刻运行。 |
-| `complete_scheduled_task` | 删除一个任务。带 goal 的任务在运行中判断目标已达成时，会用自己的 `task_id` 调它；用户要取消任务时也用它。 |
+| `complete_scheduled_task` | 标记目标达成并停止未来触发，保留配置与历史。需提供任务 ID 和配置修订号，旧修订仍在执行时不能完成编辑后的任务。 |
 | `list_scheduled_tasks` | 列出任务：调度方式、下次运行的本地时间、工作区、goal、上次运行的会话。只读。 |
 
 **怎么触发**：
-- **谁来触发**：任务存在 `$WILLDEEP_HOME/schedules.json`（权限 0600，读写带文件锁）。常驻的 Runtime daemon 每 30 秒检查一次，只在插件**已启用**时触发；停用插件就等于停掉全部定时任务。
+- **谁来触发**：Runtime 是配置与运行历史的唯一写入方，每 30 秒检查原生任务。插件只提供自然语言入口，停用插件不会暂停已经创建的原生任务。旧任务迁移时，插件未启用则导入为暂停，避免意外无人值守执行。
+- **管理与历史**：Web「定时任务」、`willdeep schedule` 与 TUI `/schedule` 共用 Runtime 接口，可暂停、归档、停止运行、显式重试和分页查询历史。配置在 `$WILLDEEP_HOME/schedules.json`，运行历史在 `$WILLDEEP_HOME/runtime/schedules/runs/`；更新按修订号检查冲突，归档或删除配置均保留历史。
 - **每次触发做什么**：到期的任务各开一个全新会话，标题为 `⏰ <任务名>`，并按任务的档位设好审批。第一句话是任务的 prompt；有 goal 时，后面再附上“完成后判断目标是否达成，达成就调 `complete_scheduled_task`”的说明，话术与 Xedit 相同。
 - **错过与重叠**：daemon 停机期间错过的触发只补一次，不会补跑 N 次。上一次触发的会话还有没跑完的轮次时，这次跳过，避免同一个任务越堆越多。
 - **留下的记录**：事件流里会有 `schedule.fired`、`schedule.skipped`、`schedule.failed`。在反馈账本里，这些轮次的来源是 `schedule`。

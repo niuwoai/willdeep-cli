@@ -1,0 +1,30 @@
+┌WillDeep · workspace · ◒ working 3s───────────────────────────────────────────────────────────────┐
+│WillDeep: Hello, I’m in workspace. Tell me what you want to build, fix, or investigate; I’ll      │
+│inspect the project before making changes. Type /help for every command, or /model to switch      │
+│models.                                                                                           │
+│                                                                                                  │
+│You: slow tui queue verification                                                                  │
+│                                                                                                  │
+│You: edited-first queued                                                                          │
+│                                                                                                  │
+│WillDeep: Fixture result: completed                                                               │
+│                                                                                                  │
+│── turn finished · first reply 20.53s · total 20.60s · in 20 · out 3 · your turn ──               │
+│                                                                                                  │
+│WillDeep · replying: Fixture result:                                                              │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Activity · Ctrl+O details─────────────────────────────────────────────────────────────────────────┐
+│◒ Receiving reply · elapsed 3.1s                                                                  │
+│  0.2s · Runtime accepted · starting                                                              │
+│  0.4s · Runtime · turn 1                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Prompt [focused] · F2 expand · Shift/Alt+Enter newline · Turn running · Enter queues · Ctrl+Q mana┐
+│unsent draft                                                                                      │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+◒ Receiving reply · elapsed 3.1s · Focus: Prompt · context 0% · latest ↑20 ↓3 · Esc interrupt · F1

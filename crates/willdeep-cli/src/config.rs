@@ -248,6 +248,9 @@ pub struct HookSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSettings {
+    /// Admission ceiling for schedules, including occupied interactive Runtime sessions.
+    /// Defaults to 4; preparing runs remain durable while waiting for capacity.
+    pub schedule_max_active: Option<usize>,
     #[serde(default)]
     pub verification_commands: Vec<String>,
     pub max_turns: Option<usize>,
@@ -595,6 +598,13 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
     }
     willdeep_core::ToolRegistry::validate_required_verifications(&file.agent.verification_commands)
         .map_err(anyhow::Error::msg)?;
+    if file
+        .agent
+        .schedule_max_active
+        .is_some_and(|limit| !(1..=64).contains(&limit))
+    {
+        bail!("agent.schedule_max_active must be between 1 and 64");
+    }
     if let Some(max_turns) = file.agent.max_turns
         && !(1..=MAX_TURNS_CEILING).contains(&max_turns)
     {

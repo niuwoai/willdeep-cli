@@ -1,0 +1,13 @@
+{
+  "version": "0.98.0-rc1",
+  "status": "passed",
+  "checks": [
+    "Queued 2",
+    "Auto-send paused while managing",
+    "Queued message attachments"
+  ],
+  "edited_queued_message_sent": true,
+  "edited_attachment_sent": true,
+  "deleted_message_not_sent": true,
+  "original_draft_kept": true
+}

@@ -151,10 +151,10 @@ pub(crate) async fn install(home: &Path, name: &str, enable: bool) -> Result<()>
     result?;
     if package.short == "scheduler" {
         println!(
-            "Scheduled runs are fired by the runtime daemon while this plugin is enabled.\n\
-             Unattended runs wait for approval on tool calls below their approval mode; to let a\n\
-             goal-based run remove itself without a prompt, allow `complete_scheduled_task` once\n\
-             when it is first requested (Always Allow)."
+            "Runtime manages scheduled tasks independently of this entry plugin.\n\
+             Manage configuration, pause/resume and run history in Web Scheduled Tasks.\n\
+             Unattended runs preserve the configured approval mode; pending approvals wait in the inbox.\n\
+             Completing a task stops future triggers and retains its configuration and history."
         );
     }
     Ok(())

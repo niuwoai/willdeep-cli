@@ -35,6 +35,7 @@ pub mod runtime_parameters;
 pub mod safety;
 pub mod sandbox;
 pub mod schedule;
+pub mod schedule_history;
 pub mod session;
 pub mod session_title;
 pub mod skills;

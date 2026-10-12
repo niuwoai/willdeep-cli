@@ -106,10 +106,7 @@ pub(crate) struct RemoteRuntimeSession {
     pub root_agent_id: uuid::Uuid,
 }
 
-#[derive(Clone)]
-pub(crate) struct RemoteRuntimeTurn {
-    pub id: uuid::Uuid,
-}
+pub(crate) type RemoteRuntimeTurn = willdeep_runtime_protocol::RuntimeTurn;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteSessionState {
@@ -462,10 +459,28 @@ pub(crate) async fn submit_runtime_turn(
     attachments: Vec<willdeep_core::MessageAttachment>,
     surface: crate::Surface,
 ) -> Result<RemoteRuntimeTurn> {
+    submit_runtime_turn_with_id(
+        home,
+        session_id,
+        prompt,
+        attachments,
+        surface,
+        uuid::Uuid::new_v4(),
+    )
+    .await
+}
+
+pub(crate) async fn submit_runtime_turn_with_id(
+    home: &Path,
+    session_id: uuid::Uuid,
+    prompt: String,
+    attachments: Vec<willdeep_core::MessageAttachment>,
+    surface: crate::Surface,
+    request_id: uuid::Uuid,
+) -> Result<RemoteRuntimeTurn> {
     if prompt.trim().is_empty() && attachments.is_empty() {
         bail!("Runtime Turn prompt and attachments must not both be empty");
     }
-    let request_id = uuid::Uuid::new_v4();
     let state = ensure_running(home).await?;
     let client = runtime_client(&state)?;
     let public_attachments = attachments
@@ -480,7 +495,9 @@ pub(crate) async fn submit_runtime_turn(
         origin_client: Some(crate::client_identity(surface).to_owned()),
     };
     let turn = api_data(client.submit_turn(&params, request_id).await?)?;
-    Ok(RemoteRuntimeTurn { id: turn.id })
+    // An idempotent submit can replay the original queued receipt. Read the
+    // current turn so clients can return an already completed result.
+    api_data(client.turn(turn.id).await?)
 }
 
 pub(crate) async fn stop_remote_turn(home: &Path, id: uuid::Uuid) -> Result<()> {

@@ -44,7 +44,12 @@ mod internal_transport;
 mod local_transport;
 mod mobile_cli;
 mod mobile_gateway;
+mod schedule_client;
+mod schedule_engine;
 mod scheduler;
+pub(crate) use schedule_client::{
+    read_session_attachments, schedule_operation, schedule_policy, schedule_response,
+};
 mod session_store;
 mod steering;
 mod tool_store;
@@ -72,8 +77,8 @@ pub(crate) use tui_bridge::{
     retry_remote_agent, retry_remote_agent_with_model, rewind_remote_session, runtime_event_head,
     runtime_events, runtime_snapshot, search_remote_session_results, set_remote_session_archived,
     spawn_remote_agent, start_runtime_event_follower, steer_remote_turn, stop_remote_agent,
-    stop_remote_turn, submit_runtime_turn, update_remote_session_approval_mode,
-    update_remote_session_model,
+    stop_remote_turn, submit_runtime_turn, submit_runtime_turn_with_id,
+    update_remote_session_approval_mode, update_remote_session_model,
 };
 pub(crate) use workspace_store::WorkspaceAccess;
 pub(crate) use workspace_store::{

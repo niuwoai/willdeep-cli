@@ -1,4 +1,6 @@
 use super::*;
+mod attachments;
+mod schedules;
 use willdeep_runtime_protocol::{
     AgentPromptParams, AgentWaitParams, AnswerQuestionParams, ApiRequest, ApiResponse,
     ApprovalDecision, ErrorCode, EventListParams, IdParams, KernelListParams,
@@ -205,6 +207,9 @@ async fn dispatch_idempotent(state: &ServerState, request: ApiRequest) -> Unifie
 
 async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
     let result = match request.operation.as_str() {
+        operation if operation.starts_with("schedule.") => {
+            schedules::dispatch(state, &request).await
+        }
         "runtime.capabilities" => json(runtime_capabilities(state)),
         "runtime.status" => json(willdeep_runtime_protocol::RuntimeStatus {
             status: if *state.work_gate.read().await {
@@ -242,6 +247,7 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             Err(error) => Err(error),
         },
         "session.create" => session_create(state, &request),
+        "session.attachments" => attachments::get(state, &request),
         "session.rename" => session_rename(state, &request),
         "session.update_model" => session_update_model(state, &request),
         "session.update_approval_mode" => session_update_approval_mode(state, &request),
@@ -691,6 +697,12 @@ fn kernel_ignore(state: &ServerState, id: uuid::Uuid) -> ApiResult {
 }
 
 const MUTATING_OPERATIONS: &[&str] = &[
+    "schedule.create",
+    "schedule.update",
+    "schedule.action",
+    "schedule.run",
+    "schedule.run.stop",
+    "schedule.cleanup",
     "agent.prompt",
     "agent.spawn",
     "agent.stop",
@@ -728,7 +740,7 @@ fn is_mutating_operation(operation: &str) -> bool {
 fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
-        "turn.submit" | "agent.spawn" | "agent.prompt" | "agent.retry"
+        "turn.submit" | "agent.spawn" | "agent.prompt" | "agent.retry" | "schedule.run"
     )
 }
 

@@ -741,6 +741,17 @@ pub(crate) async fn build(
         settings.auto_dispatch_read_only = Some(parameters.auto_dispatch_read_only);
         settings.max_deep_calls_per_harness = Some(parameters.max_deep_calls_per_harness);
     }
+    if let HarnessFrontend::Runtime { usage_origin, .. } = &frontend
+        && let Some(policy) =
+            crate::daemon::schedule_policy(home, usage_origin.origin_client.as_deref())?
+    {
+        if let Some(max_turns) = policy.max_turns {
+            effective.file.agent.max_turns = Some(max_turns as usize);
+        }
+        if let Some(token_budget) = policy.token_budget {
+            effective.file.agent.token_budget = Some(token_budget);
+        }
+    }
     let loaded = &effective;
     let max_turns = cli
         .max_turns

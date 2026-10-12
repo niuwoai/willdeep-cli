@@ -38,7 +38,7 @@ pub(super) fn help_text(language: Language) -> String {
 }
 
 /// 每条命令的用法签名。占位符随语言走，中文用户不该对着 `<task>` 猜要填什么。
-fn command_usages(language: Language) -> [(&'static str, &'static str); 26] {
+fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
     let descriptions = command_candidates(language);
     let usages = match language {
         Language::ZhCn => [
@@ -67,6 +67,8 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 26] {
             "/skills",
             "/clear",
             "/exit",
+            "/schedule [list|history <id>|action <id> <revision> <action>]",
+            "/attachments",
             "/queue",
         ],
         Language::En => [
@@ -95,6 +97,8 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 26] {
             "/skills",
             "/clear",
             "/exit",
+            "/schedule [list|history <id>|action <id> <revision> <action>]",
+            "/attachments",
             "/queue",
         ],
         Language::Ja => [
@@ -123,6 +127,8 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 26] {
             "/skills",
             "/clear",
             "/exit",
+            "/schedule [list|history <id>|action <id> <revision> <action>]",
+            "/attachments",
             "/queue",
         ],
     };
@@ -140,7 +146,7 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 26] {
     std::array::from_fn(|index| (usages[index], descriptions[index].1))
 }
 
-pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static str); 26] {
+pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static str); 28] {
     [
         (
             "/help",
@@ -334,6 +340,22 @@ pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static
         (
             "/exit",
             language.text("退出 TUI", "Exit the TUI", "TUI を終了"),
+        ),
+        (
+            "/schedule",
+            language.text(
+                "通过 Runtime 管理定时任务与运行历史",
+                "Manage scheduled tasks and run history through the Runtime",
+                "Runtime の定期タスクと履歴を管理",
+            ),
+        ),
+        (
+            "/attachments",
+            language.text(
+                "管理草稿附件：列表、预览、编辑、删除与排序",
+                "Manage draft attachments: list, preview, edit, remove and reorder",
+                "下書きの添付を一覧・表示・編集・削除・並べ替え",
+            ),
         ),
         (
             "/queue",
