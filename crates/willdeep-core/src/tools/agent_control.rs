@@ -9,6 +9,7 @@ use super::*;
 /// 再剔一遍：白名单写错了也不会把派工或指挥别的 Worker 的能力交给 Worker。
 pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &[
     "spawn_agent",
+    "continue_agent",
     "send_agent_message",
     "stop_agent",
     "resume_agent",
@@ -52,8 +53,17 @@ All fields are optional; only the fields you pass change. No approval is needed.
 /// `send_agent_message` 的正文上限（字符）。超出直接报错，不截断。
 pub const MAX_AGENT_MESSAGE_CHARS: usize = 4_000;
 
-pub(super) fn definitions() -> [ToolDefinition; 3] {
+pub(super) fn definitions() -> [ToolDefinition; 4] {
     [
+        definition(
+            "continue_agent",
+            "Give a completed background Agent a new task in the same conversation and original approved workspace/write scope. Creates a new queued run; never interrupts a running Agent. Use send_agent_message for a running Agent. An optional request_id UUID makes retries idempotent.",
+            json!({"type":"object","properties":{
+                "agent_id":{"type":"string","description":"Original Agent UUID, not its background task handle."},
+                "message":{"type":"string","description":"New bounded task; original permissions and verifier remain in force."},
+                "request_id":{"type":"string","description":"Optional stable UUID for this continuation."}
+            },"required":["agent_id","message"],"additionalProperties":false}),
+        ),
         definition(
             "await_agents",
             "Wait for background subagents this session started with spawn_agent to finish, then return their reports together. \

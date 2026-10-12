@@ -2,10 +2,13 @@ import { Box, Button, Flex, Text, VStack } from "@chakra-ui/react";
 import type { Messages } from "./i18n";
 import type { RuntimeActivity, RuntimeAgent, RuntimeArtifact, RuntimeGate, RuntimeTask, RuntimeTool } from "./RuntimeSidebar";
 import { agentDuration, formatDuration } from "./runtimeAgents";
+import { RuntimeRunHistory } from "./RuntimeRunHistory";
+import type { AgentRunsPage } from "./RuntimeSidebar";
 
 export type RuntimeDetailTarget = { kind: "agent" | "task"; id: string };
 
 type Props = {
+  onLoadRuns?: (id: string, after?: number) => Promise<AgentRunsPage>;
   activity: RuntimeActivity;
   messages: Messages;
   target: RuntimeDetailTarget;
@@ -84,8 +87,9 @@ function StructuredTimeline({ tools, artifacts, messages: t }: { tools: RuntimeT
   </VStack>;
 }
 
-export function RuntimeDetailPanel({ activity, messages: t, target, onClose }: Props) {
+export function RuntimeDetailPanel({ activity, messages: t, target, onClose, onLoadRuns }: Props) {
   const agent = target.kind === "agent" ? activity.agents.find((candidate) => candidate.id === target.id) : undefined;
+  const worker = activity.teams?.flatMap((team) => team.workers).find((candidate) => candidate.agent_id === target.id);
   const task = target.kind === "task" ? runtimeTask(activity, target.id) : undefined;
   const gate = target.kind === "task" ? taskGate(activity, target.id) : undefined;
   if (target.kind === "agent" && !agent) return null;
@@ -102,6 +106,14 @@ export function RuntimeDetailPanel({ activity, messages: t, target, onClose }: P
       <Text fontSize="2xs" color="var(--text-faint)">{agent.profile || t.unknownValue} · {agent.model || t.unknownValue}</Text>
       <Text fontSize="2xs" color="var(--text-faint)">{t.turn} {agent.current_turn} · {agent.total_tokens ?? t.unknownValue} {t.tokenUnit} · {agentDuration(agent, t)}</Text>
       {agent.current_tool && <Text fontSize="2xs" color="var(--text-faint)">{t.currentTool}: {agent.current_tool}</Text>}
+      {worker && <>
+        <Text fontSize="2xs">{t.currentRun}: {worker.latest_run.id} · {t.runCount}: {worker.run_count}</Text>
+        <Text fontSize="2xs">{t.currentRunUsage}: {worker.latest_run.usage.accounted_tokens} {t.tokenUnit} · {t.cumulativeUsage}: {worker.cumulative_usage.accounted_tokens} {t.tokenUnit}</Text>
+        <Text fontSize="2xs">{t.inputTokens}: {worker.cumulative_usage.input_tokens ?? t.unknownValue} · {t.outputTokens}: {worker.cumulative_usage.output_tokens ?? t.unknownValue} · {t.cacheTokens}: {worker.cumulative_usage.cache_read_tokens ?? t.unknownValue}</Text>
+        {worker.queue_position !== null && <Text fontSize="2xs">{t.queuePosition}: {worker.queue_position}</Text>}
+        {worker.cumulative_usage.unknown_usage_calls > 0 && <Text fontSize="2xs">{t.unknownUsageCalls}: {worker.cumulative_usage.unknown_usage_calls}</Text>}
+        {worker.cumulative_usage.uncertain_execution && <Text fontSize="2xs">{t.uncertainExecution}</Text>}
+      </>}
       {agent.dedicated_worktree && <Text fontSize="2xs" color="var(--text-faint)">{t.worktree}: {agent.worktree_branch || t.unknownValue}</Text>}
     </VStack>}
     {task && <VStack align="stretch" gap="1" mb="2">
@@ -111,6 +123,7 @@ export function RuntimeDetailPanel({ activity, messages: t, target, onClose }: P
       {task.failure_domain && <Text fontSize="2xs" color="var(--text-faint)">{t.failureDomain}: {failureDomainLabel(task.failure_domain, t)}</Text>}
     </VStack>}
     {gate && <Text fontSize="xs" mb="2">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</Text>}
+    {agent && onLoadRuns && <RuntimeRunHistory id={agent.id} onLoad={onLoadRuns} messages={t} />}
     <StructuredTimeline tools={tools} artifacts={artifacts} messages={t} />
     <Text mt="2" fontSize="2xs" color="var(--text-ghost)">{t.structuredLogPrivacy}</Text>
   </Box>;

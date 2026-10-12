@@ -166,7 +166,7 @@ pub struct TuiSink {
 #[async_trait]
 impl EventSink for TuiSink {
     async fn emit(&self, event: AgentEvent) {
-        let _ = self.ui.send(UiMessage::Agent(event));
+        let _ = self.ui.send(UiMessage::Agent(event.into_unscoped()));
     }
 }
 pub struct TuiApprover(pub mpsc::UnboundedSender<UiMessage>);
@@ -2726,6 +2726,8 @@ fn runtime_status_label(status: RuntimeStatus, language: Language) -> &'static s
     match status {
         RuntimeStatus::Idle => language.text("空闲", "idle", "待機"),
         RuntimeStatus::Working => language.text("工作中", "working", "作業中"),
+        RuntimeStatus::Queued => language.text("排队中", "queued", "待機中"),
+        RuntimeStatus::Interrupted => language.text("已中断", "interrupted", "中断"),
         RuntimeStatus::Blocked => language.text("已阻塞", "blocked", "ブロック中"),
         RuntimeStatus::WaitingApproval => language.text("等待审批", "waiting approval", "承認待ち"),
         RuntimeStatus::WaitingAnswer => language.text("等待回答", "waiting answer", "回答待ち"),
@@ -2766,8 +2768,10 @@ fn attention_source_label(source: AttentionSource, language: Language) -> &'stat
 fn attention_style(status: RuntimeStatus) -> Style {
     let color = match status {
         RuntimeStatus::WaitingApproval | RuntimeStatus::WaitingAnswer => Color::Yellow,
-        RuntimeStatus::Blocked | RuntimeStatus::Failed => Color::LightRed,
-        RuntimeStatus::Working => Color::LightBlue,
+        RuntimeStatus::Blocked | RuntimeStatus::Failed | RuntimeStatus::Interrupted => {
+            Color::LightRed
+        }
+        RuntimeStatus::Working | RuntimeStatus::Queued => Color::LightBlue,
         RuntimeStatus::Done => Color::LightGreen,
         RuntimeStatus::Partial => Color::Yellow,
         RuntimeStatus::Cancelled => Color::DarkGray,

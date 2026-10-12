@@ -58,7 +58,12 @@ fn identity(path: &Path) -> std::io::Result<PathBuf> {
 impl FileLeases {
     pub(super) fn acquire(home: &Path, targets: &BTreeSet<PathBuf>) -> Result<Self, AgentError> {
         Self::try_acquire(home, targets).map_err(|error| {
-            AgentError::Subagent(format!("cannot acquire worker write leases: {error}"))
+            let message = format!("cannot acquire worker write leases: {error}");
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                AgentError::SubagentBlocked(message)
+            } else {
+                AgentError::Subagent(message)
+            }
         })
     }
 

@@ -66,6 +66,13 @@ fn render_agent_actions(
             app.language.text("[I 补充]", "[I Instruct]", "[I 指示]"),
             Color::LightCyan,
         ));
+    }
+    if agent.background
+        && matches!(
+            agent.status,
+            willdeep_core::RuntimeStatus::Working | willdeep_core::RuntimeStatus::Queued
+        )
+    {
         actions.push((
             AgentDetailAction::Stop,
             app.language.text("[K 停止]", "[K Stop]", "[K 停止]"),
@@ -77,6 +84,7 @@ fn render_agent_actions(
             agent.status,
             willdeep_core::RuntimeStatus::Blocked
                 | willdeep_core::RuntimeStatus::Failed
+                | willdeep_core::RuntimeStatus::Interrupted
                 | willdeep_core::RuntimeStatus::Done
                 | willdeep_core::RuntimeStatus::Partial
                 | willdeep_core::RuntimeStatus::Cancelled

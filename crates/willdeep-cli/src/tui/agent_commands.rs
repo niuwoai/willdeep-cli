@@ -2,6 +2,17 @@ use super::*;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AgentCommand<'a> {
+    Runs {
+        id: uuid::Uuid,
+        after: Option<u64>,
+    },
+    Team {
+        id: uuid::Uuid,
+    },
+    Continue {
+        id: uuid::Uuid,
+        message: &'a str,
+    },
     Instruct {
         id: uuid::Uuid,
         message: &'a str,
@@ -41,6 +52,19 @@ fn parse_agent_command(arguments: &str) -> Result<AgentCommand<'_>> {
     let (id, trailing) = split_head(arguments).context("missing Runtime Agent ID")?;
     let id = uuid::Uuid::parse_str(id).context("invalid Runtime Agent ID")?;
     match action {
+        "runs" => Ok(AgentCommand::Runs {
+            id,
+            after: if trailing.is_empty() {
+                None
+            } else {
+                Some(trailing.parse().context("invalid Run cursor")?)
+            },
+        }),
+        "team" if trailing.is_empty() => Ok(AgentCommand::Team { id }),
+        "continue" if !trailing.is_empty() => Ok(AgentCommand::Continue {
+            id,
+            message: trailing,
+        }),
         "instruct" => {
             let message = trailing;
             if message.is_empty() {
@@ -79,9 +103,9 @@ pub(super) async fn handle_agent_command(
     }
     let arguments = value.strip_prefix("/agent").unwrap_or_default().trim();
     let usage = app.language.text(
-        "用法：/agent spawn <reader|judge> <任务> | instruct <ID> <指令> | stop <ID> | retry <ID> [--model <模型>]",
-        "Usage: /agent spawn <reader|judge> <task> | instruct <id> <message> | stop <id> | retry <id> [--model <model>]",
-        "使用法：/agent spawn <reader|judge> <タスク> | instruct <ID> <指示> | stop <ID> | retry <ID> [--model <モデル>]",
+        "用法：/agent team <ID> | runs <ID> [游标] | spawn <reader|judge> <任务> | continue <ID> <新任务> | instruct <ID> <指令> | stop <ID> | retry <ID> [--model <模型>]",
+        "Usage: /agent team <id> | runs <id> [cursor] | spawn <reader|judge> <task> | continue <id> <new task> | instruct <id> <message> | stop <id> | retry <id> [--model <model>]",
+        "使用法：/agent team <ID> | runs <ID> [カーソル] | spawn <reader|judge> <タスク> | continue <ID> <新しいタスク> | instruct <ID> <指示> | stop <ID> | retry <ID> [--model <モデル>]",
     );
     let command = match parse_agent_command(arguments) {
         Ok(command) => command,
@@ -91,6 +115,25 @@ pub(super) async fn handle_agent_command(
         }
     };
     let result = match command {
+        AgentCommand::Runs { id, after } => {
+            let runs =
+                crate::daemon::tui_bridge::remote_agent_runs(&runtime.home, id, after).await?;
+            app.append_transcript(format!("System: {}", serde_json::to_string_pretty(&runs)?));
+            return Ok(true);
+        }
+        AgentCommand::Team { id } => {
+            let team = crate::daemon::tui_bridge::remote_agent_team(&runtime.home, id).await?;
+            app.append_transcript(format!("System: {}", serde_json::to_string_pretty(&team)?));
+            return Ok(true);
+        }
+        AgentCommand::Continue { id, message } => {
+            crate::daemon::continue_remote_agent(&runtime.home, id, message.to_owned()).await?;
+            app.language.text(
+                "续做已排队，将保留原 Agent 的历史和权限",
+                "Continuation queued with the original Agent history and permissions",
+                "元の Agent の履歴と権限を保持して続行を予約しました",
+            )
+        }
         AgentCommand::Instruct { id, message } => {
             crate::daemon::instruct_remote_agent(&runtime.home, id, message.to_owned()).await?;
             app.language.text(
@@ -151,6 +194,24 @@ pub(super) async fn handle_agent_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuation_keeps_the_entire_new_task_and_requires_an_agent_id() {
+        let id = uuid::Uuid::new_v4();
+        assert_eq!(
+            parse_agent_command(&format!("continue {id} add a regression test")).unwrap(),
+            AgentCommand::Continue {
+                id,
+                message: "add a regression test"
+            }
+        );
+        assert!(parse_agent_command(&format!("continue {id}")).is_err());
+        assert!(parse_agent_command("continue bad-id task").is_err());
+        assert_eq!(
+            parse_agent_command(&format!("team {id}")).unwrap(),
+            AgentCommand::Team { id }
+        );
+    }
 
     #[test]
     fn parses_agent_lifecycle_commands_without_ambiguous_trailing_input() {

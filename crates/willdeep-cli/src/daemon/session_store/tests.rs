@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn team_control_turn_requeues_after_restart_even_when_parent_history_advanced() {
+    use willdeep_runtime_protocol::agent_team::AgentTeamControl;
+    let root = std::env::temp_dir().join(format!("control-restart-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let session = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace,
+            profile: None,
+            model: None,
+            config: None,
+            title: None,
+        })
+        .unwrap();
+    let request_id = uuid::Uuid::new_v4();
+    let child = uuid::Uuid::new_v4();
+    let (turn, _) = store
+        .enqueue_turn(
+            session.id,
+            CreateRuntimeTurn {
+                team_control: Some(AgentTeamControl::Continue {
+                    id: child,
+                    message: "inspect".into(),
+                    request_id,
+                }),
+                request_id,
+                prompt: "inspect".into(),
+                attachments: Vec::new(),
+                origin_client: Some("agent-control".into()),
+            },
+        )
+        .unwrap();
+    store.claim_next(session.id).unwrap().unwrap();
+    let task = uuid::Uuid::new_v4();
+    store.bind_task(turn.id, task).unwrap();
+    let mut core = store.core.load(session.id).unwrap();
+    store.prepare_execution(task, &core).unwrap();
+    core.agent_control_requests.insert(request_id);
+    core.messages.extend([
+        willdeep_core::Message::user("continue child"),
+        willdeep_core::Message::assistant("old result", Vec::new()),
+        willdeep_core::Message::user("durable agent report"),
+    ]);
+    store.core.save(&mut core).unwrap();
+    drop(store);
+    let reopened = RuntimeSessionStore::open(path, &root).unwrap();
+    assert_eq!(
+        reopened.get_turn(turn.id).unwrap().unwrap().status,
+        RuntimeTurnStatus::Queued
+    );
+    let claimed = reopened.claim_next(session.id).unwrap().unwrap();
+    assert!(
+        matches!(claimed.request.team_control, Some(AgentTeamControl::Continue { request_id: id, .. }) if id == request_id)
+    );
+    assert!(!claimed.request.replay_existing_user_message);
+    assert!(
+        reopened
+            .core
+            .load(session.id)
+            .unwrap()
+            .agent_control_requests
+            .contains(&request_id)
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn completion_keeps_harness_boundary_when_another_writer_advances_history() {
     let root = std::env::temp_dir().join(format!("runtime-end-boundary-{}", uuid::Uuid::new_v4()));
     let workspace = root.join("workspace");
@@ -20,6 +90,7 @@ fn completion_keeps_harness_boundary_when_another_writer_advances_history() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "first request".into(),
                 attachments: Vec::new(),
@@ -94,6 +165,7 @@ fn execution_start_rebases_queued_boundary_and_rejects_changed_replay() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "queued request".into(),
                 attachments: Vec::new(),
@@ -225,6 +297,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
         .enqueue_turn(
             automatic.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "  Analyze   the session migration architecture  ".to_owned(),
@@ -247,6 +320,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
         .enqueue_turn(
             renamed.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "must not replace the title".to_owned(),
@@ -261,6 +335,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
         .enqueue_turn(
             sensitive.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "debug password = NeverCopyThisValue123".to_owned(),
@@ -276,6 +351,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
         .enqueue_turn(
             attachment.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: String::new(),
@@ -506,6 +582,7 @@ fn manages_session_snapshot_lifecycle_without_exporting_private_queue_data() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "private queued prompt".to_owned(),
@@ -531,6 +608,7 @@ fn manages_session_snapshot_lifecycle_without_exporting_private_queue_data() {
             .enqueue_turn(
                 session.id,
                 CreateRuntimeTurn {
+                    team_control: None,
                     origin_client: None,
                     request_id: uuid::Uuid::new_v4(),
                     prompt: "blocked while archived".to_owned(),
@@ -712,6 +790,7 @@ fn rewinding_truncates_in_place_and_forgets_the_dropped_turns() {
             .enqueue_turn(
                 session.id,
                 CreateRuntimeTurn {
+                    team_control: None,
                     origin_client: None,
                     request_id: uuid::Uuid::new_v4(),
                     prompt: prompt.to_owned(),
@@ -826,6 +905,7 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
             .enqueue_turn(
                 session.id,
                 CreateRuntimeTurn {
+                    team_control: None,
                     origin_client: None,
                     request_id: uuid::Uuid::new_v4(),
                     prompt: prompt.to_owned(),
@@ -950,6 +1030,7 @@ fn restores_provider_model_and_config_before_claiming_the_next_turn() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "continue with the restored settings".to_owned(),
@@ -998,6 +1079,7 @@ fn safely_requeues_active_turn_without_deleting_a_persisted_user_message() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: prompt.to_owned(),
@@ -1065,6 +1147,7 @@ fn ambiguous_partial_turn_history_is_preserved_and_not_requeued() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "do not discard partial history".to_owned(),
@@ -1127,6 +1210,7 @@ fn persisted_tool_activity_blocks_automatic_turn_replay() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "a tool may already have changed the workspace".to_owned(),
@@ -1187,6 +1271,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: first_request,
                 prompt: "first".to_owned(),
@@ -1199,6 +1284,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: first_request,
                 prompt: "must not replace first".to_owned(),
@@ -1212,6 +1298,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "second".to_owned(),
@@ -1277,6 +1364,7 @@ fn cancelling_a_claimed_turn_releases_the_session_and_next_turn() {
         })
         .unwrap();
     let enqueue = |prompt: &str| CreateRuntimeTurn {
+        team_control: None,
         request_id: uuid::Uuid::new_v4(),
         prompt: prompt.to_owned(),
         attachments: Vec::new(),
@@ -1347,6 +1435,7 @@ fn partial_turn_preserves_boundary_without_marking_completed() {
         .enqueue_turn(
             session.id,
             CreateRuntimeTurn {
+                team_control: None,
                 origin_client: None,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "unfinished objective".into(),
@@ -1411,6 +1500,7 @@ fn followups_and_cancellations_reach_the_feedback_ledger() {
             .enqueue_turn(
                 session.id,
                 CreateRuntimeTurn {
+                    team_control: None,
                     request_id: uuid::Uuid::new_v4(),
                     prompt: prompt.into(),
                     attachments: Vec::new(),

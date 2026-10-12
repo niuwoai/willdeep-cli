@@ -1,4 +1,5 @@
 use super::*;
+mod agent_team;
 mod attachments;
 mod schedules;
 use willdeep_runtime_protocol::{
@@ -279,6 +280,9 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             Err(error) => Err(error),
         },
         "agent.spawn" => agent_spawn(state, &request),
+        "agent.continue" => agent_team::continue_agent(state, &request).await,
+        "agent.runs" => agent_team::runs(state, &request),
+        "agent.team" => agent_team::team(state, &request),
         "agent.prompt" => agent_prompt(state, &request).await,
         "turn.steer" => turn_steer(state, &request),
         "agent.wait" => agent_wait(state, &request).await,
@@ -532,6 +536,30 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         }
         // 设值语义，重复调用结果相同，所以不进幂等缓存——缓存会把响应体落进
         // `idempotency.json`，而 `mobile.enable` 的响应里有配对 URL（含 relay token）。
+        "webapp.status" => match params::<willdeep_runtime_protocol::EmptyParams>(&request) {
+            Ok(_) => json(state.web_app.status()),
+            Err(error) => Err(error),
+        },
+        "webapp.start" => {
+            match params::<willdeep_runtime_protocol::web_app::WebAppStartParams>(&request) {
+                Ok(params) => state
+                    .web_app
+                    .start(params)
+                    .await
+                    .map_err(ApiFailure::internal)
+                    .and_then(json),
+                Err(error) => Err(error),
+            }
+        }
+        "webapp.stop" => match params::<willdeep_runtime_protocol::EmptyParams>(&request) {
+            Ok(_) => state
+                .web_app
+                .stop()
+                .await
+                .map_err(ApiFailure::internal)
+                .and_then(json),
+            Err(error) => Err(error),
+        },
         "mobile.status" => match params::<willdeep_runtime_protocol::EmptyParams>(&request) {
             Ok(_) => json(state.mobile.status()),
             Err(error) => Err(error),
@@ -705,6 +733,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "schedule.cleanup",
     "agent.prompt",
     "agent.spawn",
+    "agent.continue",
     "agent.stop",
     "agent.retry",
     "task.cancel",
@@ -740,7 +769,13 @@ fn is_mutating_operation(operation: &str) -> bool {
 fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
-        "turn.submit" | "agent.spawn" | "agent.prompt" | "agent.retry" | "schedule.run"
+        "turn.submit"
+            | "agent.spawn"
+            | "agent.continue"
+            | "agent.prompt"
+            | "agent.retry"
+            | "schedule.run"
+            | "webapp.start"
     )
 }
 
@@ -1495,6 +1530,7 @@ async fn turn_submit(state: &ServerState, request: &ApiRequest) -> ApiResult {
         .enqueue_turn_observed(
             session_id,
             session_store::CreateRuntimeTurn {
+                team_control: None,
                 request_id: params.turn_request_id,
                 prompt: params.prompt,
                 attachments,
@@ -1804,7 +1840,10 @@ async fn agent_retry(state: &ServerState, request: &ApiRequest) -> ApiResult {
 }
 
 fn command_response(command: agent_control::AgentCommand) -> ApiResult {
-    if command.kind == agent_control::AgentCommandKind::Spawn {
+    if matches!(
+        command.kind,
+        agent_control::AgentCommandKind::Spawn | agent_control::AgentCommandKind::Continue
+    ) {
         return Err(ApiFailure::internal(anyhow::anyhow!(
             "spawn command cannot be returned as an Agent control command"
         )));
@@ -1823,7 +1862,9 @@ fn command_response(command: agent_control::AgentCommand) -> ApiResult {
             agent_control::AgentCommandKind::Instruct => {
                 willdeep_runtime_protocol::AgentCommandKind::Instruct
             }
-            agent_control::AgentCommandKind::Spawn => unreachable!(),
+            agent_control::AgentCommandKind::Spawn | agent_control::AgentCommandKind::Continue => {
+                unreachable!()
+            }
         },
         status: match command.status {
             agent_control::AgentCommandStatus::Pending => {

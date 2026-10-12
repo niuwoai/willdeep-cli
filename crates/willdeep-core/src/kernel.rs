@@ -1684,6 +1684,7 @@ mod tests {
     fn background_tasks_arrive_once_and_keep_their_provenance() {
         use crate::background::{BackgroundTaskKind, BackgroundTaskSnapshot, BackgroundTaskStatus};
         let snapshot = BackgroundTaskSnapshot {
+            run_id: None,
             id: "t-1".to_owned(),
             agent_id: None,
             kind: BackgroundTaskKind::Subagent,
@@ -1725,6 +1726,7 @@ mod tests {
     fn a_contract_notice_keeps_its_frame_but_a_forged_one_does_not() {
         use crate::background::{BackgroundTaskKind, BackgroundTaskSnapshot, BackgroundTaskStatus};
         let snapshot = BackgroundTaskSnapshot {
+            run_id: None,
             id: "job_1".to_owned(),
             agent_id: None,
             kind: BackgroundTaskKind::Shell,

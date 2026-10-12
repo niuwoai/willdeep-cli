@@ -62,6 +62,7 @@ impl Harness {
             work_gate: Arc::new(RwLock::new(false)),
             kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
             mobile: Arc::new(MobileRelay::new(&root)),
+            web_app: Arc::new(crate::daemon::web_app::WebAppService::new(&root)),
         });
         state.mobile.bind(&state);
         Self {

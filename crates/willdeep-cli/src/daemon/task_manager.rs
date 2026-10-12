@@ -355,7 +355,10 @@ impl TaskManager {
     }
 
     pub(super) async fn submit(self: &Arc<Self>, mut request: SubmitTask) -> Result<RuntimeTask> {
-        if request.prompt.trim().is_empty() && request.attachments.is_empty() {
+        if request.team_control.is_none()
+            && request.prompt.trim().is_empty()
+            && request.attachments.is_empty()
+        {
             bail!("task prompt and attachments must not both be empty");
         }
         let workspace = self.workspaces.ensure_registered(&request.workspace)?;

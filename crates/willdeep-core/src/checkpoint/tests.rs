@@ -15,6 +15,91 @@ struct WriteThenStop {
     hang: bool,
 }
 
+#[tokio::test]
+async fn report_ack_waits_for_the_parent_checkpoint_commit() {
+    use crate::background::{
+        BackgroundTaskKind, BackgroundTaskRegistry, BackgroundTaskStatus, TaskResult,
+    };
+    use crate::subagent::runs::RunRequest;
+    use willdeep_runtime_protocol::{AgentRunReason, AgentStatus};
+    let root = std::env::temp_dir().join(format!("report-commit-{}", uuid::Uuid::new_v4()));
+    let parent = uuid::Uuid::new_v4();
+    let runs = crate::subagent::AgentRunStore::new(root.join("workers"), parent);
+    let background = BackgroundTaskRegistry::default().with_agent_run_store(runs.clone());
+    let mut events = background.subscribe();
+    let agent_id = uuid::Uuid::new_v4();
+    let request_id = uuid::Uuid::new_v4();
+    let task = background
+        .start_agent_run(
+            Some(RunRequest {
+                request_id,
+                agent_id,
+                reason: AgentRunReason::Spawn,
+                label: "fixture".into(),
+                model: None,
+                max_turns: Some(1),
+                token_budget: None,
+                timeout_seconds: None,
+                dispatch: serde_json::Value::Null,
+            }),
+            agent_id,
+            BackgroundTaskKind::Subagent,
+            "fixture".into(),
+            Arc::new(crate::AgentInstructionInbox::default()),
+            || async {
+                TaskResult {
+                    status: BackgroundTaskStatus::Completed,
+                    exit_code: Some(0),
+                    output: "report".into(),
+                }
+            },
+            |_| async {},
+        )
+        .unwrap();
+    events.recv().await.unwrap();
+    background.mark_delivered(&task);
+    struct Reject;
+    impl CheckpointSink for Reject {
+        fn save(&self, _: &RunCheckpoint) -> Result<(), String> {
+            Err("fixture failed commit".into())
+        }
+    }
+    let mut rejected = CheckpointRecorder::new(Some(&Reject));
+    rejected.watch_background(Some(&background));
+    assert!(
+        rejected
+            .record(&[Message::user("report")], 1, 0, 0)
+            .is_err()
+    );
+    assert!(!runs.get(request_id).unwrap().unwrap().delivered);
+    let store = SessionStore::new(&root);
+    let mut session = Session::new(root.clone(), None, "fixture");
+    session.id = parent;
+    store.save(&mut session).unwrap();
+    let sink = SessionCheckpointSink {
+        store,
+        session_id: parent,
+    };
+    let mut committed = CheckpointRecorder::new(Some(&sink));
+    committed.watch_background(Some(&background));
+    committed
+        .record(&[Message::user("report")], 1, 0, 0)
+        .unwrap();
+    assert!(runs.get(request_id).unwrap().unwrap().delivered);
+    assert_eq!(
+        runs.get(request_id).unwrap().unwrap().status,
+        AgentStatus::Completed
+    );
+    assert!(
+        sink.store
+            .load(parent)
+            .unwrap()
+            .agent_reports_received
+            .contains(&request_id)
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn streaming_reuses_history_and_appends_only_the_current_assistant_message() {
     #[derive(Default)]

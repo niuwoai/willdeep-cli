@@ -7,6 +7,7 @@ pub(crate) enum AgentCommandKind {
     Retry,
     Instruct,
     Spawn,
+    Continue,
 }
 
 pub(super) async fn control_agent(
@@ -19,7 +20,7 @@ pub(super) async fn control_agent(
     let command = match kind {
         AgentCommandKind::Stop => client.stop_agent(id, uuid::Uuid::new_v4()).await?,
         AgentCommandKind::Retry => client.retry_agent(id, uuid::Uuid::new_v4()).await?,
-        AgentCommandKind::Instruct | AgentCommandKind::Spawn => {
+        AgentCommandKind::Instruct | AgentCommandKind::Spawn | AgentCommandKind::Continue => {
             bail!("Agent command must use its dedicated Runtime Client method")
         }
     };
@@ -181,7 +182,10 @@ pub(super) async fn enqueue_agent_command_internal(
         return Err(StatusCode::CONFLICT);
     }
     let valid_status = match kind {
-        AgentCommandKind::Stop => agent.status == RuntimeAgentStatus::Running,
+        AgentCommandKind::Stop => matches!(
+            agent.status,
+            RuntimeAgentStatus::Running | RuntimeAgentStatus::Queued
+        ),
         AgentCommandKind::Retry => matches!(
             agent.status,
             RuntimeAgentStatus::Blocked
@@ -193,6 +197,7 @@ pub(super) async fn enqueue_agent_command_internal(
         ),
         AgentCommandKind::Instruct => agent.status == RuntimeAgentStatus::Running,
         AgentCommandKind::Spawn => false,
+        AgentCommandKind::Continue => false,
     };
     if !valid_status {
         return Err(StatusCode::CONFLICT);
@@ -379,6 +384,18 @@ async fn apply_command(
     command: &AgentCommand,
 ) -> (bool, Option<String>) {
     match command.kind {
+        AgentCommandKind::Continue => {
+            let Some(message) = &command.message else {
+                return (false, Some("continuation message is missing".into()));
+            };
+            match subagents
+                .continue_background_agent(command.agent_id, message, command.id)
+                .await
+            {
+                Ok(_) => (true, None),
+                Err(error) => (false, Some(error.to_string())),
+            }
+        }
         AgentCommandKind::Stop if background.kill_agent(command.agent_id) => (true, None),
         AgentCommandKind::Retry => match subagents
             .retry_background_agent(command.agent_id, command.model.as_deref())
@@ -437,6 +454,35 @@ pub(super) struct AgentCommandStore {
 }
 
 impl AgentCommandStore {
+    pub fn enqueue_continuation(
+        &self,
+        task_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+        message: String,
+        request_id: uuid::Uuid,
+    ) -> Result<AgentCommand> {
+        let mut commands = self.lock()?;
+        if let Some(existing) = commands.get(&request_id) {
+            return Ok(existing.clone());
+        }
+        let command = AgentCommand {
+            id: request_id,
+            task_id,
+            agent_id,
+            kind: AgentCommandKind::Continue,
+            status: AgentCommandStatus::Pending,
+            created_at: now(),
+            resolved_at: None,
+            error: None,
+            message: Some(message),
+            profile: None,
+            label: None,
+            model: None,
+        };
+        commands.insert(command.id, command.clone());
+        persist_commands(&self.path, &commands)?;
+        Ok(command)
+    }
     pub fn open(path: PathBuf) -> Result<Self> {
         let mut commands = load_commands(&path)?;
         let mut changed = false;

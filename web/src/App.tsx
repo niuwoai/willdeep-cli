@@ -773,9 +773,10 @@ export function App() {
     } catch (reason) { setError(`${t.runtimeActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
   }
 
-  async function runAgentAction(id: string, action: "stop" | "retry" | "retry_model" | "prompt", currentModel?: string | null) {
-    const message = action === "prompt" ? window.prompt(t.agentPrompt)?.trim() : undefined;
-    if (action === "prompt" && !message) return;
+  async function runAgentAction(id: string, action: "stop" | "retry" | "retry_model" | "prompt" | "continue", currentModel?: string | null) {
+    const needsMessage = action === "prompt" || action === "continue";
+    const message = needsMessage ? window.prompt(action === "continue" ? t.agentContinuePrompt : t.agentPrompt)?.trim() : undefined;
+    if (needsMessage && !message) return;
     const model = action === "retry_model" ? window.prompt(t.agentModelPrompt, currentModel ?? "")?.trim() : undefined;
     if (action === "retry_model" && !model) return;
     const endpointAction = action === "retry_model" ? "retry" : action;
@@ -1121,7 +1122,7 @@ export function App() {
         <Text fontSize="2xs" color="var(--text-faint)" mt="1">{t.addWorkspaceHint}</Text>
         {workspaceError && <Text fontSize="xs" color="var(--danger-text)" mt="1">{workspaceError}</Text>}
       </Box>}
-      <RuntimeSidebar activity={runtimeActivity} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onResolveApproval={resolveRuntimeApproval} onAnswerQuestion={answerRuntimeQuestion} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
+      <RuntimeSidebar onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={runtimeActivity} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onResolveApproval={resolveRuntimeApproval} onAnswerQuestion={answerRuntimeQuestion} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="5">

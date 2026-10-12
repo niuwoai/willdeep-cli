@@ -1078,6 +1078,7 @@ fn attention_inbox_merges_human_gates_and_background_work() {
     });
     app.background_tasks.extend([
         BackgroundTaskSnapshot {
+            run_id: None,
             id: "job_failed".to_owned(),
             agent_id: None,
             kind: willdeep_core::BackgroundTaskKind::Shell,
@@ -1089,6 +1090,7 @@ fn attention_inbox_merges_human_gates_and_background_work() {
             output_bytes: 10,
         },
         BackgroundTaskSnapshot {
+            run_id: None,
             id: "agent_working".to_owned(),
             agent_id: None,
             kind: willdeep_core::BackgroundTaskKind::Subagent,
@@ -1120,6 +1122,7 @@ fn attention_inbox_recycles_settled_tasks_but_keeps_failures() {
     let mut app = App::new(Vec::new(), Language::En);
     let task =
         |id: &str, status: BackgroundTaskStatus, settled_millis: u64| BackgroundTaskSnapshot {
+            run_id: None,
             id: id.to_owned(),
             agent_id: None,
             kind: willdeep_core::BackgroundTaskKind::Shell,
@@ -1153,6 +1156,7 @@ fn attention_inbox_navigates_opens_details_and_marks_terminal_items_read() {
     app.sidebar_selected = 1;
     app.background_tasks.extend([
         BackgroundTaskSnapshot {
+            run_id: None,
             id: "job_failed".to_owned(),
             agent_id: None,
             kind: willdeep_core::BackgroundTaskKind::Shell,
@@ -1164,6 +1168,7 @@ fn attention_inbox_navigates_opens_details_and_marks_terminal_items_read() {
             output_bytes: 10,
         },
         BackgroundTaskSnapshot {
+            run_id: None,
             id: "job_done".to_owned(),
             agent_id: None,
             kind: willdeep_core::BackgroundTaskKind::Shell,
@@ -1746,6 +1751,7 @@ fn background_tasks_are_recycled_by_status_and_age() {
     use willdeep_core::{BackgroundTaskKind, BackgroundTaskSnapshot, BackgroundTaskStatus};
 
     let task = |status, settled_millis| BackgroundTaskSnapshot {
+        run_id: None,
         id: "task".to_owned(),
         agent_id: None,
         kind: BackgroundTaskKind::Shell,

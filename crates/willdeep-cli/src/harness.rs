@@ -20,6 +20,7 @@ use crate::{
     resolve_base, resolve_dialect, resolve_provider,
 };
 
+mod agent_team;
 mod verification;
 mod worker_profiles;
 
@@ -321,6 +322,8 @@ pub(crate) const KERNEL_WAKE_PROMPT: &str =
 const HEADLESS_BACKGROUND_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct BuiltHarness {
+    pub subagents: Arc<SubagentCatalog>,
+    pub goal: Arc<willdeep_core::GoalContinuation>,
     pub session_id: uuid::Uuid,
     pub agent: Arc<Agent>,
     pub workspace: PathBuf,
@@ -450,6 +453,10 @@ pub(crate) async fn execute_runtime(
     });
     if session.config.is_none() {
         session.config = request.config.clone();
+    }
+    if let Some(control) = request.team_control {
+        let _ownership = ownership;
+        return agent_team::execute(&built, &store, &mut session, control, language).await;
     }
     let outcome = execute_noninteractive(
         &built,
@@ -589,11 +596,7 @@ pub(crate) async fn execute_noninteractive(
         // 「还在跑」必须在取结果**之前**看：任务先改状态、再投结果（监视器先发
         // 结束事件、再改状态），反过来看会在两步之间读到「没在跑、也没结果」，
         // 于是提前退出，最后那条结论永远到不了模型。
-        let running = built
-            .background_tasks
-            .snapshots()
-            .iter()
-            .any(|task| task.status == willdeep_core::BackgroundTaskStatus::Running)
+        let running = built.background_tasks.has_pending_tasks()
             || crate::detached_delivery::has_running_jobs(&built.detached_jobs, session.id);
         let events = built.background_tasks.drain_pending();
         // run_in_background 的命令是脱离作业，不在进程内注册表里：两边都要看，
@@ -781,13 +784,18 @@ pub(crate) async fn build(
     let model = provider_config.model.clone();
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
     let workspace = resolve_workspace(cli, resumed)?;
+    let team_store = willdeep_core::subagent::AgentRunStore::new(home.join("workers"), session_id);
+    team_store
+        .configure_team(loaded.file.agent_team.clone())
+        .map_err(anyhow::Error::msg)?;
     // 本机用量账本（docs/USAGE_LEDGER.md）。主回合、子 Agent、压缩由 Agent 在
     // 主循环里记；这里只把辅助用途的 Provider 包上按调用记账——被主循环用的
     // Provider 不能再包，否则同一次调用会记两行。
     let usage_ledger = willdeep_core::usage_ledger::UsageLedgerScope::new(
         willdeep_core::usage_ledger::shared_sink(&willdeep_core::usage_ledger::ledger_dir(home)),
         usage_ledger_context(&frontend, session_id, &workspace),
-    );
+    )
+    .with_agent_team(team_store);
     let feedback = feedback_recorder(home, &loaded.file.feedback, usage_ledger.context())
         .with_runtime_parameters(parameters);
     let web_tools = (kind == ProviderKind::SomeIm).then(|| WebToolConfig {
@@ -906,31 +914,38 @@ pub(crate) async fn build(
         ),
     };
     let background_lifecycle_sink = sink.clone();
-    let background_tasks = Arc::new(BackgroundTaskRegistry::default().with_lifecycle_observer(
-        move |snapshot| {
-            let sink = background_lifecycle_sink.clone();
-            async move {
-                if snapshot.kind != BackgroundTaskKind::Shell {
-                    return;
+    let background_tasks = Arc::new(
+        BackgroundTaskRegistry::default()
+            .with_agent_run_store(willdeep_core::subagent::AgentRunStore::new(
+                home.join("workers"),
+                session_id,
+            ))
+            .with_agent_team_settings(loaded.file.agent_team.clone())
+            .map_err(anyhow::Error::msg)?
+            .with_lifecycle_observer(move |snapshot| {
+                let sink = background_lifecycle_sink.clone();
+                async move {
+                    if snapshot.kind != BackgroundTaskKind::Shell {
+                        return;
+                    }
+                    if snapshot.status == BackgroundTaskStatus::Running {
+                        sink.emit(willdeep_core::AgentEvent::BackgroundShellStarted {
+                            id: snapshot.id,
+                        })
+                        .await;
+                    } else {
+                        sink.emit(willdeep_core::AgentEvent::BackgroundShellCompleted {
+                            id: snapshot.id,
+                            status: snapshot.status,
+                            exit_code: snapshot.exit_code,
+                            elapsed_millis: snapshot.elapsed_millis,
+                            output_bytes: snapshot.output_bytes,
+                        })
+                        .await;
+                    }
                 }
-                if snapshot.status == BackgroundTaskStatus::Running {
-                    sink.emit(willdeep_core::AgentEvent::BackgroundShellStarted {
-                        id: snapshot.id,
-                    })
-                    .await;
-                } else {
-                    sink.emit(willdeep_core::AgentEvent::BackgroundShellCompleted {
-                        id: snapshot.id,
-                        status: snapshot.status,
-                        exit_code: snapshot.exit_code,
-                        elapsed_millis: snapshot.elapsed_millis,
-                        output_bytes: snapshot.output_bytes,
-                    })
-                    .await;
-                }
-            }
-        },
-    ));
+            }),
+    );
     let verification_home = home.to_path_buf();
     let verification_workspace = workspace.clone();
     let verification_snapshot_workspace = workspace.clone();
@@ -1094,6 +1109,7 @@ pub(crate) async fn build(
         catalog = catalog.with_safety_judge(judge);
     }
     let subagents = Arc::new(catalog);
+    subagents.restore_queued_runs().await?;
     let command_watcher = daemon::start_agent_command_watcher(
         runtime_connection.as_ref(),
         background_tasks.clone(),
@@ -1123,7 +1139,7 @@ pub(crate) async fn build(
     )
     .with_main_model(main_model)
     .with_event_sink(sink)
-    .with_subagents(subagents)
+    .with_subagents(subagents.clone())
     .with_goal_continuation(goal_continuation.clone())
     .with_background_tasks(background_tasks.clone())
     .with_event_kernel(kernel.clone())
@@ -1197,6 +1213,8 @@ pub(crate) async fn build(
     }
     let notifier = crate::notify::Notifier::new(&loaded.file.notifications);
     Ok(BuiltHarness {
+        subagents,
+        goal: goal_continuation,
         session_id,
         agent: Arc::new(agent),
         workspace,

@@ -76,7 +76,8 @@ pub(super) fn observe(
                 willdeep_core::BackgroundTaskStatus::Completed => ToolStatus::Completed,
                 willdeep_core::BackgroundTaskStatus::Partial => ToolStatus::Partial,
                 willdeep_core::BackgroundTaskStatus::Killed => ToolStatus::Interrupted,
-                willdeep_core::BackgroundTaskStatus::Running => ToolStatus::Running,
+                willdeep_core::BackgroundTaskStatus::Running
+                | willdeep_core::BackgroundTaskStatus::Queued => ToolStatus::Running,
                 willdeep_core::BackgroundTaskStatus::Blocked
                 | willdeep_core::BackgroundTaskStatus::Failed
                 | willdeep_core::BackgroundTaskStatus::TimedOut

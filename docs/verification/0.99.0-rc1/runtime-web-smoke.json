@@ -1,0 +1,24 @@
+{
+  "version": "0.99.0-rc1",
+  "status": "passed",
+  "binary_sha256": "ce7f7289858835d4b28e67c4abe34ca9d4c24c027aeb4a0e6fa9f08ffae28ba8",
+  "checks": [
+    {
+      "name": "CLI 启动进程退出后，Runtime 托管的 Web 仍可访问",
+      "status": "passed"
+    },
+    {
+      "name": "独立 API 客户端退出不关闭 Web 监听",
+      "status": "passed"
+    },
+    {
+      "name": "Runtime 停止关闭 Web，重启恢复原监听地址",
+      "status": "passed"
+    },
+    {
+      "name": "显式关闭 Web 的开关跨 Runtime 重启保持关闭",
+      "status": "passed"
+    }
+  ],
+  "scope": "isolated fixture Runtime; no model calls; installed user Runtime untouched"
+}

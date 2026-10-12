@@ -558,6 +558,7 @@ fn clicking_sidebar_hits_toggles_sections_and_opens_task_detail() {
     app.sidebar_rect = Rect::new(80, 0, 20, 30);
     app.sidebar_hits = vec![(2, SidebarHit::Section(1)), (5, SidebarHit::Attention(0))];
     app.background_tasks.push(BackgroundTaskSnapshot {
+        run_id: None,
         id: "job_test".to_owned(),
         agent_id: None,
         kind: willdeep_core::BackgroundTaskKind::Shell,

@@ -7,6 +7,8 @@ use crate::{BackgroundTaskKind, BackgroundTaskSnapshot, BackgroundTaskStatus};
 pub enum RuntimeStatus {
     Idle,
     Working,
+    Queued,
+    Interrupted,
     Blocked,
     WaitingApproval,
     WaitingAnswer,
@@ -24,8 +26,10 @@ impl RuntimeStatus {
             Self::WaitingAnswer => 85,
             Self::Blocked => 80,
             Self::Failed => 70,
+            Self::Interrupted => 65,
             Self::Partial => 60,
             Self::Working => 50,
+            Self::Queued => 45,
             Self::Done => 30,
             Self::Cancelled => 20,
             Self::Idle => 10,
@@ -39,8 +43,9 @@ impl RuntimeStatus {
             | Self::WaitingAnswer
             | Self::Blocked
             | Self::Failed
+            | Self::Interrupted
             | Self::Partial => Some(AttentionSection::NeedsYou),
-            Self::Working => Some(AttentionSection::Working),
+            Self::Working | Self::Queued => Some(AttentionSection::Working),
             Self::Done | Self::Cancelled => Some(AttentionSection::Recent),
             Self::Idle | Self::Unknown => None,
         }
@@ -160,6 +165,7 @@ impl AttentionItem {
         };
         let status = match task.status {
             BackgroundTaskStatus::Running => RuntimeStatus::Working,
+            BackgroundTaskStatus::Queued => RuntimeStatus::Queued,
             BackgroundTaskStatus::Blocked => RuntimeStatus::Blocked,
             BackgroundTaskStatus::Completed => RuntimeStatus::Done,
             BackgroundTaskStatus::Partial => RuntimeStatus::Partial,
@@ -230,6 +236,7 @@ mod tests {
 
     fn task(kind: BackgroundTaskKind, status: BackgroundTaskStatus) -> BackgroundTaskSnapshot {
         BackgroundTaskSnapshot {
+            run_id: None,
             id: "task_1".to_owned(),
             agent_id: None,
             kind,

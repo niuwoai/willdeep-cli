@@ -1644,6 +1644,7 @@ impl EventSink for TerminalSink {
             println!("{value}");
             return;
         }
+        let event = event.into_unscoped();
         match event {
             AgentEvent::RouteDecided {
                 tier,
@@ -1724,6 +1725,9 @@ impl EventSink for TerminalSink {
             AgentEvent::BackgroundShellCompleted { id, status, .. } => {
                 eprintln!("[background] finished id={id} status={status:?}");
             }
+            AgentEvent::SubagentQueued { id, profile, .. } => {
+                eprintln!("[subagent] queued {profile} ({id})");
+            }
             AgentEvent::SubagentStarted {
                 id,
                 profile,
@@ -1776,7 +1780,9 @@ impl EventSink for TerminalSink {
             AgentEvent::GoalBudgetLimited { reason } => {
                 eprintln!("[goal] budget exhausted · wrapping up · {reason:?}")
             }
-            AgentEvent::AssistantText(_) | AgentEvent::TurnStarted { .. } => {}
+            AgentEvent::AssistantText(_)
+            | AgentEvent::TurnStarted { .. }
+            | AgentEvent::RunScoped { .. } => {}
         }
     }
 }
@@ -1851,6 +1857,16 @@ pub(crate) use willdeep_core::conversation::tool_detail;
 
 pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
     match event {
+        AgentEvent::RunScoped {
+            run_id,
+            sequence,
+            event,
+        } => {
+            let mut value = agent_event_json(*event);
+            value["run_id"] = serde_json::json!(run_id);
+            value["run_sequence"] = serde_json::json!(sequence);
+            value
+        }
         AgentEvent::RouteDecided {
             tier,
             profile,
@@ -1992,6 +2008,15 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
             "exit_code": exit_code,
             "elapsed_millis": elapsed_millis,
             "output_bytes": output_bytes
+        }),
+        AgentEvent::SubagentQueued {
+            id,
+            profile,
+            model,
+            label,
+        } => serde_json::json!({
+            "type": "subagent_queued", "id": id, "profile": profile,
+            "model": model, "label": label, "background": true
         }),
         AgentEvent::SubagentStarted {
             id,

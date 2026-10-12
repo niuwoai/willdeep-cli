@@ -26,6 +26,7 @@ const SPEC_KEYS: &[&str] = &[
     "turn_id",
     "task_id",
     "agent_id",
+    "run_id",
     "workspace",
     "provider",
     "model",

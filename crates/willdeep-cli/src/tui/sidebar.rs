@@ -649,7 +649,8 @@ const FAILED_TASK_RETENTION_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 pub(super) fn background_task_visible(task: &willdeep_core::BackgroundTaskSnapshot) -> bool {
     let retention = match task.status {
         // 运行中的任务没有终态时间戳，永远可见。
-        willdeep_core::BackgroundTaskStatus::Running => return true,
+        willdeep_core::BackgroundTaskStatus::Running
+        | willdeep_core::BackgroundTaskStatus::Queued => return true,
         willdeep_core::BackgroundTaskStatus::Completed => SETTLED_TASK_RETENTION_MILLIS,
         _ => FAILED_TASK_RETENTION_MILLIS,
     };
@@ -669,6 +670,7 @@ fn agent_is_live(agent: &crate::daemon::tui_bridge::RemoteAgent) -> bool {
         agent.status,
         willdeep_core::RuntimeStatus::Idle
             | willdeep_core::RuntimeStatus::Working
+            | willdeep_core::RuntimeStatus::Queued
             | willdeep_core::RuntimeStatus::Blocked
             | willdeep_core::RuntimeStatus::WaitingApproval
             | willdeep_core::RuntimeStatus::WaitingAnswer

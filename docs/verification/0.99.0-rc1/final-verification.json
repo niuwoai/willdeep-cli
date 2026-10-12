@@ -1,0 +1,151 @@
+{
+  "version": "0.99.0-rc1",
+  "status": "passed",
+  "binary_sha256": {
+    "target/debug/willdeep": "ce7f7289858835d4b28e67c4abe34ca9d4c24c027aeb4a0e6fa9f08ffae28ba8",
+    "target/debug/deps/willdeep-3cad44906daf7e7c": "afbd4346e3dd4b5bf9eb4b34dd9de511bb0b83236715df4c9678fbdbe88157f1",
+    "target/debug/deps/willdeep_core-59fc82f01b48cd26": "acab7f867b14bf3a28e911224bd6f7ee178b44aecd8174da8ee92ac6f9ca8c8a"
+  },
+  "source_sha256": {
+    "Cargo.lock": "1f08c5af316f5f9e0728b420a4abaa3b1dff979d1243818f654e115707e6635f",
+    "Cargo.toml": "d82963fe5ad8e245dfae5116a1b0b805f1095ade87c2e0ddfddb09cd21e56783",
+    "config.example.toml": "2bff985b3bb411ec4c5c43dbe4f2c87535a90ec78b4a4232c014b655195db9f5",
+    "crates/willdeep-cli/src/audit_cmd.rs": "9c65b88840bd163ed056369c22b0f34a384fa5242c3bb8bbbf8f8ec1b8338c08",
+    "crates/willdeep-cli/src/config.rs": "0838555497df59d154ad2713c3f5d471df26744ca7cfcf616f2228c52419a454",
+    "crates/willdeep-cli/src/daemon.rs": "a7eb8337a16317ed414af0abf985ac3fffec5570a59f8a31e0449623c4b2e148",
+    "crates/willdeep-cli/src/daemon/agent_control.rs": "29d8d5bbf6b0635d75da47d7671afb9bc763eb4ad5a099b6425a56d2dfaab2a5",
+    "crates/willdeep-cli/src/daemon/agent_store.rs": "a4fbd8c556e3523b8af8e1ccd8543d5707bb5e4b57998622988cb8b8ee85f861",
+    "crates/willdeep-cli/src/daemon/agent_team.rs": "de54493661a90b30040a109925d65b6e91e26e8319958c5c4c00cba6a6a22ba0",
+    "crates/willdeep-cli/src/daemon/agent_team/tests.rs": "67514c5caf066d83190c96bb64a6bbcaa1322ec72ddcbc6581253ef7e4f65c3d",
+    "crates/willdeep-cli/src/daemon/commands.rs": "dc9f497e9b58033a82f384e110de2f76aa6d0e57ce2468fe893aae51fec0c6a8",
+    "crates/willdeep-cli/src/daemon/control_api.rs": "d58ffbaebd5b2e8b81728b645babf138f5dc1dfafc1fe44ac674bbac1387d8a8",
+    "crates/willdeep-cli/src/daemon/control_api/agent_team.rs": "1c978f8fb72d8511ecf534f8644a51ccb51adb12129df04aa1392f8473ed1506",
+    "crates/willdeep-cli/src/daemon/control_api/agent_team/tests.rs": "8a3801d968f772e749082a7089f75adf2ef6643443bcf478000e8f0bc7613c28",
+    "crates/willdeep-cli/src/daemon/goal_resume.rs": "3d1b3c7836c678b47fa6650bbcf5a49bce58643b128297f45e0469221465bdc8",
+    "crates/willdeep-cli/src/daemon/mobile_gateway/tests.rs": "e910bd864033a4263118226e7647f0f9026401f3aec395c7b91a4a4bb365d3f8",
+    "crates/willdeep-cli/src/daemon/schedule_engine.rs": "cd54e3423ed83754caea6d36906b50e0102f8cf5f79eca7adefc9000b056b57e",
+    "crates/willdeep-cli/src/daemon/session_store.rs": "0ad872e1c9aab49f7933c8fe7542c39e9ebe43a8d24fa9bd43d1f9259900f210",
+    "crates/willdeep-cli/src/daemon/session_store/tests.rs": "af6a20af3fe9ab8c7972c4be2ba86584b5bcbad24f1e11facd6322c084592f0e",
+    "crates/willdeep-cli/src/daemon/task_manager.rs": "8d09580645ad595dbd69225620ad8fc721374efc49b023d92690290731f1b03c",
+    "crates/willdeep-cli/src/daemon/tests.rs": "94c832c9b1c241d3f22f16cc53b7a735e6a3775d92b8eaa17947638317d54b34",
+    "crates/willdeep-cli/src/daemon/tool_store.rs": "b1f1586192703c4647ee7df5ef7b52d9eb61e9eb451b5f23807de3dcba0152cc",
+    "crates/willdeep-cli/src/daemon/tui_bridge.rs": "1f0c8022220902d5a380dd0d631a0016726c9fdaba12b5f6f8455635c1364da5",
+    "crates/willdeep-cli/src/daemon/web_app.rs": "f0c5fd66c1a030f7f957f7203d22affe69a2a94ba06178c15133a44073d72514",
+    "crates/willdeep-cli/src/daemon/web_app/tests.rs": "6a2c502e7d8a7dae2814bdc884d5037bcf361326cf0ca4e1fdb890d28f9c332a",
+    "crates/willdeep-cli/src/daemon/worktree_review.rs": "eb0b03e5044e0a29057792e62760e64548b27a9dd529ac972d2ab0ad56fc3ecf",
+    "crates/willdeep-cli/src/harness.rs": "03974c31868d8a9c142b786c44f3613992b9880c5194a93c8d5e13a267c65b10",
+    "crates/willdeep-cli/src/harness/agent_team.rs": "f0d8d7a915bcdc384d811334a8fe75652e589bfff96d740491e8e0d4ae4c6892",
+    "crates/willdeep-cli/src/harness/agent_team/tests.rs": "d6332fc0804bc80c59eab0ddd7ceabd37885013269cc980287524e7ff2253991",
+    "crates/willdeep-cli/src/main.rs": "56b132c0b5c1073ecb8a2f5507dab787f6009f48bd3bcf7f481a5df84ac0df67",
+    "crates/willdeep-cli/src/notify.rs": "acc8b9469c7b10aa566351245cb58201381c50664a809b5a00e8b87f7cc75265",
+    "crates/willdeep-cli/src/telemetry.rs": "49c5e3d29e831495aa4afd7f3414ec2f975b0bdcaead7307ea726c3f83a347aa",
+    "crates/willdeep-cli/src/tui.rs": "3f393be2f863186004b3ebd687383dedf95656d5b2a52c0a479ddb8cac3480b8",
+    "crates/willdeep-cli/src/tui/agent_commands.rs": "57c32721d10648f5c4baa38978ec478679ee58bebd44f1d3b74cd87f202970ad",
+    "crates/willdeep-cli/src/tui/agent_worktree_ui.rs": "d4ade331930e7635cb0add6e86f71a973eb713ea421f409c2d1fe00a9b11682e",
+    "crates/willdeep-cli/src/tui/app_state.rs": "b4824082cb6d5f76d3c99ad969e0467a56894743078ec7ab1123ea01b3f856e2",
+    "crates/willdeep-cli/src/tui/event_loop.rs": "0a0d3aefa2d58d33c4dc7aee49b868501632d3996385f12f5b8fb41d897c47b6",
+    "crates/willdeep-cli/src/tui/sidebar.rs": "ebe2be64c356dbc87a389103e157380d0000837fd80e3be857886acce6e91dde",
+    "crates/willdeep-cli/src/tui/test_suite/interaction_tests.rs": "6d31461cd9eb2280645fc192a8b363b6bded5fda4ee9e60c70577e79c1c02a54",
+    "crates/willdeep-cli/src/tui/test_suite/session_tests.rs": "bd237130b8dae44fc471a36f9e86028442362ed8706c959f11c7ded70f65a94c",
+    "crates/willdeep-cli/src/tui/webapp_commands.rs": "b5efcb848ee62749b83c65788b9cad478d78e19b3ac69a45d9d76bd25d7b5d5e",
+    "crates/willdeep-cli/src/web.rs": "7d0af6fde18aacacc932ab1706e5ece0e60ebdc14c37a7815254ad6962d769e2",
+    "crates/willdeep-core/src/agent.rs": "8b391891a8a1644c125da7eb43445c6c386b97b1f308fb1dbcb47fd1d42029c2",
+    "crates/willdeep-core/src/agent/context.rs": "dcfa1201840ff0f07bc2a539e18d6dc016af7f8b3ac67b67fc33cd926f2fc820",
+    "crates/willdeep-core/src/agent/recovery.rs": "63e18b0876e6ebff01745ae56b1729d6dcdcc33c6723cfa439182ad3a6bb2695",
+    "crates/willdeep-core/src/attention.rs": "769f1a33d0ba0c4c2f79d56aa1806ed930fa5702ac8581c37ac64b81ac4430fc",
+    "crates/willdeep-core/src/background.rs": "09f4372b4be5aaaee455c6414d4550d251efab1fa51c39a60f248a0d764c80b8",
+    "crates/willdeep-core/src/checkpoint.rs": "e28447f2c428faf57103c5e01fd0651a1ba7763315a8ae85233a8a20b618e19c",
+    "crates/willdeep-core/src/checkpoint/tests.rs": "5174a1ca8c5854c9b2299c851aedd2a56b3a890917f4a7b44fabb6c316c10ed8",
+    "crates/willdeep-core/src/kernel.rs": "448e81c329742ffab55aac50e327c5fdb248dd62962f37717291ad8444075c0b",
+    "crates/willdeep-core/src/session.rs": "66b7cec45e2e197ace0606f5e01de18bef5bebfd655720ed42cd287d283a9f1e",
+    "crates/willdeep-core/src/session/metadata.rs": "93275304b215824d2938947bc5af3a489bef2b3363f38e58ad7dbbd8d10e3b5b",
+    "crates/willdeep-core/src/subagent/catalog.rs": "ba21aee28f3cec50e2d0ec3999e5a0bf33e02fe0148d4cd61ceb9e17fecd6061",
+    "crates/willdeep-core/src/subagent/catalog/control.rs": "785531a55636f87594de32f40a7a6a1359363eabac09d30329d24a187219b1af",
+    "crates/willdeep-core/src/subagent/catalog/run_control.rs": "d0181f55e4e50a456c1daf7d37b4e27692bb73202899d20927d9af038b713333",
+    "crates/willdeep-core/src/subagent/catalog/run_control/tests.rs": "7817c13b2fb599b1312b69bb3db3d53cc6b0f3620d5f80add537a081aa0cd217",
+    "crates/willdeep-core/src/subagent/catalog/tests.rs": "0c96c41b895ed3b14a38e94d0127d7fca7a356b8bb229c89fee08ec471dbdeb5",
+    "crates/willdeep-core/src/subagent/dispatch_store.rs": "d346c85e5a9ae27207c9f67ab37a43407b8583e8afc383bd06f10e67a459920c",
+    "crates/willdeep-core/src/subagent/file_leases.rs": "3b58adf09bf271c20722c272f1762a764ba331f3b07492e3ca5bc71bae67571b",
+    "crates/willdeep-core/src/subagent/mod.rs": "010f0a7be02181b99728549e448587e99a8e5dcf15960723f879e0ac8fb670de",
+    "crates/willdeep-core/src/subagent/runner.rs": "cc861e8938ab5ba63e5f769cf28997db35db29898cc7c58ccef033796330f91a",
+    "crates/willdeep-core/src/subagent/runs.rs": "97ccc2a45fa6739e1b4f6084c1d2ef8c840c5ee3c33e6789afff5c5fbc34b81a",
+    "crates/willdeep-core/src/subagent/runs/continuation.rs": "2d043681ac10ed7c23c7f5d43224daabb41b3cc3f7dd96efbc8b5d218309cd09",
+    "crates/willdeep-core/src/subagent/runs/retirement.rs": "db5b875e104576ab6423d6ef4f8e783d2b9a8f66352ff9d20026eff4a48acb17",
+    "crates/willdeep-core/src/subagent/runs/team.rs": "0b45243e66b5a6e476b07b3c0572df6e7ad189052d324c537edcb1369fb33fbc",
+    "crates/willdeep-core/src/subagent/runs/tests.rs": "57aeed361f0b974e63313f8e498c614cc802f516651b2abbadbf54b2f8cec71d",
+    "crates/willdeep-core/src/subagent/scheduler.rs": "53e4f5f3915b35397bdfbfa2cb9d848c45ccb27c010c00cdd5afce03d5f506e1",
+    "crates/willdeep-core/src/subagent_worktree.rs": "f0f02f927cd2e5147226c5a8d47f163c1045c420b2dd40a71c2f890da6139d5b",
+    "crates/willdeep-core/src/tools/agent_control.rs": "5f759b60d8370f083d5a2df2397a02aa035348d9903317bd4250b466593a17aa",
+    "crates/willdeep-core/src/tools/verification.rs": "4b7b5b4ba56aa225cc33045567b5f89e189786ab804f8e73d154a6c43b87df83",
+    "crates/willdeep-core/src/usage_ledger.rs": "5ed7760a4e3af43bc38c1beec504c506a1321112a2038f65705cea2dccb4f77a",
+    "crates/willdeep-core/src/usage_ledger/scope.rs": "735d073e9f56ef9859c48a07c7a0946c96e986fc3ee1a2b6f86e93de02dd5555",
+    "crates/willdeep-core/src/usage_ledger/tests.rs": "5c65028f81ffb1004995ecd993bd5a65a2f4c2913f5884be6ee101f5e7c88030",
+    "crates/willdeep-runtime-client/src/lib.rs": "418487f4d4a7584ff14345419d94821f77cb17cf3a47379a7bffd23ce7bde9cc",
+    "crates/willdeep-runtime-protocol/src/agent_team.rs": "db715febfc3335f095e84fa35de20b4163d35b324268a29a27c9d582b8d8d9d3",
+    "crates/willdeep-runtime-protocol/src/lib.rs": "433adab1860076fb94f778c417e9370b86baee7bcc8c0c62f74ab34fcd52e905",
+    "crates/willdeep-runtime-protocol/src/web_app.rs": "ad7950ad30e5822ed591588cb728f5441a50ec72fa483c0c6d020e1794fab261",
+    "web/package.json": "0a74e1f104cd29f80959cf6669f353165f75def8f337c520ef02830fbfb73bc3",
+    "web/src/App.tsx": "be020d4c63eee73b0f5d0f95c837573fffd778399803034b63b56bf0ba163702",
+    "web/src/RuntimeDetailPanel.tsx": "0668b00a3b093ec81e5fed30290e58c6d46cf5af660e3eb3c817d5c2e8c993fc",
+    "web/src/RuntimeRunHistory.test.tsx": "e026c9d1002726b9403e1ab57950cd5a6790d2bd959cbb6d05342c1dab5fddf7",
+    "web/src/RuntimeRunHistory.tsx": "c6a51e6dd5baa037df777a193711b2256e50f011932053d905f5ec4ea13257e9",
+    "web/src/RuntimeSidebar.test.tsx": "3cf584da1d70dbc3fdb6767a9f74b124fd2f1e42a64276ffeab63de32abdbe7c",
+    "web/src/RuntimeSidebar.tsx": "400513a23678e48c02f84eeee37a2550eba570c2cef88d12df9828e8e7c7256a",
+    "web/src/i18n.ts": "c799315f6829e80d46f15ea8df16948d7c8d056a9e9d6cb55676ca0d86c38f48"
+  },
+  "checks": {
+    "cli_unit": {
+      "passed": 676,
+      "ignored": 1
+    },
+    "web_unit": {
+      "passed": 117
+    },
+    "core_runs": {
+      "passed": 10
+    },
+    "core_catalog": {
+      "passed": 29
+    },
+    "core_background": {
+      "passed": 8
+    },
+    "core_checkpoint": {
+      "passed": 23,
+      "ignored": 1
+    },
+    "core_agent": {
+      "passed": 31
+    },
+    "core_usage_ledger": {
+      "passed": 14
+    },
+    "headless_runtime": {
+      "passed": 30
+    },
+    "detached_jobs": {
+      "passed": 18,
+      "ignored": 1
+    },
+    "workspace_versions": {
+      "passed": 1
+    },
+    "native_team": {
+      "passed": 4,
+      "model_calls": 3
+    },
+    "native_web": {
+      "passed": 4
+    },
+    "native_tui": {
+      "passed": 3,
+      "columns": 88,
+      "rows": 32
+    }
+  },
+  "limits": [
+    "mock Providers do not prove model quality",
+    "phone relay regression and connected status do not prove a real phone was active",
+    "in-flight requests can exceed a soft request-admission token budget"
+  ]
+}

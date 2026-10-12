@@ -536,6 +536,7 @@ fn enqueue(state: &ServerState, run: &ScheduleRun) -> Result<(uuid::Uuid, uuid::
     let (turn, _, _) = state.sessions.enqueue_turn_observed(
         session.id,
         session_store::CreateRuntimeTurn {
+            team_control: None,
             request_id: run.id,
             prompt: task.run_prompt(),
             attachments: Vec::new(),

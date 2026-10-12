@@ -31,6 +31,12 @@ pub(super) fn spawn(state: std::sync::Arc<ServerState>, settings: crate::config:
                 .events
                 .append("goal.resume_error", format!("error={error:#}"));
         }
+        if let Err(error) = super::agent_team::recover(&state) {
+            let _ = state.events.append(
+                "agent.team_recovery_error",
+                willdeep_core::judge::redact_credentials(&format!("{error:#}")),
+            );
+        }
     });
 }
 
@@ -71,6 +77,7 @@ pub(super) fn recover(
         let (turn, created, _) = state.sessions.enqueue_turn_observed(
             candidate.session_id,
             session_store::CreateRuntimeTurn {
+                team_control: None,
                 request_id: uuid::Uuid::from_u128(
                     candidate.interrupted_turn_id.as_u128() ^ REQUEST_SALT,
                 ),

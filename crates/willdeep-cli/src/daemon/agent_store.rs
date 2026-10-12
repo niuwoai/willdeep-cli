@@ -21,6 +21,10 @@ pub(crate) enum RuntimeAgentStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeAgent {
+    #[serde(default)]
+    pub run_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub run_sequence: u64,
     pub id: uuid::Uuid,
     pub parent_id: Option<uuid::Uuid>,
     pub task_id: uuid::Uuid,
@@ -93,6 +97,7 @@ pub(crate) struct RuntimeAgent {
 }
 
 pub(super) struct AgentStore {
+    event_guard: Mutex<()>,
     path: PathBuf,
     agents: Mutex<HashMap<uuid::Uuid, RuntimeAgent>>,
     recovered_after_restart: Mutex<Vec<RuntimeAgent>>,
@@ -125,6 +130,7 @@ impl AgentStore {
             persist_agents(&path, &agents)?;
         }
         Ok(Self {
+            event_guard: Mutex::new(()),
             path,
             agents: Mutex::new(agents),
             recovered_after_restart: Mutex::new(recovered_after_restart),
@@ -153,6 +159,8 @@ impl AgentStore {
         }
         let timestamp = now();
         let agent = RuntimeAgent {
+            run_id: None,
+            run_sequence: 0,
             id: uuid::Uuid::new_v4(),
             parent_id: None,
             task_id,
@@ -240,6 +248,8 @@ impl AgentStore {
         }
         let timestamp = now();
         let agent = RuntimeAgent {
+            run_id: None,
+            run_sequence: 0,
             id,
             parent_id: None,
             task_id,
@@ -307,6 +317,8 @@ impl AgentStore {
             .clone();
         let timestamp = now();
         let agent = RuntimeAgent {
+            run_id: None,
+            run_sequence: 0,
             id,
             parent_id: Some(parent_id),
             task_id,
@@ -420,10 +432,40 @@ impl AgentStore {
     }
 
     pub fn apply_harness_event(&self, task_id: uuid::Uuid, line: &str) -> Result<()> {
+        let _guard = self
+            .event_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Agent event lock poisoned"))?;
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             return Ok(());
         };
-        match value.get("type").and_then(|value| value.as_str()) {
+        let child = value
+            .get("type")
+            .and_then(|value| value.as_str())
+            .is_some_and(|kind| kind.starts_with("subagent_"));
+        let id = value
+            .get("id")
+            .and_then(|value| value.as_str())
+            .and_then(|id| id.parse::<uuid::Uuid>().ok());
+        let sequence = value
+            .get("run_sequence")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let run_id = value
+            .get("run_id")
+            .and_then(|value| value.as_str())
+            .and_then(|id| id.parse::<uuid::Uuid>().ok());
+        if child
+            && let Some(id) = id
+            && let Some(agent) = self.get(id)?
+            && (sequence < agent.run_sequence
+                || (sequence == agent.run_sequence
+                    && agent.run_id.is_some()
+                    && agent.run_id != run_id))
+        {
+            return Ok(());
+        }
+        let result = match value.get("type").and_then(|value| value.as_str()) {
             Some("provider_retry_wait") => {
                 let wait = retry_wait_from_event(&value)?;
                 self.update_task_agent(task_id, |agent| {
@@ -478,6 +520,12 @@ impl AgentStore {
                 agent.updated_at = now();
             }),
             Some("subagent_started") => self.create_child_from_event(task_id, &value),
+            Some("subagent_queued") => {
+                self.create_child_from_event(task_id, &value)?;
+                self.update_child_from_event(&value, |agent| {
+                    agent.status = RuntimeAgentStatus::Queued;
+                })
+            }
             Some("subagent_completed") => self.complete_child_from_event(&value),
             // The verdict arrives before the completion event, so the record
             // that gets persisted as finished already carries what the run
@@ -529,7 +577,15 @@ impl AgentStore {
                 agent.updated_at = now();
             }),
             _ => Ok(()),
+        };
+        result?;
+        if child && sequence > 0 {
+            self.update_child_from_event(&value, |agent| {
+                agent.run_id = run_id;
+                agent.run_sequence = sequence;
+            })?;
         }
+        Ok(())
     }
 
     fn create_child_from_event(
@@ -615,6 +671,8 @@ impl AgentStore {
         agents.insert(
             id,
             RuntimeAgent {
+                run_id: None,
+                run_sequence: 0,
                 id,
                 parent_id: Some(parent.id),
                 task_id,
@@ -812,6 +870,37 @@ fn persist_agents(path: &Path, agents: &HashMap<uuid::Uuid, RuntimeAgent>) -> Re
 #[cfg(test)]
 mod retry_tests {
     use super::*;
+
+    #[test]
+    fn stale_run_events_cannot_overwrite_a_new_run_even_after_reopen() {
+        let root = std::env::temp_dir().join(format!("run-events-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agents.json");
+        let store = AgentStore::open(path.clone()).unwrap();
+        let task = uuid::Uuid::new_v4();
+        store
+            .ensure_root(task, root.clone(), None, None, RuntimeAgentStatus::Running)
+            .unwrap();
+        let child = uuid::Uuid::new_v4();
+        let first = uuid::Uuid::new_v4();
+        let second = uuid::Uuid::new_v4();
+        for (run, sequence) in [(first, 1), (second, 2)] {
+            store.apply_harness_event(task, &serde_json::json!({"type":"subagent_started","id":child,"run_id":run,"run_sequence":sequence,"profile":"scout"}).to_string()).unwrap();
+        }
+        let stale = serde_json::json!({"type":"subagent_completed","id":child,"run_id":first,"run_sequence":1,"status":"completed"}).to_string();
+        store.apply_harness_event(task, &stale).unwrap();
+        assert_eq!(
+            store.get(child).unwrap().unwrap().status,
+            RuntimeAgentStatus::Running
+        );
+        drop(store);
+        let reopened = AgentStore::open(path).unwrap();
+        reopened.apply_harness_event(task, &stale).unwrap();
+        let saved = reopened.get(child).unwrap().unwrap();
+        assert_eq!(saved.status, RuntimeAgentStatus::Interrupted);
+        assert_eq!(saved.run_id, Some(second));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn retry_wait_is_durable_and_cleared_at_execution_boundaries() {

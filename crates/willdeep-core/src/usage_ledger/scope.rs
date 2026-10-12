@@ -54,6 +54,8 @@ impl UsageLedgerContext {
 /// 记账句柄。便宜可克隆；子 Agent 用 [`UsageLedgerScope::for_subagent`] 派生。
 #[derive(Clone)]
 pub struct UsageLedgerScope {
+    run_id: Option<Uuid>,
+    run_store: Option<crate::subagent::AgentRunStore>,
     sink: Arc<UsageLedgerSink>,
     context: Arc<UsageLedgerContext>,
     agent_id: Option<String>,
@@ -73,6 +75,8 @@ impl std::fmt::Debug for UsageLedgerScope {
 impl UsageLedgerScope {
     pub fn new(sink: Arc<UsageLedgerSink>, context: UsageLedgerContext) -> Self {
         Self {
+            run_id: None,
+            run_store: None,
             sink,
             context: Arc::new(context),
             agent_id: None,
@@ -87,11 +91,60 @@ impl UsageLedgerScope {
     /// 子 Agent 的句柄：主循环记 `subagent`，`agent_id` 填子 Agent 的 id。
     pub fn for_subagent(&self, agent_id: Uuid) -> Self {
         Self {
+            run_id: self.run_id,
+            run_store: self.run_store.clone(),
             sink: self.sink.clone(),
             context: self.context.clone(),
             agent_id: Some(agent_id.to_string()),
             subagent: true,
         }
+    }
+
+    pub fn with_agent_run(&self, store: crate::subagent::AgentRunStore, run_id: Uuid) -> Self {
+        let mut scope = self.clone();
+        scope.run_id = Some(run_id);
+        scope.run_store = Some(store);
+        scope
+    }
+
+    pub fn with_agent_team(&self, store: crate::subagent::AgentRunStore) -> Self {
+        let mut scope = self.clone();
+        scope.run_store = Some(store);
+        scope
+    }
+
+    /// Soft request-admission ceiling: already in-flight calls can overshoot.
+    pub fn check_budget(&self) -> Result<(), String> {
+        let Some(store) = &self.run_store else {
+            return Ok(());
+        };
+        if !store.has_budget(self.run_id)? {
+            return Ok(());
+        }
+        if !self.sink.flush(std::time::Duration::from_secs(2))
+            || self.sink.failed() > 0
+            || self.sink.dropped() > 0
+        {
+            return Err("cannot verify Agent budget because usage recording is unavailable".into());
+        }
+        store.budget_gate(self.sink.dir())?;
+        if let Some(id) = self.run_id {
+            let run = store.get(id)?.ok_or("Agent run was not found")?;
+            if let Some(budget) = run.token_budget {
+                if run.usage.unknown_usage_calls > 0 || run.usage.uncertain_execution {
+                    return Err(
+                        "Agent run budget cannot be verified because usage is unknown".into(),
+                    );
+                }
+                if run.usage.accounted_tokens >= budget {
+                    return Err(format!(
+                        "Agent run token budget exhausted: used {}, limit {budget}",
+                        run.usage.accounted_tokens
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 主循环请求记哪一类。
@@ -135,6 +188,7 @@ impl UsageLedgerScope {
         record.turn_id = self.context.turn_id.clone();
         record.task_id = self.context.task_id.clone();
         record.agent_id = self.agent_id.clone();
+        record.run_id = self.run_id;
         record.workspace = self.context.workspace.clone();
         if let Some(identity) = call.identity {
             record.provider = Some(identity.provider);
@@ -149,6 +203,11 @@ impl UsageLedgerScope {
         record.ts = record.ts.saturating_sub(settled_ago);
         record.outcome = call.outcome;
         record.event_sequence = event_sequence;
+        if let (Some(store), Some(run_id)) = (&self.run_store, self.run_id)
+            && let Err(error) = store.usage(run_id, &record.usage)
+        {
+            eprintln!("cannot persist Agent run usage: {error}");
+        }
         self.sink.submit(record);
     }
 }
@@ -263,6 +322,7 @@ impl Provider for LedgeredProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<Completion, ProviderError> {
+        self.scope.check_budget().map_err(ProviderError::Client)?;
         let mut call = self.scope.begin(self.kind, self.inner.ledger_identity());
         let result = self.inner.complete(messages, tools).await;
         settle_from_result(&mut call, &result, None);
@@ -276,6 +336,7 @@ impl Provider for LedgeredProvider {
         tools: &[ToolDefinition],
         events: &dyn ProviderEventSink,
     ) -> Result<Completion, ProviderError> {
+        self.scope.check_budget().map_err(ProviderError::Client)?;
         let mut call = self.scope.begin(self.kind, self.inner.ledger_identity());
         let tap = UsageTap {
             inner: events,

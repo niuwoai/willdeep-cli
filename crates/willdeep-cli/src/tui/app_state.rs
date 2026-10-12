@@ -297,7 +297,9 @@ impl App {
         let Some(item) = self.selected_attention() else {
             return;
         };
-        if item.status == RuntimeStatus::Working && registry.kill(&item.id) {
+        if matches!(item.status, RuntimeStatus::Working | RuntimeStatus::Queued)
+            && registry.kill(&item.id)
+        {
             self.notice = Some(format!(
                 "{}: {}",
                 self.language.text(

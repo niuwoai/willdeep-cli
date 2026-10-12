@@ -1056,6 +1056,54 @@ pub(crate) async fn instruct_remote_agent(
     api_data(response).map(|_| ())
 }
 
+pub(crate) async fn continue_remote_agent(
+    home: &Path,
+    id: uuid::Uuid,
+    message: String,
+) -> Result<willdeep_runtime_protocol::agent_team::AgentContinuationReceipt> {
+    let state = ensure_running(home).await?;
+    let request_id = uuid::Uuid::new_v4();
+    let response = runtime_client(&state)?
+        .continue_agent(
+            &willdeep_runtime_protocol::agent_team::ContinueAgentParams {
+                id,
+                message,
+                request_id,
+            },
+            request_id,
+        )
+        .await?;
+    api_data(response)
+}
+
+pub(crate) async fn remote_agent_team(
+    home: &Path,
+    id: uuid::Uuid,
+) -> Result<willdeep_runtime_protocol::agent_team::AgentTeamSummary> {
+    let state = load_state(&DaemonPaths::new(home).state).context("Runtime is not running")?;
+    let response = runtime_client(&state)?
+        .agent_team(&willdeep_runtime_protocol::IdParams { id })
+        .await?;
+    api_data(response)
+}
+
+pub(crate) async fn remote_agent_runs(
+    home: &Path,
+    id: uuid::Uuid,
+    after_sequence: Option<u64>,
+) -> Result<willdeep_runtime_protocol::AgentRunsPage> {
+    let state = load_state(&DaemonPaths::new(home).state).context("Runtime is not running")?;
+    api_data(
+        runtime_client(&state)?
+            .agent_runs(&willdeep_runtime_protocol::agent_team::AgentRunsParams {
+                id,
+                after_sequence,
+                limit: Some(32),
+            })
+            .await?,
+    )
+}
+
 fn remote_agent(agent: willdeep_runtime_protocol::RuntimeAgent) -> RemoteAgent {
     RemoteAgent {
         id: agent.id,
@@ -1065,8 +1113,8 @@ fn remote_agent(agent: willdeep_runtime_protocol::RuntimeAgent) -> RemoteAgent {
         profile: agent.profile,
         model: agent.model,
         status: match agent.status {
-            willdeep_runtime_protocol::AgentStatus::Queued
-            | willdeep_runtime_protocol::AgentStatus::Running => {
+            willdeep_runtime_protocol::AgentStatus::Queued => willdeep_core::RuntimeStatus::Queued,
+            willdeep_runtime_protocol::AgentStatus::Running => {
                 willdeep_core::RuntimeStatus::Working
             }
             willdeep_runtime_protocol::AgentStatus::WaitingApproval => {
@@ -1082,10 +1130,10 @@ fn remote_agent(agent: willdeep_runtime_protocol::RuntimeAgent) -> RemoteAgent {
             willdeep_runtime_protocol::AgentStatus::Partial => {
                 willdeep_core::RuntimeStatus::Partial
             }
-            willdeep_runtime_protocol::AgentStatus::Failed
-            | willdeep_runtime_protocol::AgentStatus::Interrupted => {
-                willdeep_core::RuntimeStatus::Failed
+            willdeep_runtime_protocol::AgentStatus::Interrupted => {
+                willdeep_core::RuntimeStatus::Interrupted
             }
+            willdeep_runtime_protocol::AgentStatus::Failed => willdeep_core::RuntimeStatus::Failed,
             willdeep_runtime_protocol::AgentStatus::Cancelled => {
                 willdeep_core::RuntimeStatus::Cancelled
             }

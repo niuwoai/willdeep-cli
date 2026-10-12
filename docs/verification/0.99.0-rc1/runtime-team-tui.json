@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "columns": 88,
+  "rows": 32,
+  "checks": [
+    "真实 PTY 中打开 Runtime 侧栏",
+    "团队统计与 Run 历史命令在同一会话生效",
+    "预算阻塞与累计用量可查看"
+  ],
+  "binary_sha256": "ce7f7289858835d4b28e67c4abe34ca9d4c24c027aeb4a0e6fa9f08ffae28ba8"
+}

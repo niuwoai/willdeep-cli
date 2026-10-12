@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-12 | 当前版本：v0.98.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-13 | 当前版本：v0.99.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 TUI 流式输出期间输入默认排队，活动区持续显示待发条数和摘要；`Ctrl+Q` / `/queue` 查看列表并编辑、删除或主动立即插话。管理期间暂停自动发送，编辑保留附件和原草稿，发送失败保留消息供手动处理；已送达 Runtime 的插话不可撤回。
 
@@ -24,6 +24,10 @@ Web 插件中心设置先编辑，再点击每个插件的“保存设置”按�
 WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户提供的 API Base、API Key 和模型 ID，在受限工作区内完成模型推理、工具执行和结果验证。
 
 ## 核心功能
+
+- 手机与 Web 服务归 Runtime：`/mobile` 已由 daemon 托管；`/webapp` 也改为 daemon 内部 Web 服务，CLI 只发送启停、查询命令。退出 CLI 不关闭服务，Runtime 停止时关闭监听；Runtime 重启按已保存的开关恢复。`/mobile off` / `/webapp stop` 关闭对应开关。独立 Runtime 的进程退出/重启验收已通过，见 [验收记录](docs/verification/0.99.0-rc1/runtime-web-smoke.md)；发布、CLI 安装与 Runtime 升级分别核验。
+
+- 一层多智能体：默认并发 8，可通过 `[agent_team]` 调整并发与队列容量，实际配置按父会话保存；后台派工与重试共用准入。`continue_agent` 保留原 Agent 的历史和权限，每次生成独立 Run；Runtime 空闲会话续做、启动队列恢复和 CLI/TUI/Web 入口已接入。`agent.team` 返回队列位置、本次/累计执行用量及主 Agent、子 Agent、压缩、辅助调用的团队统计。可选团队预算阻止超额后的新请求；在途并发可能超额，用量未知或计量不完整时停止请求。CLI/TUI/Web 提供分页 Run 历史；核心与独立 Runtime 进程验收见 [验收矩阵](docs/verification/0.99.0-rc1/acceptance.md)。
 
 - 多附件管理：TUI `F3` / `/attachments` 查看草稿并保留输入正文，`/attachments sent` 查看当前会话已发送附件；`Ctrl+Q` 待发面板按 `a` 管理所选消息的附件。Web 提供紧凑缩略图列表与统一图标操作，可排序、删除、查看图片大图及编辑文本；已发送附件只读，可引用到草稿。管理待发消息时暂停自动发送。
 - Runtime 原生定时任务：关闭 CLI/Web 后仍由 daemon 调度；旧任务保留 ID 和启用意图，插件未启用时导入为暂停。`willdeep schedule`、TUI `/schedule` 与 Web「定时任务」共用配置和历史接口。支持显式时区、单次计划、预算、超时、去重、故障恢复、归档及保留历史；运行结束、目标达成和验证通过分别记录。实际预算与超时验收见 [验收报告](docs/verification/0.98.0-rc1/runtime-management.md)。

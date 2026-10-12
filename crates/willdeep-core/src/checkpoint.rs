@@ -18,6 +18,8 @@ pub enum CheckpointStatus {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CheckpointMetadata {
     #[serde(default)]
+    pub agent_reports_received: std::collections::BTreeSet<uuid::Uuid>,
+    #[serde(default)]
     pub runtime_parameters: Option<crate::runtime_parameters::RuntimeParameters>,
     #[serde(default)]
     pub runtime_parameters_sha256: Option<String>,
@@ -71,6 +73,7 @@ pub trait CheckpointSink: Send + Sync {
 }
 
 pub(crate) struct CheckpointRecorder<'a> {
+    background: Option<&'a crate::BackgroundTaskRegistry>,
     sink: Option<&'a dyn CheckpointSink>,
     latest: Option<RunCheckpoint>,
     verification_baseline: Option<String>,
@@ -90,6 +93,7 @@ const STREAM_CHECKPOINT_BYTES: usize = 16 * 1024;
 impl<'a> CheckpointRecorder<'a> {
     pub fn new(sink: Option<&'a dyn CheckpointSink>) -> Self {
         Self {
+            background: None,
             sink,
             latest: None,
             verification_baseline: None,
@@ -106,6 +110,10 @@ impl<'a> CheckpointRecorder<'a> {
     /// 每次落检查点时顺带写目标快照。
     pub fn watch_goal(&mut self, goal: Option<&'a crate::goal::GoalContinuation>) {
         self.goal_source = goal;
+    }
+
+    pub fn watch_background(&mut self, background: Option<&'a crate::BackgroundTaskRegistry>) {
+        self.background = background;
     }
 
     pub fn watch_runtime_parameters(
@@ -194,6 +202,10 @@ impl<'a> CheckpointRecorder<'a> {
             .collect();
         let checkpoint = RunCheckpoint {
             metadata: CheckpointMetadata {
+                agent_reports_received: self
+                    .background
+                    .map(|registry| registry.received_runs())
+                    .unwrap_or_default(),
                 runtime_parameters: self.runtime_parameters.clone(),
                 runtime_parameters_sha256: self
                     .runtime_parameters
@@ -218,6 +230,11 @@ impl<'a> CheckpointRecorder<'a> {
             goal: self.goal_snapshot(),
         };
         sink.save(&checkpoint).map_err(AgentError::Checkpoint)?;
+        if let Some(background) = self.background {
+            background
+                .acknowledge_committed(&checkpoint.metadata.agent_reports_received)
+                .map_err(AgentError::Checkpoint)?;
+        }
         self.latest = Some(checkpoint);
         self.stream_prefix = None;
         self.stream_saved = false;
@@ -450,6 +467,9 @@ impl CheckpointSink for SessionCheckpointSink {
         self.store
             .update(self.session_id, |session| {
                 session.messages = checkpoint.messages.clone();
+                session
+                    .agent_reports_received
+                    .extend(&checkpoint.metadata.agent_reports_received);
                 session.execution_checkpoint = Some(checkpoint.metadata.clone());
                 if let Some(goal) = &checkpoint.goal {
                     session.goal_state =

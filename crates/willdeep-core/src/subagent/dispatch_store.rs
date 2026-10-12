@@ -29,6 +29,7 @@ fn failure(error: impl std::fmt::Display) -> AgentError {
 
 async fn git_value(workspace: &Path, args: &[&str]) -> Result<String, AgentError> {
     let output = tokio::process::Command::new("git")
+        .kill_on_drop(true)
         .args(args)
         .current_dir(workspace)
         .output()

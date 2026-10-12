@@ -1,0 +1,53 @@
+{
+  "version": "0.99.0-rc1",
+  "date": "2026-10-13",
+  "status": "in_progress",
+  "worktree": "/private/tmp/willdeep-agent-team",
+  "checks": [
+    {
+      "name": "Web continuation controls",
+      "command": "yarn --cwd web test src/RuntimeSidebar.test.tsx --testTimeout 30000 --maxWorkers 1",
+      "status": "passed",
+      "passed": 3
+    },
+    {
+      "name": "Web team statistics build",
+      "command": "yarn --cwd web build",
+      "status": "passed",
+      "note": "Subsequent queued-stop UI change remains to be rechecked"
+    },
+    {
+      "name": "Latest workspace and test compilation",
+      "command": "cargo check --workspace --tests --offline --jobs 1",
+      "status": "passed",
+      "session_id": 28699,
+      "note": "Latest source passed after filling the mobile gateway fixture Web service field.",
+      "exit_code": 0,
+      "elapsed_seconds": 63
+    },
+    {
+      "name": "Previous native test build",
+      "status": "cancelled",
+      "exit_code": 130,
+      "note": "Stopped after subsequent source changes; prioritize latest workspace check"
+    }
+  ],
+  "sources_at_report_time": {
+    "crates/willdeep-core/src/subagent/runs/team.rs": "c9518a2f3fb22505ab4c9b20972677ac488b4640a3c3d0884675d153d77936c5",
+    "crates/willdeep-core/src/usage_ledger/scope.rs": "735d073e9f56ef9859c48a07c7a0946c96e986fc3ee1a2b6f86e93de02dd5555",
+    "crates/willdeep-cli/src/daemon/control_api/agent_team.rs": "e667601d9b662e9e3becfeaa1be9072e5be3672617857c60cd85a07780eb9a81",
+    "crates/willdeep-runtime-protocol/src/agent_team.rs": "db715febfc3335f095e84fa35de20b4163d35b324268a29a27c9d582b8d8d9d3",
+    "web/src/RuntimeSidebar.tsx": "1c03e6bb4ce713f75e1bb87a79afa3c5289bb3c5549384a48c00ee5e14a63c55",
+    "web/src/RuntimeDetailPanel.tsx": "44e6bbec8f30ee587662e5cc6b6c2cb4e1211859979f93707d4d2ba035e32881",
+    "crates/willdeep-cli/src/daemon/web_app.rs": "e6c744aa3606e40df9f0d62c91c80c0e1d5d3ca85bb7e27fe7e8c50bcbb7e927"
+  },
+  "pending": [
+    "Runtime integration tests and real idle/restart smoke",
+    "Team and per-Run budget tests and complete auxiliary coverage",
+    "Continuation capacity shared with durable worker admission",
+    "Run event identity protection and paged history UI",
+    "Write conflict Blocked semantics and timeout boundary tests",
+    "Rendered UI verification and final requirement audit",
+    "Runtime-owned Web service lifecycle and real CLI exit smoke"
+  ]
+}

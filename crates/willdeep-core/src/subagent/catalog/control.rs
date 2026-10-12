@@ -62,7 +62,9 @@ impl SubagentCatalog {
                 .iter()
                 .copied()
                 .filter(|id| {
-                    self.background.agent_status(*id) == Some(BackgroundTaskStatus::Running)
+                    self.background
+                        .agent_status(*id)
+                        .is_some_and(|status| status.is_pending())
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -80,7 +82,9 @@ impl SubagentCatalog {
             let running = targets
                 .iter()
                 .filter(|id| {
-                    self.background.agent_status(**id) == Some(BackgroundTaskStatus::Running)
+                    self.background
+                        .agent_status(**id)
+                        .is_some_and(|status| status.is_pending())
                 })
                 .count();
             if running == 0 {
@@ -99,7 +103,7 @@ impl SubagentCatalog {
             let Some(snapshot) = self.background.task_for_agent(*agent_id) else {
                 continue;
             };
-            if snapshot.status == BackgroundTaskStatus::Running {
+            if snapshot.status.is_pending() {
                 still_running.push(format!("{} ({agent_id})", snapshot.id));
                 continue;
             }
@@ -191,7 +195,7 @@ impl SubagentCatalog {
         }
         match self.background.agent_status(agent_id) {
             None => Err(not_found()),
-            Some(BackgroundTaskStatus::Running) => Ok(agent_id),
+            Some(status) if status.is_pending() => Ok(agent_id),
             Some(status) => Err(finished_error(agent_ref, Some(&status))),
         }
     }
@@ -236,14 +240,16 @@ mod tests {
     ) -> (uuid::Uuid, Arc<AgentInstructionInbox>, String) {
         let agent_id = uuid::Uuid::new_v4();
         let inbox = Arc::new(AgentInstructionInbox::default());
-        let handle = background.start_retriable_with_lifecycle(
-            agent_id,
-            BackgroundTaskKind::Subagent,
-            "child".to_owned(),
-            inbox.clone(),
-            || async { std::future::pending::<TaskResult>().await },
-            |_| async {},
-        );
+        let handle = background
+            .start_retriable_with_lifecycle(
+                agent_id,
+                BackgroundTaskKind::Subagent,
+                "child".to_owned(),
+                inbox.clone(),
+                || async { std::future::pending::<TaskResult>().await },
+                |_| async {},
+            )
+            .unwrap();
         if owned {
             catalog
                 .owned_background_agents

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use super::runs::RunRequest;
 use crate::agent::{
     AgentError, AgentEvent, AgentInstructionInbox, EventSink, SubagentLifecycleStatus,
 };
@@ -21,18 +22,7 @@ use crate::subagent_worktree::{
     worktree_result_note,
 };
 use crate::tools::ToolError;
-
-/// 一个会话同时能挂几个后台 Worker。
-///
-/// 3 → 5 与 macOS 版 1.315.0-rc13 对齐：真实的一批活常常是四五件互不依赖的
-/// 小事（读三个模块、跑一次测试、查一段历史），卡在 3 会逼主 Agent 把本可以
-/// 一起发的任务拆成两轮串着等。
-///
-/// **这个数不管文件冲突。** 两个 Worker 同时写一个文件由
-/// [`super::runner`] 的逐路径认领挡下（比 macOS 版「带写集合就锁前台」更细：
-/// 写不同文件的两个 Worker 在这里可以并行）。把并发上限调小去防写冲突是把
-/// 两件事搞混了，反过来也一样。
-pub const MAX_BACKGROUND_SUBAGENTS: usize = 5;
+use willdeep_runtime_protocol::AgentRunReason;
 
 use super::runner::{SubagentRun, run_subagent};
 use super::text::bounded_report;
@@ -42,6 +32,7 @@ use super::types::{
 };
 
 mod control;
+mod run_control;
 
 /// Hard ceiling on the attempt budget a task packet may ask for.
 const MAX_ATTEMPTS_CEILING: usize = 6;
@@ -340,7 +331,21 @@ impl SubagentCatalog {
         let Some(home) = &self.state_home else {
             return Ok(None);
         };
-        let Some(record) = super::dispatch_store::load(home, agent_id)? else {
+        let latest = self
+            .background
+            .agent_run_store()
+            .map(|store| store.latest(agent_id))
+            .transpose()
+            .map_err(AgentError::Checkpoint)?
+            .flatten();
+        let record = match latest {
+            Some(entry) => Some(
+                serde_json::from_value(entry.dispatch)
+                    .map_err(|error| AgentError::Checkpoint(error.to_string()))?,
+            ),
+            None => super::dispatch_store::load(home, agent_id)?,
+        };
+        let Some(record) = record else {
             return Ok(None);
         };
         if record.parent_session != self.parent_session
@@ -379,6 +384,7 @@ impl SubagentCatalog {
                 record.approved_targets,
                 record.approved_command,
                 Some(record.prepared),
+                Some((uuid::Uuid::new_v4(), AgentRunReason::Retry)),
             )
             .await;
         if let Err(error) = result {
@@ -463,6 +469,7 @@ impl SubagentCatalog {
             record.approved_targets,
             record.approved_command,
             Some(record.prepared),
+            None,
         )
         .await
     }
@@ -486,7 +493,7 @@ impl SubagentCatalog {
         } else {
             None
         };
-        let retried = self.background.retry_agent(agent_id);
+        let retried = self.background.retry_agent_with_model(agent_id, model);
         if retried.is_none() && model.is_some() {
             let mut overrides = self
                 .model_overrides
@@ -540,8 +547,15 @@ impl SubagentCatalog {
                 "target_command requires exact parent authorization".to_owned(),
             ));
         }
-        self.run_with_id(uuid::Uuid::new_v4(), args, approved_targets, None, None)
-            .await
+        self.run_with_id(
+            uuid::Uuid::new_v4(),
+            args,
+            approved_targets,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     pub(crate) async fn run_authorized(
@@ -555,6 +569,7 @@ impl SubagentCatalog {
             args,
             approved_targets,
             approved_command,
+            None,
             None,
         )
         .await
@@ -613,6 +628,7 @@ impl SubagentCatalog {
             None,
             None,
             None,
+            Some((id, AgentRunReason::Spawn)),
         )
         .await?;
         Ok(())
@@ -625,8 +641,14 @@ impl SubagentCatalog {
         approved_targets: Option<BTreeSet<PathBuf>>,
         approved_command: Option<String>,
         restored_workspace: Option<PreparedSubagentWorkspace>,
+        requested_run: Option<(uuid::Uuid, AgentRunReason)>,
     ) -> Result<String, AgentError> {
         let mut dispatch_args = args.clone();
+        if let Some(store) = self.background.agent_run_store() {
+            store
+                .ensure_agent_available(agent_id)
+                .map_err(AgentError::SubagentBlocked)?;
+        }
         let mut profile = self
             .profile(args.profile.as_deref())
             .ok_or_else(|| AgentError::Subagent("no subagent profiles configured".to_owned()))?
@@ -674,6 +696,16 @@ impl SubagentCatalog {
             profile.hosted_job_prompt = crate::hosts_job_prompt(&model);
             profile.model = Some(model);
         }
+        if let (Some(store), Some((request_id, _))) =
+            (self.background.agent_run_store(), requested_run)
+            && let Some(saved) = store.get(request_id).map_err(AgentError::Checkpoint)?
+        {
+            if let Some(turns) = saved.max_turns {
+                profile.max_turns = turns as usize;
+                profile.token_budget = saved.token_budget;
+                profile.timeout_seconds = saved.timeout_seconds;
+            }
+        }
         let requested_command = args
             .target_command
             .as_deref()
@@ -712,9 +744,10 @@ impl SubagentCatalog {
         }
         // 写集与正在跑的 Worker 冲突就在派工这一刻说清楚，而不是派出一个注定
         // 在认领时失败的后台任务。判定与 runner 的认领同一份名单、同一条规则。
-        if let Some(targets) = approved_targets
-            .as_ref()
-            .filter(|targets| !targets.is_empty())
+        if args.run_in_background != Some(true)
+            && let Some(targets) = approved_targets
+                .as_ref()
+                .filter(|targets| !targets.is_empty())
         {
             let held = self.claimed_files.lock().map_err(|_| {
                 AgentError::Subagent("subagent file claims are unavailable".to_owned())
@@ -760,22 +793,6 @@ impl SubagentCatalog {
         let prompt = args.prompt;
         let profile_id = profile.id.clone();
         let background = args.run_in_background.unwrap_or(false);
-        if background {
-            let running = self
-                .background
-                .snapshots()
-                .into_iter()
-                .filter(|task| {
-                    task.kind == BackgroundTaskKind::Subagent
-                        && task.status == BackgroundTaskStatus::Running
-                })
-                .count();
-            if running >= MAX_BACKGROUND_SUBAGENTS {
-                return Err(AgentError::Subagent(format!(
-                    "at most {MAX_BACKGROUND_SUBAGENTS} background subagents may run concurrently"
-                )));
-            }
-        }
         let recovering = restored_workspace.is_some();
         let prepared = if let Some(prepared) = restored_workspace {
             if prepared.dedicated != (profile.worktree == SubagentWorktreePolicy::Dedicated) {
@@ -784,23 +801,23 @@ impl SubagentCatalog {
                 ));
             }
             prepared
+        } else if background {
+            self.plan_workspace(agent_id, profile.worktree).await?
         } else {
             self.prepare_workspace(agent_id, profile.worktree).await?
         };
+        let dispatch_record = super::dispatch_store::DispatchRecord {
+            version: 1,
+            id: agent_id,
+            parent_session: self.parent_session,
+            args: dispatch_args,
+            approved_targets: approved_targets.clone(),
+            approved_command: approved_command.clone(),
+            model: profile.model.clone(),
+            prepared: prepared.clone(),
+        };
         if !recovering && let Some(home) = &self.state_home {
-            super::dispatch_store::save(
-                home,
-                &super::dispatch_store::DispatchRecord {
-                    version: 1,
-                    id: agent_id,
-                    parent_session: self.parent_session,
-                    args: dispatch_args,
-                    approved_targets: approved_targets.clone(),
-                    approved_command: approved_command.clone(),
-                    model: profile.model.clone(),
-                    prepared: prepared.clone(),
-                },
-            )?;
+            super::dispatch_store::save(home, &dispatch_record)?;
         }
         let approved_targets = remap_approved_targets(approved_targets, &prepared)?;
         let run = SubagentRun {
@@ -831,10 +848,24 @@ impl SubagentCatalog {
             goal: self.goal.clone(),
         };
         if background {
+            let (request_id, reason) =
+                requested_run.unwrap_or_else(|| (uuid::Uuid::new_v4(), AgentRunReason::Spawn));
+            let run_request = RunRequest {
+                request_id,
+                reason,
+                agent_id,
+                label: label.clone(),
+                model: profile.model.clone(),
+                max_turns: Some(profile.max_turns as u64),
+                token_budget: profile.token_budget,
+                timeout_seconds: profile.timeout_seconds,
+                dispatch: serde_json::to_value(&dispatch_record)
+                    .map_err(|error| AgentError::Checkpoint(error.to_string()))?,
+            };
             let runner_sink = self.sink.clone();
             let failures = self.failures.clone();
             let lifecycle_sink = self.sink.clone();
-            let lifecycle_background = self.background.clone();
+            let lifecycle_background = Arc::downgrade(&self.background);
             let lifecycle_profile = profile_id.clone();
             let lifecycle_model = profile.model.clone();
             let lifecycle_label = label.clone();
@@ -850,93 +881,197 @@ impl SubagentCatalog {
             let instruction_inbox = Arc::new(AgentInstructionInbox::default());
             let runner_instruction_inbox = instruction_inbox.clone();
             let runner_prepared = prepared.clone();
+            let runner_background = Arc::downgrade(&self.background);
+            let runner_worktrees = self.worktrees.clone();
+            let runner_root = self.workspace.clone();
             self.owned_background_agents
                 .lock()
                 .expect("owned background agents")
                 .insert(agent_id);
-            let id = self.background.start_retriable_with_lifecycle(
-                agent_id,
-                BackgroundTaskKind::Subagent,
-                format!("{label} · {profile_id}"),
-                instruction_inbox,
-                move || {
-                    let mut run = run.clone();
-                    let profile_id = run.profile.id.clone();
-                    let sink = runner_sink.clone();
-                    let failures = failures.clone();
-                    let instruction_inbox = runner_instruction_inbox.clone();
-                    let prepared = runner_prepared.clone();
-                    let model_overrides = runner_model_overrides.clone();
-                    async move {
-                        if let Some(model) = model_overrides
+            let id = self
+                .background
+                .start_agent_run(
+                    Some(run_request),
+                    agent_id,
+                    BackgroundTaskKind::Subagent,
+                    format!("{label} · {profile_id}"),
+                    instruction_inbox,
+                    move || {
+                        let mut run = run.clone();
+                        let profile_id = run.profile.id.clone();
+                        let sink = runner_sink.clone();
+                        let failures = failures.clone();
+                        let instruction_inbox = runner_instruction_inbox.clone();
+                        let prepared = runner_prepared.clone();
+                        let background = runner_background.clone();
+                        let worktrees = runner_worktrees.clone();
+                        let root_workspace = runner_root.clone();
+                        let model_overrides = runner_model_overrides.clone();
+                        async move {
+                            let Some(background) = background.upgrade() else {
+                                return subagent_task_result(Err(AgentError::Subagent(
+                                    "parent execution host is unavailable".into(),
+                                )));
+                            };
+                            let run_id = background
+                                .task_for_agent(agent_id)
+                                .and_then(|snapshot| snapshot.run_id);
+                            let sink: Arc<dyn EventSink> = if let (Some(store), Some(run_id)) =
+                                (background.agent_run_store(), run_id)
+                            {
+                                Arc::new(super::runs::RunProgressSink {
+                                    store: store.clone(),
+                                    run_id,
+                                    parent: sink,
+                                })
+                            } else {
+                                sink
+                            };
+                            if let (Some(scope), Some(store), Some(run_id)) =
+                                (&run.usage_ledger, background.agent_run_store(), run_id)
+                            {
+                                run.usage_ledger =
+                                    Some(scope.with_agent_run(store.clone(), run_id));
+                            }
+                            if let Some(scope) = &run.usage_ledger
+                                && let Err(error) = scope.check_budget()
+                            {
+                                return subagent_task_result(Err(AgentError::TeamBudgetBlocked(
+                                    error,
+                                )));
+                            }
+                            if prepared.dedicated && prepared.workspace.exists() {
+                                if let Err(error) = super::dispatch_store::validate_workspace(&prepared, &root_workspace).await {
+                                    return subagent_task_result(Err(AgentError::SubagentBlocked(error.to_string())));
+                                }
+                            }
+                            let prepared = if prepared.dedicated && !prepared.workspace.exists() {
+                                if let (Some(store), Some(run_id)) = (background.agent_run_store(), run_id) {
+                                    match store.workspace_was_used(agent_id, run_id) {
+                                        Ok(true) => return subagent_task_result(Err(AgentError::SubagentBlocked("The original worker worktree is missing; inspect or restore it before continuing.".into()))),
+                                        Err(error) => return subagent_task_result(Err(AgentError::Checkpoint(error))),
+                                        Ok(false) => {},
+                                    }
+                                }
+                                let Some(manager) = &worktrees else {
+                                    return subagent_task_result(Err(AgentError::Subagent(
+                                        "worker worktree manager is unavailable".into(),
+                                    )));
+                                };
+                                match manager
+                                    .prepare(&root_workspace, agent_id, run.profile.worktree)
+                                    .await
+                                {
+                                    Ok(prepared) => prepared,
+                                    Err(error) => return subagent_task_result(Err(error)),
+                                }
+                            } else {
+                                prepared
+                            };
+                            if let Some(model) = background.run_model(agent_id).or_else(|| {
+                                model_overrides
+                                    .lock()
+                                    .expect("subagent model overrides")
+                                    .get(&agent_id)
+                                    .cloned()
+                            }) {
+                                if run.profile.model.as_deref() != Some(model.as_str()) {
+                                    run.profile.provider =
+                                        match run.profile.provider.with_model(&model) {
+                                            Ok(provider) => provider,
+                                            Err(error) => {
+                                                return subagent_task_result(Err(error.into()));
+                                            }
+                                        };
+                                }
+                                run.profile.model = Some(model);
+                                run.profile.hosted_job_prompt = run
+                                    .profile
+                                    .model
+                                    .as_deref()
+                                    .is_some_and(crate::hosts_job_prompt);
+                            }
+                            let budget_scope = run.usage_ledger.clone();
+                            let mut result =
+                                run_subagent(run, sink.clone(), agent_id, Some(instruction_inbox))
+                                    .await;
+                            if result.is_err()
+                                && let Some(scope) = budget_scope
+                                && let Err(error) = scope.check_budget()
+                            {
+                                result = Err(AgentError::TeamBudgetBlocked(error));
+                            }
+                            let result = attach_worktree_report(result, &prepared).await;
+                            record_profile_result(&failures, &profile_id, &result);
+                            subagent_task_result(result)
+                        }
+                    },
+                    move |snapshot| {
+                        let sink: Arc<dyn EventSink> = if let (Some(background), Some(run_id)) =
+                            (lifecycle_background.upgrade(), snapshot.run_id)
+                            && let Some(store) = background.agent_run_store()
+                        {
+                            Arc::new(super::runs::RunProgressSink {
+                                store: store.clone(),
+                                run_id,
+                                parent: lifecycle_sink.clone(),
+                            })
+                        } else {
+                            lifecycle_sink.clone()
+                        };
+                        let background = lifecycle_background.clone();
+                        let profile = lifecycle_profile.clone();
+                        let model = lifecycle_model_overrides
                             .lock()
                             .expect("subagent model overrides")
                             .get(&agent_id)
                             .cloned()
-                        {
-                            run.profile.provider = match run.profile.provider.with_model(&model) {
-                                Ok(provider) => provider,
-                                Err(error) => return subagent_task_result(Err(error.into())),
-                            };
-                            run.profile.model = Some(model);
-                            run.profile.hosted_job_prompt = run
-                                .profile
-                                .model
-                                .as_deref()
-                                .is_some_and(crate::hosts_job_prompt);
-                        }
-                        let result =
-                            run_subagent(run, sink.clone(), agent_id, Some(instruction_inbox))
+                            .or_else(|| lifecycle_model.clone());
+                        let label = lifecycle_label.clone();
+                        let workspace = lifecycle_workspace.clone();
+                        let root_workspace = lifecycle_root_workspace.clone();
+                        let worktree_branch = lifecycle_worktree_branch.clone();
+                        async move {
+                            if snapshot.status == BackgroundTaskStatus::Queued {
+                                sink.emit(AgentEvent::SubagentQueued {
+                                    id: agent_id,
+                                    profile,
+                                    model,
+                                    label,
+                                })
                                 .await;
-                        let result = attach_worktree_report(result, &prepared).await;
-                        record_profile_result(&failures, &profile_id, &result);
-                        subagent_task_result(result)
-                    }
-                },
-                move |snapshot| {
-                    let sink = lifecycle_sink.clone();
-                    let background = lifecycle_background.clone();
-                    let profile = lifecycle_profile.clone();
-                    let model = lifecycle_model_overrides
-                        .lock()
-                        .expect("subagent model overrides")
-                        .get(&agent_id)
-                        .cloned()
-                        .or_else(|| lifecycle_model.clone());
-                    let label = lifecycle_label.clone();
-                    let workspace = lifecycle_workspace.clone();
-                    let root_workspace = lifecycle_root_workspace.clone();
-                    let worktree_branch = lifecycle_worktree_branch.clone();
-                    async move {
-                        if snapshot.status == BackgroundTaskStatus::Running {
-                            sink.emit(AgentEvent::SubagentStarted {
-                                id: agent_id,
-                                profile,
-                                model,
-                                label,
-                                background: true,
-                                max_turns: lifecycle_max_turns,
-                                token_budget: lifecycle_token_budget,
-                                timeout_seconds: lifecycle_timeout_seconds,
-                                workspace,
-                                root_workspace,
-                                worktree_branch,
-                                dedicated_worktree: lifecycle_dedicated_worktree,
-                            })
-                            .await;
-                        } else {
-                            sink.emit(AgentEvent::SubagentCompleted {
-                                id: agent_id,
-                                status: background_lifecycle_status(&snapshot.status),
-                                report: background.output(&snapshot.id, 200),
-                            })
-                            .await;
+                            } else if snapshot.status == BackgroundTaskStatus::Running {
+                                sink.emit(AgentEvent::SubagentStarted {
+                                    id: agent_id,
+                                    profile,
+                                    model,
+                                    label,
+                                    background: true,
+                                    max_turns: lifecycle_max_turns,
+                                    token_budget: lifecycle_token_budget,
+                                    timeout_seconds: lifecycle_timeout_seconds,
+                                    workspace,
+                                    root_workspace,
+                                    worktree_branch,
+                                    dedicated_worktree: lifecycle_dedicated_worktree,
+                                })
+                                .await;
+                            } else {
+                                sink.emit(AgentEvent::SubagentCompleted {
+                                    id: agent_id,
+                                    status: background_lifecycle_status(&snapshot.status),
+                                    report: background.upgrade().and_then(|background| {
+                                        background.output(&snapshot.id, 200)
+                                    }),
+                                })
+                                .await;
+                            }
                         }
-                    }
-                },
-            );
+                    },
+                )
+                .map_err(AgentError::Subagent)?;
             Ok(format!(
-                "Subagent started: agent_id={agent_id}, background_task={id}. Its report will be delivered automatically to the main harness."
+                "Subagent accepted: agent_id={agent_id}, background_task={id}. It may be queued; its report will be delivered automatically to the main harness."
             ))
         } else {
             let cached_report = if recovering {
@@ -1072,6 +1207,17 @@ impl SubagentCatalog {
         }
     }
 
+    async fn plan_workspace(
+        &self,
+        agent_id: uuid::Uuid,
+        policy: SubagentWorktreePolicy,
+    ) -> Result<PreparedSubagentWorkspace, AgentError> {
+        if let Some(manager) = &self.worktrees {
+            return manager.plan(&self.workspace, agent_id, policy).await;
+        }
+        self.prepare_workspace(agent_id, policy).await
+    }
+
     async fn prepare_workspace(
         &self,
         agent_id: uuid::Uuid,
@@ -1135,7 +1281,8 @@ fn background_lifecycle_status(status: &BackgroundTaskStatus) -> SubagentLifecyc
         BackgroundTaskStatus::Partial => SubagentLifecycleStatus::Partial,
         BackgroundTaskStatus::Blocked => SubagentLifecycleStatus::Blocked,
         BackgroundTaskStatus::Killed => SubagentLifecycleStatus::Cancelled,
-        BackgroundTaskStatus::Running
+        BackgroundTaskStatus::Queued
+        | BackgroundTaskStatus::Running
         | BackgroundTaskStatus::Failed
         | BackgroundTaskStatus::TimedOut
         | BackgroundTaskStatus::LaunchFailed => SubagentLifecycleStatus::Failed,
@@ -1146,6 +1293,9 @@ fn subagent_lifecycle_status(result: &Result<String, AgentError>) -> SubagentLif
     match result {
         Ok(_) => SubagentLifecycleStatus::Completed,
         Err(AgentError::SubagentPartial { .. }) => SubagentLifecycleStatus::Partial,
+        Err(AgentError::TeamBudgetBlocked(_) | AgentError::SubagentBlocked(_)) => {
+            SubagentLifecycleStatus::Blocked
+        }
         Err(AgentError::Tool(ToolError::ApprovalDenied(_))) => SubagentLifecycleStatus::Blocked,
         Err(_) => SubagentLifecycleStatus::Failed,
     }
@@ -1153,6 +1303,13 @@ fn subagent_lifecycle_status(result: &Result<String, AgentError>) -> SubagentLif
 
 fn subagent_task_result(result: Result<String, AgentError>) -> TaskResult {
     match result {
+        Err(AgentError::TeamBudgetBlocked(message) | AgentError::SubagentBlocked(message)) => {
+            TaskResult {
+                status: BackgroundTaskStatus::Blocked,
+                exit_code: None,
+                output: message,
+            }
+        }
         Err(error @ AgentError::SubagentPartial { .. }) => TaskResult {
             status: BackgroundTaskStatus::Partial,
             exit_code: None,
@@ -1245,845 +1402,4 @@ fn record_profile_result(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use async_trait::async_trait;
-
-    use super::*;
-    use crate::provider::ProviderError;
-    use crate::subagent::builtin_profiles;
-    use crate::subagent::test_support::{
-        AllowingJudge, CaptureSink, ModelProvider, ReportProvider, fixture,
-    };
-    use crate::subagent::types::TaskPacket;
-    use crate::types::{Completion, Message, ToolDefinition};
-
-    /// 后台并发上限与 macOS 版同一个数，且写冲突不归它管。
-    ///
-    /// 钉这条是因为两边各存一份字面量：一边改了另一边没改，同一个人在两个
-    /// 客户端里能同时挂的 Worker 数就不一样，而这个数直接决定他能不能一次派
-    /// 出一批活。
-    #[test]
-    fn the_background_ceiling_matches_the_desktop_and_does_not_guard_writes() {
-        assert_eq!(MAX_BACKGROUND_SUBAGENTS, 5);
-        // 文件冲突由逐路径认领挡下，与这个上限无关——同样的话写在常量注释里，
-        // 这里钉的是「两者确实是分开的两条路径」。
-        let claimed = Arc::new(Mutex::new(BTreeSet::new()));
-        let files: BTreeSet<PathBuf> = [PathBuf::from("src/lib.rs")].into_iter().collect();
-        let first = super::super::runner::acquire_file_claim_for_test(&claimed, &files)
-            .expect("first claim");
-        assert!(first.is_some());
-        assert!(
-            super::super::runner::acquire_file_claim_for_test(&claimed, &files).is_err(),
-            "同一个文件的第二个认领必须被拒，哪怕并发数还没到上限"
-        );
-    }
-
-    /// 写集与正在跑的 Worker 冲突：派工当场被拒，点名冲突文件，不调模型、
-    /// 也不起一个注定失败的后台任务。
-    #[tokio::test]
-    async fn overlapping_write_sets_are_refused_at_dispatch() {
-        let root = std::env::temp_dir().join(format!("willdeep-overlap-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let provider = Arc::new(super::super::test_support::ModelProvider {
-            model: "local-test".into(),
-            seen: seen.clone(),
-        });
-        let background = Arc::new(BackgroundTaskRegistry::default());
-        let mut profiles = crate::subagent::builtin_profiles(provider);
-        profiles
-            .iter_mut()
-            .find(|profile| profile.id == "implementer")
-            .unwrap()
-            .worktree = crate::subagent_worktree::SubagentWorktreePolicy::Shared;
-        let catalog = SubagentCatalog::new(&root, profiles, background.clone());
-        let target = root.join("code.rs");
-        catalog.claimed_files.lock().unwrap().insert(target.clone());
-        let error = catalog
-            .run(
-                SpawnAgentArgs {
-                    profile: Some("implementer".into()),
-                    prompt: "edit code.rs".into(),
-                    run_in_background: Some(true),
-                    task: Some(crate::subagent::TaskPacket {
-                        goal: "edit code.rs".into(),
-                        verifier: Some(crate::subagent::TaskVerifier {
-                            command: "true".into(),
-                            expected_exit_code: None,
-                        }),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                Some(BTreeSet::from([target.clone()])),
-            )
-            .await
-            .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("already writing"), "{message}");
-        assert!(message.contains("code.rs"), "{message}");
-        assert!(seen.lock().unwrap().is_empty(), "no model call");
-        assert!(
-            background.snapshots().is_empty(),
-            "no doomed background task"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn an_open_circuit_allows_one_trial_after_the_cooldown() {
-        let failures = Mutex::new(BTreeMap::new());
-        let cooldown = std::time::Duration::from_secs(600);
-        let failed: Result<String, AgentError> = Err(AgentError::Subagent("boom".into()));
-        for _ in 0..3 {
-            record_profile_result(&failures, "tester", &failed);
-        }
-        let opened = failures.lock().unwrap()["tester"].last_failure;
-        let admit = |at: std::time::Instant| {
-            circuit_admit(&mut failures.lock().unwrap(), "tester", 3, cooldown, at)
-        };
-        let error = admit(opened + std::time::Duration::from_secs(60)).unwrap_err();
-        assert!(error.contains("circuit is open"), "{error}");
-        assert!(error.contains("540s"), "{error}");
-        assert!(
-            admit(opened + cooldown).is_ok(),
-            "one trial after the cooldown"
-        );
-        assert!(
-            admit(opened + cooldown)
-                .unwrap_err()
-                .contains("already in flight"),
-            "only one trial at a time"
-        );
-        // 试探失败：重新计时，仍然开着。
-        record_profile_result(&failures, "tester", &failed);
-        let reopened = failures.lock().unwrap()["tester"].last_failure;
-        assert!(admit(reopened + std::time::Duration::from_secs(1)).is_err());
-        // 试探成功：清零。
-        assert!(admit(reopened + cooldown).is_ok());
-        record_profile_result(&failures, "tester", &Ok("fixed".into()));
-        assert!(admit(reopened).is_ok());
-        assert!(failures.lock().unwrap().is_empty());
-        // 别的工种不受影响。
-        assert!(circuit_admit(&mut BTreeMap::new(), "scout", 3, cooldown, opened).is_ok());
-    }
-
-    #[test]
-    fn partial_child_remains_partial_in_background_and_lifecycle() {
-        let error = AgentError::SubagentPartial {
-            reason: crate::AgentStopReason::Incomplete,
-            turns: 3,
-            report: "saved partial work".into(),
-        };
-        let result = Err(error);
-        assert_eq!(
-            subagent_lifecycle_status(&result),
-            SubagentLifecycleStatus::Partial
-        );
-        let task = subagent_task_result(result);
-        assert_eq!(task.status, BackgroundTaskStatus::Partial);
-        assert_eq!(task.exit_code, None);
-        assert!(task.output.contains("saved partial work"));
-        assert_eq!(
-            background_lifecycle_status(&task.status),
-            SubagentLifecycleStatus::Partial
-        );
-    }
-
-    #[test]
-    fn approval_denial_marks_background_subagent_blocked() {
-        let result = subagent_task_result(Err(AgentError::Tool(ToolError::ApprovalDenied(
-            "write access needed".to_owned(),
-        ))));
-        assert_eq!(result.status, BackgroundTaskStatus::Blocked);
-        assert_eq!(result.exit_code, None);
-        assert_eq!(result.output, "write access needed");
-    }
-
-    /// 一次就交报告、每次报 700 token 的 Worker 模型。
-    struct MeteredProvider;
-
-    #[async_trait::async_trait]
-    impl crate::provider::Provider for MeteredProvider {
-        async fn complete(
-            &self,
-            _messages: &[crate::types::Message],
-            _tools: &[crate::types::ToolDefinition],
-        ) -> Result<crate::types::Completion, crate::provider::ProviderError> {
-            Ok(crate::types::Completion {
-                content: "CONCLUSION: done".to_owned(),
-                finish_reason: Some("stop".to_owned()),
-                usage: Some(crate::types::Usage {
-                    input_tokens: Some(600),
-                    output_tokens: Some(100),
-                    total_tokens: None,
-                    cache_read_tokens: None,
-                }),
-                ..Default::default()
-            })
-        }
-    }
-
-    /// RA3：Worker 的用量计入父会话目标的 token 预算；没有激活目标时不记。
-    #[tokio::test]
-    async fn worker_usage_counts_toward_the_parent_goal_budget() {
-        let root =
-            std::env::temp_dir().join(format!("willdeep-goal-worker-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        let goal = Arc::new(crate::goal::GoalContinuation::new());
-        let catalog = SubagentCatalog::new(
-            &root,
-            builtin_profiles(Arc::new(MeteredProvider)),
-            Arc::new(BackgroundTaskRegistry::default()),
-        )
-        .with_goal(goal.clone());
-        let spawn = || SpawnAgentArgs {
-            prompt: "inspect".to_owned(),
-            profile: Some("scout".to_owned()),
-            run_in_background: Some(false),
-            ..SpawnAgentArgs::default()
-        };
-        catalog
-            .run(spawn(), None)
-            .await
-            .expect("run without a goal");
-        assert!(goal.snapshot().is_none(), "no goal, nothing recorded");
-
-        goal.activate("audit the parser", goal.default_budget());
-        catalog.run(spawn(), None).await.expect("run under a goal");
-        assert_eq!(goal.snapshot().unwrap().tokens_used, 700);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[tokio::test]
-    async fn foreground_profile_runs_in_isolated_non_nested_agent() {
-        let (catalog, root) = fixture();
-        let sink = Arc::new(CaptureSink::default());
-        let catalog = catalog.with_event_sink(sink.clone());
-        let report = catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "inspect".to_owned(),
-                    label: None,
-                    profile: Some("scout".to_owned()),
-                    run_in_background: Some(false),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await
-            .expect("run");
-        assert!(report.starts_with("subagent report\n\n"), "{report}");
-        assert!(
-            report.ends_with("</worker-facts>"),
-            "the runtime trailer closes every report: {report}"
-        );
-        assert!(report.contains(r#"profile="scout" verdict="unverified""#));
-        let events = sink.0.lock().unwrap();
-        let started = events.iter().find_map(|event| match event {
-            AgentEvent::SubagentStarted {
-                id,
-                profile,
-                background,
-                ..
-            } => Some((*id, profile.as_str(), *background)),
-            _ => None,
-        });
-        let completed = events.iter().find_map(|event| match event {
-            AgentEvent::SubagentCompleted { id, status, .. } => Some((*id, *status)),
-            _ => None,
-        });
-        assert_eq!(
-            started.map(|(_, profile, background)| (profile, background)),
-            Some(("scout", false))
-        );
-        assert_eq!(
-            completed,
-            started.map(|(id, _, _)| (id, SubagentLifecycleStatus::Completed))
-        );
-        assert!(events.iter().any(|event| matches!(
-            event,
-            AgentEvent::SubagentTurnStarted { id, turn: 1 }
-                if Some(*id) == started.map(|(id, _, _)| id)
-        )));
-        drop(events);
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[tokio::test]
-    async fn editor_requires_preapproved_target() {
-        let (catalog, root) = fixture();
-        let result = catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "edit".to_owned(),
-                    label: None,
-                    profile: Some("editor".to_owned()),
-                    run_in_background: Some(false),
-                    target_file: Some("file.txt".to_owned()),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await;
-        assert!(matches!(result, Err(AgentError::Subagent(_))));
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[tokio::test]
-    async fn external_spawn_is_background_only_and_rejects_writing_profiles() {
-        let (catalog, root) = fixture();
-        let sink = Arc::new(CaptureSink::default());
-        let catalog = catalog.with_event_sink(sink.clone());
-        assert!(
-            catalog
-                .spawn_external_read_only(
-                    uuid::Uuid::new_v4(),
-                    "edit".to_owned(),
-                    None,
-                    Some("editor".to_owned()),
-                )
-                .await
-                .is_err()
-        );
-        assert!(
-            catalog
-                .spawn_external_read_only(
-                    uuid::Uuid::new_v4(),
-                    "inspect everything".to_owned(),
-                    None,
-                    Some("deep".to_owned()),
-                )
-                .await
-                .is_err()
-        );
-        assert!(
-            catalog
-                .spawn_external_read_only(
-                    uuid::Uuid::new_v4(),
-                    "inspect".to_owned(),
-                    None,
-                    Some("missing".to_owned()),
-                )
-                .await
-                .is_err()
-        );
-
-        let id = uuid::Uuid::new_v4();
-        catalog
-            .spawn_external_read_only(
-                id,
-                "inspect".to_owned(),
-                Some("external scout".to_owned()),
-                Some("scout".to_owned()),
-            )
-            .await
-            .expect("spawn external read-only agent");
-        for _ in 0..50 {
-            if sink.0.lock().unwrap().iter().any(|event| {
-                matches!(event, AgentEvent::SubagentCompleted { id: event_id, .. } if *event_id == id)
-            }) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let events = sink.0.lock().unwrap();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            AgentEvent::SubagentStarted {
-                id: event_id,
-                profile,
-                background: true,
-                ..
-            } if *event_id == id && profile == "scout"
-        )));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            AgentEvent::SubagentCompleted { id: event_id, .. } if *event_id == id
-        )));
-        drop(events);
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[tokio::test]
-    async fn terminal_background_agent_retries_with_a_reconfigured_provider_model() {
-        let root =
-            std::env::temp_dir().join(format!("willdeep-subagent-model-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).expect("workspace");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let provider: Arc<dyn Provider> = Arc::new(ModelProvider {
-            model: "old-model".to_owned(),
-            seen: seen.clone(),
-        });
-        let background = Arc::new(BackgroundTaskRegistry::default());
-        let sink = Arc::new(CaptureSink::default());
-        let mut profiles = builtin_profiles(provider);
-        for profile in &mut profiles {
-            profile.model = Some("old-model".to_owned());
-        }
-        let catalog =
-            SubagentCatalog::new(&root, profiles, background).with_event_sink(sink.clone());
-        let id = uuid::Uuid::new_v4();
-        catalog
-            .spawn_external_read_only(
-                id,
-                "inspect".to_owned(),
-                Some("model retry".to_owned()),
-                Some("scout".to_owned()),
-            )
-            .await
-            .expect("spawn");
-        for _ in 0..50 {
-            if seen.lock().unwrap().len() == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(seen.lock().unwrap().as_slice(), ["old-model"]);
-
-        assert!(
-            catalog
-                .retry_background_agent(id, Some("new-model"))
-                .await
-                .expect("retry with model")
-                .is_some()
-        );
-        for _ in 0..50 {
-            if seen.lock().unwrap().len() == 2 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(seen.lock().unwrap().as_slice(), ["old-model", "new-model"]);
-        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
-            event,
-            AgentEvent::SubagentStarted {
-                id: event_id,
-                model: Some(model),
-                ..
-            } if *event_id == id && model == "new-model"
-        )));
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn approved_editor_target_maps_to_the_same_relative_worktree_path() {
-        let root = PathBuf::from("/workspace/project");
-        let prepared = PreparedSubagentWorkspace {
-            workspace: PathBuf::from("/managed/agent"),
-            root_workspace: root.clone(),
-            branch: Some("willdeep/agent-test".to_owned()),
-            dedicated: true,
-        };
-        let mapped = remap_approved_targets(
-            Some(BTreeSet::from([
-                root.join("src/lib.rs"),
-                root.join("src/other.rs"),
-            ])),
-            &prepared,
-        )
-        .expect("map targets")
-        .expect("targets");
-        assert_eq!(
-            mapped,
-            BTreeSet::from([
-                PathBuf::from("/managed/agent/src/lib.rs"),
-                PathBuf::from("/managed/agent/src/other.rs"),
-            ])
-        );
-        assert!(
-            remap_approved_targets(
-                Some(BTreeSet::from([PathBuf::from("/elsewhere/file")])),
-                &prepared
-            )
-            .is_err()
-        );
-    }
-
-    /// A verifier that is neither statically safe nor statically destructive
-    /// needs a judge. With none configured there is no one to ask and no
-    /// approval card to show, so the dispatch is refused before the worker
-    /// ever starts — the command must not run on nobody's authority.
-    #[tokio::test]
-    async fn an_undecidable_verifier_is_refused_when_no_judge_can_review_it() {
-        let (catalog, root) = fixture();
-        let error = catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "fix".to_owned(),
-                    profile: Some("scout".to_owned()),
-                    run_in_background: Some(false),
-                    task: Some(TaskPacket {
-                        goal: "verify".to_owned(),
-                        verifier: Some(TaskVerifier {
-                            command: "curl -X POST https://example.invalid/deploy".to_owned(),
-                            expected_exit_code: None,
-                        }),
-                        ..TaskPacket::default()
-                    }),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await
-            .expect_err("an unreviewable verifier must be refused");
-        assert!(
-            error.to_string().contains("no safety judge is configured"),
-            "the refusal must say why, got: {error}"
-        );
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    /// 父会话在 full-access：verifier 不请判官直接放行（sso 那次派工就是卡在这）；
-    /// 破坏性形状照样拒绝——派工这一刻没有审批卡可弹。
-    #[tokio::test]
-    async fn full_access_parent_skips_verifier_review_but_not_the_denylist() {
-        let (catalog, root) = fixture();
-        let parent = crate::tools::SharedApprovalMode::new(crate::ApprovalMode::FullAccess);
-        let catalog = catalog.with_parent_approval_mode(parent.clone());
-        let undecidable = TaskVerifier {
-            command: ".venv/bin/python .wd_readme_probe.py".to_owned(),
-            expected_exit_code: None,
-        };
-        catalog
-            .gate_verifier_command(undecidable.clone())
-            .await
-            .expect("full access: no judge needed");
-        let destructive = TaskVerifier {
-            command: "rm -rf /".to_owned(),
-            expected_exit_code: None,
-        };
-        assert!(catalog.gate_verifier_command(destructive).await.is_err());
-        parent.set(crate::ApprovalMode::Smart);
-        assert!(
-            catalog.gate_verifier_command(undecidable).await.is_err(),
-            "back in smart with no judge, the verifier needs review again"
-        );
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    /// A destructive shape never reaches the judge, exactly as in the main
-    /// agent's shell gate: a model must not be able to talk its way into one
-    /// by calling it a verifier.
-    #[tokio::test]
-    async fn a_destructive_verifier_is_refused_outright() {
-        let (catalog, root) = fixture();
-        let error = catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "fix".to_owned(),
-                    profile: Some("scout".to_owned()),
-                    run_in_background: Some(false),
-                    task: Some(TaskPacket {
-                        goal: "verify".to_owned(),
-                        verifier: Some(TaskVerifier {
-                            command: "rm -rf / --no-preserve-root".to_owned(),
-                            expected_exit_code: None,
-                        }),
-                        ..TaskPacket::default()
-                    }),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await
-            .expect_err("a destructive verifier must be refused");
-        assert!(
-            error.to_string().contains("destructive shape"),
-            "the refusal must name the reason, got: {error}"
-        );
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[tokio::test]
-    async fn a_sensitive_verifier_never_reaches_the_ai_judge() {
-        let root = std::env::temp_dir().join(format!(
-            "willdeep-sensitive-verifier-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).expect("workspace");
-        let catalog = SubagentCatalog::new(
-            &root,
-            builtin_profiles(Arc::new(ReportProvider) as Arc<dyn Provider>),
-            Arc::new(BackgroundTaskRegistry::default()),
-        )
-        .with_safety_judge(Arc::new(AllowingJudge));
-        let error = catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "inspect".to_owned(),
-                    profile: Some("reader".to_owned()),
-                    task: Some(TaskPacket {
-                        goal: "verify".to_owned(),
-                        verifier: Some(TaskVerifier {
-                            command: "cat ~/.ssh/id_ed25519".to_owned(),
-                            expected_exit_code: None,
-                        }),
-                        ..TaskPacket::default()
-                    }),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await
-            .expect_err("sensitive verifier must be refused before AI review");
-        assert!(error.to_string().contains("credential-sensitive"));
-        assert!(error.to_string().contains("cat ~/.ssh/id_ed25519"));
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn public_catalog_is_five_responsibilities_while_legacy_profiles_remain_executable() {
-        let provider: Arc<dyn Provider> = Arc::new(ReportProvider);
-        let catalog = SubagentCatalog::new(
-            std::env::temp_dir(),
-            builtin_profiles(provider),
-            Arc::new(BackgroundTaskRegistry::default()),
-        );
-        let description = catalog.description();
-        for profile in PUBLIC_SUBAGENT_IDS {
-            assert!(description.contains(&format!("`{profile}`")));
-            assert!(catalog.has_profile(profile));
-        }
-        for legacy in [
-            "scout",
-            "editor",
-            "test_fixer",
-            "build_fixer",
-            "log_inspector",
-            "git_detective",
-        ] {
-            assert!(catalog.has_profile(legacy));
-            assert!(!description.contains(&format!("`{legacy}`")));
-        }
-        assert_eq!(public_profile_id("git_detective"), Some("generalist"));
-        assert_eq!(public_profile_id("build_fixer"), Some("implementer"));
-        assert_eq!(public_profile_id("terminal_operator"), Some("ops_runner"));
-        assert_eq!(public_profile_id("security_guard"), Some("reviewer"));
-        // 改名前的公开名继续路由，别人保存的流程不该在这次改动里断掉。
-        assert_eq!(public_profile_id("reader"), Some("generalist"));
-        assert_eq!(public_profile_id("judge"), Some("reviewer"));
-        // `deep` 现在是档位而不是工种：它的职责部分落在 generalist 上。
-        assert_eq!(public_profile_id("deep"), Some("generalist"));
-    }
-
-    /// 档位换模型，职责不变。这条盯着正交化本身：`deep` 曾经既是职责也是
-    /// 价格，把它拆开之后，一个便宜的调查工种不能因为换了个名字就白拿父模型。
-    #[tokio::test]
-    async fn the_expert_tier_swaps_the_model_without_changing_the_responsibility() {
-        let cheap: Arc<dyn Provider> = Arc::new(ReportProvider);
-        let expert: Arc<dyn Provider> = Arc::new(ReportProvider);
-        let catalog = SubagentCatalog::new(
-            std::env::temp_dir(),
-            builtin_profiles(cheap),
-            Arc::new(BackgroundTaskRegistry::default()),
-        )
-        .with_tier_binding(
-            crate::WorkerTier::Expert,
-            TierBinding {
-                provider: expert,
-                model: Some("gpt-5.6-sol".to_owned()),
-                window: 200_000,
-                hosted_job_prompt: false,
-            },
-        );
-
-        let generalist = catalog.profile(Some("generalist")).expect("generalist");
-        // 默认这一档是便宜的：贵模型要过 agent 层的票据才拿得到。
-        assert!(generalist.context_window <= crate::WorkerTier::Standard.context_budget());
-
-        // 旧名仍然解析得到，别人保存的流程不该断。
-        assert!(catalog.has_profile("deep"));
-        assert!(catalog.has_profile("reader"));
-        assert!(catalog.has_profile("judge"));
-        assert_eq!(
-            catalog.profile(Some("deep")).map(|p| p.id.as_str()),
-            Some("generalist")
-        );
-        assert_eq!(
-            catalog.profile(Some("judge")).map(|p| p.id.as_str()),
-            Some("reviewer")
-        );
-    }
-
-    #[test]
-    fn dispatch_model_names_the_bound_model_and_flags_an_unbound_tier() {
-        let mut profiles = builtin_profiles(Arc::new(ReportProvider));
-        for profile in &mut profiles {
-            profile.model = Some("trade-model".to_owned());
-        }
-        let catalog = SubagentCatalog::new(
-            std::env::temp_dir(),
-            profiles,
-            Arc::new(BackgroundTaskRegistry::default()),
-        )
-        .with_tier_binding(
-            crate::WorkerTier::Expert,
-            TierBinding {
-                provider: Arc::new(ReportProvider),
-                model: Some("gpt-5.6-sol".to_owned()),
-                window: 200_000,
-                hosted_job_prompt: false,
-            },
-        );
-
-        let plain = catalog.dispatch_model("generalist", None);
-        assert_eq!(plain.model.as_deref(), Some("trade-model"));
-        assert_eq!(plain.fallback, None);
-
-        let expert = catalog.dispatch_model("deep", Some("expert"));
-        assert_eq!(expert.model.as_deref(), Some("gpt-5.6-sol"));
-        assert_eq!(expert.fallback, None);
-
-        // 进阶档在这个 provider 上没绑：模型没换，这件事必须说出来。
-        let advanced = catalog.dispatch_model("tester", Some("advanced"));
-        assert_eq!(advanced.model.as_deref(), Some("trade-model"));
-        let reason = advanced.fallback.expect("unbound tier is reported");
-        assert!(reason.contains("worker_tier=advanced"), "{reason}");
-        assert!(reason.contains("[worker_tiers.advanced]"), "{reason}");
-
-        // 基础档不绑定是常态，不算兜底。
-        assert_eq!(
-            catalog.dispatch_model("tester", Some("standard")).fallback,
-            None
-        );
-        assert_eq!(
-            catalog.dispatch_model("no_such_trade", None),
-            DispatchModel::default()
-        );
-    }
-
-    /// 三档都能各绑各的模型，而且真的走到那个 provider 上。
-    ///
-    /// 只断言绑定存进去了是不够的——它得在派工路径上兑现出来，否则用户在
-    /// `[worker_tiers.*]` 里写的东西就是一句空话（这正是 0.51 的毛病）。
-    #[tokio::test]
-    async fn every_tier_cashes_its_own_binding_at_dispatch() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let base: Arc<dyn Provider> = Arc::new(ModelProvider {
-            model: "someim-32b".to_owned(),
-            seen: seen.clone(),
-        });
-        let root = std::env::temp_dir().join(format!("willdeep-tiers-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).expect("workspace");
-        let mut catalog = SubagentCatalog::new(
-            &root,
-            builtin_profiles(base),
-            Arc::new(BackgroundTaskRegistry::default()),
-        );
-        for (tier, model) in [
-            (crate::WorkerTier::Advanced, "deepseek-v4-flash"),
-            (crate::WorkerTier::Expert, "opus-5"),
-        ] {
-            catalog = catalog.with_tier_binding(
-                tier,
-                TierBinding {
-                    provider: Arc::new(ModelProvider {
-                        model: model.to_owned(),
-                        seen: seen.clone(),
-                    }),
-                    model: Some(model.to_owned()),
-                    window: tier.context_budget(),
-                    hosted_job_prompt: false,
-                },
-            );
-        }
-
-        for tier in ["standard", "advanced", "expert"] {
-            catalog
-                .run(
-                    SpawnAgentArgs {
-                        prompt: "look".to_owned(),
-                        profile: Some("generalist".to_owned()),
-                        worker_tier: Some(tier.to_owned()),
-                        run_in_background: Some(false),
-                        ..SpawnAgentArgs::default()
-                    },
-                    None,
-                )
-                .await
-                .expect("run");
-        }
-
-        // 同一个职责，三档三个模型。基础档没绑定，留在工种自己的模型上。
-        assert_eq!(
-            seen.lock().expect("models").as_slice(),
-            ["someim-32b", "deepseek-v4-flash", "opus-5"]
-        );
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    /// 档位换掉一个托管工种的模型时，客户端必须把职责提示词补回来。
-    ///
-    /// 这是最容易漏的一条：工种绑在网关托管的别名上（提示词由服务端 prepend，
-    /// 客户端因此不发），档位又把模型换成了别处的 `opus-5`——两边都不发，
-    /// Worker 就只剩边界段落，完全不知道自己该干什么。
-    #[tokio::test]
-    async fn switching_tiers_hands_the_job_prompt_back_to_the_client() {
-        struct PromptProbe(Arc<Mutex<Vec<String>>>);
-        #[async_trait]
-        impl Provider for PromptProbe {
-            async fn complete(
-                &self,
-                messages: &[Message],
-                _tools: &[ToolDefinition],
-            ) -> Result<Completion, ProviderError> {
-                self.0.lock().unwrap().push(messages[0].content.clone());
-                Ok(Completion {
-                    reasoning: None,
-                    content: "report".to_owned(),
-                    tool_calls: Vec::new(),
-                    finish_reason: Some("stop".to_owned()),
-                    usage: None,
-                })
-            }
-        }
-
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let provider: Arc<dyn Provider> = Arc::new(PromptProbe(seen.clone()));
-        let root =
-            std::env::temp_dir().join(format!("willdeep-tierprompt-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).expect("workspace");
-        let mut profiles = builtin_profiles(provider.clone());
-        for profile in &mut profiles {
-            // 模拟一个绑在 `someim-32b-scout` 上的托管工种：提示词由服务端发。
-            profile.hosted_job_prompt = profile.id == "scout";
-        }
-        let catalog =
-            SubagentCatalog::new(&root, profiles, Arc::new(BackgroundTaskRegistry::default()))
-                .with_tier_binding(
-                    crate::WorkerTier::Expert,
-                    TierBinding {
-                        provider,
-                        model: Some("opus-5".to_owned()),
-                        window: 200_000,
-                        // opus-5 不是托管别名，服务端不会 prepend 任何东西。
-                        hosted_job_prompt: false,
-                    },
-                );
-
-        catalog
-            .run(
-                SpawnAgentArgs {
-                    prompt: "look".to_owned(),
-                    profile: Some("scout".to_owned()),
-                    worker_tier: Some("expert".to_owned()),
-                    run_in_background: Some(false),
-                    ..SpawnAgentArgs::default()
-                },
-                None,
-            )
-            .await
-            .expect("run");
-
-        let prompts = seen.lock().expect("prompts").clone();
-        assert!(
-            prompts[0].contains("LOCATION"),
-            "换掉托管模型之后职责提示词必须由客户端补上，实际收到：{}",
-            prompts[0]
-        );
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-}
+mod tests;

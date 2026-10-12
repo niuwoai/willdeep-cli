@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Box, Button, Flex, Input, NativeSelect, Text, Textarea, VStack } from "@chakra-ui/react";
 import type { Messages } from "./i18n";
+const AGENT_PREVIEW_LIMIT = 4;
 import { RuntimeDetailPanel, type RuntimeDetailTarget } from "./RuntimeDetailPanel";
 import { agentDuration, isSidebarAgent } from "./runtimeAgents";
 
@@ -85,16 +86,41 @@ export type RuntimeActivity = {
   tasks: RuntimeTask[];
   gates: RuntimeGate[];
   attention_count: number;
+  teams?: AgentTeamSummary[];
+  team_statistics_unavailable?: boolean;
+};
+
+export type AgentUsageSummary = {
+  model_calls: number; unknown_usage_calls: number; accounted_tokens: number;
+  input_tokens: number | null; output_tokens: number | null;
+  cache_read_tokens: number | null; total_tokens: number | null; uncertain_execution: boolean;
+};
+export type AgentRun = {
+  id: string; agent_id: string; sequence: number; status: string; reason: string;
+  queued_at_ms: number; started_at_ms: number | null; finished_at_ms: number | null;
+  current_turn: number; current_tool: string | null; usage: AgentUsageSummary;
+  report: string | null;
+};
+export type AgentRunsPage = { runs: AgentRun[]; next_after_sequence: number | null };
+export type AgentTeamSummary = {
+  parent_session_id: string;
+  policy: { max_concurrent: number; max_queued: number; token_budget: number | null } | null;
+  running: number; queued: number; completed_runs: number;
+  usage: AgentUsageSummary; parent_usage: AgentUsageSummary; child_usage: AgentUsageSummary;
+  auxiliary_usage: AgentUsageSummary; compression_usage: AgentUsageSummary; ledger_incomplete: boolean;
+  workers: { agent_id: string; latest_run: AgentRun; run_count: number;
+    queue_position: number | null; cumulative_usage: AgentUsageSummary }[];
 };
 
 type Props = {
+  onLoadRuns?: (id: string, after?: number) => Promise<AgentRunsPage>;
   activity: RuntimeActivity;
   events: RuntimeEvent[];
   onIgnoreEvent: (id: string) => Promise<void>;
   messages: Messages;
   onResolveApproval: (id: string, decision: "allow_once" | "deny" | "always_allow") => Promise<void>;
   onAnswerQuestion: (id: string, answer: string | null) => Promise<void>;
-  onAgentAction: (id: string, action: "stop" | "retry" | "retry_model" | "prompt", currentModel?: string | null) => Promise<void>;
+  onAgentAction: (id: string, action: "stop" | "retry" | "retry_model" | "prompt" | "continue", currentModel?: string | null) => Promise<void>;
   canSpawnAgent: boolean;
   onSpawnAgent: (profile: AgentSpawnProfile, prompt: string) => Promise<boolean>;
 };
@@ -124,7 +150,7 @@ function failureDomain(domain: string | null, t: Messages) {
   return t.unknownValue;
 }
 
-export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onResolveApproval, onAnswerQuestion, onAgentAction, canSpawnAgent, onSpawnAgent }: Props) {
+export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onResolveApproval, onAnswerQuestion, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [multiAnswers, setMultiAnswers] = useState<Record<string, string[]>>({});
   const [controlBusy, setControlBusy] = useState(false);
@@ -134,8 +160,10 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
   // 只列还等着人的那些。已经由 Agent 读过但不需要人处理的事件不该占用户的注意力。
   const pendingEvents = events.filter((event) => event.requires_user_action && event.delivery_state !== "ignored" && event.delivery_state !== "resolved");
   const [expanded, setExpanded] = useState(false);
+  const [showAllAgents, setShowAllAgents] = useState(false);
+  const [showAgentHistory, setShowAgentHistory] = useState(false);
   const runningTools = activity.tools.filter((tool) => tool.status === "running").length;
-  const sidebarAgents = activity.agents.filter(isSidebarAgent);
+  const sidebarAgents = showAgentHistory ? activity.agents : activity.agents.filter(isSidebarAgent);
   const hiddenAgents = activity.agents.length - sidebarAgents.length;
   async function runControl(action: () => Promise<void>) {
     if (controlBusy) return;
@@ -226,17 +254,28 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
         </Text>}
       </Box>)}
     </VStack>}
+    {activity.team_statistics_unavailable && <Text mt="2" fontSize="2xs">{t.teamStatisticsUnavailable}</Text>}
+    {activity.teams?.map((team) => <Box key={team.parent_session_id} mt="2" fontSize="2xs" color="var(--text-dim)">
+      <Text>{t.agentTeam} · {t.running} {team.running}/{team.policy?.max_concurrent ?? t.unknownValue} · {t.queued} {team.queued}/{team.policy?.max_queued ?? t.unknownValue}</Text>
+      <Text>{t.teamUsage}: {team.usage.accounted_tokens} {t.tokenUnit} · {t.modelCalls}: {team.usage.model_calls}</Text>
+      <Text>{t.parentUsage}: {team.parent_usage.accounted_tokens} · {t.childUsage}: {team.child_usage.accounted_tokens} · {t.auxiliaryUsage}: {team.auxiliary_usage.accounted_tokens} · {t.compressionUsage}: {team.compression_usage.accounted_tokens}</Text>
+      {team.usage.unknown_usage_calls > 0 && <Text>{t.unknownUsageCalls}: {team.usage.unknown_usage_calls}</Text>}
+      {team.ledger_incomplete && <Text>{t.ledgerIncomplete}</Text>}
+    </Box>)}
     {sidebarAgents.length > 0 && <VStack align="stretch" gap="1" mt="3">
-      {sidebarAgents.slice(0, 4).map((agent) => <Box key={agent.id} pl={agent.parent_id ? "3" : "0"}>
+      {sidebarAgents.slice(0, showAllAgents ? sidebarAgents.length : AGENT_PREVIEW_LIMIT).map((agent) => <Box key={agent.id} pl={agent.parent_id ? "3" : "0"}>
         <Flex justify="space-between" gap="2" fontSize="xs"><Text overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{agent.label || agent.profile || t.agent}</Text><Flex align="center" gap="1" flexShrink="0"><Text color="var(--text-dim)">{agent.retry_wait ? t.retryWaiting : runtimeStatus(agent.status, t)} · {t.turn} {agent.current_turn}</Text><Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "agent", id: agent.id })}>{t.details}</Button></Flex></Flex>
         <Text fontSize="2xs" color="var(--text-faint)" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{agent.model || t.unknownValue} · {agent.total_tokens ?? t.unknownValue} {t.tokenUnit} · {agentDuration(agent, t)}{agent.dedicated_worktree ? ` · ${agent.worktree_branch || t.worktree}` : ""}</Text>
-        {agent.background && <Flex gap="1" mt="1">
-          {agent.status === "working" && <><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "prompt"))}>{t.instruct}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "stop"))}>{t.stop}</Button></>}
-          {["blocked", "failed", "done", "partial", "cancelled"].includes(agent.status) && <><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry"))}>{t.retry}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry_model", agent.model))}>{t.changeModel}</Button></>}
+        {agent.background && <Flex gap="1" mt="1" flexWrap="wrap">
+          {agent.status === "working" && <Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "prompt"))}>{t.instruct}</Button>}
+          {["working", "queued"].includes(agent.status) && <Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "stop"))}>{t.stop}</Button>}
+          {["blocked", "failed", "done", "completed", "partial", "cancelled", "interrupted"].includes(agent.status) && <><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "continue"))}>{t.continueAgent}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry"))}>{t.retry}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry_model", agent.model))}>{t.changeModel}</Button></>}
         </Flex>}
       </Box>)}
     </VStack>}
-    {detail && <RuntimeDetailPanel activity={activity} messages={t} target={detail} onClose={() => setDetail(null)} />}
+    {sidebarAgents.length > AGENT_PREVIEW_LIMIT && <Button size="2xs" variant="ghost" onClick={() => setShowAllAgents(!showAllAgents)}>{showAllAgents ? t.showFewerAgents : t.showAllAgents}</Button>}
+    {(hiddenAgents > 0 || showAgentHistory) && <Button size="2xs" variant="ghost" onClick={() => { setShowAgentHistory(!showAgentHistory); setShowAllAgents(true); }}>{showAgentHistory ? t.showActiveAgents : t.showAgentHistory}</Button>}
+    {detail && <RuntimeDetailPanel key={detail.id} activity={activity} messages={t} target={detail} onLoadRuns={onLoadRuns} onClose={() => setDetail(null)} />}
     {activity.tools[0] && <Text mt="2" fontSize="xs" color="var(--text-faint)" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
       {activity.tools[0].name} · {activity.tools[0].status === "running" ? t.toolRunning : activity.tools[0].status === "completed" ? t.toolDone : activity.tools[0].status === "partial" ? t.partial : t.toolFailed}
     </Text>}

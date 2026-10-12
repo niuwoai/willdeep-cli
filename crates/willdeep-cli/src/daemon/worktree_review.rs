@@ -231,7 +231,22 @@ async fn merge(
         return Err(StatusCode::CONFLICT);
     }
     let patch = tracked_patch(&current.worktree).map_err(review_error_status)?;
-    apply_patch(&current.root_workspace, &patch).map_err(review_error_status)?;
+    let runs =
+        willdeep_core::subagent::AgentRunStore::from_dispatch(&state.home.join("workers"), id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let retired = runs
+        .as_ref()
+        .map(|runs| runs.retire_agent(id))
+        .transpose()
+        .map_err(|_| StatusCode::CONFLICT)?
+        .unwrap_or(false);
+    if let Err(error) = apply_patch(&current.root_workspace, &patch) {
+        if retired && let Some(runs) = &runs {
+            runs.restore_retired_agent(id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        return Err(review_error_status(error));
+    }
     state
         .tasks
         .agents
@@ -572,6 +587,8 @@ mod tests {
 
         fn agent(&self) -> RuntimeAgent {
             RuntimeAgent {
+                run_id: None,
+                run_sequence: 0,
                 id: self.agent_id,
                 parent_id: Some(uuid::Uuid::new_v4()),
                 task_id: uuid::Uuid::new_v4(),

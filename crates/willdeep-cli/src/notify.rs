@@ -134,6 +134,8 @@ pub fn status_label(status: RuntimeStatus) -> &'static str {
         RuntimeStatus::Blocked => "blocked",
         RuntimeStatus::Failed => "failed",
         RuntimeStatus::Working => "running",
+        RuntimeStatus::Queued => "queued",
+        RuntimeStatus::Interrupted => "interrupted",
         RuntimeStatus::Done => "succeeded",
         RuntimeStatus::Partial => "partial",
         RuntimeStatus::Cancelled => "denied",

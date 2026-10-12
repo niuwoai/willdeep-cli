@@ -478,6 +478,33 @@ impl RuntimeClient {
         self.call("agent.prompt", params, Some(request_id)).await
     }
 
+    pub async fn continue_agent(
+        &self,
+        params: &willdeep_runtime_protocol::agent_team::ContinueAgentParams,
+        request_id: uuid::Uuid,
+    ) -> Result<
+        ApiResponse<willdeep_runtime_protocol::agent_team::AgentContinuationReceipt>,
+        ClientError,
+    > {
+        self.call("agent.continue", params, Some(request_id)).await
+    }
+
+    pub async fn agent_runs(
+        &self,
+        params: &willdeep_runtime_protocol::agent_team::AgentRunsParams,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::agent_team::AgentRunsPage>, ClientError>
+    {
+        self.call("agent.runs", params, None).await
+    }
+
+    pub async fn agent_team(
+        &self,
+        params: &IdParams,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::agent_team::AgentTeamSummary>, ClientError>
+    {
+        self.call("agent.team", params, None).await
+    }
+
     /// 把用户在本轮进行中说的话送进会话正在跑的任务；没有在途任务时
     /// `delivered` 为假，由调用方自行排队。
     pub async fn steer_turn(
@@ -580,7 +607,28 @@ impl RuntimeClient {
             .await
     }
 
-    /// 手机中继的连接状态。旧 Runtime 不认识这个操作，回 `unsupported_operation`。
+    /// Runtime 托管 Web 的状态；旧 Runtime 返回 unsupported_operation。
+    pub async fn web_app_status(
+        &self,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::web_app::WebAppStatus>, ClientError> {
+        self.call("webapp.status", &EmptyParams::default(), None)
+            .await
+    }
+
+    pub async fn web_app_start(
+        &self,
+        params: &willdeep_runtime_protocol::web_app::WebAppStartParams,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::web_app::WebAppStatus>, ClientError> {
+        self.call("webapp.start", params, None).await
+    }
+
+    pub async fn web_app_stop(
+        &self,
+    ) -> Result<ApiResponse<willdeep_runtime_protocol::web_app::WebAppStatus>, ClientError> {
+        self.call("webapp.stop", &EmptyParams::default(), None)
+            .await
+    }
+
     pub async fn mobile_status(
         &self,
     ) -> Result<ApiResponse<willdeep_runtime_protocol::MobileRelayStatus>, ClientError> {

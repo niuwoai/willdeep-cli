@@ -176,6 +176,18 @@ pub enum AgentEvent {
         elapsed_millis: u64,
         output_bytes: usize,
     },
+    /// Associates every event from a reusable worker with its durable attempt.
+    RunScoped {
+        run_id: uuid::Uuid,
+        sequence: u64,
+        event: Box<AgentEvent>,
+    },
+    SubagentQueued {
+        id: uuid::Uuid,
+        profile: String,
+        model: Option<String>,
+        label: String,
+    },
     SubagentStarted {
         id: uuid::Uuid,
         profile: String,
@@ -280,6 +292,22 @@ pub trait EventSink: Send + Sync {
     }
 }
 
+impl AgentEvent {
+    pub fn unscoped(&self) -> &Self {
+        match self {
+            Self::RunScoped { event, .. } => event.unscoped(),
+            _ => self,
+        }
+    }
+
+    pub fn into_unscoped(self) -> Self {
+        match self {
+            Self::RunScoped { event, .. } => event.into_unscoped(),
+            _ => self,
+        }
+    }
+}
+
 struct NoopSink;
 
 #[async_trait]
@@ -355,6 +383,10 @@ pub enum AgentError {
         "provider usage is unknown under a bounded token budget; no proposed tools were executed"
     )]
     TokenBudgetUsageUnknown,
+    #[error("Agent team budget blocked the request: {0}")]
+    TeamBudgetBlocked(String),
+    #[error("subagent blocked: {0}")]
+    SubagentBlocked(String),
     #[error("subagent failed: {0}")]
     Subagent(String),
     #[error("subagent stopped with {reason:?} after {turns} rounds; partial result:\n{report}")]
@@ -758,12 +790,7 @@ impl Agent {
     fn background_active(&self) -> bool {
         self.background_tasks
             .as_ref()
-            .map(|tasks| {
-                tasks
-                    .snapshots()
-                    .iter()
-                    .any(|task| task.status == crate::BackgroundTaskStatus::Running)
-            })
+            .map(|tasks| tasks.has_pending_tasks())
             .unwrap_or(false)
     }
 
@@ -809,6 +836,7 @@ impl Agent {
                 .map_err(AgentError::VerificationSnapshot)?,
         )?;
         recorder.watch_goal(self.goal_continuation.as_deref());
+        recorder.watch_background(self.background_tasks.as_deref());
         // 目标的计时只在跑的时候走：轮次之间、进程不在的时候都不算。
         if let Some(goal) = &self.goal_continuation {
             goal.resume();
@@ -973,6 +1001,11 @@ impl Agent {
                 return Err(error);
             }
             self.sink.emit(AgentEvent::TurnStarted { turn }).await;
+            if let Some(scope) = &self.usage_ledger {
+                scope
+                    .check_budget()
+                    .map_err(AgentError::TeamBudgetBlocked)?;
+            }
             let prepared = self
                 .request_messages_accounted(&messages, &mut compressed, &mut |usage| {
                     input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
@@ -1007,7 +1040,12 @@ impl Agent {
                     return Err(error);
                 }
             };
-            // 账本上的一行从这里开始计时；无论这次请求怎么收场都恰好落一行。
+            if let Some(scope) = &self.usage_ledger {
+                scope
+                    .check_budget()
+                    .map_err(AgentError::TeamBudgetBlocked)?;
+            }
+            // Record only admitted requests, never a call refused by the budget.
             let mut model_call = Some(match self.provider() {
                 Ok(provider) => self.begin_model_call(self.loop_usage_kind(), provider.as_ref()),
                 Err(_) => crate::usage_ledger::ModelCall::inert(),
@@ -1150,6 +1188,15 @@ impl Agent {
             }
             if self.has_bounded_usage() && !usage_known {
                 return Err(AgentError::TokenBudgetUsageUnknown);
+            }
+            // A completed answer may consume the last tokens. Refuse new side
+            // effects here; the next loop/request still checks the same budget.
+            if !completion.tool_calls.is_empty()
+                && let Some(scope) = &self.usage_ledger
+            {
+                scope
+                    .check_budget()
+                    .map_err(AgentError::TeamBudgetBlocked)?;
             }
             let content = completion.content.trim().to_owned();
             if !content.is_empty() {
@@ -1427,6 +1474,17 @@ impl Agent {
             return Vec::new();
         };
         messages.push(Message::host_instruction(text));
+        if let Some(background) = &self.background_tasks {
+            for event in &events {
+                if let Some(id) = event
+                    .dedup_key
+                    .as_deref()
+                    .and_then(|key| key.strip_prefix("task:"))
+                {
+                    background.mark_delivered(id);
+                }
+            }
+        }
         batch.iter().map(|leased| leased.lease_id).collect()
     }
 

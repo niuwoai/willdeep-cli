@@ -65,6 +65,7 @@ pub(super) fn test_server_state_with_scheduler(
         work_gate: Arc::new(RwLock::new(false)),
         kernel_store: willdeep_core::kernel_store::KernelStore::new(root),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(root)),
+        web_app: Arc::new(web_app::WebAppService::new(root)),
     }
 }
 
@@ -459,6 +460,7 @@ async fn authorization_requires_exact_local_token() {
         work_gate: Arc::new(RwLock::new(false)),
         kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(&root)),
+        web_app: Arc::new(web_app::WebAppService::new(&root)),
     });
     assert!(
         runtime_capabilities(&state)
@@ -1927,6 +1929,7 @@ fn interrupted_goal_session(
         .enqueue_turn(
             session.id,
             session_store::CreateRuntimeTurn {
+                team_control: None,
                 origin_client,
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "keep going".to_owned(),

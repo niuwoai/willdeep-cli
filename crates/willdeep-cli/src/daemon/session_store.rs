@@ -141,6 +141,8 @@ pub(crate) struct RewindPlan {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct StoredRuntimeTurn {
+    #[serde(default)]
+    team_control: Option<willdeep_runtime_protocol::agent_team::AgentTeamControl>,
     metadata: RuntimeTurn,
     prompt: String,
     attachments: Vec<willdeep_core::MessageAttachment>,
@@ -169,6 +171,8 @@ pub(super) struct GoalResumeCandidate {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CreateRuntimeTurn {
+    #[serde(default)]
+    pub team_control: Option<willdeep_runtime_protocol::agent_team::AgentTeamControl>,
     pub request_id: uuid::Uuid,
     pub prompt: String,
     #[serde(default)]
@@ -328,7 +332,9 @@ impl RuntimeSessionStore {
                     .metadata
                     .active_task_id
                     .is_some_and(|task_id| tool_task_ids.contains(&task_id));
-                if !has_tool_activity && prepare_core_for_turn_replay(&core, turn)? {
+                if turn.team_control.is_some()
+                    || (!has_tool_activity && prepare_core_for_turn_replay(&core, turn)?)
+                {
                     turn.metadata.status = RuntimeTurnStatus::Queued;
                     turn.metadata.active_task_id = None;
                     turn.metadata.started_at = None;
@@ -1053,45 +1059,62 @@ impl RuntimeSessionStore {
         session_id: uuid::Uuid,
         request: CreateRuntimeTurn,
     ) -> Result<(RuntimeTurn, bool, bool)> {
-        if request.prompt.trim().is_empty() && request.attachments.is_empty() {
+        if request.team_control.is_none()
+            && request.prompt.trim().is_empty()
+            && request.attachments.is_empty()
+        {
             bail!("Turn prompt and attachments must not both be empty");
         }
         let session = self.get(session_id)?.context("Runtime Session not found")?;
         if session.status == RuntimeSessionStatus::Archived {
             bail!("Runtime Session is archived");
         }
-        let title_changed =
-            self.apply_auto_title(session_id, &request.prompt, !request.attachments.is_empty())?;
+        let title_changed = if request.team_control.is_none() {
+            self.apply_auto_title(session_id, &request.prompt, !request.attachments.is_empty())?
+        } else {
+            false
+        };
         let mut turns = self.turns_lock()?;
         if let Some(turn) = turns.values().find(|turn| {
             turn.metadata.session_id == session_id && turn.metadata.request_id == request.request_id
         }) {
+            if turn.team_control != request.team_control {
+                bail!("Turn request ID was reused for a different Agent control request");
+            }
             return Ok((turn.metadata.clone(), false, title_changed));
+        }
+        if let Some(willdeep_runtime_protocol::agent_team::AgentTeamControl::Continue { id, .. }) = &request.team_control
+            && turns.values().any(|turn| !turn_status_is_terminal(turn.metadata.status)
+                && matches!(&turn.team_control, Some(willdeep_runtime_protocol::agent_team::AgentTeamControl::Continue { id: pending_id, .. }) if pending_id == id)) {
+            bail!("this Agent already has a pending continuation request");
         }
         let timestamp = now();
         // 后续输入的上下文（RSI 反馈）：同一会话的上一轮怎么结束的、隔了多久、
         // 这一句是不是排在还没跑完的轮次后面。会话的第一轮没有可比的对象，不记。
-        let followup = self.feedback().and_then(|_| {
-            let previous = turns
-                .values()
-                .filter(|turn| turn.metadata.session_id == session_id)
-                .max_by_key(|turn| turn.metadata.queue_sequence)?;
-            let queued_behind = turns.values().any(|turn| {
-                turn.metadata.session_id == session_id
-                    && !turn_status_is_terminal(turn.metadata.status)
+        let followup = self
+            .feedback()
+            .filter(|_| request.team_control.is_none())
+            .and_then(|_| {
+                let previous = turns
+                    .values()
+                    .filter(|turn| turn.metadata.session_id == session_id)
+                    .max_by_key(|turn| turn.metadata.queue_sequence)?;
+                let queued_behind = turns.values().any(|turn| {
+                    turn.metadata.session_id == session_id
+                        && !turn_status_is_terminal(turn.metadata.status)
+                });
+                let gap_ms = previous
+                    .metadata
+                    .completed_at
+                    .map(|completed| timestamp.saturating_sub(completed).saturating_mul(1_000));
+                Some((
+                    turn_status_name(previous.metadata.status),
+                    gap_ms,
+                    queued_behind,
+                    // 这一句是对哪一轮的反应：失败链按它把反应绑到那一轮上。
+                    previous.metadata.id.to_string(),
+                ))
             });
-            let gap_ms = previous
-                .metadata
-                .completed_at
-                .map(|completed| timestamp.saturating_sub(completed).saturating_mul(1_000));
-            Some((
-                turn_status_name(previous.metadata.status),
-                gap_ms,
-                queued_behind,
-                // 这一句是对哪一轮的反应：失败链按它把反应绑到那一轮上。
-                previous.metadata.id.to_string(),
-            ))
-        });
         let queue_sequence = turns
             .values()
             .map(|turn| turn.metadata.queue_sequence)
@@ -1134,6 +1157,7 @@ impl RuntimeSessionStore {
         turns.insert(
             metadata.id,
             StoredRuntimeTurn {
+                team_control: request.team_control,
                 metadata: metadata.clone(),
                 prompt: request.prompt,
                 attachments: request.attachments,
@@ -1322,6 +1346,7 @@ impl RuntimeSessionStore {
         let claimed = ClaimedRuntimeTurn {
             metadata: turn.metadata.clone(),
             request: SubmitTask {
+                team_control: turn.team_control.clone(),
                 prompt: turn.prompt.clone(),
                 attachments: turn.attachments.clone(),
                 workspace: session.workspace.clone(),

@@ -335,6 +335,11 @@ impl Agent {
             .map(|pin| format!("\n\nThe host tracks the active goal separately and re-injects it every turn; do not restate its checklist, and never contradict it:\n{pin}"))
             .unwrap_or_default();
         for (index, (provider, hosted_prompt)) in candidates.into_iter().enumerate() {
+            if let Some(scope) = &self.usage_ledger {
+                scope
+                    .check_budget()
+                    .map_err(AgentError::TeamBudgetBlocked)?;
+            }
             let model = crate::provider::provider_model(provider.as_ref())
                 .unwrap_or_else(|| format!("candidate #{}", index + 1));
             let request = if hosted_prompt {

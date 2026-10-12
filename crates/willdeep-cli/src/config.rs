@@ -148,6 +148,8 @@ fn redact_inline_api_keys(value: &mut toml::Value) {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    #[serde(default)]
+    pub agent_team: willdeep_core::subagent::AgentTeamSettings,
     pub version: Option<u32>,
     pub default_provider: Option<String>,
     #[serde(default)]
@@ -588,6 +590,7 @@ pub fn deprecations(file: &ConfigFile) -> Vec<Deprecation> {
 }
 
 pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
+    file.agent_team.validate().map_err(anyhow::Error::msg)?;
     if let Some(version) = file.version
         && version != CONFIG_VERSION
     {

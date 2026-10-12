@@ -1,0 +1,12 @@
+{
+  "version": "0.99.0-rc1",
+  "status": "passed",
+  "binary_sha256": "ce7f7289858835d4b28e67c4abe34ca9d4c24c027aeb4a0e6fa9f08ffae28ba8",
+  "model_calls": 3,
+  "checks": [
+    "空闲父会话续做同一 Agent，保留历史",
+    "相同请求只创建一个 Run，主模型零额外调用",
+    "重启后累计预算保持，预算用尽的后续 Run 明确 Blocked",
+    "分页历史与报告回执持久化，自动统计不包含报告"
+  ]
+}

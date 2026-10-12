@@ -9,8 +9,13 @@ pub use kernel_event::{
     PublicKernelEvent,
 };
 
+pub mod agent_team;
 pub mod model_catalog;
 pub mod schedule;
+pub mod web_app;
+pub use agent_team::{
+    AgentRun, AgentRunReason, AgentRunsPage, AgentUsageSummary, ContinueAgentParams,
+};
 pub const ATTACHED_CONTEXT_HEADER: &str = "The user attached the following context for this turn — treat it as task setup, not verbatim user text:";
 pub const USER_MESSAGE_BOUNDARY: &str = "<<<willdeep:user-message:v1>>>";
 pub use model_catalog::{
@@ -1324,6 +1329,9 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "agent.list",
     "agent.get",
     "agent.spawn",
+    "agent.continue",
+    "agent.runs",
+    "agent.team",
     "agent.prompt",
     "agent.wait",
     "agent.stop",
@@ -1364,6 +1372,9 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "worktree.audit",
     "worktree.quarantine",
     "mobile.status",
+    "webapp.status",
+    "webapp.start",
+    "webapp.stop",
     "mobile.enable",
     "mobile.disable",
 ];

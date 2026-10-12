@@ -1,6 +1,14 @@
 version = 1
 default_provider = "some-im"
 
+[agent_team]
+# 主 Agent 的一层后台团队；不包含主 Agent、Shell 或 monitor。
+max_concurrent = 8
+max_queued = 64
+# 团队模型请求准入预算（主/子 Agent、辅助调用、压缩累计）；已在途请求可能超额。
+# 缺失用量或中断计量不确定时停止继续请求；生效配置按父会话持久保存。
+# token_budget = 1000000
+
 [agent]
 # Optional per-task acceptance checks; use a task-specific --config when needed.
 # Each check must pass on the final Git snapshot. Does not grant execution permission.

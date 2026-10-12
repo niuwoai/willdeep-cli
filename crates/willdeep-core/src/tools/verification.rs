@@ -322,6 +322,7 @@ pub(super) fn verification_status(status: &BackgroundTaskStatus) -> Verification
         | BackgroundTaskStatus::Killed
         | BackgroundTaskStatus::Blocked
         | BackgroundTaskStatus::Running
+        | BackgroundTaskStatus::Queued
         | BackgroundTaskStatus::Partial => VerificationStatus::Failed,
     }
 }

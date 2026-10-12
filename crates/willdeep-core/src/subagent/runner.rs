@@ -281,7 +281,7 @@ impl FileClaim {
             .map_err(|_| AgentError::Subagent("subagent file claims are unavailable".to_owned()))?;
         let conflicts = files.intersection(&held).cloned().collect::<Vec<_>>();
         if !conflicts.is_empty() {
-            return Err(AgentError::Subagent(format!(
+            return Err(AgentError::SubagentBlocked(format!(
                 "another running subagent already claimed {}; wait for it to finish or dispatch this work over different files",
                 conflicts
                     .iter()

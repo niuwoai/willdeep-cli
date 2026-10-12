@@ -275,6 +275,8 @@ struct RuntimeActivitySummary {
     tasks: Vec<WebRuntimeTask>,
     gates: Vec<WebRuntimeGate>,
     attention_count: usize,
+    teams: Vec<willdeep_runtime_protocol::agent_team::AgentTeamSummary>,
+    team_statistics_unavailable: bool,
 }
 
 #[derive(Serialize)]
@@ -346,6 +348,20 @@ struct ComposerSkill {
 }
 
 pub async fn serve(config: WebConfig) -> Result<()> {
+    serve_internal(config, None).await
+}
+
+pub(crate) async fn serve_managed(
+    config: WebConfig,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    serve_internal(config, Some(shutdown)).await
+}
+
+async fn serve_internal(
+    config: WebConfig,
+    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<()> {
     crate::favorites_plugin::ensure_installed(&config.home).await?;
     crate::video_studio_plugin::ensure_installed(&config.home).await?;
     if config.open_setup && config.listen.ip().is_loopback() {
@@ -354,8 +370,10 @@ pub async fn serve(config: WebConfig) -> Result<()> {
         }
         crate::config_plugin::ensure_installed(&config.home).await?;
     }
-    for workspace in &config.workspaces {
-        crate::daemon::ensure_remote_workspace(&config.home, workspace).await?;
+    if shutdown.is_none() {
+        for workspace in &config.workspaces {
+            crate::daemon::ensure_remote_workspace(&config.home, workspace).await?;
+        }
     }
     let state = Arc::new(WebState {
         config_path: config.config_path,
@@ -413,11 +431,16 @@ pub async fn serve(config: WebConfig) -> Result<()> {
             post(answer_runtime_question),
         )
         .route("/api/runtime/agents/{id}/stop", post(stop_runtime_agent))
+        .route("/api/runtime/agents/{id}/runs", get(agent_run_history))
         .route("/api/runtime/agents/{id}/retry", post(retry_runtime_agent))
         .route("/api/runtime/agents/spawn", post(spawn_runtime_agent))
         .route(
             "/api/runtime/agents/{id}/prompt",
             post(prompt_runtime_agent),
+        )
+        .route(
+            "/api/runtime/agents/{id}/continue",
+            post(continue_runtime_agent),
         )
         .route(
             "/api/settings/model-routing",
@@ -506,7 +529,15 @@ pub async fn serve(config: WebConfig) -> Result<()> {
     if let Some(started) = config.setup_started {
         let _ = started.send(address);
     }
-    axum::serve(listener, app).await.context("run Web server")?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            match shutdown {
+                Some(receiver) => crate::daemon::wait_for_shutdown(receiver).await,
+                None => std::future::pending::<()>().await,
+            }
+        })
+        .await
+        .context("run Web server")?;
     Ok(())
 }
 
@@ -734,10 +765,41 @@ async fn runtime_activity(
         crate::daemon::runtime_snapshot(&state.home, &workspace.root, None, crate::Surface::Web)
             .await
             .map_err(WebError::from_anyhow)?;
+    let mut teams = Vec::new();
+    let mut team_statistics_unavailable = false;
+    for agent in snapshot
+        .agents
+        .iter()
+        .filter(|agent| agent.parent_id.is_none())
+    {
+        match crate::daemon::tui_bridge::remote_agent_team(&state.home, agent.id).await {
+            Ok(team) => teams.push(team),
+            Err(_) => team_statistics_unavailable = true,
+        }
+    }
+    let mut agents: Vec<_> = snapshot.agents.into_iter().map(web_runtime_agent).collect();
+    for worker in teams.iter().flat_map(|team| &team.workers) {
+        if let Some(agent) = agents.iter_mut().find(|agent| agent.id == worker.agent_id) {
+            let run = &worker.latest_run;
+            let end = run
+                .finished_at_ms
+                .unwrap_or_else(|| now_seconds().saturating_mul(1000));
+            agent.elapsed_seconds = run
+                .started_at_ms
+                .map(|start| end.saturating_sub(start) / 1000)
+                .unwrap_or(0);
+            agent.finished_seconds_ago = run
+                .finished_at_ms
+                .map(|finished| now_seconds().saturating_sub(finished / 1000));
+            agent.total_tokens = run.usage.total_tokens;
+        }
+    }
     Ok(Json(RuntimeActivitySummary {
+        teams,
+        team_statistics_unavailable,
         tools: snapshot.tools,
         artifacts: snapshot.artifacts,
-        agents: snapshot.agents.into_iter().map(web_runtime_agent).collect(),
+        agents,
         tasks: snapshot.tasks.into_iter().map(web_runtime_task).collect(),
         gates: snapshot
             .gates
@@ -855,6 +917,8 @@ fn runtime_status_name(status: willdeep_core::RuntimeStatus) -> &'static str {
     match status {
         willdeep_core::RuntimeStatus::Idle => "idle",
         willdeep_core::RuntimeStatus::Working => "working",
+        willdeep_core::RuntimeStatus::Queued => "queued",
+        willdeep_core::RuntimeStatus::Interrupted => "interrupted",
         willdeep_core::RuntimeStatus::Blocked => "blocked",
         willdeep_core::RuntimeStatus::WaitingApproval => "waiting_approval",
         willdeep_core::RuntimeStatus::WaitingAnswer => "waiting_answer",
@@ -950,6 +1014,36 @@ async fn prompt_runtime_agent(
         .await
         .map_err(WebError::from_anyhow)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn continue_runtime_agent(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Json(action): Json<WebAgentPromptAction>,
+) -> Result<StatusCode, WebError> {
+    authorize_runtime_agent(&state, &action.workspace, id).await?;
+    crate::daemon::continue_remote_agent(&state.home, id, action.message)
+        .await
+        .map_err(WebError::from_anyhow)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+struct AgentRunHistoryQuery {
+    workspace: String,
+    after: Option<u64>,
+}
+
+async fn agent_run_history(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Query(query): Query<AgentRunHistoryQuery>,
+) -> Result<Json<willdeep_runtime_protocol::AgentRunsPage>, WebError> {
+    authorize_runtime_agent(&state, &query.workspace, id).await?;
+    crate::daemon::tui_bridge::remote_agent_runs(&state.home, id, query.after)
+        .await
+        .map(Json)
+        .map_err(WebError::from_anyhow)
 }
 
 async fn spawn_runtime_agent(

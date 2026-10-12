@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
 use crate::agent::AgentInstructionInbox;
+use crate::subagent::runs::{AgentRunStore, RunRequest};
+use crate::subagent::scheduler::{AgentTeamSettings, Scheduler};
+use willdeep_runtime_protocol::{AgentRunReason, AgentStatus};
 
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
@@ -30,6 +33,7 @@ pub enum BackgroundTaskKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackgroundTaskStatus {
+    Queued,
     Partial,
     Running,
     Blocked,
@@ -40,9 +44,17 @@ pub enum BackgroundTaskStatus {
     LaunchFailed,
 }
 
+impl BackgroundTaskStatus {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Queued | Self::Running)
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct BackgroundTaskSnapshot {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<uuid::Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<uuid::Uuid>,
     pub kind: BackgroundTaskKind,
@@ -63,6 +75,7 @@ pub struct BackgroundTaskEvent {
 }
 
 struct TaskRecord {
+    run_request: Option<RunRequest>,
     snapshot: BackgroundTaskSnapshot,
     started: Instant,
     finished: Option<Instant>,
@@ -82,6 +95,7 @@ struct RegistryState {
 }
 
 struct LaunchSpec {
+    run_request: Option<RunRequest>,
     agent_id: Option<uuid::Uuid>,
     kind: BackgroundTaskKind,
     label: String,
@@ -96,6 +110,9 @@ struct LaunchSpec {
 
 #[derive(Clone)]
 pub struct BackgroundTaskRegistry {
+    team_owner: Arc<Mutex<Option<std::fs::File>>>,
+    run_store: Option<AgentRunStore>,
+    scheduler: Scheduler,
     inner: Arc<Mutex<RegistryState>>,
     events: broadcast::Sender<BackgroundTaskEvent>,
     lifecycle: Option<TaskLifecycleHook>,
@@ -108,6 +125,9 @@ impl Default for BackgroundTaskRegistry {
     fn default() -> Self {
         let (events, _) = broadcast::channel(64);
         Self {
+            team_owner: Arc::new(Mutex::new(None)),
+            run_store: None,
+            scheduler: Scheduler::new(AgentTeamSettings::default()),
             inner: Arc::new(Mutex::new(RegistryState {
                 tasks: Vec::new(),
                 pending: VecDeque::new(),
@@ -121,6 +141,43 @@ impl Default for BackgroundTaskRegistry {
 }
 
 impl BackgroundTaskRegistry {
+    pub(crate) fn claim_agent_team(&self) -> Result<(), String> {
+        let mut owner = self
+            .team_owner
+            .lock()
+            .map_err(|_| "Agent team ownership unavailable")?;
+        if owner.is_none()
+            && let Some(store) = &self.run_store
+        {
+            *owner = Some(store.claim()?);
+        }
+        Ok(())
+    }
+    pub fn with_agent_run_store(mut self, store: AgentRunStore) -> Self {
+        self.run_store = Some(store);
+        self
+    }
+
+    pub fn agent_run_store(&self) -> Option<&AgentRunStore> {
+        self.run_store.as_ref()
+    }
+    pub fn has_pending_tasks(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .any(|task| task.snapshot.status.is_pending())
+    }
+    pub fn with_agent_team_settings(mut self, settings: AgentTeamSettings) -> Result<Self, String> {
+        settings.validate()?;
+        let settings = match &self.run_store {
+            Some(store) => store.configure_team(settings)?,
+            None => settings,
+        };
+        self.scheduler = Scheduler::new(settings);
+        Ok(self)
+    }
     pub fn with_lifecycle_observer<H, HFut>(mut self, lifecycle: H) -> Self
     where
         H: Fn(BackgroundTaskSnapshot) -> HFut + Send + Sync + 'static,
@@ -155,6 +212,19 @@ impl BackgroundTaskRegistry {
             .collect()
     }
 
+    pub fn queued_subagents(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.snapshot.kind == BackgroundTaskKind::Subagent
+                    && task.snapshot.status == BackgroundTaskStatus::Queued
+            })
+            .count()
+    }
+
     /// 还在跑的委派 Worker 数。不受 [`Self::snapshots`] 50 条上限影响：
     /// 目标的完成门禁不能因为列表截断而漏看一个还没回报告的 Worker。
     /// Shell 与 monitor 不算——常驻的开发服务器不该把目标永远卡在「未完成」。
@@ -166,7 +236,7 @@ impl BackgroundTaskRegistry {
             .iter()
             .filter(|task| {
                 task.snapshot.kind == BackgroundTaskKind::Subagent
-                    && task.snapshot.status == BackgroundTaskStatus::Running
+                    && task.snapshot.status.is_pending()
             })
             .count()
     }
@@ -191,6 +261,28 @@ impl BackgroundTaskRegistry {
             .expect("background registry")
             .delivered
             .insert(id.to_owned());
+    }
+
+    pub(crate) fn received_runs(&self) -> std::collections::BTreeSet<uuid::Uuid> {
+        let state = self.inner.lock().expect("background registry");
+        state
+            .tasks
+            .iter()
+            .filter(|task| state.delivered.contains(&task.snapshot.id))
+            .filter_map(|task| task.snapshot.run_id)
+            .collect()
+    }
+
+    pub(crate) fn acknowledge_committed(
+        &self,
+        runs: &std::collections::BTreeSet<uuid::Uuid>,
+    ) -> Result<(), String> {
+        if let Some(store) = &self.run_store {
+            for id in runs {
+                store.acknowledge_report(*id)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn is_delivered(&self, id: &str) -> bool {
@@ -240,9 +332,7 @@ impl BackgroundTaskRegistry {
         state
             .tasks
             .iter()
-            .find(|task| {
-                task.snapshot.id == id && task.snapshot.status == BackgroundTaskStatus::Running
-            })
+            .find(|task| task.snapshot.id == id && task.snapshot.status.is_pending())
             .is_some_and(|task| task.cancel.send(true).is_ok())
     }
 
@@ -253,17 +343,20 @@ impl BackgroundTaskRegistry {
             .iter()
             .rev()
             .find(|task| {
-                task.snapshot.agent_id == Some(agent_id)
-                    && task.snapshot.status == BackgroundTaskStatus::Running
+                task.snapshot.agent_id == Some(agent_id) && task.snapshot.status.is_pending()
             })
             .is_some_and(|task| task.cancel.send(true).is_ok())
     }
 
     pub fn retry(&self, id: &str) -> Option<String> {
-        let (agent_id, kind, label, launcher, lifecycle, instruction_inbox) = {
+        self.retry_with_model(id, None)
+    }
+
+    fn retry_with_model(&self, id: &str, model: Option<&str>) -> Option<String> {
+        let (agent_id, kind, label, launcher, lifecycle, instruction_inbox, mut run_request) = {
             let state = self.inner.lock().expect("background registry");
             let task = state.tasks.iter().find(|task| task.snapshot.id == id)?;
-            if task.snapshot.status == BackgroundTaskStatus::Running {
+            if task.snapshot.status.is_pending() {
                 return None;
             }
             (
@@ -273,10 +366,22 @@ impl BackgroundTaskRegistry {
                 task.retry.clone()?,
                 task.lifecycle.clone(),
                 task.instruction_inbox.clone(),
+                task.run_request.clone(),
             )
         };
         let future = launcher();
-        Some(self.launch(LaunchSpec {
+        if let Some(request) = &mut run_request {
+            request.request_id = uuid::Uuid::new_v4();
+            request.reason = AgentRunReason::Retry;
+            if let Some(model) = model {
+                request.model = Some(model.to_owned());
+                if let Some(dispatch) = request.dispatch.as_object_mut() {
+                    dispatch.insert("model".into(), serde_json::Value::String(model.to_owned()));
+                }
+            }
+        }
+        self.launch(LaunchSpec {
+            run_request,
             agent_id,
             kind,
             label,
@@ -285,10 +390,19 @@ impl BackgroundTaskRegistry {
             lifecycle,
             instruction_inbox,
             cancel_aware: None,
-        }))
+        })
+        .ok()
     }
 
     pub fn retry_agent(&self, agent_id: uuid::Uuid) -> Option<String> {
+        self.retry_agent_with_model(agent_id, None)
+    }
+
+    pub(crate) fn retry_agent_with_model(
+        &self,
+        agent_id: uuid::Uuid,
+        model: Option<&str>,
+    ) -> Option<String> {
         let id = self
             .inner
             .lock()
@@ -300,7 +414,19 @@ impl BackgroundTaskRegistry {
             .snapshot
             .id
             .clone();
-        self.retry(&id)
+        self.retry_with_model(&id, model)
+    }
+
+    pub(crate) fn run_model(&self, agent_id: uuid::Uuid) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .rev()
+            .find(|task| task.snapshot.agent_id == Some(agent_id))
+            .and_then(|task| task.run_request.as_ref())
+            .and_then(|request| request.model.clone())
     }
 
     /// 取走「监视器发过事件」的计数并清零。
@@ -365,6 +491,7 @@ impl BackgroundTaskRegistry {
         let launcher: TaskLauncher = Arc::new(move || Box::pin(launcher()));
         let future = launcher();
         self.launch(LaunchSpec {
+            run_request: None,
             agent_id: None,
             kind,
             label,
@@ -374,6 +501,7 @@ impl BackgroundTaskRegistry {
             instruction_inbox: None,
             cancel_aware: None,
         })
+        .expect("shell admission is unrestricted")
     }
 
     /// 起一个监视器。`run` 拿到分配好的 `mon_xxxxxx` 句柄和取消信号，**自己**
@@ -387,6 +515,7 @@ impl BackgroundTaskRegistry {
         let (cancel, cancelled) = watch::channel(false);
         let future = Box::pin(run(id.clone(), cancelled.clone()));
         self.launch(LaunchSpec {
+            run_request: None,
             agent_id: None,
             kind: BackgroundTaskKind::Monitor,
             label,
@@ -396,8 +525,10 @@ impl BackgroundTaskRegistry {
             instruction_inbox: None,
             cancel_aware: Some((id, cancel, cancelled)),
         })
+        .expect("monitor admission is unrestricted")
     }
 
+    #[cfg(test)]
     pub(crate) fn start_retriable_with_lifecycle<F, Fut, H, HFut>(
         &self,
         agent_id: uuid::Uuid,
@@ -406,7 +537,34 @@ impl BackgroundTaskRegistry {
         instruction_inbox: Arc<AgentInstructionInbox>,
         launcher: F,
         lifecycle: H,
-    ) -> String
+    ) -> Result<String, String>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = TaskResult> + Send + 'static,
+        H: Fn(BackgroundTaskSnapshot) -> HFut + Send + Sync + 'static,
+        HFut: Future<Output = ()> + Send + 'static,
+    {
+        self.start_agent_run(
+            None,
+            agent_id,
+            kind,
+            label,
+            instruction_inbox,
+            launcher,
+            lifecycle,
+        )
+    }
+
+    pub(crate) fn start_agent_run<F, Fut, H, HFut>(
+        &self,
+        run_request: Option<RunRequest>,
+        agent_id: uuid::Uuid,
+        kind: BackgroundTaskKind,
+        label: String,
+        instruction_inbox: Arc<AgentInstructionInbox>,
+        launcher: F,
+        lifecycle: H,
+    ) -> Result<String, String>
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = TaskResult> + Send + 'static,
@@ -417,6 +575,7 @@ impl BackgroundTaskRegistry {
         let lifecycle: TaskLifecycleHook = Arc::new(move |snapshot| Box::pin(lifecycle(snapshot)));
         let future = launcher();
         self.launch(LaunchSpec {
+            run_request,
             agent_id: Some(agent_id),
             kind,
             label,
@@ -428,8 +587,12 @@ impl BackgroundTaskRegistry {
         })
     }
 
-    fn launch(&self, spec: LaunchSpec) -> String {
+    fn launch(&self, spec: LaunchSpec) -> Result<String, String> {
+        if spec.kind == BackgroundTaskKind::Subagent {
+            self.claim_agent_team()?;
+        }
         let LaunchSpec {
+            run_request,
             agent_id,
             kind,
             label,
@@ -439,39 +602,97 @@ impl BackgroundTaskRegistry {
             instruction_inbox,
             cancel_aware,
         } = spec;
+        let agent_id = if kind == BackgroundTaskKind::Subagent {
+            Some(agent_id.unwrap_or_else(uuid::Uuid::new_v4))
+        } else {
+            agent_id
+        };
+        let run_request = run_request.or_else(|| {
+            agent_id.map(|agent_id| RunRequest {
+                request_id: uuid::Uuid::new_v4(),
+                agent_id,
+                reason: AgentRunReason::Spawn,
+                label: label.clone(),
+                model: None,
+                max_turns: None,
+                token_budget: None,
+                timeout_seconds: None,
+                dispatch: serde_json::Value::Null,
+            })
+        });
+        let mut state = self.inner.lock().expect("background registry");
+        if let Some(request) = &run_request {
+            if let Some(task) = state
+                .tasks
+                .iter()
+                .find(|task| task.snapshot.run_id == Some(request.request_id))
+            {
+                if task.run_request.as_ref().is_none_or(|previous| {
+                    previous.agent_id != request.agent_id || previous.dispatch != request.dispatch
+                }) {
+                    return Err("Agent request ID was reused with a different task".into());
+                }
+                return Ok(task.snapshot.id.clone());
+            }
+        }
+        let ticket = if kind == BackgroundTaskKind::Subagent {
+            Some(
+                self.scheduler
+                    .reserve(agent_id.ok_or("subagent identity is missing")?)?,
+            )
+        } else {
+            None
+        };
+        let queued = ticket.as_ref().is_some_and(|ticket| ticket.queued);
         let self_cancelling = cancel_aware.is_some();
         let (id, cancel, mut cancelled) = match cancel_aware {
             Some(parts) => parts,
             None => {
                 let (cancel, cancelled) = watch::channel(false);
-                (new_task_id(&kind), cancel, cancelled)
+                (
+                    run_request
+                        .as_ref()
+                        .map(|request| format!("agent_{}", request.request_id.simple()))
+                        .unwrap_or_else(|| new_task_id(&kind)),
+                    cancel,
+                    cancelled,
+                )
             }
         };
         let snapshot = BackgroundTaskSnapshot {
             id: id.clone(),
+            run_id: run_request.as_ref().map(|request| request.request_id),
             agent_id,
             kind,
             label,
-            status: BackgroundTaskStatus::Running,
+            status: if queued {
+                BackgroundTaskStatus::Queued
+            } else {
+                BackgroundTaskStatus::Running
+            },
             elapsed_millis: 0,
             settled_millis: None,
             exit_code: None,
             output_bytes: 0,
         };
-        self.inner
-            .lock()
-            .expect("background registry")
-            .tasks
-            .push(TaskRecord {
-                snapshot: snapshot.clone(),
-                started: Instant::now(),
-                finished: None,
-                output: String::new(),
-                cancel,
-                retry,
-                lifecycle: lifecycle.clone(),
-                instruction_inbox,
-            });
+        if let (Some(store), Some(request)) = (&self.run_store, &run_request) {
+            let (record, created) = store.create(request.clone())?;
+            if !created && record.status != AgentStatus::Queued {
+                return Ok(id);
+            }
+        }
+        state.tasks.push(TaskRecord {
+            run_request,
+            snapshot: snapshot.clone(),
+            started: Instant::now(),
+            finished: None,
+            output: String::new(),
+            cancel,
+            retry,
+            lifecycle: lifecycle.clone(),
+            instruction_inbox,
+        });
+        drop(state);
         let registry = self.clone();
         let task_id = id.clone();
         let observer = self.lifecycle.clone();
@@ -479,17 +700,98 @@ impl BackgroundTaskRegistry {
             if let Some(observer) = &observer {
                 observer(snapshot.clone()).await;
             }
+            if queued && let Some(lifecycle) = &lifecycle {
+                lifecycle(snapshot.clone()).await;
+            }
+            let permit = if let Some(ticket) = ticket {
+                let admission = tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => Err("task cancelled".to_owned()),
+                    result = ticket.wait() => result,
+                };
+                match admission {
+                    Ok(permit) => Some(permit),
+                    Err(error) => {
+                        if let Some(event) = registry.finish(
+                            &task_id,
+                            TaskResult {
+                                status: BackgroundTaskStatus::Killed,
+                                exit_code: None,
+                                output: error,
+                            },
+                        ) {
+                            if let Some(observer) = &observer {
+                                observer(event.snapshot.clone()).await;
+                            }
+                            if let Some(lifecycle) = &lifecycle {
+                                lifecycle(event.snapshot).await;
+                            }
+                        }
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            if let (Some(store), Some(run_id)) = (&registry.run_store, snapshot.run_id)
+                && let Err(error) = store.start(run_id)
+            {
+                if let Some(event) = registry.finish(
+                    &task_id,
+                    TaskResult {
+                        status: BackgroundTaskStatus::Failed,
+                        exit_code: None,
+                        output: format!("Agent run could not start durably: {error}"),
+                    },
+                ) {
+                    if let Some(observer) = &observer {
+                        observer(event.snapshot.clone()).await;
+                    }
+                    if let Some(lifecycle) = &lifecycle {
+                        lifecycle(event.snapshot).await;
+                    }
+                }
+                return;
+            }
+            let (running, deadline) = {
+                let mut state = registry.inner.lock().expect("background registry");
+                let task = state
+                    .tasks
+                    .iter_mut()
+                    .find(|task| task.snapshot.id == task_id)
+                    .expect("registered task");
+                task.snapshot.status = BackgroundTaskStatus::Running;
+                task.started = Instant::now();
+                let deadline = task
+                    .run_request
+                    .as_ref()
+                    .and_then(|request| request.timeout_seconds)
+                    .map(|seconds| {
+                        tokio::time::Instant::from_std(task.started)
+                            + std::time::Duration::from_secs(seconds)
+                    });
+                (task.snapshot.clone(), deadline)
+            };
+            if queued && let Some(observer) = &observer {
+                observer(running.clone()).await;
+            }
             if let Some(lifecycle) = &lifecycle {
-                lifecycle(snapshot).await;
+                lifecycle(running).await;
             }
             let result = if self_cancelling {
                 future.await
             } else {
                 tokio::select! {
-                    result = future => result,
+                    biased;
+                    _ = async { if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; } else { std::future::pending::<()>().await; } } => TaskResult {
+                        status: BackgroundTaskStatus::TimedOut, exit_code: None,
+                        output: "Agent run reached its execution timeout; existing workspace changes were preserved and tools were not replayed.".into(),
+                    },
                     _ = cancelled.changed() => TaskResult { status: BackgroundTaskStatus::Killed, exit_code: None, output: "task cancelled".to_owned() },
+                    result = future => result,
                 }
             };
+            drop(permit);
             if let Some(event) = registry.finish(&task_id, result) {
                 if let Some(observer) = &observer {
                     observer(event.snapshot.clone()).await;
@@ -499,10 +801,25 @@ impl BackgroundTaskRegistry {
                 }
             }
         });
-        id
+        Ok(id)
     }
 
     fn finish(&self, id: &str, result: TaskResult) -> Option<BackgroundTaskEvent> {
+        if let Some(store) = &self.run_store {
+            let run_id = self
+                .inner
+                .lock()
+                .expect("background registry")
+                .tasks
+                .iter()
+                .find(|task| task.snapshot.id == id)
+                .and_then(|task| task.snapshot.run_id);
+            if let Some(run_id) = run_id
+                && let Err(error) = store.finish(run_id, run_status(&result.status), &result.output)
+            {
+                eprintln!("cannot persist Agent run completion: {error}");
+            }
+        }
         let event = {
             let mut state = self.inner.lock().expect("background registry");
             let task = state.tasks.iter_mut().find(|task| task.snapshot.id == id)?;
@@ -541,6 +858,20 @@ impl BackgroundTaskRegistry {
     }
 }
 
+fn run_status(status: &BackgroundTaskStatus) -> AgentStatus {
+    match status {
+        BackgroundTaskStatus::Queued => AgentStatus::Queued,
+        BackgroundTaskStatus::Running => AgentStatus::Running,
+        BackgroundTaskStatus::Partial => AgentStatus::Partial,
+        BackgroundTaskStatus::Completed => AgentStatus::Completed,
+        BackgroundTaskStatus::Blocked => AgentStatus::Blocked,
+        BackgroundTaskStatus::Killed => AgentStatus::Cancelled,
+        BackgroundTaskStatus::Failed
+        | BackgroundTaskStatus::TimedOut
+        | BackgroundTaskStatus::LaunchFailed => AgentStatus::Failed,
+    }
+}
+
 pub(crate) struct TaskResult {
     pub status: BackgroundTaskStatus,
     pub exit_code: Option<i32>,
@@ -558,7 +889,9 @@ fn completion_notice(task: &BackgroundTaskSnapshot, output: &str) -> String {
         BackgroundTaskStatus::LaunchFailed => NoticeStatus::LaunchFailed,
         BackgroundTaskStatus::Partial => NoticeStatus::Partial,
         BackgroundTaskStatus::Blocked => NoticeStatus::Blocked,
-        BackgroundTaskStatus::Failed | BackgroundTaskStatus::Running => NoticeStatus::Failed,
+        BackgroundTaskStatus::Failed
+        | BackgroundTaskStatus::Running
+        | BackgroundTaskStatus::Queued => NoticeStatus::Failed,
     };
     crate::background_notice::render(&Notice {
         id: &task.id,
@@ -632,6 +965,199 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[tokio::test]
+    async fn twelve_workers_admit_eight_and_cancel_queued_without_execution() {
+        let registry = BackgroundTaskRegistry::default();
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let mut handles = Vec::new();
+        for index in 0..12 {
+            let started = started.clone();
+            let release = release.clone();
+            handles.push(
+                registry
+                    .start_retriable_with_lifecycle(
+                        uuid::Uuid::new_v4(),
+                        BackgroundTaskKind::Subagent,
+                        index.to_string(),
+                        Arc::new(AgentInstructionInbox::default()),
+                        move || {
+                            let started = started.clone();
+                            let release = release.clone();
+                            async move {
+                                started.send(index).unwrap();
+                                release.acquire().await.unwrap().forget();
+                                TaskResult {
+                                    status: BackgroundTaskStatus::Completed,
+                                    exit_code: None,
+                                    output: index.to_string(),
+                                }
+                            }
+                        },
+                        |_| async {},
+                    )
+                    .unwrap(),
+            );
+        }
+        for _ in 0..8 {
+            tokio::time::timeout(std::time::Duration::from_secs(3), starts.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert!(starts.try_recv().is_err());
+        assert_eq!(registry.queued_subagents(), 4);
+        assert_eq!(registry.running_subagents(), 12);
+        let mut events = registry.subscribe();
+        assert!(registry.kill(&handles[8]));
+        let cancelled = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cancelled.snapshot.status, BackgroundTaskStatus::Killed);
+        assert_eq!(registry.queued_subagents(), 3);
+        release.add_permits(1);
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(3), starts.recv())
+                .await
+                .unwrap(),
+            Some(9)
+        );
+        assert!(starts.try_recv().is_err());
+        for handle in handles {
+            registry.kill(&handle);
+        }
+    }
+
+    #[tokio::test]
+    async fn run_timeout_starts_after_admission_and_covers_the_entire_launcher() {
+        let registry = BackgroundTaskRegistry::default()
+            .with_agent_team_settings(AgentTeamSettings {
+                max_concurrent: 1,
+                max_queued: 1,
+                token_budget: None,
+            })
+            .unwrap();
+        let blocker = registry
+            .start_retriable_with_lifecycle(
+                uuid::Uuid::new_v4(),
+                BackgroundTaskKind::Subagent,
+                "hold".into(),
+                Arc::new(AgentInstructionInbox::default()),
+                || async { std::future::pending::<TaskResult>().await },
+                |_| async {},
+            )
+            .unwrap();
+        let agent_id = uuid::Uuid::new_v4();
+        let run = RunRequest {
+            request_id: uuid::Uuid::new_v4(),
+            agent_id,
+            reason: AgentRunReason::Spawn,
+            label: "timeout".into(),
+            model: None,
+            max_turns: Some(1),
+            token_budget: None,
+            timeout_seconds: Some(1),
+            dispatch: serde_json::Value::Null,
+        };
+        let _queued = registry
+            .start_agent_run(
+                Some(run),
+                agent_id,
+                BackgroundTaskKind::Subagent,
+                "timeout".into(),
+                Arc::new(AgentInstructionInbox::default()),
+                || async { std::future::pending::<TaskResult>().await },
+                |_| async {},
+            )
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        assert_eq!(
+            registry.task_for_agent(agent_id).unwrap().status,
+            BackgroundTaskStatus::Queued
+        );
+        registry.kill(&blocker);
+        tokio::time::timeout(std::time::Duration::from_secs(4), async {
+            while registry
+                .task_for_agent(agent_id)
+                .unwrap()
+                .status
+                .is_pending()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            registry.task_for_agent(agent_id).unwrap().status,
+            BackgroundTaskStatus::TimedOut
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_uses_same_queue_and_cannot_start_a_duplicate_agent() {
+        let registry = BackgroundTaskRegistry::default()
+            .with_agent_team_settings(AgentTeamSettings {
+                max_concurrent: 1,
+                max_queued: 8,
+                token_budget: None,
+            })
+            .unwrap();
+        let mut events = registry.subscribe();
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let agent = uuid::Uuid::new_v4();
+        let first = registry
+            .start_retriable_with_lifecycle(
+                agent,
+                BackgroundTaskKind::Subagent,
+                "first".into(),
+                Arc::new(AgentInstructionInbox::default()),
+                move || {
+                    let started = started.clone();
+                    async move {
+                        started.send(()).unwrap();
+                        TaskResult {
+                            status: BackgroundTaskStatus::Completed,
+                            exit_code: None,
+                            output: "done".into(),
+                        }
+                    }
+                },
+                |_| async {},
+            )
+            .unwrap();
+        starts.recv().await.unwrap();
+        events.recv().await.unwrap();
+        // Completion publication precedes final lifecycle callbacks and permit release.
+        while !registry.scheduler.state_is_idle_for_test() {
+            tokio::task::yield_now().await;
+        }
+        let blocking = registry
+            .start_retriable_with_lifecycle(
+                uuid::Uuid::new_v4(),
+                BackgroundTaskKind::Subagent,
+                "hold".into(),
+                Arc::new(AgentInstructionInbox::default()),
+                || async { std::future::pending::<TaskResult>().await },
+                |_| async {},
+            )
+            .unwrap();
+        let retried = registry.retry(&first).unwrap();
+        assert_eq!(
+            registry.task_for_agent(agent).unwrap().status,
+            BackgroundTaskStatus::Queued
+        );
+        assert!(registry.retry(&first).is_none());
+        assert!(starts.try_recv().is_err());
+        registry.kill(&blocking);
+        tokio::time::timeout(std::time::Duration::from_secs(3), starts.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(first, retried);
+    }
 
     #[tokio::test]
     async fn completed_task_publishes_notice_and_output() {
@@ -714,19 +1240,21 @@ mod tests {
         let registry = BackgroundTaskRegistry::default();
         let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
         let cancelled_agent_id = uuid::Uuid::new_v4();
-        registry.start_retriable_with_lifecycle(
-            cancelled_agent_id,
-            BackgroundTaskKind::Subagent,
-            "cancelled agent".to_owned(),
-            Arc::new(AgentInstructionInbox::default()),
-            || async { std::future::pending::<TaskResult>().await },
-            move |snapshot| {
-                let tx = lifecycle_tx.clone();
-                async move {
-                    let _ = tx.send(snapshot);
-                }
-            },
-        );
+        registry
+            .start_retriable_with_lifecycle(
+                cancelled_agent_id,
+                BackgroundTaskKind::Subagent,
+                "cancelled agent".to_owned(),
+                Arc::new(AgentInstructionInbox::default()),
+                || async { std::future::pending::<TaskResult>().await },
+                move |snapshot| {
+                    let tx = lifecycle_tx.clone();
+                    async move {
+                        let _ = tx.send(snapshot);
+                    }
+                },
+            )
+            .unwrap();
         assert_eq!(
             lifecycle_rx.recv().await.unwrap().status,
             BackgroundTaskStatus::Running
@@ -743,32 +1271,34 @@ mod tests {
         let launch_attempts = attempts.clone();
         let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
         let retried_agent_id = uuid::Uuid::new_v4();
-        let id = registry.start_retriable_with_lifecycle(
-            retried_agent_id,
-            BackgroundTaskKind::Subagent,
-            "retried agent".to_owned(),
-            Arc::new(AgentInstructionInbox::default()),
-            move || {
-                let attempt = launch_attempts.fetch_add(1, Ordering::SeqCst);
-                async move {
-                    TaskResult {
-                        status: if attempt == 0 {
-                            BackgroundTaskStatus::Failed
-                        } else {
-                            BackgroundTaskStatus::Completed
-                        },
-                        exit_code: Some(if attempt == 0 { 1 } else { 0 }),
-                        output: format!("attempt {attempt}"),
+        let id = registry
+            .start_retriable_with_lifecycle(
+                retried_agent_id,
+                BackgroundTaskKind::Subagent,
+                "retried agent".to_owned(),
+                Arc::new(AgentInstructionInbox::default()),
+                move || {
+                    let attempt = launch_attempts.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        TaskResult {
+                            status: if attempt == 0 {
+                                BackgroundTaskStatus::Failed
+                            } else {
+                                BackgroundTaskStatus::Completed
+                            },
+                            exit_code: Some(if attempt == 0 { 1 } else { 0 }),
+                            output: format!("attempt {attempt}"),
+                        }
                     }
-                }
-            },
-            move |snapshot| {
-                let tx = lifecycle_tx.clone();
-                async move {
-                    let _ = tx.send(snapshot);
-                }
-            },
-        );
+                },
+                move |snapshot| {
+                    let tx = lifecycle_tx.clone();
+                    async move {
+                        let _ = tx.send(snapshot);
+                    }
+                },
+            )
+            .unwrap();
         assert_eq!(
             lifecycle_rx.recv().await.unwrap().status,
             BackgroundTaskStatus::Running

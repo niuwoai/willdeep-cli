@@ -1864,6 +1864,7 @@ mod tests {
             Message::assistant("好的", Vec::new()),
         ];
         session.execution_checkpoint = Some(CheckpointMetadata {
+            agent_reports_received: Default::default(),
             runtime_parameters: None,
             runtime_parameters_sha256: None,
             required_verifications: vec!["cargo test".to_owned()],

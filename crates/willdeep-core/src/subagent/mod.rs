@@ -22,11 +22,15 @@ mod audit;
 mod brief;
 mod catalog;
 mod checkpoint;
+pub(crate) mod runs;
+pub use runs::AgentRunStore;
 mod dispatch_store;
 mod file_leases;
 mod profiles;
 mod runner;
+pub(crate) mod scheduler;
 pub(crate) use runner::{worker_base_section, worker_prompt_parts_with};
+pub use scheduler::AgentTeamSettings;
 mod text;
 mod types;
 

@@ -76,6 +76,10 @@ pub struct Session {
     #[serde(default)]
     pub attention_read: BTreeSet<String>,
     #[serde(default)]
+    pub agent_reports_received: BTreeSet<Uuid>,
+    #[serde(default)]
+    pub agent_control_requests: BTreeSet<Uuid>,
+    #[serde(default)]
     pub runtime_event_cursor: u64,
     #[serde(default)]
     pub runtime_managed: bool,
@@ -103,6 +107,8 @@ impl Session {
     pub fn fork_snapshot(&self) -> Self {
         let mut fork = self.clone();
         fork.id = Uuid::new_v4();
+        fork.agent_reports_received.clear();
+        fork.agent_control_requests.clear();
         fork.metadata_baseline = None;
         fork.created_at = now();
         fork.updated_at = fork.created_at;
@@ -135,6 +141,8 @@ impl Session {
             messages: Vec::new(),
             current_plan: None,
             attention_read: BTreeSet::new(),
+            agent_reports_received: BTreeSet::new(),
+            agent_control_requests: BTreeSet::new(),
             runtime_event_cursor: 0,
             runtime_managed: false,
             goal: None,
@@ -804,6 +812,8 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         .map(|value| value.as_secs())
         .unwrap_or_default();
     Ok(Session {
+        agent_reports_received: BTreeSet::new(),
+        agent_control_requests: BTreeSet::new(),
         metadata_baseline: None,
         version: SESSION_VERSION,
         id,

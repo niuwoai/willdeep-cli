@@ -137,6 +137,8 @@ pub struct UsageLedgerRecord {
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<Uuid>,
     pub workspace: Option<PathBuf>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -166,6 +168,7 @@ impl UsageLedgerRecord {
             turn_id: None,
             task_id: None,
             agent_id: None,
+            run_id: None,
             workspace: None,
             provider: None,
             model: None,

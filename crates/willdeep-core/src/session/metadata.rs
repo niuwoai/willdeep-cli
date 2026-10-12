@@ -89,6 +89,12 @@ impl Metadata {
             .attention_read
             .extend(latest.attention_read.iter().cloned());
         proposed.runtime_managed |= latest.runtime_managed;
+        proposed
+            .agent_reports_received
+            .extend(&latest.agent_reports_received);
+        proposed
+            .agent_control_requests
+            .extend(&latest.agent_control_requests);
         Ok(())
     }
 }
