@@ -22,6 +22,11 @@
 
 | 文档 | 内容 |
 |---|---|
+| [附件与 Runtime 定时任务](decisions/2026-10-12-attachments-runtime-schedules.md) | 附件管理、定时任务所有权与历史维护设计 |
+| [0.98.0-rc1 验收](verification/0.98.0-rc1/README.md) | 实际预算、超时、Web 与终端图片协议验证 |
+
+| 文档 | 内容 |
+|---|---|
 | [some.im 集成](SOMEIM_INTEGRATION.md) | 登录、自动识别、请求头、视觉回退、web_search |
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |

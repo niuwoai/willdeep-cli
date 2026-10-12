@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use willdeep_core::schedule::{Schedule, ScheduleStore, ScheduledTask, parse_hhmm};
+use willdeep_core::schedule::{Schedule, parse_hhmm};
+use willdeep_runtime_protocol::schedule::{ScheduleDraft, ScheduleSettings, ScheduledTaskView};
 
 use super::stdio_server::{BuiltinPlugin, HostClient, string_arg};
 
@@ -27,11 +28,7 @@ impl Scheduler {
         }
     }
 
-    fn store(&self) -> ScheduleStore {
-        ScheduleStore::new(&self.home)
-    }
-
-    fn schedule_task(&self, arguments: &Value) -> Result<String, String> {
+    fn draft(&self, arguments: &Value) -> Result<ScheduleDraft, String> {
         let prompt = string_arg(arguments, "prompt").ok_or("prompt is required")?;
         let schedule = parse_schedule(arguments)?;
         schedule.validate()?;
@@ -69,75 +66,110 @@ impl Scheduler {
             .chars()
             .take(48)
             .collect::<String>();
-        let task = ScheduledTask {
-            id: uuid::Uuid::new_v4(),
-            name: name.clone(),
-            prompt: prompt.clone(),
-            workspace: workspace.clone(),
-            schedule,
-            goal: goal.clone(),
-            approval_mode: approval_mode.clone(),
-            enabled: true,
-            created_at: now(),
-            last_run_at: None,
-            last_session_id: None,
-            origin_session_id: None,
+        let settings = ScheduleSettings {
+            timezone: string_arg(arguments, "timezone").unwrap_or_else(|| "local".to_owned()),
+            profile: string_arg(arguments, "profile"),
+            model: string_arg(arguments, "model"),
+            max_turns: optional_integer(arguments, "max_turns")?
+                .map(|value| u32::try_from(value).map_err(|_| "max_turns is too large"))
+                .transpose()?,
+            timeout_seconds: optional_integer(arguments, "timeout_seconds")?,
+            token_budget: optional_integer(arguments, "token_budget")?,
+            ..Default::default()
         };
-        let id = task.id;
-        self.store().update(|tasks| tasks.push(task))?;
-        let goal_line = goal
-            .map(|goal| format!("\nGoal (the task removes itself once met): {goal}"))
-            .unwrap_or_default();
+        let draft = ScheduleDraft {
+            name,
+            prompt,
+            workspace,
+            schedule,
+            goal,
+            approval_mode,
+            settings,
+        };
+        draft.validate()?;
+        Ok(draft)
+    }
+
+    async fn schedule_task(&self, arguments: &Value) -> Result<String, String> {
+        let draft = self.draft(arguments)?;
+        if let Some(mode) = draft.approval_mode.as_deref() {
+            let requested =
+                willdeep_core::ApprovalMode::parse(mode).ok_or("invalid approval mode")?;
+            let root = draft
+                .workspace
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            let workspaces = crate::daemon::remote_workspaces(&self.home)
+                .await
+                .map_err(|error| error.to_string())?;
+            let baseline = workspaces
+                .iter()
+                .find(|workspace| workspace.root == root)
+                .map(|workspace| workspace.access.approval_mode())
+                .unwrap_or(willdeep_core::ApprovalMode::Strict);
+            if !automatic_approval_allowed(baseline, requested) {
+                return Err("A scheduler tool cannot raise unattended permissions. Use the Web or CLI task editor to explicitly select a higher approval mode.".to_owned());
+            }
+        }
+        let result = crate::daemon::schedule_operation(
+            &self.home,
+            "schedule.create",
+            serde_json::to_value(&draft).map_err(|e| e.to_string())?,
+            Some(uuid::Uuid::new_v4()),
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+        let view: ScheduledTaskView = serde_json::from_value(result).map_err(|e| e.to_string())?;
         Ok(format!(
-            "Scheduled task \"{name}\" created (task_id: {id}); it will run {} in {} with approval mode {}. \
-Each run starts a fresh session whose first message is this prompt: {prompt}{goal_line}\n\
-Runs are fired by the WillDeep runtime daemon; nothing runs right now.",
-            schedule.summary(),
-            workspace.display(),
-            approval_mode.as_deref().unwrap_or("of the workspace")
+            "Scheduled task {:?} created (task_id: {}); {} in timezone {}. Runtime owns the task; nothing runs now. Manage configuration and history in the Web Scheduled Tasks page.",
+            view.task.name,
+            view.task.id,
+            view.task.schedule.summary(),
+            view.task.settings.timezone
         ))
     }
 
-    fn complete_scheduled_task(&self, arguments: &Value) -> Result<String, String> {
+    async fn complete_scheduled_task(&self, arguments: &Value) -> Result<String, String> {
         let raw = string_arg(arguments, "task_id").ok_or("task_id is required")?;
         let id = uuid::Uuid::parse_str(&raw).map_err(|_| {
             "task_id must be a scheduled-task id returned by schedule_task".to_owned()
         })?;
-        let reason = string_arg(arguments, "reason")
-            .map(|reason| format!(" Reason: {reason}"))
-            .unwrap_or_default();
-        let removed = self.store().update(|tasks| {
-            let before = tasks.len();
-            tasks.retain(|task| task.id != id);
-            before != tasks.len()
-        })?;
-        Ok(if removed {
-            format!("Scheduled task {id} marked complete and removed.{reason}")
-        } else {
-            format!("No scheduled task with id {id} (it may already be removed).{reason}")
-        })
+        let revision = arguments
+            .get("expected_revision")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        crate::daemon::schedule_operation(
+            &self.home,
+            "schedule.action",
+            json!({"id": id, "expected_revision": revision, "action":"complete"}),
+            Some(uuid::Uuid::new_v4()),
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+        Ok(format!(
+            "Scheduled task {id} completed. Future triggers stopped; configuration and run history retained."
+        ))
     }
 
-    fn list_scheduled_tasks(&self) -> Result<String, String> {
-        let tasks = self.store().list()?;
+    async fn list_scheduled_tasks(&self) -> Result<String, String> {
+        let data = crate::daemon::schedule_operation(&self.home, "schedule.list", json!({}), None)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let tasks: Vec<ScheduledTaskView> =
+            serde_json::from_value(data).map_err(|e| e.to_string())?;
         if tasks.is_empty() {
             return Ok("No scheduled tasks.".to_owned());
         }
-        let now = now();
-        let offset = willdeep_core::schedule::local_utc_offset(now);
         Ok(tasks
             .iter()
-            .map(|task| {
-                let next = task
-                    .next_fire(offset)
-                    .map(|at| {
-                        willdeep_core::format_iso8601((at as i64 + offset).max(0) as u64)
-                            .trim_end_matches('Z')
-                            .replace('T', " ")
-                    })
+            .map(|view| {
+                let task = &view.task;
+                let next = view
+                    .next_fire_at
+                    .map(willdeep_core::format_iso8601)
                     .unwrap_or_else(|| "disabled".to_owned());
                 format!(
-                    "- {} · {} · {} · next {} (local) · workspace {}{}{}",
+                    "- {} · {} · {} · next {} (UTC) · workspace {}{}{}",
                     task.id,
                     task.name,
                     task.schedule.summary(),
@@ -157,7 +189,23 @@ Runs are fired by the WillDeep runtime daemon; nothing runs right now.",
     }
 }
 
+fn automatic_approval_allowed(
+    baseline: willdeep_core::ApprovalMode,
+    requested: willdeep_core::ApprovalMode,
+) -> bool {
+    baseline == requested
+        || baseline == willdeep_core::ApprovalMode::FullAccess
+        || (baseline != willdeep_core::ApprovalMode::ReadOnly
+            && requested == willdeep_core::ApprovalMode::Strict)
+}
+
 fn parse_schedule(arguments: &Value) -> Result<Schedule, String> {
+    let once = string_arg(arguments, "once_at")
+        .map(|value| {
+            willdeep_runtime_protocol::schedule::parse_rfc3339_timestamp(&value)
+                .ok_or("once_at must be RFC3339 with an explicit timezone")
+        })
+        .transpose()?;
     let time = |key: &str| -> Result<Option<(u8, u8)>, String> {
         string_arg(arguments, key)
             .map(|raw| parse_hhmm(&raw).ok_or(format!("{key} must be HH:MM (24-hour local time)")))
@@ -175,6 +223,7 @@ fn parse_schedule(arguments: &Value) -> Result<Schedule, String> {
     let weekdays = time("weekdays_at")?;
     let weekly = time("weekly_at")?;
     let chosen = [
+        once.is_some(),
         interval.is_some(),
         daily.is_some(),
         weekdays.is_some(),
@@ -189,7 +238,9 @@ fn parse_schedule(arguments: &Value) -> Result<Schedule, String> {
                 .to_owned(),
         );
     }
-    Ok(if let Some(minutes) = interval {
+    Ok(if let Some(at) = once {
+        Schedule::OnceAt { at }
+    } else if let Some(minutes) = interval {
         Schedule::Interval { minutes }
     } else if let Some((hour, minute)) = daily {
         Schedule::DailyAt { hour, minute }
@@ -208,11 +259,15 @@ fn parse_schedule(arguments: &Value) -> Result<Schedule, String> {
     })
 }
 
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default()
+fn optional_integer(arguments: &Value, key: &str) -> Result<Option<u64>, String> {
+    let Some(value) = arguments.get(key).filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        .map(Some)
+        .ok_or_else(|| format!("{key} must be a positive integer"))
 }
 
 #[async_trait]
@@ -225,11 +280,18 @@ impl BuiltinPlugin for Scheduler {
         vec![
             json!({
                 "name": "schedule_task",
-                "description": "Schedule a recurring task that runs on its own later, each time in a fresh session started by the WillDeep runtime daemon. Use when the user asks for something to happen repeatedly or to be watched over time (\"every 30 minutes check…\", \"every morning summarize…\", \"watch X until Y\"). The prompt must be self-contained: each run sees nothing but it. Give exactly one schedule. Optionally give a goal: each run then checks whether it is met and, if so, calls complete_scheduled_task to remove the task. This does NOT run anything now.",
+                "description": "Schedule a recurring task that runs on its own later, each time in a fresh session started by the WillDeep runtime daemon. Use when the user asks for something to happen repeatedly or to be watched over time (\"every 30 minutes check…\", \"every morning summarize…\", \"watch X until Y\"). The prompt must be self-contained: each run sees nothing but it. Give exactly one schedule. Optionally give a goal: each run then checks whether it is met and, if so, calls complete_scheduled_task to complete the task while preserving its history. This does NOT run anything now.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string", "description": "What each run should do: target, scope, expected output, safety constraints."},
+                        "once_at": {"type":"string", "description":"Run once at RFC3339 datetime with an explicit offset, e.g. 2026-10-13T09:00:00+08:00."},
+                        "timezone": {"type":"string", "description":"IANA timezone such as Asia/Shanghai; local means the Runtime's timezone."},
+                        "profile": {"type":"string", "description":"Existing provider profile for these runs."},
+                        "model": {"type":"string", "description":"Existing model identifier for these runs."},
+                        "max_turns": {"type":"integer", "minimum":1, "maximum":1000},
+                        "token_budget": {"type":"integer", "minimum":1000, "maximum":10000000},
+                        "timeout_seconds": {"type":"integer", "minimum":1, "maximum":86400},
                         "title": {"type": "string", "description": "Short display name. Defaults to the goal or prompt."},
                         "interval_minutes": {"type": "string", "description": "Run every N minutes, e.g. \"30\"."},
                         "daily_at": {"type": "string", "description": "Run every day at local HH:MM."},
@@ -246,14 +308,15 @@ impl BuiltinPlugin for Scheduler {
             }),
             json!({
                 "name": "complete_scheduled_task",
-                "description": "Remove a scheduled task. A goal-bearing scheduled run calls this with its own task_id once the goal is met; it also cancels a task on the user's request.",
+                "description": "Stop future triggers while keeping configuration and run history. A goal-bearing scheduled run calls this with its own task_id once the goal is met; it also cancels a task on the user's request.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
+                        "expected_revision": {"type":"integer", "description":"Configuration revision from the scheduled run; completion fails if the task has changed."},
                         "reason": {"type": "string"}
                     },
-                    "required": ["task_id"],
+                    "required": ["task_id", "expected_revision"],
                     "additionalProperties": false
                 }
             }),
@@ -273,9 +336,9 @@ impl BuiltinPlugin for Scheduler {
         _host: &HostClient,
     ) -> Result<String, String> {
         match name {
-            "schedule_task" => self.schedule_task(&arguments),
-            "complete_scheduled_task" => self.complete_scheduled_task(&arguments),
-            "list_scheduled_tasks" => self.list_scheduled_tasks(),
+            "schedule_task" => self.schedule_task(&arguments).await,
+            "complete_scheduled_task" => self.complete_scheduled_task(&arguments).await,
+            "list_scheduled_tasks" => self.list_scheduled_tasks().await,
             other => Err(format!("unknown tool {other}")),
         }
     }
@@ -294,44 +357,14 @@ mod tests {
     }
 
     #[test]
-    fn schedule_list_and_complete_like_xedit() {
+    fn builds_a_runtime_owned_request_without_writing_a_schedule_file() {
         let (scheduler, home) = scheduler();
-        let created = scheduler
-            .schedule_task(&json!({
-                "prompt": "Check whether CI on main is green",
-                "interval_minutes": "30",
-                "goal": "CI on main is green"
-            }))
-            .unwrap();
-        assert!(created.contains("every 30 minutes"), "{created}");
-        let tasks = ScheduleStore::new(&home).list().unwrap();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].name, "CI on main is green");
-        assert_eq!(tasks[0].schedule, Schedule::Interval { minutes: 30 });
-        assert!(created.contains(&tasks[0].id.to_string()));
-
-        let listed = scheduler.list_scheduled_tasks().unwrap();
-        assert!(
-            listed.contains("every 30 minutes") && listed.contains("goal: CI on main is green")
-        );
-
-        let done = scheduler
-            .complete_scheduled_task(
-                &json!({"task_id": tasks[0].id.to_string(), "reason": "green"}),
-            )
-            .unwrap();
-        assert!(done.contains("removed"));
-        assert!(
-            scheduler
-                .complete_scheduled_task(&json!({"task_id": tasks[0].id.to_string()}))
-                .unwrap()
-                .contains("already be removed")
-        );
-        assert_eq!(
-            scheduler.list_scheduled_tasks().unwrap(),
-            "No scheduled tasks."
-        );
-        let _ = std::fs::remove_dir_all(&home);
+        let draft = scheduler.draft(&json!({"prompt": "Check CI", "interval_minutes": "30", "goal": "CI is green", "timezone": "Asia/Shanghai"})).unwrap();
+        assert_eq!(draft.name, "CI is green");
+        assert_eq!(draft.schedule, Schedule::Interval { minutes: 30 });
+        assert_eq!(draft.settings.timezone, "Asia/Shanghai");
+        assert!(!home.join("schedules.json").exists());
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
@@ -356,17 +389,15 @@ mod tests {
                 "absolute",
             ),
         ] {
-            let error = scheduler.schedule_task(&arguments).unwrap_err();
+            let error = scheduler.draft(&arguments).unwrap_err();
             assert!(error.contains(needle), "{arguments}: {error}");
         }
         let weekly = scheduler
-            .schedule_task(&json!({"prompt": "x", "weekly_at": "09:30", "weekday": "2", "approval_mode": "full-access"}))
+            .draft(&json!({"prompt": "x", "weekly_at": "09:30", "weekday": "2", "approval_mode": "full-access"}))
             .unwrap();
-        assert!(
-            weekly.contains("every Monday at 09:30") && weekly.contains("full-access"),
-            "{weekly}"
-        );
-        assert!(ScheduleStore::new(&home).path().exists());
+        assert_eq!(weekly.schedule.summary(), "every Monday at 09:30");
+        assert_eq!(weekly.approval_mode.as_deref(), Some("full-access"));
+        assert!(!home.join("schedules.json").exists());
         let _ = std::fs::remove_dir_all(&home);
     }
 }

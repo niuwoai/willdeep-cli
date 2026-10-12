@@ -8,6 +8,7 @@ export type ConversationItem = {
   role: "user" | "assistant" | "system" | "plan";
   content: string;
   attachment_count: number;
+  attachment_reference?: string;
   plan?: Plan;
   details?: string[];
   /// 这条助手消息发起的工具调用：名字、脱敏摘要、有无结果。原始参数不下发。

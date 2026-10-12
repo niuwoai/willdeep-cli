@@ -1,0 +1,15 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+const require = createRequire(new URL("../web/package.json", import.meta.url));
+const { Terminal } = require("@xterm/headless");
+const [path, output] = process.argv.slice(2);
+let data = await readFile(path);
+const leave = data.lastIndexOf(Buffer.from("\x1b[?1049l"));
+if (leave >= 0) data = data.subarray(0, leave);
+const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true });
+await new Promise((resolve) => terminal.write(data, resolve));
+const lines = Array.from({ length: terminal.buffer.active.length }, (_, index) => (terminal.buffer.active.getLine(index)?.translateToString(true) ?? "").trimEnd());
+const text = lines.join("\n");
+if (output) await writeFile(output, text);
+process.stdout.write(JSON.stringify({ text }));
+terminal.dispose();

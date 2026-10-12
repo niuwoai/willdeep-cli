@@ -57,6 +57,7 @@ enum MediaView {
 
 #[derive(Clone, Debug)]
 struct MediaOverlay {
+    inline_attachment: bool,
     items: Vec<MediaItem>,
     selected: usize,
     view: MediaView,
@@ -120,6 +121,7 @@ impl MediaState {
             return false;
         }
         self.overlay = Some(MediaOverlay {
+            inline_attachment: false,
             items,
             selected: 0,
             view: MediaView::List,
@@ -136,10 +138,30 @@ impl MediaState {
         self.hits.clear();
     }
 
+    pub(super) fn open_attachment(&mut self, label: String, target: String) -> MediaAction {
+        self.overlay = Some(MediaOverlay {
+            inline_attachment: true,
+            items: vec![MediaItem {
+                kind: MediaKind::Image,
+                label,
+                target: target.clone(),
+            }],
+            selected: 0,
+            view: MediaView::Loading {
+                target: target.clone(),
+            },
+        });
+        MediaAction::LoadImage(target)
+    }
+
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> MediaAction {
         let Some(overlay) = self.overlay.as_mut() else {
             return MediaAction::None;
         };
+        if overlay.inline_attachment && key.code == KeyCode::Esc {
+            self.close();
+            return MediaAction::None;
+        }
         match &overlay.view {
             MediaView::List => match key.code {
                 KeyCode::Esc => self.close(),
@@ -165,6 +187,9 @@ impl MediaState {
                     overlay.view = MediaView::List;
                 }
                 KeyCode::Char('o') | KeyCode::Char('O') => {
+                    if overlay.inline_attachment {
+                        return MediaAction::None;
+                    }
                     return MediaAction::OpenUrl(target.clone());
                 }
                 KeyCode::Char('u') | KeyCode::Char('U') => self.force_halfblocks(None),
@@ -344,6 +369,16 @@ pub(super) fn render_media_overlay(f: &mut Frame<'_>, app: &mut App) {
                 "画像を安全に読込中 · Esc 戻る",
             )
             .to_owned(),
+        MediaView::Preview { width, height, .. } if overlay.inline_attachment => format!(
+            "{} · {}×{} · {} · U {} · Esc {}",
+            app.language
+                .text("图片预览", "Image preview", "画像プレビュー"),
+            width,
+            height,
+            app.media.protocol_name,
+            app.language.text("字符模式", "Unicode mode", "文字モード"),
+            app.language.text("返回", "back", "戻る"),
+        ),
         MediaView::Preview { width, height, .. } => format!(
             "{} · {}×{} · {} · O {} · U {} · Esc {}",
             app.language
@@ -803,6 +838,7 @@ mod tests {
         picker.set_protocol_type(ProtocolType::Kitty);
         let mut state = MediaState::with_picker(picker, tx);
         state.overlay = Some(MediaOverlay {
+            inline_attachment: false,
             items: vec![MediaItem {
                 kind: MediaKind::Image,
                 label: "pixel".to_owned(),

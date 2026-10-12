@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-12 | 当前版本：v0.97.0-rc2（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-12 | 当前版本：v0.98.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 TUI 流式输出期间输入默认排队，活动区持续显示待发条数和摘要；`Ctrl+Q` / `/queue` 查看列表并编辑、删除或主动立即插话。管理期间暂停自动发送，编辑保留附件和原草稿，发送失败保留消息供手动处理；已送达 Runtime 的插话不可撤回。
 
@@ -24,6 +24,9 @@ Web 插件中心设置先编辑，再点击每个插件的“保存设置”按�
 WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户提供的 API Base、API Key 和模型 ID，在受限工作区内完成模型推理、工具执行和结果验证。
 
 ## 核心功能
+
+- 多附件管理：TUI `F3` / `/attachments` 查看草稿并保留输入正文，`/attachments sent` 查看当前会话已发送附件；`Ctrl+Q` 待发面板按 `a` 管理所选消息的附件。Web 提供紧凑缩略图列表与统一图标操作，可排序、删除、查看图片大图及编辑文本；已发送附件只读，可引用到草稿。管理待发消息时暂停自动发送。
+- Runtime 原生定时任务：关闭 CLI/Web 后仍由 daemon 调度；旧任务保留 ID 和启用意图，插件未启用时导入为暂停。`willdeep schedule`、TUI `/schedule` 与 Web「定时任务」共用配置和历史接口。支持显式时区、单次计划、预算、超时、去重、故障恢复、归档及保留历史；运行结束、目标达成和验证通过分别记录。实际预算与超时验收见 [验收报告](docs/verification/0.98.0-rc1/runtime-management.md)。
 
 - 普通工具循环有只读探索检查点和逐轮预算提醒；重复读取无新证据时提醒收敛，持续新证据时允许继续定向调查。运行器不强制修改，不增加预算或调用；子 Agent / 辅助调用不计入此处的本 Agent token 提醒。实现与验证边界见 [运行时改进报告](bench/swebench/analysis/2026-10-09-runtime-guidance/report.md)。
 

@@ -390,6 +390,7 @@ pub(super) async fn event_loop(
         // 用户排在后面的那句话，很可能正是基于还没看到的后台结果说的。
         if !app.running
             && app.prompt_queue.is_none()
+            && app.attachment_panel.is_none()
             && runtime.kernel.pending_wake_authority(session.id).is_none()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
@@ -399,6 +400,7 @@ pub(super) async fn event_loop(
                     .attachments
                     .iter()
                     .map(|item| DraftAttachment {
+                        id: item.id,
                         message: item.message.clone(),
                     })
                     .collect(),
@@ -521,6 +523,7 @@ pub(super) async fn event_loop(
             },
             event=events.next()=>if let Some(Ok(event))=event { match event {
                 Event::Paste(value)=>{
+                    if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
                         if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
                         continue;
@@ -548,7 +551,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
-                    if app.prompt_queue.is_some() { continue; }
+                    if app.prompt_queue.is_some() || app.attachment_panel.is_some() { continue; }
                     // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
                     // 否则「点外面」会先被下面那些 `continue` 吃掉。
                     if mouse.kind==MouseEventKind::Down(MouseButton::Left)
@@ -698,7 +701,12 @@ pub(super) async fn event_loop(
                         app.handle_approval_key(key);
                         continue;
                     }
+                    if app.media.is_open() { let action=app.media.handle_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
+                    if app.attachment_panel.is_some() { let action=app.handle_attachment_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.prompt_queue.is_some() {
+                        if key.code==KeyCode::Char('a') && app.prompt_queue.as_ref().is_some_and(|panel| panel.editor.is_none()) {
+                            let index=app.prompt_queue.as_ref().unwrap().selected; app.open_attachments(attachment_panel::Target::Queued(index)); continue;
+                        }
                         if app.handle_queue_key(key) {
                             app.prompt_queue.as_mut().unwrap().status=None;
                             let index=app.prompt_queue.as_ref().unwrap().selected;
@@ -1020,6 +1028,10 @@ pub(super) async fn event_loop(
                         app.toggle_composer_expanded();
                         continue;
                     }
+                    if key.code == KeyCode::F(3) {
+                        app.open_attachments(super::attachment_panel::Target::Draft);
+                        continue;
+                    }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('p'){
                         app.open_palette(&runtime.skills,store,session);
                         continue;
@@ -1184,6 +1196,34 @@ pub(super) async fn event_loop(
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
                         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
                         KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
+                            if app.input.text().trim()=="/schedule" || app.input.text().trim().starts_with("/schedule ") {
+                                let command=app.input.take();
+                                let home=runtime.home.clone(); let tx=runtime.tx.clone();
+                                tokio::spawn(async move {
+                                    let result=match crate::schedule_cmd::slash(&command,&home).await {
+                                        Ok(result)=>result,
+                                        Err(error)=>format!("{}: {error:#}",language.text("定时任务操作失败","Schedule operation failed","定期タスク操作に失敗")),
+                                    };
+                                    let _=tx.send(UiMessage::RuntimeResult(result));
+                                });
+                                continue;
+                            }
+                            if app.input.text().trim()=="/attachments sent" {
+                                app.input.take(); let home=runtime.home.clone(); let id=session.id; let tx=runtime.tx.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    match SessionStore::new(&home).load(id) {
+                                        Ok(saved) => {
+                                            let items=saved.messages.into_iter().flat_map(|message| message.attachments.into_iter().map(|message| DraftAttachment { id: uuid::Uuid::new_v4(), message })).collect();
+                                            let _=tx.send(UiMessage::SentAttachments { session_id: id, items });
+                                        }
+                                        Err(error) => { let _=tx.send(UiMessage::RuntimeNotice(format!("{}: {error}", language.text("读取已发送附件失败", "Could not read sent attachments", "送信済み添付を読み込めません")))); }
+                                    }
+                                });
+                                continue;
+                            }
+                            if app.input.text().trim()=="/attachments" {
+                                app.input.take(); app.open_attachments(attachment_panel::Target::Draft); continue;
+                            }
                             if app.input.text().trim()=="/queue" {
                                 app.take_submitted_input();
                                 app.open_prompt_queue();
@@ -1429,6 +1469,7 @@ pub(super) async fn event_loop(
                 UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});app.finish_turn();},
                 UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));app.finish_turn();},
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
+                UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
                 UiMessage::RuntimeResult(message)=>{app.append_transcript(message.clone());app.notice=Some(message);},
                 UiMessage::ModelsLoaded(result)=>app.set_model_picker_result(result),

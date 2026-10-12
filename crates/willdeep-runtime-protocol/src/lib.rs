@@ -10,6 +10,9 @@ pub use kernel_event::{
 };
 
 pub mod model_catalog;
+pub mod schedule;
+pub const ATTACHED_CONTEXT_HEADER: &str = "The user attached the following context for this turn — treat it as task setup, not verbatim user text:";
+pub const USER_MESSAGE_BOUNDARY: &str = "<<<willdeep:user-message:v1>>>";
 pub use model_catalog::{
     CatalogApiDialect, CatalogModel, CatalogModelKind, CatalogProvider, CatalogRouting,
     CredentialStore, MODEL_CATALOG_SCHEMA_VERSION, ModelCapability, ModelCatalog,
@@ -453,6 +456,18 @@ pub enum MessageAttachment {
         width: u32,
         height: u32,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionAttachmentsParams {
+    pub id: uuid::Uuid,
+    pub reference: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionAttachments {
+    pub reference: String,
+    pub attachments: Vec<MessageAttachment>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1271,6 +1286,21 @@ impl RuntimeCapabilities {
 }
 
 pub const SUPPORTED_OPERATIONS: &[&str] = &[
+    "schedule.list",
+    "schedule.deleted",
+    "schedule.get",
+    "schedule.create",
+    "schedule.update",
+    "schedule.action",
+    "schedule.preview",
+    "schedule.resolve_time",
+    "schedule.format_time",
+    "schedule.timezones",
+    "schedule.run",
+    "schedule.history",
+    "schedule.run.get",
+    "schedule.run.stop",
+    "schedule.cleanup",
     "runtime.capabilities",
     "runtime.status",
     "workspace.list",
@@ -1282,6 +1312,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "session.list",
     "session.search",
     "session.get",
+    "session.attachments",
     "session.rename",
     "session.update_model",
     "session.update_approval_mode",

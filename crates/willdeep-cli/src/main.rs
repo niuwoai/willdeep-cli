@@ -46,6 +46,7 @@ mod plugin_roundtable;
 mod plugin_web;
 mod projects;
 mod prompt_cmd;
+mod schedule_cmd;
 mod telemetry;
 mod titling;
 mod tui;
@@ -178,6 +179,11 @@ struct Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 enum CliCommand {
+    /// Manage Runtime-native scheduled tasks and retained run history.
+    Schedule {
+        #[command(subcommand)]
+        action: schedule_cmd::ScheduleCommand,
+    },
     /// Run one non-interactive coding-agent turn.
     Run(RunArgs),
     /// Generate a completion script from the current command tree.
@@ -573,6 +579,10 @@ async fn run() -> Result<()> {
             CliCommand::Completions { shell } => generate_completions(shell),
             CliCommand::Man => generate_man_page(),
             CliCommand::Session { action } => daemon::handle_session(action).await,
+            CliCommand::Schedule { action } => {
+                println!("{}", schedule_cmd::run(action, &willdeep_home()?).await?);
+                Ok(())
+            }
             CliCommand::Config { action } => config::handle(action, cli.config.as_deref()),
             CliCommand::Telemetry { action } => {
                 let loaded = LoadedConfig::load(cli.config.as_deref())?;

@@ -162,6 +162,7 @@ fn loading_another_session_replaces_transient_chat_state() {
     target.goal = Some("persisted target goal".to_owned());
     let mut app = App::new(vec!["old session output".to_owned()], Language::En);
     app.attachments.push(DraftAttachment {
+        id: uuid::Uuid::new_v4(),
         message: MessageAttachment::Text {
             name: "old.txt".to_owned(),
             content: "old".to_owned(),

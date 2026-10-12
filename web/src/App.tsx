@@ -10,12 +10,21 @@ import { applyThemeMode, storedThemeMode, useResolvedColorScheme, type ThemeMode
 import { PluginCenter } from "./PluginCenter";
 import { ProviderSetup, type SetupStatus } from "./ProviderSetup";
 import { PluginPage } from "./PluginPage";
+import { ScheduleManager } from "./ScheduleManager";
+import { scheduleText } from "./scheduleMessages";
 import { PluginRail, type RailSelection } from "./PluginRail";
 import { PluginSidebar } from "./PluginSidebar";
 import { fetchPlugins, orderedDestinations, type PluginFailureView, type PluginView } from "./plugins";
 import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
+import { queueText } from "./queueMessages";
+import { ListPlus } from "lucide-react";
+import { QueuedMessages, type QueuedMessage } from "./QueuedMessages";
+import { SentAttachments } from "./SentAttachments";
+import { AttachmentManager } from "./AttachmentManager";
+import { attachmentText } from "./attachmentMessages";
+import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
 import { needsActivityStrip } from "./runActivity";
 
@@ -33,7 +42,7 @@ function accessLabel(access: WorkspaceAccess, t: { accessReadOnly: string; acces
   }
 }
 type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
-type SessionDetail = { id: string; messages: ConversationItem[] };
+type SessionDetail = { id: string; workspace: string; messages: ConversationItem[] };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 type RunStep = { id: string; label: string; detail?: string; status: "active" | "done" | "failed"; startedAt: number; elapsedMs?: number };
@@ -54,7 +63,7 @@ function settleActiveSteps(steps: RunStep[], now: number): RunStep[] {
     ? { ...step, status: "done" as const, elapsedMs: step.elapsedMs ?? now - step.startedAt }
     : step);
 }
-type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider"; content: string; steps?: RunStep[]; thinking?: string; plan?: Plan; details?: string[] };
+type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider"; content: string; steps?: RunStep[]; thinking?: string; attachmentReference?: string; plan?: Plan; details?: string[] };
 /// 思维链只留尾巴：像滚动字幕，看得到它此刻在想什么就够了，正文一来就隐藏。
 const THINKING_TAIL_CHARS = 240;
 function thinkingTail(text: string): string {
@@ -79,13 +88,13 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
     // 只带工具调用、正文为空的助手消息不再单独占一个气泡。
     if (!message.content && !message.plan && !message.details?.length) return;
     chat.push({
-      id, role: message.role, plan: message.plan, details: message.details,
+      id, role: message.role, attachmentReference: message.attachment_reference, plan: message.plan, details: message.details,
       content: `${message.content}${message.attachment_count ? `\n[${message.attachment_count} ${t.attachmentCount}]` : ""}`,
     });
   });
   return chat;
 }
-type Attachment = { kind: "text"; name: string; content: string } | { kind: "image"; name: string; media_type: string; data: string; width: number; height: number };
+type Attachment = DraftAttachment;
 type ComposerSkill = { identifier: string; name: string; description: string };
 type ComposerData = { commands: string[]; skills: ComposerSkill[] };
 type Health = { status: string; version: string };
@@ -123,12 +132,14 @@ function nextId(prefix: string) { return `${prefix}-${Date.now()}-${Math.random(
 // 一级入口写进 URL hash，刷新和分享链接都能回到同一个目的地。
 function railFromHash(): RailSelection {
   const hash = window.location.hash.replace(/^#/, "");
+  if (hash === "schedules") return { kind: "schedules" };
   if (hash === "plugins") return { kind: "center" };
   const plugin = hash.startsWith("plugin/") ? hash.slice("plugin/".length) : "";
   return plugin ? { kind: "plugin", qualifiedId: decodeURIComponent(plugin) } : { kind: "conversation" };
 }
 
 function hashForRail(selection: RailSelection): string {
+  if (selection.kind === "schedules") return "#schedules";
   if (selection.kind === "center") return "#plugins";
   if (selection.kind === "plugin") return `#plugin/${encodeURIComponent(selection.qualifiedId)}`;
   return "";
@@ -265,6 +276,7 @@ export function App() {
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
   // 轮询闭包里读得到当前会话，而不必把 sessionId 放进依赖数组重开定时器。
   const sessionIdRef = useRef(sessionId);
+  const pendingWorkspaceSession = useRef<{ id: string; workspace: string; turnId: string | null } | null>(null);
   const displayRevisionRef = useRef("");
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   const [sessionSearch, setSessionSearch] = useState("");
@@ -274,11 +286,32 @@ export function App() {
   // 轮次收尾时要从运行卡片里数工具步，而会话重载会把卡片整个换掉，先照一份镜像。
   const chatRef = useRef<ChatMessage[]>([]);
   useEffect(() => { chatRef.current = chat; }, [chat]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachments, updateAttachments] = useState<Attachment[]>([]);
+  const attachmentsRef = useRef<Attachment[]>([]);
+  const setAttachments = (value: Attachment[] | ((current: Attachment[]) => Attachment[])) => {
+    const next = typeof value === "function" ? value(attachmentsRef.current) : value;
+    attachmentsRef.current = next; updateAttachments(next);
+  };
+  const appendAttachment = (payload: AttachmentPayload) => {
+    const reason = attachmentError(payload);
+    if (reason) { setError(attachmentText(reason, language)); return; }
+    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) { setError(attachmentText("limit", language)); return; }
+    setAttachments([...attachmentsRef.current, { ...payload, id: crypto.randomUUID() }]);
+  };
   const [goal, setGoal] = useState("");
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
   const [runtimeActivity, setRuntimeActivity] = useState<RuntimeActivity>({ tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
   const [busy, setBusy] = useState(false); const [activity, setActivity] = useState(""); const [error, setError] = useState("");
+  const [queuedMessages, updateQueuedMessages] = useState<QueuedMessage[]>([]);
+  const queuedRef = useRef<QueuedMessage[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const draftSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
+  const queueSending = useRef<string | null>(null);
+  const queuedSendRef = useRef<(item: QueuedMessage) => Promise<void>>(async () => undefined);
+  const setQueuedMessages = (items: QueuedMessage[] | ((current: QueuedMessage[]) => QueuedMessage[])) => {
+    const next = typeof items === "function" ? items(queuedRef.current) : items;
+    queuedRef.current = next; updateQueuedMessages(next);
+  };
   const inputSuggestion = useInputSuggestion();
   // 预测回包时要看「此刻」输入框空不空、有没有新一轮，闭包里的值是发起时的旧值。
   const composerEmptyRef = useRef(true);
@@ -292,6 +325,19 @@ export function App() {
   const activeTurnRef = useRef<string | null>(null);
   const activeSessionRef = useRef<string | null>(null);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState("");
+  useEffect(() => {
+    const next = queuedMessages[0];
+    if (!busy && !queueOpen && next && !next.failed && !queueSending.current && next.workspace === workspace && next.sessionId === sessionId) {
+      queueSending.current = next.id; void queuedSendRef.current(next);
+    }
+  }, [busy, queueOpen, queuedMessages, workspace, sessionId]);
+  const enqueueDraft = () => {
+    const target = activeSessionRef.current || sessionId;
+    if (!target || !activeTurnRef.current || (!prompt.trim() && !attachmentsRef.current.length)) return;
+    setQueuedMessages([...queuedRef.current, { id: crypto.randomUUID(), prompt: prompt.trim() || t.attachmentPrompt, attachments: attachmentsRef.current, workspace, sessionId: target, failed: false }]);
+    setPrompt(""); setAttachments([]);
+  };
+
   const pendingStopRef = useRef(false);
   const loadSessionRef = useRef<(id: string, activeTurnId?: string | null) => Promise<void>>(async () => undefined);
   const chatViewportRef = useRef<HTMLDivElement | null>(null); const followBottomRef = useRef(true);
@@ -301,6 +347,7 @@ export function App() {
   const [plugins, setPlugins] = useState<PluginView[]>([]);
   const [pluginFailures, setPluginFailures] = useState<PluginFailureView[]>([]);
   const [rail, setRail] = useState<RailSelection>(railFromHash);
+  const scheduleDirtyRef = useRef(false);
   const [pluginSelectedItem, setPluginSelectedItem] = useState<string | null>(null);
   const [pluginReloadToken, setPluginReloadToken] = useState(0);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
@@ -415,8 +462,10 @@ export function App() {
       setSessions(values);
       const available = values.filter((item) => item.workspace === workspace && !item.archived);
       const remembered = localStorage.getItem(`${lastSessionPrefix}${workspace}`);
-      const candidate = available.find((item) => item.id === remembered) ?? available.find((item) => item.active);
-      if (candidate) void loadSessionRef.current(candidate.id, candidate.active_turn_id);
+      const pending = pendingWorkspaceSession.current;
+      const candidate = pending?.workspace === workspace ? values.find((item) => item.id === pending.id) : available.find((item) => item.id === remembered) ?? available.find((item) => item.active);
+      if (pending?.workspace === workspace) pendingWorkspaceSession.current = null;
+      if (candidate) void loadSessionRef.current(candidate.id, pending?.workspace === workspace ? pending.turnId ?? candidate.active_turn_id : candidate.active_turn_id);
     }).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`));
     json<ComposerData>(`/api/composer?workspace=${encodeURIComponent(workspace)}`).then(setComposer).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`));
   }, [workspace, t.loadFailed]);
@@ -678,6 +727,11 @@ export function App() {
     setError("");
     try {
       const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
+      if (detail.workspace !== workspace) {
+        pendingWorkspaceSession.current = { id: detail.id, workspace: detail.workspace, turnId: activeTurnId };
+        localStorage.setItem(`${lastSessionPrefix}${detail.workspace}`, detail.id);
+        setWorkspace(detail.workspace); return;
+      }
       applySessionDetail(detail);
       if (activeTurnId) await resumeTurn(detail.id, activeTurnId);
     } catch (reason) {
@@ -871,11 +925,12 @@ export function App() {
   }
 
   function attachImage(file: File) {
-    const reader = new FileReader(); reader.onload = () => {
+    if (file.size > MAX_IMAGE_BASE64 * 3 / 4) { setError(attachmentText("imageTooLarge", language)); return; }
+    const reader = new FileReader(); reader.onerror = () => setError(attachmentText("imageFailed", language)); reader.onload = () => {
       const url = String(reader.result); const image = new Image(); image.onload = () => {
         const data = url.slice(url.indexOf(",") + 1);
-        setAttachments((current) => [...current, { kind: "image", name: file.name || `${t.pastedImage}.png`, media_type: file.type, data, width: image.naturalWidth, height: image.naturalHeight }]);
-      }; image.src = url;
+        appendAttachment({ kind: "image", name: file.name || `${t.pastedImage}.png`, media_type: file.type, data, width: image.naturalWidth, height: image.naturalHeight });
+      }; image.onerror = () => setError(attachmentText("imageFailed", language)); image.src = url;
     }; reader.readAsDataURL(file);
   }
 
@@ -883,7 +938,7 @@ export function App() {
     const imageFile = clipboardImageFile(event.clipboardData);
     if (imageFile) { event.preventDefault(); attachImage(imageFile); return; }
     const text = event.clipboardData.getData("text/plain");
-    if (text.includes("\n") || text.length > 200) { event.preventDefault(); setAttachments((current) => [...current, { kind: "text", name: `${t.pastedText}-${current.length + 1}.txt`, content: text }]); }
+    if (text.includes("\n") || text.length > 200) { event.preventDefault(); appendAttachment({ kind: "text", name: `${t.pastedText}-${attachmentsRef.current.length + 1}.txt`, content: text }); }
   }
 
   // `override` 给插件的 `window.willdeep.chat.send` 用：它递进来的文本要
@@ -905,7 +960,8 @@ export function App() {
     }
   }
 
-  async function send(override?: string) {
+  async function send(override?: string, queued?: QueuedMessage) {
+    const sendAttachments = queued?.attachments ?? attachmentsRef.current;
     const typed = (override ?? prompt).trim();
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
     if (typed === "/clear") { setChat([]); setPrompt(""); return; }
@@ -918,29 +974,42 @@ export function App() {
       setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: `${t.goalSet}: ${goalToStart}` }]);
       if (busy) { setPrompt(""); return; }
     }
-    const content = goalToStart || typed || (attachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
+    const content = goalToStart || typed || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
     // 采用过的建议在真正发出去这一刻结算（插话也算）：原样 / 改过 / 重写由服务端判定。
     inputSuggestion.settleSent(typed);
     // 本轮在跑时回车不是排队也不是被吞：直接送进正在跑的这一轮，下一次调模型前注入。
-    if (busy) { await steer(content); return; }
+    if (busy) { if (sendAttachments.length) enqueueDraft(); else await steer(content); return; }
     const activeGoal = goalToStart || goal;
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
-    const outgoingAttachments = attachments;
+    const outgoingAttachments = sendAttachments;
+    const outgoingPrompt = prompt;
+    const payload = { prompt: harnessPrompt, session_id: queued?.sessionId || sessionId || null, workspace: queued?.workspace || workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
+    const fingerprint = JSON.stringify(payload);
+    if (!queued && draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
+    const requestBody = queued?.requestBody ?? JSON.stringify({ ...payload, request_id: queued?.id ?? draftSendRequest.current?.id });
+    if (new TextEncoder().encode(requestBody).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
+    if (queued && !queued.requestBody) setQueuedMessages((items) => items.map((item) => item.id === queued.id ? { ...item, requestBody } : item));
     const runId = nextId("run"); const controller = new AbortController(); abortRef.current = controller;
     const startedAt = Date.now();
     activeRunRef.current = runId;
     followBottomRef.current = true;
-    setPrompt(""); setAttachments([]); setError(""); setActivity(t.thinking); setBusy(true);
+    setError(""); setActivity(t.thinking); setBusy(true);
     inputSuggestion.clear();
     setChat((current) => [...current, { id: nextId("user"), role: "user", content: `${content}${outgoingAttachments.length ? `\n[${outgoingAttachments.length} ${t.attachmentCount}]` : ""}` }, { id: runId, role: "activity", content: "", steps: [] }]);
     let terminalFailure = false;
     try {
-      const response = await fetch("/api/chat/stream", { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", accept: "text/event-stream" }, body: JSON.stringify({ prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments }) });
+      const response = await fetch("/api/chat/stream", { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", accept: "text/event-stream" }, body: requestBody });
       let answer = "";
       let completedSessionId = sessionId;
       let completedTurnId: string | null = null;
       let terminal = false;
       await readSse(response, async (event) => {
+        if (event.type === "submitted" && event.turn_id) {
+          if (!queued) draftSendRequest.current = null;
+          if (queued) setQueuedMessages((items) => items.filter((item) => item.id !== queued.id));
+          if (override === undefined) setPrompt((current) => current === outgoingPrompt ? "" : current);
+          if (!queued && attachmentsRef.current === outgoingAttachments) setAttachments([]);
+        }
         if (event.session_id) completedSessionId = event.session_id;
         if (event.turn_id) completedTurnId = event.turn_id;
         const result = await applyStreamEvent(event, runId);
@@ -979,11 +1048,25 @@ export function App() {
     } finally { if (abortRef.current === controller) abortRef.current = null; if (activeRunRef.current === runId) activeRunRef.current = null; activeTurnRef.current = null; activeSessionRef.current = null; setActiveRuntimeSessionId(""); pendingStopRef.current = false; setBusy(false); setActivity(""); }
   }
 
+  queuedSendRef.current = async (item) => {
+    setQueuedMessages((items) => items.map((entry) => entry.id === item.id ? { ...entry, sending: true } : entry));
+    await send(item.prompt, item);
+    queueSending.current = null;
+    if (queuedRef.current.some((entry) => entry.id === item.id)) {
+      setQueuedMessages((items) => items.map((entry) => entry.id === item.id ? { ...entry, failed: true, sending: false } : entry));
+      setQueueOpen(true);
+    } else { setQueuedMessages([...queuedRef.current]); }
+  };
+
   // 一级入口栏之后，右侧要么是对话（原有侧栏 + 聊天），要么是一个插件目的地
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
-  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} onSelect={(next) => { setPluginSelectedItem(null); setRail(next); }} />;
+  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} schedulesLabel={scheduleText("title", language)} onSelect={(next) => { if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = showSetup ? <ProviderSetup status={setupStatus} loadFailed={setupLoadFailed} plugin={plugins.find((plugin) => plugin.id === "willdeep-config")} messages={t} onCheck={checkSetup} onDone={finishSetup} onOpen={(destination) => { if (destination) navigateToDestination(destination); else setRail({ kind: "center" }); }} /> : null;
+
+  if (rail.kind === "schedules") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<ScheduleManager onDirty={(value) => { scheduleDirtyRef.current = value; }} workspaces={workspaces} workspace={workspace} language={language} messages={t} onOpenSession={(id, turnId) => { if (busy) { setError(scheduleText("sessionSwitchBusy", language)); setRail({ kind: "conversation" }); return; } setRail({ kind: "conversation" }); void loadSessionRef.current(id, turnId ?? null); }} />{pluginOverlays}</Flex></Box>;
+  }
 
   if (rail.kind === "center") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">
@@ -1114,7 +1197,7 @@ export function App() {
     </Box>
     <Container maxW="920px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column" h="100vh">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box py="24"><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack align="stretch" gap="3">{chat.map((message) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{message.content}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}</Box>)}</VStack>
+        <VStack align="stretch" gap="3">{chat.map((message) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{message.content}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />
       </Box>
       {/* 聊天正文选中气泡。插件拿到的 `text` 是用户真正看到的那段字，
@@ -1132,7 +1215,9 @@ export function App() {
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
         {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); setPrompt(command); }}>{command}</button>)}</Box>}
         {skillQuery !== undefined && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill) => <button key={skill.identifier} type="button" onMouseDown={(event) => { event.preventDefault(); setSkillSearch(""); setPrompt((current) => current.replace(/\$[\w-]*$/, `$${skill.identifier} `)); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
-        {attachments.length > 0 && <Flex className="attachment-row">{attachments.map((attachment, index) => <Box key={`${attachment.name}-${index}`} className="attachment-chip">{attachment.kind === "image" ? <img src={`data:${attachment.media_type};base64,${attachment.data}`} alt={attachment.name} /> : <Box className="text-attachment">TXT</Box>}<Text title={attachment.name}>{attachment.name}</Text><button type="button" aria-label={t.removeAttachment} title={t.removeAttachment} onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></Box>)}</Flex>}
+        <QueuedMessages items={queuedMessages} open={queueOpen} onOpen={setQueueOpen} onChange={setQueuedMessages} language={language} />
+        {busy && (prompt.trim() || attachments.length > 0) && <button type="button" className="queue-enqueue" title={queueText("enqueue", language)} disabled={!activeRuntimeSessionId} onClick={enqueueDraft}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
+        <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
         <Textarea value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); }} onKeyDown={(event) => {
           if (event.key === "Tab" && !event.shiftKey && ghostSuggestion) { event.preventDefault(); setPrompt(ghostSuggestion); inputSuggestion.accept(); return; }
@@ -1153,7 +1238,7 @@ export function App() {
             <SfIcon name="sf:plus.circle" size={16} />
           </button>
         )}
-        <Text className="send-hint" style={{ color: busy ? "var(--accent)" : "var(--success)" }}>{busy ? t.hintBusy : t.hintIdle}</Text>
+        <Text className={`send-hint ${busy ? "busy" : "idle"}`}>{busy ? attachments.length ? queueText("composerHint", language) : t.hintBusy : t.hintIdle}</Text>
         <Button aria-label={busy ? t.stop : t.send} title={busy ? t.stop : t.send} className={`send-button ${busy ? "stop" : ""}`} onClick={busy ? () => void stop() : () => void send()} disabled={!busy && ((!prompt.trim() && !attachments.length) || selectedSession?.archived)}>{busy ? <Box className="stop-icon" /> : <Text className="send-icon">↑</Text>}</Button>
       </Box>
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />

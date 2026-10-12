@@ -5,7 +5,7 @@ fn test_agent_store(root: &Path) -> Arc<AgentStore> {
     Arc::new(AgentStore::open(root.join("agents.json")).unwrap())
 }
 
-fn test_runtime_session_store(root: &Path) -> Arc<session_store::RuntimeSessionStore> {
+pub(super) fn test_runtime_session_store(root: &Path) -> Arc<session_store::RuntimeSessionStore> {
     Arc::new(
         session_store::RuntimeSessionStore::open(root.join("runtime-sessions.json"), root).unwrap(),
     )
@@ -16,9 +16,17 @@ fn test_turn_scheduler() -> tokio::sync::mpsc::UnboundedSender<uuid::Uuid> {
 }
 
 /// 手工搭的 `ServerState`：调度器与目标续推的测试直接调它们的入口函数。
-fn test_server_state(
+pub(super) fn test_server_state(
     root: &Path,
     sessions: Arc<session_store::RuntimeSessionStore>,
+) -> ServerState {
+    test_server_state_with_scheduler(root, sessions, test_turn_scheduler())
+}
+
+pub(super) fn test_server_state_with_scheduler(
+    root: &Path,
+    sessions: Arc<session_store::RuntimeSessionStore>,
+    scheduler: tokio::sync::mpsc::UnboundedSender<uuid::Uuid>,
 ) -> ServerState {
     let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(root);
@@ -36,7 +44,7 @@ fn test_server_state(
                 events,
                 agents: agents.clone(),
                 sessions: sessions.clone(),
-                turn_scheduler: test_turn_scheduler(),
+                turn_scheduler: scheduler,
                 runtime_url: "http://127.0.0.1:1".to_owned(),
                 runtime_token: "test-token".to_owned(),
             })
@@ -1815,7 +1823,7 @@ async fn daemon_turns_link_ledger_lines_to_their_usage_events() {
 /// 带 goal 说明的 prompt 排进去、按任务档位设审批；上一次的会话还有没跑完
 /// 的轮次就跳过；运行记录回写到任务上。
 #[tokio::test]
-async fn scheduled_tasks_fire_into_fresh_sessions_only_while_the_plugin_is_enabled() {
+async fn legacy_schedules_migrate_paused_until_explicitly_resumed() {
     use willdeep_core::schedule::{Schedule, ScheduleStore, ScheduledTask};
     let root =
         std::env::temp_dir().join(format!("willdeep-schedule-fire-{}", uuid::Uuid::new_v4()));
@@ -1837,6 +1845,7 @@ async fn scheduled_tasks_fire_into_fresh_sessions_only_while_the_plugin_is_enabl
         last_run_at: None,
         last_session_id: None,
         origin_session_id: None,
+        settings: Default::default(),
     };
     let store = ScheduleStore::new(&root);
     store.update(|tasks| tasks.push(task.clone())).unwrap();
@@ -1851,6 +1860,12 @@ async fn scheduled_tasks_fire_into_fresh_sessions_only_while_the_plugin_is_enabl
     crate::builtin_plugins::install(&root, "scheduler", true)
         .await
         .unwrap();
+    assert_eq!(
+        scheduler::fire_due(&state, due, 0).unwrap(),
+        0,
+        "enabling a plugin must not resume an imported task"
+    );
+    store.update(|tasks| tasks[0].enabled = true).unwrap();
     let fired = scheduler::fire_due(&state, due, 0).unwrap();
     assert_eq!(fired, 1);
     let stored = store.list().unwrap().remove(0);

@@ -187,7 +187,9 @@ fn visual_rows(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
+#[derive(Clone)]
 pub struct DraftAttachment {
+    pub id: uuid::Uuid,
     pub message: MessageAttachment,
 }
 impl DraftAttachment {
@@ -196,8 +198,8 @@ impl DraftAttachment {
             // 带一截正文预览：剪贴板里装的到底是不是想贴的东西，发送前就该看得出来。
             // 出过一回事——拖选聊天区自动复制顶掉了刚复制的网址，条目只写
             // 「3 lines · 146 B」，谁也看不出贴进去的是上一条回复。
-            MessageAttachment::Text { content, .. } => format!(
-                "Pasted text · {} lines · {} · 「{}」",
+            MessageAttachment::Text { content, name } => format!(
+                "Pasted text · {} lines · {} · {name} · 「{}」",
                 content.lines().count().max(1),
                 human_bytes(content.len()),
                 text_preview(content)
@@ -248,6 +250,7 @@ mod tests {
     #[test]
     fn pasted_text_summary_previews_the_first_non_empty_line() {
         let attachment = DraftAttachment {
+            id: uuid::Uuid::new_v4(),
             message: MessageAttachment::Text {
                 name: "paste-1.txt".to_owned(),
                 content: "\nscripts/tsing_hub_probe.rb 是现成脚手架，可以加一组 effort 探针在 beta 环境跑。\n\n· 首答 9.11s".to_owned(),

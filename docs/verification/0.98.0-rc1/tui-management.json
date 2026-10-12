@@ -1,0 +1,17 @@
+{
+  "version": "0.98.0-rc1",
+  "tests": [
+    {
+      "check": "real_tui_halfblocks_image_output",
+      "status": "passed",
+      "output_bytes": 15075,
+      "physical_terminal_gui": false
+    },
+    {
+      "check": "real_tui_iterm2_image_output",
+      "status": "passed",
+      "output_bytes": 43503,
+      "physical_terminal_gui": false
+    }
+  ]
+}
