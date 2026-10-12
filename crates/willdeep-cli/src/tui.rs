@@ -53,6 +53,7 @@ mod narration;
 mod overlay_dismiss;
 mod permission_commands;
 mod plan_ui;
+mod prompt_queue;
 mod rendering;
 mod rewind_ui;
 mod routing_settings;
@@ -279,6 +280,7 @@ struct App {
     /// 本轮在跑时收到的提示词，本轮一结束就按顺序发出去；中断当前轮次同样会让
     /// 队列立刻续上。手机发来的消息不进这里，直接进 Runtime 的轮次队列。
     queued_prompts: VecDeque<QueuedPrompt>,
+    prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
     /// 进程内 Harness 当前轮次的句柄。Runtime 轮次由 Daemon 停，本地轮次只能靠
@@ -502,8 +504,7 @@ enum PaletteAction {
 enum BusyInput {
     /// 只改本地显示，不碰会话、模型或 Runtime——没有任何理由让它等。
     RunNow,
-    /// 提示词：先试着直接送进正在跑的这一轮（下一次调模型前注入）；送不进去
-    /// 再排队，本轮结束（或被中断）后按顺序发出去。
+    /// 提示词保留在可编辑的本地队列，本轮结束后按顺序发送。
     Queue,
     /// 其余斜杠命令：会改会话或 Runtime 状态，延迟几分钟再执行只会更意外。
     Refuse,
@@ -520,7 +521,7 @@ fn busy_input(prompt: &str) -> BusyInput {
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
         "/help" | "/version" | "/clear" | "/sidebar" | "/skills" | "/history" | "/permissions"
-        | "/permission-mode" => BusyInput::RunNow,
+        | "/permission-mode" | "/queue" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" => BusyInput::RunNow,
@@ -1337,8 +1338,8 @@ fn format_working_summary(
     )
 }
 
-fn draw(
-    term: &mut Terminal<CrosstermBackend<io::Stdout>>,
+fn draw<B: ratatui::backend::Backend>(
+    term: &mut Terminal<B>,
     app: &mut App,
     skills: &SkillCatalog,
 ) -> Result<()> {
@@ -1366,6 +1367,7 @@ fn draw(
         } else {
             3
         };
+        let activity = if app.composer_expanded { activity } else { activity + u16::from(!app.queued_prompts.is_empty() || !app.deferred_steering.is_empty()) };
         let attach = if app.composer_expanded || app.attachments.is_empty() {
             0
         } else {
@@ -1531,6 +1533,7 @@ fn draw(
                     app.tools.summary(app.language)
                 )
             };
+            let text = app.queue_activity().map_or_else(|| text.clone(), |queue| format!("{queue}\n{text}"));
             f.render_widget(
                 Paragraph::new(text).block(
                     Block::default()
@@ -2223,6 +2226,7 @@ fn draw(
         render_agent_overlays(f, app);
         render_attention_detail(f, app);
         render_media_overlay(f, app);
+        prompt_queue::render(f, app);
         app.approval_rect = Rect::default();
         app.approval_action_hits.clear();
         if let Some((description, always, _)) = &app.approval {

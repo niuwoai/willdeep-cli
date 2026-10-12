@@ -1,0 +1,504 @@
+use super::*;
+use ratatui::Frame;
+
+#[derive(Default)]
+pub(super) struct QueuePanel {
+    pub(super) selected: usize,
+    pub(super) editor: Option<PromptEditor>,
+    pub(super) status: Option<String>,
+    scroll: u16,
+}
+
+impl App {
+    pub(super) fn open_prompt_queue(&mut self) {
+        self.prompt_queue = Some(QueuePanel::default());
+        self.command_menu_dismissed = true;
+    }
+
+    pub(super) fn queue_activity(&self) -> Option<String> {
+        let queued = self.queued_prompts.len();
+        let delivered = self.deferred_steering.len();
+        if queued == 0 && delivered == 0 {
+            return None;
+        }
+        let preview = self
+            .queued_prompts
+            .front()
+            .map(|item| item.text.as_str())
+            .or_else(|| self.deferred_steering.first().map(String::as_str))
+            .unwrap_or_default();
+        let preview = terminal_safe_text(preview)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!(
+            "{} {queued} · {} {delivered} · Ctrl+Q /queue · {}",
+            self.language.text("待发", "Queued", "送信待ち"),
+            self.language.text(
+                "已送达待读取",
+                "Delivered, awaiting next step",
+                "送達済み・次のステップ待ち"
+            ),
+            preview.chars().take(48).collect::<String>()
+        ))
+    }
+
+    fn queued_transcript_index(&self, selected: usize) -> Option<usize> {
+        let item = self.queued_prompts.get(selected)?;
+        let ordinal = self
+            .queued_prompts
+            .iter()
+            .take(selected)
+            .filter(|p| p.text == item.text)
+            .count();
+        let row = self.queued_prompt_row(&item.text);
+        self.transcript
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| **line == row)
+            .nth(ordinal)
+            .map(|(index, _)| index)
+    }
+
+    pub(super) fn remove_queued_prompt_row(&mut self, selected: usize) {
+        if let Some(index) = self.queued_transcript_index(selected) {
+            self.transcript.remove(index);
+            self.refresh_transcript_height();
+        }
+    }
+
+    /// 返回 true 时由事件循环尝试插话，只有 Runtime 接收成功才移除消息。
+    pub(super) fn handle_queue_key(&mut self, key: KeyEvent) -> bool {
+        let Some(mut panel) = self.prompt_queue.take() else {
+            return false;
+        };
+        panel.selected = panel
+            .selected
+            .min(self.queued_prompts.len().saturating_sub(1));
+        if let Some(editor) = panel.editor.as_mut() {
+            match key.code {
+                KeyCode::Esc => panel.editor = None,
+                KeyCode::Enter
+                    if key
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+                {
+                    editor.insert("\n")
+                }
+                KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    editor.insert("\n")
+                }
+                KeyCode::Enter if !editor.is_empty() => {
+                    let row_index = self.queued_transcript_index(panel.selected);
+                    if let Some(item) = self.queued_prompts.get_mut(panel.selected) {
+                        item.text = editor.take();
+                        let new = self.queued_prompt_row(&self.queued_prompts[panel.selected].text);
+                        if let Some(index) = row_index {
+                            self.transcript[index] = new;
+                        }
+                        self.refresh_transcript_height();
+                    }
+                    panel.editor = None;
+                }
+                KeyCode::Backspace => editor.backspace(),
+                KeyCode::Delete => editor.delete(),
+                KeyCode::Left => editor.left(),
+                KeyCode::Right => editor.right(),
+                KeyCode::Home => editor.home(),
+                KeyCode::End => editor.end(),
+                KeyCode::PageDown => panel.scroll = panel.scroll.saturating_add(5),
+                KeyCode::PageUp => panel.scroll = panel.scroll.saturating_sub(5),
+                KeyCode::Up => editor.up_visual(self.transcript_width.max(1)),
+                KeyCode::Down => editor.down_visual(self.transcript_width.max(1)),
+                KeyCode::Char(character)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    editor.insert(&character.to_string())
+                }
+                _ => {}
+            }
+        } else {
+            if matches!(
+                key.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('e')
+            ) {
+                panel.scroll = 0;
+            }
+            match key.code {
+                KeyCode::Esc => return false,
+                KeyCode::PageDown => panel.scroll = panel.scroll.saturating_add(5),
+                KeyCode::PageUp => panel.scroll = panel.scroll.saturating_sub(5),
+                KeyCode::Up => panel.selected = panel.selected.saturating_sub(1),
+                KeyCode::Down => {
+                    panel.selected =
+                        (panel.selected + 1).min(self.queued_prompts.len().saturating_sub(1))
+                }
+                KeyCode::Char('e') | KeyCode::Enter => {
+                    if let Some(item) = self.queued_prompts.get(panel.selected) {
+                        let mut editor = PromptEditor::default();
+                        editor.insert(&item.text);
+                        panel.editor = Some(editor);
+                    }
+                }
+                KeyCode::Char('d') | KeyCode::Delete => {
+                    self.remove_queued_prompt_row(panel.selected);
+                    self.queued_prompts.remove(panel.selected);
+                }
+                KeyCode::Char('s') if !self.queued_prompts.is_empty() => {
+                    self.prompt_queue = Some(panel);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        panel.selected = panel
+            .selected
+            .min(self.queued_prompts.len().saturating_sub(1));
+        self.prompt_queue = Some(panel);
+        false
+    }
+}
+
+pub(super) fn render(f: &mut Frame<'_>, app: &App) {
+    let Some(panel) = app.prompt_queue.as_ref() else {
+        return;
+    };
+    if app.approval.is_some() || app.question.is_some() || app.mobile_qr.is_some() {
+        return;
+    }
+    let area = f.area();
+    let width = area.width.saturating_sub(4).min(100);
+    let height = area.height.saturating_sub(4).min(24);
+    let rect = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    let mut lines = vec![
+        app.language
+            .text(
+                "↑/↓ 选择 · Enter/E 编辑 · D 删除 · S 立即插话 · Esc 关闭",
+                "↑/↓ select · Enter/E edit · D delete · S steer now · Esc close",
+                "↑/↓ 選択 · Enter/E 編集 · D 削除 · S 即時送達 · Esc 閉じる",
+            )
+            .to_owned(),
+        app.language
+            .text(
+                "管理期间暂停自动发送；关闭后按顺序发送。",
+                "Auto-send paused while managing; resumes in order on close.",
+                "管理中は自動送信を停止。閉じると順番に送信。",
+            )
+            .to_owned(),
+    ];
+    if let Some(editor) = &panel.editor {
+        lines.push(
+            app.language
+                .text(
+                    "编辑：Enter 保存 · Alt+Enter 换行 · Esc 取消（附件保留）",
+                    "Edit: Enter saves · Alt+Enter newline · Esc cancels (attachments kept)",
+                    "編集：Enter 保存 · Alt+Enter 改行 · Esc 取消（添付を保持）",
+                )
+                .to_owned(),
+        );
+        lines.push(terminal_safe_text(editor.text()));
+    } else {
+        if app.queued_prompts.is_empty() {
+            lines.push(
+                app.language
+                    .text(
+                        "没有待发消息",
+                        "No queued messages",
+                        "送信待ちメッセージなし",
+                    )
+                    .to_owned(),
+            );
+        }
+        let visible = usize::from(height.saturating_sub(8)).max(1);
+        let offset = panel.selected.saturating_sub(visible.saturating_sub(1));
+        for (index, item) in app
+            .queued_prompts
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(visible)
+        {
+            let text = terminal_safe_text(&item.text)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            lines.push(format!(
+                "{} {}. [{} {}] {}",
+                if index == panel.selected { "▶" } else { " " },
+                index + 1,
+                item.attachments.len(),
+                app.language.text("附件", "attachments", "添付"),
+                text.chars()
+                    .take(width.saturating_sub(22) as usize)
+                    .collect::<String>()
+            ));
+        }
+        if let Some(item) = app.queued_prompts.get(panel.selected) {
+            lines.push(format!(
+                "\n{}\n{}",
+                app.language.text(
+                    "所选消息全文（Enter 编辑）",
+                    "Selected message (Enter to edit)",
+                    "選択メッセージ（Enter で編集）"
+                ),
+                terminal_safe_text(&item.text)
+            ));
+        }
+        for text in &app.deferred_steering {
+            lines.push(format!(
+                "{}: {}",
+                app.language.text(
+                    "已送达，不可撤回",
+                    "Delivered, cannot recall",
+                    "送達済み・取消不可"
+                ),
+                terminal_safe_text(text)
+            ));
+        }
+    }
+    if let Some(status) = &panel.status {
+        lines.insert(0, terminal_safe_text(status));
+    }
+    let inner_width = width.saturating_sub(2).max(1) as usize;
+    let inner_height = height.saturating_sub(2) as usize;
+    let paragraph = Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false });
+    let max_scroll = paragraph
+        .line_count(inner_width as u16)
+        .saturating_sub(inner_height);
+    let mut scroll = (panel.scroll as usize).min(max_scroll);
+    let cursor = panel.editor.as_ref().map(|editor| {
+        let (row, column) = editor.cursor_visual(inner_width);
+        let prefix_rows: usize = lines
+            .iter()
+            .take(lines.len().saturating_sub(1))
+            .map(|line| visual_lines(line, inner_width))
+            .sum();
+        (row + prefix_rows, column)
+    });
+    if let Some((row, _)) = cursor {
+        scroll = scroll.min(row).max((row + 1).saturating_sub(inner_height));
+    }
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        paragraph
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0))
+            .block(
+                Block::default()
+                    .title(format!(
+                        "{} · {}/{} · PgUp/PgDn",
+                        app.language.text("待发消息", "Queued messages", "送信待ち"),
+                        if app.queued_prompts.is_empty() {
+                            0
+                        } else {
+                            panel.selected.min(app.queued_prompts.len() - 1) + 1
+                        },
+                        app.queued_prompts.len()
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            ),
+        rect,
+    );
+    if let Some((row, column)) = cursor {
+        let row = row.saturating_sub(scroll);
+        if row < height.saturating_sub(2) as usize {
+            f.set_cursor_position((
+                rect.x + 1 + column.min(width.saturating_sub(3) as usize) as u16,
+                rect.y + 1 + row as u16,
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queued_app() -> App {
+        let mut app = App::new(Vec::new(), Language::En);
+        for text in ["first", "second", "first"] {
+            app.append_transcript(app.queued_prompt_row(text));
+            app.queued_prompts.push_back(QueuedPrompt {
+                text: text.to_owned(),
+                attachments: Vec::new(),
+            });
+        }
+        app.open_prompt_queue();
+        app
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn delete_keeps_remaining_order_and_draft() {
+        let mut app = queued_app();
+        app.input.insert("draft");
+        app.handle_queue_key(key(KeyCode::Down));
+        app.handle_queue_key(key(KeyCode::Delete));
+        assert_eq!(
+            app.queued_prompts
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "first"]
+        );
+        assert_eq!(app.input.text(), "draft");
+        assert!(!app.transcript.iter().any(|row| row.contains("second")));
+    }
+
+    #[test]
+    fn edit_save_and_cancel_do_not_send() {
+        let mut app = queued_app();
+        app.handle_queue_key(key(KeyCode::Enter));
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" edited");
+        app.handle_queue_key(key(KeyCode::Enter));
+        assert_eq!(app.queued_prompts[0].text, "first edited");
+        app.handle_queue_key(key(KeyCode::Enter));
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" discarded");
+        app.handle_queue_key(key(KeyCode::Esc));
+        assert_eq!(app.queued_prompts[0].text, "first edited");
+        assert!(app.prompt_queue.is_some());
+        app.handle_queue_key(key(KeyCode::Esc));
+        assert!(app.prompt_queue.is_none());
+    }
+
+    #[test]
+    fn activity_remains_visible_for_queued_and_delivered_messages() {
+        let mut app = queued_app();
+        app.notice = None;
+        assert!(app.queue_activity().unwrap().contains("Queued 3"));
+        app.queued_prompts.clear();
+        app.deferred_steering.push("steered".to_owned());
+        assert!(
+            app.queue_activity()
+                .unwrap()
+                .contains("awaiting next step 1")
+        );
+        assert!(matches!(busy_input("/queue"), BusyInput::RunNow));
+    }
+
+    #[test]
+    fn duplicate_text_edit_targets_the_selected_occurrence() {
+        let mut app = queued_app();
+        app.handle_queue_key(key(KeyCode::Down));
+        app.handle_queue_key(key(KeyCode::Down));
+        app.handle_queue_key(key(KeyCode::Enter));
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" third");
+        app.handle_queue_key(key(KeyCode::Enter));
+        assert_eq!(app.queued_prompts[0].text, "first");
+        assert_eq!(app.queued_prompts[2].text, "first third");
+        assert_eq!(app.transcript[0], "You: [queued] first");
+        assert_eq!(app.transcript[2], "You: [queued] first third");
+    }
+
+    #[test]
+    fn editing_keeps_attachments_and_a_steer_request_keeps_the_message_until_acknowledged() {
+        let mut app = queued_app();
+        app.queued_prompts[0]
+            .attachments
+            .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+        app.handle_queue_key(key(KeyCode::Enter));
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" modified");
+        app.handle_queue_key(key(KeyCode::Enter));
+        assert_eq!(app.queued_prompts[0].attachments.len(), 1);
+        assert!(app.handle_queue_key(key(KeyCode::Char('s'))));
+        assert_eq!(app.queued_prompts.len(), 3);
+        assert_eq!(app.queued_prompts[0].text, "first modified");
+    }
+
+    #[test]
+    fn long_edit_scrolls_to_the_cursor() {
+        use ratatui::backend::TestBackend;
+        let mut app = queued_app();
+        app.handle_queue_key(key(KeyCode::Enter));
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(&format!("{}\nvisible tail", "\nline".repeat(40)));
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("visible tail"), "{screen}");
+    }
+
+    #[test]
+    fn real_layout_keeps_queue_visible_during_stream_and_lists_messages() {
+        use ratatui::backend::TestBackend;
+        for language in [Language::En, Language::ZhCn, Language::Ja] {
+            for (width, height) in [(100, 32), (60, 24)] {
+                let mut app = queued_app();
+                app.language = language;
+                app.prompt_queue = None;
+                app.running = true;
+                app.model_step_in_flight = true;
+                app.stream_transient(StreamKind::Reply, "Streaming reply");
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                let screen: String = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                assert!(screen.contains("Ctrl+Q"), "{screen}");
+                assert!(screen.contains("first"), "{screen}");
+                assert!(screen.contains("Streaming reply"), "{screen}");
+                app.open_prompt_queue();
+                draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                let screen: String = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                assert!(screen.contains("1/3"), "{screen}");
+                assert!(screen.contains("second"), "{screen}");
+                assert!(screen.contains("Esc"), "{screen}");
+            }
+        }
+    }
+}

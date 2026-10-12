@@ -170,9 +170,9 @@ impl App {
         if self.running {
             (
                 self.language.text(
-                    "本轮进行中 · 回车即送达 · Esc 中止",
-                    "Turn running · Enter steers now · Esc stops",
-                    "ターン実行中 · Enter で即時送達 · Esc で中断",
+                    "本轮进行中 · 回车排队 · Ctrl+Q 管理 · Esc 中止",
+                    "Turn running · Enter queues · Ctrl+Q manage · Esc stops",
+                    "ターン実行中 · Enter で待機 · Ctrl+Q 管理 · Esc 中断",
                 ),
                 Color::Yellow,
             )
@@ -801,7 +801,7 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         assert_eq!(app.composer_state().0, "Your turn");
         app.begin_turn(false, "working".to_owned());
-        assert!(app.composer_state().0.contains("Enter steers now"));
+        assert!(app.composer_state().0.contains("Enter queues"));
         assert!(!app.bell_pending);
 
         app.note_tool_requested("read_file", None);

@@ -389,13 +389,14 @@ pub(super) async fn event_loop(
         // 都会走到这，不必在每个终态各写一遍。**待投递的运行时事件优先**——
         // 用户排在后面的那句话，很可能正是基于还没看到的后台结果说的。
         if !app.running
+            && app.prompt_queue.is_none()
             && runtime.kernel.pending_wake_authority(session.id).is_none()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
-            app.attachments = queued.attachments;
+            let draft_attachments = std::mem::replace(&mut app.attachments, queued.attachments.iter().map(|item| DraftAttachment { message: item.message.clone() }).collect());
+            let draft_selected_attachment = app.selected_attachment;
             app.selected_attachment = 0;
-            app.mark_queued_prompt_sent(&queued.text);
-            match prompt_execution(&queued.text) {
+            let result = match prompt_execution(&queued.text) {
                 PromptExecution::Local(prompt) if !prompt.is_empty() => {
                     dispatch_prompt(
                         &mut app,
@@ -405,31 +406,21 @@ pub(super) async fn event_loop(
                         &agent,
                         &runtime.tx,
                         prompt,
-                    )?;
+                    )
                 }
-                PromptExecution::Local(_) => {}
+                PromptExecution::Local(_) => Ok(()),
                 PromptExecution::Runtime(prompt) => {
-                    match runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await {
-                        Ok(()) => {
-                            app.notice = Some(
-                                language
-                                    .text(
-                                        "队列中的提示词已发出",
-                                        "Queued prompt submitted",
-                                        "キューのプロンプトを送信しました",
-                                    )
-                                    .to_owned(),
-                            )
-                        }
-                        Err(error) => app.append_transcript(format!(
-                            "Error: {}: {error}",
-                            language.text(
-                                "提交排队的提示词失败",
-                                "Submitting the queued prompt failed",
-                                "キューのプロンプト送信に失敗"
-                            )
-                        )),
-                    }
+                    runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await
+                }
+            };
+            app.attachments = draft_attachments;
+            app.selected_attachment = draft_selected_attachment;
+            match result {
+                Ok(()) => app.mark_queued_prompt_sent(&queued.text),
+                Err(error) => {
+                    app.queued_prompts.push_front(queued);
+                    app.open_prompt_queue();
+                    app.prompt_queue.as_mut().unwrap().status = Some(format!("{}: {error}", language.text("发送失败，消息与附件已保留；关闭列表后重试", "Send failed; message and attachments retained. Close to retry", "送信失敗。メッセージと添付を保持。閉じると再試行")));
                 }
             }
             continue;
@@ -516,6 +507,10 @@ pub(super) async fn event_loop(
             },
             event=events.next()=>if let Some(Ok(event))=event { match event {
                 Event::Paste(value)=>{
+                    if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
+                        if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
+                        continue;
+                    }
                     if app.approval.is_some() {
                         app.handle_approval_text(&value);
                     } else if app.routing_settings_paste(&value) {
@@ -539,6 +534,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
+                    if app.prompt_queue.is_some() { continue; }
                     // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
                     // 否则「点外面」会先被下面那些 `continue` 吃掉。
                     if mouse.kind==MouseEventKind::Down(MouseButton::Left)
@@ -686,6 +682,25 @@ pub(super) async fn event_loop(
                     if app.question.is_some(){app.handle_question_key(key);continue;}
                     if app.approval.is_some(){
                         app.handle_approval_key(key);
+                        continue;
+                    }
+                    if app.prompt_queue.is_some() {
+                        if app.handle_queue_key(key) {
+                            app.prompt_queue.as_mut().unwrap().status=None;
+                            let index=app.prompt_queue.as_ref().unwrap().selected;
+                            let text=app.queued_prompts[index].text.clone();
+                            if app.running && app.queued_prompts[index].attachments.is_empty() && !text.trim_start().starts_with('/') && steer_running_turn(&app,session,runtime,&agent,&text).await {
+                                app.remove_queued_prompt_row(index);
+                                app.queued_prompts.remove(index);
+                                app.note_steering_delivered(&text);
+                            } else {
+                                app.prompt_queue.as_mut().unwrap().status=Some(language.text("暂不能插话，消息仍保留在队列中（附件和命令需等待下一轮）","Cannot steer now; message remains queued (attachments and commands wait for the next turn)","今は送達できません。添付やコマンドは次のターンを待ちます").to_owned());
+                            }
+                        }
+                        continue;
+                    }
+                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('q') {
+                        app.open_prompt_queue();
                         continue;
                     }
                     if app.media.is_open(){
@@ -1155,6 +1170,11 @@ pub(super) async fn event_loop(
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
                         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
                         KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
+                            if app.input.text().trim()=="/queue" {
+                                app.take_submitted_input();
+                                app.open_prompt_queue();
+                                continue;
+                            }
                             // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
                             // 提示词排队，其余命令说清楚为什么现在不行。
                             if app.running {
@@ -1162,12 +1182,6 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         let text=app.take_submitted_input();
-                                        // 先试着直接送进正在跑的这一轮；带附件的插话走不了收件箱，照旧排队。
-                                        if app.attachments.is_empty() && steer_running_turn(&app,session,runtime,&agent,&text).await {
-                                            app.note_steering_delivered(&text);
-                                            app.notice=Some(language.text("已送达 · 模型下一步就会看到","Delivered · the model sees it at its next step","送達済み · 次のステップでモデルが読みます").to_owned());
-                                            continue;
-                                        }
                                         let row=app.queued_prompt_row(&text);
                                         app.append_transcript(row);
                                         app.queued_prompts.push_back(QueuedPrompt{
@@ -1179,7 +1193,7 @@ pub(super) async fn event_loop(
                                             "{} · {} {}",
                                             language.text("已排队，本轮结束后发送","Queued · sends when this turn finishes","キューに追加 · 現在のターン終了後に送信"),
                                             app.queued_prompts.len(),
-                                            language.text("条等待 · Esc 立即中断","waiting · Esc interrupts now","件待機 · Esc で即中断"),
+                                            language.text("条等待 · Ctrl+Q 编辑/删除/插话","waiting · Ctrl+Q edit/delete/steer","件待機 · Ctrl+Q 編集/削除/送達"),
                                         ));
                                         continue;
                                     },
