@@ -393,21 +393,28 @@ pub(super) async fn event_loop(
             && runtime.kernel.pending_wake_authority(session.id).is_none()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
-            let draft_attachments = std::mem::replace(&mut app.attachments, queued.attachments.iter().map(|item| DraftAttachment { message: item.message.clone() }).collect());
+            let draft_attachments = std::mem::replace(
+                &mut app.attachments,
+                queued
+                    .attachments
+                    .iter()
+                    .map(|item| DraftAttachment {
+                        message: item.message.clone(),
+                    })
+                    .collect(),
+            );
             let draft_selected_attachment = app.selected_attachment;
             app.selected_attachment = 0;
             let result = match prompt_execution(&queued.text) {
-                PromptExecution::Local(prompt) if !prompt.is_empty() => {
-                    dispatch_prompt(
-                        &mut app,
-                        session,
-                        store,
-                        &runtime.skills,
-                        &agent,
-                        &runtime.tx,
-                        prompt,
-                    )
-                }
+                PromptExecution::Local(prompt) if !prompt.is_empty() => dispatch_prompt(
+                    &mut app,
+                    session,
+                    store,
+                    &runtime.skills,
+                    &agent,
+                    &runtime.tx,
+                    prompt,
+                ),
                 PromptExecution::Local(_) => Ok(()),
                 PromptExecution::Runtime(prompt) => {
                     runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await
@@ -420,7 +427,14 @@ pub(super) async fn event_loop(
                 Err(error) => {
                     app.queued_prompts.push_front(queued);
                     app.open_prompt_queue();
-                    app.prompt_queue.as_mut().unwrap().status = Some(format!("{}: {error}", language.text("发送失败，消息与附件已保留；关闭列表后重试", "Send failed; message and attachments retained. Close to retry", "送信失敗。メッセージと添付を保持。閉じると再試行")));
+                    app.prompt_queue.as_mut().unwrap().status = Some(format!(
+                        "{}: {error}",
+                        language.text(
+                            "发送失败，消息与附件已保留；关闭列表后重试",
+                            "Send failed; message and attachments retained. Close to retry",
+                            "送信失敗。メッセージと添付を保持。閉じると再試行"
+                        )
+                    ));
                 }
             }
             continue;

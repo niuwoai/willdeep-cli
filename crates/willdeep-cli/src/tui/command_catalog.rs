@@ -335,6 +335,13 @@ pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static
             "/exit",
             language.text("退出 TUI", "Exit the TUI", "TUI を終了"),
         ),
-        ("/queue", language.text("管理待发消息：编辑、删除或立即插话（Ctrl+Q）", "Manage queued messages: edit, delete or steer now (Ctrl+Q)", "送信待ちを編集・削除・即時送達（Ctrl+Q）")),
+        (
+            "/queue",
+            language.text(
+                "管理待发消息：编辑、删除或立即插话（Ctrl+Q）",
+                "Manage queued messages: edit, delete or steer now (Ctrl+Q)",
+                "送信待ちを編集・削除・即時送達（Ctrl+Q）",
+            ),
+        ),
     ]
 }
