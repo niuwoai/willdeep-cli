@@ -1,5 +1,7 @@
 use super::*;
 
+mod mobile_context;
+
 const RUNTIME_SESSION_SCHEMA: u32 = 2;
 const SESSION_EXPORT_SCHEMA: u32 = 1;
 const MAX_SESSION_TITLE_CHARS: usize = 200;
@@ -32,6 +34,10 @@ pub(crate) struct RuntimeSession {
     /// 用户在这个会话里选的审批档位。`None` 表示跟随工作区策略。
     #[serde(default)]
     pub approval_mode: Option<super::WorkspaceAccess>,
+    #[serde(default)]
+    pub mobile_skills: Vec<String>,
+    #[serde(default)]
+    pub mobile_plugins: Vec<String>,
     pub config: Option<PathBuf>,
     pub status: RuntimeSessionStatus,
     pub active_turn_id: Option<uuid::Uuid>,
@@ -474,6 +480,8 @@ impl RuntimeSessionStore {
             profile: core.profile.clone(),
             model: core.model.clone(),
             approval_mode: None,
+            mobile_skills: Vec::new(),
+            mobile_plugins: Vec::new(),
             config: core.config.clone(),
             status: RuntimeSessionStatus::Idle,
             active_turn_id: None,
@@ -611,6 +619,8 @@ impl RuntimeSessionStore {
             model: core.model.clone(),
             // 分叉出来的会话沿用原会话的档位：用户看到的是「同一个对话的另一支」。
             approval_mode: source.approval_mode,
+            mobile_skills: source.mobile_skills,
+            mobile_plugins: source.mobile_plugins,
             config: source.config,
             status: RuntimeSessionStatus::Idle,
             active_turn_id: None,

@@ -1320,6 +1320,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "session.attachments",
     "session.rename",
     "session.update_model",
+    "session.configure",
     "session.update_approval_mode",
     "session.fork",
     "session.rewind",

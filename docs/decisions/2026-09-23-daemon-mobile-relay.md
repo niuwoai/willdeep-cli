@@ -1,3 +1,5 @@
+> 2026-10-13 更新：本文的“手机不能修改审批档位与模型、配置字段一律忽略”限制已被用户授权的三端配置协作修复取代，现行契约见 `../MOBILE_RUN_CONTEXT.md`；其它工作区、权限和撤销边界保持有效。
+
 # 决策单：手机中继从 TUI 挪进 Runtime Daemon（2026-09-23）
 
 > 状态：已实现（0.82.0-rc1，未发布；见文末「完成记录」） | 基于 `fix/cli-mobile-command-alignment` @ 0.81.0-rc9 | 关联：`docs/MOBILE.md`、`docs/RUNTIME_DAEMON.md`、`docs/RUNTIME_CONTROL_API.md`、Android `docs/MOBILE_GATEWAY_REQUIREMENTS.md`「Desktop Command Matrix」

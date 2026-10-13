@@ -251,6 +251,10 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         "session.attachments" => attachments::get(state, &request),
         "session.rename" => session_rename(state, &request),
         "session.update_model" => session_update_model(state, &request),
+        "session.configure" => mobile_gateway::configure_run_context(state, &request.params)
+            .await
+            .map_err(|_| ApiFailure::invalid("Invalid or unavailable session configuration"))
+            .and_then(json),
         "session.update_approval_mode" => session_update_approval_mode(state, &request),
         "session.fork" => session_fork(state, &request),
         "session.rewind" => session_rewind(state, &request).await,
@@ -746,6 +750,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "session.create",
     "session.rename",
     "session.update_model",
+    "session.configure",
     "session.update_approval_mode",
     "session.fork",
     "session.rewind",

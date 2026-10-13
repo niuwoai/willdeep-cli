@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-13 | 当前版本：v0.99.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-13 | 当前版本：v0.99.0-rc2（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 TUI 流式输出期间输入默认排队，活动区持续显示待发条数和摘要；`Ctrl+Q` / `/queue` 查看列表并编辑、删除或主动立即插话。管理期间暂停自动发送，编辑保留附件和原草稿，发送失败保留消息供手动处理；已送达 Runtime 的插话不可撤回。
 
@@ -24,6 +24,8 @@ Web 插件中心设置先编辑，再点击每个插件的“保存设置”按�
 WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户提供的 API Base、API Key 和模型 ID，在受限工作区内完成模型推理、工具执行和结果验证。
 
 ## 核心功能
+
+- 手机运行配置统一四档审批，完整上报实际供应商、模型目录、允许技能和已批准插件；配置先校验后持久化，下一轮实际使用选定模型和技能正文，只读工作区限制保留。详见 [手机配置协议](docs/MOBILE_RUN_CONTEXT.md)。
 
 - 手机与 Web 服务归 Runtime：`/mobile` 已由 daemon 托管；`/webapp` 也改为 daemon 内部 Web 服务，CLI 只发送启停、查询命令。退出 CLI 不关闭服务，Runtime 停止时关闭监听；Runtime 重启按已保存的开关恢复。`/mobile off` / `/webapp stop` 关闭对应开关。独立 Runtime 的进程退出/重启验收已通过，见 [验收记录](docs/verification/0.99.0-rc1/runtime-web-smoke.md)；发布、CLI 安装与 Runtime 升级分别核验。
 

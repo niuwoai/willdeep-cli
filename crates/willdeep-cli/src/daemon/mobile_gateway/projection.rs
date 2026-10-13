@@ -573,7 +573,8 @@ impl Gateway {
             | "session.archived"
             | "session.unarchived"
             | "session.deleted"
-            | "session.model_updated" => {
+            | "session.model_updated"
+            | "session.configuration_updated" => {
                 self.snapshot_dirty = true;
                 Vec::new()
             }

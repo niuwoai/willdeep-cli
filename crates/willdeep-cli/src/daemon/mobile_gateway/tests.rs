@@ -442,7 +442,7 @@ async fn message_send_queues_one_turn_owned_by_the_phone_even_when_retried() {
         "session_id": session_id.to_string(),
         "payload": {
             "text": "run the tests",
-            // 这几项手机上改不了，必须被忽略。
+            // 配置必须在提交前生效，同一命令重试保持幂等。
             "approval_mode": "full_access",
             "model": "someone-else",
         },
@@ -482,7 +482,7 @@ async fn message_send_queues_one_turn_owned_by_the_phone_even_when_retried() {
     let session = harness
         .execute("session.get", json!({ "id": session_id }))
         .await;
-    assert!(session["model"].is_null(), "手机不能改模型：{session}");
+    assert_eq!(session["model"], "someone-else");
 
     let claimed = harness
         .state
@@ -1094,6 +1094,26 @@ async fn the_gateway_serves_a_phone_through_the_relay() {
     );
     assert!(harness.state.mobile.status().phone_active);
 
+    socket.send(WebSocketMessage::Text(json!({"id": uuid::Uuid::new_v4(), "type": "session.configure", "session_id": session_id, "payload": {"approval_mode": "workspace-write", "model": "relay-model"}}).to_string().into())).await.unwrap();
+    let configured_ack = next_of_type(&mut socket, "ack").await;
+    assert_eq!(configured_ack["payload"]["type"], "session.configure");
+    let configured = next_of_type(&mut socket, "capabilities.updated").await;
+    assert_eq!(configured["payload"]["active_model_id"], "relay-model");
+    assert_eq!(
+        configured["payload"]["active_approval_mode"],
+        "workspace-write"
+    );
+    assert_eq!(
+        harness
+            .state
+            .sessions
+            .get(session_id)
+            .unwrap()
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("relay-model")
+    );
     // 手机在场时，Runtime 里新冒出来的审批直接推过去。
     let task_id = harness.running_task(session_id).await;
     let receiver = harness
@@ -1184,4 +1204,222 @@ async fn relay_switch_is_persisted_and_reported_without_the_token() {
             .unwrap()
             .enabled()
     );
+}
+
+#[tokio::test]
+async fn mobile_configuration_catalog_persists_and_reaches_the_actual_turn() {
+    let harness = Harness::new();
+    harness.register_workspace().await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let capture = captured.clone();
+    let app = axum::Router::new().route(
+        "/v1/models",
+        axum::routing::get(|| async {
+            axum::Json(json!({"data": [{"id": "remote-model"}, {"id": "other-model"}]}))
+        }),
+    );
+    let app = app.route("/v1/chat/completions", axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
+    let capture = capture.clone();
+    async move {
+        *capture.lock().unwrap() = Some(request.clone());
+        if request["stream"] == true {
+            let data = format!("data: {}\n\ndata: [DONE]\n\n", json!({"id":"fixture-response", "choices":[{"index":0,"delta":{"role":"assistant","content":"fixture complete"},"finish_reason":"stop"}]}));
+            ([("content-type", "text/event-stream")], data)
+        } else {
+            ([("content-type", "application/json")], json!({"id":"fixture-response", "choices":[{"index":0,"message":{"role":"assistant","content":"fixture complete"},"finish_reason":"stop"}], "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}).to_string())
+        }
+    }
+}));
+    let api = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let config = format!(
+        "default_provider = 'alpha'\n[providers.alpha]\nprovider = 'openai-compatible'\napi_base = 'http://{address}/v1'\napi_key = 'test-only'\nmodel = 'configured-model'\n[providers.beta]\nprovider = 'openai-compatible'\napi_base = 'http://{address}/v1'\napi_key = 'test-only'\nmodel = 'beta-model'\n"
+    );
+    std::fs::write(harness.state.home.join("config.toml"), config).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            harness.state.home.join("config.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+
+    let session = harness
+        .state
+        .sessions
+        .create(session_store::CreateRuntimeSession {
+            id: None,
+            workspace: harness.workspace.clone(),
+            profile: None,
+            model: None,
+            config: Some(harness.state.home.join("config.toml")),
+            title: Some("mobile execution fixture".to_owned()),
+        })
+        .unwrap();
+    let session_id = session.id;
+    let skill_root = harness.workspace.join(".willdeep/skills/mobile-fixture");
+    std::fs::create_dir_all(&skill_root).unwrap();
+    std::fs::write(skill_root.join("SKILL.md"), "---\nname: Mobile fixture\ndescription: protocol fixture\n---\nCheck the fixture before changing code.").unwrap();
+    let mut gateway = harness.gateway();
+    let outgoing = phone(&mut gateway, json!({"id": "catalog", "type": "capabilities.get", "session_id": session_id, "payload": {}})).await;
+    let payload = &one(&outgoing, "capabilities.updated")["payload"];
+    assert_eq!(payload["active_provider_id"], "alpha");
+    assert_eq!(payload["active_model_id"], "configured-model");
+    assert_eq!(payload["providers"].as_array().unwrap().len(), 2);
+    assert!(
+        payload["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "remote-model")
+    );
+    assert!(
+        payload["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "mobile-fixture")
+    );
+    if let Ok(path) = std::env::var("WILLDEEP_MOBILE_RUST_FIXTURE") {
+        std::fs::write(
+            path,
+            serde_json::to_vec(one(&outgoing, "capabilities.updated")).unwrap(),
+        )
+        .unwrap();
+    }
+    assert_eq!(payload["models_status"], "complete");
+    assert_eq!(payload["approval_modes"].as_array().unwrap().len(), 4);
+    assert!(!payload.to_string().contains("test-only"));
+    assert!(
+        !payload
+            .to_string()
+            .contains(&harness.state.home.display().to_string())
+    );
+    let patch = json!({"id": uuid::Uuid::new_v4(), "type": "session.configure", "session_id": session_id, "payload": {
+        "provider_id": "beta", "model": "remote-model", "approval_mode": "full-access", "skills": ["mobile-fixture"]
+    }});
+    let updated = phone(&mut gateway, patch.clone()).await;
+    one(&updated, "ack");
+    let payload = &one(&updated, "capabilities.updated")["payload"];
+    assert_eq!(payload["active_provider_id"], "beta");
+    assert_eq!(payload["active_model_id"], "remote-model");
+    assert_eq!(payload["active_approval_mode"], "full-access");
+    assert!(
+        payload["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "mobile-fixture" && s["is_active"] == true)
+    );
+    one(&phone(&mut gateway, patch).await, "ack");
+    let reopened = session_store::RuntimeSessionStore::open(
+        harness.state.home.join("runtime-sessions.json"),
+        &harness.state.home,
+    )
+    .unwrap();
+    assert_eq!(
+        reopened.get(session_id).unwrap().unwrap().mobile_skills,
+        vec!["mobile-fixture"]
+    );
+    let message = phone(&mut gateway, json!({"id": uuid::Uuid::new_v4(), "type": "message.send", "session_id": session_id, "payload": {"text": "verify context"}})).await;
+    one(&message, "ack");
+    let claimed = harness
+        .state
+        .sessions
+        .claim_next(session_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.request.profile.as_deref(), Some("beta"));
+    assert_eq!(claimed.request.model.as_deref(), Some("remote-model"));
+    assert_eq!(claimed.request.prompt, "verify context");
+    assert!(claimed.request.attachments.iter().any(|a| matches!(a, willdeep_core::MessageAttachment::Text { content, .. } if content.contains("Check the fixture before changing code."))));
+    let task = harness.state.tasks.submit(claimed.request).await.unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        harness.state.tasks.wait_until_idle(),
+    )
+    .await
+    .unwrap();
+    let finished = harness.execute("task.get", json!({"id": task.id})).await;
+    assert_eq!(finished["status"], "completed", "{finished}");
+    let request = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("actual model HTTP request");
+    assert_eq!(request["model"], "remote-model");
+    assert!(
+        request["messages"]
+            .to_string()
+            .contains("Check the fixture before changing code.")
+    );
+    let cleared = phone(&mut gateway, json!({"id": uuid::Uuid::new_v4(), "type": "session.configure", "session_id": session_id, "payload": {"skills": []}})).await;
+    one(&cleared, "ack");
+    assert!(
+        harness
+            .state
+            .sessions
+            .get(session_id)
+            .unwrap()
+            .unwrap()
+            .mobile_skills
+            .is_empty()
+    );
+    api.abort();
+}
+
+#[tokio::test]
+async fn invalid_mobile_context_is_rejected_without_partial_changes_or_turns() {
+    let harness = Harness::new();
+    harness.register_workspace().await;
+    let session_id = harness.session().await;
+    let before = harness.state.sessions.get(session_id).unwrap().unwrap();
+    let mut gateway = harness.gateway();
+    for payload in [
+        json!({"approval_mode": "full-access", "provider_id": "unknown"}),
+        json!({"skills": ["../missing"]}),
+        json!({"experts": ["unknown"]}),
+        json!({"plugins": ["plugin:unapproved"]}),
+        json!({"approval_mode": "typo"}),
+    ] {
+        let outgoing = phone(&mut gateway, json!({"id": uuid::Uuid::new_v4(), "type": "session.configure", "session_id": session_id, "payload": payload})).await;
+        one(&outgoing, "error");
+        assert_eq!(
+            harness.state.sessions.get(session_id).unwrap().unwrap(),
+            before
+        );
+    }
+    let outgoing = phone(&mut gateway, json!({"id": uuid::Uuid::new_v4(), "type": "message.send", "session_id": session_id, "payload": {"text": "must not submit", "approval_mode": "invalid"}})).await;
+    one(&outgoing, "error");
+    assert!(
+        harness
+            .execute("turn.list", json!({"session_id": session_id}))
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn read_only_workspace_remains_read_only_after_mobile_full_access() {
+    let harness = Harness::new();
+    harness
+        .execute(
+            "workspace.register",
+            json!({"root": harness.workspace, "access": "read_only"}),
+        )
+        .await;
+    let session_id = harness.session().await;
+    let mut gateway = harness.gateway();
+    let outgoing = phone(&mut gateway, json!({"id": uuid::Uuid::new_v4(), "type": "session.configure", "session_id": session_id, "payload": {"approval_mode": "full_access"}})).await;
+    let payload = &one(&outgoing, "capabilities.updated")["payload"];
+    assert_eq!(payload["active_approval_mode"], "read-only");
+    assert!(payload["approval_modes"].as_array().unwrap().is_empty());
 }

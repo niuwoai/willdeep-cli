@@ -31,6 +31,7 @@ impl Gateway {
             "session.select" => self.select_session(server, &envelope).await,
             "workspace.list" => self.workspace_list(server, &envelope).await,
             "capabilities.get" => self.capabilities(server, &envelope).await,
+            "session.configure" => self.configure(server, &envelope).await,
             "message.send" => self.send_message(server, &envelope).await,
             "session.create" => self.create_session(server, &envelope).await,
             "turn.stop" => self.stop_turn(server, &envelope).await,
@@ -111,61 +112,87 @@ impl Gateway {
         )])
     }
 
-    /// 只读展示：手机上改不了 Profile 和模型（第 8 节第 2 条），所以只报选中会话
-    /// 正在用的那一个，让手机端的选择器不会给出切不过去的选项。
     async fn capabilities(
         &mut self,
         server: &ServerState,
         envelope: &PhoneEnvelope,
     ) -> Result<Vec<Value>, CommandError> {
-        let session = match self.selected {
-            Some(selected) => open_session(server, selected).await.ok(),
-            None => None,
-        };
-        let option = |value: Option<&String>| match value {
-            Some(id) => json!([{ "id": id, "title": id, "is_active": true }]),
-            None => json!([]),
-        };
-        let profile = session
-            .as_ref()
-            .and_then(|session| session.profile.as_ref());
-        let model = session.as_ref().and_then(|session| session.model.as_ref());
-        let mut payload = json!({
-            "providers": option(profile),
-            "models": option(model),
-            "skills": [],
-            "experts": [],
-            "plugins": [],
-        });
-        if let Some(profile) = profile {
-            payload["active_provider_id"] = json!(profile);
+        if let Some(id) = envelope_session(envelope)? {
+            let session = open_session(server, id).await?;
+            self.selected = Some(session.id);
         }
-        if let Some(model) = model {
-            payload["active_model_id"] = json!(model);
+        // 首次连接也先确定选中会话，避免请求时序导致空目录。
+        if self.selected.is_none() {
+            let _ = self.snapshot(server, None).await;
         }
+        let payload =
+            super::run_context::capabilities(server, self.selected, &envelope.payload).await?;
         Ok(vec![reply(
             envelope.id.as_deref(),
             "capabilities.updated",
-            None,
+            self.selected,
             payload,
         )])
     }
 
-    /// `approval_mode` / `provider_id` / `model` / `skills` / `experts` / `plugins`
-    /// 一律忽略：审批档位和模型只能在桌面上改。
+    async fn configure(
+        &mut self,
+        server: &ServerState,
+        envelope: &PhoneEnvelope,
+    ) -> Result<Vec<Value>, CommandError> {
+        let id = envelope_session(envelope)?
+            .or(self.selected)
+            .ok_or_else(|| CommandError::new("Select a session before configuring it."))?;
+        let mut params = envelope.payload.clone();
+        params["id"] = json!(id);
+        let _: Value = call(
+            server,
+            "session.configure",
+            params,
+            Some(envelope_request_id(envelope)),
+        )
+        .await?;
+        self.selected = Some(id);
+        let mut replies = vec![ack(
+            envelope.id.as_deref(),
+            "session.configure",
+            Some(id),
+            None,
+        )];
+        replies.extend(self.capabilities(server, envelope).await?);
+        Ok(replies)
+    }
+
     async fn send_message(
         &mut self,
         server: &ServerState,
         envelope: &PhoneEnvelope,
     ) -> Result<Vec<Value>, CommandError> {
         let text = payload_string(&envelope.payload, &["text", "content"]).unwrap_or_default();
-        let attachments = phone_images(&envelope.payload).await?;
+        let mut attachments = phone_images(&envelope.payload).await?;
         if text.is_empty() && attachments.is_empty() {
             return Err(CommandError::new("Message text is empty."));
         }
         let request_id = envelope_request_id(envelope);
         let session_id = self.target_session(server, envelope, request_id).await?;
         let image_count = attachments.len();
+        // 旧手机随消息带配置；先校验并落盘，再提交，绝不静默忽略。
+        if super::run_context::has_context(&envelope.payload) {
+            let mut params = envelope.payload.clone();
+            params["id"] = json!(session_id);
+            // 消息字段不是配置参数。
+            let params = super::run_context::context_params(params);
+            let _: Value = call(
+                server,
+                "session.configure",
+                params,
+                Some(uuid::Uuid::from_u128(
+                    request_id.as_u128() ^ 0xc0ff_ee00_0000_0000_0000_0000_0000_0002,
+                )),
+            )
+            .await?;
+        }
+        attachments.extend(super::run_context::selected_attachments(server, session_id).await?);
         let _turn: RuntimeTurn = call(
             server,
             "turn.submit",

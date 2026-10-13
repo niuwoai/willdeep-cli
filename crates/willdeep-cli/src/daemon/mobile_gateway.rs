@@ -22,6 +22,8 @@ use crate::mobile::{RelayCredentials, UnsafeCredentialPermissions};
 
 mod commands;
 mod projection;
+mod run_context;
+pub(super) use run_context::configure_run_context;
 #[cfg(test)]
 mod tests;
 
@@ -42,6 +44,7 @@ const PHONE_COMMANDS: &[&str] = &[
     "session.create",
     "workspace.list",
     "capabilities.get",
+    "session.configure",
     "push.register",
     "session.select",
     "message.send",
@@ -62,6 +65,7 @@ const PHONE_COMMANDS: &[&str] = &[
 const RUNTIME_OPERATIONS: &[&str] = &[
     "session.list",
     "session.get",
+    "session.configure",
     "session.create",
     "workspace.list",
     "task.list",
