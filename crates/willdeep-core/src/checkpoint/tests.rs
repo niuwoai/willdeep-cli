@@ -31,21 +31,23 @@ async fn report_ack_waits_for_the_parent_checkpoint_commit() {
     let request_id = uuid::Uuid::new_v4();
     let task = background
         .start_agent_run(
-            Some(RunRequest {
-                request_id,
+            crate::background::AgentRunSpec {
+                request: Some(RunRequest {
+                    request_id,
+                    agent_id,
+                    reason: AgentRunReason::Spawn,
+                    label: "fixture".into(),
+                    model: None,
+                    max_turns: Some(1),
+                    token_budget: None,
+                    timeout_seconds: None,
+                    dispatch: serde_json::Value::Null,
+                }),
                 agent_id,
-                reason: AgentRunReason::Spawn,
+                kind: BackgroundTaskKind::Subagent,
                 label: "fixture".into(),
-                model: None,
-                max_turns: Some(1),
-                token_budget: None,
-                timeout_seconds: None,
-                dispatch: serde_json::Value::Null,
-            }),
-            agent_id,
-            BackgroundTaskKind::Subagent,
-            "fixture".into(),
-            Arc::new(crate::AgentInstructionInbox::default()),
+                instruction_inbox: Arc::new(crate::AgentInstructionInbox::default()),
+            },
             || async {
                 TaskResult {
                     status: BackgroundTaskStatus::Completed,

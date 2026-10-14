@@ -699,12 +699,11 @@ impl SubagentCatalog {
         if let (Some(store), Some((request_id, _))) =
             (self.background.agent_run_store(), requested_run)
             && let Some(saved) = store.get(request_id).map_err(AgentError::Checkpoint)?
+            && let Some(turns) = saved.max_turns
         {
-            if let Some(turns) = saved.max_turns {
-                profile.max_turns = turns as usize;
-                profile.token_budget = saved.token_budget;
-                profile.timeout_seconds = saved.timeout_seconds;
-            }
+            profile.max_turns = turns as usize;
+            profile.token_budget = saved.token_budget;
+            profile.timeout_seconds = saved.timeout_seconds;
         }
         let requested_command = args
             .target_command
@@ -891,11 +890,10 @@ impl SubagentCatalog {
             let id = self
                 .background
                 .start_agent_run(
-                    Some(run_request),
-                    agent_id,
-                    BackgroundTaskKind::Subagent,
-                    format!("{label} · {profile_id}"),
-                    instruction_inbox,
+                    crate::background::AgentRunSpec {
+                        request: Some(run_request), agent_id, kind: BackgroundTaskKind::Subagent,
+                        label: format!("{label} · {profile_id}"), instruction_inbox,
+                    },
                     move || {
                         let mut run = run.clone();
                         let profile_id = run.profile.id.clone();
@@ -940,10 +938,9 @@ impl SubagentCatalog {
                                     error,
                                 )));
                             }
-                            if prepared.dedicated && prepared.workspace.exists() {
-                                if let Err(error) = super::dispatch_store::validate_workspace(&prepared, &root_workspace).await {
+                            if prepared.dedicated && prepared.workspace.exists()
+                                && let Err(error) = super::dispatch_store::validate_workspace(&prepared, &root_workspace).await {
                                     return subagent_task_result(Err(AgentError::SubagentBlocked(error.to_string())));
-                                }
                             }
                             let prepared = if prepared.dedicated && !prepared.workspace.exists() {
                                 if let (Some(store), Some(run_id)) = (background.agent_run_store(), run_id) {

@@ -38,10 +38,10 @@ impl SubagentCatalog {
                 ));
             }
             if existing.record.status == AgentStatus::Queued
-                && !self
+                && self
                     .background
                     .task_for_agent(agent_id)
-                    .is_some_and(|task| task.run_id == Some(request_id))
+                    .is_none_or(|task| task.run_id != Some(request_id))
             {
                 self.validate_run_owner(&dispatch, agent_id)?;
                 if let Some(model) = &dispatch.model {

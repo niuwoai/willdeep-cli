@@ -108,6 +108,14 @@ struct LaunchSpec {
     cancel_aware: Option<(String, watch::Sender<bool>, watch::Receiver<bool>)>,
 }
 
+pub(crate) struct AgentRunSpec {
+    pub request: Option<RunRequest>,
+    pub agent_id: uuid::Uuid,
+    pub kind: BackgroundTaskKind,
+    pub label: String,
+    pub instruction_inbox: Arc<AgentInstructionInbox>,
+}
+
 #[derive(Clone)]
 pub struct BackgroundTaskRegistry {
     team_owner: Arc<Mutex<Option<std::fs::File>>>,
@@ -545,11 +553,13 @@ impl BackgroundTaskRegistry {
         HFut: Future<Output = ()> + Send + 'static,
     {
         self.start_agent_run(
-            None,
-            agent_id,
-            kind,
-            label,
-            instruction_inbox,
+            AgentRunSpec {
+                request: None,
+                agent_id,
+                kind,
+                label,
+                instruction_inbox,
+            },
             launcher,
             lifecycle,
         )
@@ -557,11 +567,7 @@ impl BackgroundTaskRegistry {
 
     pub(crate) fn start_agent_run<F, Fut, H, HFut>(
         &self,
-        run_request: Option<RunRequest>,
-        agent_id: uuid::Uuid,
-        kind: BackgroundTaskKind,
-        label: String,
-        instruction_inbox: Arc<AgentInstructionInbox>,
+        spec: AgentRunSpec,
         launcher: F,
         lifecycle: H,
     ) -> Result<String, String>
@@ -571,6 +577,13 @@ impl BackgroundTaskRegistry {
         H: Fn(BackgroundTaskSnapshot) -> HFut + Send + Sync + 'static,
         HFut: Future<Output = ()> + Send + 'static,
     {
+        let AgentRunSpec {
+            request: run_request,
+            agent_id,
+            kind,
+            label,
+            instruction_inbox,
+        } = spec;
         let launcher: TaskLauncher = Arc::new(move || Box::pin(launcher()));
         let lifecycle: TaskLifecycleHook = Arc::new(move |snapshot| Box::pin(lifecycle(snapshot)));
         let future = launcher();
@@ -621,19 +634,18 @@ impl BackgroundTaskRegistry {
             })
         });
         let mut state = self.inner.lock().expect("background registry");
-        if let Some(request) = &run_request {
-            if let Some(task) = state
+        if let Some(request) = &run_request
+            && let Some(task) = state
                 .tasks
                 .iter()
                 .find(|task| task.snapshot.run_id == Some(request.request_id))
-            {
-                if task.run_request.as_ref().is_none_or(|previous| {
-                    previous.agent_id != request.agent_id || previous.dispatch != request.dispatch
-                }) {
-                    return Err("Agent request ID was reused with a different task".into());
-                }
-                return Ok(task.snapshot.id.clone());
+        {
+            if task.run_request.as_ref().is_none_or(|previous| {
+                previous.agent_id != request.agent_id || previous.dispatch != request.dispatch
+            }) {
+                return Err("Agent request ID was reused with a different task".into());
             }
+            return Ok(task.snapshot.id.clone());
         }
         let ticket = if kind == BackgroundTaskKind::Subagent {
             Some(
@@ -1063,11 +1075,13 @@ mod tests {
         };
         let _queued = registry
             .start_agent_run(
-                Some(run),
-                agent_id,
-                BackgroundTaskKind::Subagent,
-                "timeout".into(),
-                Arc::new(AgentInstructionInbox::default()),
+                AgentRunSpec {
+                    request: Some(run),
+                    agent_id,
+                    kind: BackgroundTaskKind::Subagent,
+                    label: "timeout".into(),
+                    instruction_inbox: Arc::new(AgentInstructionInbox::default()),
+                },
                 || async { std::future::pending::<TaskResult>().await },
                 |_| async {},
             )

@@ -485,12 +485,11 @@ impl AgentRunStore {
                 .map_err(storage_error)?;
             Ok(())
         })();
-        if result.is_err() {
-            if let Err(error) = std::fs::remove_file(&temporary)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                return Err(storage_error(error));
-            }
+        if result.is_err()
+            && let Err(error) = std::fs::remove_file(&temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(storage_error(error));
         }
         result
     }
