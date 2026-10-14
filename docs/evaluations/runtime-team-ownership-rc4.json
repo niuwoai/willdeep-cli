@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-14",
+  "version": "0.99.0-rc4",
+  "base_commit": "e79f990e5e258da13a34788a65563537cb68640f",
+  "status": "passed",
+  "checks": [
+    { "name": "agent::recovery::ownership_tests", "passed": 3, "ignored": 0 },
+    { "name": "harness::", "passed": 31, "ignored": 0 },
+    { "name": "subagent::", "passed": 73, "ignored": 1 },
+    { "name": "checkpoint::", "passed": 23, "ignored": 1, "overlap_with_subagent": 2 },
+    { "name": "public_retry_restores_child_after_daemon_and_parent_harness_restart", "passed": 1, "ignored": 0 },
+    { "name": "yarn --cwd web build", "status": "passed" },
+    { "name": "cargo fmt --all --check", "status": "passed" },
+    { "name": "git diff --check", "status": "passed" },
+    { "name": "Rust and Web version consistency", "status": "passed" }
+  ],
+  "delivery": {
+    "recorded_at": "validation_before_release",
+    "branch": "codex/fix-runtime-team-ownership",
+    "committed": false,
+    "merged_to_main": false,
+    "installed": false,
+    "user_runtime_restarted": false
+  }
+}
