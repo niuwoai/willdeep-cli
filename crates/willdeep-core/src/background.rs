@@ -324,6 +324,43 @@ impl BackgroundTaskRegistry {
             .map(|task| task.output.clone())
     }
 
+    pub(crate) fn append_terminal_note(&self, id: &str, note: &str) -> Result<(), String> {
+        let (run_id, event) = {
+            let mut state = self
+                .inner
+                .lock()
+                .map_err(|_| "background registry unavailable")?;
+            let task = state
+                .tasks
+                .iter_mut()
+                .find(|task| task.snapshot.id == id)
+                .ok_or("background task not found")?;
+            if task.snapshot.status.is_pending() {
+                return Err("background task is not terminal".into());
+            }
+            task.output = truncate(format!("{}\n\n{note}", task.output), false);
+            task.snapshot.output_bytes = task.output.len();
+            (
+                task.snapshot.run_id,
+                BackgroundTaskEvent {
+                    notice: completion_notice(&task.snapshot, &task.output),
+                    snapshot: task.snapshot.clone(),
+                },
+            )
+        };
+        if let (Some(store), Some(run_id)) = (&self.run_store, run_id) {
+            store.append_terminal_note(run_id, note)?;
+        }
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| "background registry unavailable")?;
+        if let Some(pending) = state.pending.iter_mut().find(|e| e.snapshot.id == id) {
+            *pending = event;
+        }
+        Ok(())
+    }
+
     pub fn output(&self, id: &str, tail_lines: usize) -> Option<String> {
         let state = self.inner.lock().expect("background registry");
         let output = &state

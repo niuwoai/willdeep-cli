@@ -3,6 +3,43 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[tokio::test]
+async fn deadline_prevents_expired_commands_and_bounds_running_commands() {
+    let root = std::env::temp_dir().join(format!("tool-deadline-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let tools = ToolRegistry::new(&root, ApprovalMode::FullAccess).unwrap();
+    tools.set_execution_deadline(Some(tokio::time::Instant::now()));
+    let command = |background| CommandArgs {
+        cwd: None,
+        command: "touch unexpected".into(),
+        timeout_seconds: Some(60),
+        label: None,
+        run_in_background: Some(background),
+        network: None,
+    };
+    assert!(tools.run_command(command(false)).await.is_err());
+    assert!(tools.run_command(command(true)).await.is_err());
+    assert!(!root.join("unexpected").exists());
+    tools.set_execution_deadline(Some(
+        tokio::time::Instant::now() + std::time::Duration::from_millis(50),
+    ));
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tools.run_command(CommandArgs {
+            cwd: None,
+            command: "sleep 5".into(),
+            timeout_seconds: Some(60),
+            label: None,
+            run_in_background: None,
+            network: None,
+        }),
+    )
+    .await
+    .expect("deadline bounds command");
+    assert!(matches!(result, Err(ToolError::CommandTimeout { .. })));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 struct AllowApprover;
 #[async_trait]
 impl Approver for AllowApprover {
@@ -499,6 +536,7 @@ async fn smart_runs_read_only_shell_but_still_gates_effectful_commands() {
 
     let inspection = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "printf ok".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -516,6 +554,7 @@ async fn smart_runs_read_only_shell_but_still_gates_effectful_commands() {
     ] {
         let denied = registry
             .run_command(CommandArgs {
+                cwd: None,
                 command: blocked.to_owned(),
                 timeout_seconds: None,
                 label: None,
@@ -565,6 +604,7 @@ async fn only_ambiguous_commands_reach_the_ai_judge() {
     for command in ["ls", "rm -rf build", "git commit -m wip"] {
         let _ = registry
             .run_command(CommandArgs {
+                cwd: None,
                 command: command.to_owned(),
                 timeout_seconds: None,
                 label: None,
@@ -603,6 +643,7 @@ async fn judge_denial_falls_back_to_the_user() {
         .with_safety_judge(Arc::new(DenyingJudge));
     let denied = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "git commit -m wip".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -635,6 +676,7 @@ async fn reviewed_child_never_sends_dangerous_or_sensitive_commands_to_the_judge
 
     let reviewed = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "printf reviewed > result.txt".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -654,6 +696,7 @@ async fn reviewed_child_never_sends_dangerous_or_sensitive_commands_to_the_judge
     ] {
         let denied = registry
             .run_command(CommandArgs {
+                cwd: None,
                 command: command.to_owned(),
                 timeout_seconds: None,
                 label: None,
@@ -687,6 +730,7 @@ async fn human_preapproval_is_exact_and_does_not_authorize_a_decorated_command()
         .with_preapproved_commands([exact.to_owned()]);
     registry
         .run_command(CommandArgs {
+            cwd: None,
             command: exact.to_owned(),
             timeout_seconds: None,
             label: None,
@@ -697,6 +741,7 @@ async fn human_preapproval_is_exact_and_does_not_authorize_a_decorated_command()
         .expect("exact human-authorized command");
     let decorated = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: format!("{exact} && printf extra"),
             timeout_seconds: None,
             label: None,
@@ -913,6 +958,7 @@ async fn a_read_only_git_worker_composes_git_queries_and_nothing_else() {
     ] {
         registry
             .run_command(CommandArgs {
+                cwd: None,
                 command: command.to_owned(),
                 timeout_seconds: None,
                 label: None,
@@ -930,6 +976,7 @@ async fn a_read_only_git_worker_composes_git_queries_and_nothing_else() {
     ] {
         let denied = registry
             .run_command(CommandArgs {
+                cwd: None,
                 command: command.to_owned(),
                 timeout_seconds: None,
                 label: None,
@@ -995,6 +1042,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
         .with_command_allowlist(Some(HashSet::from(["echo verified".to_owned()])));
     registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "echo verified".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -1005,6 +1053,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
         .expect("the declared verifier must run");
     let denied = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "ls".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -1021,6 +1070,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
     // again, and each guess costs a turn.
     let decorated = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "echo verified 2>&1".to_owned(),
             timeout_seconds: None,
             label: None,
@@ -1067,6 +1117,7 @@ async fn a_failing_test_command_carries_a_delegation_hint_for_the_main_agent_onl
         .expect("registry")
         .with_delegation_hints(true)
         .run_command(CommandArgs {
+            cwd: None,
             command: "cargo test -p willdeep-core".to_owned(),
             timeout_seconds: Some(30),
             label: None,
@@ -1082,6 +1133,7 @@ async fn a_failing_test_command_carries_a_delegation_hint_for_the_main_agent_onl
     let plain = ToolRegistry::new(&root, ApprovalMode::WorkspaceAccess)
         .expect("registry")
         .run_command(CommandArgs {
+            cwd: None,
             command: "cargo test -p willdeep-core".to_owned(),
             timeout_seconds: Some(30),
             label: None,
@@ -1113,6 +1165,7 @@ async fn approved_background_command_returns_handle_and_publishes_completion() {
     };
     let result = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: command.to_owned(),
             timeout_seconds: Some(10),
             label: Some("test command".to_owned()),
@@ -1407,6 +1460,7 @@ async fn verification_evidence_is_recorded_without_an_external_reporter() {
         std::fs::write(root.join("test"), script).unwrap();
         tools
             .run_command(CommandArgs {
+                cwd: None,
                 command: "ruby test".into(),
                 timeout_seconds: None,
                 label: None,
@@ -1436,6 +1490,7 @@ async fn run_verification_summarizes_only_this_run() {
         .with_approver(Arc::new(AllowApprover))
         .with_verification_snapshot(move || Some(current.lock().unwrap().clone()));
     let run = || CommandArgs {
+        cwd: None,
         command: "ruby test".into(),
         timeout_seconds: None,
         label: None,
@@ -1485,6 +1540,7 @@ async fn a_verification_launch_error_invalidates_previous_success() {
         .with_verification_snapshot(|| Some("current".into()));
     std::fs::write(root.join("test"), "exit 0\n").unwrap();
     let command = || CommandArgs {
+        cwd: None,
         command: "ruby test".into(),
         timeout_seconds: None,
         label: None,
@@ -1630,6 +1686,7 @@ async fn a_child_follows_the_parent_into_full_access_and_back_out() {
         async move {
             registry
                 .run_command(CommandArgs {
+                    cwd: None,
                     command,
                     timeout_seconds: None,
                     label: None,
@@ -1676,6 +1733,7 @@ async fn full_access_does_not_widen_a_verifier_only_child() {
         .with_parent_approval_mode(parent);
     let other = registry
         .run_command(CommandArgs {
+            cwd: None,
             command: "echo something else".to_owned(),
             timeout_seconds: None,
             label: None,

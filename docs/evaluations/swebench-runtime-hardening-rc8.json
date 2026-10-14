@@ -1,0 +1,102 @@
+{
+  "version": "0.99.0-rc8",
+  "started_at": "2026-10-14T12:36:34+08:00",
+  "gates": [
+    {
+      "name": "format",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 1.32,
+      "test_summaries": []
+    },
+    {
+      "name": "clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 15.84,
+      "test_summaries": []
+    },
+    {
+      "name": "workspace-tests",
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "exit_code": 0,
+      "seconds": 210.1,
+      "test_summaries": [
+        "test result: ok. 685 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 9.73s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s",
+        "test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.62s",
+        "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 73.92s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 736 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 98.69s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "web-lint",
+      "argv": [
+        "yarn",
+        "lint"
+      ],
+      "exit_code": 0,
+      "seconds": 1.75,
+      "test_summaries": []
+    },
+    {
+      "name": "web-build",
+      "argv": [
+        "yarn",
+        "build"
+      ],
+      "exit_code": 0,
+      "seconds": 5.44,
+      "test_summaries": []
+    },
+    {
+      "name": "source-size",
+      "argv": [
+        "ruby",
+        "scripts/check_source_size.rb",
+        "--output",
+        "target/swebench-runtime-hardening-validation-final/source-size"
+      ],
+      "exit_code": 0,
+      "seconds": 0.2,
+      "test_summaries": []
+    },
+    {
+      "name": "diff",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.01,
+      "test_summaries": []
+    }
+  ],
+  "state": "passed",
+  "finished_at": "2026-10-14T12:40:28+08:00"
+}

@@ -11,6 +11,247 @@ use crate::subagent::test_support::{
 use crate::subagent::types::TaskPacket;
 use crate::types::{Completion, Message, ToolDefinition};
 
+struct EditingThenWaitingProvider(std::sync::atomic::AtomicUsize);
+#[async_trait]
+impl Provider for EditingThenWaitingProvider {
+    async fn complete(
+        &self,
+        _: &[Message],
+        _: &[ToolDefinition],
+    ) -> Result<Completion, ProviderError> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            std::future::pending::<()>().await;
+        }
+        Ok(Completion {
+            reasoning: None,
+            content: "editing".into(),
+            tool_calls: vec![crate::types::ToolCall {
+                id: "edit".into(),
+                name: "edit_file".into(),
+                arguments:
+                    serde_json::json!({"path":"fix.rs","old_string":"before","new_string":"after"})
+                        .to_string(),
+            }],
+            finish_reason: Some("tool_calls".into()),
+            usage: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn cancelling_dedicated_worker_retains_patch_and_cancelled_status() {
+    let root = std::env::temp_dir().join(format!("cancel-handoff-{}", uuid::Uuid::new_v4()));
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("fix.rs"), "before").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "fix.rs"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    ] {
+        assert!(
+            tokio::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .status()
+                .await
+                .unwrap()
+                .success()
+        );
+    }
+    let background = Arc::new(BackgroundTaskRegistry::default());
+    let mut profiles = builtin_profiles(Arc::new(EditingThenWaitingProvider(0.into())));
+    profiles
+        .iter_mut()
+        .find(|p| p.id == "generalist")
+        .unwrap()
+        .worktree = crate::subagent_worktree::SubagentWorktreePolicy::Dedicated;
+    let catalog = SubagentCatalog::new(&repo, profiles, background.clone())
+        .with_worktree_root(root.join("managed"))
+        .with_parent_approval_mode(crate::tools::SharedApprovalMode::new(
+            crate::ApprovalMode::FullAccess,
+        ));
+    catalog
+        .run(
+            SpawnAgentArgs {
+                prompt: "change before to after".into(),
+                profile: Some("generalist".into()),
+                run_in_background: Some(true),
+                task: Some(TaskPacket {
+                    goal: "change before to after".into(),
+                    write_files: vec!["fix.rs".into()],
+                    ..TaskPacket::default()
+                }),
+                ..SpawnAgentArgs::default()
+            },
+            Some(BTreeSet::from([repo
+                .join("fix.rs")
+                .canonicalize()
+                .unwrap()])),
+        )
+        .await
+        .unwrap();
+    let agent = *catalog
+        .owned_background_agents
+        .lock()
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap();
+    let child = root.join("managed").join(agent.to_string());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::read_to_string(child.join("fix.rs"))
+            .ok()
+            .as_deref()
+            != Some("after")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("worker made actual edit");
+    let id = background.snapshots()[0].id.clone();
+    assert!(background.kill(&id));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !background
+            .full_output(&id)
+            .is_some_and(|s| s.contains("Tracked patch:"))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelled handoff delivered");
+    assert_eq!(
+        background.snapshots()[0].status,
+        BackgroundTaskStatus::Killed
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("fix.rs")).unwrap(),
+        "before"
+    );
+    assert_eq!(
+        std::fs::read_to_string(child.join("fix.rs")).unwrap(),
+        "after"
+    );
+    assert!(
+        background
+            .full_output(&id)
+            .unwrap()
+            .contains("Integration: pending")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+struct WaitingProvider;
+#[async_trait]
+impl Provider for WaitingProvider {
+    async fn complete(
+        &self,
+        _: &[Message],
+        _: &[ToolDefinition],
+    ) -> Result<Completion, ProviderError> {
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn parent_deadline_bounds_worker_provider_wait() {
+    let root = std::env::temp_dir().join(format!("worker-deadline-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let catalog = SubagentCatalog::new(
+        &root,
+        builtin_profiles(Arc::new(WaitingProvider)),
+        Arc::new(BackgroundTaskRegistry::default()),
+    );
+    catalog.set_execution_deadline(Some(
+        tokio::time::Instant::now() + Duration::from_millis(50),
+    ));
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        catalog.run(
+            SpawnAgentArgs {
+                prompt: "inspect".into(),
+                profile: Some("scout".into()),
+                run_in_background: Some(false),
+                ..SpawnAgentArgs::default()
+            },
+            None,
+        ),
+    )
+    .await
+    .expect("parent deadline bounds worker");
+    match result.unwrap_err() {
+        AgentError::Subagent(message) => {
+            assert!(message.contains("Parent integration deadline"), "{message}")
+        }
+        AgentError::SubagentPartial { reason, .. } => {
+            assert_eq!(reason, crate::agent::AgentStopReason::BudgetLimited)
+        }
+        other => panic!("worker stopped for a different reason: {other}"),
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn failed_workers_retain_workspace_handoff_without_becoming_success() {
+    let root = std::env::temp_dir().join(format!("worker-handoff-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(
+        tokio::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&root)
+            .status()
+            .await
+            .unwrap()
+            .success()
+    );
+    std::fs::write(root.join("fix.rs"), "pending fix").unwrap();
+    let prepared = PreparedSubagentWorkspace {
+        workspace: root.clone(),
+        root_workspace: root.clone(),
+        branch: Some("worker".into()),
+        dedicated: true,
+    };
+    let timeout = attach_worktree_report(Err(AgentError::Subagent("timed out".into())), &prepared)
+        .await
+        .unwrap_err();
+    assert!(timeout.to_string().contains("timed out"));
+    assert!(timeout.to_string().contains("fix.rs"));
+    let partial = attach_worktree_report(
+        Err(AgentError::SubagentPartial {
+            reason: crate::agent::AgentStopReason::MaxTurns,
+            turns: 2,
+            report: "partial implementation".into(),
+        }),
+        &prepared,
+    )
+    .await
+    .unwrap_err();
+    match partial {
+        AgentError::SubagentPartial {
+            reason,
+            turns,
+            report,
+        } => {
+            assert_eq!(reason, crate::agent::AgentStopReason::MaxTurns);
+            assert_eq!(turns, 2);
+            assert!(report.contains("partial implementation"));
+            assert!(report.contains("fix.rs"));
+        }
+        other => panic!("lost partial result: {other}"),
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// 文件写集合冲突由认领控制，独立于并发槽位。
 #[test]
 fn file_claims_guard_writes_independently_of_admission() {

@@ -304,6 +304,24 @@ impl AgentRunStore {
         .map(|_| ())
     }
 
+    pub(crate) fn append_terminal_note(&self, id: Uuid, note: &str) -> Result<(), String> {
+        self.update(id, |run| {
+            if run.is_pending() {
+                return Err("Cannot append terminal handoff to a running Agent".into());
+            }
+            let report = run.report.get_or_insert_with(String::new);
+            if !report.contains(note) {
+                *report = crate::background::keep_head_and_tail(
+                    &format!("{report}\n\n{note}"),
+                    REPORT_LIMIT * 3 / 4,
+                    REPORT_LIMIT / 4,
+                );
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     pub(crate) fn usage(&self, id: Uuid, usage: &Usage) -> Result<(), String> {
         self.update(id, |run| {
             run.usage.model_calls = run.usage.model_calls.saturating_add(1);

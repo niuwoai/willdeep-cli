@@ -313,6 +313,7 @@ impl Drop for FileClaim {
 /// nothing it has to ask the catalog for again.
 #[derive(Clone)]
 pub(super) struct SubagentRun {
+    pub(super) execution_deadline: Option<tokio::time::Instant>,
     pub(super) workspace: PathBuf,
     pub(super) sandbox: crate::sandbox::SandboxSpec,
     pub(super) profile: SubagentProfile,
@@ -360,7 +361,26 @@ pub(super) async fn run_subagent(
     agent_id: uuid::Uuid,
     instruction_inbox: Option<Arc<AgentInstructionInbox>>,
 ) -> Result<String, AgentError> {
+    let deadline = run.execution_deadline;
+    if deadline.is_some_and(|d| d <= tokio::time::Instant::now()) {
+        return Err(AgentError::Subagent("Parent integration deadline reached before worker execution; no new worker attempt was started.".into()));
+    }
+    let future = run_subagent_inner(run, lifecycle_sink, agent_id, instruction_inbox);
+    if let Some(deadline) = deadline {
+        tokio::time::timeout_at(deadline, future).await.map_err(|_| AgentError::Subagent("Parent integration deadline reached; worker stopped with retained partial changes.".into()))?
+    } else {
+        future.await
+    }
+}
+
+async fn run_subagent_inner(
+    run: SubagentRun,
+    lifecycle_sink: Arc<dyn EventSink>,
+    agent_id: uuid::Uuid,
+    instruction_inbox: Option<Arc<AgentInstructionInbox>>,
+) -> Result<String, AgentError> {
     let SubagentRun {
+        execution_deadline,
         workspace,
         sandbox,
         profile,
@@ -488,6 +508,7 @@ pub(super) async fn run_subagent(
                 .as_ref()
                 .map(|board| (board.clone(), board_author.clone())),
             goal.clone(),
+            execution_deadline,
             attempt,
         )
         .await?;
@@ -592,6 +613,7 @@ async fn run_once(
     feedback: Option<&crate::feedback::FeedbackRecorder>,
     board: Option<(Arc<crate::board::Board>, String)>,
     goal: Option<Arc<crate::goal::GoalContinuation>>,
+    execution_deadline: Option<tokio::time::Instant>,
     attempt: usize,
 ) -> Result<(String, WorkerFacts), AgentError> {
     let approval = if profile.shell.uses_intelligent_review() {
@@ -695,6 +717,7 @@ async fn run_once(
             token_budget: profile.token_budget,
         },
     )
+    .with_execution_deadline(execution_deadline)
     .with_event_sink(Arc::new(ChildEventSink {
         id: agent_id,
         parent: lifecycle_sink,

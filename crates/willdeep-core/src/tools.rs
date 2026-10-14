@@ -174,6 +174,8 @@ impl ToolError {
 }
 
 pub struct ToolRegistry {
+    completion_contract: Option<CompletionContract>,
+    execution_deadline: Mutex<Option<tokio::time::Instant>>,
     workspace: PathBuf,
     approval_mode: SharedApprovalMode,
     /// 子 Agent 专用：父会话的档位句柄。父会话处于 `full-access` 时，本注册表也按
@@ -238,6 +240,72 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
+    pub fn with_completion_contract(
+        mut self,
+        contract: CompletionContract,
+    ) -> Result<Self, String> {
+        contract.validate()?;
+        self.completion_contract = Some(contract);
+        Ok(self)
+    }
+
+    pub(crate) fn completion_patch_baseline(
+        &self,
+    ) -> Result<Option<std::collections::BTreeMap<String, [u8; 32]>>, ToolError> {
+        self.completion_contract
+            .as_ref()
+            .map(|c| c.capture(&self.workspace).map_err(ToolError::HookDenied))
+            .transpose()
+    }
+
+    pub(crate) fn completion_contract_prompt(&self) -> String {
+        self.completion_contract.as_ref().map_or_else(String::new, |contract| format!("[completion-patch-contract] Required current-task implementation changes and protected existing files: {}. These are path constraints, not execution permission. Worker worktrees and pre-existing dirty files do not satisfy parent requirements; integrate explicitly and verify the final parent snapshot.", serde_json::json!(contract)))
+    }
+
+    pub(crate) fn completion_patch_evidence(
+        &self,
+    ) -> Result<Option<crate::checkpoint::CompletionPatchEvidence>, ToolError> {
+        Ok(self
+            .completion_contract
+            .as_ref()
+            .zip(self.completion_patch_baseline()?)
+            .map(
+                |(contract, baseline)| crate::checkpoint::CompletionPatchEvidence {
+                    workspace: self.workspace.clone(),
+                    contract: contract.clone(),
+                    baseline,
+                },
+            ))
+    }
+
+    pub(crate) fn completion_patch_feedback(
+        &self,
+        baseline: Option<&std::collections::BTreeMap<String, [u8; 32]>>,
+    ) -> Option<String> {
+        let contract = self.completion_contract.as_ref()?;
+        let Some(baseline) = baseline else {
+            return Some(
+                "Completion contract baseline unavailable; completion cannot be verified.".into(),
+            );
+        };
+        match contract.capture(&self.workspace) {
+            Ok(current) => contract.feedback(baseline, &current),
+            Err(error) => Some(error),
+        }
+    }
+    pub(crate) fn set_execution_deadline(&self, deadline: Option<tokio::time::Instant>) {
+        *self
+            .execution_deadline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = deadline;
+    }
+
+    pub(crate) fn remaining_execution_time(&self) -> Option<std::time::Duration> {
+        self.execution_deadline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|d| d.saturating_duration_since(tokio::time::Instant::now()))
+    }
     pub fn new(
         workspace: impl AsRef<Path>,
         approval_mode: ApprovalMode,
@@ -250,6 +318,8 @@ impl ToolRegistry {
             )));
         }
         Ok(Self {
+            completion_contract: None,
+            execution_deadline: Mutex::new(None),
             output_store: crate::tool_output::ToolOutputStore::new(
                 &std::env::temp_dir().join("willdeep-tool-outputs"),
                 &workspace,
@@ -795,6 +865,7 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "Shell command line."},
+                        "cwd": {"type":"string", "description":"Optional workspace-relative working directory. Evidence is scoped to this directory; do not use cd wrappers."},
                         "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
                         "label": {"type": "string", "description": "Optional concise action label; never include secrets."},
                         "run_in_background": {"type": "boolean", "description": "Return a job handle immediately and keep working. A completion notice is delivered automatically; do not poll or sleep."},
@@ -1581,12 +1652,48 @@ impl ToolRegistry {
     }
 
     async fn run_command(&self, args: CommandArgs) -> Result<String, ToolError> {
+        let command_workspace = if let Some(cwd) = args.cwd.as_deref() {
+            let resolved = self.resolve_existing(cwd)?;
+            if !resolved.is_dir() {
+                return Err(ToolError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    "command cwd is not a directory",
+                )));
+            }
+            if resolved != self.workspace
+                && (self.write_targets.is_some()
+                    || self.command_allowlist.is_some()
+                    || self.reviewed_subagent_shell)
+            {
+                return Err(ToolError::HookDenied("Scoped workers must run commands in their approved workspace; a different cwd needs a new task packet.".into()));
+            }
+            resolved
+        } else {
+            self.workspace.clone()
+        };
+        let evidence_command = if command_workspace == self.workspace {
+            args.command.trim().to_owned()
+        } else {
+            format!(
+                "[cwd:{}] {}",
+                command_workspace
+                    .strip_prefix(&self.workspace)
+                    .expect("validated cwd")
+                    .display(),
+                args.command.trim()
+            )
+        };
+        let accepted_verification = self.accepts_verification(&args.command);
         let description = args
             .label
             .as_deref()
             .filter(|label| !label.trim().is_empty())
             .map(|label| format!("{label}\ncommand: {}", args.command))
             .unwrap_or_else(|| args.command.clone());
+        let description = format!(
+            "{description}\nworking directory: {}",
+            command_workspace.display()
+        );
         self.gate_command(&args.command, &description).await?;
         // 围栏跟着档位走：审批刚按哪一档放行，命令就套哪一档的围栏。
         let mut sandbox = self.effective_sandbox();
@@ -1604,7 +1711,26 @@ impl ToolRegistry {
             .timeout_seconds
             .unwrap_or(DEFAULT_COMMAND_TIMEOUT_SECS)
             .clamp(1, MAX_COMMAND_TIMEOUT_SECS);
+        let command_duration = self
+            .remaining_execution_time()
+            .map_or(std::time::Duration::from_secs(timeout), |remaining| {
+                remaining.min(std::time::Duration::from_secs(timeout))
+            });
+        if command_duration.is_zero() {
+            return Err(ToolError::CommandTimeout {
+                seconds: 0,
+                output: "Run time budget exhausted; command was not started.".into(),
+            });
+        }
         if args.run_in_background.unwrap_or(false) {
+            let timeout = command_duration.as_secs();
+            if timeout == 0 {
+                return Err(ToolError::CommandTimeout {
+                    seconds: 0,
+                    output: "Less than one second remains; background command was not started."
+                        .into(),
+                });
+            }
             // 脱离模式：进程自成进程组，输出与退出码落盘。父进程升级或退出
             // 都不影响它，回来只取结果，不重跑。
             if let Some(jobs) = self.detached_jobs.clone() {
@@ -1612,7 +1738,7 @@ impl ToolRegistry {
                     .spawn_with_policy(
                         &args.command,
                         &description,
-                        &self.workspace,
+                        &command_workspace,
                         &sandbox,
                         timeout,
                     )
@@ -1623,7 +1749,7 @@ impl ToolRegistry {
                 ));
             }
             let command = args.command;
-            let workspace = self.workspace.clone();
+            let workspace = command_workspace.clone();
             let sandbox = sandbox.clone();
             let verification_reporter = self.verification_reporter.clone();
             let verification_snapshot = self.verification_snapshot.clone();
@@ -1632,13 +1758,16 @@ impl ToolRegistry {
                 description,
                 move || {
                     let command = command.clone();
+                    let evidence_command = evidence_command.clone();
                     let workspace = workspace.clone();
                     let sandbox = sandbox.clone();
                     let verification_reporter = verification_reporter.clone();
                     let verification_snapshot = verification_snapshot.clone();
                     async move {
-                        let snapshot_id =
-                            capture_verification_snapshot(verification_snapshot.as_ref(), &command);
+                        let snapshot_id = verification::capture_accepted_snapshot(
+                            verification_snapshot.as_ref(),
+                            accepted_verification,
+                        );
                         let mut result =
                             run_background_shell(command.clone(), workspace, timeout, sandbox)
                                 .await;
@@ -1649,9 +1778,11 @@ impl ToolRegistry {
                             verification_status(&result.status),
                             &mut result.output,
                         );
-                        report_verification(
-                            verification_reporter.as_ref(),
-                            &command,
+                        verification::report_accepted_verification(
+                            verification_reporter
+                                .as_ref()
+                                .filter(|_| accepted_verification),
+                            &evidence_command,
                             result.exit_code,
                             status,
                             &result.output,
@@ -1665,22 +1796,26 @@ impl ToolRegistry {
                 "Background task started: {id}. Completion will be delivered automatically; use get_job_output for details."
             ));
         }
-        let snapshot_id =
-            capture_verification_snapshot(self.verification_snapshot.as_ref(), &args.command);
+        let snapshot_id = verification::capture_accepted_snapshot(
+            self.verification_snapshot.as_ref(),
+            accepted_verification,
+        );
         let output = match crate::execution::run_capture(
             &args.command,
-            &self.workspace,
+            &command_workspace,
             &sandbox,
-            std::time::Duration::from_secs(timeout),
+            command_duration,
             self.command_output_limit(),
         )
         .await
         {
             Ok(output) => output,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
-                report_verification(
-                    self.verification_reporter.as_ref(),
-                    &args.command,
+                verification::report_accepted_verification(
+                    self.verification_reporter
+                        .as_ref()
+                        .filter(|_| accepted_verification),
+                    &evidence_command,
                     None,
                     VerificationStatus::TimedOut,
                     &error.to_string(),
@@ -1692,9 +1827,11 @@ impl ToolRegistry {
                 });
             }
             Err(error) => {
-                report_verification(
-                    self.verification_reporter.as_ref(),
-                    &args.command,
+                verification::report_accepted_verification(
+                    self.verification_reporter
+                        .as_ref()
+                        .filter(|_| accepted_verification),
+                    &evidence_command,
                     None,
                     VerificationStatus::Failed,
                     &error.to_string(),
@@ -1720,9 +1857,11 @@ impl ToolRegistry {
             },
             &mut text,
         );
-        report_verification(
-            self.verification_reporter.as_ref(),
-            &args.command,
+        verification::report_accepted_verification(
+            self.verification_reporter
+                .as_ref()
+                .filter(|_| accepted_verification),
+            &evidence_command,
             output.status.code(),
             status,
             &text,
@@ -2055,7 +2194,11 @@ pub(crate) use agent_control::{PARENT_ONLY_TOOLS, update_plan_definition};
 use background_shell::run_background_shell;
 pub use background_shell::run_background_supervisor;
 pub use verification::RunVerification;
-use verification::{capture_verification_snapshot, report_verification, verification_status};
+mod patch_contract;
+pub use patch_contract::CompletionContract;
+#[cfg(test)]
+use verification::report_verification;
+use verification::verification_status;
 
 fn validate_workspace_relative(requested: &str) -> Result<(), ToolError> {
     let path = Path::new(requested);
@@ -2678,6 +2821,7 @@ struct ListDirectoryArgs {
 #[derive(Deserialize)]
 struct CommandArgs {
     command: String,
+    cwd: Option<String>,
     timeout_seconds: Option<u64>,
     label: Option<String>,
     run_in_background: Option<bool>,

@@ -117,7 +117,7 @@ impl ToolRegistry {
         }
         for (index, command) in commands.iter().enumerate() {
             if command.len() > REQUIRED_COMMAND_BYTES
-                || !is_verification_command(command)
+                || !(is_verification_command(command) || is_project_test_entry(command))
                 || contains_sensitive_command(command)
             {
                 return Err(format!(
@@ -158,6 +158,17 @@ impl ToolRegistry {
             .iter()
             .cloned()
             .collect()
+    }
+
+    pub(super) fn accepts_verification(&self, command: &str) -> bool {
+        !contains_sensitive_command(command)
+            && (is_verification_command(command)
+                || self
+                    .verification_records
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .required
+                    .contains(command.trim()))
     }
 
     pub(crate) fn required_verification_prompt(&self) -> String {
@@ -329,14 +340,14 @@ pub(super) fn verification_status(status: &BackgroundTaskStatus) -> Verification
 
 pub(super) fn finish_verification(
     capture: Option<&VerificationSnapshot>,
-    command: &str,
+    _command: &str,
     before: &Option<String>,
     status: VerificationStatus,
     output: &mut String,
 ) -> VerificationStatus {
     if status == VerificationStatus::Passed
         && before.is_some()
-        && capture_verification_snapshot(capture, command) != *before
+        && capture.and_then(|capture| capture().ok().flatten()) != *before
     {
         output.push_str("\n[verification-invalidated] Workspace snapshot changed or could not be read after this check. Exit code 0 is not verified evidence for the original files; rerun against a stable final snapshot.");
         return VerificationStatus::Failed;
@@ -344,17 +355,22 @@ pub(super) fn finish_verification(
     status
 }
 
-pub(super) fn capture_verification_snapshot(
-    capture: Option<&VerificationSnapshot>,
+#[cfg(test)]
+pub(super) fn report_verification(
+    reporter: Option<&VerificationReporter>,
     command: &str,
-) -> Option<String> {
-    if !is_verification_command(command) || contains_sensitive_command(command) {
-        return None;
+    exit_code: Option<i32>,
+    status: VerificationStatus,
+    output: &str,
+    snapshot_id: Option<String>,
+) {
+    if !is_verification_command(command) {
+        return;
     }
-    capture.and_then(|capture| capture().ok().flatten())
+    report_accepted_verification(reporter, command, exit_code, status, output, snapshot_id);
 }
 
-pub(super) fn report_verification(
+pub(super) fn report_accepted_verification(
     reporter: Option<&VerificationReporter>,
     command: &str,
     exit_code: Option<i32>,
@@ -365,7 +381,7 @@ pub(super) fn report_verification(
     let Some(reporter) = reporter else {
         return;
     };
-    if !is_verification_command(command) || contains_sensitive_command(command) {
+    if contains_sensitive_command(command) {
         return;
     }
     let summary = output
@@ -384,6 +400,39 @@ pub(super) fn report_verification(
         status,
         summary: truncate_utf8_bytes(summary, MAX_VERIFICATION_SUMMARY_BYTES),
     });
+}
+
+pub(super) fn capture_accepted_snapshot(
+    capture: Option<&VerificationSnapshot>,
+    accepted: bool,
+) -> Option<String> {
+    if accepted {
+        capture.and_then(|capture| capture().ok().flatten())
+    } else {
+        None
+    }
+}
+
+fn is_project_test_entry(command: &str) -> bool {
+    let Some(words) = verification_words(command) else {
+        return false;
+    };
+    if words
+        .iter()
+        .any(|w| matches!(w.as_str(), "--help" | "-h" | "--version" | "--list"))
+    {
+        return false;
+    }
+    match words.as_slice() {
+        [interpreter, script, ..] if python_interpreter(interpreter).is_some() => {
+            script.ends_with(".py") && !script.starts_with('-')
+        }
+        [interpreter, script, ..] if interpreter == "ruby" => {
+            script.ends_with(".rb") && !script.starts_with('-')
+        }
+        [script, ..] => script.starts_with("./") && script.ends_with(".sh"),
+        _ => false,
+    }
 }
 
 pub(super) fn is_verification_command(command: &str) -> bool {
@@ -410,6 +459,8 @@ pub(super) fn is_verification_command(command: &str) -> bool {
         "pytest",
         "python -m pytest",
         "python -m unittest",
+        "python tests/runtests.py",
+        "python bin/test",
         "ruby test",
         "bundle exec rspec",
         "bundle exec rake test",
@@ -504,6 +555,87 @@ fn verification_words(command: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn command_cwd_is_confined_and_cannot_satisfy_root_check() {
+        let root = std::env::temp_dir().join(format!("cwd-check-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        std::fs::write(root.join("checks.rb"), "puts 'root check'\n").unwrap();
+        std::fs::write(root.join("child/checks.rb"), "puts 'child check'\n").unwrap();
+        let tools = ToolRegistry::new(&root, ApprovalMode::FullAccess)
+            .unwrap()
+            .with_verification_snapshot(|| Some("current".into()))
+            .with_verification_reporter(|_| {});
+        tools
+            .require_verifications(&["ruby checks.rb".into()])
+            .unwrap();
+        let call = |cwd| ToolCall {
+            id: "cwd-check".into(),
+            name: "run_command".into(),
+            arguments: serde_json::json!({"command":"ruby checks.rb", "cwd":cwd}).to_string(),
+        };
+        assert!(tools.execute(&call("../")).await.is_err());
+        assert!(tools.execute(&call("child/checks.rb")).await.is_err());
+        assert!(
+            tools
+                .execute(&call("child"))
+                .await
+                .unwrap()
+                .contains("child check")
+        );
+        assert!(!tools.completion_has_current_evidence(Some("current")));
+        assert!(
+            tools
+                .execute(&call("."))
+                .await
+                .unwrap()
+                .contains("root check")
+        );
+        assert!(tools.completion_has_current_evidence(Some("current")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn configured_project_test_is_exact_and_bound_to_final_snapshot() {
+        let root = std::env::temp_dir().join(format!("project-check-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("revision"), "original").unwrap();
+        std::fs::write(
+            root.join("checks.rb"),
+            "File.write('revision', 'changed')\n",
+        )
+        .unwrap();
+        let captured = root.clone();
+        let tools = ToolRegistry::new(&root, ApprovalMode::FullAccess)
+            .unwrap()
+            .with_verification_snapshot(move || {
+                std::fs::read_to_string(captured.join("revision")).ok()
+            })
+            .with_verification_reporter(|_| {});
+        tools
+            .require_verifications(&["ruby checks.rb".into()])
+            .unwrap();
+        assert!(!tools.accepts_verification("ruby checks.rb extra"));
+        assert!(
+            tools
+                .require_verifications(&["ruby checks.rb | tail -1".into()])
+                .is_err()
+        );
+        let call = ToolCall {
+            id: "native-check".into(),
+            name: "run_command".into(),
+            arguments: serde_json::json!({"command":"ruby checks.rb"}).to_string(),
+        };
+        let output = tools.execute(&call).await.unwrap();
+        assert!(output.contains("verification-invalidated"));
+        std::fs::write(root.join("revision"), "original").unwrap();
+        assert!(!tools.completion_has_current_evidence(Some("original")));
+        std::fs::write(root.join("checks.rb"), "puts 'passed'\n").unwrap();
+        tools.execute(&call).await.unwrap();
+        assert!(tools.completion_has_current_evidence(Some("original")));
+        assert_eq!(tools.verification_count(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn successful_check_requires_same_readable_snapshot_at_finish() {
@@ -1016,6 +1148,10 @@ mod tests {
             "pythonista -m pytest",
             "python2 -m pytest",
             "python3 -m http.server",
+            "python tests/runtests.py --help",
+            "python bin/test | tail -10",
+            "python bin/test || true",
+            "python tests/runtests.py.fake",
         ] {
             assert!(!is_verification_command(command), "{command}");
         }
@@ -1030,6 +1166,8 @@ mod tests {
             ".venv/bin/python -m pytest -q",
             "venv/bin/python3.12 -m unittest",
             "/usr/bin/python3 -m pytest tests/test_api.py",
+            "python3 tests/runtests.py queries --verbosity 2",
+            ".venv/bin/python bin/test solvers",
             "cargo test 'literal;value'",
             "cargo test \"literal|value\"",
             "cargo test '$(literal)'",

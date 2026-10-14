@@ -82,6 +82,7 @@ pub struct SubagentCatalog {
     feedback: Option<crate::feedback::FeedbackRecorder>,
     board: Option<Arc<crate::board::Board>>,
     goal: Option<Arc<crate::goal::GoalContinuation>>,
+    execution_deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
 }
 
 /// 见 [`SubagentCatalog::dispatch_model`]。
@@ -144,6 +145,7 @@ impl SubagentCatalog {
             feedback: None,
             board: None,
             goal: None,
+            execution_deadline: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -151,6 +153,13 @@ impl SubagentCatalog {
     pub fn with_goal(mut self, goal: Arc<crate::goal::GoalContinuation>) -> Self {
         self.goal = Some(goal);
         self
+    }
+
+    pub(crate) fn set_execution_deadline(&self, deadline: Option<tokio::time::Instant>) {
+        *self
+            .execution_deadline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = deadline;
     }
 
     /// 挂上父会话的共享黑板：派出的每个 Worker 都能读写它。
@@ -820,6 +829,10 @@ impl SubagentCatalog {
         }
         let approved_targets = remap_approved_targets(approved_targets, &prepared)?;
         let run = SubagentRun {
+            execution_deadline: *self
+                .execution_deadline
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
             workspace: prepared.workspace.clone(),
             sandbox: self
                 .sandbox
@@ -1054,6 +1067,17 @@ impl SubagentCatalog {
                                 })
                                 .await;
                             } else {
+                                if lifecycle_dedicated_worktree && workspace.exists() && matches!(snapshot.status, BackgroundTaskStatus::Killed | BackgroundTaskStatus::TimedOut) {
+                                    let prepared = PreparedSubagentWorkspace { workspace, root_workspace, branch: worktree_branch, dedicated: true };
+                                    let note = match worktree_result_note(&prepared).await {
+                                        Ok(Some(note)) => note,
+                                        Ok(None) => String::new(),
+                                        Err(error) => format!("Cancelled worker workspace retained; handoff capture failed: {error}"),
+                                    };
+                                    if let Some(registry) = background.upgrade() && let Err(error) = registry.append_terminal_note(&snapshot.id, &note) {
+                                        eprintln!("cannot persist cancelled worker handoff: {error}");
+                                    }
+                                }
                                 sink.emit(AgentEvent::SubagentCompleted {
                                     id: agent_id,
                                     status: background_lifecycle_status(&snapshot.status),
@@ -1239,11 +1263,25 @@ async fn attach_worktree_report(
     result: Result<String, AgentError>,
     prepared: &PreparedSubagentWorkspace,
 ) -> Result<String, AgentError> {
-    let report = result?;
-    let Some(note) = worktree_result_note(prepared).await? else {
-        return Ok(report);
+    let note = match worktree_result_note(prepared).await {
+        Ok(Some(note)) => note,
+        Ok(None) => return result,
+        Err(error) => format!("[WillDeep Worktree] Unable to inspect retained workspace: {error}"),
     };
-    Ok(format!("{report}\n\n{note}"))
+    match result {
+        Ok(report) => Ok(format!("{report}\n\n{note}")),
+        Err(AgentError::SubagentPartial {
+            reason,
+            turns,
+            report,
+        }) => Err(AgentError::SubagentPartial {
+            reason,
+            turns,
+            report: format!("{report}\n\n{note}"),
+        }),
+        Err(AgentError::Subagent(error)) => Err(AgentError::Subagent(format!("{error}\n\n{note}"))),
+        Err(error) => Err(error),
+    }
 }
 
 fn remap_approved_targets(

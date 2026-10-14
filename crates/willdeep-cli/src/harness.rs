@@ -1069,6 +1069,13 @@ pub(crate) async fn build(
     tools
         .require_verifications(&loaded.file.agent.verification_commands)
         .map_err(anyhow::Error::msg)?;
+    let tools = if let Some(contract) = loaded.file.agent.completion_contract.clone() {
+        tools
+            .with_completion_contract(contract)
+            .map_err(anyhow::Error::msg)?
+    } else {
+        tools
+    };
     let goal_continuation = Arc::new(willdeep_core::GoalContinuation::with_default_budget(
         loaded.file.agent.goal_budget(),
     ));
@@ -1148,6 +1155,12 @@ pub(crate) async fn build(
     .with_event_kernel(kernel.clone())
     .with_usage_ledger(usage_ledger.clone())
     .with_feedback(feedback);
+    if let Some(seconds) = loaded.file.agent.time_budget_seconds {
+        if seconds == 0 {
+            anyhow::bail!("agent.time_budget_seconds must be greater than zero");
+        }
+        agent = agent.with_time_budget(std::time::Duration::from_secs(seconds));
+    }
     // Runtime 任务的收件箱由任务管理器持有另一半；进程内轮次用 Agent 自带的那个。
     if let Some(inbox) = runtime_inbox {
         agent = agent.with_instruction_inbox(inbox);

@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn terminal_handoff_note_preserves_cancelled_and_delivered_state() {
+    let (store, root) = fixture();
+    let (run, _) = store.create(request(Uuid::new_v4())).unwrap();
+    assert!(store.append_terminal_note(run.id, "handoff").is_err());
+    store
+        .finish(run.id, AgentStatus::Cancelled, "cancelled")
+        .unwrap();
+    store.mark_delivered(run.id).unwrap();
+    store
+        .append_terminal_note(run.id, "retained patch; integration pending")
+        .unwrap();
+    let current = store.get(run.id).unwrap().unwrap();
+    assert_eq!(current.status, AgentStatus::Cancelled);
+    assert!(current.delivered);
+    assert!(current.report.unwrap().contains("integration pending"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn retirement_excludes_pending_runs_and_new_admissions_and_can_roll_back_a_failed_merge() {
     let (store, root) = fixture();
     let agent = Uuid::new_v4();

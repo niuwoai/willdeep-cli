@@ -29,6 +29,8 @@ pub struct CheckpointMetadata {
     pub verification_evidence: Vec<VerificationEvidence>,
     #[serde(default)]
     pub verification_baseline: Option<String>,
+    #[serde(default)]
+    pub completion_patch: Option<CompletionPatchEvidence>,
     pub status: CheckpointStatus,
     pub turns: usize,
     pub input_tokens: u64,
@@ -44,6 +46,13 @@ pub struct VerificationEvidence {
     pub status: crate::tools::VerificationStatus,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompletionPatchEvidence {
+    pub workspace: std::path::PathBuf,
+    pub contract: crate::tools::CompletionContract,
+    pub baseline: std::collections::BTreeMap<String, [u8; 32]>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RunCheckpoint {
     pub metadata: CheckpointMetadata,
@@ -54,6 +63,9 @@ pub struct RunCheckpoint {
 }
 
 pub trait CheckpointSink: Send + Sync {
+    fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
+        Ok(None)
+    }
     fn required_verifications(&self) -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
@@ -73,9 +85,11 @@ pub trait CheckpointSink: Send + Sync {
 }
 
 pub(crate) struct CheckpointRecorder<'a> {
+    completion_patch: Option<CompletionPatchEvidence>,
     background: Option<&'a crate::BackgroundTaskRegistry>,
     sink: Option<&'a dyn CheckpointSink>,
     latest: Option<RunCheckpoint>,
+    retain_memory: bool,
     verification_baseline: Option<String>,
     stream_prefix: Option<usize>,
     stream_saved: bool,
@@ -93,9 +107,11 @@ const STREAM_CHECKPOINT_BYTES: usize = 16 * 1024;
 impl<'a> CheckpointRecorder<'a> {
     pub fn new(sink: Option<&'a dyn CheckpointSink>) -> Self {
         Self {
+            completion_patch: None,
             background: None,
             sink,
             latest: None,
+            retain_memory: false,
             verification_baseline: None,
             stream_prefix: None,
             stream_saved: false,
@@ -104,6 +120,23 @@ impl<'a> CheckpointRecorder<'a> {
             evidence_source: None,
             goal_source: None,
             runtime_parameters: None,
+        }
+    }
+
+    pub fn retain_for_deadline(&mut self) {
+        self.retain_memory = true;
+    }
+
+    pub fn deadline_outcome(&self) -> AgentOutcome {
+        let latest = self.latest.as_ref();
+        AgentOutcome {
+            final_text: "Run time budget exhausted. Partial changes and pending calls are retained; completion is unverified.".into(),
+            turns: latest.map_or(0, |c| c.metadata.turns),
+            messages: latest.map_or_else(Vec::new, |c| c.messages.clone()),
+            stop_reason: crate::agent::AgentStopReason::BudgetLimited,
+            input_tokens: latest.map_or(0, |c| c.metadata.input_tokens),
+            output_tokens: latest.map_or(0, |c| c.metadata.output_tokens),
+            first_response_millis: None,
         }
     }
 
@@ -181,6 +214,35 @@ impl<'a> CheckpointRecorder<'a> {
         self.verification_baseline.as_deref()
     }
 
+    pub fn initialize_patch_contract(
+        &mut self,
+        tools: &crate::tools::ToolRegistry,
+    ) -> Result<(), AgentError> {
+        let current = tools.completion_patch_evidence()?;
+        let previous = self
+            .sink
+            .map(|sink| sink.completion_patch())
+            .transpose()
+            .map_err(AgentError::Checkpoint)?
+            .flatten();
+        self.completion_patch = match previous {
+            Some(previous) => {
+                if !current.as_ref().is_some_and(|c| {
+                    c.workspace == previous.workspace && c.contract == previous.contract
+                }) {
+                    return Err(AgentError::Checkpoint("Cannot change or remove an unfinished task's completion contract or workspace; restore its original scope or start a new task.".into()));
+                }
+                Some(previous)
+            }
+            None => current,
+        };
+        Ok(())
+    }
+
+    pub fn patch_baseline(&self) -> Option<&std::collections::BTreeMap<String, [u8; 32]>> {
+        self.completion_patch.as_ref().map(|p| &p.baseline)
+    }
+
     pub fn record(
         &mut self,
         messages: &[Message],
@@ -188,7 +250,9 @@ impl<'a> CheckpointRecorder<'a> {
         input_tokens: u64,
         output_tokens: u64,
     ) -> Result<(), AgentError> {
-        let Some(sink) = self.sink else { return Ok(()) };
+        if self.sink.is_none() && !self.retain_memory {
+            return Ok(());
+        }
         let results: std::collections::HashSet<_> = messages
             .iter()
             .filter(|message| message.role == Role::Tool)
@@ -220,6 +284,7 @@ impl<'a> CheckpointRecorder<'a> {
                     .map(|tools| tools.verification_evidence())
                     .unwrap_or_default(),
                 verification_baseline: self.verification_baseline.clone(),
+                completion_patch: self.completion_patch.clone(),
                 status: CheckpointStatus::Running,
                 turns,
                 input_tokens,
@@ -229,7 +294,9 @@ impl<'a> CheckpointRecorder<'a> {
             messages: messages.to_vec(),
             goal: self.goal_snapshot(),
         };
-        sink.save(&checkpoint).map_err(AgentError::Checkpoint)?;
+        if let Some(sink) = self.sink {
+            sink.save(&checkpoint).map_err(AgentError::Checkpoint)?;
+        }
         if let Some(background) = self.background {
             background
                 .acknowledge_committed(&checkpoint.metadata.agent_reports_received)
@@ -394,6 +461,9 @@ impl Drop for ActiveRun {
 }
 
 impl CheckpointSink for ClaimedSessionCheckpointSink {
+    fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
+        self.inner.completion_patch()
+    }
     fn required_verifications(&self) -> Result<Vec<String>, String> {
         self.inner.required_verifications()
     }
@@ -422,6 +492,17 @@ impl CheckpointSink for ClaimedSessionCheckpointSink {
 }
 
 impl CheckpointSink for SessionCheckpointSink {
+    fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
+        self.store
+            .load(self.session_id)
+            .map(|session| {
+                session
+                    .execution_checkpoint
+                    .filter(|c| c.status != CheckpointStatus::Completed)
+                    .and_then(|c| c.completion_patch)
+            })
+            .map_err(|e| e.to_string())
+    }
     fn required_verifications(&self) -> Result<Vec<String>, String> {
         self.store
             .load(self.session_id)

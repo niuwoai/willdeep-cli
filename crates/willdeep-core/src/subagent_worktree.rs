@@ -4,6 +4,8 @@ use tokio::process::Command;
 
 use crate::agent::AgentError;
 
+mod handoff;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubagentWorktreePolicy {
     Shared,
@@ -30,10 +32,11 @@ pub(crate) async fn worktree_result_note(
         return Ok(None);
     }
     let status = git_stdout(&prepared.workspace, &["status", "--short"]).await?;
+    let handoff = handoff::capture(prepared).await?;
     let branch = prepared.branch.as_deref().unwrap_or("unknown");
     let status = bounded_status(status.trim(), 16 * 1024);
     Ok(Some(format!(
-        "[WillDeep Worktree]\nworkspace: {}\nbranch: {}\nchanges:\n{}",
+        "[WillDeep Worktree]\nworkspace: {}\nbranch: {}\nchanges:\n{}\n{handoff}\nIntegration: pending. Inspect and apply the retained changes explicitly, then verify the parent workspace. Worker verification does not verify the parent snapshot.",
         prepared.workspace.display(),
         branch,
         if status.is_empty() { "(none)" } else { &status }

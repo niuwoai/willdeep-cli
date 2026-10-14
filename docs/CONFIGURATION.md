@@ -25,6 +25,17 @@ default_provider = "some-im"
 
 [agent]
 max_turns = 200
+# Optional per-run wall clock limit; omit for unlimited runs.
+# time_budget_seconds = 1200
+# Explicit project-native checks are accepted only as these exact commands.
+# verification_commands = ["python tests/runtests.py queries", "ruby tools/checks.rb"]
+# run_command supports a confined workspace-relative cwd. Root configured
+# checks must still run at the root; a subdirectory result cannot replace them.
+# For repair tasks, optionally require an implementation change and preserve
+# existing tests. Configure this contract only for tasks needing these rules.
+# [agent.completion_contract]
+# require_changed_globs = ["src/**"]
+# preserve_existing_globs = ["tests/**"]
 approval = "smart"
 language = "zh-CN"      # zh-CN | en | ja
 small_model_routing = true

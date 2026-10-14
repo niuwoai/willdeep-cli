@@ -15,6 +15,64 @@ struct WriteThenStop {
     hang: bool,
 }
 
+#[test]
+fn patch_contract_baseline_survives_disk_recovery_and_cannot_be_weakened() {
+    let root = std::env::temp_dir().join(format!("patch-recovery-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::create_dir_all(workspace.join("tests")).unwrap();
+    std::fs::write(workspace.join("src/fix.rs"), "old implementation").unwrap();
+    std::fs::write(workspace.join("tests/check.rs"), "original test").unwrap();
+    let contract = crate::tools::CompletionContract {
+        require_changed_globs: vec!["src/**".into()],
+        preserve_existing_globs: vec!["tests/**".into()],
+    };
+    let tools = || {
+        ToolRegistry::new(&workspace, ApprovalMode::FullAccess)
+            .unwrap()
+            .with_completion_contract(contract.clone())
+            .unwrap()
+    };
+    let store = SessionStore::new(root.join("sessions"));
+    let mut session = Session::new(workspace.clone(), None, "fix");
+    store.save(&mut session).unwrap();
+    let id = session.id;
+    let sink = SessionCheckpointSink {
+        store,
+        session_id: id,
+    };
+    let original = tools();
+    let mut recorder = CheckpointRecorder::new(Some(&sink));
+    recorder.initialize_patch_contract(&original).unwrap();
+    recorder.record(&[Message::user("fix")], 1, 0, 0).unwrap();
+    drop(recorder);
+    drop(sink);
+    std::fs::write(workspace.join("src/fix.rs"), "completed implementation").unwrap();
+    let restored_sink = SessionCheckpointSink {
+        store: SessionStore::new(root.join("sessions")),
+        session_id: id,
+    };
+    let restored = tools();
+    let mut resumed = CheckpointRecorder::new(Some(&restored_sink));
+    resumed.initialize_patch_contract(&restored).unwrap();
+    assert!(
+        restored
+            .completion_patch_feedback(resumed.patch_baseline())
+            .is_none()
+    );
+    std::fs::write(workspace.join("tests/check.rs"), "weakened test").unwrap();
+    assert!(
+        restored
+            .completion_patch_feedback(resumed.patch_baseline())
+            .unwrap()
+            .contains("protected")
+    );
+    let weakened = ToolRegistry::new(&workspace, ApprovalMode::FullAccess).unwrap();
+    let mut rejected = CheckpointRecorder::new(Some(&restored_sink));
+    assert!(rejected.initialize_patch_contract(&weakened).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn report_ack_waits_for_the_parent_checkpoint_commit() {
     use crate::background::{

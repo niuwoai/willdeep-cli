@@ -438,6 +438,8 @@ pub struct Agent {
     usage_ledger: Option<crate::usage_ledger::UsageLedgerScope>,
     /// 本机反馈账本（RSI 强反馈）：工具失败、没收敛的运行。不挂就不记。
     feedback: Option<crate::feedback::FeedbackRecorder>,
+    time_budget: Option<std::time::Duration>,
+    inherited_deadline: Option<tokio::time::Instant>,
 }
 
 impl Agent {
@@ -468,6 +470,8 @@ impl Agent {
             kernel: None,
             usage_ledger: None,
             feedback: None,
+            time_budget: None,
+            inherited_deadline: None,
         }
     }
 
@@ -676,6 +680,20 @@ impl Agent {
         self
     }
 
+    /// Per-run wall clock limit. Existing checkpoints retain interrupted work.
+    pub fn with_time_budget(mut self, budget: std::time::Duration) -> Self {
+        self.time_budget = Some(budget);
+        self
+    }
+
+    pub(crate) fn with_execution_deadline(
+        mut self,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Self {
+        self.inherited_deadline = deadline;
+        self
+    }
+
     pub fn with_event_sink(mut self, sink: Arc<dyn EventSink>) -> Self {
         self.sink = sink;
         self
@@ -831,10 +849,35 @@ impl Agent {
             self.restore_team_for_execution().await?;
         }
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
+        let deadline = self
+            .time_budget
+            .map(|budget| {
+                tokio::time::Instant::now()
+                    .checked_add(budget)
+                    .ok_or_else(|| {
+                        AgentError::Checkpoint(
+                            "Configured run time budget exceeds the monotonic clock range".into(),
+                        )
+                    })
+            })
+            .transpose()?
+            .or(self.inherited_deadline);
+        self.tools.set_execution_deadline(deadline);
+        if let Some(catalog) = &self.subagents {
+            catalog.set_execution_deadline(
+                self.time_budget
+                    .zip(deadline)
+                    .map(|(budget, deadline)| deadline - budget / 5),
+            );
+        }
+        if deadline.is_some() {
+            recorder.retain_for_deadline();
+        }
         if let Some(routing) = &self.routing {
             routing.begin_run();
         }
         recorder.initialize_evidence(&self.tools)?;
+        recorder.initialize_patch_contract(&self.tools)?;
         recorder.initialize_verification(
             self.tools
                 .try_verification_baseline()
@@ -866,9 +909,20 @@ impl Agent {
                 .and_then(|feedback| feedback.runtime_parameters())
                 .cloned(),
         );
-        let result = self
-            .run_inner(messages, user_message, &mut recorder, feedback.as_ref())
-            .await;
+        let result = if let Some(deadline) = deadline {
+            match tokio::time::timeout_at(
+                deadline,
+                self.run_inner(messages, user_message, &mut recorder, feedback.as_ref()),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Ok(recorder.deadline_outcome()),
+            }
+        } else {
+            self.run_inner(messages, user_message, &mut recorder, feedback.as_ref())
+                .await
+        };
         if let Some(goal) = &self.goal_continuation {
             goal.pause();
         }
@@ -905,6 +959,7 @@ impl Agent {
         checkpoint: &mut crate::checkpoint::CheckpointRecorder<'_>,
         feedback: Option<&crate::feedback::FeedbackRecorder>,
     ) -> Result<AgentOutcome, AgentError> {
+        let patch_baseline = checkpoint.patch_baseline().cloned();
         // Persisted history can come from older desktop bridges that retained
         // `role=tool` while losing the protocol IDs. Never let one malformed
         // historical item make every future turn fail at the Provider boundary.
@@ -961,6 +1016,7 @@ impl Agent {
         // 自上次续推判定以来成功发起的工具调用数——续推判定的「进展证据」。
         let mut tools_since_check = 0_usize;
         let mut progress = progress::ProgressTracker::default();
+        let mut blockers = progress::BlockedToolTracker::default();
         let mut exploration = guidance::ExplorationGuidance::default();
         let mut incomplete_responses = 0_usize;
         let verification_baseline = checkpoint.verification_baseline().map(str::to_owned);
@@ -971,10 +1027,11 @@ impl Agent {
         for turn in 1..=self.config.max_turns {
             rules.refresh().map_err(ToolError::Io)?;
             messages[0].content = format!(
-                "{}\n\n{}\n\n{}",
+                "{}\n\n{}\n\n{}\n\n{}",
                 self.config.system_prompt,
                 rules.render(),
-                self.tools.required_verification_prompt()
+                self.tools.required_verification_prompt(),
+                self.tools.completion_contract_prompt()
             );
             // 目标状态钉在 system 消息里：每轮重建、不进压缩摘要，所以目标、
             // 验收清单与在飞 Worker 永远不会被摘要掉。
@@ -993,6 +1050,15 @@ impl Agent {
                 turn,
                 self.config.max_turns,
             ));
+            if let Some(remaining) = self.tools.remaining_execution_time() {
+                messages[0].content.push_str(&format!("\n[run-time-budget] Remaining wall clock: {} ms. Model waits and tools consume this same budget; worker deadlines reserve the final 20% for parent integration.", remaining.as_millis()));
+                if self
+                    .time_budget
+                    .is_some_and(|budget| remaining <= budget / 5)
+                {
+                    messages[0].content.push_str(" Begin bounded wrap-up now: inspect retained worker reports and actual parent diff, integrate explicitly, preserve partial work, and run short target/regression checks. Do not launch broad suites or new delegation; do not weaken tests or claim unverified completion.");
+                }
+            }
             self.append_pending_instructions(&mut messages);
             checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             // 事件在这里进对话，而不是在工具与工具之间：一次 assistant 的
@@ -1245,7 +1311,11 @@ impl Agent {
                 if !wrapping_up
                     && let Some(feedback) = self
                         .tools
-                        .completion_verification_feedback(verification_baseline.as_deref())
+                        .completion_patch_feedback(patch_baseline.as_ref())
+                        .or_else(|| {
+                            self.tools
+                                .completion_verification_feedback(verification_baseline.as_deref())
+                        })
                 {
                     unverified_stops += 1;
                     if unverified_stops >= MAX_INCOMPLETE_RESPONSES {
@@ -1359,7 +1429,9 @@ impl Agent {
                         .emit(AgentEvent::ToolRequested(call.clone()))
                         .await;
                 }
-                let result = if let Some(results) = parallel_results.as_mut() {
+                let result = if blockers.refuses(&call) && parallel_results.is_none() {
+                    Err(ToolError::HookDenied("This unchanged action failed three times without new successful evidence. It was not executed again. Diagnose the cause with a different bounded check, address the cause, or report the blocker; do not bypass approval or weaken verification.".into()))
+                } else if let Some(results) = parallel_results.as_mut() {
                     results.pop_front().expect("one result per parallel read")
                 } else {
                     match rules.before_call(&call) {
@@ -1395,7 +1467,9 @@ impl Agent {
                         (format!("tool error: {error}"), true)
                     }
                 };
-                if progress.observe(&call, &output, is_error) {
+                let novel_progress = progress.observe(&call, &output, is_error);
+                blockers.observe(&call, &output, is_error, novel_progress);
+                if novel_progress {
                     tools_since_check = tools_since_check.saturating_add(1);
                     novel_read |= guidance::is_exploration_read(&call);
                 }

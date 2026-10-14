@@ -255,7 +255,10 @@ pub struct AgentSettings {
     pub schedule_max_active: Option<usize>,
     #[serde(default)]
     pub verification_commands: Vec<String>,
+    pub completion_contract: Option<willdeep_core::tools::CompletionContract>,
     pub max_turns: Option<usize>,
+    /// Per-run wall clock budget, including model and tool waits. Omitted means unlimited.
+    pub time_budget_seconds: Option<u64>,
     /// 主 Agent 一轮的 token 预算（输入 + 输出累计）。轮次上限放到 200 之后，
     /// 这是唯一的自动闸门；用尽时交出部分结果与交接信息，不判失败。不写不限。
     pub token_budget: Option<u64>,
