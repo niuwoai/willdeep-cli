@@ -1,9 +1,10 @@
 use super::*;
-use std::collections::{BTreeMap, HashSet};
-use std::io::{BufRead, BufReader};
+use std::collections::BTreeMap;
 use willdeep_runtime_protocol::agent_team::{
     AgentTeamPolicy, AgentTeamSummary, AgentUsageSummary, AgentWorkerSummary,
 };
+
+mod ledger;
 
 impl AgentRunStore {
     pub(crate) fn has_budget(&self, run_id: Option<Uuid>) -> Result<bool, String> {
@@ -136,11 +137,12 @@ impl AgentRunStore {
 
     /// Read-only projection. Public results never include private dispatch data.
     pub fn team_summary(&self, ledger_directory: &Path) -> Result<AgentTeamSummary, String> {
-        let mut records: Vec<_> = self
-            .entries()?
-            .into_iter()
-            .map(|entry| entry.record)
+        let entries = self.entries()?;
+        let recorded_runs: BTreeMap<_, _> = entries
+            .iter()
+            .map(|entry| (entry.record.id, entry.record.usage.model_calls))
             .collect();
+        let mut records: Vec<_> = entries.into_iter().map(|entry| entry.record).collect();
         records.sort_by_key(|run| run.sequence);
         let mut summary = AgentTeamSummary {
             parent_session_id: self.parent,
@@ -185,9 +187,9 @@ impl AgentRunStore {
             .workers
             .sort_by_key(|worker| worker.latest_run.sequence);
         let recorded = read_ledger(ledger_directory, &mut summary)?;
-        summary.ledger_incomplete |= self.entries()?.iter().any(|entry| {
-            entry.record.usage.model_calls > recorded.get(&entry.record.id).copied().unwrap_or(0)
-        });
+        summary.ledger_incomplete |= recorded_runs
+            .iter()
+            .any(|(id, calls)| *calls > recorded.get(id).copied().unwrap_or(0));
         summary.usage.uncertain_execution = summary
             .workers
             .iter()
@@ -234,70 +236,5 @@ fn read_ledger(
     directory: &Path,
     summary: &mut AgentTeamSummary,
 ) -> Result<BTreeMap<Uuid, u64>, String> {
-    use crate::usage_ledger::{MAX_LINE_BYTES, SCHEMA, UsageKind, UsageLedgerRecord};
-    let files = match std::fs::read_dir(directory) {
-        Ok(files) => files,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(error) => return Err(storage_error(error)),
-    };
-    let mut seen = HashSet::new();
-    let mut recorded = BTreeMap::new();
-    for entry in files {
-        let entry = entry.map_err(storage_error)?;
-        if entry.path().extension().is_none_or(|ext| ext != "jsonl") {
-            continue;
-        }
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options.open(entry.path()).map_err(storage_error)?;
-        if !file.metadata().map_err(storage_error)?.is_file() {
-            return Err("usage ledger shard is not a regular file".into());
-        }
-        let mut reader = BufReader::new(file);
-        loop {
-            let mut bytes = Vec::new();
-            let size = (&mut reader)
-                .take(MAX_LINE_BYTES as u64 + 1)
-                .read_until(b'\n', &mut bytes)
-                .map_err(storage_error)?;
-            if size == 0 {
-                break;
-            }
-            if size > MAX_LINE_BYTES || bytes.last() != Some(&b'\n') {
-                summary.ledger_incomplete = true;
-                break;
-            }
-            let record: UsageLedgerRecord = match serde_json::from_slice(&bytes) {
-                Ok(record) => record,
-                Err(_) => {
-                    summary.ledger_incomplete = true;
-                    continue;
-                }
-            };
-            if record.schema != SCHEMA
-                || record.session_id != Some(summary.parent_session_id)
-                || !seen.insert(record.id)
-            {
-                continue;
-            }
-            let usage = counted(&record.usage);
-            if let Some(id) = record.run_id {
-                let count = recorded.entry(id).or_insert(0_u64);
-                *count = count.saturating_add(1);
-            }
-            merge(&mut summary.usage, &usage);
-            match record.kind {
-                UsageKind::Main => merge(&mut summary.parent_usage, &usage),
-                UsageKind::Subagent => merge(&mut summary.child_usage, &usage),
-                UsageKind::Auxiliary => merge(&mut summary.auxiliary_usage, &usage),
-                UsageKind::Compression => merge(&mut summary.compression_usage, &usage),
-            }
-        }
-    }
-    Ok(recorded)
+    ledger::read(directory, summary)
 }
