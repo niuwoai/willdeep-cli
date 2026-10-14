@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-14",
+  "version": "0.99.0-rc5",
+  "status": "passed",
+  "stage": "validation_before_release",
+  "rust_workspace": { "passed": 1493, "ignored": 7, "failed": 0 },
+  "runtime_integration": { "passed": 30, "failed": 0 },
+  "clippy_deny_warnings": "passed",
+  "sdk_package_dry_run": "passed",
+  "ruby_contracts": { "passed": 67, "failed": 0 },
+  "model_eval_task_checks": { "passed": 20, "failed": 0 },
+  "web_build": "passed",
+  "format_and_diff": "passed",
+  "version_consistency": "passed",
+  "source_size": "passed"
+}
