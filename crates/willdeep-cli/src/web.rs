@@ -19,9 +19,10 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
-use willdeep_core::{MessageAttachment, Role, Session, SessionStore, SkillCatalog};
+use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 
 mod agent_library;
+mod composer;
 mod runtime_chat;
 mod schedules;
 mod setup;
@@ -330,24 +331,6 @@ enum WebRuntimeGate {
     },
 }
 
-#[derive(Deserialize)]
-struct ComposerQuery {
-    workspace: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ComposerData {
-    commands: Vec<&'static str>,
-    skills: Vec<ComposerSkill>,
-}
-
-#[derive(Serialize)]
-struct ComposerSkill {
-    identifier: String,
-    name: String,
-    description: String,
-}
-
 pub async fn serve(config: WebConfig) -> Result<()> {
     serve_internal(config, None).await
 }
@@ -447,7 +430,7 @@ async fn serve_internal(
             "/api/settings/model-routing",
             get(model_routing_settings).put(update_model_routing_settings),
         )
-        .route("/api/composer", get(composer))
+        .route("/api/composer", get(composer::get))
         .merge(agent_library::routes())
         .route("/", get(index))
         // 单页应用的 catch-all。插件的 /plugin-host/... 比它更具体，
@@ -545,28 +528,6 @@ async fn serve_internal(
 
 pub(crate) fn setup_ready(path: &std::path::Path, profile: Option<&str>) -> bool {
     setup::setup_ready(path, profile)
-}
-
-async fn composer(
-    State(state): State<Arc<WebState>>,
-    Query(query): Query<ComposerQuery>,
-) -> Result<Json<ComposerData>, WebError> {
-    let workspace = select_workspace(&state, query.workspace.as_deref()).await?;
-    let catalog = SkillCatalog::discover(&workspace.root, &[]).allow_only(&workspace.skills);
-    let skills = catalog
-        .list()
-        .iter()
-        .filter(|skill| !skill.identifier.starts_with("auto-"))
-        .map(|skill| ComposerSkill {
-            identifier: skill.identifier.clone(),
-            name: skill.name.clone(),
-            description: safe_skill_description(&skill.description),
-        })
-        .collect();
-    Ok(Json(ComposerData {
-        commands: vec!["/help", "/goal", "/compress", "/skills", "/clear"],
-        skills,
-    }))
 }
 
 async fn model_routing_settings(

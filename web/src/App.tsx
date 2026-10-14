@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ComposerReferences } from "./ComposerReferences";
+import { insertReference, useComposerReferences, type Reference } from "./useComposerReferences";
 import { Box, Button, Container, Dialog, Flex, Heading, Input, NativeSelect, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { detectLanguage, messages, type Language, type Messages } from "./i18n";
 import { RuntimeSidebar, type AgentSpawnProfile, type RuntimeActivity, type RuntimeEvent } from "./RuntimeSidebar";
@@ -243,8 +245,18 @@ export function App() {
   };
   const [goal, setGoal] = useState("");
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
+  const [error, setError] = useState("");
+  const references = useComposerReferences(workspace, prompt, t.loadFailed, setError);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  function chooseReference(entry: Reference) {
+    if (!references.query) return;
+    const cursor = references.query.start + entry.value.length + 1;
+    setPrompt(insertReference(prompt, references.query, entry.value));
+    references.dismiss();
+    requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(cursor, cursor); });
+  }
   const [runtimeActivity, setRuntimeActivity] = useState<RuntimeActivity>({ tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
-  const [busy, setBusy] = useState(false); const [activity, setActivity] = useState(""); const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false); const [activity, setActivity] = useState("");
   const [queuedMessages, updateQueuedMessages] = useState<QueuedMessage[]>([]);
   const queuedRef = useRef<QueuedMessage[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -1161,6 +1173,7 @@ export function App() {
         />
       )}
       <Box className="composer-shell">
+        {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
         {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); setPrompt(command); }}>{command}</button>)}</Box>}
         {skillQuery !== undefined && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill) => <button key={skill.identifier} type="button" onMouseDown={(event) => { event.preventDefault(); setSkillSearch(""); setPrompt((current) => current.replace(/\$[\w-]*$/, `$${skill.identifier} `)); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
@@ -1168,7 +1181,18 @@ export function App() {
         {busy && (prompt.trim() || attachments.length > 0) && <button type="button" className="queue-enqueue" title={queueText("enqueue", language)} disabled={!activeRuntimeSessionId} onClick={enqueueDraft}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
         <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
-        <Textarea value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); }} onKeyDown={(event) => {
+        <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (references.query) {
+            if (event.key === "Escape") { event.preventDefault(); references.dismiss(); return; }
+            if (references.entries.length && ["ArrowUp", "ArrowDown", "Tab", "Enter"].includes(event.key) && !event.shiftKey) {
+              event.preventDefault();
+              if (event.key === "ArrowUp" || event.key === "ArrowDown") references.setSelected((references.selected + (event.key === "ArrowUp" ? -1 : 1) + references.entries.length) % references.entries.length);
+              else chooseReference(references.entries[references.selected]);
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); return; }
+          }
           if (event.key === "Tab" && !event.shiftKey && ghostSuggestion) { event.preventDefault(); setPrompt(ghostSuggestion); inputSuggestion.accept(); return; }
           if (event.key === "Escape" && ghostSuggestion) { event.preventDefault(); inputSuggestion.clear("dismissed"); return; }
           if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }

@@ -1,0 +1,3 @@
+.reference-suggestions { max-height: min(360px, 50vh); overflow-y: auto; }
+.reference-suggestions button { overflow-wrap: anywhere; }
+.reference-suggestions button[aria-selected="true"] { background: var(--bg-panel-hover); color: var(--accent); }
