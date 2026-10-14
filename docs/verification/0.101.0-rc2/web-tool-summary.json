@@ -1,0 +1,18 @@
+{
+  "version": "0.101.0-rc2",
+  "date": "2026-10-14",
+  "base_commit": "ea6f571",
+  "branch": "codex/fix-web-tool-summary",
+  "checks": {
+    "web_tests": { "files": 16, "passed": 129, "failed": 0, "new_tests": 7 },
+    "lint": "passed",
+    "typescript_and_web_build": "passed",
+    "rust_embedded_web_build": "passed",
+    "history_tools": { "input_messages": 7, "cards": 1, "collapsed_rows": 1, "height_px": 31, "expanded_tools": 7 },
+    "mobile": { "viewport": [390, 844], "horizontal_overflow": false },
+    "scrollbar": { "track_width_px": 14, "thumb_border_px": 1, "visible_thumb_width_px": 12, "drag_scroll_top_before": 0, "drag_scroll_top_after": 318 },
+    "uncaught_browser_errors": 0
+  },
+  "runtime": "isolated synthetic history served to the production Web build",
+  "delivery": { "merged": false, "pushed": false, "released": false, "running_user_service_replaced": false }
+}

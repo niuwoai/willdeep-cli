@@ -9,8 +9,6 @@
 .suggestions button small { display: block; margin-top: 2px; overflow: hidden; color: var(--text-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .suggestion-empty { padding: 8px 10px; color: var(--text-faint); font-size: 12px; }
 .chat-viewport { overscroll-behavior: contain; scrollbar-gutter: stable; }
-.chat-viewport::-webkit-scrollbar { width: 9px; }
-.chat-viewport::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: var(--border); background-clip: padding-box; }
 .attachment-manager { padding: 8px 12px; max-height: 250px; overflow: auto; font-size: 12px; }
 .attachment-manager > header, .attachment-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .attachment-count, .queue-heading { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); }
