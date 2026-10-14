@@ -9,6 +9,8 @@ require 'securerandom'
 
 binary = File.expand_path(ARGV.fetch(0))
 raise 'binary does not exist' unless File.executable?(binary)
+reply_delay = Float(ENV.fetch('WILLDEEP_FIXTURE_REPLY_DELAY', '0.1'))
+raise 'fixture reply delay must be between 0 and 30 seconds' unless reply_delay.finite? && reply_delay.between?(0, 30)
 root = Dir.mktmpdir('wdm-', '/private/tmp')
 home = File.join(root, 'home')
 workspace = File.join(root, 'workspace')
@@ -57,7 +59,7 @@ Thread.new do
           end
           chunk = { id: 'fixture', object: 'chat.completion.chunk', model: 'fixture-model', choices: [{ index: 0, delta: delta, finish_reason: nil }] }
           socket.write("data: #{JSON.generate(chunk)}\n\n")
-          sleep(parsed.fetch('messages', []).to_s.include?('slow') ? 20 : 0.1)
+          sleep(parsed.fetch('messages', []).to_s.include?('slow') ? 20 : reply_delay)
           chunk[:choices] = [{ index: 0, delta: budget_loop ? {} : { content: 'completed' }, finish_reason: budget_loop ? 'tool_calls' : 'stop' }]
           chunk[:usage] = parsed.fetch('messages', []).to_s.include?('token-budget-loop') ? { prompt_tokens: 1100, completion_tokens: 3, total_tokens: 1103 } : { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 }
           socket.write("data: #{JSON.generate(chunk)}\n\ndata: [DONE]\n\n")

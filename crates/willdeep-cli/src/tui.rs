@@ -537,6 +537,7 @@ fn busy_input(prompt: &str) -> BusyInput {
             _ => BusyInput::Refuse,
         },
         "/local" | "/runtime" => BusyInput::Queue,
+        "/goal" if runtime_ui::goal_command_to_start(value).is_some() => BusyInput::Queue,
         _ => BusyInput::Refuse,
     }
 }

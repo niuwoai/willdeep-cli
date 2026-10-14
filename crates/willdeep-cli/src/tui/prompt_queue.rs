@@ -10,6 +10,49 @@ pub(super) struct QueuePanel {
 }
 
 impl App {
+    pub(super) fn queue_submitted_prompt(&mut self) {
+        let text = self.take_submitted_input();
+        self.append_transcript(self.queued_prompt_row(&text));
+        self.queued_prompts.push_back(QueuedPrompt {
+            text,
+            attachments: std::mem::take(&mut self.attachments),
+        });
+        self.selected_attachment = 0;
+        self.notice = Some(format!(
+            "{} · {} {}",
+            self.language.text(
+                "已排队，本轮结束后发送",
+                "Queued · sends when this turn finishes",
+                "キューに追加 · 現在のターン終了後に送信"
+            ),
+            self.queued_prompts.len(),
+            self.language.text(
+                "条等待 · Ctrl+Q 编辑/删除/插话",
+                "waiting · Ctrl+Q edit/delete/steer",
+                "件待機 · Ctrl+Q 編集/削除/送達"
+            ),
+        ));
+    }
+
+    /// 排队时保留原始命令；发送前才启用目标，避免改变仍在执行的轮次。
+    pub(super) fn queued_prompt_execution(
+        &mut self,
+        prompt: &str,
+        session: &mut Session,
+        store: &SessionStore,
+    ) -> Result<PromptExecution> {
+        let Some(goal) = runtime_ui::goal_command_to_start(prompt) else {
+            return Ok(prompt_execution(prompt));
+        };
+        let previous = session.goal.replace(goal.to_owned());
+        if let Err(error) = store.save(session) {
+            session.goal = previous;
+            return Err(error.into());
+        }
+        self.goal = session.goal.clone();
+        Ok(PromptExecution::Runtime(goal.to_owned()))
+    }
+
     pub(super) fn open_prompt_queue(&mut self) {
         self.prompt_queue = Some(QueuePanel::default());
         self.command_menu_dismissed = true;
@@ -343,6 +386,141 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn goal_enter_queues_without_changing_the_running_turn_or_the_next_draft() {
+        let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+        app.goal = Some("当前目标".to_owned());
+        app.begin_turn(true, "working".to_owned());
+        let request = "/goal 请读一下 DESIGN.md 并按新设计要求更新一版";
+        app.input.insert(request);
+        app.attachments
+            .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+        assert!(!app.handle_command_key(key(KeyCode::Enter)));
+        assert_eq!(busy_input(app.input.text()), BusyInput::Queue);
+
+        app.queue_submitted_prompt();
+        assert!(app.running);
+        assert_eq!(app.goal.as_deref(), Some("当前目标"));
+        assert!(app.input.is_empty());
+        assert!(app.attachments.is_empty());
+        assert_eq!(app.queued_prompts.len(), 1);
+        assert_eq!(app.queued_prompts[0].text, request);
+        assert_eq!(app.queued_prompts[0].attachments.len(), 1);
+        assert!(app.queue_activity().unwrap().contains("待发 1"));
+
+        app.input.insert("下一条尚未发送的草稿");
+        app.note_reply("hi 的回复里有 kubectl get pods");
+        app.finish_turn();
+        assert_eq!(app.input.text(), "下一条尚未发送的草稿");
+        assert_eq!(app.queued_prompts[0].text, request);
+        app.open_prompt_queue();
+        app.handle_queue_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.prompt_queue
+                .as_ref()
+                .unwrap()
+                .editor
+                .as_ref()
+                .unwrap()
+                .text(),
+            request
+        );
+    }
+
+    #[test]
+    fn queued_goal_is_persisted_and_stripped_only_when_dispatching() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-queued-goal-{}", uuid::Uuid::new_v4()));
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "queued goal");
+        session.goal = Some("old goal".to_owned());
+        store.save(&mut session).unwrap();
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.goal = session.goal.clone();
+        app.input.insert("未发送草稿");
+
+        assert_eq!(
+            app.queued_prompt_execution("/goal\t读 DESIGN.md\n更新一版", &mut session, &store)
+                .unwrap(),
+            PromptExecution::Runtime("读 DESIGN.md\n更新一版".to_owned())
+        );
+        assert_eq!(store.load(session.id).unwrap().goal, session.goal);
+        assert_eq!(app.goal, session.goal);
+        assert!(
+            app.enrich_prompt("读 DESIGN.md\n更新一版", &SkillCatalog::default())
+                .contains("<goal>\n读 DESIGN.md\n更新一版\n</goal>")
+        );
+        assert_eq!(app.input.text(), "未发送草稿");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_goal_persistence_preserves_the_previous_goal_and_queued_message() {
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-queued-goal-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&root, b"not a directory").unwrap();
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "queued goal failure");
+        session.goal = Some("old goal".to_owned());
+        let mut app = App::new(Vec::new(), Language::En);
+        app.goal = session.goal.clone();
+        app.input.insert("/goal new goal");
+        app.queue_submitted_prompt();
+        assert!(
+            app.queued_prompt_execution("/goal new goal", &mut session, &store)
+                .is_err()
+        );
+        assert_eq!(session.goal.as_deref(), Some("old goal"));
+        assert_eq!(app.goal, session.goal);
+        assert_eq!(app.queued_prompts[0].text, "/goal new goal");
+        std::fs::remove_file(root).unwrap();
+    }
+
+    #[test]
+    fn queued_input_invalidates_late_suggestions_without_appending_them() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let epoch = app.input_suggestion_epoch;
+        assert!(app.adopt_input_suggestion(Some("kubectl get pods".to_owned()), epoch));
+        app.input.insert("/goal read DESIGN.md");
+        app.queue_submitted_prompt();
+        assert!(app.input_suggestion.is_none());
+        assert!(!app.adopt_input_suggestion(Some("kubectl get pods".to_owned()), epoch));
+        let current_epoch = app.input_suggestion_epoch;
+        assert!(!app.adopt_input_suggestion(Some("kubectl get pods".to_owned()), current_epoch));
+        assert!(!app.accept_input_suggestion());
+        assert!(app.input.is_empty());
+        assert_eq!(app.queued_prompts[0].text, "/goal read DESIGN.md");
+    }
+
+    #[test]
+    fn goal_queue_is_visible_in_the_actual_layout_while_hi_streams() {
+        use ratatui::backend::TestBackend;
+        let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.input.insert("/goal 请读一下 DESIGN.md 并更新一版");
+        app.queue_submitted_prompt();
+        app.stream_transient(StreamKind::Reply, "hi 的回复仍在生成");
+        let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        let compact: String = screen
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(compact.contains("待发1"), "{screen}");
+        assert!(screen.contains("DESIGN.md"), "{screen}");
+        assert!(compact.contains("hi的回复仍在生成"), "{screen}");
+        assert!(screen.contains("Ctrl+Q"), "{screen}");
     }
 
     #[test]

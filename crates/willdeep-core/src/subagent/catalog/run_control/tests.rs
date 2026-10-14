@@ -284,6 +284,54 @@ async fn continuation_rejects_unknown_or_foreign_agents_and_empty_requests() {
 }
 
 #[tokio::test]
+async fn idle_catalog_recovery_does_not_claim_the_execution_owner() {
+    let (catalog, background, provider, root) = fixture();
+    assert_eq!(catalog.restore_queued_runs().await.unwrap(), 0);
+    let store = background.agent_run_store().unwrap();
+    let owner = store.claim().expect("an idle UI must not own the team");
+    assert_eq!(catalog.restore_queued_runs().await.unwrap(), 0);
+    let error = catalog
+        .run(
+            SpawnAgentArgs {
+                profile: Some("scout".into()),
+                prompt: "inspect".into(),
+                run_in_background: Some(true),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("already owned by another execution host"),
+        "{error}"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    drop(owner);
+    let mut events = background.subscribe();
+    catalog
+        .run(
+            SpawnAgentArgs {
+                profile: Some("scout".into()),
+                prompt: "inspect".into(),
+                run_in_background: Some(true),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    completion(&mut events).await;
+    assert!(
+        store.claim().is_err(),
+        "actual workers still own the team exclusively"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn settled_worker_does_not_keep_the_team_execution_owner_alive() {
     let (catalog, background, _, root) = fixture();
     let store = background.agent_run_store().unwrap().clone();

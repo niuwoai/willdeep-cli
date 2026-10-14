@@ -175,6 +175,7 @@ impl App {
         } else if !submitted.is_empty() {
             self.finish_suggestion(willdeep_core::feedback::Signal::SuggestionIgnoredTyped);
         }
+        self.clear_input_suggestion();
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
@@ -1075,6 +1076,7 @@ impl App {
             || self.running
             || !self.input.is_empty()
             || !self.attachments.is_empty()
+            || !self.queued_prompts.is_empty()
         {
             return false;
         }
@@ -1101,7 +1103,11 @@ impl App {
 
     /// 灰字只在空闲且输入框为空时存在；其余时候当它不存在。
     pub(super) fn visible_input_suggestion(&self) -> Option<&str> {
-        if self.running || !self.input.is_empty() {
+        if self.running
+            || !self.input.is_empty()
+            || !self.attachments.is_empty()
+            || !self.queued_prompts.is_empty()
+        {
             return None;
         }
         self.input_suggestion.as_deref()
@@ -1969,7 +1975,7 @@ impl App {
         if !value.starts_with('/') {
             return false;
         }
-        let (command, args) = value.split_once(' ').unwrap_or((value, ""));
+        let (command, args) = value.split_once(char::is_whitespace).unwrap_or((value, ""));
         if matches!(
             command,
             "/agent"

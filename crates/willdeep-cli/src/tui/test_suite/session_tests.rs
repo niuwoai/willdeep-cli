@@ -1851,10 +1851,23 @@ fn a_running_turn_no_longer_swallows_every_enter() {
     // `/session search` 只是查询，`/session switch` 会换掉当前会话。
     assert_eq!(busy_input("/session search 登录"), BusyInput::RunNow);
     assert_eq!(busy_input("/session switch abc"), BusyInput::Refuse);
-    for prompt in ["继续重构这个模块", "/local 跑一下测试", "/runtime 修一下"] {
+    for prompt in [
+        "继续重构这个模块",
+        "/local 跑一下测试",
+        "/runtime 修一下",
+        "/goal 请读一下 DESIGN.md",
+        "/goal\t更新一版",
+    ] {
         assert_eq!(busy_input(prompt), BusyInput::Queue, "{prompt}");
     }
-    for command in ["/compress", "/daemon upgrade", "/diff"] {
+    for command in [
+        "/compress",
+        "/daemon upgrade",
+        "/diff",
+        "/goal",
+        "/goal off",
+        "/goal OFF",
+    ] {
         assert_eq!(busy_input(command), BusyInput::Refuse, "{command}");
     }
 }

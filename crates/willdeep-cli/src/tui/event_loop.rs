@@ -407,21 +407,24 @@ pub(super) async fn event_loop(
             );
             let draft_selected_attachment = app.selected_attachment;
             app.selected_attachment = 0;
-            let result = match prompt_execution(&queued.text) {
-                PromptExecution::Local(prompt) if !prompt.is_empty() => dispatch_prompt(
-                    &mut app,
-                    session,
-                    store,
-                    &runtime.skills,
-                    &agent,
-                    &runtime.tx,
-                    prompt,
-                ),
-                PromptExecution::Local(_) => Ok(()),
-                PromptExecution::Runtime(prompt) => {
-                    runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await
+            let result = async {
+                match app.queued_prompt_execution(&queued.text, session, store)? {
+                    PromptExecution::Local(prompt) if !prompt.is_empty() => dispatch_prompt(
+                        &mut app,
+                        session,
+                        store,
+                        &runtime.skills,
+                        &agent,
+                        &runtime.tx,
+                        prompt,
+                    ),
+                    PromptExecution::Local(_) => Ok(()),
+                    PromptExecution::Runtime(prompt) => {
+                        runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await
+                    }
                 }
-            };
+            }
+            .await;
             app.attachments = draft_attachments;
             app.selected_attachment = draft_selected_attachment;
             match result {
@@ -1235,20 +1238,7 @@ pub(super) async fn event_loop(
                                 match busy_input(app.input.text()) {
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
-                                        let text=app.take_submitted_input();
-                                        let row=app.queued_prompt_row(&text);
-                                        app.append_transcript(row);
-                                        app.queued_prompts.push_back(QueuedPrompt{
-                                            text,
-                                            attachments:std::mem::take(&mut app.attachments),
-                                        });
-                                        app.selected_attachment=0;
-                                        app.notice=Some(format!(
-                                            "{} · {} {}",
-                                            language.text("已排队，本轮结束后发送","Queued · sends when this turn finishes","キューに追加 · 現在のターン終了後に送信"),
-                                            app.queued_prompts.len(),
-                                            language.text("条等待 · Ctrl+Q 编辑/删除/插话","waiting · Ctrl+Q edit/delete/steer","件待機 · Ctrl+Q 編集/削除/送達"),
-                                        ));
+                                        app.queue_submitted_prompt();
                                         continue;
                                     },
                                     BusyInput::Refuse=>{

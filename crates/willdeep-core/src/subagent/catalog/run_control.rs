@@ -131,10 +131,15 @@ impl SubagentCatalog {
     /// Called once after the Harness owns its parent session. Read-only clients
     /// never invoke this: running tools become Interrupted, only Queued resumes.
     pub async fn restore_queued_runs(&self) -> Result<usize, AgentError> {
-        self.background.claim_agent_team().map_err(run_error)?;
         let Some(store) = self.background.agent_run_store() else {
             return Ok(0);
         };
+        // 空团队没有恢复工作。界面启动也会构建 Catalog，不能提前占住
+        // Runtime 的执行锁；实际派工仍由 BackgroundTaskRegistry 原子取锁。
+        if !store.needs_recovery().map_err(run_error)? {
+            return Ok(0);
+        }
+        self.background.claim_agent_team().map_err(run_error)?;
         if self.background.running_subagents() > 0 {
             return Err(run_error("cannot recover a team with live workers"));
         }
