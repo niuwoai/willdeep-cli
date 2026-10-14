@@ -23,6 +23,8 @@ mod local_partial;
 mod monitor_events;
 #[path = "headless_runtime/prompt_variant.rs"]
 mod prompt_variant;
+#[path = "headless_runtime/retry_wait.rs"]
+mod retry_wait;
 #[path = "headless_runtime/runtime_parameters.rs"]
 mod runtime_parameters;
 
@@ -1126,84 +1128,6 @@ fn public_api_spawns_and_waits_for_a_read_only_child_agent() {
         3,
         "root reaches Provider once; child retries its one 429 exactly once"
     );
-}
-
-#[test]
-fn root_retry_wait_is_observable_through_public_runtime_api() {
-    let _serial = process_test_guard();
-    let root = temporary_root();
-    let home = root.join("home");
-    let workspace = root.join("workspace");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&workspace).unwrap();
-    let provider = MockProvider::start_with_mode(MockMode::RetryRoot);
-    let config = root.join("config.toml");
-    write_private_config(&config, provider.api_base());
-    let _guard = TestGuard::new(root.clone(), home.clone());
-    let child = willdeep(&home)
-        .args([
-            "run",
-            "--config",
-            path_text(&config),
-            "--workspace",
-            path_text(&workspace),
-            "--output",
-            "json",
-            "retry root request",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut process = ChildGuard(Some(child));
-    wait_until(Duration::from_secs(10), || provider.requests() > 0);
-    let client = runtime_client(&home);
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut root_id = None;
-    wait_until(Duration::from_secs(10), || {
-        let willdeep_runtime_protocol::ApiResponse::Ok { data, .. } =
-            runtime.block_on(client.agents()).unwrap()
-        else {
-            panic!("agent.list failed");
-        };
-        let Some(agent) = data.iter().find(|agent| agent.parent_id.is_none()) else {
-            return false;
-        };
-        root_id = Some(agent.id);
-        agent
-            .retry_wait
-            .as_ref()
-            .is_some_and(|wait| wait.attempt == 1 && wait.delay_ms == 2000)
-    });
-    let root_id = root_id.unwrap();
-    wait_until(Duration::from_secs(10), || {
-        if provider.requests() != 2 {
-            return false;
-        }
-        let willdeep_runtime_protocol::ApiResponse::Ok { data, .. } =
-            runtime.block_on(client.agent(root_id)).unwrap()
-        else {
-            panic!("agent.get failed");
-        };
-        data.retry_wait.is_none() && data.status == willdeep_runtime_protocol::AgentStatus::Running
-    });
-    provider.release_stream.store(true, Ordering::SeqCst);
-    wait_until(Duration::from_secs(10), || {
-        process.0.as_mut().unwrap().try_wait().unwrap().is_some()
-    });
-    let result = process.0.take().unwrap().wait_with_output().unwrap();
-    assert_success(&result, "root Provider retry");
-    let willdeep_runtime_protocol::ApiResponse::Ok { data, .. } =
-        runtime.block_on(client.agent(root_id)).unwrap()
-    else {
-        panic!("final agent.get failed");
-    };
-    assert_eq!(
-        data.status,
-        willdeep_runtime_protocol::AgentStatus::Completed
-    );
-    assert!(data.retry_wait.is_none());
-    assert_eq!(provider.requests(), 2);
 }
 
 #[test]
@@ -2614,6 +2538,7 @@ impl Drop for TestGuard {
 struct MockProvider {
     captured_requests: Arc<Mutex<Vec<serde_json::Value>>>,
     release_stream: Arc<AtomicBool>,
+    release_retry_response: Arc<AtomicBool>,
     address: std::net::SocketAddr,
     stop: Arc<AtomicBool>,
     requests: Arc<AtomicUsize>,
@@ -2651,6 +2576,8 @@ impl MockProvider {
         let worker_captured = captured_requests.clone();
         let release_stream = Arc::new(AtomicBool::new(false));
         let worker_release = release_stream.clone();
+        let release_retry_response = Arc::new(AtomicBool::new(false));
+        let worker_retry_response = release_retry_response.clone();
         let thread = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2667,6 +2594,7 @@ impl MockProvider {
                     .with_state(MockProviderState {
                         captured_requests: worker_captured,
                         release_stream: worker_release,
+                        release_retry_response: worker_retry_response,
                         mode,
                         requests: worker_requests,
                     });
@@ -2683,6 +2611,7 @@ impl MockProvider {
         Self {
             captured_requests,
             release_stream,
+            release_retry_response,
             address,
             stop,
             requests,
@@ -2727,6 +2656,7 @@ enum MockMode {
 impl Drop for MockProvider {
     fn drop(&mut self) {
         self.release_stream.store(true, Ordering::SeqCst);
+        self.release_retry_response.store(true, Ordering::SeqCst);
         self.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
             thread.join().expect("join mock Provider");
@@ -2738,6 +2668,7 @@ impl Drop for MockProvider {
 struct MockProviderState {
     captured_requests: Arc<Mutex<Vec<serde_json::Value>>>,
     release_stream: Arc<AtomicBool>,
+    release_retry_response: Arc<AtomicBool>,
     mode: MockMode,
     requests: Arc<AtomicUsize>,
 }
@@ -2764,6 +2695,13 @@ async fn mock_provider_response(
     ) {
         let first = usize::from(matches!(state.mode, MockMode::WaitRootThenRetryChild));
         if request_index == first {
+            // Only RetryRoot uses the observer-ready barrier. The child retry
+            // fixture keeps its existing immediate response behavior.
+            if matches!(state.mode, MockMode::RetryRoot) {
+                while !state.release_retry_response.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
             return axum::response::Response::builder()
                 .status(429)
                 .header("retry-after", "2")
