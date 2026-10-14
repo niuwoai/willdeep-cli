@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-14 | 当前版本：v0.99.0-rc8（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-14 | 当前版本：v0.99.0-rc9（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 SWE-bench 失败轨迹驱动的运行时强化：原生/显式配置测试入口与工作目录证据、主子 Agent 统一截止和收尾窗口、重复失败保护、异常补丁交付与恢复时保留的实现路径契约。候选独立分支的完整工程与机制验收通过，尚未发布；未将机制回归宣称为新的模型解决率，详细范围与边界见 [运行时强化验收](docs/SWEBENCH_RUNTIME_HARDENING.md)。
 

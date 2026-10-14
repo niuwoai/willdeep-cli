@@ -146,12 +146,26 @@ fn replacement_and_truncation_discard_old_totals() {
     assert_eq!(fixture.summary(fixture.parent).usage.model_calls, 0);
     append_record(&fixture.directory, &fixture.record(3)).unwrap();
     assert_eq!(fixture.summary(fixture.parent).usage.accounted_tokens, 3);
+    let previous = Stamp::for_path(&path).unwrap();
     // Atomic replacement can have the same size or grow; inode change must rebuild.
     let mut bytes = serde_json::to_vec(&fixture.record(999)).unwrap();
     bytes.push(b'\n');
     let replacement = fixture.directory.join("replacement.tmp");
     std::fs::write(&replacement, bytes).unwrap();
+    // File replacement must be detected even when the modification time is
+    // preserved; Windows creation-time tunneling can also preserve creation.
+    OpenOptions::new()
+        .write(true)
+        .open(&replacement)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(previous.modified))
+        .unwrap();
     std::fs::rename(replacement, path).unwrap();
+    #[cfg(any(unix, windows))]
+    assert_ne!(
+        previous.identity,
+        Stamp::for_path(&fixture.shard()).unwrap().identity
+    );
     assert_eq!(fixture.summary(fixture.parent).usage.accounted_tokens, 999);
 }
 
