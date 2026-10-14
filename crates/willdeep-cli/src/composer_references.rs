@@ -40,14 +40,13 @@ pub(crate) fn collect(
                 .name
                 .strip_prefix("mcp__")
                 .and_then(|name| name.split("__").next())
+                && !entries.iter().any(|entry| entry.name == name)
             {
-                if !entries.iter().any(|entry| entry.name == name) {
-                    entries.push(Reference {
-                        kind: "mcp",
-                        name: name.to_owned(),
-                        value: format!("@mcp:{name}"),
-                    });
-                }
+                entries.push(Reference {
+                    kind: "mcp",
+                    name: name.to_owned(),
+                    value: format!("@mcp:{name}"),
+                });
             }
         }
     }
@@ -186,10 +185,10 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<String>, remaining: &mut usize)
         };
         if kind.is_dir() && !SKIP_DIRS.contains(&entry.file_name().to_string_lossy().as_ref()) {
             walk(root, &path, files, remaining);
-        } else if kind.is_file() {
-            if let Ok(name) = path.strip_prefix(root) {
-                files.push(name.to_string_lossy().into_owned());
-            }
+        } else if kind.is_file()
+            && let Ok(name) = path.strip_prefix(root)
+        {
+            files.push(name.to_string_lossy().into_owned());
         }
     }
 }
