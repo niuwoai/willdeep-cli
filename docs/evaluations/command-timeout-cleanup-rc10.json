@@ -1,0 +1,124 @@
+{
+  "version": "0.99.0-rc10",
+  "started_at": "2026-10-14T13:31:55+08:00",
+  "gates": [
+    {
+      "name": "format",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 1.4,
+      "test_summaries": []
+    },
+    {
+      "name": "clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 67.71,
+      "test_summaries": []
+    },
+    {
+      "name": "workspace-tests",
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "exit_code": 0,
+      "seconds": 295.95,
+      "test_summaries": [
+        "test result: ok. 685 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 12.72s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.01s",
+        "test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.65s",
+        "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.65s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 737 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 90.41s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "web-lint",
+      "argv": [
+        "yarn",
+        "lint"
+      ],
+      "exit_code": 0,
+      "seconds": 1.95,
+      "test_summaries": []
+    },
+    {
+      "name": "web-build",
+      "argv": [
+        "yarn",
+        "build"
+      ],
+      "exit_code": 0,
+      "seconds": 7.31,
+      "test_summaries": []
+    },
+    {
+      "name": "source-size",
+      "argv": [
+        "ruby",
+        "scripts/check_source_size.rb",
+        "--output",
+        "target/command-timeout-cleanup-validation/source-size"
+      ],
+      "exit_code": 0,
+      "seconds": 0.29,
+      "test_summaries": []
+    },
+    {
+      "name": "diff",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.03,
+      "test_summaries": []
+    }
+  ],
+  "state": "passed",
+  "finished_at": "2026-10-14T13:38:10+08:00",
+  "base_commit": "318ae37fac349bfe395b4dcf595532bb79f683a7",
+  "additional_checks": [
+    {
+      "name": "execution-tests",
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "name": "windows-gnu-check",
+      "exit_code": 0
+    },
+    {
+      "name": "windows-gnu-all-targets-clippy",
+      "exit_code": 0
+    },
+    {
+      "name": "workflow-yaml-and-actionlint",
+      "exit_code": 0
+    }
+  ],
+  "windows_native_runtime": "pending_release_ci",
+  "benchmark_scores_changed": false
+}

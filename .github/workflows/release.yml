@@ -9,6 +9,10 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Verify release
+    uses: ./.github/workflows/ci.yml
+
   linux:
     name: Linux ${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -96,7 +100,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [linux, windows, macos]
+    needs: [linux, windows, macos, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

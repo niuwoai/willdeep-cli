@@ -8,14 +8,17 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
 pub(super) struct Job(Option<OwnedHandle>);
+
+const JOB_EXIT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
 impl Job {
     pub(super) fn new(command: &mut tokio::process::Command) -> io::Result<Self> {
@@ -59,6 +62,39 @@ impl Job {
     pub(super) fn terminate(&mut self) {
         // Closing the last job handle kills the leader and all descendants.
         self.0.take();
+    }
+
+    /// Retain the job handle until every member has finished termination.
+    /// The caller bounds this wait; closing the handle remains cancellation fallback.
+    pub(super) async fn terminate_and_wait(&mut self) -> io::Result<()> {
+        let Some(handle) = self.0.as_ref() else {
+            return Ok(());
+        };
+        // SAFETY: The job handle remains owned throughout termination and polling.
+        if unsafe { TerminateJobObject(handle.as_raw_handle(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            // SAFETY: Live handle and correctly sized writable accounting buffer.
+            if unsafe {
+                QueryInformationJobObject(
+                    handle.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&accounting) as u32,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if accounting.ActiveProcesses == 0 {
+                self.0.take();
+                return Ok(());
+            }
+            tokio::time::sleep(JOB_EXIT_POLL_INTERVAL).await;
+        }
     }
 }
 
@@ -142,6 +178,34 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(4)).await;
         assert!(!root.join("escaped").exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn timeout_releases_workspace_and_prevents_delayed_descendant_write() {
+        let root = fixture();
+        let marker = root.with_extension("escaped");
+        std::fs::write(
+            root.join("child.ps1"),
+            format!(
+                "Set-Content started yes; Start-Sleep -Seconds 20; Set-Content '{}' escaped",
+                marker.display().to_string().replace('\'', "''")
+            ),
+        )
+        .unwrap();
+        let result = super::super::run_capture(
+            &command(true),
+            &root,
+            &SandboxSpec::new(SandboxPolicy::Off, []),
+            Duration::from_secs(10),
+            4096,
+        )
+        .await;
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(root.join("started").exists(), "descendant actually started");
+        // No sleeps or retries before removal: return guarantees released cwd.
+        std::fs::remove_dir_all(root).unwrap();
+        tokio::time::sleep(Duration::from_secs(21)).await;
+        assert!(!marker.exists(), "terminated descendant cannot write later");
     }
 
     #[tokio::test]

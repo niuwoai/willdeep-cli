@@ -34,6 +34,9 @@ pub(crate) fn shell(command: &str, sandbox: &SandboxSpec) -> io::Result<Command>
 /// 「末尾永远可读」不能被上限破坏，失败原因几乎总在最后几行。
 pub(crate) const MAX_LOG_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Cleanup has its own small bound after a command's execution deadline.
+const COMMAND_CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+
 struct CaptureState {
     bytes: std::collections::VecDeque<u8>,
     limit: usize,
@@ -266,9 +269,13 @@ pub(crate) async fn run_capture_logged(
         };
         #[cfg(windows)]
         let wait = async {
-            let result = child.wait().await;
-            group.terminate();
-            result
+            let status = child.wait().await?;
+            tokio::time::timeout(COMMAND_CLEANUP_TIMEOUT, group.terminate_and_wait())
+                .await
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::TimedOut, "command job cleanup timed out")
+                })??;
+            Ok::<_, io::Error>(status)
         };
         let (status, (), ()) = tokio::try_join!(
             wait,
@@ -282,6 +289,21 @@ pub(crate) async fn run_capture_logged(
         })
     };
     let result = tokio::time::timeout(timeout, operation).await;
+    let cleanup = if !matches!(&result, Ok(Ok(_))) {
+        tokio::time::timeout(COMMAND_CLEANUP_TIMEOUT, async {
+            #[cfg(unix)]
+            group.terminate();
+            #[cfg(windows)]
+            group.terminate_and_wait().await?;
+            child.wait().await?;
+            Ok::<_, io::Error>(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "command cleanup timed out"))
+        .and_then(|result| result)
+    } else {
+        Ok(())
+    };
     // 超时也要收尾：被截断的日志正是最需要真实末尾的那一种。
     stdout_state.finish()?;
     stderr_state.finish()?;
@@ -299,7 +321,10 @@ pub(crate) async fn run_capture_logged(
             Err(io::Error::new(
                 error.kind(),
                 format!(
-                    "{error}\nstdout:\n{}\nstderr:\n{}",
+                    "{error}{}\nstdout:\n{}\nstderr:\n{}",
+                    cleanup
+                        .err()
+                        .map_or_else(String::new, |error| format!("; cleanup failed: {error}")),
                     stdout_state.describe(),
                     stderr_state.describe()
                 ),
@@ -381,6 +406,41 @@ mod tests {
         )
         .await;
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_reaps_leader_before_returning_and_stops_delayed_write() {
+        let root = std::env::temp_dir().join(format!("willdeep-timeout-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let command = "printf '%s' $$; (sleep 1; touch escaped) & wait";
+        let error = run_capture(
+            command,
+            &root,
+            &SandboxSpec::new(SandboxPolicy::Off, []),
+            Duration::from_millis(100),
+            4096,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        let message = error.to_string();
+        let pid: i32 = message
+            .split("stdout:\n")
+            .nth(1)
+            .unwrap()
+            .split("\nstderr:")
+            .next()
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: Signal zero only checks whether the recorded child is still live.
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!root.join("escaped").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
