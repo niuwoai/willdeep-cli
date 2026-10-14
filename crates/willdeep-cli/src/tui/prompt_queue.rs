@@ -10,6 +10,13 @@ pub(super) struct QueuePanel {
 }
 
 impl App {
+    pub(super) fn queued_prompt_ready(&self) -> bool {
+        !self.running
+            && !self.queued_prompts.is_empty()
+            && self.prompt_queue.is_none()
+            && self.attachment_panel.is_none()
+    }
+
     pub(super) fn queue_submitted_prompt(&mut self) {
         let text = self.take_submitted_input();
         self.append_transcript(self.queued_prompt_row(&text));
@@ -382,6 +389,87 @@ mod tests {
         }
         app.open_prompt_queue();
         app
+    }
+
+    #[test]
+    fn runtime_completion_dispatches_user_queue_despite_pending_kernel_events() {
+        use willdeep_runtime_protocol::kernel_event::{
+            EventPriority, EventSource, InterruptPolicy,
+        };
+        let home = std::env::temp_dir().join(format!("queued-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let store = SessionStore::new(&home);
+        let mut session = Session::new(home.clone(), None, "queue test");
+        let kernel = willdeep_core::EventKernel::new();
+        kernel.publish(
+            willdeep_core::host_event(
+                session.id,
+                EventSource::Task,
+                "task.completed",
+                EventPriority::Normal,
+                InterruptPolicy::YieldAtBoundary,
+                "background result",
+                None,
+                None,
+                false,
+            ),
+            willdeep_core::DedupPolicy::Once,
+        );
+        let mut app = queued_app();
+        app.prompt_queue = None;
+        app.begin_turn(true, "running".into());
+        assert!(!app.queued_prompt_ready());
+        runtime_ui::apply_runtime_events(
+            &mut app,
+            vec![crate::daemon::RemoteRuntimeEvent {
+                sequence: 1,
+                kind: "turn.completed".into(),
+                message: format!("session_id={} turn_id={}", session.id, uuid::Uuid::new_v4()),
+                visible: true,
+                session_id: Some(session.id),
+            }],
+            &mut session,
+            &store,
+        )
+        .unwrap();
+        assert!(kernel.pending_wake_authority(session.id).is_some());
+        assert!(
+            app.queued_prompt_ready(),
+            "pending host events must not starve an already submitted user prompt"
+        );
+        assert_eq!(app.queued_prompts.pop_front().unwrap().text, "first");
+        assert_eq!(app.queued_prompts.front().unwrap().text, "second");
+        assert!(
+            kernel.pending_wake_authority(session.id).is_some(),
+            "user dispatch does not discard background events"
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn queued_messages_keep_idle_composer_out_of_your_turn_state() {
+        let mut app = queued_app();
+        app.finish_turn();
+        assert_eq!(app.composer_state().1, Color::Yellow);
+        assert!(app.composer_state().0.contains("Queued messages"));
+        assert!(
+            !app.bell_pending,
+            "the user should not be signaled to send again"
+        );
+        assert!(
+            !app.queued_prompt_ready(),
+            "editing the queue pauses dispatch"
+        );
+        app.prompt_queue = None;
+        assert!(app.queued_prompt_ready());
+        app.open_attachments(attachment_panel::Target::Queued(0));
+        assert!(
+            !app.queued_prompt_ready(),
+            "attachment editing retains the pending message"
+        );
+        app.attachment_panel = None;
+        app.queued_prompts.clear();
+        assert_eq!(app.composer_state(), ("Your turn", Color::Green));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

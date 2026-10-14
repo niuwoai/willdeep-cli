@@ -14,17 +14,18 @@ import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
 import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
 
-export type RailSelection = { kind: "conversation" } | { kind: "schedules" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
+export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "schedules" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
 type Props = {
   entries: Array<{ plugin: PluginView; destination: PluginDestinationView }>;
   selection: RailSelection;
   messages: Messages;
   schedulesLabel: string;
+  agentsLabel?: string;
   onSelect: (selection: RailSelection) => void;
 };
 
-export function PluginRail({ entries, selection, messages, schedulesLabel, onSelect }: Props) {
+export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, onSelect }: Props) {
   const [showOverflow, setShowOverflow] = useState(false);
   const pinned = entries.slice(0, MAX_PINNED_DESTINATIONS);
   const overflow = entries.slice(MAX_PINNED_DESTINATIONS);
@@ -56,6 +57,7 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, onSel
         () => onSelect({ kind: "conversation" })
       )}
       {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
+      {agentsLabel && button("agents", agentsLabel, <SfIcon name="sf:person.2" size={20} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
       <Box className="rail-divider" />
       {entries.length > 0 && <Text className="rail-section-label">{messages.pluginSectionTitle}</Text>}
       {pinned.map(({ plugin, destination }) =>

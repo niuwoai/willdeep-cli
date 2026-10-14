@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-14 | 当前版本：v0.100.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-14 | 当前版本：v0.101.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+
+专业智能体库（P0—P3）：CLI `willdeep agents`、TUI `/agents` 与 Web 智能体库支持自定义定义、签名官方固定版本、导入导出、fork、pin、历史与回滚。some.im 服务账号和模型 Provider 分离，私有定义需要显式加入当前账号同步并主动同步；按 service origin / user / tenant 隔离缓存，冲突保留本地版本。派工使用受基础职责约束的定义快照与技能正文；不兼容定义可见但停用。此阶段未加入 RSI 自动迭代。
 
 命令超时收尾：执行截止后最多等待 1 秒终止与释放资源；Windows 等待 Job 全部进程归零。若收尾失败，错误明确记录，不宣称资源已经释放。
 

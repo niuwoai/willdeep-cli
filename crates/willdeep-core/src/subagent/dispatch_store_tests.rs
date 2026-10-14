@@ -270,6 +270,7 @@ fn recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports() {
                 approved_targets: None,
                 approved_command: None,
                 model: None,
+                definition: None,
                 prepared: PreparedSubagentWorkspace {
                     workspace: root.clone(),
                     root_workspace: root.clone(),

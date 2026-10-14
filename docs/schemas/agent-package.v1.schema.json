@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://willdeep.com/schemas/agent-package.v1.schema.json",
+  "title": "WillDeep immutable agent package v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["definition", "sha256", "signature"],
+  "properties": {
+    "definition": {"$ref": "agent-definition.v1.schema.json"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signature": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false, "required": ["key_id", "value"],
+          "properties": {
+            "key_id": {"type": "string", "minLength": 1, "maxLength": 96},
+            "value": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
+          }
+        }
+      ]
+    }
+  },
+  "$comment": "sha256 covers canonical definition bytes. Official signature verification requires keys from the trusted service origin; a package cannot supply its own trust root."
+}

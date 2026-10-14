@@ -38,7 +38,7 @@ pub(super) fn help_text(language: Language) -> String {
 }
 
 /// 每条命令的用法签名。占位符随语言走，中文用户不该对着 `<task>` 猜要填什么。
-fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
+fn command_usages(language: Language) -> [(&'static str, &'static str); 29] {
     let descriptions = command_candidates(language);
     let usages = match language {
         Language::ZhCn => [
@@ -62,6 +62,7 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <文本>",
+            "/agents [list|catalog|sync]",
             "/diff",
             "/rewind",
             "/skills",
@@ -92,6 +93,7 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <text>",
+            "/agents [list|catalog|sync]",
             "/diff",
             "/rewind",
             "/skills",
@@ -122,6 +124,7 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <テキスト>",
+            "/agents [list|catalog|sync]",
             "/diff",
             "/rewind",
             "/skills",
@@ -146,7 +149,7 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 28] {
     std::array::from_fn(|index| (usages[index], descriptions[index].1))
 }
 
-pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static str); 28] {
+pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static str); 29] {
     [
         (
             "/help",
@@ -303,6 +306,14 @@ pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static
                 "查看或控制子 Agent",
                 "Inspect or control child Agents",
                 "子 Agent の表示・操作",
+            ),
+        ),
+        (
+            "/agents",
+            language.text(
+                "管理专业智能体库和账号同步",
+                "Manage specialist definitions and account synchronization",
+                "専門エージェントとアカウント同期を管理",
             ),
         ),
         (

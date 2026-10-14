@@ -1291,6 +1291,23 @@ impl RuntimeCapabilities {
 }
 
 pub const SUPPORTED_OPERATIONS: &[&str] = &[
+    "agent_library.list",
+    "agent_library.save",
+    "agent_library.import",
+    "agent_library.export",
+    "agent_library.fork",
+    "agent_library.history",
+    "agent_library.pin",
+    "agent_library.enable",
+    "agent_library.rollback",
+    "agent_library.catalog",
+    "agent_library.preview",
+    "agent_library.install",
+    "agent_library.share",
+    "agent_library.sync",
+    "agent_library.delete",
+    "agent_library.logout",
+    "agent_library.bind",
     "schedule.list",
     "schedule.deleted",
     "schedule.get",

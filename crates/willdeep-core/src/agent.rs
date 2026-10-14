@@ -999,6 +999,18 @@ impl Agent {
         self.tools.set_task_context(&user_message.content);
         messages.push(user_message);
         let mut definitions = self.tools.definitions();
+        if let Some(catalog) = &self.subagents
+            && let Some(spawn) = definitions
+                .iter_mut()
+                .find(|tool| tool.name == "spawn_agent")
+        {
+            spawn.parameters["properties"]["profile"]["enum"] =
+                serde_json::json!(catalog.public_profile_ids());
+            spawn.description.push_str(&format!(
+                " Available specialist definitions: {}",
+                catalog.description()
+            ));
+        }
         // 有目标时才给 `update_plan`：清单是目标的一部分，没有目标就无从谈起。
         if self
             .goal_continuation
@@ -1686,7 +1698,7 @@ impl Agent {
                 )));
             }
             let approved_command = match args.target_command.as_deref() {
-                Some(_) if profile != "ops_runner" => {
+                Some(_) if !catalog.supports_target_command(&profile) => {
                     return Err(ToolError::ApprovalDenied(
                         "target_command may only be used with profile=\"ops_runner\"".to_owned(),
                     ));

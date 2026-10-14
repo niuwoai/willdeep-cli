@@ -176,6 +176,15 @@ impl App {
                 ),
                 Color::Yellow,
             )
+        } else if !self.queued_prompts.is_empty() {
+            (
+                self.language.text(
+                    "待发消息等待发送 · Ctrl+Q 管理",
+                    "Queued messages waiting to send · Ctrl+Q manage",
+                    "送信待ちのメッセージがあります · Ctrl+Q 管理",
+                ),
+                Color::Yellow,
+            )
         } else {
             (
                 self.language.text("轮到你", "Your turn", "あなたの番"),

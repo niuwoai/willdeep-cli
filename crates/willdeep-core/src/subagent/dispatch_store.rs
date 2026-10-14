@@ -20,6 +20,8 @@ pub(super) struct DispatchRecord {
     pub approved_targets: Option<BTreeSet<PathBuf>>,
     pub approved_command: Option<String>,
     pub model: Option<String>,
+    #[serde(default)]
+    pub definition: Option<crate::agent_definition::AgentDefinition>,
     pub prepared: PreparedSubagentWorkspace,
 }
 

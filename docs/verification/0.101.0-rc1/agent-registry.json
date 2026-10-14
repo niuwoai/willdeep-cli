@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-14",
+  "scope": ["P0", "P1", "P2", "P3"],
+  "versions": {"rust":"0.101.0-rc1","mac":"1.419.0-rc1","someim":"0.248.0-rc2"},
+  "environment": {"service":"http://127.0.0.1:33317","database":"codex_agent_registry_test","database_port":"33316","production":false},
+  "cross_client": {
+    "mac_create_rust_download": {"status":"passed","revision":"0824f301bcd37588454e61fcad7cb2903a1c391b2861d9c45a11b03cec34c5de"},
+    "rust_update_mac_readback": {"status":"passed","version":"1.0.0-rc2","revision":"d30e14565386bee1dee5eb21bb2b1e6eba786b0224077de8efef2f5815bd0512"},
+    "mac_stale_update_rejected": {"status":"passed","preserved_revision":"a54ae66aedb679e733ad39f3c5cbaa5d1675c66458ce7eb2fbf1c86a2caa12b2"},
+    "mac_delete_rust_tombstone": {"status":"passed"},
+    "second_account_isolation": {"status":"passed","clients":["mac","rust"]},
+    "official_signed_fixed_revision": {"status":"passed","clients":["mac","rust"],"revision":"a63f949f0e5f1488b50f16d9da6ee88cee0653c4dbbc091a36a7c5743ea64540"},
+    "web_create_rust_readback": {"status":"passed","revision":"5674359c0d978abfe8d41881f4e6a323c21a207e2ac84bd0e94dbd53815b9f9f"},
+    "admin_publish": {"status":"passed","preview_did_not_publish":true,"clients":["mac","rust"],"first_revision":"70c98225efa2d1abeb257c9acf568552ecccacce3a88c7b19ea60036fa0fdae6","second_revision":"a6055b5573f29ab7cbb10c0ffd880c9b342acd155000326b78d24f10c82f2379","rollback_readback":true,"withdraw_hides_index":true,"withdraw_retains_fixed_package":true}
+  },
+  "regression": {"queued_prompt_tests":14,"related_tui_tests":240,"queued_prompt_status":"passed"},
+  "rust_tests": {"definition":9,"registry":14,"subagent_passed":89,"subagent_existing_ignored":2,"tui":240,"web":122,"build":"passed"},
+  "mac_tests": {"passed":38,"suites":3,"test_exit":0,"xcresult_log_counts_match":true,"light_dark_rendering":"passed","entire_repository_tested":false},
+  "service_tests": {"go_passed_including_subcases":689,"separate_real_database_http":9,"separate_migration_database":1,"new_frontend":7,"typescript":"passed","production_build":"passed"},
+  "key_rotation": {"status":"passed","key_id":"public-key SHA256 prefix","same_origin_old_keys_retained":true,"reused_key_id_mismatch_rejected":true,"cross_origin_keys_not_mixed":true,"definition_hash_unchanged":true,"forced_cache_revocation":false},
+  "final_http_readback": {"version":"0.248.0-rc2","anonymous_private_admin_status":"401","mac_official_and_isolation":"passed","rust_official_and_repeat_sync":"passed"},
+  "pending": [],
+  "delivery": {"committed":true,"merged":false,"pushed":false,"released":false,"production_migrated":false,"installed_over_user_app":false},
+  "local_commits": {"mac":"7963851f","service_feature":"3f1138cb","service_fix":"9140099f","standalone_queue_fix":"e8df5eb"},
+  "cleanup": {"fixture_http_stopped":true,"fixture_web_stopped":true,"test_mysql_container_stopped":true,"user_runtime_restarted":false},
+  "rsi": "deferred"
+}

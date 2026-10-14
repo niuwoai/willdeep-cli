@@ -26,7 +26,7 @@ pub async fn run(explicit_path: Option<&Path>) -> Result<bool> {
         return Ok(true);
     }
     let (provider, base, key, model) = if choice.trim() == "2" {
-        some_im_login().await?
+        some_im_login(&crate::willdeep_home()?).await?
     } else if choice.trim() == "3" {
         let base = required("API Base: ")?;
         let key = required("API Key（输入会显示，请留意终端历史）: ")?;
@@ -130,7 +130,13 @@ pub(crate) fn open_browser(url: &str) -> bool {
     result.is_ok_and(|status| status.success())
 }
 
-async fn some_im_login() -> Result<(String, String, String, String)> {
+pub(crate) async fn agent_customer_login(home: &Path) -> Result<()> {
+    some_im_login(home).await?;
+    crate::agent_registry::service::CustomerSession::load(home)?;
+    Ok(())
+}
+
+async fn some_im_login(home: &Path) -> Result<(String, String, String, String)> {
     let secret = std::env::var("WILLDEEP_CLIENT_LOGIN_SECRET").unwrap_or_default();
     if secret.trim().is_empty() {
         bail!(
@@ -156,8 +162,12 @@ async fn some_im_login() -> Result<(String, String, String, String)> {
         .append_pair("willdeep_pair_token", &pair_token)
         .append_pair("return_to", "willdeep")
         .append_pair("next", &next);
-    println!("请在浏览器打开并登录：\n{url}\n\n设备码：{code}\nWillDeep 正在等待授权……");
+    if !open_browser(url.as_str()) {
+        bail!("无法自动打开登录浏览器，请检查本机默认浏览器后重试；登录配对凭据不会写入终端日志");
+    }
+    println!("已打开 some.im 登录浏览器。\n设备码：{code}\nWillDeep 正在等待授权……");
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()?;
     for _ in 0..180 {
@@ -186,6 +196,12 @@ async fn some_im_login() -> Result<(String, String, String, String)> {
                 state.as_str(),
                 "connected" | "success" | "completed" | "authenticated"
             ) {
+                let token = string(data, &["token", "customer_token"])
+                    .context("some.im login did not return a customer session; log in again")?;
+                crate::agent_registry::service::Service::new(SOME_IM_ORIGIN)?
+                    .identify(&token)
+                    .await?
+                    .save(home)?;
                 let key = string(
                     data,
                     &[

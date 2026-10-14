@@ -98,6 +98,42 @@ pub(super) async fn handle_agent_command(
     session_id: uuid::Uuid,
 ) -> Result<bool> {
     let value = prompt.trim();
+    if value == "/agents" || value.starts_with("/agents ") {
+        let words: Vec<_> = value.split_whitespace().collect();
+        let (operation, params) = match words.as_slice() {
+            ["/agents"] | ["/agents", "list"] => ("list", serde_json::json!({})),
+            ["/agents", "catalog"] => ("catalog", serde_json::json!({})),
+            ["/agents", "sync"] => ("sync", serde_json::json!({})),
+            ["/agents", "logout"] => ("logout", serde_json::json!({})),
+            ["/agents", "share", id] => ("share", serde_json::json!({"id":id})),
+            ["/agents", "disable", id] => ("enable", serde_json::json!({"id":id,"value":false})),
+            ["/agents", "enable", id] => ("enable", serde_json::json!({"id":id,"value":true})),
+            ["/agents", "pin", id] => ("pin", serde_json::json!({"id":id,"value":true})),
+            ["/agents", "unpin", id] => ("pin", serde_json::json!({"id":id,"value":false})),
+            ["/agents", "install", id, revision] => {
+                ("install", serde_json::json!({"id":id,"revision":revision}))
+            }
+            ["/agents", "fork", id, new_id] => {
+                ("fork", serde_json::json!({"id":id,"new_id":new_id}))
+            }
+            ["/agents", "rollback", id, revision] => {
+                ("rollback", serde_json::json!({"id":id,"revision":revision}))
+            }
+            _ => {
+                app.append_transcript(app.language.text("用法：/agents [list|catalog|sync|share ID|enable ID|disable ID|pin ID|unpin ID|install ID SHA|fork ID 新ID|rollback ID SHA|logout]；创建/导入导出请使用 willdeep agents 或 Web 智能体库。", "Usage: /agents [list|catalog|sync|share ID|enable ID|disable ID|pin ID|unpin ID|install ID SHA|fork ID NEW_ID|rollback ID SHA|logout]. Create/import/export with willdeep agents or the Web library.", "使用法：/agents [list|catalog|sync|share ID|enable ID|disable ID|pin ID|unpin ID|install ID SHA|fork ID NEW_ID|rollback ID SHA|logout]。作成・入出力は willdeep agents または Web を使ってください。").into());
+                return Ok(true);
+            }
+        };
+        let result = crate::daemon::schedule_operation(
+            &runtime.home,
+            &format!("agent_library.{operation}"),
+            params,
+            None,
+        )
+        .await?;
+        app.append_transcript(serde_json::to_string_pretty(&result)?);
+        return Ok(true);
+    }
     if value != "/agent" && !value.starts_with("/agent ") {
         return Ok(false);
     }

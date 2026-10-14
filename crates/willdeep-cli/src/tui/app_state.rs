@@ -990,9 +990,16 @@ impl App {
             ));
         }
         parts.push(
-            self.language
-                .text("轮到你", "your turn", "あなたの番")
-                .to_owned(),
+            if self.queued_prompts.is_empty() {
+                self.language.text("轮到你", "your turn", "あなたの番")
+            } else {
+                self.language.text(
+                    "继续发送待发消息",
+                    "sending queued messages next",
+                    "送信待ちを続行",
+                )
+            }
+            .to_owned(),
         );
         self.append_transcript(format!("{TURN_DIVIDER_PREFIX}{} ──", parts.join(" · ")));
     }
@@ -1012,9 +1019,18 @@ impl App {
         self.model_step_in_flight = false;
         self.flush_deferred_steering();
         self.turn_narration = None;
-        self.activity_line = self.language.text("就绪", "Ready", "準備完了").to_owned();
+        self.activity_line = if self.queued_prompts.is_empty() {
+            self.language.text("就绪", "Ready", "準備完了")
+        } else {
+            self.language.text(
+                "待发消息等待发送",
+                "Queued messages waiting to send",
+                "送信待ちがあります",
+            )
+        }
+        .to_owned();
         // 铃声只给审批、提问和后台任务的话，盯着别处的用户不知道轮到自己了。
-        self.bell_pending = true;
+        self.bell_pending = self.queued_prompts.is_empty();
     }
 
     fn record_suggestion(

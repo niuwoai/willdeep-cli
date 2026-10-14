@@ -1062,12 +1062,18 @@ pub(crate) async fn build(
         gateway.context_window,
         &model,
     );
-    let subagent_profiles = worker_profiles::configure_worker_profiles(
+    let mut subagent_profiles = worker_profiles::configure_worker_profiles(
         &loaded.file,
         &parent_provider_config,
         &follow_main,
         kind,
     )?;
+    subagent_profiles.extend(crate::agent_registry::runtime_profiles(
+        &home,
+        &subagent_profiles,
+        &loaded.file,
+        &parent_provider_config,
+    )?);
     tools
         .require_verifications(&loaded.file.agent.verification_commands)
         .map_err(anyhow::Error::msg)?;

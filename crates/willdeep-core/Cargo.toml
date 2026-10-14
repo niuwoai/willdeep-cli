@@ -15,6 +15,7 @@ ignore = "0.4"
 httpdate = "1.0"
 psl.workspace = true
 regex = "1.11"
+ring = "0.17"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

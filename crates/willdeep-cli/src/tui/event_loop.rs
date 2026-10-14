@@ -385,13 +385,10 @@ pub(super) async fn event_loop(
                 )),
             }
         }
-        // 排队的提示词在这里续上：本轮正常结束、被 Esc 中断、或 Runtime 报失败，
-        // 都会走到这，不必在每个终态各写一遍。**待投递的运行时事件优先**——
-        // 用户排在后面的那句话，很可能正是基于还没看到的后台结果说的。
-        if !app.running
-            && app.prompt_queue.is_none()
-            && app.attachment_panel.is_none()
-            && runtime.kernel.pending_wake_authority(session.id).is_none()
+        // 用户已提交的队列本身就是启动下一轮的理由。待处理内核事件会在模型
+        // 边界投递，不能要求它们先被另一个自动唤醒消费；Runtime 终态、恢复的
+        // 事件或被限流的唤醒都可能没有后续回调，否则会永久饿死用户队列。
+        if app.queued_prompt_ready()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
             let draft_attachments = std::mem::replace(

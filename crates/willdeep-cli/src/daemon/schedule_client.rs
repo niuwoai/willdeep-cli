@@ -18,8 +18,8 @@ pub(crate) async fn schedule_response(
     params: serde_json::Value,
     request_id: Option<uuid::Uuid>,
 ) -> Result<willdeep_runtime_protocol::ApiResponse<serde_json::Value>> {
-    if !operation.starts_with("schedule.") {
-        bail!("not a schedule operation");
+    if !operation.starts_with("schedule.") && !operation.starts_with("agent_library.") {
+        bail!("not a library or schedule operation");
     }
     let state = ensure_running(home).await?;
     Ok(runtime_client(&state)?

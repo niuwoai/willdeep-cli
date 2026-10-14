@@ -56,6 +56,8 @@
 | 文档 | 内容 |
 |---|---|
 | [架构](ARCHITECTURE.md) | 调用链、边界与模块划分 |
+| [专业智能体定义 v1](AGENT_DEFINITION_V1.md) | Rust / Mac / some.im 的定义、固定版本、签名、私有同步与规范化契约 |
+| [智能体库使用](AGENT_LIBRARY.md) | CLI、TUI、Web 的自定义、官方安装、账号同步与本地模型绑定 |
 | [Provider 协议契约](PROVIDER_PROTOCOLS.md) | 三种线格式的请求/响应契约 |
 | [Runtime 控制 API](RUNTIME_CONTROL_API.md) | 统一控制协议的完整契约 |
 | [Runtime 会话协议](RUNTIME_SESSION_PROTOCOL.md) | Session / Turn 状态机与持久化 |

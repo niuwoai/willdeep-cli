@@ -1756,7 +1756,11 @@ fn draw<B: ratatui::backend::Backend>(
             } else {
                 format!(
                     "{} · {}: {} · {} {context_pct}% · {} ↑{input} ↓{output}{cache} · {elapsed} · {} · Ctrl+S {} · F1",
-                    app.language.text("就绪", "Ready", "準備完了"),
+                    if app.queued_prompts.is_empty() {
+                        app.language.text("就绪", "Ready", "準備完了")
+                    } else {
+                        app.language.text("待发消息等待发送", "Queued messages waiting to send", "送信待ちがあります")
+                    },
                     app.language.text("焦点", "Focus", "フォーカス"),
                     focus_label(app.focus, app.language),
                     app.language.text("上下文", "context", "コンテキスト"),

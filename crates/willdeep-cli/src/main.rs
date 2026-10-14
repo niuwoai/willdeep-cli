@@ -14,6 +14,7 @@ use willdeep_core::{
 };
 
 mod agent_metrics;
+mod agent_registry;
 mod audit_cmd;
 mod builtin_plugins;
 mod config;
@@ -179,6 +180,11 @@ struct Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 enum CliCommand {
+    /// Define, install and synchronize versioned specialist agents.
+    Agents {
+        #[command(subcommand)]
+        action: agent_registry::AgentAction,
+    },
     /// Manage Runtime-native scheduled tasks and retained run history.
     Schedule {
         #[command(subcommand)]
@@ -578,6 +584,7 @@ async fn run() -> Result<()> {
             CliCommand::Run(_) => unreachable!("run command is normalized above"),
             CliCommand::Completions { shell } => generate_completions(shell),
             CliCommand::Man => generate_man_page(),
+            CliCommand::Agents { action } => agent_registry::run(action, &willdeep_home()?).await,
             CliCommand::Session { action } => daemon::handle_session(action).await,
             CliCommand::Schedule { action } => {
                 println!("{}", schedule_cmd::run(action, &willdeep_home()?).await?);

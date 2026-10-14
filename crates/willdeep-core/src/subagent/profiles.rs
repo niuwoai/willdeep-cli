@@ -340,6 +340,8 @@ struct ProfileSpec<'a> {
 
 fn profile(provider: Arc<dyn Provider>, spec: ProfileSpec<'_>) -> SubagentProfile {
     SubagentProfile {
+        definition: None,
+        definition_model_bound: false,
         id: spec.id.to_owned(),
         purpose: spec.purpose.to_owned(),
         model: None,

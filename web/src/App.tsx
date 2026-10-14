@@ -28,6 +28,8 @@ import { attachmentText } from "./attachmentMessages";
 import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
 import { needsActivityStrip } from "./runActivity";
+import { AgentLibrary } from "./AgentLibrary";
+import { agentText } from "./agentLibraryMessages";
 
 type WorkspaceAccess = "read_only" | "strict" | "smart" | "workspace_write" | "full_access";
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
@@ -133,6 +135,7 @@ function nextId(prefix: string) { return `${prefix}-${Date.now()}-${Math.random(
 // 一级入口写进 URL hash，刷新和分享链接都能回到同一个目的地。
 function railFromHash(): RailSelection {
   const hash = window.location.hash.replace(/^#/, "");
+  if (hash === "agents") return { kind: "agents" };
   if (hash === "schedules") return { kind: "schedules" };
   if (hash === "plugins") return { kind: "center" };
   const plugin = hash.startsWith("plugin/") ? hash.slice("plugin/".length) : "";
@@ -140,6 +143,7 @@ function railFromHash(): RailSelection {
 }
 
 function hashForRail(selection: RailSelection): string {
+  if (selection.kind === "agents") return "#agents";
   if (selection.kind === "schedules") return "#schedules";
   if (selection.kind === "center") return "#plugins";
   if (selection.kind === "plugin") return `#plugin/${encodeURIComponent(selection.qualifiedId)}`;
@@ -1063,8 +1067,12 @@ export function App() {
   // 一级入口栏之后，右侧要么是对话（原有侧栏 + 聊天），要么是一个插件目的地
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
-  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} schedulesLabel={scheduleText("title", language)} onSelect={(next) => { if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
+  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} onSelect={(next) => { if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = showSetup ? <ProviderSetup status={setupStatus} loadFailed={setupLoadFailed} plugin={plugins.find((plugin) => plugin.id === "willdeep-config")} messages={t} onCheck={checkSetup} onDone={finishSetup} onOpen={(destination) => { if (destination) navigateToDestination(destination); else setRail({ kind: "center" }); }} /> : null;
+
+  if (rail.kind === "agents") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<AgentLibrary language={language} onTrial={(text) => { setPrompt(text); setRail({ kind: "conversation" }); }} />{pluginOverlays}</Flex></Box>;
+  }
 
   if (rail.kind === "schedules") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<ScheduleManager onDirty={(value) => { scheduleDirtyRef.current = value; }} workspaces={workspaces} workspace={workspace} language={language} messages={t} onOpenSession={(id, turnId) => { if (busy) { setError(scheduleText("sessionSwitchBusy", language)); setRail({ kind: "conversation" }); return; } setRail({ kind: "conversation" }); void loadSessionRef.current(id, turnId ?? null); }} />{pluginOverlays}</Flex></Box>;

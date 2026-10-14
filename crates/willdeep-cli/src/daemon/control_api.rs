@@ -212,6 +212,14 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             schedules::dispatch(state, &request).await
         }
         "runtime.capabilities" => json(runtime_capabilities(state)),
+        operation if operation.starts_with("agent_library.") => crate::agent_registry::operate(
+            &state.home,
+            operation.trim_start_matches("agent_library."),
+            request.params.clone(),
+        )
+        .await
+        .map_err(ApiFailure::internal)
+        .and_then(json),
         "runtime.status" => json(willdeep_runtime_protocol::RuntimeStatus {
             status: if *state.work_gate.read().await {
                 willdeep_runtime_protocol::RuntimeHealth::Draining
@@ -769,6 +777,14 @@ const MUTATING_OPERATIONS: &[&str] = &[
 
 fn is_mutating_operation(operation: &str) -> bool {
     MUTATING_OPERATIONS.contains(&operation)
+        || (operation.starts_with("agent_library.")
+            && !matches!(
+                operation,
+                "agent_library.list"
+                    | "agent_library.catalog"
+                    | "agent_library.export"
+                    | "agent_library.history"
+            ))
 }
 
 fn is_work_producing_operation(operation: &str) -> bool {

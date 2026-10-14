@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use willdeep_core::{MessageAttachment, Role, Session, SessionStore, SkillCatalog};
 
+mod agent_library;
 mod runtime_chat;
 mod schedules;
 mod setup;
@@ -447,6 +448,7 @@ async fn serve_internal(
             get(model_routing_settings).put(update_model_routing_settings),
         )
         .route("/api/composer", get(composer))
+        .merge(agent_library::routes())
         .route("/", get(index))
         // 单页应用的 catch-all。插件的 /plugin-host/... 比它更具体，
         // 路由树按具体度匹配，所以不会被这一条吞掉。

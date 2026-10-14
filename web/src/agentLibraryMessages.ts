@@ -1,0 +1,32 @@
+import type { Language } from "./i18n";
+const text = {
+  title: ["智能体库", "Agent library", "エージェントライブラリ"],
+  intro: ["创建专业智能体，安装官方版本，并主动同步到当前账号。每次派工使用固定定义快照。", "Create specialists, install official versions and explicitly synchronize with the current account. Each dispatch keeps an immutable snapshot.", "専門エージェントを作成し、公式版を導入してアカウントへ同期します。実行は固定スナップショットを使用します。"],
+  create: ["创建", "Create", "作成"], save: ["校验并保存", "Validate and save", "検証して保存"], cancel: ["取消", "Cancel", "取消"],
+  id: ["定义 ID", "Definition ID", "定義 ID"], name: ["名称", "Name", "名前"], version: ["版本", "Version", "バージョン"], purpose: ["适用任务", "Purpose", "用途"],
+  instructions: ["专业指令", "Instructions", "専門指示"], role: ["基础职责", "Base role", "基本役割"],
+  generalist: ["调查", "Investigate", "調査"], implementer: ["实现", "Implement", "実装"], tester: ["验证", "Test", "検証"], reviewer: ["审查", "Review", "レビュー"], ops_runner: ["运维", "Operations", "運用"],
+  import: ["导入 JSON 包", "Import JSON package", "JSON パッケージを入力"], export: ["导出", "Export", "出力"], edit: ["编辑", "Edit", "編集"], fork: ["创建副本", "Fork", "複製"],
+  pin: ["固定版本", "Pin", "固定"], unpin: ["取消固定", "Unpin", "固定解除"], enable: ["启用", "Enable", "有効化"], disable: ["停用", "Disable", "無効化"],
+  enabled: ["已启用", "Enabled", "有効"], disabled: ["已停用", "Disabled", "無効"], pinned: ["已固定", "Pinned", "固定済み"],
+  local: ["本地", "Local", "ローカル"], official: ["官方签名", "Official signature", "公式署名"], private: ["当前账号私有", "Private to account", "非公開"],
+  share: ["加入账号同步", "Add to account sync", "アカウント同期に追加"], sync: ["主动同步", "Synchronize", "同期"], logout: ["退出服务账号", "Sign out", "ログアウト"],
+  loginHelp: ["服务账号尚未登录。请在终端运行 willdeep agents login；模型 Provider 可独立配置。", "Sign in with willdeep agents login in a terminal. Model providers remain independent.", "ターミナルで willdeep agents login を実行してください。モデル設定は独立しています。"],
+  catalog: ["加载官方目录", "Load official catalog", "公式カタログを読み込む"], preview: ["查看并比较", "Preview and compare", "比較"], install: ["安装此固定版本", "Install this revision", "この版を導入"],
+  history: ["版本历史", "History", "履歴"], rollback: ["切换并固定", "Select and pin", "切替して固定"], remove: ["删除", "Delete", "削除"],
+  deleteConfirm: ["删除此智能体？私有定义会同步删除，历史版本包保留。", "Delete this agent? Private definitions are deleted remotely; historical packages remain.", "削除しますか？非公開定義はサーバーからも削除します。履歴は保持します。"],
+  empty: ["尚未安装专业智能体，内置职责仍可使用。", "No specialists installed. Built-in roles remain available.", "専門エージェント未導入。基本役割は使用できます。"],
+  busy: ["处理中…", "Working…", "処理中…"], failed: ["智能体操作失败", "Agent operation failed", "操作失敗"], done: ["操作完成", "Completed", "完了"],
+  incompatible: ["定义与此执行器不兼容", "Definition incompatible with this worker", "このワーカーと互換性がありません"],
+  optionalMissing: ["可选技能正文为空", "Optional skill content unavailable", "任意スキルの本文なし"],
+  advanced: ["完整定义 JSON（可配置工具和内嵌技能）", "Definition JSON (tools and embedded skills)", "完全な定義 JSON（ツールとスキル）"],
+  editorHelp: ["工具请求会与基础职责及本次授权取交集。编辑必须使用新版本；官方定义需创建副本。", "Requested tools are intersected with the base role and run authorization. Edits require a new version; fork official definitions.", "ツールは基本役割と実行権限の範囲に制限されます。編集には新版が必要です。公式版は複製してください。"],
+  newRevision: ["待安装定义", "Candidate definition", "候補の定義"], currentRevision: ["当前定义", "Installed definition", "現在の定義"],
+  trial: ["试运行", "Try agent", "試す"], trialTask: ["请输入试运行任务", "Enter a trial task", "試すタスクを入力"], trialPrompt: ["请使用专业智能体 {id} 执行以下试运行任务，保留其定义和权限边界：\n{task}", "Use specialist {id} for this trial, preserving its definition and permission boundaries:\n{task}", "専門エージェント {id} で次のタスクを試してください。定義と権限を保持してください：\n{task}"],
+  dirty: ["待同步修改", "Pending sync", "同期待ち"], synced: ["已同步", "Synchronized", "同期済み"],
+  modelBinding: ["本地模型绑定", "Local model binding", "ローカルモデル設定"],
+  modelBindingHelp: ["Provider 与模型只保存在本机，不进入导出包或跨端同步。留空沿用基础职责模型。", "Provider and model stay on this device and are excluded from export and synchronization. Leave empty to inherit the base role.", "プロバイダーとモデルはこの端末にのみ保存され、出力と同期には含まれません。空欄で基本役割を継承します。"],
+  provider: ["模型 Provider", "Model provider", "モデルプロバイダー"], model: ["模型", "Model", "モデル"], inherit: ["沿用基础职责", "Inherit base role", "基本役割を継承"],
+} as const;
+export type AgentTextKey = keyof typeof text;
+export function agentText(key: AgentTextKey, language: Language): string { return text[key][language === "zh-CN" ? 0 : language === "ja" ? 2 : 1]; }

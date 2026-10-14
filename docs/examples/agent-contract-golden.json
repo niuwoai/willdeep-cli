@@ -1,0 +1,92 @@
+{
+  "schema": "willdeep.agent-golden.v1",
+  "keys": {
+    "golden-test-only": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+  },
+  "packages": [
+    {
+      "definition": {
+        "schema": "willdeep.agent-definition.v1",
+        "definition_id": "user/golden-reviewer",
+        "version": "1.0.0-rc1",
+        "name": {
+          "en": "Independent reviewer",
+          "zh-Hans": "独立审查员"
+        },
+        "purpose": "Review a bounded code change and report independently reproducible defects.",
+        "base_role": "reviewer",
+        "instructions": "Trace the actual execution path. Report defects with file and line evidence; distinguish uncertainty from verified findings.",
+        "input_modalities": [
+          "text"
+        ],
+        "tools": [
+          "workspace.read",
+          "repository.inspect"
+        ],
+        "skills": [],
+        "forked_from": null
+      },
+      "sha256": "ad7a5aa6b15c930ccae617f686cc40e10857a6902ed309623a256f8996738938",
+      "signature": null
+    },
+    {
+      "definition": {
+        "schema": "willdeep.agent-definition.v1",
+        "definition_id": "user/unicode-reviewer",
+        "version": "1.0.0-rc1",
+        "name": {
+          "en": "Independent reviewer",
+          "zh-Hans": "独立审查员"
+        },
+        "purpose": "Review a bounded code change and report independently reproducible defects.",
+        "base_role": "reviewer",
+        "instructions": "检查 😀 <tag> / \\ 引号\"\n证据",
+        "input_modalities": [
+          "text"
+        ],
+        "tools": [
+          "workspace.read",
+          "repository.inspect"
+        ],
+        "skills": [],
+        "forked_from": null
+      },
+      "sha256": "5697d09227a4afabc1e1300b01d2fd1cd952b7f5f3ff9f65d9965a97dcc539eb",
+      "signature": null
+    },
+    {
+      "definition": {
+        "schema": "willdeep.agent-definition.v1",
+        "definition_id": "official/golden-reviewer",
+        "version": "1.0.0-rc1",
+        "name": {
+          "en": "Independent reviewer",
+          "zh-Hans": "独立审查员"
+        },
+        "purpose": "Review a bounded code change and report independently reproducible defects.",
+        "base_role": "reviewer",
+        "instructions": "Trace the actual execution path. Report defects with file and line evidence; distinguish uncertainty from verified findings.",
+        "input_modalities": [
+          "text"
+        ],
+        "tools": [
+          "workspace.read",
+          "repository.inspect"
+        ],
+        "skills": [],
+        "forked_from": null
+      },
+      "sha256": "e017a6490334e1087580cc5da2c3969b0429572ea717eacd36071ca0695d4fbb",
+      "signature": {
+        "key_id": "golden-test-only",
+        "value": "d051ffc9308c2a5efe8ab236644acd85d10340fc8f7b2e1b4a3fd65dde93a929d39149fbd0e8f902ff7ec2ea63e6c05a4f3842c20aa6704a29798a90b577930f"
+      }
+    }
+  ],
+  "canonical_unicode": "{\"base_role\":\"reviewer\",\"definition_id\":\"user/unicode-reviewer\",\"forked_from\":null,\"input_modalities\":[\"text\"],\"instructions\":\"\\u68c0\\u67e5 \\ud83d\\ude00 <tag> / \\\\ \\u5f15\\u53f7\\\"\\u000a\\u8bc1\\u636e\",\"name\":{\"en\":\"Independent reviewer\",\"zh-Hans\":\"\\u72ec\\u7acb\\u5ba1\\u67e5\\u5458\"},\"purpose\":\"Review a bounded code change and report independently reproducible defects.\",\"schema\":\"willdeep.agent-definition.v1\",\"skills\":[],\"tools\":[\"workspace.read\",\"repository.inspect\"],\"version\":\"1.0.0-rc1\"}",
+  "invalid_json": [
+    "{\"a\":null,\"a\":false}",
+    "{\"a\":{\"b\":true,\"b\":false}}",
+    "12"
+  ]
+}

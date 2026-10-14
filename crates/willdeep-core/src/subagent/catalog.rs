@@ -313,12 +313,36 @@ impl SubagentCatalog {
     }
 
     pub fn description(&self) -> String {
-        PUBLIC_SUBAGENT_IDS
-            .iter()
-            .filter_map(|id| self.profiles.get(*id))
+        self.profiles
+            .values()
+            .filter(|profile| {
+                PUBLIC_SUBAGENT_IDS.contains(&profile.id.as_str()) || profile.definition.is_some()
+            })
             .map(|profile| format!("`{}` — {}", profile.id, profile.purpose))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    pub fn public_profile_ids(&self) -> Vec<String> {
+        self.profiles
+            .values()
+            .filter(|profile| {
+                PUBLIC_SUBAGENT_IDS.contains(&profile.id.as_str()) || profile.definition.is_some()
+            })
+            .map(|profile| profile.id.clone())
+            .collect()
+    }
+
+    pub(crate) fn supports_target_command(&self, id: &str) -> bool {
+        self.profile(Some(id)).is_some_and(|profile| {
+            profile
+                .definition
+                .as_ref()
+                .map(|definition| definition.base_role.as_str())
+                .unwrap_or(&profile.id)
+                == "ops_runner"
+                && profile.tool_names.iter().any(|name| name == "run_command")
+        })
     }
 
     pub async fn retry_background_agent(
@@ -662,6 +686,26 @@ impl SubagentCatalog {
             .profile(args.profile.as_deref())
             .ok_or_else(|| AgentError::Subagent("no subagent profiles configured".to_owned()))?
             .clone();
+        if restored_workspace.is_some()
+            && let Some(home) = &self.state_home
+            && let Some(record) = super::dispatch_store::load(home, agent_id)?
+            && let Some(definition) = record.definition
+        {
+            let base = self.profiles.get(&definition.base_role).ok_or_else(|| {
+                AgentError::Subagent("original definition base role unavailable".into())
+            })?;
+            let local_binding = profile
+                .definition_model_bound
+                .then(|| (profile.provider.clone(), profile.model.clone()));
+            profile = definition
+                .project(base)
+                .map_err(|error| AgentError::Subagent(error.to_string()))?;
+            if let Some((provider, model)) = local_binding {
+                profile.provider = provider;
+                profile.model = model;
+                profile.definition_model_bound = true;
+            }
+        }
         dispatch_args.profile = Some(profile.id.clone());
         // 职责给提示词、工具和写入边界，档位给模型和上下文预算。
         //
@@ -674,14 +718,17 @@ impl SubagentCatalog {
             .and_then(crate::WorkerTier::parse)
         {
             profile.context_window = profile.context_window.max(tier.context_budget());
-            if let Some(binding) = self.tier_bindings.get(&tier) {
+            if !profile.definition_model_bound
+                && let Some(binding) = self.tier_bindings.get(&tier)
+            {
                 profile.provider = binding.provider.clone();
                 profile.model = binding.model.clone();
                 profile.context_window = profile.context_window.max(binding.window);
                 // 提示词的归属跟着模型走，不跟着工种走。工种默认绑在托管别名上、
                 // 档位又把它换成别的模型时，这份提示词必须重新由客户端发送，
                 // 否则 Worker 只剩边界段落、不知道自己是干什么的。
-                profile.hosted_job_prompt = binding.hosted_job_prompt;
+                profile.hosted_job_prompt =
+                    profile.definition.is_none() && binding.hosted_job_prompt;
             }
         }
         if let Some(model) = self
@@ -694,7 +741,8 @@ impl SubagentCatalog {
             if profile.model.as_deref() != Some(model.as_str()) {
                 profile.provider = profile.provider.with_model(&model)?;
             }
-            profile.hosted_job_prompt = crate::hosts_job_prompt(&model);
+            profile.hosted_job_prompt =
+                profile.definition.is_none() && crate::hosts_job_prompt(&model);
             profile.model = Some(model);
         }
         // 跟随主模型的工种没有固定模型名：派工这一刻主模型是谁，就记谁。
@@ -719,7 +767,7 @@ impl SubagentCatalog {
             .as_deref()
             .map(str::trim)
             .filter(|command| !command.is_empty());
-        if requested_command.is_some() && profile.id != "ops_runner" {
+        if requested_command.is_some() && !self.supports_target_command(&profile.id) {
             return Err(AgentError::Subagent(
                 "target_command is only supported by the ops_runner profile".to_owned(),
             ));
@@ -798,6 +846,15 @@ impl SubagentCatalog {
             .or_else(|| task.as_ref().map(|task| task.goal.clone()))
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| args.prompt.chars().take(48).collect());
+        let label = match &profile.definition {
+            Some(definition) => format!(
+                "[revision={}] {label}",
+                definition
+                    .revision()
+                    .map_err(|error| AgentError::Subagent(error.to_string()))?
+            ),
+            None => label,
+        };
         let prompt = args.prompt;
         let profile_id = profile.id.clone();
         let background = args.run_in_background.unwrap_or(false);
@@ -822,6 +879,7 @@ impl SubagentCatalog {
             approved_targets: approved_targets.clone(),
             approved_command: approved_command.clone(),
             model: profile.model.clone(),
+            definition: profile.definition.clone(),
             prepared: prepared.clone(),
         };
         if !recovering && let Some(home) = &self.state_home {
