@@ -281,7 +281,7 @@ fn local_ledger_read_only_benchmark() {
         .find_map(|entry| {
             BufReader::new(std::fs::File::open(entry.path()).unwrap())
                 .lines()
-                .filter_map(Result::ok)
+                .map_while(Result::ok)
                 .find_map(|line| {
                     serde_json::from_str::<UsageLedgerRecord>(&line)
                         .ok()
