@@ -1069,7 +1069,7 @@ pub(crate) async fn build(
         kind,
     )?;
     subagent_profiles.extend(crate::agent_registry::runtime_profiles(
-        &home,
+        home,
         &subagent_profiles,
         &loaded.file,
         &parent_provider_config,
