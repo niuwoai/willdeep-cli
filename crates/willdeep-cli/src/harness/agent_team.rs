@@ -37,6 +37,8 @@ async fn execute_team(
     control: AgentTeamControl,
     language: Language,
 ) -> Result<RuntimeHarnessOutcome> {
+    // 控制 Turn 不运行父 Agent，由此处在持有会话执行权时恢复团队。
+    team.subagents.restore_queued_runs().await?;
     let runs = team
         .background
         .agent_run_store()

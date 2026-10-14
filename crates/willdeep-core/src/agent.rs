@@ -421,6 +421,7 @@ pub struct Agent {
     /// 轮次结束后预测用户下一句的 Provider，与标题同一档。没绑就不预测。
     input_suggesters: Vec<Arc<dyn Provider>>,
     subagents: Option<Arc<SubagentCatalog>>,
+    team_recovery: tokio::sync::OnceCell<()>,
     instruction_inbox: Option<Arc<AgentInstructionInbox>>,
     goal_continuation: Option<Arc<GoalContinuation>>,
     background_tasks: Option<Arc<BackgroundTaskRegistry>>,
@@ -457,6 +458,7 @@ impl Agent {
             titlers: Vec::new(),
             input_suggesters: Vec::new(),
             subagents: None,
+            team_recovery: tokio::sync::OnceCell::new(),
             // 根 Agent 也带收件箱：用户在本轮进行中说的话由此送达，不必等轮次结束。
             instruction_inbox: Some(Arc::new(AgentInstructionInbox::default())),
             goal_continuation: None,
@@ -825,6 +827,9 @@ impl Agent {
             .map(|sink| sink.acquire_run())
             .transpose()
             .map_err(AgentError::Checkpoint)?;
+        if sink.is_some() {
+            self.restore_team_for_execution().await?;
+        }
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
         if let Some(routing) = &self.routing {
             routing.begin_run();

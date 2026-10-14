@@ -1,6 +1,9 @@
 use super::*;
 use serde::Deserialize;
 
+#[cfg(test)]
+mod ownership_tests;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResumeArgs {
@@ -32,6 +35,23 @@ fn parse<T: serde::de::DeserializeOwned>(call: &ToolCall) -> Result<T, ToolError
 }
 
 impl Agent {
+    pub(super) fn restore_team_for_execution(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<(), AgentError>> {
+        // 恢复会启动 Worker，Worker 又调用 Agent；装箱打断异步 Future 类型递归。
+        Box::pin(async {
+            self.team_recovery
+                .get_or_try_init(|| async {
+                    if let Some(catalog) = &self.subagents {
+                        catalog.restore_queued_runs().await?;
+                    }
+                    Ok::<(), AgentError>(())
+                })
+                .await?;
+            Ok(())
+        })
+    }
+
     pub(super) async fn execute_recovery_tool(
         &self,
         call: &ToolCall,

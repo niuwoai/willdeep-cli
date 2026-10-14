@@ -24,6 +24,9 @@ mod agent_team;
 mod verification;
 mod worker_profiles;
 
+#[cfg(test)]
+mod ownership_tests;
+
 /// 把三个 Worker 档位各自解析成一个模型绑定。
 ///
 /// 优先级从高到低：
@@ -1109,7 +1112,7 @@ pub(crate) async fn build(
         catalog = catalog.with_safety_judge(judge);
     }
     let subagents = Arc::new(catalog);
-    subagents.restore_queued_runs().await?;
+    // 构建界面只读取团队状态；恢复由取得会话执行权后的执行入口负责。
     let command_watcher = daemon::start_agent_command_watcher(
         runtime_connection.as_ref(),
         background_tasks.clone(),
