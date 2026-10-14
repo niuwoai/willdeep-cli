@@ -10,6 +10,36 @@ use crate::config;
 
 const SOME_IM_ORIGIN: &str = "https://some.im";
 const CLIENT_ID: &str = "willdeep";
+const DEVICE_CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const DEVICE_CODE_GROUP_LEN: usize = 4;
+
+fn format_browser_device_code(random: &[u8]) -> String {
+    let symbols: String = random
+        .iter()
+        .map(|byte| DEVICE_CODE_ALPHABET[usize::from(*byte) % DEVICE_CODE_ALPHABET.len()] as char)
+        .collect();
+    format!(
+        "WD-{}-{}",
+        &symbols[..DEVICE_CODE_GROUP_LEN],
+        &symbols[DEVICE_CODE_GROUP_LEN..]
+    )
+}
+
+fn browser_device_code() -> String {
+    let random = Uuid::new_v4();
+    // UUID variant bits are above the five random bits used for each symbol.
+    format_browser_device_code(&random.as_bytes()[8..])
+}
+
+fn check_browser_status(status: reqwest::StatusCode) -> Result<()> {
+    if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+        bail!(
+            "some.im 浏览器配对状态请求被拒绝 (HTTP {})",
+            status.as_u16()
+        );
+    }
+    Ok(())
+}
 
 /// Returns true when the user chose the browser configuration flow.
 pub async fn run(explicit_path: Option<&Path>) -> Result<bool> {
@@ -143,11 +173,7 @@ async fn some_im_login(home: &Path) -> Result<(String, String, String, String)> 
             "浏览器登录需要 WILLDEEP_CLIENT_LOGIN_SECRET；它是客户端凭据，不能写进仓库。也可重跑 --onboarding 选择手动 API Key"
         )
     }
-    let code = format!(
-        "WD-{}-{}",
-        &Uuid::new_v4().simple().to_string()[..4].to_uppercase(),
-        &Uuid::new_v4().simple().to_string()[..4].to_uppercase()
-    );
+    let code = browser_device_code();
     let pair_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let mut url = reqwest::Url::parse(&format!("{SOME_IM_ORIGIN}/customer/login"))?;
     let next = format!(
@@ -186,6 +212,7 @@ async fn some_im_login(home: &Path) -> Result<(String, String, String, String)> 
             .header("X-WillDeep-Client-Secret", secret.trim())
             .send()
             .await?;
+        check_browser_status(response.status())?;
         if response.status().is_success() {
             let body: Value = response.json().await?;
             let data = body.get("data").unwrap_or(&body);
@@ -306,6 +333,33 @@ fn prompt(label: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_codes_match_the_some_im_contract_for_all_random_byte_values() {
+        let accepted = regex::Regex::new(r"^WD-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$").unwrap();
+        for byte in u8::MIN..=u8::MAX {
+            assert!(accepted.is_match(&format_browser_device_code(&[byte; 8])));
+        }
+        assert_eq!(format_browser_device_code(&[0; 8]), "WD-AAAA-AAAA");
+        assert_eq!(format_browser_device_code(&[1; 8]), "WD-BBBB-BBBB");
+        for _ in 0..128 {
+            assert!(accepted.is_match(&browser_device_code()));
+        }
+    }
+
+    #[test]
+    fn invalid_pairing_requests_fail_immediately_without_retrying_until_timeout() {
+        for status in [
+            reqwest::StatusCode::BAD_REQUEST,
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::FORBIDDEN,
+        ] {
+            assert!(check_browser_status(status).is_err());
+        }
+        assert!(check_browser_status(reqwest::StatusCode::OK).is_ok());
+        assert!(check_browser_status(reqwest::StatusCode::TOO_MANY_REQUESTS).is_ok());
+        assert!(check_browser_status(reqwest::StatusCode::SERVICE_UNAVAILABLE).is_ok());
+    }
 
     #[test]
     fn incomplete_existing_configuration_still_requires_setup() {
