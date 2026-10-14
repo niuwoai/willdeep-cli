@@ -29,6 +29,9 @@ impl Scheduler {
     }
 
     fn draft(&self, arguments: &Value) -> Result<ScheduleDraft, String> {
+        let origin_session_id = string_arg(arguments, "_session_id")
+            .map(|value| uuid::Uuid::parse_str(&value).map_err(|_| "invalid host session"))
+            .transpose()?;
         let prompt = string_arg(arguments, "prompt").ok_or("prompt is required")?;
         let schedule = parse_schedule(arguments)?;
         schedule.validate()?;
@@ -47,7 +50,9 @@ impl Scheduler {
             ),
             None => None,
         };
-        let workspace = match string_arg(arguments, "workspace") {
+        let workspace = match string_arg(arguments, "_workspace")
+            .or_else(|| string_arg(arguments, "workspace"))
+        {
             Some(path) => PathBuf::from(path),
             None => self
                 .default_workspace
@@ -67,6 +72,7 @@ impl Scheduler {
             .take(48)
             .collect::<String>();
         let settings = ScheduleSettings {
+            continue_in_session: origin_session_id.is_some(),
             timezone: string_arg(arguments, "timezone").unwrap_or_else(|| "local".to_owned()),
             profile: string_arg(arguments, "profile"),
             model: string_arg(arguments, "model"),
@@ -78,6 +84,7 @@ impl Scheduler {
             ..Default::default()
         };
         let draft = ScheduleDraft {
+            origin_session_id,
             name,
             prompt,
             workspace,
@@ -151,41 +158,62 @@ impl Scheduler {
         ))
     }
 
-    async fn list_scheduled_tasks(&self) -> Result<String, String> {
+    async fn list_scheduled_tasks(&self, arguments: &Value) -> Result<String, String> {
         let data = crate::daemon::schedule_operation(&self.home, "schedule.list", json!({}), None)
             .await
-            .map_err(|e| format!("{e:#}"))?;
-        let tasks: Vec<ScheduledTaskView> =
-            serde_json::from_value(data).map_err(|e| e.to_string())?;
-        if tasks.is_empty() {
-            return Ok("No scheduled tasks.".to_owned());
+            .map_err(|error| format!("{error:#}"))?;
+        let mut tasks: Vec<ScheduledTaskView> =
+            serde_json::from_value(data).map_err(|error| error.to_string())?;
+        if let Some(session) = string_arg(arguments, "_session_id") {
+            tasks.retain(|view| {
+                view.task
+                    .origin_session_id
+                    .is_some_and(|id| id.to_string() == session)
+            });
         }
-        Ok(tasks
-            .iter()
-            .map(|view| {
-                let task = &view.task;
-                let next = view
-                    .next_fire_at
-                    .map(willdeep_core::format_iso8601)
-                    .unwrap_or_else(|| "disabled".to_owned());
-                format!(
-                    "- {} · {} · {} · next {} (UTC) · workspace {}{}{}",
-                    task.id,
-                    task.name,
-                    task.schedule.summary(),
-                    next,
-                    task.workspace.display(),
-                    task.goal
-                        .as_deref()
-                        .map(|goal| format!(" · goal: {goal}"))
-                        .unwrap_or_default(),
-                    task.last_session_id
-                        .map(|id| format!(" · last run session {id}"))
-                        .unwrap_or_default(),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"))
+        serde_json::to_string_pretty(&tasks).map_err(|error| error.to_string())
+    }
+
+    async fn manage(&self, arguments: &Value, history: bool) -> Result<String, String> {
+        let id = string_arg(arguments, "task_id").ok_or("task_id is required")?;
+        let data =
+            crate::daemon::schedule_operation(&self.home, "schedule.get", json!({"id": id}), None)
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+        let view: ScheduledTaskView =
+            serde_json::from_value(data).map_err(|error| error.to_string())?;
+        if let Some(session) = string_arg(arguments, "_session_id")
+            && view
+                .task
+                .origin_session_id
+                .is_none_or(|origin| origin.to_string() != session)
+        {
+            return Err("task does not belong to this conversation".to_owned());
+        }
+        let (operation, params) = if history {
+            (
+                "schedule.history",
+                json!({"task_id": id, "limit": 20, "before": string_arg(arguments, "before")}),
+            )
+        } else {
+            let action = string_arg(arguments, "action").ok_or("action is required")?;
+            if !matches!(action.as_str(), "pause" | "resume") {
+                return Err("action must be pause or resume".to_owned());
+            }
+            (
+                "schedule.action",
+                json!({"id": id, "action": action, "expected_revision": view.task.settings.revision}),
+            )
+        };
+        let data = crate::daemon::schedule_operation(
+            &self.home,
+            operation,
+            params,
+            (!history).then(uuid::Uuid::new_v4),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+        serde_json::to_string_pretty(&data).map_err(|error| error.to_string())
     }
 }
 
@@ -278,9 +306,11 @@ impl BuiltinPlugin for Scheduler {
 
     fn tools(&self) -> Vec<Value> {
         vec![
+            json!({"name":"manage_scheduled_task", "description":"Pause or resume a task belonging to this conversation. Pause stops future triggers and preserves history; an active run continues.", "inputSchema":{"type":"object", "properties":{"task_id":{"type":"string"}, "action":{"type":"string", "enum":["pause","resume"]}}, "required":["task_id","action"], "additionalProperties":false}}),
+            json!({"name":"get_scheduled_task_history", "description":"Read paginated actual run statuses, reasons and results for a task in this conversation. Execution completed does not mean verification passed.", "inputSchema":{"type":"object", "properties":{"task_id":{"type":"string"}, "before":{"type":"string"}}, "required":["task_id"], "additionalProperties":false}, "annotations":{"readOnlyHint":true}}),
             json!({
                 "name": "schedule_task",
-                "description": "Schedule a recurring task that runs on its own later, each time in a fresh session started by the WillDeep runtime daemon. Use when the user asks for something to happen repeatedly or to be watched over time (\"every 30 minutes check…\", \"every morning summarize…\", \"watch X until Y\"). The prompt must be self-contained: each run sees nothing but it. Give exactly one schedule. Optionally give a goal: each run then checks whether it is met and, if so, calls complete_scheduled_task to complete the task while preserving its history. This does NOT run anything now.",
+                "description": "Schedule a recurring task that runs on its own later, in this conversation when called from chat; legacy standalone tasks use a fresh session. The WillDeep runtime daemon executes it. Use when the user asks for something to happen repeatedly or to be watched over time (\"every 30 minutes check…\", \"every morning summarize…\", \"watch X until Y\"). Chat tasks continue the current conversation and inherit its permissions. Busy conversations are skipped with a recorded reason. Give exactly one schedule. Optionally give a goal: each run then checks whether it is met and, if so, calls complete_scheduled_task to complete the task while preserving its history. This does NOT run anything now.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -338,7 +368,9 @@ impl BuiltinPlugin for Scheduler {
         match name {
             "schedule_task" => self.schedule_task(&arguments).await,
             "complete_scheduled_task" => self.complete_scheduled_task(&arguments).await,
-            "list_scheduled_tasks" => self.list_scheduled_tasks().await,
+            "list_scheduled_tasks" => self.list_scheduled_tasks(&arguments).await,
+            "manage_scheduled_task" => self.manage(&arguments, false).await,
+            "get_scheduled_task_history" => self.manage(&arguments, true).await,
             other => Err(format!("unknown tool {other}")),
         }
     }

@@ -9,6 +9,10 @@ const MAX_SEARCH_QUERY_CHARS: usize = 200;
 const MAX_SEARCH_RESULTS: usize = 100;
 const MAX_SEARCH_SNIPPET_CHARS: usize = 160;
 
+#[derive(Debug, thiserror::Error)]
+#[error("source session is busy")]
+pub(super) struct ScheduledSessionBusy;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RuntimeSessionStatus {
@@ -1099,6 +1103,17 @@ impl RuntimeSessionStore {
             bail!("this Agent already has a pending continuation request");
         }
         let timestamp = now();
+        if request
+            .origin_client
+            .as_deref()
+            .is_some_and(|origin| origin.starts_with("schedule:"))
+            && turns.values().any(|turn| {
+                turn.metadata.session_id == session_id
+                    && !turn_status_is_terminal(turn.metadata.status)
+            })
+        {
+            return Err(ScheduledSessionBusy.into());
+        }
         // 后续输入的上下文（RSI 反馈）：同一会话的上一轮怎么结束的、隔了多久、
         // 这一句是不是排在还没跑完的轮次后面。会话的第一轮没有可比的对象，不记。
         let followup = self

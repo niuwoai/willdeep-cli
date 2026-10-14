@@ -49,6 +49,34 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn turn_usage_excludes_other_turns_and_sessions_and_deduplicates_records() {
+    let fixture = Fixture::new();
+    let turn = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let mut first = fixture.record(11);
+    first.turn_id = Some(other.to_string());
+    let mut current = fixture.record(7);
+    current.turn_id = Some(turn.to_string());
+    let mut foreign = fixture.record(99);
+    foreign.turn_id = Some(turn.to_string());
+    foreign.session_id = Some(Uuid::new_v4());
+    for record in [&first, &current, &current, &foreign] {
+        append_record(&fixture.directory, record).unwrap();
+    }
+    let store = AgentRunStore::new(fixture.directory.join("workers"), fixture.parent);
+    let usage = store.turn_usage(&fixture.directory, turn).unwrap().unwrap();
+    assert_eq!(usage.total_tokens, Some(7));
+    assert_eq!(usage.model_calls, 1);
+    assert_eq!(fixture.summary(fixture.parent).usage.total_tokens, Some(18));
+    assert!(
+        store
+            .turn_usage(&fixture.directory, Uuid::new_v4())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn repeated_polls_and_other_teams_do_not_reread_unchanged_ledger() {
     let fixture = Fixture::new();
     let record = fixture.record(7);

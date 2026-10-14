@@ -41,6 +41,7 @@ pub struct PluginChatTools {
     host_requests: Option<Arc<dyn PluginHostRequests>>,
     /// 为 false 时不经网关（测试、以及明确只要本进程宿主的场合）。
     use_gateway: bool,
+    session_context: Option<(uuid::Uuid, PathBuf)>,
     snapshot: StdMutex<Option<Arc<Snapshot>>>,
 }
 
@@ -51,6 +52,7 @@ impl PluginChatTools {
             catalog: PluginToolCatalog::new(home),
             host_requests: None,
             use_gateway: true,
+            session_context: None,
             snapshot: StdMutex::new(None),
         }
     }
@@ -64,6 +66,26 @@ impl PluginChatTools {
     pub fn without_gateway(mut self) -> Self {
         self.use_gateway = false;
         self
+    }
+
+    /// Host-owned context survives either gateway or local plugin transport.
+    pub fn with_session(mut self, id: uuid::Uuid, workspace: PathBuf) -> Self {
+        self.session_context = Some((id, workspace));
+        self
+    }
+
+    fn scoped_arguments(&self, plugin: &str, mut arguments: Value) -> Value {
+        if plugin == "willdeep-scheduler"
+            && let Some(object) = arguments.as_object_mut()
+        {
+            object.remove("_session_id");
+            object.remove("_workspace");
+            if let Some((id, workspace)) = &self.session_context {
+                object.insert("_session_id".into(), json!(id));
+                object.insert("_workspace".into(), json!(workspace));
+            }
+        }
+        arguments
     }
 
     fn registry_modified(&self) -> Option<SystemTime> {
@@ -240,6 +262,7 @@ impl LazyToolSource for PluginChatTools {
         let (plugin_id, server, tool) = self
             .route(name)
             .ok_or_else(|| McpError::UnknownTool(name.to_owned()))?;
+        let arguments = self.scoped_arguments(&plugin_id, arguments);
         let result = self
             .request(
                 &plugin_id,
@@ -258,6 +281,28 @@ mod tests {
     use crate::plugin::test_support::{
         events, install_fake_plugin, python_available, scratch_home,
     };
+
+    #[test]
+    fn scheduler_context_is_owned_by_host_and_cannot_be_overridden_by_tool_arguments() {
+        let id = uuid::Uuid::new_v4();
+        let tools =
+            PluginChatTools::new(Path::new("/tmp")).with_session(id, PathBuf::from("/workspace"));
+        let arguments =
+            json!({"_session_id":"another", "_workspace":"/another", "prompt":"Check results"});
+        let scoped = tools.scoped_arguments("willdeep-scheduler", arguments.clone());
+        assert_eq!(scoped["_session_id"], json!(id));
+        assert_eq!(scoped["_workspace"], "/workspace");
+        assert_eq!(
+            tools.scoped_arguments("other-plugin", arguments.clone()),
+            arguments
+        );
+        assert!(
+            PluginChatTools::new(Path::new("/tmp"))
+                .scoped_arguments("willdeep-scheduler", arguments)
+                .get("_session_id")
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn only_enabled_runnable_plugins_are_exposed_and_spawned_on_demand() {

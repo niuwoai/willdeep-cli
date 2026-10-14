@@ -1,6 +1,10 @@
 import type { Language } from "./i18n";
 const languageIndex: Record<Language, number> = { "zh-CN": 0, en: 1, ja: 2 };
 const text = {
+  conversationTasks: ["会话定时任务", "Conversation schedules", "会話の定期タスク"],
+  conversationHint: ["到时继续本会话；忙碌时跳过。关闭网页后由 Runtime 继续计时。", "Continue this conversation when due; skip when busy. Runtime keeps scheduling after the page closes.", "時刻になるとこの会話を続行します。使用中はスキップし、ページを閉じても Runtime が予定を管理します。"],
+  source_session_busy: ["原会话正在执行或等待处理，本次已跳过", "Source conversation is active or waiting; this run was skipped", "元の会話が実行中・応答待ちのためスキップしました"],
+  loadingTasks: ["正在加载定时任务…", "Loading schedules…", "定期タスクを読み込み中…"],
   title: ["定时任务", "Scheduled tasks", "定期タスク"],
   activeRun: ["当前运行", "Active run", "現在の実行"],
   inputTokens: ["输入", "Input", "入力"], outputTokens: ["输出", "Output", "出力"], totalTokens: ["合计", "Total", "合計"],

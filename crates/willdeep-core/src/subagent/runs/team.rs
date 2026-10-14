@@ -7,6 +7,15 @@ use willdeep_runtime_protocol::agent_team::{
 mod ledger;
 
 impl AgentRunStore {
+    /// Reuses the same append-only ledger projection as team totals.
+    pub fn turn_usage(
+        &self,
+        ledger_directory: &Path,
+        turn: uuid::Uuid,
+    ) -> Result<Option<AgentUsageSummary>, String> {
+        ledger::read_turn(ledger_directory, self.parent, turn)
+    }
+
     pub(crate) fn has_budget(&self, run_id: Option<Uuid>) -> Result<bool, String> {
         if self
             .team_policy()?

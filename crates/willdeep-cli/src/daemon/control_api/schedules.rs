@@ -206,6 +206,7 @@ fn create(state: &ServerState, mut draft: ScheduleDraft, now: u64) -> ApiResult 
         .workspace
         .canonicalize()
         .map_err(|error| ApiFailure::invalid(error.to_string()))?;
+    validate_session_binding(state, &draft)?;
     let task = draft.into_task(uuid::Uuid::new_v4(), now);
     let id = task.id;
     ScheduleStore::new(&state.home)
@@ -225,6 +226,9 @@ fn update(state: &ServerState, mut update: ScheduleUpdate, now: u64) -> ApiResul
         .workspace
         .canonicalize()
         .map_err(|error| ApiFailure::invalid(error.to_string()))?;
+    let previous = task(state, update.id)?;
+    update.task.origin_session_id = previous.origin_session_id;
+    validate_session_binding(state, &update.task)?;
     let id = update.id;
     ScheduleStore::new(&state.home)
         .try_update(|tasks| {
@@ -260,6 +264,23 @@ fn update(state: &ServerState, mut update: ScheduleUpdate, now: u64) -> ApiResul
         .append("schedule.updated", format!("task_id={id}"))
         .map_err(ApiFailure::internal)?;
     view(state, id, now).and_then(json)
+}
+
+fn validate_session_binding(state: &ServerState, draft: &ScheduleDraft) -> Result<(), ApiFailure> {
+    let Some(id) = draft.origin_session_id else {
+        return Ok(());
+    };
+    let session = state
+        .sessions
+        .get(id)
+        .map_err(ApiFailure::internal)?
+        .ok_or_else(|| ApiFailure::invalid("source session not found"))?;
+    if session.workspace != draft.workspace {
+        return Err(ApiFailure::invalid(
+            "schedule workspace must match its source session",
+        ));
+    }
+    Ok(())
 }
 
 fn action(state: &ServerState, action: ScheduleAction, now: u64) -> ApiResult {
@@ -485,6 +506,109 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[tokio::test]
+    async fn conversation_task_continues_its_owner_without_changing_permissions_or_title() {
+        let fixture = Fixture::new();
+        let workspace: PathBuf =
+            serde_json::from_value(fixture.draft["workspace"].clone()).unwrap();
+        let (session, _) = fixture
+            .state
+            .sessions
+            .ensure(session_store::CreateRuntimeSession {
+                id: None,
+                workspace,
+                title: Some("Original chat".into()),
+                profile: None,
+                model: None,
+                config: None,
+            })
+            .unwrap();
+        fixture
+            .state
+            .sessions
+            .update_approval_mode(session.id, workspace_store::WorkspaceAccess::Strict)
+            .unwrap();
+        let mut draft = fixture.draft.clone();
+        draft["origin_session_id"] = serde_json::json!(session.id);
+        draft["continue_in_session"] = true.into();
+        draft["approval_mode"] = "full-access".into();
+        let created = fixture.call("schedule.create", draft.clone()).await;
+        let id = &created["task"]["id"];
+        let first = fixture
+            .call("schedule.run", serde_json::json!({"id":id}))
+            .await;
+        assert_eq!(first["session_id"], serde_json::json!(session.id));
+        assert_eq!(first["snapshot"]["approval_mode"], "strict");
+        assert_eq!(fixture.state.sessions.list().unwrap().len(), 1);
+        assert_eq!(
+            fixture
+                .state
+                .sessions
+                .get(session.id)
+                .unwrap()
+                .unwrap()
+                .approval_mode,
+            Some(workspace_store::WorkspaceAccess::Strict)
+        );
+        assert_eq!(
+            willdeep_core::SessionStore::new(&fixture.root)
+                .load(session.id)
+                .unwrap()
+                .title,
+            "Original chat"
+        );
+        let other = fixture.call("schedule.create", draft).await;
+        let skipped = fixture
+            .call(
+                "schedule.run",
+                serde_json::json!({"id":other["task"]["id"]}),
+            )
+            .await;
+        assert_eq!(skipped["status"], "skipped");
+        assert_eq!(skipped["reason"], "source_session_busy");
+        assert_eq!(
+            fixture.state.sessions.list_turns(session.id).unwrap().len(),
+            1
+        );
+        fixture
+            .call(
+                "schedule.action",
+                serde_json::json!({"id":id,"action":"pause","expected_revision":1}),
+            )
+            .await;
+        let paused = fixture
+            .call("schedule.get", serde_json::json!({"id":id}))
+            .await;
+        assert_eq!(paused["task"]["enabled"], false);
+        assert!(!paused["active_run"].is_null());
+        assert_eq!(
+            fixture
+                .call("schedule.history", serde_json::json!({"task_id":id}))
+                .await["runs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_or_cross_workspace_conversation_binding() {
+        let fixture = Fixture::new();
+        let mut draft = fixture.draft.clone();
+        draft["continue_in_session"] = true.into();
+        let invalid = super::super::execute(
+            &fixture.state,
+            ApiRequest::new("schedule.create", draft.clone()),
+        )
+        .await;
+        assert!(invalid.body.into_result().is_err());
+        draft["origin_session_id"] = serde_json::json!(uuid::Uuid::new_v4());
+        let invalid =
+            super::super::execute(&fixture.state, ApiRequest::new("schedule.create", draft)).await;
+        assert!(invalid.body.into_result().is_err());
     }
 
     #[tokio::test]

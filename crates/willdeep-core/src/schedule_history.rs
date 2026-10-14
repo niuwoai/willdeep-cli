@@ -447,6 +447,7 @@ mod tests {
         fn new() -> Self {
             let root = std::env::temp_dir().join(format!("schedule-history-{}", Uuid::new_v4()));
             let task = ScheduleDraft {
+                origin_session_id: None,
                 name: "test".to_owned(),
                 prompt: "check".to_owned(),
                 workspace: std::env::temp_dir(),

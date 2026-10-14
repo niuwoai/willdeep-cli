@@ -889,7 +889,9 @@ pub(crate) async fn build(
             Arc::new(std::sync::RwLock::new(vec![workspace.clone()])),
         ));
         mcp_registry = mcp_registry.with_lazy_tools(Arc::new(
-            willdeep_core::plugin::PluginChatTools::new(home).with_host_requests(host_requests),
+            willdeep_core::plugin::PluginChatTools::new(home)
+                .with_session(session_id, workspace.clone())
+                .with_host_requests(host_requests),
         ));
     }
     let mcp = Arc::new(mcp_registry);

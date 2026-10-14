@@ -41,7 +41,8 @@ pub(super) fn record_output(
             .take(RESULT_PREVIEW_CHARS)
             .collect(),
     );
-    if let Some(agent_id) = agent_id
+    if !run.snapshot.settings.continue_in_session
+        && let Some(agent_id) = agent_id
         && let Some(agent) = agents.get(agent_id)?
         && agent.task_id == runtime_task_id
     {
@@ -59,7 +60,38 @@ pub(super) fn record_output(
             .verifier_passed
             .map(|passed| if passed { "passed" } else { "failed" }.to_owned());
     }
+    fill_continuation_usage(home, &mut run)?;
     history.put(&run).map_err(anyhow::Error::msg)
+}
+
+fn fill_continuation_usage(home: &Path, run: &mut ScheduleRun) -> Result<()> {
+    if !run.snapshot.settings.continue_in_session {
+        return Ok(());
+    }
+    // A conversation's cumulative counters and old verifier verdict are not
+    // evidence for this scheduled Turn. Missing/incomplete ledger stays unknown.
+    run.usage = None;
+    run.verification = None;
+    let Some((session, turn)) = run.session_id.zip(run.turn_id) else {
+        return Ok(());
+    };
+    let store = willdeep_core::subagent::AgentRunStore::new(home.join("workers"), session);
+    if let Some(usage) = store
+        .turn_usage(&willdeep_core::usage_ledger::ledger_dir(home), turn)
+        .map_err(anyhow::Error::msg)?
+        && usage.unknown_usage_calls == 0
+        && usage.model_calls > 0
+        && let (Some(input_tokens), Some(output_tokens), Some(total_tokens)) =
+            (usage.input_tokens, usage.output_tokens, usage.total_tokens)
+    {
+        run.usage = Some(ScheduleRunUsage {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            model_calls: Some(usage.model_calls),
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn policy_for_origin(
@@ -261,6 +293,26 @@ pub(super) fn trigger(
 
 fn freeze_configuration(state: &ServerState, mut task: ScheduledTask) -> Result<ScheduledTask> {
     use clap::Parser;
+    if task.settings.continue_in_session {
+        let session = state
+            .sessions
+            .get(task.origin_session_id.context("source session missing")?)?
+            .context("source session not found")?;
+        if session.workspace != task.workspace {
+            bail!("source session workspace changed");
+        }
+        task.settings.profile = session.profile;
+        task.settings.model = session.model;
+        task.settings.config_path = session.config;
+        let workspace = state.workspaces.ensure_registered(&task.workspace)?;
+        task.approval_mode = Some(
+            session
+                .approval_mode
+                .unwrap_or(workspace.access)
+                .wire_name()
+                .replace('_', "-"),
+        );
+    }
     let requested_turns = task.settings.max_turns;
     let requested_tokens = task.settings.token_budget;
     let workspace = state.workspaces.ensure_registered(&task.workspace)?;
@@ -378,10 +430,7 @@ fn dispatch_run(state: &ServerState, mut run: ScheduleRun, now: u64) -> Result<S
     }
     run.reason = None;
     let result = enqueue(state, &run).or_else(|error| {
-        let session_id = uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_OID,
-            format!("schedule-session:{}", run.id).as_bytes(),
-        );
+        let session_id = run_session_id(&run)?;
         if let Ok(turns) = state.sessions.list_turns(session_id)
             && let Some(turn) = turns.into_iter().find(|turn| turn.request_id == run.id)
         {
@@ -426,6 +475,13 @@ fn dispatch_run(state: &ServerState, mut run: ScheduleRun, now: u64) -> Result<S
             }
         }
         Err(error) => {
+            if error.is::<session_store::ScheduledSessionBusy>() {
+                run.status = ScheduleRunStatus::Skipped;
+                run.finished_at = Some(now);
+                run.reason = Some("source_session_busy".to_owned());
+                history.put(&run).map_err(anyhow::Error::msg)?;
+                return Ok(run);
+            }
             // A Preparing record retains a deterministic session/request ID. A lost
             // reply cannot authorize a second independent turn on recovery.
             run.status = ScheduleRunStatus::Failed;
@@ -477,6 +533,27 @@ fn has_capacity(state: &ServerState, history: &ScheduleHistoryStore) -> Result<b
 
 fn enqueue(state: &ServerState, run: &ScheduleRun) -> Result<(uuid::Uuid, uuid::Uuid)> {
     let task = &run.snapshot;
+    if task.settings.continue_in_session {
+        let session_id = run_session_id(run)?;
+        let session = state
+            .sessions
+            .get(session_id)?
+            .context("source session not found")?;
+        if session.workspace != task.workspace {
+            bail!("source session workspace changed");
+        }
+        let (turn, _, _) = state.sessions.enqueue_turn_observed(
+            session_id,
+            session_store::CreateRuntimeTurn {
+                team_control: None,
+                request_id: run.id,
+                prompt: task.run_prompt(),
+                attachments: Vec::new(),
+                origin_client: Some(format!("schedule:{}:{}", task.id, run.id)),
+            },
+        )?;
+        return Ok((session_id, turn.id));
+    }
     let workspace = state.workspaces.ensure_registered(&task.workspace)?;
     let session_id = uuid::Uuid::new_v5(
         &uuid::Uuid::NAMESPACE_OID,
@@ -544,6 +621,19 @@ fn enqueue(state: &ServerState, run: &ScheduleRun) -> Result<(uuid::Uuid, uuid::
         },
     )?;
     Ok((session.id, turn.id))
+}
+
+fn run_session_id(run: &ScheduleRun) -> Result<uuid::Uuid> {
+    if run.snapshot.settings.continue_in_session {
+        return run
+            .snapshot
+            .origin_session_id
+            .context("source session missing");
+    }
+    Ok(uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_OID,
+        format!("schedule-session:{}", run.id).as_bytes(),
+    ))
 }
 
 pub(super) fn reconcile(state: &ServerState, now: u64) -> Result<()> {
@@ -664,7 +754,8 @@ fn fill_result(state: &ServerState, run: &mut ScheduleRun) -> Result<()> {
                         .collect()
                 });
         }
-        if let Some(session) = state.sessions.get(session_id)?
+        if !run.snapshot.settings.continue_in_session
+            && let Some(session) = state.sessions.get(session_id)?
             && let Some(agent) = state.agents.get(session.root_agent_id)?
             && turn
                 .as_ref()
@@ -690,6 +781,7 @@ fn fill_result(state: &ServerState, run: &mut ScheduleRun) -> Result<()> {
             format!("run_id={} reason=run_output_unavailable", run.id),
         )?;
     }
+    fill_continuation_usage(&state.home, run)?;
     Ok(())
 }
 

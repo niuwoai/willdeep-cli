@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "version": "0.100.0-rc1",
+  "checks": [
+    "created_from_chat",
+    "source_session_reused",
+    "prior_context_sent",
+    "task_instruction_sent",
+    "history_retained",
+    "pause_stops_future_triggers"
+  ],
+  "trigger": "scheduled",
+  "run_status": "completed",
+  "verification": "unverified",
+  "source_session": "b9cdfb47-1501-462e-a099-02e5962e6e34",
+  "run_session": "b9cdfb47-1501-462e-a099-02e5962e6e34",
+  "run_id": "ebdc602e-5ab4-5b9f-90e3-7fd91416a2f6",
+  "model": "fixture-model",
+  "session_count": 1,
+  "usage": {
+    "input_tokens": 20,
+    "model_calls": 1,
+    "output_tokens": 3,
+    "total_tokens": 23
+  }
+}

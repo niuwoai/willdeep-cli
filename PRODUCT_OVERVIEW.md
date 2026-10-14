@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-14 | 当前版本：v0.99.0-rc10（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-14 | 当前版本：v0.100.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 命令超时收尾：执行截止后最多等待 1 秒终止与释放资源；Windows 等待 Job 全部进程归零。若收尾失败，错误明确记录，不宣称资源已经释放。
 
@@ -321,3 +321,5 @@ SOMEIM_API_KEY='<your-key>' cargo run -p willdeep -- \
 - [ ] Swift/Rust 共享会话 schema 稳定后开放双向原地写入；当前采用安全副本。
 - [ ] 抽取 Swift/Rust 共用的签名 Computer Use Helper 协议，再开放 AX 检查与短效控制租约。
 - [-] 将 Harness、任务和会话生命周期迁入 Runtime Daemon；持久 Session/Turn、attach/detach、事件断线续传、TUI/Web Session/Turn 及 Runtime 进程内 Harness 已完成，跨重启恢复活动执行资源和统一客户端 API 尚待完成。
+
+会话定时任务（v0.100.0-rc1）：聊天中创建时绑定当前会话并在到点后续跑；原会话忙碌时跳过。Web 聊天右侧可新建、暂停/恢复并查询运行历史。旧独立任务继续使用独立会话。定时循环提供检查与改进的执行机制，质量提升仍需实际验证结果。

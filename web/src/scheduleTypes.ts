@@ -3,6 +3,7 @@ export type ScheduleSpec = { kind: "interval"; minutes: number }
   | { kind: "weeklyAt"; weekday: number; hour: number; minute: number }
   | { kind: "onceAt"; at: number };
 export type ScheduleDraft = {
+  origin_session_id?: string | null; continue_in_session?: boolean;
   name: string; prompt: string; workspace: string; schedule: ScheduleSpec; timezone: string;
   goal: string | null; approval_mode: string | null; profile: string | null; model: string | null;
   max_turns: number | null; timeout_seconds: number | null; token_budget: number | null;
@@ -54,6 +55,6 @@ export function newSchedule(workspace: string, timezone: string): ScheduleDraft 
     missed_policy: "coalesce", failure_limit: 3, retention_days: 90 };
 }
 export function taskDraft(task: ScheduledTask): ScheduleDraft {
-  const { name, prompt, workspace, timezone, schedule, goal, approval_mode, profile, model, max_turns, timeout_seconds, token_budget, missed_policy, failure_limit, retention_days } = task;
-  return { name, prompt, workspace, timezone, schedule, goal, approval_mode, profile, model, max_turns, timeout_seconds, token_budget, missed_policy, failure_limit, retention_days };
+  const { name, prompt, workspace, timezone, schedule, goal, approval_mode, profile, model, max_turns, timeout_seconds, token_budget, missed_policy, failure_limit, retention_days, origin_session_id, continue_in_session } = task;
+  return { name, prompt, workspace, timezone, schedule, goal, approval_mode, profile, model, max_turns, timeout_seconds, token_budget, missed_policy, failure_limit, retention_days, origin_session_id, continue_in_session };
 }

@@ -13,6 +13,7 @@ export function ScheduleOptions({ draft, onChange, language, messages, disabled 
   const choices = Array.from(new Set([draft.model ?? "", ...(discovered.data?.models ?? []), models.data?.root_model ?? "", ...(models.data?.providers.filter((provider) => provider.id === draft.profile).map((provider) => provider.model) ?? [])])).filter(Boolean);
   const number = (key: "max_turns" | "timeout_seconds" | "token_budget", value: string) => onChange({ ...draft, [key]: value ? Number(value) : null });
   return <details className="schedule-options"><summary>{s("budget")}</summary><fieldset disabled={disabled} className="schedule-fields">
+    {draft.continue_in_session ? <p>{s("conversationHint")}</p> : <>
     <label>{s("profile")}<select value={draft.profile ?? ""} onChange={(event) => onChange({ ...draft, profile: event.target.value || null })}>
       <option value="">{s("inherited")}</option>{providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
     </select></label>
@@ -22,6 +23,7 @@ export function ScheduleOptions({ draft, onChange, language, messages, disabled 
     <label>{s("permission")}<select value={draft.approval_mode ?? ""} onChange={(event) => onChange({ ...draft, approval_mode: event.target.value || null })}>
       <option value="">{s("inherited")}</option><option value="strict">{messages.accessStrict}</option><option value="smart">{messages.accessSmart}</option><option value="workspace-write">{messages.accessWrite}</option><option value="full-access">{messages.accessFull}</option>
     </select></label>
+    </>}
     <label>{s("maxTurns")}<input type="number" min="1" max="1000" value={draft.max_turns ?? ""} placeholder={s("runtimeDefault")} onChange={(event) => number("max_turns", event.target.value)} /></label>
     <label>{s("timeout")}<input type="number" min="1" max="86400" value={draft.timeout_seconds ?? ""} placeholder={s("runtimeDefault")} onChange={(event) => number("timeout_seconds", event.target.value)} /></label>
     <label>{s("tokens")}<input type="number" min="1000" max="10000000" value={draft.token_budget ?? ""} placeholder={s("runtimeDefault")} onChange={(event) => number("token_budget", event.target.value)} /></label>

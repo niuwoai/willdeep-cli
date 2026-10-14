@@ -43,7 +43,11 @@ Thread.new do
         body = socket.read(headers.fetch('content-length', '0').to_i)
         parsed = body.empty? ? {} : JSON.parse(body)
         requests_lock.synchronize do
-          requests << { method: method, path: target, model: parsed['model'], message_count: parsed.fetch('messages', []).size }
+          record = { method: method, path: target, model: parsed['model'], message_count: parsed.fetch('messages', []).size }
+          if ENV['WILLDEEP_FIXTURE_CAPTURE_CONVERSATION'] == '1'
+            record[:messages] = parsed.fetch('messages', []).select { |message| message['role'] == 'user' }
+          end
+          requests << record
           File.write(File.join(root, 'provider-requests.json'), JSON.pretty_generate(requests))
         end
         if target.start_with?('/v1/models')

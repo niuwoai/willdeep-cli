@@ -194,11 +194,14 @@ impl ScheduledTask {
     /// （与 Xedit `AppStateAgentRoutines` 同一段话术）。
     pub fn run_prompt(&self) -> String {
         let mut prompt = format!(
-            "[scheduled-task id={} name={:?} schedule={:?}] This is an unattended scheduled run in a fresh session; no one is watching live.",
+            "[scheduled-task id={} name={:?} schedule={:?}] This is an unattended scheduled run; no one is watching live.",
             self.id,
             self.name,
             self.schedule.summary()
         );
+        if self.settings.continue_in_session {
+            prompt.push_str("\nContinue the source conversation using its prior results. Check actual evidence before proposing improvements, and report what changed and what remains unverified.");
+        }
         if let Some(goal) = self.goal.as_deref().filter(|goal| !goal.trim().is_empty()) {
             prompt.push_str(&format!(
                 "\n\n[scheduled-task-goal]\nGoal: {goal}\nAfter doing the work above, judge whether this goal is now met:\n- Met → call the `complete_scheduled_task` tool with task_id \"{}\" and expected_revision {} to stop future runs while preserving the task and its history.\n- Not met → briefly report current progress. Do not call complete_scheduled_task.",
@@ -240,6 +243,8 @@ pub struct ScheduleSettings {
     pub failure_limit: u32,
     pub consecutive_failures: u32,
     pub retention_days: u32,
+    /// Opt-in only: legacy tasks keep independent run sessions.
+    pub continue_in_session: bool,
     pub archived_at: Option<u64>,
     pub completed_at: Option<u64>,
     pub migration_reason: Option<String>,
@@ -262,6 +267,7 @@ impl Default for ScheduleSettings {
             failure_limit: 3,
             consecutive_failures: 0,
             retention_days: 90,
+            continue_in_session: false,
             archived_at: None,
             completed_at: None,
             migration_reason: None,
@@ -297,6 +303,8 @@ pub struct ScheduleDraft {
     pub goal: Option<String>,
     #[serde(default)]
     pub approval_mode: Option<String>,
+    #[serde(default)]
+    pub origin_session_id: Option<Uuid>,
     #[serde(flatten)]
     pub settings: ScheduleSettings,
 }
@@ -313,6 +321,9 @@ impl ScheduleDraft {
             return Err("schedule workspace must be absolute".to_owned());
         }
         self.schedule.validate()?;
+        if self.settings.continue_in_session && self.origin_session_id.is_none() {
+            return Err("continuing a session requires origin_session_id".to_owned());
+        }
         self.settings.validate()
     }
 
@@ -339,7 +350,7 @@ impl ScheduleDraft {
             created_at: now,
             last_run_at: None,
             last_session_id: None,
-            origin_session_id: None,
+            origin_session_id: self.origin_session_id,
             settings,
         }
     }

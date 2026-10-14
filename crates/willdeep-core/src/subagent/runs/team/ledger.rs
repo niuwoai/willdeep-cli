@@ -57,6 +57,27 @@ pub(super) fn read(
     Ok(usage.recorded.clone())
 }
 
+pub(super) fn read_turn(
+    directory: &Path,
+    parent: Uuid,
+    turn: Uuid,
+) -> Result<Option<AgentUsageSummary>, String> {
+    let cache = shared(directory)?;
+    let mut cache = cache.lock().map_err(storage_error)?;
+    if let Err(error) = cache.refresh(directory) {
+        *cache = LedgerCache::default();
+        return Err(error);
+    }
+    if cache.shards.values().any(|shard| shard.incomplete()) {
+        return Ok(None);
+    }
+    Ok(cache
+        .sessions
+        .get(&parent)
+        .and_then(|usage| usage.turns.get(&turn.to_string()))
+        .cloned())
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
     len: u64,
@@ -283,6 +304,7 @@ struct SessionUsage {
     child: AgentUsageSummary,
     auxiliary: AgentUsageSummary,
     compression: AgentUsageSummary,
+    turns: HashMap<String, AgentUsageSummary>,
 }
 
 impl SessionUsage {
@@ -291,6 +313,9 @@ impl SessionUsage {
             return;
         }
         let usage = counted(&record.usage);
+        if let Some(turn) = record.turn_id {
+            merge(self.turns.entry(turn).or_default(), &usage);
+        }
         if let Some(id) = record.run_id {
             let count = self.recorded.entry(id).or_insert(0);
             *count = count.saturating_add(1);
