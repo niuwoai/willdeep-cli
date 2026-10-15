@@ -212,14 +212,17 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             schedules::dispatch(state, &request).await
         }
         "runtime.capabilities" => json(runtime_capabilities(state)),
-        operation if operation.starts_with("agent_library.") => crate::agent_registry::operate(
-            &state.home,
-            operation.trim_start_matches("agent_library."),
-            request.params.clone(),
-        )
-        .await
-        .map_err(ApiFailure::internal)
-        .and_then(json),
+        // Keep the optional RSI/Worker state machine out of every Runtime operation.
+        operation if operation.starts_with("agent_library.") => {
+            Box::pin(crate::agent_registry::operate(
+                &state.home,
+                operation.trim_start_matches("agent_library."),
+                request.params.clone(),
+            ))
+            .await
+            .map_err(ApiFailure::internal)
+            .and_then(json)
+        }
         "runtime.status" => json(willdeep_runtime_protocol::RuntimeStatus {
             status: if *state.work_gate.read().await {
                 willdeep_runtime_protocol::RuntimeHealth::Draining

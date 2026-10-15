@@ -1407,6 +1407,44 @@ async fn invalid_mobile_context_is_rejected_without_partial_changes_or_turns() {
     );
 }
 
+#[test]
+fn runtime_and_mobile_dispatch_futures_fit_default_thread_stack() {
+    // Default Rust test threads have a 2 MiB stack. Leave headroom for nested
+    // poll/constructor frames instead of masking growth with RUST_MIN_STACK.
+    const MAX_DISPATCH_FUTURE_BYTES: usize = 256 * 1024;
+    fn assert_bounded(name: &str, future: &impl std::future::Future) {
+        let bytes = std::mem::size_of_val(future);
+        eprintln!("{name}_future_bytes={bytes}");
+        assert!(
+            bytes <= MAX_DISPATCH_FUTURE_BYTES,
+            "{name} future is {bytes} bytes; optional Worker state must be boxed at its dispatch boundary"
+        );
+    }
+    let harness = Harness::new();
+    let request = ApiRequest::new("session.configure", json!({"approval_mode":"invalid"}));
+    let control = control_api::execute(&harness.state, request);
+    assert_bounded("runtime_control", &control);
+    drop(control);
+    let library = crate::agent_registry::operate(&harness.state.home, "rsi.run", json!({}));
+    assert_bounded("agent_library", &library);
+    drop(library);
+    let rsi = crate::agent_rsi::operate(&harness.state.home, "run", json!({}));
+    assert_bounded("rsi_dispatch", &rsi);
+    drop(rsi);
+    let mut gateway = harness.gateway();
+    let phone = gateway
+        .on_phone_text(r#"{"type":"session.configure","payload":{"approval_mode":"invalid"}}"#);
+    assert_bounded("mobile_command", &phone);
+    drop(phone);
+    eprintln!(
+        "agent_struct_bytes={} subagent_profile_bytes={}",
+        std::mem::size_of::<willdeep_core::Agent>(),
+        std::mem::size_of::<willdeep_core::SubagentProfile>()
+    );
+    // These futures were constructed and measured, never polled: no operation,
+    // configuration change, scheduling or Provider call can occur in this gate.
+}
+
 #[tokio::test]
 async fn read_only_workspace_remains_read_only_after_mobile_full_access() {
     let harness = Harness::new();

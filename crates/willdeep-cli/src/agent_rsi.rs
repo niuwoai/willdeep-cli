@@ -146,12 +146,13 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
             Suite::builtin(),
         ),
         "run" => {
-            runner::execute(
+            // A Worker run must not inflate configuration/list/control futures.
+            Box::pin(runner::execute(
                 home,
                 &field("id")?,
                 &field("agent_revision")?,
                 params["resume"].as_bool().unwrap_or(false),
-            )
+            ))
             .await
         }
         "upload" => service::upload(home, &field("id")?, &field("grant_id")?).await,
