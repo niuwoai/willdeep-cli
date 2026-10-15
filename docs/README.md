@@ -39,6 +39,8 @@
 | [本机反馈账本](FEEDBACK_LEDGER.md) | RSI 强反馈信号 `feedback/YYYY-MM.jsonl`：下一句建议的采用与改写、工具失败、Worker 轮次耗尽 |
 | [协调 / 长任务 / 插件 / RSI 路线图](ROADMAP_ORCHESTRATION_RSI.md) | 主 Agent 协调与 goal 缺口自查、Xedit 定时任务与专家团插件化、反馈数据分阶段计划 |
 | [智能体 RSI P4a 与 P4b](AGENT_RSI_P4AB.md) | 已实现的候选隔离、执行证据、免费配对验收和显式授权上传；真实评测尚待批准 |
+| [受控原生 Worker 评测](AGENT_RSI_NATIVE_TRIAL.md) | 单独提案、本机预算代理、零网络首请求预览、真实读取证明与独立宿主评分材料 |
+| [首轮实际价格与评分登记](decisions/2026-10-15-agent-rsi-live-preregistration.md) | 账号实际账单价、$5 硬上限、冻结宿主评分、单次授权、执行证据及保留集准入 |
 | [RSI 后续分阶段方案](decisions/2026-10-15-agent-rsi-iteration-plan.md) | 三端现状、原规划剩余项及评测、晋升、灰度与回滚边界 |
 | [首轮真实评测确认清单](decisions/2026-10-15-agent-rsi-paid-evaluation-proposal.md) | 模型、24 道原创审查题、双臂重复、价格快照和 5 美元总预算提案；待确认 |
 | [Skills 与 MCP](SKILLS_AND_MCP.md) | Skill 发现规则、MCP 配置、项目上下文文件 |

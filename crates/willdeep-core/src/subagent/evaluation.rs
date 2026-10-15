@@ -102,6 +102,11 @@ pub struct OfflineObservation {
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
+pub struct WorkerObservation {
+    pub context: crate::rsi::ExecutionContext,
+    pub result: std::result::Result<String, crate::AgentError>,
+    pub events: Vec<serde_json::Value>,
+}
 pub fn effective_tools(package: &AgentPackage) -> Result<Vec<String>> {
     let provider = Arc::new(OfflineProvider {
         marker: String::new(),
@@ -140,6 +145,50 @@ pub async fn run_offline(
         output: output.into(),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
+    let observed = run_isolated(package, home, workspace, prompt, budget, provider).await?;
+    let report = observed.result?;
+    let events = observed.events;
+    let verified = report.starts_with(output)
+        && events.iter().any(|e| {
+            e["kind"] == "tool_completed" && e["name"] == "read_file" && e["is_error"] == false
+        });
+    let input_tokens = events
+        .iter()
+        .filter_map(|e| e["usage"]["input_tokens"].as_u64())
+        .sum();
+    let output_tokens = events
+        .iter()
+        .filter_map(|e| e["usage"]["output_tokens"].as_u64())
+        .sum();
+    let verifier_input = verifier_input(&report, output, &events);
+    let verifier_input_sha256 = crate::rsi::contract::hash(&verifier_input)?;
+    Ok(OfflineObservation {
+        context: observed.context,
+        report_sha256: digest(report.as_bytes()),
+        verifier_input,
+        verifier_input_sha256,
+        events,
+        verified,
+        input_tokens,
+        output_tokens,
+    })
+}
+
+/// Execute a locked read-only definition through the production Worker. The host owns provider admission.
+/// No oracle, expected output, task ID or label is accepted by this interface.
+pub async fn run_isolated(
+    package: &AgentPackage,
+    home: &Path,
+    workspace: &Path,
+    prompt: &str,
+    budget: &serde_json::Value,
+    provider: Arc<dyn Provider>,
+) -> Result<WorkerObservation> {
+    package.definition.validate()?;
+    ensure!(
+        package.sha256 == package.definition.revision()?,
+        "package revision mismatch"
+    );
     let base = super::builtin_profiles(provider.clone())
         .into_iter()
         .find(|p| p.id == package.definition.base_role)
@@ -158,14 +207,24 @@ pub async fn run_offline(
             .any(|t| t == "workspace.edit" || t == "process.verify"),
         "offline reviewer fixtures require read-only capabilities"
     );
-    profile.max_turns = budget["max_turns"].as_u64().unwrap() as usize;
-    profile.token_budget = Some(budget["max_tokens"].as_u64().unwrap());
-    profile.timeout_seconds = Some(budget["timeout_seconds"].as_u64().unwrap());
+    let limit = |name: &str, maximum: u64| -> Result<u64> {
+        let value = budget[name]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("invalid isolated Worker {name}"))?;
+        ensure!(
+            (1..=maximum).contains(&value),
+            "isolated Worker {name} exceeds supported range"
+        );
+        Ok(value)
+    };
+    profile.max_turns = limit("max_turns", 10)? as usize;
+    profile.token_budget = Some(limit("max_tokens", 1_000_000)?);
+    profile.timeout_seconds = Some(limit("timeout_seconds", 900)?);
     let events = Arc::new(Events::default());
     let worker = uuid::Uuid::new_v4();
     let sink = crate::feedback::FeedbackSink::spawn(home.join("feedback"));
     let feedback = crate::feedback::FeedbackRecorder::new(sink.clone(), "cli", false)
-        .for_run(Some(provider.ledger_identity().unwrap()));
+        .for_run(provider.ledger_identity());
     let run = super::runner::SubagentRun {
         isolated_evaluation: true,
         execution_deadline: None,
@@ -190,7 +249,7 @@ pub async fn run_offline(
         board: None,
         goal: None,
     };
-    let report = super::runner::run_subagent(run, events.clone(), worker, None).await?;
+    let result = super::runner::run_subagent(run, events.clone(), worker, None).await;
     ensure!(
         sink.flush(std::time::Duration::from_secs(5)),
         "offline feedback did not flush"
@@ -217,29 +276,10 @@ pub async fn run_offline(
         "actual revision differs from requested target"
     );
     let events = events.0.lock().unwrap().clone();
-    let verified = report.starts_with(output)
-        && events.iter().any(|e| {
-            e["kind"] == "tool_completed" && e["name"] == "read_file" && e["is_error"] == false
-        });
-    let input_tokens = events
-        .iter()
-        .filter_map(|e| e["usage"]["input_tokens"].as_u64())
-        .sum();
-    let output_tokens = events
-        .iter()
-        .filter_map(|e| e["usage"]["output_tokens"].as_u64())
-        .sum();
-    let verifier_input = verifier_input(&report, output, &events);
-    let verifier_input_sha256 = crate::rsi::contract::hash(&verifier_input)?;
-    Ok(OfflineObservation {
+    Ok(WorkerObservation {
         context,
-        report_sha256: digest(report.as_bytes()),
-        verifier_input,
-        verifier_input_sha256,
+        result,
         events,
-        verified,
-        input_tokens,
-        output_tokens,
     })
 }
 

@@ -1,0 +1,73 @@
+{
+  "version": "0.102.0-rc2",
+  "status": "awaiting_direct_confirmation_of_higher_actual_price",
+  "paid_model_calls": 0,
+  "production_changed": false,
+  "quality_claimed": false,
+  "budget_and_grader": {
+    "tests": 31,
+    "assertions": 83,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "paid_model_calls": 0,
+    "passed": true
+  },
+  "native_broker_integration": {
+    "schema": "willdeep.agent-rsi.free-native-broker-test.v1",
+    "passed": true,
+    "paid_model_calls": 0,
+    "provider_keys_read": false,
+    "simulated_requests": 4,
+    "results": [
+      {
+        "platform": "rust-native-worker",
+        "passed": true,
+        "native_exit_status": 0,
+        "status": "unverified",
+        "fixture_read": true,
+        "observation": "/private/tmp/willdeep-rsi-live-native-broker-final/f394e467-c590-4494-90d6-9143f14103e8/observation.json",
+        "quality_claim": false,
+        "stdout_sha256": "480a32b55a14de589e1576ec60cfb8d88bfe33be7b63ec6c33aeccf8970f6ee2",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "platform": "macos-native-worker",
+        "passed": true,
+        "native_exit_status": 0,
+        "status": "unverified",
+        "fixture_read": true,
+        "observation": "/private/tmp/willdeep-rsi-live-native-broker-final/2380477e-c9cf-4662-946c-97920efbec7b/observation.json",
+        "quality_claim": false,
+        "stdout_sha256": "472c52fa953153518005a70c6fa66750e254c4dd47e9e2be19d5c92c7790d4d2",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "costs_and_usage_are_synthetic_fixtures": true,
+    "model_quality_claimed": false
+  },
+  "host_evidence_admission": {
+    "rust": true,
+    "mac": true
+  },
+  "account_preflight": {
+    "observed_at": "2026-10-15T04:47:48Z",
+    "same_account_verified": true,
+    "currency": "USD",
+    "balance_sufficient_for_5_usd": true,
+    "model": "deepseek-v4-flash",
+    "bill_input_per_1m": "0.23205",
+    "bill_output_per_1m": "0.69405",
+    "cost_margin": "1.0500",
+    "billing_multiplier": "1.0",
+    "maximum_bill_microusd_per_million_tokens": 694050,
+    "key_model_fallback_disabled": true,
+    "proposal_sha256": "a3ae36e96d268f8aaab8a02efacea61cb68f58c1d3bf812b9a38311890736606",
+    "conservative_total_microusd": 3997728,
+    "budget_cap_microusd": 5000000,
+    "status": "awaiting_direct_confirmation_of_higher_actual_price",
+    "paid_model_calls": 0
+  },
+  "rust_binary_sha256": "f482cfc4c4597e8682e98445656d27c86eb8f78a18cda75c5b5bd515d5c208cb",
+  "mac_frozen_runner_sha256": "de4d5a521b01c61f5750173924f921e6d45bb70073f3973e32d7be7c74a49714"
+}

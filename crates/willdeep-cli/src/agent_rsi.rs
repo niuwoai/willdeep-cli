@@ -1,4 +1,6 @@
-//! Offline, revision-targeted experiments. No code path constructs a paid Provider.
+//! Revision-targeted experiments. The native pilot only talks to a local admission broker.
+mod native;
+mod native_provider;
 mod runner;
 mod service;
 use anyhow::{Context, Result, ensure};
@@ -14,6 +16,14 @@ use willdeep_core::{
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum RsiAction {
+    /// One separately admitted native trial through the local budget broker; never uses user keys.
+    NativeTrial {
+        #[arg(long)]
+        control: PathBuf,
+        /// Capture the real first Worker request and stop before network transmission.
+        #[arg(long)]
+        preview: bool,
+    },
     /// Verify strict shared JSON, hashes and immutable candidate constraints.
     Check {
         file: PathBuf,
@@ -60,6 +70,7 @@ pub enum RsiAction {
 
 pub async fn run(action: RsiAction, home: &Path) -> Result<()> {
     let value = match action {
+        RsiAction::NativeTrial { control, preview } => native::execute(&control, preview).await?,
         RsiAction::Check { file } => {
             let v = contract::parse_json(&std::fs::read(file)?)?;
             contract::validate(&v)?;
