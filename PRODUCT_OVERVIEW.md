@@ -1,6 +1,6 @@
 # Product Overview
 
-> 最后更新：2026-10-15 | 当前版本：v0.103.0-rc1（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-15 | 当前版本：v0.103.0-rc2（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
 
 P4b 免费工程补齐：两端共用严格 JSON 四字段输出，独立 Mock 入口经真实 Worker 读取公共夹具并保存执行证据，再交宿主固定夹具 / 参考函数客观核验最小复现。预算诊断保持原字节上界与额度，明确区分本地未准入、已知用量、真实未知用量和取消。原基线、275 份保存回答、13 个预算终态与账本保持不变；新公共夹具只证明工程链路，不能说明候选质量提升。两端 8 个正常案例宿主核验与 6 个资源边界均通过，见 [联合验收报告](docs/verification/0.103.0-rc1/README.md)；运行方法见 [免费 P4b 说明](docs/AGENT_RSI_P4B_FREE.md)。下一轮只登记 [新盲测元数据方案](docs/decisions/2026-10-15-agent-rsi-next-holdout-plan.md)，不启动付费请求。
 

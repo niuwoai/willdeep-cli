@@ -251,8 +251,10 @@ pub async fn run(directory: &Path, options: Options) -> Result<Value> {
         TASK,
         &json!({"max_turns":5,"max_tokens":options.max_tokens,"timeout_seconds":60}),
         provider.clone(),
-        true,
-        Some(stop),
+        super::evaluation::IsolatedOptions {
+            offline_review_json: true,
+            stop: Some(stop),
+        },
     )
     .await?;
     let mut state = provider.state.lock().unwrap();
@@ -290,7 +292,7 @@ pub async fn run(directory: &Path, options: Options) -> Result<Value> {
             .ok_or_else(|| anyhow::anyhow!("missing shared instruction marker"))?
             + marker.len();
         ensure!(
-            observed.context.effective_prompt_sha256 == digest(prompt[..end].as_bytes()),
+            observed.context.effective_prompt_sha256 == digest(&prompt.as_bytes()[..end]),
             "actual request does not contain the locked Worker prelude"
         );
     } else {

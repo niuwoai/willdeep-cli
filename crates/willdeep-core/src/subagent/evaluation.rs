@@ -185,7 +185,13 @@ pub async fn run_isolated(
     provider: Arc<dyn Provider>,
 ) -> Result<WorkerObservation> {
     run_isolated_configured(
-        package, home, workspace, prompt, budget, provider, false, None,
+        package,
+        home,
+        workspace,
+        prompt,
+        budget,
+        provider,
+        IsolatedOptions::default(),
     )
     .await
 }
@@ -195,6 +201,12 @@ pub(super) enum IsolatedStop {
     CancelAfter(std::time::Duration),
 }
 
+#[derive(Default)]
+pub(super) struct IsolatedOptions {
+    pub(super) offline_review_json: bool,
+    pub(super) stop: Option<IsolatedStop>,
+}
+
 pub(super) async fn run_isolated_configured(
     package: &AgentPackage,
     home: &Path,
@@ -202,9 +214,12 @@ pub(super) async fn run_isolated_configured(
     prompt: &str,
     budget: &serde_json::Value,
     provider: Arc<dyn Provider>,
-    offline_review_json: bool,
-    stop: Option<IsolatedStop>,
+    options: IsolatedOptions,
 ) -> Result<WorkerObservation> {
+    let IsolatedOptions {
+        offline_review_json,
+        stop,
+    } = options;
     package.definition.validate()?;
     ensure!(
         package.sha256 == package.definition.revision()?,
