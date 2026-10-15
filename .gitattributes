@@ -1,0 +1,5 @@
+# These public evaluation assets are hashed as bytes before execution or embedding.
+# Pin checkout line endings even when Git for Windows enables core.autocrlf.
+/bench/agent-rsi/reproduction-free-v1/** text eol=lf
+/bench/agent-rsi/review-output-v2/** text eol=lf
+/docs/examples/agent-rsi-golden.json text eol=lf
