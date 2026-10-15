@@ -184,6 +184,27 @@ pub async fn run_isolated(
     budget: &serde_json::Value,
     provider: Arc<dyn Provider>,
 ) -> Result<WorkerObservation> {
+    run_isolated_configured(
+        package, home, workspace, prompt, budget, provider, false, None,
+    )
+    .await
+}
+
+pub(super) enum IsolatedStop {
+    Timeout(std::time::Duration),
+    CancelAfter(std::time::Duration),
+}
+
+pub(super) async fn run_isolated_configured(
+    package: &AgentPackage,
+    home: &Path,
+    workspace: &Path,
+    prompt: &str,
+    budget: &serde_json::Value,
+    provider: Arc<dyn Provider>,
+    offline_review_json: bool,
+    stop: Option<IsolatedStop>,
+) -> Result<WorkerObservation> {
     package.definition.validate()?;
     ensure!(
         package.sha256 == package.definition.revision()?,
@@ -227,6 +248,7 @@ pub async fn run_isolated(
         .for_run(provider.ledger_identity());
     let run = super::runner::SubagentRun {
         isolated_evaluation: true,
+        offline_review_json,
         execution_deadline: None,
         workspace: workspace.into(),
         sandbox: crate::sandbox::SandboxSpec::new(crate::sandbox::SandboxPolicy::ReadOnly, []),
@@ -249,7 +271,27 @@ pub async fn run_isolated(
         board: None,
         goal: None,
     };
-    let result = super::runner::run_subagent(run, events.clone(), worker, None).await;
+    let result = {
+        let worker_run = super::runner::run_subagent(run, events.clone(), worker, None);
+        tokio::pin!(worker_run);
+        match stop {
+            None => worker_run.await,
+            Some(IsolatedStop::Timeout(duration)) => tokio::time::timeout(duration, worker_run)
+                .await
+                .unwrap_or_else(|_| {
+                    Err(crate::AgentError::Subagent("offline_mock_timeout".into()))
+                }),
+            Some(IsolatedStop::CancelAfter(duration)) => {
+                // The deterministic host cancellation signal drops the real Worker future.
+                tokio::select! {
+                    result = &mut worker_run => result,
+                    _ = tokio::time::sleep(duration) => {
+                        Err(crate::AgentError::Subagent("offline_mock_cancelled".into()))
+                    }
+                }
+            }
+        }
+    };
     ensure!(
         sink.flush(std::time::Duration::from_secs(5)),
         "offline feedback did not flush"

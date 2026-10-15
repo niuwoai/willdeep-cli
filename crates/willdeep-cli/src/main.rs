@@ -538,6 +538,10 @@ fn runtime_failure_domain(error: &anyhow::Error) -> willdeep_runtime_protocol::F
 }
 
 async fn run() -> Result<()> {
+    // Branch before Clap constructs the global credential-aware parser.
+    if let Some(result) = agent_rsi::run_free_review_standalone().await {
+        return result;
+    }
     let mut cli = Cli::parse();
     let run_args = match cli.command.take() {
         Some(CliCommand::Run(args)) => {

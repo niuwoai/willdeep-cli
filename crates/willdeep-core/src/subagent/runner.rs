@@ -315,6 +315,8 @@ impl Drop for FileClaim {
 pub(super) struct SubagentRun {
     /// Only the offline evaluation adapter sets this; avoids reading live user rules.
     pub(super) isolated_evaluation: bool,
+    /// Only the sealed deterministic free-review adapter selects this format.
+    pub(super) offline_review_json: bool,
     pub(super) execution_deadline: Option<tokio::time::Instant>,
     pub(super) workspace: PathBuf,
     pub(super) sandbox: crate::sandbox::SandboxSpec,
@@ -383,6 +385,7 @@ async fn run_subagent_inner(
 ) -> Result<String, AgentError> {
     let SubagentRun {
         isolated_evaluation,
+        offline_review_json,
         execution_deadline,
         workspace,
         sandbox,
@@ -514,6 +517,7 @@ async fn run_subagent_inner(
             execution_deadline,
             attempt,
             isolated_evaluation,
+            offline_review_json,
         )
         .await?;
         let Some(verifier) = verifier.as_ref() else {
@@ -530,6 +534,9 @@ async fn run_subagent_inner(
             // checked without a command is what the report cites.
             let audit = audit_citations(&workspace, &report).await;
             lifecycle_sink.emit(verdict(None, attempt, &audit)).await;
+            if offline_review_json && isolated_evaluation {
+                return Ok(report);
+            }
             let trailer = facts.render(&profile.id, "unverified", attempt, Some(&audit));
             return Ok(match audit.note() {
                 Some(note) => format!("{report}\n\n{note}\n\n{trailer}"),
@@ -640,6 +647,7 @@ async fn run_once(
     execution_deadline: Option<tokio::time::Instant>,
     attempt: usize,
     isolated_evaluation: bool,
+    offline_review_json: bool,
 ) -> Result<(String, WorkerFacts, Option<crate::rsi::ExecutionContext>), AgentError> {
     let approval = if profile.shell.uses_intelligent_review() {
         ApprovalMode::Smart
@@ -722,12 +730,22 @@ async fn run_once(
     // A relay-hosted trade already carries its job prompt server-side. Sending
     // the client's copy too would put two descriptions of the same trade in
     // one context — and when they drift, the worker gets to pick.
-    let mut system_prompt = if isolated_evaluation {
-        worker_prompt_parts_with(profile, has_board, None)
+    let mut system_prompt = if offline_review_json && isolated_evaluation {
+        [
+            BOUNDARY_TEMPLATE,
+            &profile.capability_prompt,
+            crate::rsi::review_output::instructions(),
+            &format!(
+                "Output instructions SHA-256: {}",
+                crate::rsi::review_output::instructions_sha256()
+            ),
+        ]
+        .join("\n\n")
+    } else if isolated_evaluation {
+        worker_prompt_parts_with(profile, has_board, None).join("\n\n")
     } else {
-        worker_prompt_parts(profile, has_board)
+        worker_prompt_parts(profile, has_board).join("\n\n")
     }
-    .join("\n\n")
     .replace("{workspace}", &workspace.display().to_string());
     if let Some(rules) = if isolated_evaluation {
         Ok(None)
@@ -989,6 +1007,7 @@ mod tests {
         let home = root.join("home");
         let run = SubagentRun {
             isolated_evaluation: true,
+            offline_review_json: false,
             execution_deadline: None,
             workspace: root.clone(),
             sandbox: crate::sandbox::SandboxSpec::new(crate::sandbox::SandboxPolicy::Off, []),

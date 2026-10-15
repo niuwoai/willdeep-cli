@@ -27,6 +27,7 @@ pub use runs::AgentRunStore;
 mod dispatch_store;
 pub mod evaluation;
 mod file_leases;
+pub mod free_review;
 mod profiles;
 mod runner;
 pub(crate) mod scheduler;

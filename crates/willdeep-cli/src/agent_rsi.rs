@@ -1,4 +1,5 @@
 //! Revision-targeted experiments. The native pilot only talks to a local admission broker.
+mod free_review;
 mod native;
 mod native_provider;
 mod runner;
@@ -16,6 +17,8 @@ use willdeep_core::{
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum RsiAction {
+    /// Free-only Worker/file-tool acceptance; never constructs a network provider.
+    FreeReview(free_review::Arguments),
     /// One separately admitted native trial through the local budget broker; never uses user keys.
     NativeTrial {
         #[arg(long)]
@@ -68,8 +71,13 @@ pub enum RsiAction {
     },
 }
 
+pub(crate) async fn run_free_review_standalone() -> Option<Result<()>> {
+    free_review::run_standalone(std::env::args_os().collect()).await
+}
+
 pub async fn run(action: RsiAction, home: &Path) -> Result<()> {
     let value = match action {
+        RsiAction::FreeReview(arguments) => free_review::execute(arguments).await?,
         RsiAction::NativeTrial { control, preview } => native::execute(&control, preview).await?,
         RsiAction::Check { file } => {
             let v = contract::parse_json(&std::fs::read(file)?)?;

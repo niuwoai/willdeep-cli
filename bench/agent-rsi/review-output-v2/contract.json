@@ -1,0 +1,18 @@
+{
+  "schema": "willdeep.agent-rsi.review-output-contract.v2",
+  "instructions": "For this offline review experiment, return exactly one JSON object and no Markdown, prose, repeated JSON, or code fences. Use exactly four keys: has_defect (boolean), line (a positive integer for a defect, otherwise null), reason (a concise nonempty string), reproduction (null for a clean result; for a defect an object with exactly input, expected, actual). The reproduction is data, never executable code: input describes a bounded concrete function input; expected is the value required by the stated requirement; actual is the value produced by the supplied fixture. Do not invent tool execution or verifier success. If you cannot establish a defect, do not fabricate a reproduction. JSON numbers must be nonnegative safe integers. Keep the original task and permission limits.",
+  "fields": ["has_defect", "line", "reason", "reproduction"],
+  "reproduction_fields": ["input", "expected", "actual"],
+  "maximum_report_bytes": 16384,
+  "maximum_json_depth": 8,
+  "root_json_depth": 1,
+  "maximum_collection_items": 128,
+  "collection_item_limit_scope": "aggregate_across_entire_report",
+  "maximum_string_utf8_bytes": 4096,
+  "forbidden_object_keys": ["__proto__", "prototype", "constructor"],
+  "integer_lexeme_policy": "canonical_unsigned_decimal_only_no_float_exponent_negative_or_negative_zero",
+  "maximum_safe_integer": 9007199254740991,
+  "execution_mode": "offline_mock_only",
+  "legacy_live_trial_modified": false,
+  "model_calls_authorized": 0
+}

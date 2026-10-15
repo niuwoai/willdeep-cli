@@ -1,0 +1,240 @@
+{
+  "schema": "willdeep.agent-rsi.reproduction-free-fixtures.v1",
+  "execution_mode": "offline_mock_only",
+  "model_calls_authorized": 0,
+  "tasks": [
+    {
+      "case_id": "count-zero-bug",
+      "family": "count-zero",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/count-zero-bug.js",
+      "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+      "reference_file": "references/count-zero.js",
+      "reference_sha256": "95844dc59db1b6ac9b99a039b1317286db0892b12ce8a0939dde04f822522f49",
+      "input_shape": "count_fallback",
+      "has_defect": true,
+      "defect_line": 3,
+      "public_probes": [
+        {
+          "count": 0,
+          "fallback": 7
+        },
+        {
+          "count": null,
+          "fallback": 7
+        },
+        {
+          "count": 2,
+          "fallback": 7
+        }
+      ],
+      "public_witness": {
+        "input": {
+          "count": 0,
+          "fallback": 7
+        },
+        "expected": 0,
+        "actual": 7
+      }
+    },
+    {
+      "case_id": "count-zero-clean",
+      "family": "count-zero",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/count-zero-clean.js",
+      "fixture_sha256": "da7956a504b831a1f084148c49638c3a532be79e4e9d8756eeab03d10e1dae4b",
+      "reference_file": "references/count-zero.js",
+      "reference_sha256": "95844dc59db1b6ac9b99a039b1317286db0892b12ce8a0939dde04f822522f49",
+      "input_shape": "count_fallback",
+      "has_defect": false,
+      "defect_line": null,
+      "public_probes": [
+        {
+          "count": 0,
+          "fallback": 7
+        },
+        {
+          "count": null,
+          "fallback": 7
+        },
+        {
+          "count": 2,
+          "fallback": 7
+        }
+      ],
+      "public_witness": null
+    },
+    {
+      "case_id": "copy-boundary-bug",
+      "family": "copy-boundary",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/copy-boundary-bug.js",
+      "fixture_sha256": "42e8dfc7bc539ce8122f36ec3c10759cb9e446afc632240069d23a44a33a2424",
+      "reference_file": "references/copy-boundary.js",
+      "reference_sha256": "a9bafb029bafa2b4842289f046d9117e76b2dd0b851d36b61b5e7bd6df61430e",
+      "input_shape": "numeric_values",
+      "has_defect": true,
+      "defect_line": 4,
+      "public_probes": [
+        {
+          "values": []
+        },
+        {
+          "values": [
+            2,
+            5
+          ]
+        }
+      ],
+      "public_witness": {
+        "input": {
+          "values": [
+            2,
+            5
+          ]
+        },
+        "expected": [
+          2,
+          5
+        ],
+        "actual": [
+          2,
+          5,
+          null
+        ]
+      }
+    },
+    {
+      "case_id": "copy-boundary-clean",
+      "family": "copy-boundary",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/copy-boundary-clean.js",
+      "fixture_sha256": "84fc8cfbe7955c75f73497d286486fefcbb81546f7af9b70d1b5fa08b57d2f90",
+      "reference_file": "references/copy-boundary.js",
+      "reference_sha256": "a9bafb029bafa2b4842289f046d9117e76b2dd0b851d36b61b5e7bd6df61430e",
+      "input_shape": "numeric_values",
+      "has_defect": false,
+      "defect_line": null,
+      "public_probes": [
+        {
+          "values": []
+        },
+        {
+          "values": [
+            2,
+            5
+          ]
+        }
+      ],
+      "public_witness": null
+    },
+    {
+      "case_id": "duplicate-first-bug",
+      "family": "duplicate-first",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/duplicate-first-bug.js",
+      "fixture_sha256": "7e83a906c3339ad0b07c022ca148cea5f19922dc9f587e32ba2a38aff6cacbae",
+      "reference_file": "references/duplicate-first.js",
+      "reference_sha256": "00622507d22997389e362a67edf55916f0f155bb68607c8ec7ad9534d9b83b13",
+      "input_shape": "key_entries",
+      "has_defect": true,
+      "defect_line": 5,
+      "public_probes": [
+        {
+          "entries": []
+        },
+        {
+          "entries": [
+            {
+              "key": "x",
+              "value": 2
+            },
+            {
+              "key": "x",
+              "value": 9
+            }
+          ]
+        }
+      ],
+      "public_witness": {
+        "input": {
+          "entries": [
+            {
+              "key": "x",
+              "value": 2
+            },
+            {
+              "key": "x",
+              "value": 9
+            }
+          ]
+        },
+        "expected": {
+          "x": 2
+        },
+        "actual": {
+          "x": 9
+        }
+      }
+    },
+    {
+      "case_id": "duplicate-first-clean",
+      "family": "duplicate-first",
+      "visibility": "public_free_engineering_fixture",
+      "task_prompt": "Read fixture.txt through the file tool. Review only its stated requirement and documented input shape. Do not modify files. The host will execute a frozen fixture and reference independently; submit data only and do not claim host verification.",
+      "fixture_file": "fixtures/duplicate-first-clean.js",
+      "fixture_sha256": "0d0cfa4a9cfdaf507c2f49f8b5286b56129faba169726815cdb55f17f8b72e85",
+      "reference_file": "references/duplicate-first.js",
+      "reference_sha256": "00622507d22997389e362a67edf55916f0f155bb68607c8ec7ad9534d9b83b13",
+      "input_shape": "key_entries",
+      "has_defect": false,
+      "defect_line": null,
+      "public_probes": [
+        {
+          "entries": []
+        },
+        {
+          "entries": [
+            {
+              "key": "x",
+              "value": 2
+            },
+            {
+              "key": "x",
+              "value": 9
+            }
+          ]
+        }
+      ],
+      "public_witness": null
+    }
+  ],
+  "host_negative_fixtures": [
+    {
+      "name": "timeout",
+      "source_file": "host-negative/timeout.js",
+      "source_sha256": "025e8f1fcce5ea4c2e9c64e3cccc8d25252de541f252a806667459a4ae98b74d",
+      "host_only": true,
+      "worker_task": false
+    },
+    {
+      "name": "output-limit",
+      "source_file": "host-negative/output-limit.js",
+      "source_sha256": "36e2f869af1ef6e75deaf74dfaa129fab9cbe59920162057367855f1d8b44fe7",
+      "host_only": true,
+      "worker_task": false
+    },
+    {
+      "name": "sandbox",
+      "source_file": "host-negative/sandbox.js",
+      "source_sha256": "c1c4b66263aff87614b59020e5f63067ee95a6f13dd07c42bea0c2d48000cbac",
+      "host_only": true,
+      "worker_task": false
+    }
+  ]
+}

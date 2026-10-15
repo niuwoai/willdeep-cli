@@ -1,6 +1,7 @@
 //! Local execution lineage. A completion is never a verification or a promotion.
 use serde::{Deserialize, Serialize};
 pub mod contract;
+pub mod review_output;
 
 /// Attached by the host after resolving the definition and assembling the real prompt.
 /// Contains summaries only: no paths, code, credentials, or model responses.

@@ -1,0 +1,176 @@
+{
+  "schema": "willdeep.rust-free-review-acceptance.v2",
+  "execution_mode": "offline_mock_only",
+  "verification": "unverified",
+  "network_model_calls": 0,
+  "quality_claim": false,
+  "binary": "/private/tmp/willdeep-p4b-free-target/debug/willdeep",
+  "binary_sha256": "4c73f984d9d3f5ab4d09994f53a29630b06059cd7dd2a1b6872e335ca1287dd9",
+  "version": "willdeep 0.103.0-rc1",
+  "tests": {
+    "shared_review_output": {
+      "passed": 2
+    },
+    "subagent_module": {
+      "passed": 96,
+      "ignored": 2
+    },
+    "cli_free_parser": {
+      "passed": 2
+    },
+    "frontend_build": "passed",
+    "cli_build": "passed"
+  },
+  "cases": [
+    {
+      "case": "bug",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/bug",
+      "completed": true,
+      "stop_reason": "completed",
+      "mock_requests_admitted": 2,
+      "per_request_system_prompt_sha256": [
+        "818464c7e42f58cab515e11005fa97129db291b9553f58221572a70b3a9c76bc",
+        "1c3787c368746083876b5c46597a471d0b2bdbb19ddd89c30ccca9b21a3bb8bf"
+      ],
+      "evidence": {
+        "delivered_to_model": true,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": true
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "clean",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/clean",
+      "completed": true,
+      "stop_reason": "completed",
+      "mock_requests_admitted": 2,
+      "per_request_system_prompt_sha256": [
+        "ccf3b3872cb5015fb924636b7741169f139259e5fd7dcf52e4c96125f4fed806",
+        "5054f1b380942788d64e6e8aba77b2f19f3221d8dd3636e3e93f3fc99dff77d2"
+      ],
+      "evidence": {
+        "delivered_to_model": true,
+        "fixture_sha256": "da7956a504b831a1f084148c49638c3a532be79e4e9d8756eeab03d10e1dae4b",
+        "fixture_unchanged": true,
+        "read_observed": true
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "request-cap-2",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/request-cap-2",
+      "completed": false,
+      "stop_reason": "request_limit",
+      "mock_requests_admitted": 2,
+      "per_request_system_prompt_sha256": [
+        "f31c00b4cce8a892cab7799f2b01167667b59152571bbf4d504b482c315d700d",
+        "ccd44f22523f61c4b0959f3b2ce51fda55db768dd74edb9f8d8ab281679c7f89"
+      ],
+      "evidence": {
+        "delivered_to_model": true,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": true
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "request-cap-4",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/request-cap-4",
+      "completed": true,
+      "stop_reason": "completed",
+      "mock_requests_admitted": 4,
+      "per_request_system_prompt_sha256": [
+        "5620fd2e84957b7d0a830c86551822e3476d170577722cb170f65547632d58e7",
+        "51b015945e2cfcd0eaadef6a0fdc182f45acf7665b7a934f6516c58cc84afd8d",
+        "dbfb4c23b0cf88bc9d4d6e8a98ad3116980d226ca596c27c2e71fb80f605becb",
+        "6cd36a7c13301d0f93eaae1c31c413b677e9140904221af333c5b4ab0c030544"
+      ],
+      "evidence": {
+        "delivered_to_model": true,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": true
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "token-admission",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/token-admission",
+      "completed": false,
+      "stop_reason": "token_admission",
+      "mock_requests_admitted": 0,
+      "per_request_system_prompt_sha256": [],
+      "evidence": {
+        "delivered_to_model": false,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": false
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "token-exhaustion",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/token-exhaustion",
+      "completed": false,
+      "stop_reason": "token_exhausted",
+      "mock_requests_admitted": 1,
+      "per_request_system_prompt_sha256": [
+        "2e2c51b0d7174cafcdac76a3fb6f960b4066541407a848199861852ef99f0082"
+      ],
+      "evidence": {
+        "delivered_to_model": false,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": false
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "timeout",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/timeout",
+      "completed": false,
+      "stop_reason": "timeout",
+      "mock_requests_admitted": 1,
+      "per_request_system_prompt_sha256": [
+        "112c196ce01ba5e68b40b01aff656691807b158cf61ef2291d505ac7e047715e"
+      ],
+      "evidence": {
+        "delivered_to_model": false,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": false
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    },
+    {
+      "case": "cancel",
+      "output_directory": "/private/tmp/willdeep-p4b-rust-acceptance-final-20261015-fbbea1/cancel",
+      "completed": false,
+      "stop_reason": "cancelled",
+      "mock_requests_admitted": 1,
+      "per_request_system_prompt_sha256": [
+        "6d4c94cef26b245e5bffdc09e17876df5aaf76421acc8ef67b3d18e8fd3c5013"
+      ],
+      "evidence": {
+        "delivered_to_model": false,
+        "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+        "fixture_unchanged": true,
+        "read_observed": false
+      },
+      "instructions_sha256": "ace7d00ee76f9234df3fe934624ba443402c7dee80255972128199e4ed4c9ae8"
+    }
+  ],
+  "negative_cli_cases_passed": 4,
+  "provider_config_and_credentials_not_loaded": true,
+  "preparation_failures_resolved": [
+    "initial test helper used unavailable tempfile; replaced with isolated directory guard",
+    "initial assertion conflated compiled prelude and actual runtime system prompt; now separated with explicitly derived request projection",
+    "initial CLI compile lacked this worktree web/dist; generated current assets with offline yarn build"
+  ],
+  "previous_acceptance_directory": "/private/tmp/willdeep-p4b-rust-acceptance-20261015-b640e6",
+  "final_source_rebuilt": true,
+  "per_request_prompt_body_recomputed": true
+}

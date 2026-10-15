@@ -1,0 +1,47 @@
+{
+  "budget-and-grader": {
+    "tests": 60,
+    "assertions": 127,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "paid_model_calls": 0,
+    "passed": true
+  },
+  "budget-audit": {
+    "tests": 10,
+    "assertions": 11,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "model_requests": 0,
+    "passed": true
+  },
+  "budget-policy": {
+    "tests": 17,
+    "assertions": 46,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "model_requests": 0,
+    "passed": true
+  },
+  "format-parser": {
+    "tests": 52,
+    "assertions": 61,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "model_requests": 0,
+    "passed": true
+  },
+  "offline-replay": {
+    "tests": 19,
+    "assertions": 32,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "model_requests": 0,
+    "passed": true
+  }
+}

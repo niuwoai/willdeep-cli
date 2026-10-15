@@ -888,6 +888,7 @@ impl SubagentCatalog {
         let approved_targets = remap_approved_targets(approved_targets, &prepared)?;
         let run = SubagentRun {
             isolated_evaluation: false,
+            offline_review_json: false,
             execution_deadline: *self
                 .execution_deadline
                 .lock()

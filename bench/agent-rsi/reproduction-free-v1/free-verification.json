@@ -1,0 +1,255 @@
+{
+  "schema": "willdeep.agent-rsi.reproduction-free-verification.v1",
+  "created_at": "2026-10-15T09:03:51Z",
+  "model_calls": 0,
+  "cost_microusd": 0,
+  "network_calls": 0,
+  "paid_or_legacy_trials_modified": false,
+  "public_engineering_fixture_only": true,
+  "quality_improvement_claim": false,
+  "automatic_promotion": false,
+  "tests": {
+    "runs": 56,
+    "assertions": 154,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "test_output": "Run options: --seed 38133\n\n# Running:\n\n........................................................\n\nFinished in 2.113382s, 26.4978 runs/s, 72.8690 assertions/s.\n\n56 runs, 154 assertions, 0 failures, 0 errors, 0 skips\n",
+  "public_cases": [
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "count-zero-bug",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": true,
+      "reproduction_status": "verified",
+      "objective_execution_count": 2,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "7f9ac90e9f727fa2f1a6b74d75753f5012bdf760a3c40d4eec04bf4c3dc1b4c9",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "b1389ab2f18feeedec2e1c920519a1753ae8541fb1ea172ae831497d64d0815a",
+      "reference_sha256": "95844dc59db1b6ac9b99a039b1317286db0892b12ce8a0939dde04f822522f49",
+      "host_executions": [
+        {
+          "input_sha256": "5a0a2e73f75fea371e34ccfda7000cab4eab8012e1e143403cf70cd0ba8a8937",
+          "fixture_actual": 7,
+          "reference_expected": 0
+        }
+      ],
+      "verifier_input_sha256": "b6cecbb0fd67e1e5e0124556325008e2b42717e8f10d565c9967e51996947165"
+    },
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "count-zero-clean",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": null,
+      "reproduction_status": "not_applicable_clean",
+      "objective_execution_count": 6,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "3c0280b345fc7d88204b2f2766d52ecab9505341d1572cae39e09f830cf0d2e6",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "da7956a504b831a1f084148c49638c3a532be79e4e9d8756eeab03d10e1dae4b",
+      "reference_sha256": "95844dc59db1b6ac9b99a039b1317286db0892b12ce8a0939dde04f822522f49",
+      "host_executions": [
+        {
+          "input_sha256": "5a0a2e73f75fea371e34ccfda7000cab4eab8012e1e143403cf70cd0ba8a8937",
+          "fixture_actual": 0,
+          "reference_expected": 0
+        },
+        {
+          "input_sha256": "f6af913a05ade173d482fd13f2cb9659517fa24dad9b2fae2277922112004774",
+          "fixture_actual": 7,
+          "reference_expected": 7
+        },
+        {
+          "input_sha256": "d33957f96bf3313f3f77277ba7ccec46bb40e92f41890f1541955ed364cbe5aa",
+          "fixture_actual": 2,
+          "reference_expected": 2
+        }
+      ],
+      "clean_public_probes_match": true,
+      "verifier_input_sha256": "71131df66ecd19cf1e271aa558070e63f7f087739e15d6ecf4ea73ee1ce303bc"
+    },
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "copy-boundary-bug",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": true,
+      "reproduction_status": "verified",
+      "objective_execution_count": 2,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "0e431f0a4c6bc4867b29a7eaaf2572e8c0baeced65a6e6778b78ccee3dae494c",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "42e8dfc7bc539ce8122f36ec3c10759cb9e446afc632240069d23a44a33a2424",
+      "reference_sha256": "a9bafb029bafa2b4842289f046d9117e76b2dd0b851d36b61b5e7bd6df61430e",
+      "host_executions": [
+        {
+          "input_sha256": "cac9f3573e79d4a447113b33c1d492d41791ddd83da9cb8b61e93df531f2c5df",
+          "fixture_actual": [
+            2,
+            5,
+            null
+          ],
+          "reference_expected": [
+            2,
+            5
+          ]
+        }
+      ],
+      "verifier_input_sha256": "0b124344dfbc8e1549309c5c70c32366b3369876d3889029522bce94c7607072"
+    },
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "copy-boundary-clean",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": null,
+      "reproduction_status": "not_applicable_clean",
+      "objective_execution_count": 4,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "3c0280b345fc7d88204b2f2766d52ecab9505341d1572cae39e09f830cf0d2e6",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "84fc8cfbe7955c75f73497d286486fefcbb81546f7af9b70d1b5fa08b57d2f90",
+      "reference_sha256": "a9bafb029bafa2b4842289f046d9117e76b2dd0b851d36b61b5e7bd6df61430e",
+      "host_executions": [
+        {
+          "input_sha256": "8138e5e9bb95f27b029fa5e119d99c2e9a6b7f44c8a07faada29f295b76297d3",
+          "fixture_actual": [],
+          "reference_expected": []
+        },
+        {
+          "input_sha256": "cac9f3573e79d4a447113b33c1d492d41791ddd83da9cb8b61e93df531f2c5df",
+          "fixture_actual": [
+            2,
+            5
+          ],
+          "reference_expected": [
+            2,
+            5
+          ]
+        }
+      ],
+      "clean_public_probes_match": true,
+      "verifier_input_sha256": "9a73301984eefe77f94bc9281fc392edb2f44b7a51c89ce3d2e5bc1db9ce1c13"
+    },
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "duplicate-first-bug",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": true,
+      "reproduction_status": "verified",
+      "objective_execution_count": 2,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "a24c01dbb479b6b30d4d4397f1dcc392d6914d0d65411f7c33550878739b5f84",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "7e83a906c3339ad0b07c022ca148cea5f19922dc9f587e32ba2a38aff6cacbae",
+      "reference_sha256": "00622507d22997389e362a67edf55916f0f155bb68607c8ec7ad9534d9b83b13",
+      "host_executions": [
+        {
+          "input_sha256": "cf052b4f8a37023dec5500bad22a92d64de26b1a4db7e814e63e588978f25772",
+          "fixture_actual": {
+            "x": 9
+          },
+          "reference_expected": {
+            "x": 2
+          }
+        }
+      ],
+      "verifier_input_sha256": "d9ccef9bdb1fb948a74d5ee9bcf0331d91131c3ed98500de72ba4224635b03ee"
+    },
+    {
+      "schema": "willdeep.agent-rsi.reproduction-verifier.v1",
+      "execution_mode": "offline_mock_only",
+      "case_id": "duplicate-first-clean",
+      "format_valid": true,
+      "classification_correct": true,
+      "line_correct": true,
+      "read_observed": true,
+      "delivered_to_model": true,
+      "fixture_unchanged": true,
+      "evidence_verified": true,
+      "reproduction_verified": null,
+      "reproduction_status": "not_applicable_clean",
+      "objective_execution_count": 4,
+      "passed": true,
+      "model_calls": 0,
+      "cost_microusd": 0,
+      "report_sha256": "3c0280b345fc7d88204b2f2766d52ecab9505341d1572cae39e09f830cf0d2e6",
+      "claim_limit": "Public engineering fixtures only; no semantic reason judging, paid inference, general quality improvement or promotion claim.",
+      "fixture_sha256": "0d0cfa4a9cfdaf507c2f49f8b5286b56129faba169726815cdb55f17f8b72e85",
+      "reference_sha256": "00622507d22997389e362a67edf55916f0f155bb68607c8ec7ad9534d9b83b13",
+      "host_executions": [
+        {
+          "input_sha256": "d801aa1fb7ddcc330a5e3173372ea6af4a3d08ec58074478e85aa5603e926658",
+          "fixture_actual": {},
+          "reference_expected": {}
+        },
+        {
+          "input_sha256": "cf052b4f8a37023dec5500bad22a92d64de26b1a4db7e814e63e588978f25772",
+          "fixture_actual": {
+            "x": 2
+          },
+          "reference_expected": {
+            "x": 2
+          }
+        }
+      ],
+      "clean_public_probes_match": true,
+      "verifier_input_sha256": "bff9d6976358dd493320ff44ed5bfe473d6a05d7c90764c34727e0506d1ed352"
+    }
+  ],
+  "actual_host_function_executions": 20,
+  "sha256": {
+    "scripts/lib/agent_rsi_reproduction.rb": "04b44ecce5026835cdb25639ef26f276b086e8e5fefbaf731bb722d976fb6dfb",
+    "scripts/lib/agent_rsi_reproduction_eval.rb": "125e46c537431b423af017aca9ad2aae36fe9cd004d3b0ac790af5ec019d841f",
+    "scripts/lib/agent_rsi_reproduction_harness.js": "a6a45b706044c2daaf28c8759a7699a3c18e7d2d28c0f08afda69073a93eb59b",
+    "scripts/test_agent_rsi_reproduction.rb": "401c6cb6cc8b89b2b8a96e90cf46723f9a20be1d762acd821896072a5440d998",
+    "bench/agent-rsi/reproduction-free-v1/manifest.json": "4cb96af334f1d8a7113240e8cbe7c4e275009d68233ce6cab52b67926ce05af3",
+    "bench/agent-rsi/review-output-v2/contract.json": "91b66fce5a84e96340573e43a0743c5d8205b02d228e9240a4947cc86dad163a",
+    "bench/agent-rsi/review-output-v2/golden.json": "3c469f644182975f85957855583244a4e06ef2f90b3f2ee4b145af29f30f4899"
+  }
+}

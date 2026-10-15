@@ -1,0 +1,67 @@
+{
+  "schema": "willdeep.agent-rsi.next-holdout-plan.v1",
+  "status": "metadata_proposal_only_not_approved_for_generation_or_inference",
+  "model_calls_authorized": 0,
+  "future_task_text_created": false,
+  "future_oracles_created": false,
+  "future_seed_created": false,
+  "suite_sha256": null,
+  "custodian": "independent_holder_to_be_authorized",
+  "old_public_suite": {
+    "suite_id": "reviewer-original-24-v1",
+    "use": "regression_only_no_blind_quality_claim",
+    "tasks": 24,
+    "families": 12
+  },
+  "proposed_new_suite": {
+    "validation_families": 12,
+    "validation_tasks": 24,
+    "holdout_families": 6,
+    "holdout_tasks": 12,
+    "bug_and_clean_per_family": 2,
+    "cross_split_family_overlap_allowed": false,
+    "near_duplicate_and_root_cause_overlap_allowed": false,
+    "exact_task_content": null,
+    "oracle": null,
+    "seed": null
+  },
+  "proposed_comparison_if_separately_approved": {
+    "regression_tasks": 24,
+    "new_validation_tasks": 24,
+    "new_holdout_tasks": 12,
+    "arms": 2,
+    "repetitions": 3,
+    "platforms": 2,
+    "nominal_native_trials": 720,
+    "model": null,
+    "maximum_requests": null,
+    "maximum_tokens": null,
+    "maximum_infrastructure_retries": null,
+    "total_budget_microusd": null,
+    "authorized": false
+  },
+  "freeze_order": [
+    "approve_generation_scope_and_independent_custodian",
+    "freeze_candidate_baseline_output_contract_and_host_grader",
+    "custodian_generates_private_new_tasks_and_oracles_without_exposing_them_to_candidate_author",
+    "independent_deduplication_and_reference_execution_audit",
+    "freeze_private_manifest_hashes_and_preregister_metrics_and_resource_limits",
+    "present_model_account_price_task_count_attempt_request_token_and_total_budget_for_explicit_approval",
+    "run_validation_regression_then_single_frozen_holdout_batch",
+    "retain_all_attempts_and_separate_terminal_classes_before_manual_promotion_review"
+  ],
+  "metrics": [
+    "strict_four_field_format",
+    "classification_separate_from_schema_gate",
+    "exact_line_auxiliary",
+    "host_observed_read_delivery_and_fixture_integrity",
+    "objective_reproduction_verified_or_clean_not_applicable",
+    "planned_and_quality_evaluable_denominators",
+    "same_epoch_complete_task_pairs_aggregate_repetitions_then_family_cluster_bootstrap"
+  ],
+  "statistical_unit": "family_cluster_not_repetitions_or_bug_clean_siblings_as_independent_samples",
+  "holdout_precision_limit": "six_families_is_a_small_pilot_not_precise_generalization_or_promotion_proof",
+  "promotion": "manual_review_only_no_automatic_promotion",
+  "unblinding": "single_holdout_use_candidate_revision_frozen_no_running_optimization",
+  "paid_approval": "required_again_old_batch_20usd_does_not_authorize_this_plan"
+}

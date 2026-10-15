@@ -1,0 +1,26 @@
+{
+  "schema": "willdeep.agent-rsi.review-output-golden.v2",
+  "valid": [
+    {"has_defect": true, "line": 3, "reason": "Zero must remain valid.", "reproduction": {"input": {"count": 0, "fallback": 7}, "expected": 0, "actual": 7}},
+    {"has_defect": false, "line": null, "reason": "The fixture meets the stated requirement.", "reproduction": null}
+  ],
+  "invalid": [
+    {"has_defect": true, "line": 3, "reason": "Missing concrete witness.", "reproduction": null},
+    {"has_defect": false, "line": null, "reason": "Clean result must not invent a witness.", "reproduction": {"input": {}, "expected": 0, "actual": 7}},
+    {"has_defect": true, "line": 3, "reason": "Do not accept executable model code.", "reproduction": {"input": {}, "expected": 0, "actual": 7, "code": "process.exit()"}}
+  ],
+  "raw_cases": [
+    {"id":"clean","valid":true,"raw":"{\"has_defect\":false,\"line\":null,\"reason\":\"符合要求\",\"reproduction\":null}"},
+    {"id":"duplicate-key","valid":false,"raw":"{\"has_defect\":false,\"has_defect\":true,\"line\":null,\"reason\":\"ok\",\"reproduction\":null}"},
+    {"id":"duplicate-nested-key","valid":false,"raw":"{\"has_defect\":true,\"line\":3,\"reason\":\"ok\",\"reproduction\":{\"input\":{\"count\":0,\"count\":1},\"expected\":0,\"actual\":7}}"},
+    {"id":"multiple-objects","valid":false,"raw":"{\"has_defect\":false,\"line\":null,\"reason\":\"ok\",\"reproduction\":null} {}"},
+    {"id":"markdown-fence","valid":false,"raw":"```json\n{\"has_defect\":false,\"line\":null,\"reason\":\"ok\",\"reproduction\":null}\n```"},
+    {"id":"float","valid":false,"raw":"{\"has_defect\":true,\"line\":3.0,\"reason\":\"ok\",\"reproduction\":{\"input\":{},\"expected\":0,\"actual\":7}}"},
+    {"id":"exponent","valid":false,"raw":"{\"has_defect\":true,\"line\":3e0,\"reason\":\"ok\",\"reproduction\":{\"input\":{},\"expected\":0,\"actual\":7}}"},
+    {"id":"negative-zero","valid":false,"raw":"{\"has_defect\":true,\"line\":3,\"reason\":\"ok\",\"reproduction\":{\"input\":{},\"expected\":-0,\"actual\":7}}"},
+    {"id":"unsafe-integer","valid":false,"raw":"{\"has_defect\":true,\"line\":9007199254740992,\"reason\":\"ok\",\"reproduction\":{\"input\":{},\"expected\":0,\"actual\":7}}"},
+    {"id":"reserved-nested-key","valid":false,"raw":"{\"has_defect\":true,\"line\":3,\"reason\":\"ok\",\"reproduction\":{\"input\":{\"__proto__\":{}},\"expected\":0,\"actual\":7}}"},
+    {"id":"reserved-word-in-text","valid":true,"raw":"{\"has_defect\":false,\"line\":null,\"reason\":\"constructor is text, not a key\",\"reproduction\":null}"},
+    {"id":"boolean-line","valid":false,"raw":"{\"has_defect\":true,\"line\":true,\"reason\":\"ok\",\"reproduction\":{\"input\":{},\"expected\":0,\"actual\":7}}"}
+  ]
+}
