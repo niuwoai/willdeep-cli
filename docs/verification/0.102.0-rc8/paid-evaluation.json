@@ -1,0 +1,813 @@
+{
+  "schema": "willdeep.agent-rsi.sanitized-final-delivery.v1",
+  "model": "some-im/deepseek-v4-flash",
+  "planned_samples": 288,
+  "terminal_planned_samples": 288,
+  "quality_evaluable_samples": 275,
+  "budget_exhausted_samples": 13,
+  "model_requests": 708,
+  "actual_verified_cost": {
+    "currency": "USD",
+    "microusd": 667158,
+    "usd": "0.667158",
+    "approved_total_cap_microusd": 20000000
+  },
+  "groups_by_epoch": [
+    {
+      "platform": "rust-native-worker",
+      "arm": "candidate",
+      "scoring_epoch": "v1-historical",
+      "planned_samples": 4,
+      "quality_evaluable_samples": 3,
+      "budget_exhausted": 1,
+      "quality_inference_eligible": false,
+      "metrics": {
+        "schema_valid": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 3,
+            "percent": "0.000"
+          }
+        },
+        "classification_correct": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 3,
+            "percent": "0.000"
+          }
+        },
+        "localization_correct": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 3,
+            "percent": "0.000"
+          }
+        },
+        "read_observed": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 4,
+            "percent": "75.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 4,
+            "percent": "75.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 3,
+            "percent": "0.000"
+          }
+        }
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "baseline",
+      "scoring_epoch": "v1-historical",
+      "planned_samples": 4,
+      "quality_evaluable_samples": 4,
+      "budget_exhausted": 0,
+      "quality_inference_eligible": false,
+      "metrics": {
+        "schema_valid": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          }
+        },
+        "classification_correct": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          }
+        },
+        "localization_correct": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          }
+        },
+        "read_observed": {
+          "count": 4,
+          "among_planned_samples": {
+            "numerator": 4,
+            "denominator": 4,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 4,
+            "denominator": 4,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 4,
+          "among_planned_samples": {
+            "numerator": 4,
+            "denominator": 4,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 4,
+            "denominator": 4,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 0,
+          "among_planned_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 0,
+            "denominator": 4,
+            "percent": "0.000"
+          }
+        }
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "baseline",
+      "scoring_epoch": "v1-historical",
+      "planned_samples": 3,
+      "quality_evaluable_samples": 3,
+      "budget_exhausted": 0,
+      "quality_inference_eligible": false,
+      "metrics": {
+        "schema_valid": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "classification_correct": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "localization_correct": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "read_observed": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        }
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "candidate",
+      "scoring_epoch": "v1-historical",
+      "planned_samples": 3,
+      "quality_evaluable_samples": 3,
+      "budget_exhausted": 0,
+      "quality_inference_eligible": false,
+      "metrics": {
+        "schema_valid": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "classification_correct": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "localization_correct": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "read_observed": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 3,
+          "among_planned_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 3,
+            "denominator": 3,
+            "percent": "100.000"
+          }
+        }
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "candidate",
+      "scoring_epoch": "v2-prospective",
+      "planned_samples": 69,
+      "quality_evaluable_samples": 69,
+      "budget_exhausted": 0,
+      "quality_inference_eligible": true,
+      "metrics": {
+        "schema_valid": {
+          "count": 64,
+          "among_planned_samples": {
+            "numerator": 64,
+            "denominator": 69,
+            "percent": "92.754"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 64,
+            "denominator": 69,
+            "percent": "92.754"
+          }
+        },
+        "classification_correct": {
+          "count": 64,
+          "among_planned_samples": {
+            "numerator": 64,
+            "denominator": 69,
+            "percent": "92.754"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 64,
+            "denominator": 69,
+            "percent": "92.754"
+          }
+        },
+        "localization_correct": {
+          "count": 63,
+          "among_planned_samples": {
+            "numerator": 63,
+            "denominator": 69,
+            "percent": "91.304"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 63,
+            "denominator": 69,
+            "percent": "91.304"
+          }
+        },
+        "read_observed": {
+          "count": 69,
+          "among_planned_samples": {
+            "numerator": 69,
+            "denominator": 69,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 69,
+            "denominator": 69,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 69,
+          "among_planned_samples": {
+            "numerator": 69,
+            "denominator": 69,
+            "percent": "100.000"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 69,
+            "denominator": 69,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 63,
+          "among_planned_samples": {
+            "numerator": 63,
+            "denominator": 69,
+            "percent": "91.304"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 63,
+            "denominator": 69,
+            "percent": "91.304"
+          }
+        }
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "baseline",
+      "scoring_epoch": "v2-prospective",
+      "planned_samples": 69,
+      "quality_evaluable_samples": 68,
+      "budget_exhausted": 1,
+      "quality_inference_eligible": true,
+      "metrics": {
+        "schema_valid": {
+          "count": 62,
+          "among_planned_samples": {
+            "numerator": 62,
+            "denominator": 69,
+            "percent": "89.855"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 62,
+            "denominator": 68,
+            "percent": "91.176"
+          }
+        },
+        "classification_correct": {
+          "count": 62,
+          "among_planned_samples": {
+            "numerator": 62,
+            "denominator": 69,
+            "percent": "89.855"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 62,
+            "denominator": 68,
+            "percent": "91.176"
+          }
+        },
+        "localization_correct": {
+          "count": 62,
+          "among_planned_samples": {
+            "numerator": 62,
+            "denominator": 69,
+            "percent": "89.855"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 62,
+            "denominator": 68,
+            "percent": "91.176"
+          }
+        },
+        "read_observed": {
+          "count": 68,
+          "among_planned_samples": {
+            "numerator": 68,
+            "denominator": 69,
+            "percent": "98.551"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 68,
+            "denominator": 68,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 68,
+          "among_planned_samples": {
+            "numerator": 68,
+            "denominator": 69,
+            "percent": "98.551"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 68,
+            "denominator": 68,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 62,
+          "among_planned_samples": {
+            "numerator": 62,
+            "denominator": 69,
+            "percent": "89.855"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 62,
+            "denominator": 68,
+            "percent": "91.176"
+          }
+        }
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "candidate",
+      "scoring_epoch": "v2-prospective",
+      "planned_samples": 68,
+      "quality_evaluable_samples": 61,
+      "budget_exhausted": 7,
+      "quality_inference_eligible": true,
+      "metrics": {
+        "schema_valid": {
+          "count": 26,
+          "among_planned_samples": {
+            "numerator": 26,
+            "denominator": 68,
+            "percent": "38.235"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 26,
+            "denominator": 61,
+            "percent": "42.623"
+          }
+        },
+        "classification_correct": {
+          "count": 26,
+          "among_planned_samples": {
+            "numerator": 26,
+            "denominator": 68,
+            "percent": "38.235"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 26,
+            "denominator": 61,
+            "percent": "42.623"
+          }
+        },
+        "localization_correct": {
+          "count": 26,
+          "among_planned_samples": {
+            "numerator": 26,
+            "denominator": 68,
+            "percent": "38.235"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 26,
+            "denominator": 61,
+            "percent": "42.623"
+          }
+        },
+        "read_observed": {
+          "count": 61,
+          "among_planned_samples": {
+            "numerator": 61,
+            "denominator": 68,
+            "percent": "89.706"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 61,
+            "denominator": 61,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 61,
+          "among_planned_samples": {
+            "numerator": 61,
+            "denominator": 68,
+            "percent": "89.706"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 61,
+            "denominator": 61,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 26,
+          "among_planned_samples": {
+            "numerator": 26,
+            "denominator": 68,
+            "percent": "38.235"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 26,
+            "denominator": 61,
+            "percent": "42.623"
+          }
+        }
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "baseline",
+      "scoring_epoch": "v2-prospective",
+      "planned_samples": 68,
+      "quality_evaluable_samples": 64,
+      "budget_exhausted": 4,
+      "quality_inference_eligible": true,
+      "metrics": {
+        "schema_valid": {
+          "count": 30,
+          "among_planned_samples": {
+            "numerator": 30,
+            "denominator": 68,
+            "percent": "44.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 30,
+            "denominator": 64,
+            "percent": "46.875"
+          }
+        },
+        "classification_correct": {
+          "count": 30,
+          "among_planned_samples": {
+            "numerator": 30,
+            "denominator": 68,
+            "percent": "44.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 30,
+            "denominator": 64,
+            "percent": "46.875"
+          }
+        },
+        "localization_correct": {
+          "count": 30,
+          "among_planned_samples": {
+            "numerator": 30,
+            "denominator": 68,
+            "percent": "44.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 30,
+            "denominator": 64,
+            "percent": "46.875"
+          }
+        },
+        "read_observed": {
+          "count": 64,
+          "among_planned_samples": {
+            "numerator": 64,
+            "denominator": 68,
+            "percent": "94.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 64,
+            "denominator": 64,
+            "percent": "100.000"
+          }
+        },
+        "fixture_unchanged": {
+          "count": 64,
+          "among_planned_samples": {
+            "numerator": 64,
+            "denominator": 68,
+            "percent": "94.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 64,
+            "denominator": 64,
+            "percent": "100.000"
+          }
+        },
+        "passed": {
+          "count": 30,
+          "among_planned_samples": {
+            "numerator": 30,
+            "denominator": 68,
+            "percent": "44.118"
+          },
+          "among_quality_evaluable_samples": {
+            "numerator": 30,
+            "denominator": 64,
+            "percent": "46.875"
+          }
+        }
+      }
+    }
+  ],
+  "v2_paired_classification": [
+    {
+      "platform": "macos-native-worker",
+      "scoring_epoch": "v2-prospective",
+      "independent_task_pairs": 22,
+      "candidate_minus_baseline_accuracy": 0.030303030303030307,
+      "bootstrap_task_cluster_95_percent_interval": [
+        -0.07575757575757577,
+        0.13636363636363638
+      ],
+      "task_wins": 4,
+      "task_ties": 16,
+      "task_losses": 2,
+      "repetitions_are_not_independent_tasks": true,
+      "bootstrap_replicates": 5000,
+      "bootstrap_seed": 15102026
+    },
+    {
+      "platform": "rust-native-worker",
+      "scoring_epoch": "v2-prospective",
+      "independent_task_pairs": 17,
+      "candidate_minus_baseline_accuracy": -0.0980392156862745,
+      "bootstrap_task_cluster_95_percent_interval": [
+        -0.2156862745098039,
+        0.01960784313725491
+      ],
+      "task_wins": 2,
+      "task_ties": 9,
+      "task_losses": 6,
+      "repetitions_are_not_independent_tasks": true,
+      "bootstrap_replicates": 5000,
+      "bootstrap_seed": 15102026
+    }
+  ],
+  "posthoc_format_limitations": {
+    "v2_quality_failures_examined": 81,
+    "schema_failures": 80,
+    "valid_schema_classification_errors": 0,
+    "valid_schema_exact_line_errors": 1,
+    "categories_nonexclusive": {
+      "normal_code_braces": 55,
+      "abbreviated_json_fragment": 15,
+      "multiple_complete_valid_answers": 11,
+      "no_valid_three_field_answer": 1
+    },
+    "replaces_formal_scores": false,
+    "reason_semantic_judge": false
+  },
+  "method_amendments_and_delivery_state": [
+    "首笔调用因外层路由与内部映射层级混淆而暂停；历史费用及基础设施尝试保留，不重置预算。",
+    "实际账单包含时段 2 倍倍率；用户批准本批累计总预算 20 美元，模型、288 个计划样本与尝试上限不扩张。",
+    "v2 经明确批准修正正常行内代码未闭合花括号误拒；v1 正式结果原样保存，免费事后回放不混入正式分数。",
+    "已核价且证据完整的预算耗尽作为独立非质量终态，不借基础设施重试补分；未结束或未知费用仍阻断。",
+    "后续 Host 恢复包含元数据与门禁修正；冻结模型、原生执行产物、候选定义和评分规则继续保留审计边界。",
+    "Mac 独立 rc3 修复已完成免费测试，尚未合并、尚未发布；评测结束不等于安装或发版。"
+  ],
+  "amendment_audit_verified": {
+    "signed_terminal_classification_amendment": true,
+    "signed_billing_recovery_amendment": true,
+    "signed_local_denial_budget_amendment": true,
+    "signed_input_reservation_budget_amendment": true,
+    "signed_metadata_read_recovery_amendment": true
+  },
+  "audited_metadata_only_resume_checkpoints": 1,
+  "native_initial_artifact_boundary_audited": true,
+  "independent_final_audit": {
+    "passed": true,
+    "check_count": 16253
+  },
+  "automatic_promotion": false,
+  "release_performed": false,
+  "interpretation": [
+    "288 是计划终态分母，预算耗尽占据计划位置但不计普通质量分；可评分观察另作分母。",
+    "v1 历史与 v2 后续正式分开报告；事后免费回放不进入任一正式计数。",
+    "配对仅纳入同评分版本、同任务两臂各三重复完整的 v2 观察；重复不是独立题目。",
+    "固定 seed 的 5000 次任务簇 bootstrap 只描述小套件不确定性，不能证明一般能力提升。",
+    "格式门禁连带的分类/定位 false 不能独立解释为审查判断错；代码片段标签仅为事后启发式诊断。",
+    "reason 的语义、复现质量与真实任务泛化未被本评分器评测；未自动晋升、未自动发布。"
+  ],
+  "input_file_sha256": {
+    "audit": "0e3d8ab166a4e6746d2a3668014562f7c114166d7f3ebcdf08a77578892a90b6",
+    "report": "03c47ec2d3114f8dd92db92ff3117bb7c469e73699bac860a070af4b1652f8a1",
+    "format": "1ef851f194b760b0d64b1135539eb2cc07bbc6b8e65c2b071982bd2a24ffe18b"
+  }
+}

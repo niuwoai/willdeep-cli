@@ -52,23 +52,36 @@ module AgentRsiLive
   # replay of requests with missing receipts. Reservation is persisted BEFORE
   # dispatch, including holdout accesses and all attempts.
   class Ledger
+    MAXIMUM_BUDGET_MICROUSD = 20_000_000
     attr_reader :state
 
-    def initialize(directory, manifest, expires_at: nil)
+    def initialize(directory, manifest, expires_at: nil, resume_from_sha256: nil)
       FileUtils.mkdir_p(directory, mode: 0o700)
       @directory = directory
       @lock = File.open(File.join(directory, 'run.lock'), File::RDWR | File::CREAT, 0o600)
       raise Denied, 'experiment already running' unless @lock.flock(File::LOCK_EX | File::LOCK_NB)
-      raise Denied, 'never overwrite or auto-resume an experiment ledger' if File.exist?(path)
       @rate = manifest.fetch('maximum_bill_microusd_per_million_tokens')
       @expected_route = manifest.fetch('expected_routed_model', 'fixed-route')
+      @budget_cap = manifest.fetch('budget_cap_microusd', LIMITS[:microdollars])
       raise Denied, 'invalid effective bill rate' unless @rate.is_a?(Integer) && @rate.positive?
+      raise Denied, 'invalid signed budget cap' unless @budget_cap.is_a?(Integer) && @budget_cap.positive? && @budget_cap <= MAXIMUM_BUDGET_MICROUSD
       raise Denied, 'wrong immutable proposal' unless manifest['proposal_sha256'] == PROPOSAL
       @mutex = Mutex.new
       @expires_at = expires_at
+      if File.exist?(path)
+        raise Denied, 'never overwrite or auto-resume an experiment ledger' unless resume_from_sha256
+        resume_ledger(manifest, resume_from_sha256)
+        return
+      end
+      raise Denied, 'resume requires the existing original ledger' if resume_from_sha256
       @state = {'manifest_sha256' => AgentRsiLive.digest(manifest), 'attempts' => [], 'requests' => [],
-                'holdout_accesses' => 0, 'retries' => 0, 'holdout_retries' => 0, 'paused' => nil}
+                'holdout_accesses' => 0, 'retries' => 0, 'holdout_retries' => 0, 'paused' => nil,
+                'budget_cap_microusd' => @budget_cap}
+      preserve_manifest(manifest)
       save
+    rescue StandardError
+      @lock.close if @lock && !@lock.closed?
+      raise
     end
 
     def close
@@ -89,7 +102,10 @@ module AgentRsiLive
     end
 
     def self.exposure(row)
-      [row.fetch('accounted_microusd', row['reserved_microusd']), row.fetch('observed_bill_microusd', 0)].max
+      values = [row.fetch('accounted_microusd', row['reserved_microusd']), row.fetch('observed_bill_microusd', 0),
+                row.fetch('verified_bill_microusd', 0)]
+      values << row['reserved_microusd'] if %w[reserved unknown].include?(row['status'])
+      values.compact.max || 0
     end
 
     def begin_trial(trial)
@@ -156,7 +172,7 @@ module AgentRsiLive
         reserved = input_bound + output_cap
         cost_bound = (reserved * @rate + 999_999) / 1_000_000
         exposure = @state['requests'].sum { |row| self.class.exposure(row) }
-        check!(exposure + cost_bound <= LIMITS[:microdollars], 'global dollar reservation exhausted')
+        check!(exposure + cost_bound <= @budget_cap, 'global dollar reservation exhausted')
         admitted = body.merge('max_tokens' => output_cap)
         record = {'receipt_id' => SecureRandom.uuid, 'trial_id' => trial_id, 'sequence' => sequence,
                   'status' => 'reserved', 'reserved_input_tokens' => input_bound, 'max_tokens' => output_cap,
@@ -208,6 +224,131 @@ module AgentRsiLive
 
     private
 
+    # The Host verifies the signed grant and passes its exact raw-ledger digest.
+    # This method never creates authority from ledger fields or a new budget.
+    def resume_ledger(manifest, expected_raw_sha)
+      check!(!@expires_at || Time.now < @expires_at, 'authorization expired')
+      check!(expected_raw_sha.is_a?(String) && expected_raw_sha.match?(/\A[0-9a-f]{64}\z/), 'invalid resume ledger digest')
+      metadata = File.lstat(path)
+      check!(metadata.file? && !metadata.symlink?, 'resume ledger must be a regular file')
+      raw = File.binread(path)
+      check!(Digest::SHA256.hexdigest(raw) == expected_raw_sha, 'resume ledger differs from signed grant')
+      JSON.parse(raw, object_class: Grader::UniqueObject)
+      @state = JSON.parse(raw)
+      validate_resume_state
+      old_hash = @state.fetch('manifest_sha256')
+      old_manifest = previous_manifest(old_hash)
+      validate_resume_scope(old_manifest, manifest)
+      new_hash = AgentRsiLive.digest(manifest)
+      preserve_manifest(old_manifest)
+      preserve_manifest(manifest)
+      snapshot = File.join('amendments', "ledger-#{expected_raw_sha}.json")
+      preserve_bytes(File.join(@directory, snapshot), raw)
+      amendments = @state.fetch('amendments', [])
+      check!(amendments.is_a?(Array), 'invalid existing amendment chain')
+      amendment = {'resume_from_sha256' => expected_raw_sha, 'previous_manifest_sha256' => old_hash,
+                   'manifest_sha256' => new_hash, 'ledger_snapshot' => snapshot,
+                   'resume_receipt' => File.join('amendments', "resume-#{expected_raw_sha}.json"),
+                   'previous_manifest_snapshot' => manifest_snapshot(old_hash),
+                   'manifest_snapshot' => manifest_snapshot(new_hash),
+                   'previous_amendment_sha256' => amendments.empty? ? nil : AgentRsiLive.digest(amendments.last),
+                   'previous_budget_cap_microusd' => old_manifest.fetch('budget_cap_microusd', LIMITS[:microdollars]),
+                   'budget_cap_microusd' => @budget_cap,
+                   'previous_pause' => @state['paused'], 'amended_at' => Time.now.utc.iso8601}
+      @state['amendments'] = amendments + [amendment]
+      @state['manifest_sha256'] = new_hash
+      @state['budget_cap_microusd'] = @budget_cap
+      @state['paused'] = nil
+      @active = nil
+      save
+      receipt = {'previous_ledger_sha256' => expected_raw_sha, 'amended_ledger_sha256' => Digest::SHA256.file(path).hexdigest,
+                 'previous_manifest_sha256' => old_hash, 'manifest_sha256' => new_hash, 'amended_at' => amendment['amended_at']}
+      preserve_bytes(File.join(@directory, amendment['resume_receipt']), AgentRsiLive.canonical(receipt))
+    rescue JSON::ParserError, KeyError, TypeError => error
+      raise Denied, "invalid resume ledger or manifest (#{error.class})"
+    end
+
+    def validate_resume_state
+      check!(@state.is_a?(Hash) && @state['manifest_sha256'].is_a?(String) &&
+             @state['manifest_sha256'].match?(/\A[0-9a-f]{64}\z/), 'invalid original manifest identity')
+      attempts, requests = @state.values_at('attempts', 'requests')
+      check!(attempts.is_a?(Array) && requests.is_a?(Array), 'invalid original ledger rows')
+      check!(attempts.length <= LIMITS[:attempts] && requests.length <= LIMITS[:requests], 'original global limits exceeded')
+      terminals = %w[passed quality_failure infrastructure_error incomplete budget_exhausted interrupted]
+      check!(attempts.all? { |row| row.is_a?(Hash) && terminals.include?(row['status']) }, 'running or unresolved trial blocks resume')
+      counters = {'holdout_accesses' => [:holdout_accesses, attempts.count { |r| r['split'] == 'holdout' }],
+                  'retries' => [:retries, attempts.count { |r| r['attempt'] == 2 }],
+                  'holdout_retries' => [:holdout_retries, attempts.count { |r| r['attempt'] == 2 && r['split'] == 'holdout' }]}
+      counters.each do |name, (limit, minimum)|
+        value = @state[name]
+        check!(value.is_a?(Integer) && value >= minimum && value <= LIMITS[limit], 'invalid or reduced original quota counter')
+      end
+      requests.each do |row|
+        check!(row.is_a?(Hash) && row['status'] == 'settled', 'reserved or unknown request blocks resume')
+        %w[actual_tokens input_tokens output_tokens accounted_microusd verified_bill_microusd].each do |field|
+          check!(row[field].is_a?(Integer) && row[field] >= 0, 'resume requires known settled tokens and verified bills')
+        end
+        check!(row['actual_tokens'] == row['input_tokens'] + row['output_tokens'], 'inconsistent settled token usage')
+        if row.key?('observed_bill_microusd')
+          check!(row['observed_bill_microusd'].is_a?(Integer) && row['observed_bill_microusd'] >= 0, 'invalid observed bill')
+        end
+      end
+      check!(requests.sum { |row| row['actual_tokens'] } <= LIMITS[:tokens], 'original token cap exceeded')
+      check!(requests.sum { |row| self.class.exposure(row) } <= @budget_cap, 'original dollar cap exceeded')
+      check!(!@state['frozen_routed_model'] || @state['frozen_routed_model'] == @expected_route, 'existing frozen route differs from amendment')
+    end
+
+    def validate_resume_scope(previous, current)
+      check!(previous['proposal_sha256'] == PROPOSAL && current['proposal_sha256'] == PROPOSAL, 'resume changed immutable proposal')
+      scope = previous.dig('account', 'scope_sha256')
+      check!(scope.is_a?(String) && !scope.empty? && current.dig('account', 'scope_sha256') == scope, 'resume changed account scope')
+      original = File.realpath(@directory)
+      check!([previous['run_directory'], current['run_directory']].all? { |directory| directory.is_a?(String) && File.realpath(directory) == original },
+             'resume moved the original experiment directory')
+    rescue Errno::ENOENT
+      raise Denied, 'resume moved the original experiment directory'
+    end
+
+    def previous_manifest(hash)
+      snapshot = File.join(@directory, manifest_snapshot(hash))
+      source = File.exist?(snapshot) ? snapshot : File.join(@directory, 'manifest.json')
+      check!(File.file?(source) && !File.symlink?(source), 'original manifest snapshot unavailable')
+      manifest = JSON.parse(File.binread(source))
+      check!(AgentRsiLive.digest(manifest) == hash, 'original manifest snapshot differs from ledger')
+      manifest
+    end
+
+    def manifest_snapshot(hash)
+      File.join('amendments', "manifest-#{hash}.json")
+    end
+
+    def preserve_manifest(manifest)
+      hash = AgentRsiLive.digest(manifest)
+      destination = File.join(@directory, manifest_snapshot(hash))
+      if File.exist?(destination)
+        check!(File.file?(destination) && !File.symlink?(destination) && AgentRsiLive.digest(JSON.parse(File.binread(destination))) == hash,
+               'immutable manifest snapshot differs')
+        return
+      end
+      source = File.join(@directory, 'manifest.json')
+      raw = File.binread(source) if File.file?(source) && !File.symlink?(source)
+      bytes = raw && AgentRsiLive.digest(JSON.parse(raw)) == hash ? raw : AgentRsiLive.canonical(manifest)
+      preserve_bytes(destination, bytes)
+    end
+
+    def preserve_bytes(destination, bytes)
+      FileUtils.mkdir_p(File.dirname(destination), mode: 0o700)
+      if File.exist?(destination)
+        check!(File.file?(destination) && !File.symlink?(destination) && File.binread(destination) == bytes, 'immutable amendment snapshot differs')
+        return
+      end
+      File.open(destination, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
+        file.write(bytes)
+        file.flush
+        file.fsync
+      end
+    end
+
     def check!(condition, reason)
       raise Denied, reason unless condition
     end
@@ -216,11 +357,14 @@ module AgentRsiLive
   class Broker
     attr_reader :origin
 
-    def initialize(ledger, upstream:, api_key:, directory:, transport: nil)
+    def initialize(ledger, upstream:, api_key:, directory:, transport: nil, expected_response_model: nil, expected_gateway_version: nil, billing_validator: nil)
       @ledger, @upstream, @api_key, @directory = ledger, URI(upstream), api_key, directory
       raise Denied, 'upstream must be fixed HTTPS inference endpoint' unless @upstream.scheme == 'https' && @upstream.path.end_with?('/chat/completions') && @upstream.userinfo.nil?
       @capability = @trial_id = nil
       @transport = transport
+      @expected_response_model = expected_response_model
+      @expected_gateway_version = expected_gateway_version
+      @billing_validator = billing_validator
       @server = WEBrick::HTTPServer.new(BindAddress: '127.0.0.1', Port: 0, AccessLog: [], Logger: WEBrick::Log.new(File::NULL), RequestTimeout: 125)
       @origin = "http://127.0.0.1:#{@server.config[:Port]}"
       @server.mount_proc('/v1/chat/completions') { |request, response| handle(request, response) }
@@ -266,13 +410,22 @@ module AgentRsiLive
                            {'http_status' => result.code.to_i, 'headers' => headers, 'body' => result.body})
         raise Denied, "upstream HTTP #{result.code}; charge unresolved" unless result.code == '200'
         data = JSON.parse(result.body)
+        raise Denied, 'gateway response model alias changed' if @expected_response_model && data['model'] != @expected_response_model
+        raise Denied, 'gateway version changed' if @expected_gateway_version && headers['x-app-version'] != @expected_gateway_version
         @ledger.settle(record, data, headers)
+        @billing_validator&.call(record)
         headers.each { |key, value| response[key] = value if value }
         response['X-RSI-Receipt-Id'] = record['receipt_id']
         response['X-RSI-Approved-Model'] = MODEL
         response.status, response.body = 200, result.body
       rescue StandardError => error
-        @ledger.unknown(record, error.is_a?(Denied) ? error.message : 'network or malformed response; charge unresolved') unless record['status'] == 'unknown'
+        reason = error.is_a?(Denied) ? error.message : 'network, bill or malformed response unresolved'
+        if record['status'] == 'settled' && record.key?('observed_bill_microusd')
+          record['execution_status'] = 'rejected_at_billing_gate'
+          @ledger.pause(reason)
+        elsif record['status'] != 'unknown'
+          @ledger.unknown(record, reason)
+        end
         raise Denied, @ledger.state['paused']
       end
     rescue StandardError => error
@@ -299,27 +452,68 @@ module AgentRsiLive
       end
     end
 
-    # Parse top-level JSON objects while respecting strings and escapes. Do not
-    # grade Worker wrappers or accept several conflicting model answers.
-    def objects(text)
-      objects, start, depth, quoted, escaped = [], nil, 0, false, false
-      text.each_char.with_index do |character, index|
+    def balanced_object(text, start)
+      depth = 0
+      quoted = escaped = false
+      (start...text.length).each do |index|
+        character = text[index]
         if quoted
           if escaped then escaped = false
           elsif character == '\\' then escaped = true
           elsif character == '"' then quoted = false
           end
-        elsif character == '"' && depth.positive? then quoted = true
-        elsif character == '{'
-          start = index if depth.zero?
-          depth += 1
-        elsif character == '}' && depth.positive?
+        elsif character == '"' then quoted = true
+        elsif character == '{' then depth += 1
+        elsif character == '}'
           depth -= 1
-          objects << text[start..index] if depth.zero?
+          return index if depth.zero?
         end
       end
-      return [] unless depth.zero?
-      objects.map { |object| JSON.parse(object, object_class: UniqueObject, allow_duplicate_key: false) rescue nil }
+      nil
+    end
+
+    # Parse every complete JSON object, including inline-code answers. Only an
+    # unmatched non-JSON brace following code in a closed inline span is ignored.
+    # JSON strings are consumed atomically so their backticks remain literal.
+    def objects(text)
+      found = []
+      index = 0
+      inline_width = inline_start = nil
+      ignored_incomplete_inline = false
+      while index < text.length
+        character = text[index]
+        if character == '{'
+          ending = balanced_object(text, index)
+          if ending
+            begin
+              found << JSON.parse(text[index..ending], object_class: UniqueObject, allow_duplicate_key: false)
+            rescue JSON::ParserError
+              return []
+            end
+            index = ending + 1
+            next
+          end
+          prefix = inline_start ? text[inline_start...index].strip : ''
+          return [] unless inline_width && !prefix.empty? && !text[(index + 1)..].lstrip.start_with?('"')
+          ignored_incomplete_inline = true
+        elsif character == '`'
+          width = text[index..].match(/\A`+/)[0].length
+          if inline_width
+            if width == inline_width
+              inline_width = inline_start = nil
+              ignored_incomplete_inline = false
+            end
+          elsif width < 3
+            inline_width = width
+            inline_start = index + width
+          end
+          index += width
+          next
+        end
+        index += 1
+      end
+      return [] if ignored_incomplete_inline
+      found
     end
 
     def grade(raw, expected, read_observed:, fixture_unchanged:)

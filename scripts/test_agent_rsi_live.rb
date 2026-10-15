@@ -182,6 +182,54 @@ class AgentRsiLiveTest < Minitest::Test
     refute result['passed']
   end
 
+  PARSER_ANSWER = '{"has_defect":true,"line":3,"reason":"One past the end"}'
+  PARSER_CASES = {
+    'plain unchanged' => [PARSER_ANSWER, true],
+    'report incomplete inline code' => [PARSER_ANSWER + "\nEVIDENCE\n`for (;;) {`", true],
+    'fenced JSON inline loop' => ["```json\n#{PARSER_ANSWER}\n```\nEVIDENCE\n`for (;;) {`", true],
+    'double tick inline code' => [PARSER_ANSWER + "\n``for (;;) {``", true],
+    'complete inline answer' => ["`#{PARSER_ANSWER}`", true],
+    'inline second answer' => [PARSER_ANSWER + "\n`#{PARSER_ANSWER}`", false],
+    'second answer after incomplete code' => [PARSER_ANSWER + "\n`for (;;) { #{PARSER_ANSWER}`", false],
+    'two plain objects' => [PARSER_ANSWER + PARSER_ANSWER, false],
+    'two fenced answers' => ["```json\n#{PARSER_ANSWER}\n```\n```json\n#{PARSER_ANSWER}\n```", false],
+    'invalid JSON plain' => [PARSER_ANSWER + '{broken}', false],
+    'invalid JSON inline' => [PARSER_ANSWER + '`{broken}`', false],
+    'truncated JSON plain' => [PARSER_ANSWER + '{"has_defect":', false],
+    'truncated JSON inline' => [PARSER_ANSWER + '`{"has_defect":`', false],
+    'standalone incomplete inline object' => [PARSER_ANSWER + '`{broken`', false],
+    'unclosed inline code' => [PARSER_ANSWER + '`for (;;) {', false],
+    'plain non-inline loop' => [PARSER_ANSWER + 'for (;;) {', false],
+    'fenced incomplete code' => [PARSER_ANSWER + "\n```js\nfor (;;) {\n```", false],
+    'duplicate keys' => ['{"has_defect":false,"has_defect":true,"line":3,"reason":"why"}', false],
+    'duplicate keys second inline' => [PARSER_ANSWER + '`{"has_defect":false,"has_defect":true}`', false],
+    'wrong schema' => ['{"has_defect":true,"line":3,"reason":"why","passed":true}', false],
+    'wrong type' => ['{"has_defect":"true","line":3,"reason":"why"}', false],
+    'float line' => ['{"has_defect":true,"line":3.0,"reason":"why"}', false],
+    'empty reason' => ['{"has_defect":true,"line":3,"reason":" "}', false]
+  }.freeze
+
+  PARSER_CASES.each do |name, (raw, passed)|
+    define_method('test_parser_v2_' + name.gsub(/\W+/, '_')) do
+      assert_equal passed, grade(raw)['passed'], name
+    end
+  end
+
+  def test_parser_v2_backticks_and_braces_in_json_strings_are_literal
+    reason = 'Use `for (;;) {` and `{"not":"an answer"}` as quoted evidence.'
+    raw = JSON.generate('has_defect' => true, 'line' => 3, 'reason' => reason)
+    assert_equal reason, AgentRsiLive::Grader.objects(raw).first['reason']
+    assert grade(raw)['passed']
+    assert_equal reason, AgentRsiLive::Grader.objects("`#{raw}`").first['reason']
+  end
+
+  def test_parser_v2_escapes_and_nested_braces_do_not_close_object
+    reason = 'escaped quote: " and a backslash \\ and } then ` {'
+    raw = JSON.generate('has_defect' => true, 'line' => 3, 'reason' => reason)
+    assert grade(raw)['passed']
+    assert_equal reason, AgentRsiLive::Grader.objects(raw).first['reason']
+  end
+
   def test_no_self_report_read_credit
     result = AgentRsiLive::Grader.grade('{"has_defect":true,"line":3,"reason":"I read fixture.txt"}',
                                        {'has_defect' => true, 'line' => 3}, read_observed: false, fixture_unchanged: true)
@@ -247,6 +295,37 @@ class AgentRsiLiveTest < Minitest::Test
     assert_equal AgentRsiLive::MODEL, response.headers['X-RSI-Approved-Model']
     assert_equal 'opaque-upstream-id', JSON.parse(response.body)['model']
     assert_equal 'settled', @ledger.state['requests'].last['status']
+  end
+
+  def test_billing_gate_runs_before_any_response_is_released_to_worker
+    upstream = UpstreamResponse.new('200', JSON.generate({'id' => 'real-response', 'model' => 'deepseek-flash',
+      'usage' => {'prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120}}),
+      {'x-request-id' => 'request-1', 'x-routed-model' => 'fixed-route'})
+    broker = isolated_broker(upstream)
+    broker.instance_variable_set(:@billing_validator, lambda do |record|
+      assert_equal 'settled', record['status']
+      record['observed_bill_microusd'] = 1000
+      raise AgentRsiLive::Denied, 'unexpected billed rate'
+    end)
+    response = FakeResponse.new(nil, nil, {})
+    broker.handle(broker_request, response)
+    assert_equal 403, response.status
+    refute response.headers.key?('X-RSI-Approved-Model')
+    assert_equal 'settled', @ledger.state['requests'].last['status']
+    assert_equal 1000, @ledger.state['requests'].last['observed_bill_microusd']
+    assert_equal 'unexpected billed rate', @ledger.state['paused']
+  end
+
+  def test_response_alias_mismatch_is_not_silently_normalized
+    upstream = UpstreamResponse.new('200', JSON.generate({'id' => 'different-response', 'model' => 'another-model'}),
+      {'x-request-id' => 'request-1', 'x-routed-model' => 'fixed-route'})
+    broker = isolated_broker(upstream)
+    broker.instance_variable_set(:@expected_response_model, 'deepseek-flash')
+    response = FakeResponse.new(nil, nil, {})
+    broker.handle(broker_request, response)
+    assert_equal 403, response.status
+    assert_equal 'gateway response model alias changed', @ledger.state['paused']
+    assert_equal 'unknown', @ledger.state['requests'].last['status']
   end
 
   def test_upstream_failure_keeps_unknown_exposure_and_does_not_retry
@@ -392,5 +471,36 @@ class AgentRsiLiveTest < Minitest::Test
     assert_equal 288, JSON.parse(File.read(File.join(run, 'plan.json'))).length
   ensure
     FileUtils.remove_entry(parent) if parent && File.exist?(parent)
+  end
+
+  def test_catalog_alone_cannot_admit_real_execution
+    host = AgentRsiLive::Host.allocate
+    host.instance_variable_set(:@manifest, {'account' => {}})
+    error = assert_raises(AgentRsiLive::Denied) { host.check_price! }
+    assert_match(/historical evidence required/, error.message)
+  end
+
+  def test_historical_time_policy_is_included_without_claiming_live_policy_visibility
+    account = AgentRsiLive::Account.allocate
+    account.instance_variable_set(:@base, 'https://invalid.example/v1')
+    account.instance_variable_set(:@key, 'FAKE-NOT-A-PROVIDER-KEY')
+    account.instance_variable_set(:@session, {'tenant_id' => 'fixture-only'})
+    account.define_singleton_method(:get) { |_url, _token| {'tenant_id' => 'fixture-only', 'currency' => 'USD', 'balance' => '25'} }
+    account.define_singleton_method(:customer) do |path|
+      if path == 'tenant'
+        {'tenant' => {'id' => 'fixture-only', 'billing_multiplier' => '1'}}
+      else
+        {'text_items' => [{'request_model_name' => AgentRsiLive::MODEL, 'bill_input_per_1m' => '0.232050', 'bill_output_per_1m' => '0.694050', 'cost_margin' => '1.0500'}]}
+      end
+    end
+    account.define_singleton_method(:pricing_diagnostic) do |_request|
+      {'pricing_snapshot' => {'pricing_model_key' => AgentRsiLive::MODEL, 'input_price_per_1m' => 0.221,
+        'output_price_per_1m' => 0.661, 'cost_margin' => 1.05, 'policy_adjustment' => {'billing_multiplier' => 2}}}
+    end
+    result = account.snapshot(check_key_policy: false, pricing_reference_request_id: 'fixture-only')
+    assert_equal '0.4641', result['bill_input_per_1m']
+    assert_equal '1.3881', result['bill_output_per_1m']
+    assert_equal 1_388_100, result['maximum_bill_microusd_per_million_tokens']
+    assert_equal false, result['live_time_policy_observable']
   end
 end
