@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::Path, time::Duration};
 use willdeep_core::agent_definition::store::{AgentLibrary, Origin, private_write};
+mod resolution;
 mod trusted_keys;
+#[cfg(test)]
+use resolution::resolve;
+pub use resolution::{Conflict, ResolveChoice, resolve_scoped};
 use willdeep_core::agent_definition::{AgentPackage, MAX_PACKAGE_BYTES, valid_hash};
 
 pub const DEFAULT_ORIGIN: &str = "https://some.im";
@@ -36,6 +40,17 @@ impl CustomerSession {
             "incomplete customer identity"
         );
         private_write(&home.join("agent-session.json"), &serde_json::to_vec(self)?)
+    }
+    pub fn ensure_current(&self, home: &Path) -> Result<()> {
+        let current = Self::load(home)?;
+        ensure!(
+            current.origin == self.origin
+                && current.user_id == self.user_id
+                && current.tenant_id == self.tenant_id
+                && current.token == self.token,
+            "customer account changed; synchronize again"
+        );
+        Ok(())
     }
 }
 
@@ -195,6 +210,17 @@ impl Service {
     }
     pub async fn list(&self, session: &CustomerSession) -> Result<Vec<RemoteItem>> {
         self.verified_session(session).await?;
+        self.list_items(session).await
+    }
+    async fn list_scoped(&self, home: &Path, session: &CustomerSession) -> Result<Vec<RemoteItem>> {
+        session.ensure_current(home)?;
+        self.verified_session(session).await?;
+        session.ensure_current(home)?;
+        let items = self.list_items(session).await?;
+        session.ensure_current(home)?;
+        Ok(items)
+    }
+    async fn list_items(&self, session: &CustomerSession) -> Result<Vec<RemoteItem>> {
         let body = self
             .read(
                 self.client
@@ -302,6 +328,11 @@ impl RemoteItem {
                     && package.signature.is_none(),
                 "private package identity mismatch"
             );
+        } else {
+            ensure!(
+                self.package.is_none(),
+                "deleted private agent must not contain a package"
+            );
         }
         Ok(())
     }
@@ -313,12 +344,13 @@ pub struct SyncReport {
     pub uploaded: Vec<String>,
     pub deleted: Vec<String>,
     pub conflicts: Vec<String>,
+    pub conflict_details: Vec<Conflict>,
 }
 
 pub async fn synchronize(home: &Path) -> Result<SyncReport> {
     let session = CustomerSession::load(home)?;
     let service = Service::new(&session.origin)?;
-    let remote = service.list(&session).await?;
+    let remote = service.list_scoped(home, &session).await?;
     let library = session.library(home);
     let local = library.installations()?;
     let mut report = SyncReport::default();
@@ -327,6 +359,7 @@ pub async fn synchronize(home: &Path) -> Result<SyncReport> {
         .map(|item| (item.definition_id.clone(), item))
         .collect();
     for (id, item) in &remote {
+        session.ensure_current(home)?;
         let previous = local.get(id);
         if previous.is_some_and(|local| {
             local.dirty && local.remote_etag.as_deref() != Some(item.etag.as_str())
@@ -372,6 +405,7 @@ pub async fn synchronize(home: &Path) -> Result<SyncReport> {
             continue;
         }
         let package = library.package(&item.sha256)?;
+        session.ensure_current(home)?;
         let key = stable_request_key(
             &session,
             "put",
@@ -384,6 +418,7 @@ pub async fn synchronize(home: &Path) -> Result<SyncReport> {
             .await
         {
             Ok(result) => {
+                session.ensure_current(home)?;
                 library.mark_synced(id, &item.sha256, result.etag)?;
                 report.uploaded.push(id.clone());
             }
@@ -393,6 +428,13 @@ pub async fn synchronize(home: &Path) -> Result<SyncReport> {
                 report.conflicts.push(id.clone())
             }
             Err(error) => return Err(error),
+        }
+    }
+    for id in &report.conflicts {
+        if let (Some(local), Some(remote)) = (local.get(id), remote.get(id)) {
+            let mut conflict = Conflict::new(local, remote);
+            conflict.local_version = library.package(&local.sha256)?.definition.version;
+            report.conflict_details.push(conflict);
         }
     }
     Ok(report)

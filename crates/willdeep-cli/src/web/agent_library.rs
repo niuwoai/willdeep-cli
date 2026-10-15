@@ -16,8 +16,30 @@ async fn operation(
         ));
     }
     const ALLOWED: &[&str] = &[
-        "list", "save", "import", "export", "fork", "history", "pin", "enable", "rollback",
-        "catalog", "preview", "install", "share", "sync", "delete", "logout", "bind",
+        "list",
+        "save",
+        "import",
+        "export",
+        "fork",
+        "history",
+        "pin",
+        "enable",
+        "rollback",
+        "catalog",
+        "preview",
+        "install",
+        "share",
+        "sync",
+        "resolve",
+        "delete",
+        "logout",
+        "bind",
+        "rsi.list",
+        "rsi.candidate",
+        "rsi.prepare",
+        "rsi.run",
+        "rsi.report",
+        "rsi.upload",
     ];
     if !ALLOWED.contains(&operation.as_str()) {
         return Err(WebError::forbidden("agent library operation unavailable"));

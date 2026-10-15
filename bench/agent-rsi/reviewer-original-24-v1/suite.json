@@ -1,0 +1,197 @@
+{
+  "suite_id": "reviewer-original-24-v1",
+  "tasks": [
+    {
+      "task_id": "loop-bound-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "lowercaseAll",
+      "fixture": "// Every input string is converted exactly once; input contains only strings.\nfunction lowercaseAll(values: string[]) {\n  const result: string[] = [];\n  for (let i = 0; i <= values.length; i++) {\n    result.push(values[i].toLowerCase());\n  }\n  return result;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":4,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "loop-bound-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "lowercaseAll",
+      "fixture": "// Every input string is converted exactly once; input contains only strings.\nfunction lowercaseAll(values: string[]) {\n  const result: string[] = [];\n  for (let i = 0; i < values.length; i++) {\n    result.push(values[i].toLowerCase());\n  }\n  return result;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "zero-default-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "configuredCount",
+      "fixture": "// A configured count of zero is valid; only null or undefined uses the fallback.\nfunction configuredCount(count: number | null | undefined, fallback: number) {\n  return count || fallback;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "zero-default-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "configuredCount",
+      "fixture": "// A configured count of zero is valid; only null or undefined uses the fallback.\nfunction configuredCount(count: number | null | undefined, fallback: number) {\n  return count ?? fallback;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "disabled-admin-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "mayEdit",
+      "fixture": "// Disabled accounts must never edit, including administrators.\nfunction mayEdit(isAdmin: boolean, isOwner: boolean, enabled: boolean) {\n  return isAdmin || isOwner && enabled;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "disabled-admin-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "mayEdit",
+      "fixture": "// Disabled accounts must never edit, including administrators.\nfunction mayEdit(isAdmin: boolean, isOwner: boolean, enabled: boolean) {\n  return (isAdmin || isOwner) && enabled;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "async-catch-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "loadOrFallback",
+      "fixture": "// Any rejected load promise must be caught and return the fallback string.\nasync function loadOrFallback(load: () => Promise<string>) {\n  try {\n    return load();\n  } catch {\n    return \"fallback\";\n  }\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":4,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "async-catch-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "loadOrFallback",
+      "fixture": "// Any rejected load promise must be caught and return the fallback string.\nasync function loadOrFallback(load: () => Promise<string>) {\n  try {\n    return await load();\n  } catch {\n    return \"fallback\";\n  }\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "sort-mutation-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "ascendingCopy",
+      "fixture": "// Return sorted values while preserving the caller's input array unchanged.\nfunction ascendingCopy(values: number[]) {\n  return values.sort((a, b) => a - b);\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "sort-mutation-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "ascendingCopy",
+      "fixture": "// Return sorted values while preserving the caller's input array unchanged.\nfunction ascendingCopy(values: number[]) {\n  return [...values].sort((a, b) => a - b);\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "expiry-boundary-bug",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "isExpired",
+      "fixture": "// expiresAt is an exclusive boundary: a value equal to now is expired.\nfunction isExpired(expiresAt: number, now: number) {\n  return expiresAt < now;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "expiry-boundary-clean",
+      "split": "validation",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "isExpired",
+      "fixture": "// expiresAt is an exclusive boundary: a value equal to now is expired.\nfunction isExpired(expiresAt: number, now: number) {\n  return expiresAt <= now;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "empty-progress-bug",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "progressPercent",
+      "fixture": "// Inputs are nonnegative; zero total must return numeric zero.\nfunction progressPercent(done: number, total: number) {\n  return done / total * 100;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "empty-progress-clean",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "progressPercent",
+      "fixture": "// Inputs are nonnegative; zero total must return numeric zero.\nfunction progressPercent(done: number, total: number) {\n  return total === 0 ? 0 : done / total * 100;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "page-offset-bug",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "pageOffset",
+      "fixture": "// Pages start at 1, page and size are positive integers, first page offset is zero.\nfunction pageOffset(page: number, size: number) {\n  return Math.max(1, page) * size;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "page-offset-clean",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "pageOffset",
+      "fixture": "// Pages start at 1, page and size are positive integers, first page offset is zero.\nfunction pageOffset(page: number, size: number) {\n  return (Math.max(1, page) - 1) * size;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "duplicate-key-bug",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "uniqueIndex",
+      "fixture": "// Duplicate IDs must throw; silently choosing either entry is forbidden.\nfunction uniqueIndex(items: {id: string}[]) {\n  const result = new Map<string, {id: string}>();\n  for (const item of items) {\n    result.set(item.id, item);\n  }\n  return result;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":5,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "duplicate-key-clean",
+      "split": "regression",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "uniqueIndex",
+      "fixture": "// Duplicate IDs must throw; silently choosing either entry is forbidden.\nfunction uniqueIndex(items: {id: string}[]) {\n  const result = new Map<string, {id: string}>();\n  for (const item of items) {\n    if (result.has(item.id)) throw new Error(\"duplicate id\");\n    result.set(item.id, item);\n  }\n  return result;\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "release-on-error-bug",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "withPermit",
+      "fixture": "// release must run exactly once after acquire succeeds, even when work rejects.\nasync function withPermit(acquire: () => Promise<() => void>, work: () => Promise<string>) {\n  const release = await acquire();\n  const value = await work();\n  release();\n  return value;\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":4,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "release-on-error-clean",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "withPermit",
+      "fixture": "// release must run exactly once after acquire succeeds, even when work rejects.\nasync function withPermit(acquire: () => Promise<() => void>, work: () => Promise<string>) {\n  const release = await acquire();\n  try {\n    return await work();\n  } finally {\n    release();\n  }\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "tenant-cache-bug",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "cachedItem",
+      "fixture": "// IDs contain only letters, digits, and hyphens; itemID repeats across tenants and entries must stay isolated.\nfunction cachedItem(cache: Map<string, string>, tenantID: string, itemID: string) {\n  return cache.get(itemID);\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "tenant-cache-clean",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "cachedItem",
+      "fixture": "// IDs contain only letters, digits, and hyphens; itemID repeats across tenants and entries must stay isolated.\nfunction cachedItem(cache: Map<string, string>, tenantID: string, itemID: string) {\n  return cache.get(`${tenantID}:${itemID}`);\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    },
+    {
+      "task_id": "unicode-slice-bug",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "prefixCodepoints",
+      "fixture": "// Limit by Unicode code points, preserving surrogate pairs; limit is nonnegative.\nfunction prefixCodepoints(text: string, limit: number) {\n  return text.slice(0, limit);\n}\n",
+      "expected_output": "{\"has_defect\":true,\"line\":3,\"reason\":\"Offline oracle confirms the seeded requirement violation.\"}"
+    },
+    {
+      "task_id": "unicode-slice-clean",
+      "split": "holdout",
+      "prompt": "Read fixture.txt through the file tool. Review only the stated requirement. Assume finite numeric inputs and the documented input ranges. Return JSON {\"has_defect\":boolean,\"line\":number|null,\"reason\":string}. Use a 1-based line for a reproducible defect and null when none. Do not modify files. Do not infer verifier success from your own answer.",
+      "marker": "prefixCodepoints",
+      "fixture": "// Limit by Unicode code points, preserving surrogate pairs; limit is nonnegative.\nfunction prefixCodepoints(text: string, limit: number) {\n  return [...text].slice(0, limit).join(\"\");\n}\n",
+      "expected_output": "{\"has_defect\":false,\"line\":null,\"reason\":\"Offline oracle confirms the stated requirement.\"}"
+    }
+  ]
+}

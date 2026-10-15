@@ -15,6 +15,7 @@ use willdeep_core::{
 
 mod agent_metrics;
 mod agent_registry;
+mod agent_rsi;
 mod audit_cmd;
 mod builtin_plugins;
 mod composer_references;

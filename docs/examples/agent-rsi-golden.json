@@ -1,0 +1,259 @@
+{
+  "schema": "willdeep.agent-rsi.golden.v1",
+  "values": {
+    "grant": {
+      "schema": "willdeep.agent-rsi.grant.v1",
+      "grant_id": "grant-golden-v1",
+      "purpose": "private_evaluation",
+      "material_scope": [
+        "execution_summary"
+      ],
+      "expires_at": "2099-10-15T00:00:00Z"
+    },
+    "candidate": {
+      "schema": "willdeep.agent-rsi.candidate.v1",
+      "candidate_id": "candidate-golden-v1",
+      "grant_id": "grant-golden-v1",
+      "baseline_package": {
+        "definition": {
+          "schema": "willdeep.agent-definition.v1",
+          "definition_id": "user/rsi-reviewer",
+          "version": "1.0.0-rc1",
+          "name": {
+            "en": "RSI reviewer",
+            "zh-Hans": "审查员"
+          },
+          "purpose": "Review a bounded change using reproducible evidence.",
+          "base_role": "reviewer",
+          "instructions": "Report defects with file evidence.",
+          "input_modalities": [
+            "text"
+          ],
+          "tools": [
+            "workspace.read",
+            "repository.inspect"
+          ],
+          "skills": [],
+          "forked_from": null
+        },
+        "sha256": "51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd",
+        "signature": null
+      },
+      "candidate_package": {
+        "definition": {
+          "schema": "willdeep.agent-definition.v1",
+          "definition_id": "user/rsi-reviewer",
+          "version": "1.0.0-rc2",
+          "name": {
+            "en": "RSI reviewer",
+            "zh-Hans": "审查员"
+          },
+          "purpose": "Review a bounded change using reproducible evidence.",
+          "base_role": "reviewer",
+          "instructions": "Report defects with file evidence and a minimal reproduction.",
+          "input_modalities": [
+            "text"
+          ],
+          "tools": [
+            "workspace.read",
+            "repository.inspect"
+          ],
+          "skills": [],
+          "forked_from": "51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd"
+        },
+        "sha256": "9554ab2e7fb5449750c903716efdbb640215af6fe34975609b17fd3d39a79306",
+        "signature": null
+      }
+    },
+    "experiment": {
+      "schema": "willdeep.agent-rsi.experiment.v1",
+      "experiment_id": "exp-golden-v1",
+      "grant_id": "grant-golden-v1",
+      "candidate_id": "candidate-golden-v1",
+      "definition_id": "user/rsi-reviewer",
+      "baseline_revision": "51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd",
+      "candidate_revision": "9554ab2e7fb5449750c903716efdbb640215af6fe34975609b17fd3d39a79306",
+      "hypothesis": "加入复现步骤 😀 <tag> / \\ 引号\"\\n证据",
+      "execution_mode": "direct",
+      "runtime": {
+        "adapter": "mock-worker-v1",
+        "product_version": "1.0.0-rc1",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "binary_sha256": "c470b1ad0f406edd15c32b22f4988dd442aca4401fb7a084b2facb86c1dc5ed6",
+        "platform": "fixture",
+        "architecture": "universal"
+      },
+      "model": {
+        "provider": "mock",
+        "model": "deterministic-reviewer-v1",
+        "model_revision": null,
+        "parameters_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "routing_policy_sha256": "373faa446fa3d335594b09d96cf9e2048e692c84bed1acb1b0ede324f95d2821"
+      },
+      "conditions": {
+        "runtime_parameters_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "tools_sha256": "0e42b20300a246539922650d0acd3275c5812495ea3fb57831029cea0559990a",
+        "skills_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "workspace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "memory_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "dataset": {
+        "suite_id": "reviewer-offline-v1",
+        "suite_sha256": "425ad0609214ad61e167487e390ea9b5c13bb6beb3fe77de711f228c84f8e4dd",
+        "fixture_sha256": "f0855c612d5affd9d0d02afd277bae10649daf5329575f591300bf0e90b4d172",
+        "verifier_sha256": "6dad0754ad6fabb5130a8023973e631e4df925e9d0d458ee56d24a6be9d3b636",
+        "split_sha256": "308c68a2e4e42a6216bdbcf5e9fa98834e52ed79e49a6175802dab097b995244",
+        "tasks": [
+          {
+            "task_id": "validation-1",
+            "split": "validation",
+            "task_sha256": "ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63"
+          },
+          {
+            "task_id": "regression-1",
+            "split": "regression",
+            "task_sha256": "dbf9c14347f990e40c86d2943a8fa9d20cf634db5675b91e749e8fe0abd8ad7c"
+          },
+          {
+            "task_id": "holdout-1",
+            "split": "holdout",
+            "task_sha256": "fa79ae5521d1c27c7fe4bba856bf9d245ae79ab4b6db26ec628d1b767fe8d8d7"
+          }
+        ]
+      },
+      "budget": {
+        "max_turns": 4,
+        "max_tokens": 4000,
+        "timeout_seconds": 60,
+        "max_attempts": 2,
+        "max_parallel_trials": 1,
+        "max_candidates": 1,
+        "max_holdout_accesses": 4,
+        "max_cost_microusd": 0
+      },
+      "gate": {
+        "gate_id": "reviewer-offline-gate-v1",
+        "gate_sha256": "164587be57c26f268ac115ff0005022a34d3231f7c98315a7d990d9ee996531b"
+      },
+      "repetitions": 1,
+      "execution_policy": "offline_only"
+    },
+    "admission": {
+      "schema": "willdeep.agent-rsi.admission.v1",
+      "trial_id": "trial-golden-baseline-1",
+      "task_id": "validation-1",
+      "arm": "baseline",
+      "repetition": 1,
+      "attempt": 1,
+      "resume_of": null,
+      "estimated_cost_microusd": 0
+    },
+    "evidence": {
+      "schema": "willdeep.agent-rsi.evidence.v1",
+      "experiment_id": "exp-golden-v1",
+      "trial_id": "trial-golden-baseline-1",
+      "task_id": "validation-1",
+      "task_sha256": "ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63",
+      "split": "validation",
+      "arm": "baseline",
+      "repetition": 1,
+      "attempt": 1,
+      "resume_of": null,
+      "root_run_id": "root-golden-1",
+      "worker_run_id": "worker-golden-1",
+      "definition_id": "user/rsi-reviewer",
+      "definition_revision": "51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd",
+      "effective_prompt_sha256": "3c4bbf5da2bb0c1841c84f3d5c6f12935b458e778d59c4974d955feb0afb900d",
+      "skills_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "runtime": {
+        "adapter": "mock-worker-v1",
+        "product_version": "1.0.0-rc1",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "binary_sha256": "c470b1ad0f406edd15c32b22f4988dd442aca4401fb7a084b2facb86c1dc5ed6",
+        "platform": "fixture",
+        "architecture": "universal"
+      },
+      "model": {
+        "provider": "mock",
+        "model": "deterministic-reviewer-v1",
+        "model_revision": null,
+        "parameters_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "routing_policy_sha256": "373faa446fa3d335594b09d96cf9e2048e692c84bed1acb1b0ede324f95d2821"
+      },
+      "model_route": [
+        {
+          "provider": "mock",
+          "model": "deterministic-reviewer-v1",
+          "model_revision": null
+        }
+      ],
+      "conditions": {
+        "runtime_parameters_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "tools_sha256": "0e42b20300a246539922650d0acd3275c5812495ea3fb57831029cea0559990a",
+        "skills_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "workspace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "rules_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "memory_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "budget": {
+        "max_turns": 4,
+        "max_tokens": 4000,
+        "timeout_seconds": 60,
+        "max_attempts": 2,
+        "max_parallel_trials": 1,
+        "max_candidates": 1,
+        "max_holdout_accesses": 4,
+        "max_cost_microusd": 0
+      },
+      "dataset_sha256": "425ad0609214ad61e167487e390ea9b5c13bb6beb3fe77de711f228c84f8e4dd",
+      "fixture_sha256": "f0855c612d5affd9d0d02afd277bae10649daf5329575f591300bf0e90b4d172",
+      "verifier": {
+        "verifier_id": "fixture-verifier-v1",
+        "verifier_sha256": "6dad0754ad6fabb5130a8023973e631e4df925e9d0d458ee56d24a6be9d3b636",
+        "input_sha256": "ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63",
+        "result": "passed",
+        "exit_code": 0
+      },
+      "target_executed": true,
+      "started_at": "2026-10-15T00:00:00Z",
+      "finished_at": "2026-10-15T00:00:01Z",
+      "status": "passed",
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "auxiliary_tokens": 0,
+        "elapsed_ms": 1000,
+        "cost_microusd": 0
+      },
+      "events_sha256": "f74f57265f6f90c28a39624936cd31c1365e455104d08d330db8106f1d24788f",
+      "trust": "local_mock"
+    },
+    "canonical_edge": {
+      "z": "检查 😀 <tag> / \\ 引号\"\n证据",
+      "a": [
+        null,
+        true,
+        false,
+        0,
+        9007199254740991
+      ]
+    }
+  },
+  "canonical": {
+    "grant": "{\"expires_at\":\"2099-10-15T00:00:00Z\",\"grant_id\":\"grant-golden-v1\",\"material_scope\":[\"execution_summary\"],\"purpose\":\"private_evaluation\",\"schema\":\"willdeep.agent-rsi.grant.v1\"}",
+    "candidate": "{\"baseline_package\":{\"definition\":{\"base_role\":\"reviewer\",\"definition_id\":\"user/rsi-reviewer\",\"forked_from\":null,\"input_modalities\":[\"text\"],\"instructions\":\"Report defects with file evidence.\",\"name\":{\"en\":\"RSI reviewer\",\"zh-Hans\":\"\\u5ba1\\u67e5\\u5458\"},\"purpose\":\"Review a bounded change using reproducible evidence.\",\"schema\":\"willdeep.agent-definition.v1\",\"skills\":[],\"tools\":[\"workspace.read\",\"repository.inspect\"],\"version\":\"1.0.0-rc1\"},\"sha256\":\"51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd\",\"signature\":null},\"candidate_id\":\"candidate-golden-v1\",\"candidate_package\":{\"definition\":{\"base_role\":\"reviewer\",\"definition_id\":\"user/rsi-reviewer\",\"forked_from\":\"51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd\",\"input_modalities\":[\"text\"],\"instructions\":\"Report defects with file evidence and a minimal reproduction.\",\"name\":{\"en\":\"RSI reviewer\",\"zh-Hans\":\"\\u5ba1\\u67e5\\u5458\"},\"purpose\":\"Review a bounded change using reproducible evidence.\",\"schema\":\"willdeep.agent-definition.v1\",\"skills\":[],\"tools\":[\"workspace.read\",\"repository.inspect\"],\"version\":\"1.0.0-rc2\"},\"sha256\":\"9554ab2e7fb5449750c903716efdbb640215af6fe34975609b17fd3d39a79306\",\"signature\":null},\"grant_id\":\"grant-golden-v1\",\"schema\":\"willdeep.agent-rsi.candidate.v1\"}",
+    "experiment": "{\"baseline_revision\":\"51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd\",\"budget\":{\"max_attempts\":2,\"max_candidates\":1,\"max_cost_microusd\":0,\"max_holdout_accesses\":4,\"max_parallel_trials\":1,\"max_tokens\":4000,\"max_turns\":4,\"timeout_seconds\":60},\"candidate_id\":\"candidate-golden-v1\",\"candidate_revision\":\"9554ab2e7fb5449750c903716efdbb640215af6fe34975609b17fd3d39a79306\",\"conditions\":{\"memory_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"rules_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"runtime_parameters_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"skills_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"tools_sha256\":\"0e42b20300a246539922650d0acd3275c5812495ea3fb57831029cea0559990a\",\"workspace_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\"},\"dataset\":{\"fixture_sha256\":\"f0855c612d5affd9d0d02afd277bae10649daf5329575f591300bf0e90b4d172\",\"split_sha256\":\"308c68a2e4e42a6216bdbcf5e9fa98834e52ed79e49a6175802dab097b995244\",\"suite_id\":\"reviewer-offline-v1\",\"suite_sha256\":\"425ad0609214ad61e167487e390ea9b5c13bb6beb3fe77de711f228c84f8e4dd\",\"tasks\":[{\"split\":\"validation\",\"task_id\":\"validation-1\",\"task_sha256\":\"ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63\"},{\"split\":\"regression\",\"task_id\":\"regression-1\",\"task_sha256\":\"dbf9c14347f990e40c86d2943a8fa9d20cf634db5675b91e749e8fe0abd8ad7c\"},{\"split\":\"holdout\",\"task_id\":\"holdout-1\",\"task_sha256\":\"fa79ae5521d1c27c7fe4bba856bf9d245ae79ab4b6db26ec628d1b767fe8d8d7\"}],\"verifier_sha256\":\"6dad0754ad6fabb5130a8023973e631e4df925e9d0d458ee56d24a6be9d3b636\"},\"definition_id\":\"user/rsi-reviewer\",\"execution_mode\":\"direct\",\"execution_policy\":\"offline_only\",\"experiment_id\":\"exp-golden-v1\",\"gate\":{\"gate_id\":\"reviewer-offline-gate-v1\",\"gate_sha256\":\"164587be57c26f268ac115ff0005022a34d3231f7c98315a7d990d9ee996531b\"},\"grant_id\":\"grant-golden-v1\",\"hypothesis\":\"\\u52a0\\u5165\\u590d\\u73b0\\u6b65\\u9aa4 \\ud83d\\ude00 <tag> / \\\\ \\u5f15\\u53f7\\\"\\\\n\\u8bc1\\u636e\",\"model\":{\"model\":\"deterministic-reviewer-v1\",\"model_revision\":null,\"parameters_sha256\":\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\"provider\":\"mock\",\"routing_policy_sha256\":\"373faa446fa3d335594b09d96cf9e2048e692c84bed1acb1b0ede324f95d2821\"},\"repetitions\":1,\"runtime\":{\"adapter\":\"mock-worker-v1\",\"architecture\":\"universal\",\"binary_sha256\":\"c470b1ad0f406edd15c32b22f4988dd442aca4401fb7a084b2facb86c1dc5ed6\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"platform\":\"fixture\",\"product_version\":\"1.0.0-rc1\"},\"schema\":\"willdeep.agent-rsi.experiment.v1\"}",
+    "admission": "{\"arm\":\"baseline\",\"attempt\":1,\"estimated_cost_microusd\":0,\"repetition\":1,\"resume_of\":null,\"schema\":\"willdeep.agent-rsi.admission.v1\",\"task_id\":\"validation-1\",\"trial_id\":\"trial-golden-baseline-1\"}",
+    "evidence": "{\"arm\":\"baseline\",\"attempt\":1,\"budget\":{\"max_attempts\":2,\"max_candidates\":1,\"max_cost_microusd\":0,\"max_holdout_accesses\":4,\"max_parallel_trials\":1,\"max_tokens\":4000,\"max_turns\":4,\"timeout_seconds\":60},\"conditions\":{\"memory_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"rules_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"runtime_parameters_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"skills_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"tools_sha256\":\"0e42b20300a246539922650d0acd3275c5812495ea3fb57831029cea0559990a\",\"workspace_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\"},\"dataset_sha256\":\"425ad0609214ad61e167487e390ea9b5c13bb6beb3fe77de711f228c84f8e4dd\",\"definition_id\":\"user/rsi-reviewer\",\"definition_revision\":\"51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd\",\"effective_prompt_sha256\":\"3c4bbf5da2bb0c1841c84f3d5c6f12935b458e778d59c4974d955feb0afb900d\",\"events_sha256\":\"f74f57265f6f90c28a39624936cd31c1365e455104d08d330db8106f1d24788f\",\"experiment_id\":\"exp-golden-v1\",\"finished_at\":\"2026-10-15T00:00:01Z\",\"fixture_sha256\":\"f0855c612d5affd9d0d02afd277bae10649daf5329575f591300bf0e90b4d172\",\"model\":{\"model\":\"deterministic-reviewer-v1\",\"model_revision\":null,\"parameters_sha256\":\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\"provider\":\"mock\",\"routing_policy_sha256\":\"373faa446fa3d335594b09d96cf9e2048e692c84bed1acb1b0ede324f95d2821\"},\"model_route\":[{\"model\":\"deterministic-reviewer-v1\",\"model_revision\":null,\"provider\":\"mock\"}],\"repetition\":1,\"resume_of\":null,\"root_run_id\":\"root-golden-1\",\"runtime\":{\"adapter\":\"mock-worker-v1\",\"architecture\":\"universal\",\"binary_sha256\":\"c470b1ad0f406edd15c32b22f4988dd442aca4401fb7a084b2facb86c1dc5ed6\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"platform\":\"fixture\",\"product_version\":\"1.0.0-rc1\"},\"schema\":\"willdeep.agent-rsi.evidence.v1\",\"skills_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"split\":\"validation\",\"started_at\":\"2026-10-15T00:00:00Z\",\"status\":\"passed\",\"target_executed\":true,\"task_id\":\"validation-1\",\"task_sha256\":\"ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63\",\"trial_id\":\"trial-golden-baseline-1\",\"trust\":\"local_mock\",\"usage\":{\"auxiliary_tokens\":0,\"cost_microusd\":0,\"elapsed_ms\":1000,\"input_tokens\":100,\"output_tokens\":50},\"verifier\":{\"exit_code\":0,\"input_sha256\":\"ea00af6ebf3a740d1de4d70763f01b92e1809ac11fcfab0ecc320e40c42c1f63\",\"result\":\"passed\",\"verifier_id\":\"fixture-verifier-v1\",\"verifier_sha256\":\"6dad0754ad6fabb5130a8023973e631e4df925e9d0d458ee56d24a6be9d3b636\"},\"worker_run_id\":\"worker-golden-1\"}",
+    "canonical_edge": "{\"a\":[null,true,false,0,9007199254740991],\"z\":\"\\u68c0\\u67e5 \\ud83d\\ude00 <tag> / \\\\ \\u5f15\\u53f7\\\"\\u000a\\u8bc1\\u636e\"}"
+  },
+  "sha256": {
+    "grant": "5c69852ef9c802701f9b03213c6c41219e9cf404058b1962d82a7c908effbf7a",
+    "candidate": "f844cbd3c2c83ecf39ad949a998a50882e8917a4508df419bc836ea3d96b0739",
+    "experiment": "592abd486afe1214bb68489cb264cb16aa259c8faf28619f43f99ebb7b0ca24b",
+    "admission": "128a71354b61b94855cba260245b6d45ccd4b68aa0eb6468434e4bce87c74e23",
+    "evidence": "a02647e57a63993fce03607a5e871010125e74a63cd51b62902c72071dd6e400",
+    "canonical_edge": "49a9497e874fdd4a331a9e51d3647cc09cf9c4cc1a137529553e00ecd218f15c"
+  }
+}

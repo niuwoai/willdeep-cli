@@ -139,6 +139,9 @@ pub struct FeedbackRecord {
     pub prompt_bundle: Option<String>,
     #[serde(default)]
     pub run_id: Option<Uuid>,
+    /// Immutable specialist identity and effective runtime input. Missing for legacy/root runs.
+    #[serde(default)]
+    pub execution_context: Option<crate::rsi::ExecutionContext>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -229,6 +232,7 @@ impl FeedbackRecord {
             worker_profile: None,
             prompt_bundle: None,
             run_id: None,
+            execution_context: None,
             provider: None,
             model: None,
             runtime_parameters: None,
@@ -307,6 +311,7 @@ pub struct FeedbackRecorder {
     worker_profile: Option<String>,
     prompt_bundle: Option<String>,
     run_id: Option<Uuid>,
+    execution_context: Option<crate::rsi::ExecutionContext>,
     provider: Option<String>,
     model: Option<String>,
     runtime_parameters: Option<crate::runtime_parameters::RuntimeParameters>,
@@ -336,6 +341,7 @@ impl FeedbackRecorder {
             worker_profile: None,
             prompt_bundle: None,
             run_id: None,
+            execution_context: None,
             provider: None,
             model: None,
             runtime_parameters: None,
@@ -391,6 +397,16 @@ impl FeedbackRecorder {
     /// 给这个记录者写出的行打上提示词版本戳。
     pub fn with_prompt_bundle(mut self, bundle: impl Into<String>) -> Self {
         self.prompt_bundle = Some(bundle.into());
+        self
+    }
+
+    pub fn with_execution_context(mut self, mut context: crate::rsi::ExecutionContext) -> Self {
+        context.root_run_id = self
+            .execution_context
+            .as_ref()
+            .and_then(|value| value.root_run_id.clone())
+            .or_else(|| self.run_id.map(|value| value.to_string()));
+        self.execution_context = Some(context);
         self
     }
 
@@ -493,6 +509,13 @@ impl FeedbackRecorder {
         self.agent_id.is_some()
     }
 
+    pub fn execution_root_run_id(&self) -> Option<String> {
+        self.execution_context
+            .as_ref()
+            .and_then(|context| context.root_run_id.clone())
+            .or_else(|| self.run_id.map(|id| id.to_string()))
+    }
+
     fn record(&self, signal: Signal, fill: impl FnOnce(&mut FeedbackRecord)) {
         let Some(sink) = &self.sink else {
             return;
@@ -504,6 +527,7 @@ impl FeedbackRecorder {
         record.worker_profile = self.worker_profile.clone();
         record.prompt_bundle = self.prompt_bundle.clone();
         record.run_id = self.run_id;
+        record.execution_context = self.execution_context.clone();
         record.provider = self.provider.clone();
         record.model = self.model.clone();
         fill(&mut record);

@@ -17,6 +17,9 @@ struct Database {
     item: Option<RemoteItem>,
     sequence: u32,
     put_keys: Vec<String>,
+    after_list: Option<Box<dyn FnOnce() + Send>>,
+    before_put: Option<RemoteItem>,
+    versions: BTreeMap<(String, String), String>,
 }
 type DatabaseState = Arc<Mutex<Database>>;
 fn authorized(headers: &HeaderMap) -> bool {
@@ -34,7 +37,12 @@ async fn list(State(db): State<DatabaseState>, headers: HeaderMap) -> Response {
     if !authorized(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    Json(json!({"data":{"items":db.lock().await.item.iter().cloned().collect::<Vec<_>>(),"cursor":"snapshot"}})).into_response()
+    let mut db = db.lock().await;
+    let items = db.item.iter().cloned().collect::<Vec<_>>();
+    if let Some(hook) = db.after_list.take() {
+        hook();
+    }
+    Json(json!({"data":{"items":items,"cursor":"snapshot"}})).into_response()
 }
 async fn put(
     State(db): State<DatabaseState>,
@@ -45,6 +53,9 @@ async fn put(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut db = db.lock().await;
+    if let Some(item) = db.before_put.take() {
+        db.item = Some(item);
+    }
     let valid = match &db.item {
         None => headers.get("if-none-match").is_some_and(|v| v == "*"),
         Some(item) => {
@@ -54,6 +65,18 @@ async fn put(
     if !valid {
         return StatusCode::PRECONDITION_FAILED.into_response();
     }
+    let version_key = (
+        package.definition.definition_id.clone(),
+        package.definition.version.clone(),
+    );
+    if db
+        .versions
+        .get(&version_key)
+        .is_some_and(|sha| sha != &package.sha256)
+    {
+        return StatusCode::CONFLICT.into_response();
+    }
+    db.versions.insert(version_key, package.sha256.clone());
     let Some(key) = headers.get("idempotency-key").and_then(|v| v.to_str().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -102,6 +125,8 @@ async fn server() -> (String, DatabaseState, tokio::task::JoinHandle<()>) {
 fn home() -> PathBuf {
     std::env::temp_dir().join(format!("agents-sync-test-{}", uuid::Uuid::new_v4()))
 }
+#[path = "resolution_tests.rs"]
+mod resolution_tests;
 fn package() -> AgentPackage {
     AgentPackage::local(
         AgentDefinition::parse(include_bytes!(

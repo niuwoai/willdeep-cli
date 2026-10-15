@@ -38,6 +38,9 @@
 | [本机用量账本](USAGE_LEDGER.md) | 每次模型调用一行的 `usage/YYYY-MM.jsonl`、字段来源、`willdeep usage backfill`（canonical 在 Xedit 仓库） |
 | [本机反馈账本](FEEDBACK_LEDGER.md) | RSI 强反馈信号 `feedback/YYYY-MM.jsonl`：下一句建议的采用与改写、工具失败、Worker 轮次耗尽 |
 | [协调 / 长任务 / 插件 / RSI 路线图](ROADMAP_ORCHESTRATION_RSI.md) | 主 Agent 协调与 goal 缺口自查、Xedit 定时任务与专家团插件化、反馈数据分阶段计划 |
+| [智能体 RSI P4a 与 P4b](AGENT_RSI_P4AB.md) | 已实现的候选隔离、执行证据、免费配对验收和显式授权上传；真实评测尚待批准 |
+| [RSI 后续分阶段方案](decisions/2026-10-15-agent-rsi-iteration-plan.md) | 三端现状、原规划剩余项及评测、晋升、灰度与回滚边界 |
+| [首轮真实评测确认清单](decisions/2026-10-15-agent-rsi-paid-evaluation-proposal.md) | 模型、24 道原创审查题、双臂重复、价格快照和 5 美元总预算提案；待确认 |
 | [Skills 与 MCP](SKILLS_AND_MCP.md) | Skill 发现规则、MCP 配置、项目上下文文件 |
 | [内置插件](BUILTIN_PLUGINS.md) | 定时任务（`willdeep-scheduler`）与专家圆桌（`willdeep-roundtable`）：安装、工具、无人值守审批、与 Xedit 的差异 |
 | [插件系统](PLUGINS.md) | 与 macOS 版共享插件包、三种页面运行时、页面桥与沙箱边界 |

@@ -81,7 +81,7 @@ pub(super) fn encode(value: &Value) -> Result<String> {
     })
 }
 
-fn string(value: &str) -> String {
+pub(crate) fn string(value: &str) -> String {
     let mut result = String::from("\"");
     for unit in value.encode_utf16() {
         match unit {

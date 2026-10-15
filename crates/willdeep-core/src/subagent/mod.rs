@@ -25,6 +25,7 @@ mod checkpoint;
 pub(crate) mod runs;
 pub use runs::AgentRunStore;
 mod dispatch_store;
+pub mod evaluation;
 mod file_leases;
 mod profiles;
 mod runner;

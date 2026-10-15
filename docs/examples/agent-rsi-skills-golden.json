@@ -1,0 +1,19 @@
+{
+  "schema": "willdeep.agent-rsi.skills-golden.v1",
+  "skills": [
+    {
+      "id": "review/reproducible",
+      "content": "先读取测试与相关实现，再报告可复现缺陷。\nPreserve evidence 😀 <tag> / \\",
+      "sha256": "f47d068da66d06b920943bd5ce29f7da42d1152d45870f3b3dda6a37e0a7ed2d",
+      "required": true
+    },
+    {
+      "id": "review/optional",
+      "content": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required": false
+    }
+  ],
+  "canonical": "[{\"content\":\"\\u5148\\u8bfb\\u53d6\\u6d4b\\u8bd5\\u4e0e\\u76f8\\u5173\\u5b9e\\u73b0\\uff0c\\u518d\\u62a5\\u544a\\u53ef\\u590d\\u73b0\\u7f3a\\u9677\\u3002\\u000aPreserve evidence \\ud83d\\ude00 <tag> / \\\\\",\"id\":\"review/reproducible\",\"required\":true,\"sha256\":\"f47d068da66d06b920943bd5ce29f7da42d1152d45870f3b3dda6a37e0a7ed2d\"},{\"content\":\"\",\"id\":\"review/optional\",\"required\":false,\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]",
+  "sha256": "688ff99569177b7e24d2a1e0539af05fc3f314a9cb76a5b48998199e08601118"
+}

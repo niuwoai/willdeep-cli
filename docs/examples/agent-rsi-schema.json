@@ -1,0 +1,881 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "willdeep.agent-rsi.contract.v1",
+  "title": "WillDeep Agent RSI P4a P4b contract",
+  "$comment": "Semantic checks, duplicate keys, integer lexical rules, cross-object hashes, permissions, timestamps, and trial lineage also require the CONTRACT.md validators. JSON Schema alone is insufficient.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/grant"
+    },
+    {
+      "$ref": "#/$defs/candidate"
+    },
+    {
+      "$ref": "#/$defs/experiment"
+    },
+    {
+      "$ref": "#/$defs/admission"
+    },
+    {
+      "$ref": "#/$defs/evidence"
+    }
+  ],
+  "$defs": {
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "product_version",
+        "commit",
+        "binary_sha256",
+        "platform",
+        "architecture"
+      ],
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "product_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "commit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "binary_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "platform": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "architecture": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "model_revision",
+        "parameters_sha256",
+        "routing_policy_sha256"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parameters_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "routing_policy_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_parameters_sha256",
+        "tools_sha256",
+        "skills_sha256",
+        "workspace_sha256",
+        "rules_sha256",
+        "memory_sha256"
+      ],
+      "properties": {
+        "runtime_parameters_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "tools_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "skills_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "workspace_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "rules_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "memory_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_turns",
+        "max_tokens",
+        "timeout_seconds",
+        "max_attempts",
+        "max_parallel_trials",
+        "max_candidates",
+        "max_holdout_accesses",
+        "max_cost_microusd"
+      ],
+      "properties": {
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "max_parallel_trials": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "max_candidates": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "max_holdout_accesses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "max_cost_microusd": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 0
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "split",
+        "task_sha256"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "split": {
+          "type": "string",
+          "enum": [
+            "validation",
+            "regression",
+            "holdout"
+          ]
+        },
+        "task_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_id",
+        "suite_sha256",
+        "fixture_sha256",
+        "verifier_sha256",
+        "split_sha256",
+        "tasks"
+      ],
+      "properties": {
+        "suite_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "suite_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fixture_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "verifier_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task"
+          },
+          "minItems": 3,
+          "maxItems": 128
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_id",
+        "gate_sha256"
+      ],
+      "properties": {
+        "gate_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "gate_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "model_revision"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verifier_id",
+        "verifier_sha256",
+        "input_sha256",
+        "result",
+        "exit_code"
+      ],
+      "properties": {
+        "verifier_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "verifier_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "unverified"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "auxiliary_tokens",
+        "elapsed_ms",
+        "cost_microusd"
+      ],
+      "properties": {
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "auxiliary_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_microusd": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "experiment_id",
+        "grant_id",
+        "candidate_id",
+        "definition_id",
+        "baseline_revision",
+        "candidate_revision",
+        "hypothesis",
+        "execution_mode",
+        "runtime",
+        "model",
+        "conditions",
+        "dataset",
+        "budget",
+        "gate",
+        "repetitions",
+        "execution_policy"
+      ],
+      "properties": {
+        "schema": {
+          "const": "willdeep.agent-rsi.experiment.v1"
+        },
+        "experiment_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "grant_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "definition_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "baseline_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "candidate_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "hypothesis": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "team"
+          ]
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "conditions": {
+          "$ref": "#/$defs/conditions"
+        },
+        "dataset": {
+          "$ref": "#/$defs/dataset"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "gate": {
+          "$ref": "#/$defs/gate"
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "execution_policy": {
+          "type": "string",
+          "enum": [
+            "offline_only"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "experiment_id",
+        "trial_id",
+        "task_id",
+        "task_sha256",
+        "split",
+        "arm",
+        "repetition",
+        "attempt",
+        "resume_of",
+        "root_run_id",
+        "worker_run_id",
+        "definition_id",
+        "definition_revision",
+        "effective_prompt_sha256",
+        "skills_sha256",
+        "runtime",
+        "model",
+        "model_route",
+        "conditions",
+        "budget",
+        "dataset_sha256",
+        "fixture_sha256",
+        "verifier",
+        "target_executed",
+        "started_at",
+        "finished_at",
+        "status",
+        "usage",
+        "events_sha256",
+        "trust"
+      ],
+      "properties": {
+        "schema": {
+          "const": "willdeep.agent-rsi.evidence.v1"
+        },
+        "experiment_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "trial_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "task_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "task_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "split": {
+          "type": "string",
+          "enum": [
+            "validation",
+            "regression",
+            "holdout"
+          ]
+        },
+        "arm": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "candidate"
+          ]
+        },
+        "repetition": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "resume_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root_run_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "worker_run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "definition_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "definition_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "effective_prompt_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "skills_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "model_route": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "conditions": {
+          "$ref": "#/$defs/conditions"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "dataset_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fixture_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "verifier": {
+          "$ref": "#/$defs/verifier"
+        },
+        "target_executed": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "unverified",
+            "infra_error",
+            "interrupted",
+            "budget_exhausted",
+            "invalid"
+          ]
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "events_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trust": {
+          "type": "string",
+          "enum": [
+            "local_mock",
+            "client_reported"
+          ]
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "grant_id",
+        "purpose",
+        "material_scope",
+        "expires_at"
+      ],
+      "properties": {
+        "schema": {
+          "const": "willdeep.agent-rsi.grant.v1"
+        },
+        "grant_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "private_evaluation",
+            "official_contribution"
+          ]
+        },
+        "material_scope": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "execution_summary"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "candidate_id",
+        "grant_id",
+        "baseline_package",
+        "candidate_package"
+      ],
+      "properties": {
+        "schema": {
+          "const": "willdeep.agent-rsi.candidate.v1"
+        },
+        "candidate_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "grant_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "baseline_package": {
+          "type": "object",
+          "description": "Validate separately with unchanged agent-definition.v1 package parser."
+        },
+        "candidate_package": {
+          "type": "object",
+          "description": "Validate separately with unchanged agent-definition.v1 package parser."
+        }
+      }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "trial_id",
+        "task_id",
+        "arm",
+        "repetition",
+        "attempt",
+        "resume_of",
+        "estimated_cost_microusd"
+      ],
+      "properties": {
+        "schema": {
+          "const": "willdeep.agent-rsi.admission.v1"
+        },
+        "trial_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "task_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+        },
+        "arm": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "candidate"
+          ]
+        },
+        "repetition": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "resume_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]{1,128}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimated_cost_microusd": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 0
+        }
+      }
+    }
+  }
+}

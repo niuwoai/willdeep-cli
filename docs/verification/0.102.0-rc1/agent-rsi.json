@@ -1,0 +1,90 @@
+{
+  "version": "0.102.0-rc1",
+  "phase": "P4a/P4b offline engineering acceptance",
+  "paid_execution": false,
+  "production_changed": false,
+  "model_quality_improvement_claimed": false,
+  "binary_sha256": "e1cac01ff1a2aa216dfeedffbe2d8aae163b0d56306bb95b190f7921a21f51dc",
+  "checks": [
+    {
+      "name": "core",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 136.96,
+      "summaries": [
+        "test result: ok. 753 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 104.93s\n"
+      ]
+    },
+    {
+      "name": "core-verifier-input",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 20.81,
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 761 filtered out; finished in 0.00s\n"
+      ]
+    },
+    {
+      "name": "core-rsi-final",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 0.37,
+      "summaries": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 756 filtered out; finished in 0.05s\n"
+      ]
+    },
+    {
+      "name": "cli-rsi-final",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 142.86,
+      "summaries": [
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 709 filtered out; finished in 78.88s\n"
+      ]
+    },
+    {
+      "name": "cli-registry-final",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 24.32,
+      "summaries": [
+        "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 712 filtered out; finished in 0.96s\n"
+      ]
+    },
+    {
+      "name": "clippy",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 10.13,
+      "summaries": []
+    },
+    {
+      "name": "build",
+      "passed": true,
+      "exit_code": 0,
+      "seconds": 14.98,
+      "summaries": []
+    }
+  ],
+  "web": {
+    "full_prior_snapshot": 135,
+    "final_changed_surface": 8,
+    "production_build": true,
+    "asset": "index-PVJxb1qO.js"
+  },
+  "shared_fixture_sha256": {
+    "golden": "7543edb8642fee4a6eef69e49d2d65971f9df1ef049b0591aeb721aa3e0c51d7",
+    "negative": "5e733d4adf3c3e2df1402cce4c2cd3bb844415cb0307f94bc5341c8b9ea1e371",
+    "schema": "2d46330112d9c7a95cb7e428c1c87e8faf2d8521749de877fa30c3e2f49687ec",
+    "skills-golden": "227461aac11ea680bab5a1d2d015bc4f2b503a8037a9eca986bd60774bd23c0a"
+  },
+  "sync_resolution": {
+    "registry_tests": 22,
+    "local_cas": true,
+    "cloud_if_match": true,
+    "same_version_fork_requires_explicit_new_version": true,
+    "history_retained": true,
+    "account_switch_cancels": true,
+    "queued_expected_account": true
+  }
+}

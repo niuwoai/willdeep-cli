@@ -5,6 +5,8 @@ import type { Language } from "./i18n";
 import { agentText, type AgentTextKey } from "./agentLibraryMessages";
 import "./agentLibrary.css";
 import { AgentModelBinding, type LocalAgentBinding } from "./AgentModelBinding";
+import { AgentRsiPanel, type RsiPackage } from "./AgentRsiPanel";
+import { AgentSyncConflicts, type SyncConflict } from "./AgentSyncConflicts";
 
 type Definition = { schema: string; definition_id: string; version: string; name: Record<string, string>; purpose: string; base_role: string; instructions: string; input_modalities: string[]; tools: string[]; skills: {id: string; content: string; sha256: string; required: boolean}[]; forked_from: string | null };
 type Package = { definition: Definition; sha256: string; signature: {key_id: string; value: string} | null };
@@ -22,13 +24,33 @@ export function AgentLibrary({language, onTrial}: {language: Language; onTrial: 
   const [history, setHistory] = useState<Package[]>([]);
   const [bindingItem,setBindingItem] = useState<Item|null>(null);
   const [result, setResult] = useState<string>("");
+  const [conflicts, setConflicts] = useState<{account: string; items: SyncConflict[]} | null>(null);
+  const [syncSummary,setSyncSummary] = useState<{account: string; text: string} | null>(null);
+  const [rsi, setRsi] = useState<{baseline: RsiPackage | null; account: string} | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const mutation = useMutation({
     mutationFn: ({operation, params}: {operation: string; params?: unknown}) => agentLibraryCall<unknown>(operation, params),
-    onSuccess: async (value) => { setResult(JSON.stringify(value, null, 2)); await client.invalidateQueries({queryKey: ["agent-library"]}); },
+    onMutate: () => ({account:accountKey}),
+    onSuccess: async (value, {operation, params}, context) => {
+      if ((operation === "sync" || operation === "resolve") && context?.account !== accountKey) {
+        await client.invalidateQueries({queryKey:["agent-library"]}); return;
+      }
+      setResult(JSON.stringify(value, null, 2));
+      if (operation === "sync") setConflicts({account: accountKey, items: (value as {conflict_details?: SyncConflict[]}).conflict_details ?? []});
+      if (operation === "resolve") {
+        setConflicts(previous => previous ? {...previous, items: previous.items.filter(item => item.definition_id !== (params as {id: string}).id)} : null);
+        const resolved=value as {deleted?:boolean; version?:string};
+        setSyncSummary({account:accountKey,text:resolved.deleted ? t("resolveDeleted") : t("resolveCompleted").replace("{version}",resolved.version ?? "")});
+      }
+      if (operation === "logout") {setRsi(null); setConflicts(null); client.removeQueries({queryKey: ["agent-rsi"]});}
+      await client.invalidateQueries({queryKey: ["agent-library"]});
+    },
   });
   const act = (operation: string, params?: unknown) => mutation.mutate({operation, params});
   const items = library.data?.items ?? [];
+  const accountKey = JSON.stringify(library.data?.account ?? null);
+  if (conflicts && conflicts.account !== accountKey) setConflicts(null);
+  if (syncSummary && syncSummary.account !== accountKey) setSyncSummary(null);
   const displayName = (definition: Pick<Definition, "name" | "definition_id">) => definition.name[language === "zh-CN" ? "zh-Hans" : language] ?? definition.name.en ?? definition.definition_id;
   const create = () => setEditor(JSON.stringify({schema: "willdeep.agent-definition.v1", definition_id: "user/my-agent", version: "1.0.0", name: {en: t("name"), [language === "zh-CN" ? "zh-Hans" : language]: t("name")}, purpose: t("purpose"), base_role: "reviewer", instructions: t("instructions"), input_modalities: ["text"], tools: ["workspace.read", "repository.inspect"], skills: [], forked_from: null}, null, 2));
   const edit = (definition: Definition) => setEditor(JSON.stringify({...definition, version: nextAgentVersion(definition.version)}, null, 2));
@@ -47,17 +69,21 @@ export function AgentLibrary({language, onTrial}: {language: Language; onTrial: 
     <div className="agent-library-actions">
       {button("create", create)}{button("import", () => file.current?.click())}{button("catalog", () => { void catalog.refetch(); })}
       {button("sync", () => act("sync"), !library.data?.account)}
+      {button("rsiTitle", () => setRsi({baseline:null, account:accountKey}))}
       {library.data?.account && button("logout", () => act("logout"))}
       <input ref={file} type="file" accept="application/json,.json" hidden onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void selected.text().then(package_text => act("import", {package_text})); event.target.value = ""; }} />
     </div>
     <p className="agent-library-account">{library.data?.account ? `${library.data.account.origin} · ${library.data.account.user_id} / ${library.data.account.tenant_id}` : t("loginHelp")}</p>
     {(mutation.error || library.error || catalog.error) && <div role="alert">{t("failed")}: {(mutation.error || library.error || catalog.error)?.message}</div>}
     {(mutation.isPending || library.isLoading || catalog.isFetching) && <p role="status">{t("busy")}</p>}
+    {syncSummary?.account === accountKey && <p role="status">{syncSummary.text}</p>}
+    {conflicts?.account === accountKey && !!conflicts.items.length && <AgentSyncConflicts conflicts={conflicts.items} language={language} pending={mutation.isPending} onResolve={params=>act("resolve",{...params,expected_account:library.data?.account})} />}
     {editor !== null && <section className="agent-library-editor">
       <h2>{t("advanced")}</h2><p>{t("editorHelp")}</p>
       <textarea aria-label={t("advanced")} value={editor} onChange={event => setEditor(event.target.value)} spellCheck={false} />
       {button("save", () => { void mutation.mutateAsync({operation: "save", params: {definition_text: editor}}).then(() => setEditor(null)).catch(() => setResult(t("failed"))); })}{button("cancel", () => setEditor(null))}
     </section>}
+    {rsi?.account === accountKey && <AgentRsiPanel key={`${accountKey}/${rsi.baseline?.sha256 ?? "list"}`} accountScope={accountKey} language={language} baseline={rsi.baseline} onClose={() => setRsi(null)} />}
     {bindingItem && <AgentModelBinding key={`${bindingItem.scope}/${bindingItem.package.definition.definition_id}`} language={language} binding={bindingItem.installation.binding ?? {provider_profile:null,model:null}} pending={mutation.isPending} onCancel={()=>setBindingItem(null)} onSave={binding=>{void mutation.mutateAsync({operation:"bind",params:{id:bindingItem.package.definition.definition_id,binding}}).then(()=>setBindingItem(null)).catch(()=>setResult(t("failed")));}} />}
     {!items.length && !library.isLoading && <p>{t("empty")}</p>}
     <section className="agent-library-grid">
@@ -75,6 +101,7 @@ export function AgentLibrary({language, onTrial}: {language: Language; onTrial: 
             {item.installation.origin !== "official" && button("edit", () => edit(definition), item.installation.pinned)}
             {button("fork", () => fork(item))}{button("export", () => { void exported(item).catch(() => setResult(t("failed"))); })}
             {button("modelBinding",()=>setBindingItem(item))}
+            {button("rsiTitle",()=>setRsi({baseline:item.package, account:accountKey}), !item.compatible || item.installation.origin === "official")}
             {button(item.installation.pinned ? "unpin" : "pin", () => act("pin", {id: definition.definition_id, value: !item.installation.pinned}))}
             {button(item.installation.enabled ? "disable" : "enable", () => act("enable", {id: definition.definition_id, value: !item.installation.enabled}))}
             {item.installation.origin === "local" && button("share", () => act("share", {id: definition.definition_id}), !library.data?.account)}
@@ -82,6 +109,7 @@ export function AgentLibrary({language, onTrial}: {language: Language; onTrial: 
             {button("trial", () => { const task = window.prompt(t("trialTask")); if (task) onTrial(t("trialPrompt").replace("{id}", definition.definition_id).replace("{task}", task)); }, !item.compatible || !item.installation.enabled)}
             {button("remove", () => { if (window.confirm(t("deleteConfirm"))) act("delete", {id: definition.definition_id}); })}
           </div>
+          {item.installation.origin === "official" && <p>{t("rsiForkRequired")}</p>}
         </article>;
       })}
     </section>

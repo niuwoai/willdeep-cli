@@ -13,6 +13,11 @@ use willdeep_core::agent_definition::{AgentDefinition, AgentPackage, SCHEMA};
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum AgentAction {
+    /// Controlled specialist experiments. Real model evaluation is not admitted in this phase.
+    Rsi {
+        #[command(subcommand)]
+        action: crate::agent_rsi::RsiAction,
+    },
     List,
     Create {
         id: String,
@@ -86,12 +91,28 @@ pub enum AgentAction {
         id: String,
     },
     Sync,
+    /// Explicitly resolve one conflict returned by sync. Historical packages are retained.
+    Resolve {
+        id: String,
+        #[arg(long, value_enum)]
+        choice: service::ResolveChoice,
+        #[arg(long)]
+        expected_local_revision: String,
+        #[arg(long)]
+        expected_remote_etag: String,
+        /// Create a new version retaining local instructions for a same-version fork.
+        #[arg(long)]
+        new_version: Option<String>,
+    },
     Delete {
         id: String,
     },
 }
 
 pub async fn run(action: AgentAction, home: &Path) -> Result<()> {
+    if let AgentAction::Rsi { action } = action {
+        return crate::agent_rsi::run(action, home).await;
+    }
     let value = match action {
         AgentAction::Create { id, name, purpose, role, instructions_file, tools } => operate(home, "save", json!({"definition": {
             "schema":SCHEMA,"definition_id":id,"version":"1.0.0","name":{"zh-Hans":name},"purpose":purpose,"base_role":role,
@@ -116,7 +137,12 @@ pub async fn run(action: AgentAction, home: &Path) -> Result<()> {
         AgentAction::Logout => operate(home,"logout",json!({})).await?,
         AgentAction::Share { id } => operate(home,"share",json!({"id":id})).await?,
         AgentAction::Sync => operate(home,"sync",json!({})).await?,
+        AgentAction::Resolve { id, choice, expected_local_revision, expected_remote_etag, new_version } => {
+            let session=CustomerSession::load(home)?;
+            operate(home,"resolve",json!({"id":id,"choice":choice,"expected_local_revision":expected_local_revision,"expected_remote_etag":expected_remote_etag,"new_version":new_version,"expected_account":{"origin":session.origin,"user_id":session.user_id,"tenant_id":session.tenant_id}})).await?
+        },
         AgentAction::Delete { id } => operate(home,"delete",json!({"id":id})).await?,
+        AgentAction::Rsi { .. } => unreachable!(),
     };
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
@@ -153,6 +179,9 @@ fn installed(home: &Path, id: &str) -> Result<(AgentLibrary, AgentPackage)> {
 }
 
 pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Value> {
+    if let Some(operation) = operation.strip_prefix("rsi.") {
+        return crate::agent_rsi::operate(home, operation, params).await;
+    }
     let local = AgentLibrary::new(home);
     match operation {
         "list" => {
@@ -386,6 +415,31 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
             )
         }
         "sync" => Ok(json!(service::synchronize(home).await?)),
+        "resolve" => {
+            service::resolve_scoped(
+                home,
+                id(&params)?,
+                serde_json::from_value(
+                    params
+                        .get("choice")
+                        .cloned()
+                        .context("conflict choice required")?,
+                )?,
+                params
+                    .get("expected_local_revision")
+                    .and_then(Value::as_str)
+                    .context("expected local revision required")?,
+                params
+                    .get("expected_remote_etag")
+                    .and_then(Value::as_str)
+                    .context("expected remote ETag required")?,
+                params.get("new_version").and_then(Value::as_str),
+                params
+                    .get("expected_account")
+                    .context("expected customer account required")?,
+            )
+            .await
+        }
         "delete" => {
             let (library, package) = installed(home, id(&params)?)?;
             let item = library

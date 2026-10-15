@@ -1,5 +1,5 @@
 //! Portable agent definitions. Content identity never grants runtime authority.
-mod canonical;
+pub(crate) mod canonical;
 pub mod store;
 
 use std::collections::{BTreeMap, BTreeSet};

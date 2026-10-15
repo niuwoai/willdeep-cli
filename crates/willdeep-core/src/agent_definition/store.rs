@@ -244,6 +244,63 @@ impl AgentLibrary {
         item.dirty = false;
         self.save(&items)
     }
+    /// An explicit conflict choice may replace a pinned revision; both branches remain in history.
+    /// Unlike ordinary sync this accepts divergent branches bearing the same semantic version.
+    pub fn resolve_private(
+        &self,
+        id: &str,
+        expected_revision: &str,
+        package: Option<&AgentPackage>,
+        etag: &str,
+        compatible: bool,
+    ) -> Result<()> {
+        let _lock = self.lock()?;
+        let mut items = self.installations()?;
+        let current = items
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("agent not installed"))?;
+        ensure!(
+            current.sha256 == expected_revision && current.origin == Origin::Private,
+            "local revision changed; synchronize again"
+        );
+        if let Some(package) = package {
+            self.archive_private_locked(id, package)?;
+            let item = items.get_mut(id).expect("checked installation");
+            item.sha256 = package.sha256.clone();
+            item.remote_etag = Some(etag.into());
+            item.dirty = false;
+            item.enabled &= compatible;
+        } else {
+            items.remove(id);
+        }
+        self.save(&items)
+    }
+    pub fn archive_private(&self, id: &str, package: &AgentPackage) -> Result<()> {
+        let _lock = self.lock()?;
+        self.archive_private_locked(id, package)
+    }
+    fn archive_private_locked(&self, id: &str, package: &AgentPackage) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(package)?;
+        AgentPackage::parse(&bytes)?;
+        ensure!(
+            package.definition.definition_id == id
+                && id.starts_with("user/")
+                && package.signature.is_none(),
+            "invalid private conflict revision"
+        );
+        let path = self
+            .root
+            .join("revisions")
+            .join(format!("{}.json", package.sha256));
+        if path.exists() {
+            ensure!(
+                self.package(&package.sha256)? == *package,
+                "immutable package mismatch"
+            );
+            return Ok(());
+        }
+        private_write(&path, &bytes)
+    }
     pub fn set_remote_base(&self, id: &str, etag: String) -> Result<()> {
         self.update(id, |item| {
             item.remote_etag = Some(etag);

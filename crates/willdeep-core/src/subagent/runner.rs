@@ -313,6 +313,8 @@ impl Drop for FileClaim {
 /// nothing it has to ask the catalog for again.
 #[derive(Clone)]
 pub(super) struct SubagentRun {
+    /// Only the offline evaluation adapter sets this; avoids reading live user rules.
+    pub(super) isolated_evaluation: bool,
     pub(super) execution_deadline: Option<tokio::time::Instant>,
     pub(super) workspace: PathBuf,
     pub(super) sandbox: crate::sandbox::SandboxSpec,
@@ -380,6 +382,7 @@ async fn run_subagent_inner(
     instruction_inbox: Option<Arc<AgentInstructionInbox>>,
 ) -> Result<String, AgentError> {
     let SubagentRun {
+        isolated_evaluation,
         execution_deadline,
         workspace,
         sandbox,
@@ -485,7 +488,7 @@ async fn run_subagent_inner(
 
     let mut last_facts = WorkerFacts::default();
     for attempt in 1..=attempts {
-        let (report, facts) = run_once(
+        let (report, facts, context) = run_once(
             &workspace,
             &profile,
             &approved_targets,
@@ -510,9 +513,18 @@ async fn run_subagent_inner(
             goal.clone(),
             execution_deadline,
             attempt,
+            isolated_evaluation,
         )
         .await?;
         let Some(verifier) = verifier.as_ref() else {
+            crate::rsi::record_worker_event(
+                state_home.as_deref(),
+                context.as_ref(),
+                "verifier",
+                "unverified",
+                None,
+            )
+            .map_err(|error| AgentError::Checkpoint(error.to_string()))?;
             // No verifier: unverified, which is not the same as failed, and
             // the telemetry has to keep the two apart. What can still be
             // checked without a command is what the report cites.
@@ -525,6 +537,18 @@ async fn run_subagent_inner(
             });
         };
         let result = run_verifier(&workspace, verifier, &sandbox).await?;
+        crate::rsi::record_worker_event(
+            state_home.as_deref(),
+            context.as_ref(),
+            "verifier",
+            if result.passed { "passed" } else { "failed" },
+            Some(serde_json::json!({
+                "verifier_sha256": crate::agent_definition::digest(verifier.command.as_bytes()),
+                "expected_exit_code": verifier.expected_exit_code(), "exit_code": result.exit_code,
+                "output_sha256": crate::agent_definition::digest(result.digest.as_bytes())
+            })),
+        )
+        .map_err(|error| AgentError::Checkpoint(error.to_string()))?;
         if result.passed {
             lifecycle_sink
                 .emit(verdict(Some(true), attempt, &CitationAudit::default()))
@@ -615,7 +639,8 @@ async fn run_once(
     goal: Option<Arc<crate::goal::GoalContinuation>>,
     execution_deadline: Option<tokio::time::Instant>,
     attempt: usize,
-) -> Result<(String, WorkerFacts), AgentError> {
+    isolated_evaluation: bool,
+) -> Result<(String, WorkerFacts, Option<crate::rsi::ExecutionContext>), AgentError> {
     let approval = if profile.shell.uses_intelligent_review() {
         ApprovalMode::Smart
     } else if approved_targets.is_some() {
@@ -643,7 +668,7 @@ async fn run_once(
     let has_board = board.is_some();
     let mut tools = ToolRegistry::new(workspace, approval)?
         .with_sandbox(sandbox.clone())
-        .with_allowed_tools(allowed)
+        .with_allowed_tools(allowed.clone())
         .with_write_targets(approved_targets.clone());
     if let Some((board, author)) = board {
         tools = tools.with_board(board, author);
@@ -697,16 +722,41 @@ async fn run_once(
     // A relay-hosted trade already carries its job prompt server-side. Sending
     // the client's copy too would put two descriptions of the same trade in
     // one context — and when they drift, the worker gets to pick.
-    let mut system_prompt = worker_prompt_parts(profile, has_board)
-        .join("\n\n")
-        .replace("{workspace}", &workspace.display().to_string());
-    if let Some(rules) = crate::prompt::global_user_instructions()
-        .map_err(|error| AgentError::Subagent(error.to_string()))?
+    let mut system_prompt = if isolated_evaluation {
+        worker_prompt_parts_with(profile, has_board, None)
+    } else {
+        worker_prompt_parts(profile, has_board)
+    }
+    .join("\n\n")
+    .replace("{workspace}", &workspace.display().to_string());
+    if let Some(rules) = if isolated_evaluation {
+        Ok(None)
+    } else {
+        crate::prompt::global_user_instructions()
+    }
+    .map_err(|error| AgentError::Subagent(error.to_string()))?
     {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(&rules);
     }
     let timeout_seconds = profile.timeout_seconds;
+    let mut context = crate::rsi::ExecutionContext::from_profile(
+        profile,
+        &system_prompt,
+        allowed,
+        agent_id,
+        attempt,
+    )
+    .map_err(|error| AgentError::Checkpoint(error.to_string()))?;
+    if let Some(context) = &mut context {
+        context.root_run_id = feedback.and_then(|recorder| recorder.execution_root_run_id());
+    }
+    let feedback = feedback.cloned().map(|recorder| match &context {
+        Some(context) => recorder.with_execution_context(context.clone()),
+        None => recorder,
+    });
+    let mut evidence = crate::rsi::WorkerEvidenceGuard::start(state_home, context.clone())
+        .map_err(|error| AgentError::Checkpoint(error.to_string()))?;
     let mut agent = Agent::new(
         profile.provider.clone(),
         tools,
@@ -729,7 +779,7 @@ async fn run_once(
     if let Some(scope) = usage_ledger {
         agent = agent.with_usage_ledger(scope.clone());
     }
-    if let Some(recorder) = feedback {
+    if let Some(recorder) = &feedback {
         agent = agent.with_feedback(recorder.clone());
     }
     let run = Box::pin(async {
@@ -743,7 +793,7 @@ async fn run_once(
         tokio::time::timeout(Duration::from_secs(seconds), run)
             .await
             .map_err(|_| {
-                if let Some(feedback) = feedback {
+                if let Some(feedback) = &feedback {
                     feedback.record_worker_failure(crate::feedback::Signal::WorkerTimedOut, None);
                 }
                 AgentError::Subagent(format!("subagent timed out after {seconds} seconds"))
@@ -754,6 +804,9 @@ async fn run_once(
     // 子 Agent 触顶同样交部分结果，但父 Agent 得知道它没收敛，
     // 否则会把一份半成品当成经过验证的答案。
     let facts = WorkerFacts::observe(&outcome.messages, outcome.turns);
+    evidence
+        .finish(outcome.stop_reason.as_str())
+        .map_err(|error| AgentError::Checkpoint(error.to_string()))?;
     if !outcome.stop_reason.is_complete() {
         let trailer = facts.render(&profile.id, "partial", attempt, None);
         return Err(AgentError::SubagentPartial {
@@ -762,7 +815,7 @@ async fn run_once(
             report: format!("{}\n\n{trailer}", outcome.final_text),
         });
     }
-    Ok((outcome.final_text, facts))
+    Ok((outcome.final_text, facts, context))
 }
 
 struct VerifierResult {
@@ -917,6 +970,76 @@ mod tests {
     use crate::subagent::types::SpawnAgentArgs;
     use crate::subagent::{SubagentCatalog, builtin_profiles};
     use crate::types::{Completion, Message, ToolDefinition};
+
+    #[tokio::test]
+    async fn defined_worker_persists_independent_verifier_and_actual_prompt_lineage() {
+        let root =
+            std::env::temp_dir().join(format!("definition-verifier-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let golden = crate::rsi::contract::golden();
+        let package = crate::agent_definition::AgentPackage::parse(
+            &serde_json::to_vec(&golden["values"]["candidate"]["baseline_package"]).unwrap(),
+        )
+        .unwrap();
+        let base = builtin_profiles(Arc::new(ReportProvider))
+            .into_iter()
+            .find(|p| p.id == "reviewer")
+            .unwrap();
+        let profile = package.definition.project(&base).unwrap();
+        let home = root.join("home");
+        let run = SubagentRun {
+            isolated_evaluation: true,
+            execution_deadline: None,
+            workspace: root.clone(),
+            sandbox: crate::sandbox::SandboxSpec::new(crate::sandbox::SandboxPolicy::Off, []),
+            profile,
+            prompt: "review fixture".into(),
+            task: None,
+            approved_targets: None,
+            verifier: Some(TaskVerifier {
+                command: "true".into(),
+                expected_exit_code: Some(0),
+            }),
+            max_attempts: 1,
+            claimed_files: Arc::new(Mutex::new(BTreeSet::new())),
+            skills: None,
+            safety_judge: None,
+            approved_command: None,
+            mcp: None,
+            always_allow_store: None,
+            state_home: Some(home.clone()),
+            parent_approval_mode: None,
+            usage_ledger: None,
+            feedback: None,
+            board: None,
+            goal: None,
+        };
+        let report = run_subagent(
+            run,
+            Arc::new(CaptureSink::default()),
+            uuid::Uuid::new_v4(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(report.contains("verdict=\"passed\""));
+        let events: Vec<serde_json::Value> = std::fs::read_dir(home.join("agent-evidence"))
+            .unwrap()
+            .map(|e| serde_json::from_slice(&std::fs::read(e.unwrap().path()).unwrap()).unwrap())
+            .collect();
+        assert!(events.iter().any(|e| e["phase"] == "verifier"
+            && e["outcome"] == "passed"
+            && e["verifier"]["exit_code"] == 0));
+        assert!(events.iter().all(|e| {
+            e["context"]["definition_revision"] == package.sha256
+                && e["context"]["effective_prompt_sha256"]
+                    .as_str()
+                    .unwrap()
+                    .len()
+                    == 64
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn child_retry_wait_reaches_parent_without_child_text() {
