@@ -200,7 +200,7 @@ class AgentRsiLiveTest < Minitest::Test
     'standalone incomplete inline object' => [PARSER_ANSWER + '`{broken`', false],
     'unclosed inline code' => [PARSER_ANSWER + '`for (;;) {', false],
     'plain non-inline loop' => [PARSER_ANSWER + 'for (;;) {', false],
-    'fenced incomplete code' => [PARSER_ANSWER + "\n```js\nfor (;;) {\n```", false],
+    'fenced incomplete code excerpt' => [PARSER_ANSWER + "\n```js\nfor (;;) {\n```", true],
     'duplicate keys' => ['{"has_defect":false,"has_defect":true,"line":3,"reason":"why"}', false],
     'duplicate keys second inline' => [PARSER_ANSWER + '`{"has_defect":false,"has_defect":true}`', false],
     'wrong schema' => ['{"has_defect":true,"line":3,"reason":"why","passed":true}', false],

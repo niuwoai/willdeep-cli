@@ -7,7 +7,7 @@ require_relative 'agent_rsi_live_account'
 module AgentRsiLive
   class Host
     ROOT = File.expand_path('../..', __dir__)
-    SOURCE_FILES = %w[scripts/lib/agent_rsi_live.rb scripts/lib/agent_rsi_live_account.rb scripts/lib/agent_rsi_live_host.rb
+    SOURCE_FILES = %w[scripts/lib/agent_rsi_live.rb scripts/lib/agent_rsi_grader.rb scripts/lib/agent_rsi_live_account.rb scripts/lib/agent_rsi_live_host.rb
                       scripts/lib/agent_rsi_contract.rb scripts/lib/willdeep_credentials.rb
                       docs/decisions/2026-10-15-agent-rsi-live-preregistration.md].freeze
     QUALITY_TERMINALS = %w[passed quality_failure].freeze

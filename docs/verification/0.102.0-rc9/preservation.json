@@ -1,0 +1,16 @@
+{
+  "schema": "willdeep.agent-rsi.format-replay-preservation.v1",
+  "original_batch_identical_across_all_three_replays": true,
+  "original_batch_tree_sha256": "99b69c68d0d11b53239ecb24fbf2d50d6cc48ba108ca5f65cadcf657957d7ee3",
+  "original_batch_entries_verified_unchanged": 8924,
+  "original_ledger_raw_sha256": "8810e599300a4b74c1acde9a38a84751f6e3a95e606ebaacc95c5c66c5a6d2f7",
+  "independent_post_replay_audit": {
+    "passed": true,
+    "checks": 16253,
+    "issues": 0,
+    "file_sha256": "2a4304202ae02954e7d8acd3d4a61d6fcd58efb6f532cb195371ce2fee0b6056"
+  },
+  "model_requests_added": 0,
+  "verified_batch_cost_microusd_unchanged": 667158,
+  "formal_scores_replaced": false
+}

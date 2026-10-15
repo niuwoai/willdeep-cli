@@ -1,0 +1,253 @@
+{
+  "schema": "willdeep.agent-rsi.posthoc-format-replay.v1",
+  "created_at": "2026-10-15T07:59:42Z",
+  "parser_revision": "report-json-v3",
+  "parser_sha256": "d98b5190511fa8908f14a28c57e3845ba4fe6fb1f91ee99fdf162776ed6626f5",
+  "policy_sha256": "e2402cf6e68e8fb414ca43b2ce5c5169e7d9e8c0e0bbbaad93a59bd5616423ea",
+  "replay_tool_sha256": "7321f7bb5fc5766ba510e324d0cfe7e185628e635a695d98ce4a32ff85c04574",
+  "original_audit_sha256": "0e3d8ab166a4e6746d2a3668014562f7c114166d7f3ebcdf08a77578892a90b6",
+  "original_ledger_raw_sha256": "8810e599300a4b74c1acde9a38a84751f6e3a95e606ebaacc95c5c66c5a6d2f7",
+  "original_manifest_sha256": "678f4e3d4ef5c2ca312343a9502ac415a13e33eca5ed8d99b00b994d31ee2a02",
+  "original_batch_tree_sha256": "99b69c68d0d11b53239ecb24fbf2d50d6cc48ba108ca5f65cadcf657957d7ee3",
+  "original_batch_entries_verified_unchanged": 8924,
+  "original_inputs_unchanged": true,
+  "planned_terminals": 288,
+  "replayed_quality_observations": 275,
+  "budget_terminals_excluded": 13,
+  "historical_infrastructure_attempts_excluded": 2,
+  "original_model_requests_unchanged": 708,
+  "original_verified_cost_microusd_unchanged": 667158,
+  "original_metrics": {
+    "schema_valid": 188,
+    "classification_correct": 188,
+    "localization_correct": 187,
+    "read_observed": 275,
+    "fixture_unchanged": 275,
+    "passed": 187
+  },
+  "posthoc_metrics": {
+    "schema_valid": 261,
+    "classification_correct": 261,
+    "localization_correct": 260,
+    "read_observed": 275,
+    "fixture_unchanged": 275,
+    "passed": 260
+  },
+  "transitions": {
+    "schema_valid": {
+      "false_to_true": 73,
+      "true_to_false": 0
+    },
+    "classification_correct": {
+      "false_to_true": 73,
+      "true_to_false": 0
+    },
+    "localization_correct": {
+      "false_to_true": 73,
+      "true_to_false": 0
+    },
+    "read_observed": {
+      "false_to_true": 0,
+      "true_to_false": 0
+    },
+    "fixture_unchanged": {
+      "false_to_true": 0,
+      "true_to_false": 0
+    },
+    "passed": {
+      "false_to_true": 73,
+      "true_to_false": 0
+    }
+  },
+  "posthoc_rejection_reasons": {
+    "multiple_complete_objects": 5,
+    "invalid_json_or_duplicate_key": 8,
+    "incomplete_json_or_unknown_brace": 1
+  },
+  "groups_by_original_epoch": [
+    {
+      "platform": "rust-native-worker",
+      "arm": "candidate",
+      "original_scoring_epoch": "v1-historical",
+      "replayed": 3,
+      "original_metrics": {
+        "schema_valid": 0,
+        "classification_correct": 0,
+        "localization_correct": 0,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 0
+      },
+      "posthoc_metrics": {
+        "schema_valid": 3,
+        "classification_correct": 3,
+        "localization_correct": 3,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 3
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "baseline",
+      "original_scoring_epoch": "v1-historical",
+      "replayed": 4,
+      "original_metrics": {
+        "schema_valid": 0,
+        "classification_correct": 0,
+        "localization_correct": 0,
+        "read_observed": 4,
+        "fixture_unchanged": 4,
+        "passed": 0
+      },
+      "posthoc_metrics": {
+        "schema_valid": 4,
+        "classification_correct": 4,
+        "localization_correct": 4,
+        "read_observed": 4,
+        "fixture_unchanged": 4,
+        "passed": 4
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "baseline",
+      "original_scoring_epoch": "v1-historical",
+      "replayed": 3,
+      "original_metrics": {
+        "schema_valid": 3,
+        "classification_correct": 3,
+        "localization_correct": 3,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 3
+      },
+      "posthoc_metrics": {
+        "schema_valid": 3,
+        "classification_correct": 3,
+        "localization_correct": 3,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 3
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "candidate",
+      "original_scoring_epoch": "v1-historical",
+      "replayed": 3,
+      "original_metrics": {
+        "schema_valid": 3,
+        "classification_correct": 3,
+        "localization_correct": 3,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 3
+      },
+      "posthoc_metrics": {
+        "schema_valid": 3,
+        "classification_correct": 3,
+        "localization_correct": 3,
+        "read_observed": 3,
+        "fixture_unchanged": 3,
+        "passed": 3
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "candidate",
+      "original_scoring_epoch": "v2-prospective",
+      "replayed": 69,
+      "original_metrics": {
+        "schema_valid": 64,
+        "classification_correct": 64,
+        "localization_correct": 63,
+        "read_observed": 69,
+        "fixture_unchanged": 69,
+        "passed": 63
+      },
+      "posthoc_metrics": {
+        "schema_valid": 67,
+        "classification_correct": 67,
+        "localization_correct": 66,
+        "read_observed": 69,
+        "fixture_unchanged": 69,
+        "passed": 66
+      }
+    },
+    {
+      "platform": "macos-native-worker",
+      "arm": "baseline",
+      "original_scoring_epoch": "v2-prospective",
+      "replayed": 68,
+      "original_metrics": {
+        "schema_valid": 62,
+        "classification_correct": 62,
+        "localization_correct": 62,
+        "read_observed": 68,
+        "fixture_unchanged": 68,
+        "passed": 62
+      },
+      "posthoc_metrics": {
+        "schema_valid": 67,
+        "classification_correct": 67,
+        "localization_correct": 67,
+        "read_observed": 68,
+        "fixture_unchanged": 68,
+        "passed": 67
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "candidate",
+      "original_scoring_epoch": "v2-prospective",
+      "replayed": 61,
+      "original_metrics": {
+        "schema_valid": 26,
+        "classification_correct": 26,
+        "localization_correct": 26,
+        "read_observed": 61,
+        "fixture_unchanged": 61,
+        "passed": 26
+      },
+      "posthoc_metrics": {
+        "schema_valid": 56,
+        "classification_correct": 56,
+        "localization_correct": 56,
+        "read_observed": 61,
+        "fixture_unchanged": 61,
+        "passed": 56
+      }
+    },
+    {
+      "platform": "rust-native-worker",
+      "arm": "baseline",
+      "original_scoring_epoch": "v2-prospective",
+      "replayed": 64,
+      "original_metrics": {
+        "schema_valid": 30,
+        "classification_correct": 30,
+        "localization_correct": 30,
+        "read_observed": 64,
+        "fixture_unchanged": 64,
+        "passed": 30
+      },
+      "posthoc_metrics": {
+        "schema_valid": 58,
+        "classification_correct": 58,
+        "localization_correct": 58,
+        "read_observed": 64,
+        "fixture_unchanged": 64,
+        "passed": 58
+      }
+    }
+  ],
+  "regressed_observations": 0,
+  "validation_passed": true,
+  "model_requests": 0,
+  "network_dependencies_loaded": false,
+  "formal_scores_replaced": false,
+  "paid_evaluation_rerun": false,
+  "candidate_promotion_allowed": false,
+  "claim_limit": "Post-hoc format validation on saved answers, not new independent quality evidence or an improvement/promotion claim."
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "willdeep.agent-rsi.offline-format-preflight.v1",
+  "parser_revision": "report-json-v5",
+  "model_requests_authorized": 0,
+  "previous_replay_summary_sha256": "e762f01b3844cc244e94de30373b15e62624137b523e8d6a9b978cd1571daf8b",
+  "files": {
+    "scripts/lib/agent_rsi_grader.rb": "8594b930064aaf9fb313507acee6ab8b7838b965c705b89d92a25c4e1a3ca463",
+    "scripts/lib/agent_rsi_format_replay.rb": "7321f7bb5fc5766ba510e324d0cfe7e185628e635a695d98ce4a32ff85c04574",
+    "scripts/agent_rsi_format_replay.rb": "93acca047f67a148a3e267b8db2a2bb49d9d8ed52f9090fb8f495910c1435684",
+    "docs/decisions/2026-10-15-agent-rsi-format-replay-policy.md": "981945e4e6255508b1a037d7ffbb306adfb4f27c6f82f914c009727bd6f8377e"
+  },
+  "free_tests": {
+    "format-parser": {
+      "tests": 52,
+      "assertions": 61,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "model_requests": 0,
+      "passed": true
+    },
+    "offline-replay": {
+      "tests": 19,
+      "assertions": 32,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "model_requests": 0,
+      "passed": true
+    },
+    "budget-and-grader": {
+      "tests": 60,
+      "assertions": 127,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "paid_model_calls": 0,
+      "passed": true
+    },
+    "resume-ledger": {
+      "tests": 20,
+      "assertions": 75,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "paid_model_calls": 0,
+      "passed": true
+    },
+    "known-terminal-recovery": {
+      "tests": 38,
+      "assertions": 52,
+      "failures": 0,
+      "errors": 0,
+      "paid_model_calls": 0
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "tests": 20,
+  "assertions": 75,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "paid_model_calls": 0,
+  "passed": true
+}
