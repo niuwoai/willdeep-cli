@@ -956,7 +956,7 @@ fn runtime_provider_failure_preserves_the_documented_exit_code() {
     // 503 属于该重发的那一类，所以这里看到的是重试预算跑满（willdeep-core 的
     // MAX_ATTEMPTS）而不是一次就走。重试改变的只是敲门次数——一直不成，
     // 对外仍旧是同一个退出码 3。
-    assert_eq!(provider.requests(), 3);
+    assert_eq!(provider.requests(), 6, "initial request plus five retries");
 }
 
 #[test]
