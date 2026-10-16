@@ -32,6 +32,7 @@ import { useInputSuggestion } from "./inputSuggestion";
 import { formatStepElapsed, groupActivityMessages, needsActivityStrip, type RunStep } from "./runActivity";
 import { RunCard } from "./RunCard";
 import { AgentLibrary } from "./AgentLibrary";
+import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
 
 type WorkspaceAccess = "read_only" | "strict" | "smart" | "workspace_write" | "full_access";
@@ -128,6 +129,7 @@ function nextId(prefix: string) { return `${prefix}-${Date.now()}-${Math.random(
 function railFromHash(): RailSelection {
   const hash = window.location.hash.replace(/^#/, "");
   if (hash === "agents") return { kind: "agents" };
+  if (hash === "agent-experiments") return { kind: "agent-experiments" };
   if (hash === "schedules") return { kind: "schedules" };
   if (hash === "plugins") return { kind: "center" };
   const plugin = hash.startsWith("plugin/") ? hash.slice("plugin/".length) : "";
@@ -136,6 +138,7 @@ function railFromHash(): RailSelection {
 
 function hashForRail(selection: RailSelection): string {
   if (selection.kind === "agents") return "#agents";
+  if (selection.kind === "agent-experiments") return "#agent-experiments";
   if (selection.kind === "schedules") return "#schedules";
   if (selection.kind === "center") return "#plugins";
   if (selection.kind === "plugin") return `#plugin/${encodeURIComponent(selection.qualifiedId)}`;
@@ -303,6 +306,8 @@ export function App() {
   const [pluginFailures, setPluginFailures] = useState<PluginFailureView[]>([]);
   const [rail, setRail] = useState<RailSelection>(railFromHash);
   const scheduleDirtyRef = useRef(false);
+  const agentDirtyRef = useRef(false);
+  const trackAgentDirty = useCallback((dirty: boolean) => {agentDirtyRef.current = dirty;}, []);
   const [pluginSelectedItem, setPluginSelectedItem] = useState<string | null>(null);
   const [pluginReloadToken, setPluginReloadToken] = useState(0);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
@@ -349,10 +354,16 @@ export function App() {
     }
   }, [rail]);
   useEffect(() => {
-    const onHashChange = () => setRail(railFromHash());
+    const onHashChange = () => {
+      const next = railFromHash();
+      if (hashForRail(next) !== hashForRail(rail) && !allowAgentNavigation(agentDirtyRef.current, language)) {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hashForRail(rail)}`); return;
+      }
+      setRail(next);
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  }, [rail, language]);
 
   const navigateToDestination = useCallback((qualifiedId: string) => {
     setPluginSelectedItem(null);
@@ -1017,11 +1028,11 @@ export function App() {
   // 一级入口栏之后，右侧要么是对话（原有侧栏 + 聊天），要么是一个插件目的地
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
-  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} onSelect={(next) => { if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
+  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = showSetup ? <ProviderSetup status={setupStatus} loadFailed={setupLoadFailed} plugin={plugins.find((plugin) => plugin.id === "willdeep-config")} messages={t} onCheck={checkSetup} onDone={finishSetup} onOpen={(destination) => { if (destination) navigateToDestination(destination); else setRail({ kind: "center" }); }} /> : null;
 
-  if (rail.kind === "agents") {
-    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<AgentLibrary language={language} onTrial={(text) => { setPrompt(text); setRail({ kind: "conversation" }); }} />{pluginOverlays}</Flex></Box>;
+  if (rail.kind === "agents" || rail.kind === "agent-experiments") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<AgentLibrary mode={rail.kind === "agents" ? "library" : "experiments"} onDirty={trackAgentDirty} onNavigate={mode => setRail({kind:mode === "library" ? "agents" : "agent-experiments"})} language={language} onTrial={(text) => { setPrompt(text); setRail({ kind: "conversation" }); }} />{pluginOverlays}</Flex></Box>;
   }
 
   if (rail.kind === "schedules") {

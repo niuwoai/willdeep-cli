@@ -1,5 +1,6 @@
 use super::*;
-use crate::types::{MessageAttachment, Role, ToolDefinition};
+use crate::types::{MessageAttachment, MessageSource, Role, ToolDefinition};
+use std::collections::HashSet;
 
 const COMPRESSION_TRIGGER_PERCENT: u64 = 75;
 const KEEP_RECENT_MESSAGES: usize = 6;
@@ -11,6 +12,7 @@ const MIN_SUMMARY_INPUT_BUDGET: u64 = 8_192;
 const SUMMARY_OVERHEAD_TOKENS: u64 = 1_024;
 /// 合并分块摘要的轮数上限：真实历史两三轮就收敛，这是防呆不是预期路径。
 const MAX_SUMMARY_REDUCE_ROUNDS: usize = 8;
+const SUMMARY_TRUNCATION_MARKER: &str = "\n[…truncated for summarization…]\n";
 
 impl Agent {
     pub async fn compress_history(
@@ -29,13 +31,19 @@ impl Agent {
     ) -> Result<Vec<Message>, AgentError> {
         // Manual compression can precede the next Agent run after a crash.
         uncertain::UncertainCalls::recover(&mut messages);
-        if messages.len() < KEEP_RECENT_MESSAGES + 2 {
+        let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
+        let target = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
+        messages = self.page_tool_outputs(&messages, capacity)?;
+        if messages.len() < KEEP_RECENT_MESSAGES + 2 && estimate_tokens(&messages) < target {
             return Ok(messages);
         }
-        let split = batch_boundary(
+        let mut split = batch_boundary(
             &messages,
             messages.len().saturating_sub(KEEP_RECENT_MESSAGES),
         );
+        if split == 0 && estimate_tokens(&messages) >= target {
+            split = messages.len();
+        }
         if split == 0 {
             return Ok(messages);
         }
@@ -47,11 +55,25 @@ impl Agent {
         let summary = self
             .summarize_history(&messages[..split], record_usage)
             .await?;
-        let result = compact_prefix(&messages, split, &summary);
+        let mut result = compact_prefix(&messages, split, &summary);
+        // A summary alone is not success: the recent tail may still contain a
+        // window-sized tool batch (including reasoning). Fold that tail too.
+        if estimate_tokens(&result) > target && split < messages.len() {
+            let summary = self.summarize_history(&messages, record_usage).await?;
+            result = compact_prefix(&messages, messages.len(), &summary);
+        }
+        let dropped = self.archive_old_batches(&mut result, target)?;
+        let estimated = estimate_tokens(&result);
+        if estimated > capacity {
+            return Err(AgentError::ContextCapacity {
+                estimated,
+                capacity,
+            });
+        }
         self.sink
             .emit(AgentEvent::CompressionCompleted {
-                estimated_tokens: estimate_tokens(&result),
-                dropped_messages: 0,
+                estimated_tokens: estimated,
+                dropped_messages: dropped,
             })
             .await;
         Ok(result)
@@ -73,8 +95,7 @@ impl Agent {
         cache: &mut Option<SummaryCache>,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
-        let definitions = self.tools.definitions();
-        let capacity = message_capacity(self.config.context_window, &definitions)?;
+        let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
         let mut result = self.page_tool_outputs(messages, capacity)?;
         let watermark = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
         let raw_estimate = estimate_tokens(&result);
@@ -142,22 +163,31 @@ impl Agent {
             }
             None => {}
         }
+        // The usual recent tail is a preference, not a licence to exceed the
+        // window. A single thinking response can be larger than that whole tail.
+        if estimate_tokens(&result) > capacity && replaceable(&result) {
+            let summary = self.summarize_history(&result, record_usage).await?;
+            let source = self.page_tool_outputs(messages, capacity)?;
+            let entry = SummaryCache::new(&source, source.len(), summary);
+            result = compact_prefix(&source, entry.through, &entry.summary);
+            *cache = Some(entry);
+        }
         // If the recent tail remains too large, replace complete tool batches with
         // archived references. Never remove individual protocol messages.
         let dropped = self.archive_old_batches(&mut result, capacity)?;
         let estimated = estimate_tokens(&result);
-        self.sink
-            .emit(AgentEvent::CompressionCompleted {
-                estimated_tokens: estimated,
-                dropped_messages: dropped,
-            })
-            .await;
         if estimated > capacity {
             return Err(AgentError::ContextCapacity {
                 estimated,
                 capacity,
             });
         }
+        self.sink
+            .emit(AgentEvent::CompressionCompleted {
+                estimated_tokens: estimated,
+                dropped_messages: dropped,
+            })
+            .await;
         Ok(result)
     }
 
@@ -167,7 +197,20 @@ impl Agent {
         capacity: u64,
     ) -> Result<Vec<Message>, AgentError> {
         let limit = (capacity / TOOL_MESSAGE_WINDOW_DIVISOR).max(64);
-        messages.iter().map(|message| {
+        // Host steering can be re-injected every turn. Keep the last exact
+        // occurrence, preserving its ordering/authority; operator input and
+        // distinct instructions are never deduplicated or summarized away.
+        let mut seen = HashSet::new();
+        let mut keep = vec![true; messages.len()];
+        for (index, message) in messages.iter().enumerate().rev() {
+            if message.role == Role::User
+                && message.source == Some(MessageSource::HostInstruction)
+                && !seen.insert(summary_source(std::slice::from_ref(message))?)
+            {
+                keep[index] = false;
+            }
+        }
+        messages.iter().enumerate().filter(|(index, _)| keep[*index]).map(|(_, message)| {
             let mut result = message.clone();
             if message.role == Role::Tool && !uncertain::has_unknown_effect(std::slice::from_ref(message)) && text_tokens(&message.content) > limit {
                 let id = self.tools.archive_output(&message.content)?;
@@ -249,7 +292,10 @@ impl Agent {
         let chunks = chunk_for_summary(messages, budget);
         if chunks.len() <= 1 {
             return self
-                .summarize_once(summary_source(messages)?, record_usage)
+                .summarize_once(
+                    summary_source(chunks.first().map(Vec::as_slice).unwrap_or(&[]))?,
+                    record_usage,
+                )
                 .await;
         }
         // 分块摘要自己也要封顶，否则合并那一轮可能又超预算，白白多绕一圈。
@@ -317,6 +363,9 @@ impl Agent {
         source: String,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
+        // JSON escaping and multiple fields can exceed a message-level estimate.
+        // Bound the actual serialized transcript supplied to every compressor.
+        let source = clamp_text(&source, self.summary_input_budget());
         let candidates = if self.compressors.is_empty() {
             vec![(self.provider()?, false)]
         } else {
@@ -507,11 +556,25 @@ fn chunk_for_summary(messages: &[Message], budget: u64) -> Vec<Vec<Message>> {
 }
 
 fn clamp_message(message: &Message, budget: u64) -> Message {
-    if text_tokens(&message.content) <= budget {
+    if estimate_tokens(std::slice::from_ref(message)) <= budget {
         return message.clone();
     }
     let mut result = message.clone();
     result.content = clamp_text(&message.content, budget);
+    // Summary input is a derived transcript, not a replay to the thinking
+    // model. Bound every large field, including reasoning and attachments.
+    result.reasoning = result
+        .reasoning
+        .as_ref()
+        .map(|text| clamp_text(text, budget));
+    for call in &mut result.tool_calls {
+        call.arguments = clamp_text(&call.arguments, budget);
+    }
+    for attachment in &mut result.attachments {
+        if let MessageAttachment::Text { content, .. } = attachment {
+            *content = clamp_text(content, budget);
+        }
+    }
     result
 }
 
@@ -520,20 +583,35 @@ fn clamp_text(text: &str, budget: u64) -> String {
     if text_tokens(text) <= budget {
         return text.to_owned();
     }
-    // `text_tokens` 对非 ASCII 记 2 token/字符，按最坏情况折算成字符数才不会超。
-    let characters = (budget as usize / 2).max(64);
-    let head = characters.saturating_sub(characters / 4);
-    let tail = characters / 4;
-    let prefix: String = text.chars().take(head).collect();
-    let suffix: String = text
-        .chars()
-        .rev()
-        .take(tail)
-        .collect::<String>()
+    let marker_cost = text_tokens(SUMMARY_TRUNCATION_MARKER);
+    if budget <= marker_cost {
+        return token_excerpt(text.chars(), budget);
+    }
+    let available = budget - marker_cost;
+    let tail_budget = available / 4;
+    let prefix = token_excerpt(text.chars(), available - tail_budget);
+    let suffix: String = token_excerpt(text.chars().rev(), tail_budget)
         .chars()
         .rev()
         .collect();
-    format!("{prefix}\n[…truncated for summarization…]\n{suffix}")
+    format!("{prefix}{SUMMARY_TRUNCATION_MARKER}{suffix}")
+}
+
+fn token_excerpt(characters: impl Iterator<Item = char>, budget: u64) -> String {
+    let mut result = String::new();
+    let (mut ascii, mut non_ascii) = (0_u64, 0_u64);
+    for character in characters {
+        if character.is_ascii() {
+            ascii += 1;
+        } else {
+            non_ascii += 1;
+        }
+        if ascii.div_ceil(4) + non_ascii.saturating_mul(2) > budget {
+            break;
+        }
+        result.push(character);
+    }
+    result
 }
 
 fn text_tokens(text: &str) -> u64 {
@@ -552,6 +630,7 @@ pub(super) fn estimate_tokens(messages: &[Message]) -> u64 {
         .iter()
         .map(|message| {
             text_tokens(&message.content)
+                + message.reasoning.as_deref().map(text_tokens).unwrap_or(0)
                 + 8
                 + message
                     .tool_calls

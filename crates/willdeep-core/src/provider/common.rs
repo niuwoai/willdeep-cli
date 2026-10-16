@@ -31,12 +31,12 @@ pub async fn emit_buffered_completion(
     Ok(completion)
 }
 
-/// 一次 Provider 请求最多发几遍（含第一遍）。
-const MAX_ATTEMPTS: u32 = 3;
+/// 首次请求之外最多重试五次，所有尝试共享原请求期限。
+const MAX_RETRIES: u32 = 5;
+const MAX_ATTEMPTS: u32 = MAX_RETRIES + 1;
 
-/// 首次退避时长，此后逐次翻倍：250ms、500ms。三次尝试最多多等 750ms，
-/// 换掉的是「握手抖一下整个 task 就死」。
-const RETRY_BASE_DELAY_MS: u64 = 250;
+/// 无 Retry-After 时依次等待 2、4、8、16、32 秒，最多增加 62 秒等待。
+const RETRY_BASE_DELAY_SECS: u64 = 2;
 
 /// 粘贴文本附件送给模型时的包装。
 ///
@@ -124,8 +124,8 @@ fn apply_some_im_headers(request: RequestBuilder, config: &ProviderConfig) -> Re
 /// 发一次 Provider 请求，连接层抖动和 5xx 自动重发。
 ///
 /// 起因是一次真实故障：`tls handshake eof` 让任务在 5 秒内以 `failure_domain=provider`
-/// 收场，而链路本身几秒后就恢复了——握手掉一次，整轮对话连同上下文一起丢掉，
-/// 重来的成本远高于等那 250 毫秒。
+/// 收场，而链路本身几秒后就恢复了。首次请求之外最多重试五次，
+/// 以秒级递增等待给暂时的网络中断留出恢复时间。
 ///
 /// 429 和 5xx 遵守 Retry-After；无有效头时使用退避。其他 4xx 不重试。
 /// 所有尝试及等待共享一个请求期限，等待被取消后不会再发送请求。
@@ -207,7 +207,7 @@ fn ensure_request_deadline(deadline: tokio::time::Instant) -> Result<(), Provide
 }
 
 fn retry_delay(error: &ProviderError, attempt: u32) -> Duration {
-    let fallback = Duration::from_millis(RETRY_BASE_DELAY_MS << (attempt - 1));
+    let fallback = Duration::from_secs(RETRY_BASE_DELAY_SECS << (attempt - 1));
     match error {
         ProviderError::Http {
             retry_after: Some(delay),
@@ -221,7 +221,7 @@ fn retry_delay(error: &ProviderError, attempt: u32) -> Duration {
     }
 }
 
-/// 发一遍并读出 body。连接层的失败在这里就被收进 [`ProviderError::Request`]，
+/// 发一遍并检查响应状态。连接层的失败在这里收进 [`ProviderError::Request`]，
 /// 好让重试判定跟 HTTP 状态码那一路走同一个出口——否则 `?` 会让它绕过重试，
 /// 而连接失败恰恰是最该重发的那一类。
 async fn send_once(
@@ -242,21 +242,49 @@ async fn send_once(
 
 fn is_retryable(error: &ProviderError) -> bool {
     match error {
-        // 三者分工：`is_connect` 是连不上（`tls handshake eof` 落在这儿），
-        // `is_timeout` 是等太久，`is_request` 是连上了但半路断（hyper 报
-        // `IncompleteMessage`）。少了最后一条就漏掉「握手过了才掉线」那一类，
-        // 而它和前两类一样，重发一次通常就好了。
-        //
-        // 请求发出去、响应回来的路上断了，重发确实可能让对面多算一次用量。
-        // 这是重试换可用性的固有代价：整轮对话连同上下文丢掉要贵得多。
+        // Only evaluated while opening the response, never after successful
+        // headers/body/stream delivery. A lost response before headers can still
+        // represent upstream work, so retain the bounded attempt/deadline cap.
         ProviderError::Request(error) => {
-            error.is_connect() || error.is_timeout() || error.is_request()
+            !permanent_tls_failure(error)
+                && (error.is_connect() || error.is_timeout() || error.is_request())
         }
         ProviderError::Http { status, .. } => {
             status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
         }
         _ => false,
     }
+}
+
+/// Certificate and protocol configuration errors need a configuration fix;
+/// transient handshake EOFs remain eligible under the existing transport rule.
+fn permanent_tls_failure(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cause = Some(error);
+    while let Some(current) = cause {
+        if current.downcast_ref::<rustls::Error>().is_some_and(|tls| {
+            matches!(
+                tls,
+                rustls::Error::InvalidCertificate(_)
+                    | rustls::Error::NoCertificatesPresented
+                    | rustls::Error::UnsupportedNameType
+                    | rustls::Error::InvalidCertRevocationList(_)
+                    | rustls::Error::PeerIncompatible(_)
+                    | rustls::Error::NoApplicationProtocol
+                    | rustls::Error::InconsistentKeys(_)
+                    | rustls::Error::BadMaxFragmentSize
+            )
+        }) {
+            return true;
+        }
+        // io::Error can wrap rustls without returning that inner object from
+        // source(); inspect get_ref() so certificate failures cannot be hidden.
+        cause = current
+            .downcast_ref::<std::io::Error>()
+            .and_then(|io| io.get_ref())
+            .map(|inner| inner as &(dyn std::error::Error + 'static))
+            .or_else(|| current.source());
+    }
+    false
 }
 
 pub async fn decode_success(
@@ -326,6 +354,9 @@ fn safe_error_body(status: StatusCode, bytes: &[u8], api_key: Option<&str>) -> S
         body
     }
 }
+
+#[cfg(test)]
+mod retry_tests;
 
 #[cfg(test)]
 mod tests {
@@ -419,13 +450,13 @@ mod tests {
     /// `script` 按顺序决定每一次连接怎么收场：`None` 表示接了就把连接掐掉
     /// （不回一个字节），这是离 `tls handshake eof` 最近的可复现形态；
     /// `Some(status)` 表示回一个该状态码的空响应。脚本用完之后一律回 200。
-    async fn scripted_server(
+    pub(super) async fn scripted_server(
         script: Vec<Option<u16>>,
     ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
         scripted_server_with_retry_after(script, None).await
     }
 
-    async fn scripted_server_with_retry_after(
+    pub(super) async fn scripted_server_with_retry_after(
         script: Vec<Option<u16>>,
         retry_after: Option<&'static str>,
     ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
@@ -467,7 +498,7 @@ mod tests {
         (base_url, hits, handle)
     }
 
-    fn probe_config(base_url: &str) -> ProviderConfig {
+    pub(super) fn probe_config(base_url: &str) -> ProviderConfig {
         ProviderConfig::new(
             ProviderKind::OpenAiCompatible,
             ApiDialect::ChatCompletions,
@@ -682,7 +713,9 @@ mod tests {
     /// 重试有上限：一直连不上就得如实报错，不能无限重发把任务吊在那儿。
     #[tokio::test]
     async fn retries_give_up_after_the_attempt_budget() {
-        let (base_url, hits, server) = scripted_server(vec![Some(500), Some(500), Some(500)]).await;
+        let (base_url, hits, server) =
+            scripted_server_with_retry_after(vec![Some(500); MAX_ATTEMPTS as usize], Some("0"))
+                .await;
         let config = probe_config(&base_url);
         let request = client(&config).expect("client").get(&base_url);
 

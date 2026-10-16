@@ -1,0 +1,28 @@
+{
+  "schema": "willdeep.context-compression.verification.v1",
+  "version": "0.103.0-rc6",
+  "base_commit": "03d0a7e",
+  "context_tests": { "passed": 30, "failed": 0, "added": 9 },
+  "core_initial": { "passed": 749, "environment_failed": 23, "ignored": 6 },
+  "environment_rerun": { "passed": 23, "failed": 0, "report": "network-regressions.json" },
+  "core_aggregate": { "passed": 772, "failed": 0, "ignored": 6 },
+  "clippy_core_lib_and_tests_deny_warnings": true,
+  "format_check": true,
+  "diff_check": true,
+  "local_incident_readonly": {
+    "host_instruction_count": 47,
+    "host_instruction_characters": 255723,
+    "protected_message_count_before": 60,
+    "protected_message_count_after_exact_host_dedup": 28,
+    "protected_content_token_estimate_before": 105056,
+    "protected_content_token_estimate_after": 45786,
+    "operator_message_count_before": 12,
+    "operator_message_count_after": 12,
+    "session_modified": false,
+    "message_bodies_exported": false
+  },
+  "real_model_requests": 0,
+  "frozen_rsi_native_modified": false,
+  "installed_or_running_runtime_updated": false,
+  "merged_or_pushed": false
+}

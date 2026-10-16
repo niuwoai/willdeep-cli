@@ -9,12 +9,14 @@
 
 import { Box, Flex, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
+import { FlaskConical, Library, Users } from "lucide-react";
+import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
 import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
 
-export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "schedules" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
+export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
 type Props = {
   entries: Array<{ plugin: PluginView; destination: PluginDestinationView }>;
@@ -22,10 +24,13 @@ type Props = {
   messages: Messages;
   schedulesLabel: string;
   agentsLabel?: string;
+  experimentsLabel?: string;
+  agentsGroupLabel?: string;
+  brandLabel?: string;
   onSelect: (selection: RailSelection) => void;
 };
 
-export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, onSelect }: Props) {
+export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, experimentsLabel, agentsGroupLabel, brandLabel, onSelect }: Props) {
   const [showOverflow, setShowOverflow] = useState(false);
   const pinned = entries.slice(0, MAX_PINNED_DESTINATIONS);
   const overflow = entries.slice(MAX_PINNED_DESTINATIONS);
@@ -48,7 +53,8 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
   );
 
   return (
-    <Flex as="nav" className="plugin-rail" direction="column" aria-label={messages.pluginNavigation}>
+    <Flex as="nav" className={`plugin-rail${selection.kind === "agents" || selection.kind === "agent-experiments" ? " agent-workspace-rail" : ""}`} direction="column" aria-label={messages.pluginNavigation}>
+      {(selection.kind === "agents" || selection.kind === "agent-experiments") && <div className="agent-rail-brand"><img src={brandIcon} alt="" /><strong>{brandLabel}</strong></div>}
       {button(
         "conversation",
         messages.conversation,
@@ -57,7 +63,9 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
         () => onSelect({ kind: "conversation" })
       )}
       {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
-      {agentsLabel && button("agents", agentsLabel, <SfIcon name="sf:person.2" size={20} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
+      {agentsGroupLabel && <Text className="rail-agent-group"><Users size={20} />{agentsGroupLabel}</Text>}
+      {agentsLabel && button("agents", agentsLabel, <Library size={20} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
+      {experimentsLabel && button("agent-experiments", experimentsLabel, <FlaskConical size={20} />, selection.kind === "agent-experiments", () => onSelect({ kind: "agent-experiments" }))}
       <Box className="rail-divider" />
       {entries.length > 0 && <Text className="rail-section-label">{messages.pluginSectionTitle}</Text>}
       {pinned.map(({ plugin, destination }) =>

@@ -1424,7 +1424,7 @@ pub(super) async fn event_loop(
                     willdeep_core::provider::ProviderEvent::TextDelta(text)=>app.stream_transient(StreamKind::Reply,&text),
                     willdeep_core::provider::ProviderEvent::ReasoningDelta(text)=>app.stream_transient(StreamKind::Reasoning,&text),
                     willdeep_core::provider::ProviderEvent::Usage(usage)=>{app.context_tokens=usage.input_tokens.unwrap_or(app.context_tokens);app.latest_usage=usage;},
-                    willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>app.record_progress(format!("{} · {attempt} · {}s",language.text("服务端要求等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64())),
+                    willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>app.record_progress(format!("{} · {attempt} · {}s",language.text("等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64())),
                 },
                 UiMessage::Agent(AgentEvent::RunScoped { .. })=>{},
                 UiMessage::Agent(AgentEvent::AssistantText(v))=>app.note_narration(&v),

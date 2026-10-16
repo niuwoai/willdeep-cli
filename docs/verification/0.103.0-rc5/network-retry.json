@@ -1,0 +1,173 @@
+{
+  "schema": "willdeep.network-retry-verification.v1",
+  "version": "0.103.0-rc5",
+  "date": "2026-10-16",
+  "platform": "macOS arm64",
+  "workspace": "/private/tmp/willdeep-network-retry-20261016",
+  "branch": "codex/network-retry-five",
+  "base_commit": "03d0a7e638381bf88e951780eb193d1f3666f3e3",
+  "behavior": {
+    "max_retries": 5,
+    "max_attempts": 6,
+    "default_delays_seconds": [
+      2,
+      4,
+      8,
+      16,
+      32
+    ],
+    "shared_deadline": true,
+    "cancellable": true,
+    "retry_after_respected": true,
+    "successful_response_body_or_stream_replayed": false
+  },
+  "tests": {
+    "final_common": {
+      "passed": 20,
+      "failed": 0
+    },
+    "stream_no_replay": {
+      "passed": 3,
+      "failed": 0
+    },
+    "strict_core_clippy": {
+      "exit_code": 0
+    },
+    "rustfmt": {
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "exit_code": 0
+    }
+  },
+  "first_run": {
+    "passed": 19,
+    "failed": 1,
+    "reason": "Test assumed reqwest truncated response uses is_body; this version reports is_decode. Corrected test accepts body/decode errors and retains successful-200 scripted response plus exactly-one-request assertion. Production boundary unchanged."
+  },
+  "real_model_requests": 0,
+  "account_requests": 0,
+  "released": false,
+  "installed": false,
+  "commit_created": false,
+  "remote_push": false,
+  "cache": {
+    "mode": "clonefile_only_no_fallback",
+    "source": "/private/tmp/willdeep-agent-registry/target",
+    "target": "/private/tmp/willdeep-network-retry-cache/target",
+    "incrementals_copied": false,
+    "clone_report": {
+      "mode": "clonefile_only_no_fallback",
+      "target": "/private/tmp/willdeep-network-retry-cache/target",
+      "files": 42522,
+      "logical_bytes": 36234906380,
+      "elapsed_seconds": 10.63088999997126,
+      "protected_binary_unchanged": true,
+      "incrementals_copied": false
+    },
+    "minimum_free_bytes": 8861048832,
+    "floor_bytes": 6442450944,
+    "protected_source_rust_binary_sha256": "eb14f3f2a308c5d94be6f2a183a034b5924c4f1e669e9f7eeda0df20ecb99574",
+    "protected_binary_unchanged_all_runs": true,
+    "other_frozen_native_artifacts": "Not accessed or changed; full artifact hashes were not recomputed by this focused repair."
+  },
+  "source_sha256": {
+    "Cargo.toml": "3ca95e603b4f49e32df58212b4e7d93683fde812f982bf393de9fc4ab4356fce",
+    "Cargo.lock": "ef1671107c15e9f2cca81507e86a0e4959a7ba75e0562947357f85404c0ea05d",
+    "web/package.json": "5018b113bc286d470d937d425feb501fc8048f5c68d2a39606b14e232abbd5cd",
+    "crates/willdeep-core/Cargo.toml": "34b9fa5f2887424133dccd3a5ce28aac65166722fc93a8fa94f1c213f379d35d",
+    "crates/willdeep-core/src/provider/common.rs": "c0fbee0a159d5de068887d6552c0489d384965a4df8c10e7a13b31d0f7567def",
+    "crates/willdeep-core/src/provider/common/retry_tests.rs": "a0d7d7c54e43041568ca456a4c97e41b6f23bda5959da8093e43b598bb5b8fe3",
+    "crates/willdeep-cli/src/tui/event_loop.rs": "4defe94d88435b52053dfc9e39e3295274a7f3c748d257d6d16442101b95a4be",
+    "CHANGELOG.md": "b81cf35f03003fb22c0a0ddfc7662ad556e74a85db71675f64496d8b1dd4cc8b",
+    "PRODUCT_OVERVIEW.md": "26a471f91431742a148ecc5d79122c6bbf96a6c4089ffebc276553321a7b5ed6"
+  },
+  "runs": {
+    "core-common-test": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "-p",
+        "willdeep-core",
+        "provider::common",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 101,
+      "success": false,
+      "elapsed_seconds": 72.24386200000299,
+      "target_directory": "/private/tmp/willdeep-network-retry-cache/target",
+      "floor_bytes": 6442450944,
+      "stopped_for_disk_floor": false,
+      "protected_binary_unchanged": true
+    },
+    "core-common-test-final": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "-p",
+        "willdeep-core",
+        "provider::common",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "success": true,
+      "elapsed_seconds": 42.13353799999459,
+      "target_directory": "/private/tmp/willdeep-network-retry-cache/target",
+      "floor_bytes": 6442450944,
+      "stopped_for_disk_floor": false,
+      "protected_binary_unchanged": true
+    },
+    "stream-no-replay": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "-p",
+        "willdeep-core",
+        "--lib",
+        "--",
+        "--exact",
+        "provider::chat_completions::streaming::tests::interrupted_chat_preserves_text_without_replaying_or_exposing_tools",
+        "provider::anthropic::streaming::tests::interrupted_anthropic_stream_keeps_partial_text_and_usage_without_retry",
+        "provider::responses::streaming::tests::responses_eof_keeps_partial_text_and_does_not_retry"
+      ],
+      "exit_code": 0,
+      "success": true,
+      "elapsed_seconds": 2.0144730000174604,
+      "target_directory": "/private/tmp/willdeep-network-retry-cache/target",
+      "floor_bytes": 6442450944,
+      "stopped_for_disk_floor": false,
+      "protected_binary_unchanged": true
+    },
+    "clippy-core": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "-p",
+        "willdeep-core",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "success": true,
+      "elapsed_seconds": 26.400982999999542,
+      "target_directory": "/private/tmp/willdeep-network-retry-cache/target",
+      "floor_bytes": 6442450944,
+      "stopped_for_disk_floor": false,
+      "protected_binary_unchanged": true
+    }
+  },
+  "limits": [
+    "Successful headers terminate retry eligibility; body/stream failures require explicit continuation.",
+    "Before headers, an upstream may already have processed a request; retries can still duplicate upstream work.",
+    "A shorter shared deadline may end before all five retries.",
+    "No installed UI, Windows/Linux CI, release or production-provider validation performed."
+  ]
+}
