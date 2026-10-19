@@ -388,6 +388,27 @@ pub(super) async fn event_loop(
         // 用户已提交的队列本身就是启动下一轮的理由。待处理内核事件会在模型
         // 边界投递，不能要求它们先被另一个自动唤醒消费；Runtime 终态、恢复的
         // 事件或被限流的唤醒都可能没有后续回调，否则会永久饿死用户队列。
+        if app.queued_background_prompt_ready() {
+            let text = app.queued_prompts.front().unwrap().text.clone();
+            if steer_running_turn(&app, session, runtime, &agent, &text).await {
+                app.remove_queued_prompt_row(0);
+                app.queued_prompts.pop_front();
+                app.waiting_background = false;
+                app.note_steering_delivered(&text);
+            } else {
+                app.open_prompt_queue();
+                app.prompt_queue.as_mut().unwrap().status = Some(
+                    language
+                        .text(
+                            "自动发送失败，消息已保留；关闭列表后重试",
+                            "Auto-send failed; message retained. Close to retry",
+                            "自動送信失敗。メッセージを保持。閉じると再試行",
+                        )
+                        .to_owned(),
+                );
+            }
+            continue;
+        }
         if app.queued_prompt_ready()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
@@ -1426,6 +1447,7 @@ pub(super) async fn event_loop(
                     willdeep_core::provider::ProviderEvent::Usage(usage)=>{app.context_tokens=usage.input_tokens.unwrap_or(app.context_tokens);app.latest_usage=usage;},
                     willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>app.record_progress(format!("{} · {attempt} · {}s",language.text("等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64())),
                 },
+                UiMessage::Agent(AgentEvent::BackgroundWait { waiting })=>{app.waiting_background = waiting;},
                 UiMessage::Agent(AgentEvent::RunScoped { .. })=>{},
                 UiMessage::Agent(AgentEvent::AssistantText(v))=>app.note_narration(&v),
                 UiMessage::Agent(AgentEvent::RouteDecided{tier,profile,confidence,auto_dispatched,model,..})=>app.record_progress(format!("{} {} · {}{} · {confidence}%{}",language.text("模型路由","Model route","モデルルート"),tier.as_str(),profile.as_deref().unwrap_or("root"),model.map(|model|format!(" · {model}")).unwrap_or_default(),if auto_dispatched{language.text(" · 已自动下发"," · auto-dispatched"," · 自動ディスパッチ済み")}else{""})),

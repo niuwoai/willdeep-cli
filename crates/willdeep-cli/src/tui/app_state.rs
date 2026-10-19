@@ -48,6 +48,7 @@ impl App {
             turn_started: None,
             last_progress_at: None,
             runtime_turn: false,
+            waiting_background: false,
             stale_runtime_turn_snapshots: 0,
             stale_runtime_turn_recovery_reported: false,
             last_elapsed: None,
@@ -189,6 +190,7 @@ impl App {
         self.clear_input_suggestion();
         self.abandon_accepted_suggestion();
         self.running = false;
+        self.waiting_background = false;
         self.turn_started = None;
         self.last_progress_at = None;
         self.runtime_turn = false;
@@ -1170,6 +1172,7 @@ impl App {
         self.abandon_accepted_suggestion();
         let now = Instant::now();
         self.running = true;
+        self.waiting_background = false;
         self.runtime_turn = runtime_turn;
         self.stale_runtime_turn_snapshots = 0;
         self.stale_runtime_turn_recovery_reported = false;

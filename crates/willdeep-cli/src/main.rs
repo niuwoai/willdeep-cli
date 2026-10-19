@@ -1718,6 +1718,7 @@ impl EventSink for TerminalSink {
                 eprintln!("[goal] budget exhausted · wrapping up · {reason:?}")
             }
             AgentEvent::AssistantText(_)
+            | AgentEvent::BackgroundWait { .. }
             | AgentEvent::TurnStarted { .. }
             | AgentEvent::RunScoped { .. } => {}
         }
@@ -1834,6 +1835,9 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
             "used": used,
             "reason": reason
         }),
+        AgentEvent::BackgroundWait { waiting } => {
+            serde_json::json!({"type":"background_wait","waiting":waiting})
+        }
         AgentEvent::TurnStarted { turn } => {
             serde_json::json!({"type": "turn_started", "turn": turn})
         }

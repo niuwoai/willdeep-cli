@@ -407,6 +407,12 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
         app.ensure_runtime_turn();
     }
     match output_type {
+        Some("background_wait") => {
+            app.waiting_background = value
+                .get("waiting")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+        }
         // 与进程内轮次一致：定稿的一段话直接落进聊天区，流式增量仍走下面的
         // 临时预览行。非托管会话的镜像也同步记一条。
         Some("assistant_text") => {
@@ -432,6 +438,7 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             }
         }
         Some("turn_started") => {
+            app.waiting_background = false;
             app.note_model_step_started();
             if let Some(turn) = value.get("turn").and_then(|value| value.as_u64()) {
                 app.record_progress(format!(
@@ -649,6 +656,49 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
         _ => {}
     }
     None
+}
+
+#[cfg(test)]
+mod background_queue_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_background_boundary_allows_queue_without_finishing_runtime_task() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "running".into());
+        app.input.insert("queued question");
+        app.queue_submitted_prompt();
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"assistant_text","text":"waiting"}"#,
+        );
+        assert!(
+            !app.queued_background_prompt_ready(),
+            "narration alone is not a safe send boundary"
+        );
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"background_wait","waiting":true}"#,
+        );
+        assert!(app.queued_background_prompt_ready());
+        assert!(app.running);
+        assert!(app.runtime_turn);
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"background_wait","waiting":false}"#,
+        );
+        assert!(!app.queued_background_prompt_ready());
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"background_wait","waiting":true}"#,
+        );
+        apply_runtime_output(&mut app, r#"task_id=test {"type":"turn_started","turn":1}"#);
+        assert!(!app.queued_background_prompt_ready());
+        app.finish_turn();
+        assert!(!app.waiting_background);
+        assert!(app.queued_prompt_ready());
+        assert_eq!(app.queued_prompts.len(), 1);
+    }
 }
 
 fn short_event_agent(value: &serde_json::Value) -> &str {

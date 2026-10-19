@@ -10,6 +10,19 @@ pub(super) struct QueuePanel {
 }
 
 impl App {
+    pub(super) fn queued_background_prompt_ready(&self) -> bool {
+        self.running
+            && self.runtime_turn
+            && self.waiting_background
+            && self.prompt_queue.is_none()
+            && self.attachment_panel.is_none()
+            && self.approval.is_none()
+            && self.question.is_none()
+            && self.queued_prompts.front().is_some_and(|item| {
+                item.attachments.is_empty() && !item.text.trim_start().starts_with('/')
+            })
+    }
+
     pub(super) fn queued_prompt_ready(&self) -> bool {
         !self.running
             && !self.queued_prompts.is_empty()
@@ -28,9 +41,9 @@ impl App {
         self.notice = Some(format!(
             "{} · {} {}",
             self.language.text(
-                "已排队，本轮结束后发送",
-                "Queued · sends when this turn finishes",
-                "キューに追加 · 現在のターン終了後に送信"
+                "已排队，模型回复后或本轮结束后发送",
+                "Queued · sends after the model replies or this turn finishes",
+                "キューに追加 · モデル応答後またはターン終了後に送信"
             ),
             self.queued_prompts.len(),
             self.language.text(
@@ -389,6 +402,47 @@ mod tests {
         }
         app.open_prompt_queue();
         app
+    }
+
+    #[test]
+    fn background_wait_automatically_dispatches_only_the_queue_head() {
+        let mut app = queued_app();
+        app.prompt_queue = None;
+        app.begin_turn(true, "running".into());
+        assert!(!app.queued_background_prompt_ready());
+        app.waiting_background = true;
+        assert!(app.queued_background_prompt_ready());
+        app.open_prompt_queue();
+        assert!(
+            !app.queued_background_prompt_ready(),
+            "editing pauses auto-send"
+        );
+        app.prompt_queue = None;
+        app.queued_prompts.front_mut().unwrap().text = "/goal new goal".into();
+        assert!(
+            !app.queued_background_prompt_ready(),
+            "commands cannot bypass turn ownership"
+        );
+        app.queued_prompts.front_mut().unwrap().text = "first".into();
+        app.queued_prompts
+            .front_mut()
+            .unwrap()
+            .attachments
+            .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+        assert!(
+            !app.queued_background_prompt_ready(),
+            "attachments must stay with their message"
+        );
+        app.queued_prompts.front_mut().unwrap().attachments.clear();
+        app.note_steering_delivered("first");
+        assert!(
+            !app.queued_background_prompt_ready(),
+            "wait for the next background boundary before sending another message"
+        );
+        assert!(
+            app.running,
+            "sending a message must not complete or cancel background work"
+        );
     }
 
     #[test]

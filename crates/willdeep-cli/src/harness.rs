@@ -325,6 +325,7 @@ const INSTRUCTION_WAKE_PROMPT: &str = "Additional instructions arrived while bac
 const HEADLESS_BACKGROUND_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct BuiltHarness {
+    event_sink: Arc<dyn EventSink>,
     pub subagents: Arc<SubagentCatalog>,
     pub goal: Arc<willdeep_core::GoalContinuation>,
     pub session_id: uuid::Uuid,
@@ -595,6 +596,7 @@ pub(crate) async fn execute_noninteractive(
     present_partial_outcome(&mut outcome, language);
     session.messages = outcome.messages.clone();
     store.save(session)?;
+    let mut waiting_background = false;
     loop {
         // 「还在跑」必须在取结果**之前**看：任务先改状态、再投结果（监视器先发
         // 结束事件、再改状态），反过来看会在两步之间读到「没在跑、也没结果」，
@@ -624,6 +626,13 @@ pub(crate) async fn execute_noninteractive(
             if !running {
                 break;
             }
+            if !waiting_background {
+                built
+                    .event_sink
+                    .emit(willdeep_core::AgentEvent::BackgroundWait { waiting: true })
+                    .await;
+                waiting_background = true;
+            }
             tokio::time::sleep(HEADLESS_BACKGROUND_POLL).await;
             continue;
         }
@@ -642,6 +651,11 @@ pub(crate) async fn execute_noninteractive(
                 willdeep_core::DedupPolicy::Once,
             );
         }
+        built
+            .event_sink
+            .emit(willdeep_core::AgentEvent::BackgroundWait { waiting: false })
+            .await;
+        waiting_background = false;
         outcome = built
             .agent
             .run_checkpointed(
@@ -1167,7 +1181,7 @@ pub(crate) async fn build(
         },
     )
     .with_main_model(main_model)
-    .with_event_sink(sink)
+    .with_event_sink(sink.clone())
     .with_subagents(subagents.clone())
     .with_goal_continuation(goal_continuation.clone())
     .with_background_tasks(background_tasks.clone())
@@ -1248,6 +1262,7 @@ pub(crate) async fn build(
     }
     let notifier = crate::notify::Notifier::new(&loaded.file.notifications);
     Ok(BuiltHarness {
+        event_sink: sink,
         subagents,
         goal: goal_continuation,
         session_id,

@@ -306,6 +306,7 @@ struct App {
     turn_started: Option<Instant>,
     last_progress_at: Option<Instant>,
     runtime_turn: bool,
+    waiting_background: bool,
     /// 界面显示 Runtime 轮次在跑、而新鲜快照里却找不到本会话活动任务的连续次数。
     /// 攒够 [`STALE_RUNTIME_TURN_SNAPSHOTS`] 次就去问 Runtime 一句「还有在途轮次吗」，
     /// 没有就把残留的「工作中」复位——否则排队的提示词会跟着一起死等。

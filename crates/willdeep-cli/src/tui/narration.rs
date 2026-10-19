@@ -233,6 +233,7 @@ impl App {
 
     /// 插话已送进正在跑的这一轮。模型这一步还在生成时先压着，见 `deferred_steering`。
     pub(super) fn note_steering_delivered(&mut self, text: &str) {
+        self.waiting_background = false;
         if self.model_step_in_flight {
             self.deferred_steering.push(text.to_owned());
         } else {
@@ -242,6 +243,7 @@ impl App {
 
     /// 模型新的一步开始。插话正是在这之前注入对话的，压着的这时落进聊天区。
     pub(super) fn note_model_step_started(&mut self) {
+        self.waiting_background = false;
         self.transient_thought = None;
         self.flush_deferred_steering();
         self.model_step_in_flight = true;

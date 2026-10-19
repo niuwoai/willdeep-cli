@@ -123,6 +123,10 @@ enum LeaseOutcome {
 
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
+    /// Model loop returned while background work remains active.
+    BackgroundWait {
+        waiting: bool,
+    },
     TurnStarted {
         turn: usize,
     },

@@ -96,6 +96,27 @@ fn check_steering(monitor: bool) {
             .is_some_and(|c| c.status == willdeep_core::checkpoint::CheckpointStatus::Partial)
     });
     assert!(!release.0.exists());
+    wait_for(
+        "Runtime publishes the background-only send boundary",
+        || {
+            let events =
+                std::fs::read_to_string(home.join("runtime/events.ndjson")).unwrap_or_default();
+            events
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .any(|event| {
+                    event["message"]
+                        .as_str()
+                        .and_then(|message| message.split_once(' '))
+                        .and_then(|(_, payload)| {
+                            serde_json::from_str::<serde_json::Value>(payload).ok()
+                        })
+                        .is_some_and(|value| {
+                            value["type"] == "background_wait" && value["waiting"] == true
+                        })
+                })
+        },
+    );
     let params = root.join("steer.json");
     std::fs::write(
         &params,
