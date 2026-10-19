@@ -319,6 +319,7 @@ fn usage_ledger_context(
 /// 了来源。把事件正文塞进提示词等于让它绕过那一层。
 pub(crate) const KERNEL_WAKE_PROMPT: &str =
     "Runtime events arrived while you were away. Review them and continue.";
+const INSTRUCTION_WAKE_PROMPT: &str = "Additional instructions arrived while background work is still running. Read them and respond now; do not wait for background work to finish.";
 
 /// 无头运行等后台结果时的轮询间隔。脱离作业要读磁盘，比进程内查询贵。
 const HEADLESS_BACKGROUND_POLL: std::time::Duration = std::time::Duration::from_millis(250);
@@ -612,7 +613,14 @@ pub(crate) async fn execute_noninteractive(
         // 随下一次唤醒（最迟是结束事件）一起交给模型。
         let monitor_wake = built.background_tasks.take_monitor_signals() > 0
             && built.kernel.pending_wake_authority(session.id).is_some();
-        if events.is_empty() && finished_jobs == 0 && !monitor_wake {
+        // S/turn.steer must also wake a parent whose model loop has already
+        // returned. Leave the inbox intact until run_checkpointed consumes it;
+        // task cancellation must still be able to hand undelivered text back.
+        let instruction_wake = built
+            .agent
+            .instruction_inbox()
+            .is_some_and(|inbox| inbox.has_pending());
+        if events.is_empty() && finished_jobs == 0 && !monitor_wake && !instruction_wake {
             if !running {
                 break;
             }
@@ -638,7 +646,11 @@ pub(crate) async fn execute_noninteractive(
             .agent
             .run_checkpointed(
                 session.messages.clone(),
-                willdeep_core::Message::host_instruction(KERNEL_WAKE_PROMPT),
+                willdeep_core::Message::host_instruction(if instruction_wake {
+                    INSTRUCTION_WAKE_PROMPT
+                } else {
+                    KERNEL_WAKE_PROMPT
+                }),
                 Some(&checkpointer),
             )
             .await?;

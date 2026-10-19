@@ -83,6 +83,15 @@ impl AgentInstructionInbox {
         self.enqueue(AgentInstruction::Operator, text)
     }
 
+    /// Inspect without consuming: only the model loop may take instructions
+    /// so cancellation can still return undelivered operator messages.
+    pub fn has_pending(&self) -> bool {
+        self.pending
+            .lock()
+            .map(|pending| !pending.is_empty())
+            .unwrap_or(false)
+    }
+
     fn enqueue(&self, wrap: fn(String) -> AgentInstruction, text: String) -> bool {
         let text = text.trim();
         if text.is_empty() || text.len() > MAX_INSTRUCTION_BYTES {

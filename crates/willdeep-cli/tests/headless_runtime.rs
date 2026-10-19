@@ -11,6 +11,8 @@ use futures_util::StreamExt;
 
 #[path = "headless_runtime/automatic_compression.rs"]
 mod automatic_compression;
+#[path = "headless_runtime/background_steering.rs"]
+mod background_steering;
 #[path = "headless_runtime/background_supervisor.rs"]
 mod background_supervisor;
 #[path = "headless_runtime/detached_background.rs"]
@@ -2656,6 +2658,10 @@ enum MockMode {
     /// 第一轮起一个 `monitor`，之后正常收尾。
     #[cfg_attr(not(unix), allow(dead_code))]
     MonitorThenSuccess,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    IdleBackgroundThenSuccess {
+        monitor: bool,
+    },
 }
 
 impl Drop for MockProvider {
@@ -2765,7 +2771,8 @@ async fn mock_provider_response(
         | MockMode::DelayedSuccess(_)
         | MockMode::FailingToolThenSuccess
         | MockMode::BackgroundJobThenSuccess
-        | MockMode::MonitorThenSuccess => 200,
+        | MockMode::MonitorThenSuccess
+        | MockMode::IdleBackgroundThenSuccess { .. } => 200,
     };
     let body = if matches!(state.mode, MockMode::CheckpointThenWait) && request_index == 0 {
         let command = r#"ruby -e 'File.open("progress.log", "a") { |file| file.write("checkpoint-once\n") }'"#;
@@ -2780,6 +2787,8 @@ async fn mock_provider_response(
         detached_background::response(&body, request_index)
     } else if matches!(state.mode, MockMode::MonitorThenSuccess) {
         monitor_events::response(&body, request_index)
+    } else if let MockMode::IdleBackgroundThenSuccess { monitor } = state.mode {
+        background_steering::response(&body, request_index, monitor)
     } else if mode_is_waiting_root(state.mode, request_index) {
         r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"ask_root","type":"function","function":{"name":"ask_user","arguments":"{\"question\":\"keep the root active?\",\"options\":[\"yes\"]}"}}]},"finish_reason":"tool_calls"}]}"#.to_owned()
     } else if matches!(state.mode, MockMode::IncompleteThenSuccess) && request_index < 3 {

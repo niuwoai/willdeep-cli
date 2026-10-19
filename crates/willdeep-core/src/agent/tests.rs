@@ -784,6 +784,24 @@ async fn parent_instruction_prevents_early_finish_and_continues_next_turn() {
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
+#[test]
+fn checking_pending_instructions_does_not_consume_or_reorder_them() {
+    let inbox = AgentInstructionInbox::default();
+    assert!(!inbox.has_pending());
+    assert!(inbox.push_operator("first".into()));
+    assert!(inbox.push("second".into()));
+    assert!(inbox.has_pending());
+    assert!(inbox.has_pending());
+    assert_eq!(
+        inbox.drain(),
+        vec![
+            AgentInstruction::Operator("first".into()),
+            AgentInstruction::Parent("second".into())
+        ]
+    );
+    assert!(!inbox.has_pending());
+}
+
 struct OperatorSteerProvider {
     calls: std::sync::atomic::AtomicUsize,
     /// 根 Agent 自带的收件箱，Agent 建好之后才拿得到，所以放在槽位里。
