@@ -749,13 +749,6 @@ pub(super) fn visual_lines(text: &str, width: usize) -> usize {
         .sum()
 }
 
-pub(super) fn question_option_row(popup_y: u16, question: &str, width: usize, index: usize) -> u16 {
-    popup_y
-        .saturating_add(2)
-        .saturating_add(visual_lines(question, width).min(u16::MAX as usize) as u16)
-        .saturating_add(index.min(u16::MAX as usize) as u16)
-}
-
 #[cfg(test)]
 pub(super) fn transcript(messages: &[Message]) -> Vec<String> {
     projected_transcript(messages, None, Language::En)

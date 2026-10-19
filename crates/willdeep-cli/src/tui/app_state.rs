@@ -150,6 +150,7 @@ impl App {
             approval_action_hits: Vec::new(),
             question_rect: Rect::default(),
             question_hits: Vec::new(),
+            question_footer_row: None,
             search_rect: Rect::default(),
             mobile_qr_rect: Rect::default(),
             help_rect: Rect::default(),
@@ -1905,6 +1906,9 @@ impl App {
                 self.resolve_approval(|_| decision);
             }
         } else if self.question.is_some() && self.question_rect.contains((x, y).into()) {
+            if x <= self.question_rect.x + 1 || x >= self.question_rect.right().saturating_sub(2) {
+                return;
+            }
             if let Some((_, selected)) = self
                 .question_hits
                 .iter()
@@ -1925,7 +1929,7 @@ impl App {
                     let _ = dialog.sender.send(answer);
                     self.promote_next_question();
                 }
-            } else if y >= self.question_rect.bottom().saturating_sub(2) {
+            } else if self.question_footer_row == Some(y) {
                 let code = if x < self.question_rect.x + self.question_rect.width / 2 {
                     KeyCode::Esc
                 } else {

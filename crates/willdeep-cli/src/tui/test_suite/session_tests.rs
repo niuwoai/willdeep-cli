@@ -302,6 +302,7 @@ async fn mouse_can_resolve_approval_and_single_choice_question() {
     });
     app.question_rect = Rect::new(10, 10, 60, 10);
     app.question_hits = vec![(13, 0), (14, 1)];
+    app.question_footer_row = Some(18);
     app.handle_mouse(20, 14, &registry, &skills);
     assert_eq!(question_receiver.await.unwrap().as_deref(), Some("B"));
 }
@@ -1034,6 +1035,7 @@ async fn mouse_can_toggle_and_submit_multi_choice_question() {
     });
     app.question_rect = Rect::new(10, 10, 60, 10);
     app.question_hits = vec![(13, 0), (14, 1)];
+    app.question_footer_row = Some(18);
 
     app.handle_mouse(20, 13, &registry, &skills);
     assert!(app.question.as_ref().unwrap().checked[0]);
@@ -1053,11 +1055,6 @@ fn mouse_can_place_cursor_in_chat_search() {
     app.handle_mouse(12, 3, &registry, &skills);
     app.handle_search_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE));
     assert_eq!(app.search.as_ref().unwrap().editor.text(), "aXbc");
-}
-#[test]
-fn wrapped_question_offsets_mouse_option_rows() {
-    assert_eq!(question_option_row(10, "123456789", 4, 0), 15);
-    assert_eq!(question_option_row(10, "123456789", 4, 1), 16);
 }
 #[test]
 fn attention_inbox_merges_human_gates_and_background_work() {
@@ -1318,36 +1315,6 @@ fn wrapping_preserves_line_level_styles_not_just_span_styles() {
         "error lines stay red after wrapping: {:?}",
         colour_of(1)
     );
-}
-
-/// The dialog has to read as its own region: the row under the cursor gets a
-/// highlight bar, the free-text field is picked out, and the key hints dim.
-#[test]
-fn question_modal_highlights_the_cursor_row_and_dims_the_hints() {
-    let request = UserQuestion {
-        question: "现在提交首次 commit 吗？".to_owned(),
-        options: vec!["提交".to_owned(), "暂不提交".to_owned()],
-        multi_select: false,
-    };
-    let (tx, _rx) = oneshot::channel();
-    let dialog = AskDialog {
-        request,
-        selected: 1,
-        checked: vec![false; 2],
-        answer: PromptEditor::default(),
-        sender: tx,
-    };
-    let content = "现在提交首次 commit 吗？\n\n  ( ) 提交\n▶ (*) 暂不提交\n\n其他答案: \n↑/↓ 选择";
-    let lines = question_lines(&dialog, content);
-
-    assert_eq!(lines.len(), 7);
-    assert!(lines[0].style.add_modifier.contains(Modifier::BOLD));
-    // Row 2 is the first option, row 3 the cursor row.
-    assert_eq!(lines[2].style.bg, None);
-    assert_eq!(lines[3].style.bg, Some(Color::LightCyan));
-    assert!(lines[3].style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(lines[5].style.fg, Some(Color::LightYellow));
-    assert_eq!(lines[6].style.fg, Some(Color::Gray));
 }
 
 /// The complaint was that the dialog did not read as its own region: its

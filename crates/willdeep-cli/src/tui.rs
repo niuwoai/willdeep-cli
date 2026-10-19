@@ -48,6 +48,7 @@ mod command_catalog;
 mod daemon_commands;
 mod diff_review_ui;
 mod dispatch;
+mod human_gate_ui;
 mod media_ui;
 mod model_commands;
 mod narration;
@@ -435,6 +436,7 @@ struct App {
     approval_action_hits: Vec<(Rect, ApprovalDecision)>,
     question_rect: Rect,
     question_hits: Vec<(u16, usize)>,
+    question_footer_row: Option<u16>,
     search_rect: Rect,
     // 弹层自身的外框。只有记下来，才知道一次点击是「落在弹层里」
     // 还是「落在弹层外」——后者按 Esc 处理。
@@ -2241,183 +2243,9 @@ fn draw<B: ratatui::backend::Backend>(
         prompt_queue::render(f, app);
         attachment_panel::render(f, app);
         render_media_overlay(f, app);
-        app.approval_rect = Rect::default();
-        app.approval_action_hits.clear();
-        if let Some((description, always, _)) = &app.approval {
-            let description = description.clone();
-            let always = *always;
-            let action_count = approval_decisions(always).len() as u16;
-            let popup_height = if always { 12 } else { 11 }.min(f.area().height);
-            let popup = centered_rect(modal_width(f.area()), popup_height, f.area());
-            app.approval_rect = popup;
-            paint_modal_halo(f, popup);
-            let block = modal_block(
-                approval_title(app.language, app.approval_queue.len()),
-                Color::LightYellow,
-            );
-            let inner = block.inner(popup);
-            f.render_widget(block, popup);
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                    Constraint::Length(action_count),
-                ])
-                .split(inner);
-            f.render_widget(
-                Paragraph::new(description).wrap(Wrap { trim: false }),
-                rows[0],
-            );
-            for (index, decision) in approval_decisions(always).iter().copied().enumerate() {
-                let row = Rect::new(
-                    rows[2].x,
-                    rows[2].y.saturating_add(index as u16),
-                    rows[2].width,
-                    1.min(rows[2].height.saturating_sub(index as u16)),
-                );
-                if row.height == 0 {
-                    continue;
-                }
-                let selected = app.approval_selected == index;
-                f.render_widget(
-                    Paragraph::new(approval_action_text(decision, app.language, selected))
-                        .style(approval_action_style(decision, selected)),
-                    row,
-                );
-                app.approval_action_hits.push((row, decision));
-            }
-            let halo = modal_halo(popup, f.area());
-            seal_modal_background(f.buffer_mut(), halo);
-        }
-        app.question_rect = Rect::default();
-        app.question_hits.clear();
-        if let Some(dialog) = &app.question {
-            let options = dialog
-                .request
-                .options
-                .iter()
-                .enumerate()
-                .map(|(index, option)| {
-                    let marker = if dialog.request.multi_select {
-                        if dialog.checked[index] { "[x]" } else { "[ ]" }
-                    } else if index == dialog.selected {
-                        "(*)"
-                    } else {
-                        "( )"
-                    };
-                    format!(
-                        "{} {} {}",
-                        if index == dialog.selected { "▶" } else { " " },
-                        marker,
-                        option
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let help = if dialog.request.multi_select {
-                app.language.text(
-                    "↑/↓ 选择 · Space 勾选 · 可输入其他答案 · Enter 发送 · Esc 跳过",
-                    "↑/↓ select · Space toggle · type another answer · Enter send · Esc skip",
-                    "↑/↓ 選択 · Space 切替 · その他を入力 · Enter 送信 · Esc スキップ",
-                )
-            } else {
-                app.language.text(
-                    "↑/↓ 选择 · 可输入其他答案 · Enter 发送 · Esc 跳过",
-                    "↑/↓ select · type another answer · Enter send · Esc skip",
-                    "↑/↓ 選択 · その他を入力 · Enter 送信 · Esc スキップ",
-                )
-            };
-            let content = format!(
-                "{}\n\n{}\n\n{}: {}\n{}",
-                dialog.request.question,
-                options,
-                app.language
-                    .text("其他答案", "Other answer", "その他の回答"),
-                dialog.answer.text(),
-                help
-            );
-            let popup_width = modal_width(f.area());
-            // Borders take 2 columns, the block's horizontal padding another 2.
-            let content_width = popup_width.saturating_sub(4).max(1) as usize;
-            let height = (visual_lines(&content, content_width) as u16 + 2)
-                .min(f.area().height)
-                .max(8);
-            let popup = centered_rect(popup_width, height, f.area());
-            app.question_rect = popup;
-            app.question_hits = (0..dialog.request.options.len())
-                .map(|index| {
-                    (
-                        question_option_row(
-                            popup.y,
-                            &dialog.request.question,
-                            content_width,
-                            index,
-                        ),
-                        index,
-                    )
-                })
-                .collect();
-            paint_modal_halo(f, popup);
-            f.render_widget(
-                Paragraph::new(question_lines(dialog, &content))
-                    .block(modal_block(
-                        queued_title(
-                            app.language.text(
-                                "智能体提问",
-                                "Question from Agent",
-                                "エージェントからの質問",
-                            ),
-                            app.language,
-                            app.question_queue.len(),
-                        ),
-                        Color::LightCyan,
-                    ))
-                    .wrap(Wrap { trim: false }),
-                popup,
-            );
-            let halo = modal_halo(popup, f.area());
-            seal_modal_background(f.buffer_mut(), halo);
-        }
+        human_gate_ui::render(f, app);
     })?;
     Ok(())
-}
-
-/// Styles the question modal's rows: bold question, a highlight bar on the row
-/// the cursor is on, the free-text field picked out, and the key hints dimmed.
-///
-/// Takes the already-assembled `content` rather than rebuilding the text, so the
-/// styled rows cannot drift from the string the height and mouse-row math use.
-fn question_lines(dialog: &AskDialog, content: &str) -> Vec<Line<'static>> {
-    let question_rows = dialog.request.question.split('\n').count();
-    let first_option = question_rows + 1; // one blank line after the question
-    let after_options = first_option + dialog.request.options.len();
-    let other_answer_row = after_options + 1; // one blank line after the options
-    content
-        .split('\n')
-        .enumerate()
-        .map(|(index, row)| {
-            let style = if index < question_rows {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else if (first_option..after_options).contains(&index) {
-                if index - first_option == dialog.selected {
-                    Style::default()
-                        .bg(Color::LightCyan)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                }
-            } else if index == other_answer_row {
-                Style::default().fg(Color::LightYellow)
-            } else if index > other_answer_row {
-                Style::default().fg(Color::Gray)
-            } else {
-                Style::default()
-            };
-            Line::styled(row.to_owned(), style)
-        })
-        .collect()
 }
 
 /// 弹窗与文字选区的底色和字色。
@@ -2489,8 +2317,7 @@ fn seal_modal_background(buffer: &mut ratatui::buffer::Buffer, area: Rect) {
 }
 
 /// Chrome for a modal panel: thick accent border, bold title, and horizontal
-/// padding only — vertical padding would shift the option rows that
-/// [`question_option_row`] uses for mouse hit-testing.
+/// padding only. The renderer derives mouse hits from this same inner area.
 fn modal_block(title: String, accent: Color) -> Block<'static> {
     Block::default()
         .title(title)
@@ -2651,6 +2478,7 @@ fn approval_action_style(decision: ApprovalDecision, selected: bool) -> Style {
             .add_modifier(Modifier::BOLD);
     }
     Style::default()
+        .bg(Color::Indexed(23))
         .fg(if decision == ApprovalDecision::Deny {
             Color::LightRed
         } else {
@@ -2822,5 +2650,7 @@ pub fn channel() -> (
 ) {
     mpsc::unbounded_channel()
 }
+#[cfg(test)]
+mod human_gate_ui_tests;
 #[cfg(test)]
 mod test_suite;
