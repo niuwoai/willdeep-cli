@@ -22,7 +22,9 @@ Key 按以下顺序解析，取第一个非空值：
 
 > **子 Agent 的例外**：子 Agent 从 Profile 直接构造 Provider 配置，只走上面的第 2、3、4 层，**不继承** `--api-key` / `WILLDEEP_API_KEY`。给子 Agent 绑定独立 Profile 时，必须在该 Profile 里写 `api_key` 或 `api_key_env`。
 
-API Base 的回退是独立的一条链：`--api-base` / `WILLDEEP_API_BASE` → Profile 的 `api_base` → Provider 内置默认值（some-im 为 `https://some.im/v1`，anthropic 为 `https://api.anthropic.com`）。
+API Base 的回退是独立的一条链：`--api-base` / `WILLDEEP_API_BASE` → Profile 的 `api_base` 或 `api_base_env` → 对应供应商的 `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` → Provider 内置默认值。显式命名的 `api_base_env`、`api_key_env` 缺失或空白时直接报错，不会静默落到其他凭据。前台、Runtime 和子 Agent 共用同一解析器，显式绑定的子 Agent Profile 继续隔离父进程的通用覆盖。
+
+本地网关的完整配置及 Runtime 环境继承边界见 [Magpie 接入](MAGPIE.md)。
 
 ### 推荐做法
 

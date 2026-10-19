@@ -23,6 +23,8 @@ mod local_partial;
 mod monitor_events;
 #[path = "headless_runtime/prompt_variant.rs"]
 mod prompt_variant;
+#[path = "headless_runtime/provider_environment.rs"]
+mod provider_environment;
 #[path = "headless_runtime/retry_wait.rs"]
 mod retry_wait;
 #[path = "headless_runtime/runtime_parameters.rs"]
@@ -1923,6 +1925,9 @@ fn willdeep(home: &Path) -> Command {
         .env_remove("WILLDEEP_CONFIG")
         .env_remove("WILLDEEP_LANGUAGE")
         .env_remove("WILLDEEP_MODEL");
+    command
+        .env_remove("OPENAI_BASE_URL")
+        .env_remove("ANTHROPIC_BASE_URL");
     command
 }
 

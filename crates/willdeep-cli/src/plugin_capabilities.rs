@@ -1025,10 +1025,9 @@ pub(crate) fn plugin_media_directory(home: &Path, plugin: &str) -> Result<PathBu
 
 fn someim_credentials(file: &crate::config::ConfigFile) -> Option<(String, String)> {
     let profile = file.providers.get("some-im")?;
-    let base = profile
-        .api_base
-        .clone()
-        .unwrap_or_else(|| "https://some.im/v1".to_owned());
+    let base = crate::provider_settings::ProviderEnvironment::read()
+        .base(None, Some(profile), Some(crate::ProviderArg::SomeIm), false)
+        .ok()?;
     let key = profile
         .api_key
         .clone()

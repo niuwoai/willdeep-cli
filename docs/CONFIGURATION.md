@@ -124,6 +124,7 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `provider` | 身份：`some-im` / `openai-compatible` / `anthropic` |
 | `api` | 线格式：`chat-completions` / `responses` / `anthropic-messages` |
 | `api_base` | API Base URL |
+| `api_base_env` | 地址环境变量名，与 `api_base` 互斥；缺失时明确报错 |
 | `api_key_env` | 存放 Key 的环境变量名（**推荐**） |
 | `api_key` | 内联明文 Key（触发 `0600` 权限强制） |
 | `model` | 模型 ID |
@@ -225,7 +226,7 @@ API Key 的完整解析链和权限强制规则见 [认证与凭据](AUTHENTICAT
 |---|---|---|---|
 | `SOMEIM_API_KEY` | some.im | `https://some.im/v1` | `glm-5` |
 | `ANTHROPIC_API_KEY` | Anthropic | `https://api.anthropic.com` | `claude-sonnet-4-5` |
-| `OPENAI_API_KEY` + `WILLDEEP_API_BASE` | OpenAI-compatible | 取 `WILLDEEP_API_BASE` | 无，须给 `WILLDEEP_MODEL` |
+| `OPENAI_API_KEY` + `OPENAI_BASE_URL`（或 `WILLDEEP_API_BASE`） | OpenAI-compatible | 使用提供的地址 | 无，须给 `WILLDEEP_MODEL` |
 
 命令行的 `--provider` / `--api-base` / `--api-key` / `--model` 优先于推断。TUI 开屏会提示凭据来自环境、`willdeep config init` 可固化；`willdeep doctor` 的 `provider` 项在这种情况下报通过。
 
@@ -236,6 +237,8 @@ API Key 的完整解析链和权限强制规则见 [认证与凭据](AUTHENTICAT
 | 环境变量 | 用途 |
 |---|---|
 | `WILLDEEP_API_BASE` | API Base |
+| `OPENAI_BASE_URL` | OpenAI-compatible 地址后备；显式 Profile 地址优先 |
+| `ANTHROPIC_BASE_URL` | Anthropic 地址后备，保留 Messages 协议；显式 Profile 地址优先 |
 | `WILLDEEP_API_KEY` | 通用 API Key |
 | `WILLDEEP_MODEL` | 模型 ID |
 | `WILLDEEP_CONFIG` | 显式 TOML 配置文件路径 |

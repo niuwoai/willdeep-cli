@@ -49,6 +49,7 @@ mod plugin_roundtable;
 mod plugin_web;
 mod projects;
 mod prompt_cmd;
+mod provider_settings;
 mod schedule_cmd;
 mod telemetry;
 mod titling;
@@ -1163,15 +1164,10 @@ fn model_accepts_images(model: &str) -> bool {
 }
 
 /// 没有配置文件、也没有 `--provider` 时，按环境里有哪把钥匙推断 Provider：
-/// `SOMEIM_API_KEY` → some.im，`ANTHROPIC_API_KEY` → Anthropic；`OPENAI_API_KEY` 只有
-/// 同时给了 `WILLDEEP_API_BASE` 才算数，OpenAI-compatible 的端点没法猜。
+/// 标准地址变量会选择对应协议；保留 SOMEIM_API_KEY / ANTHROPIC_API_KEY
+/// 的零配置回退。OpenAI-compatible 仍要求用户提供地址与模型。
 pub(crate) fn provider_from_env() -> Option<ProviderArg> {
-    let present = |name: &str| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
-    provider_from_keys(
-        present("SOMEIM_API_KEY"),
-        present("ANTHROPIC_API_KEY"),
-        present("OPENAI_API_KEY") && present("WILLDEEP_API_BASE"),
-    )
+    provider_settings::ProviderEnvironment::read().inferred_provider()
 }
 
 fn provider_from_keys(
@@ -1236,28 +1232,12 @@ fn resolve_base(
     profile: Option<&ProviderProfile>,
     selected_provider: Option<ProviderArg>,
 ) -> Result<String> {
-    if let Some(base) = cli
-        .api_base
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(base.to_owned());
-    }
-    if let Some(base) = profile
-        .and_then(|provider| provider.api_base.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(base.to_owned());
-    }
-    match selected_provider {
-        Some(ProviderArg::SomeIm) => Ok("https://some.im/v1".to_owned()),
-        Some(ProviderArg::Anthropic) => Ok("https://api.anthropic.com".to_owned()),
-        _ => bail!(
-            "API base is required; set it in the provider profile, WILLDEEP_API_BASE, or --api-base"
-        ),
-    }
+    provider_settings::ProviderEnvironment::read().base(
+        cli.api_base.as_deref(),
+        profile,
+        selected_provider,
+        true,
+    )
 }
 
 pub(crate) fn provider_config_from_profile(
@@ -1268,50 +1248,9 @@ pub(crate) fn provider_config_from_profile(
         .providers
         .get(name)
         .with_context(|| format!("provider profile not found: {name}"))?;
-    let provider_arg = profile
-        .provider
-        .as_deref()
-        .map(parse_provider)
-        .transpose()?
-        .unwrap_or(ProviderArg::Auto);
-    let base = profile
-        .api_base
-        .clone()
-        .or_else(|| match provider_arg {
-            ProviderArg::SomeIm => Some("https://some.im/v1".to_owned()),
-            ProviderArg::Anthropic => Some("https://api.anthropic.com".to_owned()),
-            _ => None,
-        })
-        .with_context(|| format!("providers.{name}.api_base is required"))?;
-    let kind = resolve_provider(provider_arg, &base);
-    let api = profile
-        .api
-        .as_deref()
-        .map(parse_api)
-        .transpose()?
-        .unwrap_or(ApiArg::Auto);
-    let key = profile
-        .api_key
-        .clone()
-        .or_else(|| {
-            profile
-                .api_key_env
-                .as_deref()
-                .and_then(|variable| std::env::var(variable).ok())
-        })
-        .or_else(|| match kind {
-            ProviderKind::SomeIm => std::env::var("SOMEIM_API_KEY").ok(),
-            ProviderKind::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
-            ProviderKind::OpenAiCompatible => std::env::var("OPENAI_API_KEY").ok(),
-        })
-        .with_context(|| format!("API key for providers.{name} is unavailable"))?;
-    let model = profile
-        .model
-        .clone()
-        .with_context(|| format!("providers.{name}.model is required"))?;
-    let mut configured = ProviderConfig::new(kind, resolve_dialect(api, kind), base, key, model);
-    configured.max_output_tokens = profile.max_output_tokens.unwrap_or(16_384);
-    Ok(configured)
+    provider_settings::ProviderEnvironment::read()
+        .resolve(Some(profile), None)
+        .with_context(|| format!("resolve provider profile {name}"))
 }
 
 fn resolve_provider(provider: ProviderArg, base: &str) -> ProviderKind {
@@ -1338,26 +1277,11 @@ fn resolve_api_key(
     profile: Option<&ProviderProfile>,
     provider: ProviderKind,
 ) -> Result<String> {
-    let key = cli
-        .api_key
-        .clone()
-        .or_else(|| profile.and_then(|provider| provider.api_key.clone()))
-        .or_else(|| {
-            profile
-                .and_then(|provider| provider.api_key_env.as_deref())
-                .and_then(|name| std::env::var(name).ok())
-        })
-        .or_else(|| {
-            if provider == ProviderKind::SomeIm {
-                std::env::var("SOMEIM_API_KEY").ok()
-            } else if provider == ProviderKind::Anthropic {
-                std::env::var("ANTHROPIC_API_KEY").ok()
-            } else {
-                std::env::var("OPENAI_API_KEY").ok()
-            }
-        });
-    key.filter(|value| !value.trim().is_empty()).context(
-        "API key is required; set api_key/api_key_env in the provider profile, WILLDEEP_API_KEY, a provider-specific environment variable, or --api-key",
+    provider_settings::ProviderEnvironment::read().key(
+        cli.api_key.as_deref(),
+        profile,
+        provider,
+        true,
     )
 }
 

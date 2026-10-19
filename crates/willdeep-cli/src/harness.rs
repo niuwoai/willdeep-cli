@@ -15,9 +15,8 @@ use crate::config::{LoadedConfig, ProviderProfile};
 use crate::daemon::{AgentCommandWatcher, RuntimeConnection};
 use crate::i18n::Language;
 use crate::{
-    ApiArg, Cli, ProviderArg, TerminalApprover, TerminalSink, daemon, model_accepts_images,
-    parse_api, parse_provider, projects, provider_config_from_profile, resolve_api_key,
-    resolve_base, resolve_dialect, resolve_provider,
+    ApiArg, Cli, TerminalApprover, TerminalSink, daemon, model_accepts_images, projects,
+    provider_config_from_profile,
 };
 
 mod agent_team;
@@ -1314,35 +1313,7 @@ pub(crate) fn resolve_parent_provider_config(
     resumed_profile: Option<&str>,
 ) -> Result<ProviderConfig> {
     let profile = loaded.select_provider(cli.profile.as_deref().or(resumed_profile))?;
-    let profile_provider = profile
-        .and_then(|provider| provider.provider.as_deref())
-        .map(parse_provider)
-        .transpose()?;
-    // 没有任何 Provider 配置时，按环境里有哪把钥匙推断，零配置也能开工。
-    let selected_provider = cli
-        .provider
-        .or(profile_provider)
-        .or_else(|| profile.is_none().then(crate::provider_from_env).flatten());
-    let base = resolve_base(cli, profile, selected_provider)?;
-    let kind = resolve_provider(selected_provider.unwrap_or(ProviderArg::Auto), &base);
-    let profile_api = profile
-        .and_then(|provider| provider.api.as_deref())
-        .map(parse_api)
-        .transpose()?;
-    let dialect = resolve_dialect(cli.api.or(profile_api).unwrap_or(ApiArg::Auto), kind);
-    let api_key = resolve_api_key(cli, profile, kind)?;
-    let model = cli
-        .model
-        .clone()
-        .or_else(|| profile.and_then(|provider| provider.model.clone()))
-        .or_else(|| crate::default_model(kind).map(str::to_owned))
-        .context("model is required; set it in the provider profile, WILLDEEP_MODEL, or --model")?;
-    let mut provider_config = ProviderConfig::new(kind, dialect, base, api_key, model);
-    provider_config.max_output_tokens = cli
-        .max_output_tokens
-        .or_else(|| profile.and_then(|provider| provider.max_output_tokens))
-        .unwrap_or(16_384);
-    Ok(provider_config)
+    crate::provider_settings::ProviderEnvironment::read().resolve(profile, Some(cli))
 }
 
 /// 上下文压缩在会话模型兜底之前的候选：显式 `[agent] compressor_model`，或者

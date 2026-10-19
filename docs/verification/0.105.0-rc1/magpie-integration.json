@@ -1,0 +1,59 @@
+{
+  "passed": true,
+  "willdeep_version": "willdeep 0.105.0-rc1",
+  "magpie_revision": "224ea7d5bee5759e1e2bfeac8aca4a0c3d9503a5",
+  "paid_requests": 0,
+  "live_credentials_used": false,
+  "checks": [
+    {
+      "name": "real_magpie_model_catalog",
+      "passed": true
+    },
+    {
+      "name": "foreground_openai",
+      "passed": true,
+      "requests": 2,
+      "paths": [
+        "/v1/chat/completions"
+      ],
+      "models": [
+        "chat"
+      ]
+    },
+    {
+      "name": "foreground_anthropic",
+      "passed": true,
+      "requests": 1,
+      "paths": [
+        "/v1/messages"
+      ],
+      "models": [
+        "claude-mock"
+      ]
+    },
+    {
+      "name": "profile_local",
+      "passed": true,
+      "requests": 3,
+      "paths": [
+        "/v1/chat/completions"
+      ],
+      "models": [
+        "chat",
+        "child"
+      ]
+    },
+    {
+      "name": "runtime",
+      "passed": true,
+      "requests": 3,
+      "paths": [
+        "/v1/chat/completions"
+      ],
+      "models": [
+        "chat",
+        "child"
+      ]
+    }
+  ]
+}

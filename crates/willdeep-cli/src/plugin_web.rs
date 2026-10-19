@@ -884,7 +884,9 @@ async fn ai_providers(
         .providers
         .iter()
         .map(|(name, profile)| {
-            let base = profile.api_base.clone().unwrap_or_default();
+            let base = crate::provider_settings::ProviderEnvironment::read()
+                .profile_base(profile)
+                .unwrap_or_default();
             let mut models: Vec<String> = profile.model.iter().cloned().collect();
             if let Some(vision) = &profile.vision_model
                 && !models.contains(vision)

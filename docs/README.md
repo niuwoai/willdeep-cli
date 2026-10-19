@@ -28,6 +28,7 @@
 | 文档 | 内容 |
 |---|---|
 | [some.im 集成](SOMEIM_INTEGRATION.md) | 登录、自动识别、请求头、视觉回退、web_search |
+| [Magpie 本地网关](MAGPIE.md) | 标准地址变量、共享 Profile、Runtime 环境与隔离联调 |
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |
 | [Agent Runtime Kernel（任务书）](AGENT_RUNTIME_KERNEL.md) | 统一事件信封、三档中断、lease 与外部事件的移植计划 |

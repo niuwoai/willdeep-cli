@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-19 | 当前版本：v0.104.0-rc5（验收记录见 docs/AGENT_RELIABILITY_WORK.md）
+> 最后更新：2026-10-19 | 当前版本：v0.105.0-rc1（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）
+
+Provider 网关接入：统一前台、Runtime 与子 Agent 的 Profile 解析，支持 OpenAI / Anthropic 标准地址环境变量及 api_base_env；Magpie 作为独立 Profile，不替换已有供应商。
 
 TUI 鼠标操作：审批按钮扩大点击范围，提问选项加入不响应点击的间隔，窄小终端自适应压缩；模型、会话、工作区、命令与媒体列表保持紧凑。
 

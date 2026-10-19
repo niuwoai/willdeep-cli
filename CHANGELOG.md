@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.105.0-rc1] - 2026-10-19
+
+### Added
+- 兼容 OPENAI_BASE_URL 与 ANTHROPIC_BASE_URL，新增 Provider api_base_env，统一前台、子 Agent 与 Runtime 的 Provider 配置解析；提供 Magpie 网关配置及隔离联调验证。
+
 ## [0.104.0-rc5] - 2026-10-19
 
 ### Fixed

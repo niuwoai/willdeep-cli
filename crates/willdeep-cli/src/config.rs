@@ -415,6 +415,7 @@ pub struct ProviderProfile {
     pub provider: Option<String>,
     pub api: Option<String>,
     pub api_base: Option<String>,
+    pub api_base_env: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub model: Option<String>,
@@ -654,6 +655,17 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
         }
     }
     for (name, provider) in &file.providers {
+        if provider.api_base.is_some() && provider.api_base_env.is_some() {
+            bail!("providers.{name} cannot define both api_base and api_base_env");
+        }
+        if provider
+            .api_base_env
+            .as_deref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            bail!("providers.{name}.api_base_env cannot be empty");
+        }
+
         if provider.api_key.as_deref().is_some_and(str::is_empty) {
             bail!("providers.{name}.api_key cannot be empty");
         }

@@ -347,7 +347,9 @@ fn check_config(options: &DoctorOptions, checks: &mut Vec<DoctorCheck>) {
     check_notifications(&loaded, checks);
     match loaded.select_provider(options.profile.as_deref()) {
         Ok(Some(provider)) => {
+            let environment = crate::provider_settings::ProviderEnvironment::read();
             let credentials = options.api_key_present
+                || environment.resolve(Some(provider), None).is_ok()
                 || provider
                     .api_key
                     .as_deref()
@@ -356,11 +358,7 @@ fn check_config(options: &DoctorOptions, checks: &mut Vec<DoctorCheck>) {
                     .api_key_env
                     .as_deref()
                     .is_some_and(env_value_present);
-            let endpoint = options.api_base_present
-                || provider
-                    .api_base
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty());
+            let endpoint = options.api_base_present || environment.profile_base(provider).is_ok();
             let model = options.model_present
                 || provider
                     .model
