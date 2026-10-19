@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-19 | 当前版本：v0.105.0-rc1（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）
+> 最后更新：2026-10-19 | 当前版本：v0.105.0-rc2（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）
+
+完全访问审核：命令替换中的未知命令不再等同破坏性操作，网络查询与文件统计免审；嵌套的明确危险命令仍要求确认，智能和严格模式保留审核流程。
 
 Provider 网关接入：统一前台、Runtime 与子 Agent 的 Profile 解析，支持 OpenAI / Anthropic 标准地址环境变量及 api_base_env；Magpie 作为独立 Profile，不替换已有供应商。
 
