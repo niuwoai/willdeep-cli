@@ -198,7 +198,31 @@ async fn parent_deadline_bounds_worker_provider_wait() {
         }
         other => panic!("worker stopped for a different reason: {other}"),
     }
-    std::fs::remove_dir_all(root).unwrap();
+    drop(catalog);
+    remove_deadline_fixture(&root).await;
+}
+
+async fn remove_deadline_fixture(root: &std::path::Path) {
+    const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+    const CLEANUP_RETRY: Duration = Duration::from_millis(20);
+    let deadline = tokio::time::Instant::now() + CLEANUP_TIMEOUT;
+    loop {
+        match std::fs::remove_dir_all(root) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            // Windows can briefly retain a cancelled worker's file handles.
+            // Retry only sharing/access/directory-not-empty errors, and fail
+            // with the original context if they outlast the cleanup window.
+            Err(error)
+                if cfg!(windows)
+                    && matches!(error.raw_os_error(), Some(5 | 32 | 145))
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(CLEANUP_RETRY).await;
+            }
+            Err(error) => panic!("remove deadline fixture {}: {error}", root.display()),
+        }
+    }
 }
 
 #[tokio::test]
