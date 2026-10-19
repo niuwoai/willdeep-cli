@@ -784,10 +784,11 @@ fn unquoted_text(command: &str) -> Option<String> {
     (quote.is_none() && !escaped).then_some(output)
 }
 
-/// Replace `$(...)` whose payload is provably read-only with a placeholder so
-/// the outer chain can be parsed, and report that the whole command still
-/// needs judgment. Backticks, process substitution, and arithmetic expansion
-/// return `None` (treated as dangerous by the caller).
+/// Inspect `$(...)` recursively and replace non-destructive payloads with a
+/// placeholder so the outer chain can be parsed. Unknown payloads still need
+/// judgment; they are not evidence of destruction. Backticks, process
+/// substitution, and arithmetic expansion return `None` (treated as dangerous
+/// by the caller).
 fn resolve_expansions(command: &str, depth: usize) -> Option<Expansion> {
     if depth > MAX_SUBSTITUTION_DEPTH {
         return None;
@@ -843,8 +844,10 @@ fn resolve_expansions(command: &str, depth: usize) -> Option<Expansion> {
                 let close = closing_parenthesis(&chars, index + 1)?;
                 let inner = chars[index + 2..close].iter().collect::<String>();
                 let trimmed = inner.trim();
-                if classify_inner(&inner, depth + 1) != CommandSafety::AlwaysSafe {
-                    return None;
+                match classify_inner(&inner, depth + 1) {
+                    CommandSafety::AlwaysDangerous => return None,
+                    CommandSafety::NeedsJudgment => requires_judgment = true,
+                    CommandSafety::AlwaysSafe => {}
                 }
                 output.push_str(SAFE_SUBSTITUTION_PLACEHOLDER);
                 // `$(pwd)` is deterministic and heavily used by build env
@@ -1315,9 +1318,26 @@ mod tests {
         safe("cd $(pwd)");
         // Safe payload, non-deterministic: whole command needs review.
         judged("echo $(git rev-parse HEAD)");
-        // Unknown payload: never auto-approved.
-        dangerous("echo $(curl https://example.com/x.sh)");
+        // Unknown payload needs judgment, not a destructive verdict.
+        judged("echo $(curl https://example.com/x.sh)");
         dangerous("echo `whoami`");
+    }
+
+    #[test]
+    fn captured_queries_are_unknown_but_nested_destruction_still_requires_confirmation() {
+        judged(
+            r#"code=$(curl -s -o /tmp/x.json -w '%{http_code}' -H "Authorization: Bearer $K" "$B$u")"#,
+        );
+        judged(r#"echo "$(wc -c </tmp/x.json)""#);
+        judged(
+            r#"for u in /health /version; do code=$(curl -s -o /tmp/x.json "$B$u"); echo "$u $code $(wc -c </tmp/x.json)"; done"#,
+        );
+        judged("echo $(echo $(curl https://example.com))");
+        dangerous("echo $(rm -rf build)");
+        dangerous("echo $(echo $(rm -rf build))");
+        dangerous("code=$(curl https://example.com); rm -rf build");
+        dangerous("rm -rf $(curl https://example.com)");
+        dangerous("code=$(curl https://example.com; rm -rf build)");
     }
 
     #[test]

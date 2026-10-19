@@ -655,6 +655,40 @@ mod tests {
         (registry, traces)
     }
 
+    #[tokio::test]
+    async fn captured_queries_follow_the_approval_mode_without_executing_them() {
+        let root = fixture("captured-query-approval");
+        let query = r#"code=$(curl -s -o /tmp/x.json "$B$u"); echo "$(wc -c </tmp/x.json)""#;
+        let judged = Arc::new(AtomicUsize::new(0));
+        let registry = ToolRegistry::new(&root, ApprovalMode::FullAccess)
+            .unwrap()
+            .with_safety_judge(Arc::new(CountingJudge(judged.clone())));
+        registry.gate_main_command(query, "query").await.unwrap();
+        assert_eq!(judged.load(Ordering::SeqCst), 0);
+        for command in [
+            "echo $(rm -rf build)",
+            "echo $(echo $(rm -rf build))",
+            "code=$(curl https://example.com); rm -rf build",
+        ] {
+            assert!(matches!(
+                registry.gate_main_command(command, "destructive").await,
+                Err(ToolError::ApprovalDenied(_))
+            ));
+        }
+        assert_eq!(judged.load(Ordering::SeqCst), 0);
+        let smart = ToolRegistry::new(&root, ApprovalMode::Smart)
+            .unwrap()
+            .with_safety_judge(Arc::new(CountingJudge(judged.clone())));
+        smart.gate_main_command(query, "query").await.unwrap();
+        assert_eq!(judged.load(Ordering::SeqCst), 1);
+        let strict = ToolRegistry::new(&root, ApprovalMode::Strict).unwrap();
+        assert!(matches!(
+            strict.gate_main_command(query, "query").await,
+            Err(ToolError::ApprovalDenied(_))
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// 默认审批器一律拒绝，所以「命令跑了」就等于「没问人」。
     #[tokio::test]
     async fn full_access_skips_review_but_not_the_destructive_denylist() {
