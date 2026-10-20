@@ -408,10 +408,12 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
     }
     match output_type {
         Some("background_wait") => {
-            app.waiting_background = value
-                .get("waiting")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            app.set_background_wait(
+                value
+                    .get("waiting")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            );
         }
         // 与进程内轮次一致：定稿的一段话直接落进聊天区，流式增量仍走下面的
         // 临时预览行。非托管会话的镜像也同步记一条。
@@ -478,6 +480,14 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                     value.get("detail").and_then(|value| value.as_str()),
                     is_error,
                 );
+                if !is_error
+                    && name == "run_command"
+                    && let Some(seconds) = value
+                        .get("background_delay_seconds")
+                        .and_then(|v| v.as_u64())
+                {
+                    app.note_delayed_command(seconds);
+                }
             }
         }
         Some("usage") => {
@@ -683,6 +693,11 @@ mod background_queue_tests {
         assert!(app.queued_background_prompt_ready());
         assert!(app.running);
         assert!(app.runtime_turn);
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"tool_completed","name":"run_command","is_error":false,"background_delay_seconds":240}"#,
+        );
+        assert!(app.transcript.iter().any(|line| line.contains("240s")));
         apply_runtime_output(
             &mut app,
             r#"task_id=test {"type":"background_wait","waiting":false}"#,

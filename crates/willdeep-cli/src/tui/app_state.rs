@@ -50,6 +50,7 @@ impl App {
             last_progress_at: None,
             runtime_turn: false,
             waiting_background: false,
+            overlay_close_hits: Vec::new(),
             stale_runtime_turn_snapshots: 0,
             stale_runtime_turn_recovery_reported: false,
             last_elapsed: None,
@@ -1516,6 +1517,13 @@ impl App {
 
     pub(super) fn working_summary(&self) -> Option<String> {
         let started = self.turn_started?;
+        if self.waiting_background && self.approval.is_none() && self.question.is_none() {
+            return Some(self.language.text(
+                "后台任务运行中 · 可以继续输入，普通消息回车后发送 · 完成后自动通知",
+                "Background running · Keep typing; Enter sends text · Completion will be reported",
+                "バックグラウンド実行中 · 入力して Enter で送信 · 完了後に通知",
+            ).to_owned());
+        }
         let elapsed = started.elapsed();
         let idle = self
             .last_progress_at

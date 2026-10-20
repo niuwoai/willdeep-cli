@@ -77,6 +77,12 @@ pub(super) fn render_attention_detail(f: &mut ratatui::Frame<'_>, app: &mut App)
             .wrap(Wrap { trim: false }),
         popup,
     );
+    app.render_overlay_close_hint(
+        f,
+        overlay_dismiss::DismissibleOverlay::AttentionDetail,
+        popup,
+        title,
+    );
     if diff_review && popup.height >= 3 {
         let labels = [
             app.language

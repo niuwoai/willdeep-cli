@@ -10,6 +10,9 @@ max_queued = 64
 # token_budget = 1000000
 
 [agent]
+# 交互式启动：ask 询问，5 秒后继续本工作区最近会话；latest 总是继续；new 总是新建。
+# willdeep config startup ask|latest|new 可保存偏好；--new-session 本次直接新建。
+session_startup = "ask"
 # Optional per-task acceptance checks; use a task-specific --config when needed.
 # Each check must pass on the final Git snapshot. Does not grant execution permission.
 # verification_commands = ["cargo test --workspace"]

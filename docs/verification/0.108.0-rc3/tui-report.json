@@ -1,0 +1,10 @@
+{
+  "enter_sent": true,
+  "followup_read_before_command_completion": true,
+  "completion_delivered": true,
+  "execution_count": 1,
+  "command_issued": 1,
+  "followup_saved_count": 1,
+  "visible_hint": true,
+  "passed": true
+}

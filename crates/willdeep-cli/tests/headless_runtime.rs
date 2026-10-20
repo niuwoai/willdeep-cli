@@ -2662,6 +2662,8 @@ enum MockMode {
     IdleBackgroundThenSuccess {
         monitor: bool,
     },
+    #[cfg_attr(not(unix), allow(dead_code))]
+    LeadingSleepThenSuccess,
 }
 
 impl Drop for MockProvider {
@@ -2772,7 +2774,8 @@ async fn mock_provider_response(
         | MockMode::FailingToolThenSuccess
         | MockMode::BackgroundJobThenSuccess
         | MockMode::MonitorThenSuccess
-        | MockMode::IdleBackgroundThenSuccess { .. } => 200,
+        | MockMode::IdleBackgroundThenSuccess { .. }
+        | MockMode::LeadingSleepThenSuccess => 200,
     };
     let body = if matches!(state.mode, MockMode::CheckpointThenWait) && request_index == 0 {
         let command = r#"ruby -e 'File.open("progress.log", "a") { |file| file.write("checkpoint-once\n") }'"#;
@@ -2788,7 +2791,9 @@ async fn mock_provider_response(
     } else if matches!(state.mode, MockMode::MonitorThenSuccess) {
         monitor_events::response(&body, request_index)
     } else if let MockMode::IdleBackgroundThenSuccess { monitor } = state.mode {
-        background_steering::response(&body, request_index, monitor)
+        background_steering::response(&body, request_index, monitor, false)
+    } else if matches!(state.mode, MockMode::LeadingSleepThenSuccess) {
+        background_steering::response(&body, request_index, false, true)
     } else if mode_is_waiting_root(state.mode, request_index) {
         r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"ask_root","type":"function","function":{"name":"ask_user","arguments":"{\"question\":\"keep the root active?\",\"options\":[\"yes\"]}"}}]},"finish_reason":"tool_calls"}]}"#.to_owned()
     } else if matches!(state.mode, MockMode::IncompleteThenSuccess) && request_index < 3 {
