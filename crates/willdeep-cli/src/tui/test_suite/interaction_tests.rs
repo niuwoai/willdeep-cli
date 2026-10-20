@@ -617,6 +617,7 @@ fn sidebar_render_clamps_extreme_manual_scroll_without_underflow() {
             workspace: PathBuf::from("/workspace"),
             worktree_branch: None,
             dedicated_worktree: false,
+            started_at: Some(now - 5),
             created_at: now - 5,
             completed_at: Some(now - 1),
         }));
@@ -655,6 +656,7 @@ fn sidebar_renders_runtime_agent_lifecycle_summary() {
             workspace: PathBuf::from("/workspace"),
             worktree_branch: None,
             dedicated_worktree: false,
+            started_at: Some(now - 1),
             created_at: now - 1,
             completed_at: Some(now),
         });
@@ -678,6 +680,7 @@ fn sidebar_renders_runtime_agent_lifecycle_summary() {
             workspace: PathBuf::from("/worktrees/agent"),
             worktree_branch: Some("willdeep/agent-test".to_owned()),
             dedicated_worktree: true,
+            started_at: Some(now - 5),
             created_at: now - 5,
             completed_at: None,
         });
@@ -723,7 +726,7 @@ fn sidebar_renders_runtime_agent_lifecycle_summary() {
         .collect::<String>();
     assert!(rendered.contains("Runtime agents · 2"));
     assert!(rendered.contains("abe596 · editor · done"));
-    assert!(rendered.contains("root · root-model · took 1s"));
+    assert!(rendered.contains("root · root-model · This turn took 1s"));
     assert!(rendered.contains("T3/- · - · 42t/- · -s"));
     assert!(rendered.contains("inspect · scout-model · running for"));
     assert!(rendered.contains("T1/8 · read_file · 9t/32000t · 300s"));
@@ -763,6 +766,60 @@ fn sidebar_group_headings_use_terminal_foreground_with_bold_contrast() {
 }
 
 #[test]
+fn root_sidebar_and_detail_show_the_current_turn_instead_of_its_lifetime() {
+    let now = unix_now();
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    let agent = crate::daemon::tui_bridge::RemoteAgent {
+        id: uuid::Uuid::new_v4(),
+        parent_id: None,
+        label: Some("root".into()),
+        background: false,
+        profile: None,
+        model: None,
+        status: RuntimeStatus::Done,
+        current_turn: 1,
+        current_tool: None,
+        retry_wait: None,
+        total_tokens: None,
+        max_turns: None,
+        token_budget: None,
+        timeout_seconds: None,
+        report: None,
+        workspace: PathBuf::from("/workspace"),
+        worktree_branch: None,
+        dedicated_worktree: false,
+        created_at: now - 116 * 3600,
+        started_at: Some(now - 45),
+        completed_at: Some(now),
+    };
+    app.runtime_agents.push(agent.clone());
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 32)).unwrap();
+    terminal
+        .draw(|frame| sidebar::render_sidebar(frame, &mut app, frame.area()))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(
+        rendered.replace(' ', "").contains("本轮耗时45s"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("116h"));
+    let detail = agent_worktree_ui::agent_detail_content(&app, &agent);
+    assert!(detail.contains("本轮耗时 45s"));
+    let mut legacy = agent;
+    legacy.started_at = None;
+    assert_eq!(
+        sidebar::agent_duration_label(&legacy, Language::ZhCn),
+        "本轮尚无开始时间"
+    );
+}
+
+#[test]
 fn sidebar_drops_long_finished_agents_and_keeps_selection_on_the_visible_ones() {
     let mut app = App::new(Vec::new(), Language::En);
     let now = unix_now();
@@ -785,6 +842,7 @@ fn sidebar_drops_long_finished_agents_and_keeps_selection_on_the_visible_ones() 
         workspace: PathBuf::from("/workspace"),
         worktree_branch: None,
         dedicated_worktree: false,
+        started_at: Some(now - 47_148),
         created_at: now - 47_148,
         completed_at: Some(now - 43_200),
     };
@@ -858,6 +916,7 @@ fn agent_detail_filters_tool_timeline_and_diff_by_agent() {
         workspace: PathBuf::from("/workspace"),
         worktree_branch: None,
         dedicated_worktree: false,
+        started_at: Some(1),
         created_at: 1,
         completed_at: Some(2),
     };
@@ -937,6 +996,7 @@ fn terminal_agent_detail_exposes_clickable_retry_model_and_diff_actions() {
         workspace: PathBuf::from("/worktree"),
         worktree_branch: Some("willdeep/editor".to_owned()),
         dedicated_worktree: true,
+        started_at: Some(1),
         created_at: 1,
         completed_at: Some(2),
     });

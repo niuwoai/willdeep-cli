@@ -242,8 +242,19 @@ impl DetachedJobStore {
     }
 
     pub fn get(&self, id: &str) -> Option<DetachedJob> {
+        if id.is_empty() || id.contains(['/', '\\']) || matches!(id, "." | "..") {
+            return None;
+        }
         let bytes = std::fs::read(self.directory.join(id).join("meta.json")).ok()?;
-        serde_json::from_slice(&bytes).ok()
+        let job: DetachedJob = serde_json::from_slice(&bytes).ok()?;
+        (job.id == id).then_some(job)
+    }
+
+    /// Ownership is explicit; legacy unowned jobs never grant an exemption.
+    pub fn owns(&self, job: &DetachedJob) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| job.owner.as_ref() == Some(owner))
     }
 
     /// 现在这个作业是什么状态。

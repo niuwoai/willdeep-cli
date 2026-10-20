@@ -2129,8 +2129,15 @@ impl ToolRegistry {
     }
 
     async fn kill_job(&self, args: JobIDArgs) -> Result<String, ToolError> {
-        self.require_approval(&format!("cancel background task: {}", args.job_id), false)
-            .await?;
+        let action = format!("cancel background task: {}", args.job_id);
+        let owned = self.background.contains(&args.job_id)
+            || self.detached_jobs.as_ref().is_some_and(|jobs| {
+                jobs.get(&args.job_id)
+                    .is_some_and(|job| job.id == args.job_id && jobs.owns(&job))
+            });
+        if !(owned && self.allowed_by_full_access(&action)) {
+            self.require_approval(&action, false).await?;
+        }
         if self.background.kill(&args.job_id) {
             return Ok(format!("kill requested for {}", args.job_id));
         }
@@ -2927,5 +2934,7 @@ struct EditArgs {
     replace_all: Option<bool>,
 }
 
+#[cfg(test)]
+mod job_control_tests;
 #[cfg(test)]
 mod tests;

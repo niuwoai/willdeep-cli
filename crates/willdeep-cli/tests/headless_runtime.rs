@@ -15,6 +15,8 @@ mod automatic_compression;
 mod background_steering;
 #[path = "headless_runtime/background_supervisor.rs"]
 mod background_supervisor;
+#[path = "headless_runtime/control_policy.rs"]
+mod control_policy;
 #[path = "headless_runtime/detached_background.rs"]
 mod detached_background;
 #[path = "headless_runtime/foreground_recovery.rs"]
@@ -2309,6 +2311,7 @@ default_provider = "mock"
 [agent]
 max_turns = 4
 approval = "smart"
+auto_dispatch_read_only = false
 # 这些用例数的是「一轮打几次 Provider」。自动标题会在会话第一轮多打一次，
 # 那是它设计上的成本，但会把这里的断言变成在数两件事。标题链路本身由
 # `first_turn_titles_the_session_with_one_extra_provider_call` 单独盯。
@@ -2664,6 +2667,9 @@ enum MockMode {
     },
     #[cfg_attr(not(unix), allow(dead_code))]
     LeadingSleepThenSuccess,
+    AutomaticReadOnly,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    CancelOwnJob,
 }
 
 impl Drop for MockProvider {
@@ -2775,7 +2781,9 @@ async fn mock_provider_response(
         | MockMode::BackgroundJobThenSuccess
         | MockMode::MonitorThenSuccess
         | MockMode::IdleBackgroundThenSuccess { .. }
-        | MockMode::LeadingSleepThenSuccess => 200,
+        | MockMode::LeadingSleepThenSuccess
+        | MockMode::AutomaticReadOnly
+        | MockMode::CancelOwnJob => 200,
     };
     let body = if matches!(state.mode, MockMode::CheckpointThenWait) && request_index == 0 {
         let command = r#"ruby -e 'File.open("progress.log", "a") { |file| file.write("checkpoint-once\n") }'"#;
@@ -2792,6 +2800,15 @@ async fn mock_provider_response(
         monitor_events::response(&body, request_index)
     } else if let MockMode::IdleBackgroundThenSuccess { monitor } = state.mode {
         background_steering::response(&body, request_index, monitor, false)
+    } else if matches!(
+        state.mode,
+        MockMode::AutomaticReadOnly | MockMode::CancelOwnJob
+    ) {
+        control_policy::response(
+            &body,
+            request_index,
+            matches!(state.mode, MockMode::CancelOwnJob),
+        )
     } else if matches!(state.mode, MockMode::LeadingSleepThenSuccess) {
         background_steering::response(&body, request_index, false, true)
     } else if mode_is_waiting_root(state.mode, request_index) {

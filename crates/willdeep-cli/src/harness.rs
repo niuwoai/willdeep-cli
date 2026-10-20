@@ -1201,7 +1201,7 @@ pub(crate) async fn build(
         agent = agent.with_instruction_inbox(inbox);
     }
     let routing_policy = RoutingPolicy {
-        auto_dispatch_read_only: loaded.file.agent.auto_dispatch_read_only.unwrap_or(false),
+        auto_dispatch_read_only: loaded.file.agent.auto_dispatch_read_only.unwrap_or(true),
         max_deep_calls: loaded.file.agent.max_deep_calls_per_harness.unwrap_or(1),
     };
     if loaded.file.agent.small_model_routing.unwrap_or(true) {

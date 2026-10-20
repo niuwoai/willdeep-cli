@@ -204,6 +204,7 @@ pub(super) fn agent_detail_content(
         app.language.text("分支", "Branch", "ブランチ"),
         agent.worktree_branch.as_deref().unwrap_or("—")
     )];
+    lines.push(sidebar::agent_duration_label(agent, app.language));
     if let Some(wait) = &agent.retry_wait {
         lines.push(format!(
             "{} · {} · {}s",
