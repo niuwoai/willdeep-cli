@@ -372,6 +372,17 @@ impl BackgroundTaskRegistry {
         Some(lines[lines.len().saturating_sub(tail_lines.max(1))..].join("\n"))
     }
 
+    /// The registry belongs to one harness/team; inspect all records, not the
+    /// fifty most recent entries returned by the presentation snapshot.
+    pub(crate) fn contains(&self, id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .any(|task| task.snapshot.id == id)
+    }
+
     pub fn kill(&self, id: &str) -> bool {
         let state = self.inner.lock().expect("background registry");
         state

@@ -2,6 +2,8 @@
 
 WillDeep 的命令树由 Clap 定义，补全脚本和 man page 从同一棵树生成。本文覆盖日常使用的命令；Runtime 内部操作见 [Runtime Daemon](RUNTIME_DAEMON.md)。
 
+只读任务自动派工默认开启：`[agent] auto_dispatch_read_only = false` 可显式关闭；需同时启用 `small_model_routing` 才会自动创建子 Agent。仅高置信度只读请求自动下发，写入任务仍按任务包与原权限执行。完全访问模式下 `kill_job` 取消当前会话自己的 Job 无需审批，跨会话和无主 Job 保留审批。root 的侧栏与详情显示本轮任务时长，缺少开始时间时明确提示未知，不回退到 Agent 创建时间。
+
 ```text
 willdeep [OPTIONS] [PROMPT]... [COMMAND]
 ```

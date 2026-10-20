@@ -87,6 +87,8 @@ pub(crate) struct RemoteAgent {
     pub workspace: PathBuf,
     pub worktree_branch: Option<String>,
     pub dedicated_worktree: bool,
+    /// Root duration starts at its current task, never its session lifetime.
+    pub started_at: Option<u64>,
     pub created_at: u64,
     pub completed_at: Option<u64>,
 }
@@ -838,6 +840,11 @@ pub(crate) async fn runtime_snapshot(
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
+    let tasks = api_data(runtime_client(&state)?.tasks().await?)?;
+    let task_index = tasks
+        .iter()
+        .map(|task| (task.id, task))
+        .collect::<std::collections::HashMap<_, _>>();
     let mut agents = raw_agents
         .into_iter()
         .filter(|agent| {
@@ -848,10 +855,12 @@ pub(crate) async fn runtime_snapshot(
                 .and_then(|path| path.canonicalize().ok())
                 .is_some_and(|path| path == workspace)
         })
-        .map(remote_agent)
+        .map(|agent| {
+            let task = task_index.get(&agent.task_id).copied();
+            remote_agent_with_task(agent, task)
+        })
         .collect::<Vec<_>>();
     agents.sort_by_key(|agent| (agent.parent_id.is_some(), agent.parent_id, agent.id));
-    let tasks = api_data(runtime_client(&state)?.tasks().await?)?;
     // 同一个工作区可能同时开着多个 TUI。任务对本工作区可见，不代表它的审批该在
     // 这里弹——所以除了「哪些任务可见」，还要记住「每个任务归谁」。
     let visible_tasks = tasks
@@ -985,7 +994,13 @@ pub(crate) async fn runtime_snapshot(
 
 pub(crate) async fn remote_agent_detail(home: &Path, id: uuid::Uuid) -> Result<RemoteAgent> {
     let state = ensure_running(home).await?;
-    api_data(runtime_client(&state)?.agent(id).await?).map(remote_agent)
+    let agent = api_data(runtime_client(&state)?.agent(id).await?)?;
+    if agent.parent_id.is_some() {
+        return Ok(remote_agent(agent));
+    }
+    let tasks = api_data(runtime_client(&state)?.tasks().await?)?;
+    let task = tasks.iter().find(|task| task.id == agent.task_id);
+    Ok(remote_agent_with_task(agent, task))
 }
 
 pub(crate) async fn stop_remote_agent(home: &Path, id: uuid::Uuid) -> Result<()> {
@@ -1123,6 +1138,32 @@ pub(crate) async fn remote_agent_runs(
     )
 }
 
+fn remote_agent_with_task(
+    agent: willdeep_runtime_protocol::RuntimeAgent,
+    task: Option<&willdeep_runtime_protocol::RuntimeTask>,
+) -> RemoteAgent {
+    let task = task.filter(|task| agent.parent_id.is_none() && task.id == agent.task_id);
+    let mut remote = remote_agent(agent);
+    if let Some(task) = task {
+        remote.started_at = task.started_at;
+        remote.completed_at = task.completed_at;
+    }
+    remote
+}
+
+impl RemoteAgent {
+    pub(crate) fn elapsed_seconds_at(&self, now: u64) -> u64 {
+        let start = if self.parent_id.is_none() {
+            self.started_at
+        } else {
+            Some(self.created_at)
+        };
+        start.map_or(0, |start| {
+            self.completed_at.unwrap_or(now).saturating_sub(start)
+        })
+    }
+}
+
 fn remote_agent(agent: willdeep_runtime_protocol::RuntimeAgent) -> RemoteAgent {
     RemoteAgent {
         id: agent.id,
@@ -1168,6 +1209,7 @@ fn remote_agent(agent: willdeep_runtime_protocol::RuntimeAgent) -> RemoteAgent {
         workspace: agent.workspace.map(PathBuf::from).unwrap_or_default(),
         worktree_branch: agent.worktree_branch,
         dedicated_worktree: agent.dedicated_worktree,
+        started_at: None,
         created_at: agent.created_at,
         completed_at: agent.completed_at,
     }
@@ -1653,6 +1695,52 @@ mod tests {
             exit_code: None,
             failure_domain: None,
         }
+    }
+
+    #[test]
+    fn root_duration_uses_its_current_task_and_keeps_the_agent_lifetime() {
+        let mut task = attention_task(None);
+        task.started_at = Some(500_000);
+        task.completed_at = Some(500_045);
+        let agent: willdeep_runtime_protocol::RuntimeAgent =
+            serde_json::from_value(serde_json::json!({
+                "id": uuid::Uuid::new_v4(), "parent_id": null, "task_id": task.id,
+                "background": false, "dedicated_worktree": false, "status": "completed",
+                "current_turn": 3, "created_at": 1, "updated_at": 500_045
+            }))
+            .unwrap();
+        let root = remote_agent_with_task(agent.clone(), Some(&task));
+        assert_eq!(root.created_at, 1, "persistent Agent identity is unchanged");
+        assert_eq!(root.elapsed_seconds_at(600_000), 45);
+        task.id = uuid::Uuid::new_v4();
+        assert_eq!(
+            remote_agent_with_task(agent.clone(), Some(&task)).elapsed_seconds_at(600_000),
+            0,
+            "do not borrow another task's clock"
+        );
+        task.id = agent.task_id;
+        task.started_at = Some(600_000);
+        task.completed_at = None;
+        assert_eq!(
+            remote_agent_with_task(agent.clone(), Some(&task)).elapsed_seconds_at(600_012),
+            12,
+            "the next turn resets the displayed duration"
+        );
+        task.started_at = None;
+        assert_eq!(
+            remote_agent_with_task(agent.clone(), Some(&task)).elapsed_seconds_at(600_012),
+            0,
+            "queued/legacy roots never fall back to lifetime"
+        );
+        let mut child = agent;
+        child.parent_id = Some(uuid::Uuid::new_v4());
+        child.created_at = 600_000;
+        child.completed_at = Some(600_030);
+        assert_eq!(
+            remote_agent_with_task(child, Some(&task)).elapsed_seconds_at(600_100),
+            30,
+            "children retain their own execution duration"
+        );
     }
 
     /// 弹窗第一眼要回答「这是哪个任务、在干什么」：标题给提示词摘要，

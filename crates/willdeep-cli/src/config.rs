@@ -869,7 +869,7 @@ impl AgentSettings {
             goal_max_continuations: self.goal_max_continuations.unwrap_or(64),
             input_suggestions: self.input_suggestions.unwrap_or(true),
             small_model_routing: self.small_model_routing.unwrap_or(true),
-            auto_dispatch_read_only: self.auto_dispatch_read_only.unwrap_or(false),
+            auto_dispatch_read_only: self.auto_dispatch_read_only.unwrap_or(true),
             max_deep_calls_per_harness: self.max_deep_calls_per_harness.unwrap_or(1),
             ..Default::default()
         }
@@ -892,6 +892,16 @@ impl AgentSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_read_only_dispatch_defaults_on_and_preserves_an_explicit_opt_out() {
+        let defaults = super::AgentSettings::default();
+        assert!(defaults.runtime_parameters(128).auto_dispatch_read_only);
+        let disabled = super::AgentSettings {
+            auto_dispatch_read_only: Some(false),
+            ..defaults
+        };
+        assert!(!disabled.runtime_parameters(128).auto_dispatch_read_only);
+    }
     use super::*;
 
     #[test]

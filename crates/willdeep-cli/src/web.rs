@@ -846,8 +846,7 @@ fn now_seconds() -> u64 {
 }
 
 fn agent_elapsed_seconds(agent: &crate::daemon::tui_bridge::RemoteAgent) -> u64 {
-    let end = agent.completed_at.unwrap_or_else(now_seconds);
-    end.saturating_sub(agent.created_at)
+    agent.elapsed_seconds_at(now_seconds())
 }
 
 fn task_status_name(status: willdeep_runtime_protocol::TaskStatus) -> &'static str {
@@ -2353,7 +2352,8 @@ mod tests {
                 workspace: std::path::PathBuf::from("/tmp"),
                 worktree_branch: None,
                 dedicated_worktree: false,
-                created_at: completed_at - 30,
+                started_at: Some(completed_at - 30),
+                created_at: 1,
                 completed_at: Some(completed_at),
             }))
             .expect("serialize public agent summary");

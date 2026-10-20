@@ -41,7 +41,7 @@ impl Default for RuntimeParameters {
             goal_max_continuations: 64,
             input_suggestions: true,
             small_model_routing: true,
-            auto_dispatch_read_only: false,
+            auto_dispatch_read_only: true,
             max_deep_calls_per_harness: 1,
         }
     }
@@ -148,7 +148,13 @@ mod tests {
     }
     #[test]
     fn canonical_roundtrip_has_stable_fingerprint() {
-        let value = RuntimeParameters::default();
+        // Keep the existing cross-client golden vector explicit: changing a
+        // product default must not change fingerprints of saved parameters.
+        assert!(RuntimeParameters::default().auto_dispatch_read_only);
+        let value = RuntimeParameters {
+            auto_dispatch_read_only: false,
+            ..Default::default()
+        };
         let decoded: RuntimeParameters = serde_json::from_str(&value.canonical()).unwrap();
         assert_eq!(decoded, value);
         assert_eq!(decoded.fingerprint(), value.fingerprint());

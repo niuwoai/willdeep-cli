@@ -698,8 +698,7 @@ fn sidebar_runtime_agent_visible(agent: &crate::daemon::tui_bridge::RemoteAgent,
 }
 
 fn agent_elapsed_seconds(agent: &crate::daemon::tui_bridge::RemoteAgent) -> u64 {
-    let end = agent.completed_at.unwrap_or_else(now_seconds);
-    end.saturating_sub(agent.created_at)
+    agent.elapsed_seconds_at(now_seconds())
 }
 
 fn format_duration(seconds: u64) -> String {
@@ -713,11 +712,24 @@ fn format_duration(seconds: u64) -> String {
 }
 
 /// 运行中的是「已运行」，结束的是「耗时」——同一个数字混着显示会让人以为进程还活着。
-fn agent_duration_label(
+pub(super) fn agent_duration_label(
     agent: &crate::daemon::tui_bridge::RemoteAgent,
     language: Language,
 ) -> String {
-    let label = if agent_is_live(agent) {
+    if agent.parent_id.is_none() && agent.started_at.is_none() {
+        return language
+            .text(
+                "本轮尚无开始时间",
+                "Turn start unavailable",
+                "今回の開始時刻は未取得",
+            )
+            .to_owned();
+    }
+    let label = if agent.parent_id.is_none() && agent_is_live(agent) {
+        language.text("本轮已运行", "This turn running for", "今回の実行時間")
+    } else if agent.parent_id.is_none() {
+        language.text("本轮耗时", "This turn took", "今回の所要時間")
+    } else if agent_is_live(agent) {
         language.text("已运行", "running for", "実行時間")
     } else {
         language.text("耗时", "took", "所要時間")
