@@ -64,6 +64,27 @@ fn check_steering(monitor: bool, delayed: bool) {
         .unwrap()
         .replace("max_turns = 4", "max_turns = 1");
     std::fs::write(&config, settings).unwrap();
+    if delayed {
+        // The Runtime workspace policy overrides the config's approval mode.
+        // This regression tests background delivery, not OS fence availability:
+        // Linux runners without a usable fence must not wait on approval here.
+        let registration = root.join("workspace.json");
+        std::fs::write(
+            &registration,
+            serde_json::json!({"root": workspace, "access": "full_access"}).to_string(),
+        )
+        .unwrap();
+        let registered = willdeep(&home)
+            .args([
+                "api",
+                "workspace.register",
+                "--params-file",
+                path_text(&registration),
+            ])
+            .output()
+            .unwrap();
+        assert_success(&registered, "register delayed-command test workspace");
+    }
     let mut client = ChildGuard(Some(
         willdeep(&home)
             .args([
