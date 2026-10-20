@@ -587,6 +587,7 @@ pub(super) async fn event_loop(
             },
             event=events.next()=>if let Some(Ok(event))=event { match event {
                 Event::Paste(value)=>{
+                    app.note_user_activity();
                     if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
                         if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
@@ -609,6 +610,7 @@ pub(super) async fn event_loop(
                     }
                 },
                 Event::Mouse(mouse)=>{
+                    if app.wake_quiet_mouse(mouse) { continue; }
                     if app.question.is_some()||app.approval.is_some() {
                         if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
                             app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
@@ -729,6 +731,7 @@ pub(super) async fn event_loop(
                     _=>{}
                 }},
                 Event::Key(key) if key.kind==KeyEventKind::Press=>{
+                    app.note_user_activity();
                     if app.native_selection_mode {
                         // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
                         if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {

@@ -38,6 +38,12 @@ enum OverlayLayer {
 }
 
 impl App {
+    pub(super) fn has_open_overlay(&self) -> bool {
+        self.topmost_overlay().is_some()
+            || self.prompt_queue.is_some()
+            || self.attachment_panel.is_some()
+    }
+
     /// Repaint the visible Esc label as a mouse affordance, using terminal-cell
     /// widths. A clipped title gets a compact control on its right border.
     pub(super) fn render_overlay_close_hint(
