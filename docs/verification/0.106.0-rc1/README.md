@@ -55,3 +55,10 @@ ruby scripts/model_provider_tui_verify.rb "$PWD/target/debug/willdeep"
 ```
 
 脚本创建独立临时目录、Provider 服务和 Runtime，使用测试占位凭据，结束后停止自己创建的 Runtime。
+
+## 发布前完整检查
+
+- CLI：768 通过、1 忽略；Core：783 通过、6 忽略。
+- Runtime 集成：33 通过，包含有活动任务时平滑交接，以及静默后台任务的插话唤醒；版本一致性：1 通过。
+- 工作区严格 Clippy、格式、源码行数、Web `yarn build` / `yarn lint`：通过。
+- 原任务的备份、审批处理和安装后读回保存在用户本机私有验收目录，不随源码发布；不将远端评测已结束或 SSH 暂不可达等上下文误报为本次发布的模型验证结论。
