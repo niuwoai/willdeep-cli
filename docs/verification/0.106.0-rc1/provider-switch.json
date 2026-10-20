@@ -1,0 +1,115 @@
+{
+  "root": "/private/tmp/wd-model-provider-20261020-54645-8vpw7g",
+  "stages": 20,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/alpha/v1/model-capabilities",
+      "model": null,
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "GET",
+      "path": "/alpha/v1/models",
+      "model": null,
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "GET",
+      "path": "/beta/v1/models",
+      "model": null,
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": true
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": true
+    },
+    {
+      "method": "POST",
+      "path": "/beta/v1/messages",
+      "model": "beta-model",
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "GET",
+      "path": "/beta/v1/models",
+      "model": null,
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "GET",
+      "path": "/alpha/v1/models",
+      "model": null,
+      "auth_ok": true,
+      "child": false
+    },
+    {
+      "method": "POST",
+      "path": "/alpha/v1/chat/completions",
+      "model": "alpha-model",
+      "auth_ok": true,
+      "child": false
+    }
+  ],
+  "sessions": [
+    {
+      "profile": "alpha",
+      "model": "alpha-model"
+    }
+  ],
+  "beta_local": true,
+  "beta_child": true,
+  "alpha_after_mouse": true,
+  "all_auth_correct": true,
+  "runtime_sessions": [
+    {
+      "profile": "alpha",
+      "model": "alpha-model",
+      "status": "idle"
+    }
+  ],
+  "beta_child_requests": 2
+}

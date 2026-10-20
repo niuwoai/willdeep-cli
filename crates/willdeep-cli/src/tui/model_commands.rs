@@ -1,6 +1,5 @@
 use super::*;
 
-const MODEL_LIST_TIMEOUT_SECONDS: u64 = 20;
 const MAX_MODEL_NAME_BYTES: usize = 256;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -11,6 +10,12 @@ pub(super) enum ModelCommand {
 
 #[derive(Default)]
 pub(super) struct ModelPickerState {
+    pub(super) profile: Option<String>,
+    pub(super) active_profile: Option<String>,
+    pub(super) provider_label: String,
+    pub(super) profiles: Vec<String>,
+    pub(super) choosing_provider: bool,
+    pub(super) request_id: uuid::Uuid,
     pub(super) editor: PromptEditor,
     pub(super) models: Vec<String>,
     pub(super) filtered: Vec<usize>,
@@ -24,6 +29,7 @@ pub(super) enum ModelPickerAction {
     None,
     Close,
     Select(String),
+    Provider(Option<String>),
 }
 
 impl App {
@@ -84,6 +90,9 @@ impl App {
         if key.code == KeyCode::Esc {
             return ModelPickerAction::Close;
         }
+        if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return ModelPickerAction::Provider(None);
+        }
         let mut query_changed = false;
         match key.code {
             KeyCode::Up | KeyCode::BackTab if !picker.filtered.is_empty() => {
@@ -103,7 +112,16 @@ impl App {
             }
             KeyCode::Enter if !picker.filtered.is_empty() => {
                 let model_index = picker.filtered[picker.selected.min(picker.filtered.len() - 1)];
-                return ModelPickerAction::Select(picker.models[model_index].clone());
+                return if picker.choosing_provider {
+                    ModelPickerAction::Provider(Some(picker.models[model_index].clone()))
+                } else {
+                    ModelPickerAction::Select(picker.models[model_index].clone())
+                };
+            }
+            KeyCode::Enter
+                if !picker.choosing_provider && !picker.editor.is_empty() && !picker.loading =>
+            {
+                return ModelPickerAction::Select(picker.editor.text().trim().to_owned());
             }
             KeyCode::Left => picker.editor.left(),
             KeyCode::Right => picker.editor.right(),
@@ -147,11 +165,14 @@ impl App {
         }
     }
 
-    pub(super) fn activate_model_picker_at(&mut self, x: u16, y: u16) -> Option<String> {
+    pub(super) fn activate_model_picker_at(&mut self, x: u16, y: u16) -> Option<ModelPickerAction> {
         if !self.model_picker_rect.contains((x, y).into()) {
             return None;
         }
         if y == self.model_picker_rect.y.saturating_add(1) {
+            return Some(ModelPickerAction::Provider(None));
+        }
+        if y == self.model_picker_rect.y.saturating_add(2) {
             if let Some(picker) = self.model_picker.as_mut() {
                 picker.editor.set_cursor_visual(
                     0,
@@ -168,7 +189,13 @@ impl App {
         let picker = self.model_picker.as_mut()?;
         picker.selected = position.min(picker.filtered.len().saturating_sub(1));
         let model_index = *picker.filtered.get(picker.selected)?;
-        picker.models.get(model_index).cloned()
+        picker.models.get(model_index).cloned().map(|value| {
+            if picker.choosing_provider {
+                ModelPickerAction::Provider(Some(value))
+            } else {
+                ModelPickerAction::Select(value)
+            }
+        })
     }
 }
 
@@ -180,19 +207,39 @@ pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
     };
     let width = f.area().width.min(100);
     let desired_rows = if picker.loading || picker.error.is_some() || picker.filtered.is_empty() {
-        7
+        8
     } else {
-        picker.filtered.len().min(18) as u16 + 3
+        picker.filtered.len().min(18) as u16 + 4
     };
     let height = f.area().height.min(desired_rows.max(7));
     let popup = centered_rect(width, height, f.area());
     app.model_picker_rect = popup;
-    let visible = popup.height.saturating_sub(3).max(1) as usize;
+    let visible = popup.height.saturating_sub(4).max(1) as usize;
     let start = picker.selected.saturating_sub(visible - 1);
-    let mut lines = vec![Line::styled(
-        format!("› {}", picker.editor.text()),
-        Style::default().fg(Color::Yellow),
-    )];
+    let provider = picker.active_profile.as_deref().unwrap_or_else(|| {
+        if picker.provider_label.is_empty() {
+            app.language
+                .text("启动配置", "Startup configuration", "起動設定")
+        } else {
+            &picker.provider_label
+        }
+    });
+    let browsing = picker.profile.as_deref().unwrap_or(provider);
+    let mut lines = vec![
+        Line::styled(
+            format!(
+                "Provider: {provider} · {}: {browsing} · Ctrl+P {}",
+                app.language.text("浏览", "Browse", "参照"),
+                app.language
+                    .text("切换 / 点击此行", "switch / click here", "切替 / クリック")
+            ),
+            Style::default().fg(Color::LightCyan),
+        ),
+        Line::styled(
+            format!("› {}", picker.editor.text()),
+            Style::default().fg(Color::Yellow),
+        ),
+    ];
     if picker.loading {
         lines.push(Line::styled(
             app.language.text(
@@ -228,7 +275,9 @@ pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
         {
             let model = &picker.models[*model_index];
             let selected = position == picker.selected;
-            let current = model == &picker.current_model;
+            let current = !picker.choosing_provider
+                && picker.profile == picker.active_profile
+                && model == &picker.current_model;
             let style = if selected {
                 Style::default()
                     .fg(Color::Black)
@@ -255,7 +304,7 @@ pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
                 style,
             ));
             app.model_picker_hits
-                .push((popup.y + 2 + (position - start) as u16, position));
+                .push((popup.y + 3 + (position - start) as u16, position));
         }
     }
     f.render_widget(Clear, popup);
@@ -263,9 +312,14 @@ pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
         Paragraph::new(lines).block(
             Block::default()
                 .title(format!(
-                    "{} · {}/{} · ↑/↓/PgUp/PgDn · Enter · Esc",
-                    app.language
-                        .text("选择模型", "Select model", "モデルを選択"),
+                    "{} · Ctrl+P Provider · {}/{} · ↑/↓/PgUp/PgDn · Enter · Esc",
+                    if picker.choosing_provider {
+                        app.language
+                            .text("选择 Provider", "Select Provider", "Provider 選択")
+                    } else {
+                        app.language
+                            .text("选择模型", "Select model", "モデルを選択")
+                    },
                     if picker.filtered.is_empty() {
                         0
                     } else {
@@ -281,7 +335,7 @@ pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
     if popup.width > 3 {
         let cursor = UnicodeWidthStr::width(picker.editor.text())
             .min(popup.width.saturating_sub(4) as usize) as u16;
-        f.set_cursor_position((popup.x + 3 + cursor, popup.y + 1));
+        f.set_cursor_position((popup.x + 3 + cursor, popup.y + 2));
     }
 }
 
@@ -299,15 +353,9 @@ pub(super) fn parse(prompt: &str) -> Option<ModelCommand> {
 
 pub(super) fn request_model_list(app: &mut App, runtime: &TuiRuntime, current_model: String) {
     app.open_model_picker(current_model);
-    let mut config = runtime.provider_config.clone();
-    config.request_timeout_secs = MODEL_LIST_TIMEOUT_SECONDS;
-    let tx = runtime.tx.clone();
-    tokio::spawn(async move {
-        let result = willdeep_core::provider::list_models(&config)
-            .await
-            .map_err(|error| error.to_string());
-        let _ = tx.send(UiMessage::ModelsLoaded(result));
-    });
+    if let Err(error) = model_provider::initialize(app, runtime) {
+        app.set_model_picker_result(Err(error.to_string()));
+    }
 }
 
 /// 本轮在跑时只记下来，本轮结束再切；否则当场切。
@@ -323,6 +371,7 @@ pub(super) async fn switch_or_defer_model(
     runtime: &mut TuiRuntime,
     agent: &Arc<Agent>,
 ) -> Result<String> {
+    app.pending_provider = None;
     if app.running {
         return defer_model_switch(app, model);
     }

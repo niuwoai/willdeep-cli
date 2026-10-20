@@ -7,9 +7,32 @@ pub(super) struct QueuePanel {
     pub(super) editor: Option<PromptEditor>,
     pub(super) status: Option<String>,
     scroll: u16,
+    hits: Vec<(Rect, KeyCode)>,
+    rows: Vec<(Rect, usize)>,
 }
 
 impl App {
+    pub(super) fn queue_mouse_key(&mut self, mouse: MouseEvent) -> Option<KeyEvent> {
+        let panel = self.prompt_queue.as_mut()?;
+        match mouse.kind {
+            MouseEventKind::ScrollUp => panel.scroll = panel.scroll.saturating_sub(3),
+            MouseEventKind::ScrollDown => panel.scroll = panel.scroll.saturating_add(3),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let point = (mouse.column, mouse.row).into();
+                if let Some((_, code)) = panel.hits.iter().find(|(rect, _)| rect.contains(point)) {
+                    return Some(KeyEvent::new(*code, KeyModifiers::NONE));
+                }
+                if let Some((_, selected)) =
+                    panel.rows.iter().find(|(rect, _)| rect.contains(point))
+                {
+                    panel.selected = *selected;
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
     pub(super) fn queued_background_prompt_ready(&self) -> bool {
         self.running
             && self.runtime_turn
@@ -231,7 +254,13 @@ impl App {
     }
 }
 
-pub(super) fn render(f: &mut Frame<'_>, app: &App) {
+fn wrapped_rows(text: &str, width: usize) -> usize {
+    Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .line_count(width.max(1) as u16)
+}
+
+pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
     let Some(panel) = app.prompt_queue.as_ref() else {
         return;
     };
@@ -247,12 +276,70 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
         width,
         height,
     );
+    let footer_actions = if panel.editor.is_some() {
+        vec![
+            (
+                KeyCode::Enter,
+                app.language.text("Enter 保存", "Enter Save", "Enter 保存"),
+            ),
+            (
+                KeyCode::Esc,
+                app.language
+                    .text("Esc 取消编辑", "Esc Cancel edit", "Esc 編集取消"),
+            ),
+        ]
+    } else {
+        let mut actions = Vec::new();
+        if !app.queued_prompts.is_empty() {
+            actions.extend([
+                (
+                    KeyCode::Char('s'),
+                    app.language.text("S 发送", "S Send", "S 送信"),
+                ),
+                (
+                    KeyCode::Char('e'),
+                    app.language.text("E 编辑", "E Edit", "E 編集"),
+                ),
+                (
+                    KeyCode::Char('a'),
+                    app.language.text("A 附件", "A Attachments", "A 添付"),
+                ),
+                (
+                    KeyCode::Delete,
+                    app.language.text("D 删除", "D Delete", "D 削除"),
+                ),
+            ]);
+        }
+        actions.push((
+            KeyCode::Esc,
+            app.language.text("Esc 关闭", "Esc Close", "Esc 閉じる"),
+        ));
+        actions
+    };
+    let mut footer_hits = Vec::new();
+    let mut footer_labels = Vec::new();
+    let available = width.saturating_sub(2);
+    let (mut x, mut row) = (0u16, 0u16);
+    for (code, label) in footer_actions {
+        let label = format!("[{label}]");
+        let length = (UnicodeWidthStr::width(label.as_str()) as u16).min(available);
+        if x > 0 && x + length > available {
+            x = 0;
+            row += 1;
+        }
+        footer_labels.push((x, row, length, label));
+        footer_hits.push((Rect::new(x, row, length, 1), code));
+        x += length + 2;
+    }
+    let footer_height = (row + 1).min(height.saturating_sub(3));
+    let footer_y = rect.bottom().saturating_sub(1 + footer_height);
+    let mut list_rows = Vec::new();
     let mut lines = vec![
         app.language
             .text(
-                "↑/↓ 选择 · Enter/E 编辑 · A 附件 · D 删除 · S 立即插话 · Esc 关闭",
-                "↑/↓ select · Enter/E edit · A attachments · D delete · S steer now · Esc close",
-                "↑/↓ 選択 · Enter/E 編集 · A 添付 · D 削除 · S 即時送達 · Esc 閉じる",
+                "↑/↓ 或鼠标点击选择消息；底部操作可点击",
+                "↑/↓ or click to select; click an action below",
+                "↑/↓ またはクリックで選択。下の操作をクリック",
             )
             .to_owned(),
         app.language
@@ -299,6 +386,10 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
+            let start = lines
+                .iter()
+                .map(|line| wrapped_rows(line, available.max(1) as usize))
+                .sum::<usize>();
             lines.push(format!(
                 "{} {}. [{} {}] {}",
                 if index == panel.selected { "▶" } else { " " },
@@ -309,6 +400,8 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
                     .take(width.saturating_sub(22) as usize)
                     .collect::<String>()
             ));
+            let count = wrapped_rows(lines.last().unwrap(), available.max(1) as usize);
+            list_rows.push((start, count, index));
         }
         if let Some(item) = app.queued_prompts.get(panel.selected) {
             lines.push(format!(
@@ -335,9 +428,13 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
     }
     if let Some(status) = &panel.status {
         lines.insert(0, terminal_safe_text(status));
+        let shift = wrapped_rows(&terminal_safe_text(status), available.max(1) as usize);
+        for (start, _, _) in &mut list_rows {
+            *start += shift;
+        }
     }
     let inner_width = width.saturating_sub(2).max(1) as usize;
-    let inner_height = height.saturating_sub(2) as usize;
+    let inner_height = height.saturating_sub(2 + footer_height) as usize;
     let paragraph = Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false });
     let max_scroll = paragraph
         .line_count(inner_width as u16)
@@ -348,7 +445,7 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
         let prefix_rows: usize = lines
             .iter()
             .take(lines.len().saturating_sub(1))
-            .map(|line| visual_lines(line, inner_width))
+            .map(|line| wrapped_rows(line, inner_width))
             .sum();
         (row + prefix_rows, column)
     });
@@ -357,28 +454,68 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
     }
     f.render_widget(Clear, rect);
     f.render_widget(
-        paragraph
-            .scroll((scroll.min(u16::MAX as usize) as u16, 0))
-            .block(
-                Block::default()
-                    .title(format!(
-                        "{} · {}/{} · PgUp/PgDn",
-                        app.language.text("待发消息", "Queued messages", "送信待ち"),
-                        if app.queued_prompts.is_empty() {
-                            0
-                        } else {
-                            panel.selected.min(app.queued_prompts.len() - 1) + 1
-                        },
-                        app.queued_prompts.len()
-                    ))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
-            ),
+        Block::default()
+            .title(format!(
+                "{} · {}/{} · PgUp/PgDn",
+                app.language.text("待发消息", "Queued messages", "送信待ち"),
+                if app.queued_prompts.is_empty() {
+                    0
+                } else {
+                    panel.selected.min(app.queued_prompts.len() - 1) + 1
+                },
+                app.queued_prompts.len()
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
         rect,
     );
+    let content = Rect::new(rect.x + 1, rect.y + 1, available, inner_height as u16);
+    f.render_widget(
+        paragraph.scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        content,
+    );
+    for (x, row, length, label) in footer_labels {
+        if row < footer_height {
+            f.render_widget(
+                Paragraph::new(label).style(Style::default().fg(Color::Cyan)),
+                Rect::new(rect.x + 1 + x, footer_y + row, length, 1),
+            );
+        }
+    }
+    let rows = list_rows
+        .into_iter()
+        .filter_map(|(start, count, index)| {
+            let top = start.max(scroll);
+            let bottom = (start + count).min(scroll + inner_height);
+            (bottom > top).then(|| {
+                (
+                    Rect::new(
+                        content.x,
+                        content.y + (top - scroll) as u16,
+                        content.width,
+                        (bottom - top) as u16,
+                    ),
+                    index,
+                )
+            })
+        })
+        .collect();
+    let panel = app.prompt_queue.as_mut().unwrap();
+    panel.rows = rows;
+    panel.hits = footer_hits
+        .into_iter()
+        .filter_map(|(mut hit, code)| {
+            if hit.y >= footer_height {
+                return None;
+            }
+            hit.x += rect.x + 1;
+            hit.y += footer_y;
+            Some((hit, code))
+        })
+        .collect();
     if let Some((row, column)) = cursor {
         let row = row.saturating_sub(scroll);
-        if row < height.saturating_sub(2) as usize {
+        if row < inner_height {
             f.set_cursor_position((
                 rect.x + 1 + column.min(width.saturating_sub(3) as usize) as u16,
                 rect.y + 1 + row as u16,
@@ -390,6 +527,138 @@ pub(super) fn render(f: &mut Frame<'_>, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn paint_queue(app: &mut App, width: u16, height: u16) {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+    }
+
+    fn click(x: u16, y: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click_action(app: &mut App, code: KeyCode) -> KeyEvent {
+        let rect = app
+            .prompt_queue
+            .as_ref()
+            .unwrap()
+            .hits
+            .iter()
+            .find(|(_, key)| *key == code)
+            .unwrap()
+            .0;
+        app.queue_mouse_key(click(rect.x, rect.y)).unwrap()
+    }
+
+    #[test]
+    fn mouse_selects_message_and_footer_dispatches_existing_actions() {
+        let mut app = queued_app();
+        paint_queue(&mut app, 100, 30);
+        let row = app
+            .prompt_queue
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|(_, index)| *index == 1)
+            .unwrap()
+            .0;
+        assert!(app.queue_mouse_key(click(row.x, row.y)).is_none());
+        assert_eq!(app.prompt_queue.as_ref().unwrap().selected, 1);
+        let key = click_action(&mut app, KeyCode::Char('s'));
+        assert!(app.handle_queue_key(key));
+        assert_eq!(
+            app.queued_prompts.len(),
+            3,
+            "sending must await actual delivery"
+        );
+        let key = click_action(&mut app, KeyCode::Delete);
+        app.handle_queue_key(key);
+        assert_eq!(
+            app.queued_prompts
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "first"]
+        );
+        assert!(!app.transcript.iter().any(|line| line.contains("second")));
+    }
+
+    #[test]
+    fn footer_wraps_with_inert_gaps_and_never_overlaps_scrolled_content() {
+        for width in [32, 60, 100] {
+            let mut app = queued_app();
+            app.prompt_queue.as_mut().unwrap().scroll = 3;
+            paint_queue(&mut app, width, 24);
+            let panel = app.prompt_queue.as_ref().unwrap();
+            assert_eq!(panel.hits.len(), 5);
+            let top = panel.hits.iter().map(|(rect, _)| rect.y).min().unwrap();
+            assert!(panel.rows.iter().all(|(rect, _)| rect.bottom() <= top));
+            for (rect, _) in &panel.hits {
+                assert_eq!(rect.height, 1);
+                assert!(rect.right() < width && rect.bottom() < 24);
+            }
+            let first = panel.hits[0].0;
+            assert!(app.queue_mouse_key(click(first.right(), first.y)).is_none());
+        }
+    }
+
+    #[test]
+    fn mouse_editor_cancel_keeps_original_and_save_updates_selected_only() {
+        let mut app = queued_app();
+        paint_queue(&mut app, 60, 24);
+        let key = click_action(&mut app, KeyCode::Char('e'));
+        app.handle_queue_key(key);
+        paint_queue(&mut app, 60, 24);
+        assert_eq!(app.prompt_queue.as_ref().unwrap().hits.len(), 2);
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" changed");
+        let key = click_action(&mut app, KeyCode::Esc);
+        app.handle_queue_key(key);
+        assert_eq!(app.queued_prompts[0].text, "first");
+        paint_queue(&mut app, 60, 24);
+        let key = click_action(&mut app, KeyCode::Char('e'));
+        app.handle_queue_key(key);
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .insert(" saved");
+        paint_queue(&mut app, 60, 24);
+        let key = click_action(&mut app, KeyCode::Enter);
+        app.handle_queue_key(key);
+        assert_eq!(app.queued_prompts[0].text, "first saved");
+        assert_eq!(app.queued_prompts[1].text, "second");
+        paint_queue(&mut app, 60, 24);
+        let key = click_action(&mut app, KeyCode::Esc);
+        app.handle_queue_key(key);
+        assert!(app.prompt_queue.is_none());
+    }
+
+    #[test]
+    fn empty_queue_only_offers_close_even_with_delivered_messages() {
+        let mut app = queued_app();
+        app.queued_prompts.clear();
+        app.deferred_steering.push("already delivered".into());
+        paint_queue(&mut app, 60, 24);
+        let panel = app.prompt_queue.as_ref().unwrap();
+        assert_eq!(panel.hits.len(), 1);
+        assert_eq!(panel.hits[0].1, KeyCode::Esc);
+        assert!(panel.rows.is_empty());
+    }
 
     fn queued_app() -> App {
         let mut app = App::new(Vec::new(), Language::En);

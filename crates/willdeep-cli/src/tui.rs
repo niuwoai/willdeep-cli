@@ -45,12 +45,14 @@ mod agent_commands;
 mod agent_worktree_ui;
 mod attachment_panel;
 mod command_catalog;
+mod confirmation_example;
 mod daemon_commands;
 mod diff_review_ui;
 mod dispatch;
 mod human_gate_ui;
 mod media_ui;
 mod model_commands;
+mod model_provider;
 mod narration;
 mod overlay_dismiss;
 mod permission_commands;
@@ -124,7 +126,10 @@ pub enum UiMessage {
     /// Runtime 操作的最终结果：同时进聊天记录与状态行。只进状态行的话，下一条
     /// 提示一来就被覆盖，用户看到的只剩「操作已提交」。
     RuntimeResult(String),
-    ModelsLoaded(std::result::Result<Vec<String>, String>),
+    ModelsLoaded {
+        request_id: uuid::Uuid,
+        result: std::result::Result<Vec<String>, String>,
+    },
     MediaLoaded {
         target: String,
         result: std::result::Result<DynamicImage, String>,
@@ -291,6 +296,7 @@ struct App {
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
+    pending_provider: Option<String>,
     /// 进程内 Harness 当前轮次的句柄。Runtime 轮次由 Daemon 停，本地轮次只能靠
     /// 掐这个 Task——没有它，`/local` 跑飞了就只剩退出 TUI 一条路。
     local_turn: Option<tokio::task::JoinHandle<()>>,

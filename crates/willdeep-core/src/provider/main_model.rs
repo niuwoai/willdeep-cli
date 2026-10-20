@@ -40,6 +40,11 @@ impl MainModelHandle {
     /// 换主模型。所有 follower 从下一次请求起跟着换。
     pub fn set_model(&self, model: &str) -> Result<(), ProviderError> {
         let configured = self.current()?.with_model(model)?;
+        self.set_provider(configured)
+    }
+
+    /// Replace the complete connection, including endpoint, credentials and dialect.
+    pub fn set_provider(&self, configured: Arc<dyn Provider>) -> Result<(), ProviderError> {
         *self
             .current
             .write()
@@ -152,6 +157,19 @@ mod tests {
         assert_eq!(provider_model(follower.as_ref()).as_deref(), Some("new"));
         let answer = follower.complete(&[], &[]).await.expect("complete");
         assert_eq!(answer.content, "new", "请求必须落到切换后的主模型上");
+    }
+
+    #[tokio::test]
+    async fn replacing_the_provider_moves_existing_followers_to_the_new_connection() {
+        let handle = MainModelHandle::new(Arc::new(Named("old-connection".into())));
+        let follower = handle.follower();
+        handle
+            .set_provider(Arc::new(Named("new-connection".into())))
+            .unwrap();
+        assert_eq!(
+            follower.complete(&[], &[]).await.unwrap().content,
+            "new-connection"
+        );
     }
 
     #[test]

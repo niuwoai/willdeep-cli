@@ -10,39 +10,37 @@ fn paint(app: &mut App, width: u16, height: u16) -> Terminal<TestBackend> {
 }
 
 #[tokio::test]
-async fn approval_padding_clicks_resolve_the_displayed_action_and_gap_does_nothing() {
+async fn approval_single_rows_resolve_the_displayed_action_and_gap_does_nothing() {
     for always in [false, true] {
         for (index, expected) in approval_decisions(always).iter().copied().enumerate() {
-            for padding_row in [0, 1, 2] {
-                let mut app = App::new(Vec::new(), Language::ZhCn);
-                let (tx, mut rx) = oneshot::channel();
-                app.approval = Some(("run_command: 探测实例健康与版本".into(), always, tx));
-                let terminal = paint(&mut app, 100, 30);
-                let (button, _) = app.approval_action_hits[index];
-                assert_eq!(button.height, 3);
-                if index > 0 {
-                    let previous = app.approval_action_hits[index - 1].0;
-                    assert_eq!(button.y - previous.bottom(), 1);
-                    app.handle_mouse(
-                        button.x + 2,
-                        previous.bottom(),
-                        &BackgroundTaskRegistry::default(),
-                        &SkillCatalog::default(),
-                    );
-                    assert!(matches!(
-                        rx.try_recv(),
-                        Err(oneshot::error::TryRecvError::Empty)
-                    ));
-                }
-                assert!(terminal.backend().buffer()[(button.x + 3, button.y + 1)].symbol() != " ");
+            let mut app = App::new(Vec::new(), Language::ZhCn);
+            let (tx, mut rx) = oneshot::channel();
+            app.approval = Some(("run_command: 探测实例健康与版本".into(), always, tx));
+            let terminal = paint(&mut app, 100, 30);
+            let (button, _) = app.approval_action_hits[index];
+            assert_eq!(button.height, 1);
+            if index > 0 {
+                let previous = app.approval_action_hits[index - 1].0;
+                assert_eq!(button.y - previous.bottom(), 1);
                 app.handle_mouse(
                     button.x + 2,
-                    button.y + padding_row,
+                    previous.bottom(),
                     &BackgroundTaskRegistry::default(),
                     &SkillCatalog::default(),
                 );
-                assert_eq!(rx.await.unwrap(), expected);
+                assert!(matches!(
+                    rx.try_recv(),
+                    Err(oneshot::error::TryRecvError::Empty)
+                ));
             }
+            assert!(terminal.backend().buffer()[(button.x + 3, button.y)].symbol() != " ");
+            app.handle_mouse(
+                button.x + 2,
+                button.y,
+                &BackgroundTaskRegistry::default(),
+                &SkillCatalog::default(),
+            );
+            assert_eq!(rx.await.unwrap(), expected);
         }
     }
 }

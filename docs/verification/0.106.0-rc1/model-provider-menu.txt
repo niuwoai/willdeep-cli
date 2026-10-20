@@ -1,0 +1,30 @@
+┌WillDeep · workspace──────────────────────────────────────────────────────────────────────────────┐
+│WillDeep: Hello, I’m in workspace. Tell me what you want to build, fix, or investigate; I’ll      │
+│inspect the project before making changes. Type /help for every command, or /model to switch      │
+│models.                                                                                           │
+│                                                                                                  │
+│You: /model                                                                                       │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+┌Select model · Ctrl+P Provider · 1/1 · ↑/↓/PgUp/PgDn · Enter · Esc────────────────────────────────┐
+│Provider: alpha · Browse: beta · Ctrl+P switch / click here                                       │
+│›                                                                                                 │
+│▶ beta-model                                                                                      │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Activity · Ctrl+O details─────────────────────────────────────────────────────────────────────────┐
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Prompt [focused] · F2 expand · Shift/Alt+Enter newline · Your turn · Full access (Shift+Tab)──────┐
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Ready · Focus: Prompt · context 0% · latest ↑0 ↓0 · 0.0s · Enter send · Ctrl+S select · F1

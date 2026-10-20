@@ -431,6 +431,25 @@ pub(crate) async fn update_remote_session_model(
     Ok(())
 }
 
+pub(crate) async fn update_remote_session_provider(
+    home: &Path,
+    id: uuid::Uuid,
+    profile: &str,
+    model: &str,
+) -> Result<()> {
+    let state = ensure_running(home).await?;
+    let response: willdeep_runtime_protocol::ApiResponse<serde_json::Value> =
+        runtime_client(&state)?
+            .call(
+                "session.configure",
+                &serde_json::json!({"id": id, "provider_id": profile, "model": model}),
+                Some(uuid::Uuid::new_v4()),
+            )
+            .await?;
+    api_data(response)?;
+    Ok(())
+}
+
 pub(crate) async fn update_remote_session_approval_mode(
     home: &Path,
     id: uuid::Uuid,

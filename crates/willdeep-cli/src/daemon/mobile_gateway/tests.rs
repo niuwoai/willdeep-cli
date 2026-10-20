@@ -1309,6 +1309,11 @@ async fn mobile_configuration_catalog_persists_and_reaches_the_actual_turn() {
     let payload = &one(&updated, "capabilities.updated")["payload"];
     assert_eq!(payload["active_provider_id"], "beta");
     assert_eq!(payload["active_model_id"], "remote-model");
+    let core = willdeep_core::SessionStore::new(&harness.state.home)
+        .load(session_id)
+        .unwrap();
+    assert_eq!(core.profile.as_deref(), Some("beta"));
+    assert_eq!(core.model.as_deref(), Some("remote-model"));
     assert_eq!(payload["active_approval_mode"], "full-access");
     assert!(
         payload["skills"]
