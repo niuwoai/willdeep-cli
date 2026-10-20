@@ -167,7 +167,20 @@ impl App {
 
     /// 输入框标题上的状态词：跑的时候回车只是排队，空闲时才轮到用户。
     pub(super) fn composer_state(&self) -> (&'static str, Color) {
-        if self.running {
+        if self.running
+            && self.waiting_background
+            && self.approval.is_none()
+            && self.question.is_none()
+        {
+            (
+                self.language.text(
+                    "后台任务运行中 · 可继续输入 · 普通消息回车发送 · Ctrl+Q 管理",
+                    "Background running · Keep typing · Enter sends text · Ctrl+Q manage",
+                    "バックグラウンド実行中 · 入力可 · Enter でテキスト送信 · Ctrl+Q 管理",
+                ),
+                Color::Cyan,
+            )
+        } else if self.running {
             (
                 self.language.text(
                     "本轮进行中 · 回车排队 · Ctrl+Q 管理 · Esc 中止",
@@ -191,6 +204,29 @@ impl App {
                 Color::Green,
             )
         }
+    }
+
+    pub(super) fn note_delayed_command(&mut self, seconds: u64) {
+        let notice = self.language.pick(
+            format!("等待命令已转入后台（先等待约 {seconds} 秒，再执行后续步骤）。可以继续输入，原任务会继续运行，完成后自动通知。"),
+            format!("Delayed command moved to background ({seconds}s before subsequent steps). Keep typing; the original job continues and completion will be reported automatically."),
+            format!("待機コマンドをバックグラウンドに移しました（後続処理まで約 {seconds} 秒）。入力を続けられます。完了後に通知します。"),
+        );
+        self.append_transcript(format!("System: {notice}"));
+        self.notice = Some(notice);
+    }
+
+    pub(super) fn set_background_wait(&mut self, waiting: bool) {
+        if waiting && !self.waiting_background {
+            let message = self.language.text(
+                "后台等待中，可以继续输入；普通消息回车后自动发送，后台任务继续运行",
+                "Waiting in background; keep typing. Enter sends text while the background job continues",
+                "バックグラウンド待機中。入力して Enter で送信できます。ジョブは継続します",
+            ).to_owned();
+            self.record_progress(message.clone());
+            self.notice = Some(message);
+        }
+        self.waiting_background = waiting;
     }
 
     /// 本轮在跑时排队的提示词先带「待发」标记回显；此前它和真正发出去的长得
@@ -825,6 +861,21 @@ mod tests {
         app.finish_turn();
         assert!(std::mem::take(&mut app.bell_pending));
         assert_eq!(app.composer_state().0, "Your turn");
+    }
+
+    #[test]
+    fn background_wait_explains_input_and_preserves_draft() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "working".into());
+        app.input.insert("unsent draft");
+        app.note_delayed_command(240);
+        assert!(app.transcript.last().unwrap().contains("240s"));
+        app.set_background_wait(true);
+        assert!(app.composer_state().0.contains("Keep typing"));
+        assert!(app.working_summary().unwrap().contains("Enter sends text"));
+        assert_eq!(app.input.text(), "unsent draft");
+        app.set_background_wait(false);
+        assert!(app.composer_state().0.contains("Enter queues"));
     }
 
     #[test]

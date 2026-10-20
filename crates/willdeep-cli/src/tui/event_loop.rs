@@ -521,7 +521,10 @@ pub(super) async fn event_loop(
                 app.kernel_attention=runtime.kernel.pending_for_user().iter().map(AttentionItem::from_kernel_event).collect();
                 // 脱离作业没有完成回调，只能在这里按秒看记录。发布之后要像进程内
                 // 任务那样唤醒空闲会话，否则结论会一直躺在队列里等用户开口。
-                let finished_jobs=crate::detached_delivery::publish_finished_jobs(&runtime.kernel,&runtime.detached_jobs,session.id);
+                let finished_jobs=match crate::detached_delivery::publish_finished_jobs_for_tui(&runtime.kernel,&runtime.detached_jobs,store,&runtime.kernel_store,session.id,app.running,app.runtime_turn) {
+                    Ok(count)=>count,
+                    Err(error)=>{app.notice=Some(format!("{}: {error:#}",language.text("后台结果保存失败","Background result persistence failed","バックグラウンド結果の保存に失敗")));0},
+                };
                 willdeep_core::kernel_store::flush(&runtime.kernel,&runtime.kernel_store);
                 if finished_jobs>0 {
                     app.notice=Some(format!("{finished_jobs} background job(s) finished · queued as runtime events"));
@@ -624,7 +627,8 @@ pub(super) async fn event_loop(
                     // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
                     // 否则「点外面」会先被下面那些 `continue` 吃掉。
                     if mouse.kind==MouseEventKind::Down(MouseButton::Left)
-                        && app.dismiss_overlay_on_outside_click(mouse.column,mouse.row)
+                        && (app.dismiss_overlay_on_close_click(mouse.column,mouse.row)
+                            || app.dismiss_overlay_on_outside_click(mouse.column,mouse.row))
                     {
                         continue;
                     }
@@ -1473,7 +1477,7 @@ pub(super) async fn event_loop(
                     willdeep_core::provider::ProviderEvent::Usage(usage)=>{app.context_tokens=usage.input_tokens.unwrap_or(app.context_tokens);app.latest_usage=usage;},
                     willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>app.record_progress(format!("{} · {attempt} · {}s",language.text("等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64())),
                 },
-                UiMessage::Agent(AgentEvent::BackgroundWait { waiting })=>{app.waiting_background = waiting;},
+                UiMessage::Agent(AgentEvent::BackgroundWait { waiting })=>{app.set_background_wait(waiting);},
                 UiMessage::Agent(AgentEvent::RunScoped { .. })=>{},
                 UiMessage::Agent(AgentEvent::AssistantText(v))=>app.note_narration(&v),
                 UiMessage::Agent(AgentEvent::RouteDecided{tier,profile,confidence,auto_dispatched,model,..})=>app.record_progress(format!("{} {} · {}{} · {confidence}%{}",language.text("模型路由","Model route","モデルルート"),tier.as_str(),profile.as_deref().unwrap_or("root"),model.map(|model|format!(" · {model}")).unwrap_or_default(),if auto_dispatched{language.text(" · 已自动下发"," · auto-dispatched"," · 自動ディスパッチ済み")}else{""})),
@@ -1481,7 +1485,7 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在思考 · 准备轮次","Thinking · preparing turn","思考中 · ターンを準備")));},
                 UiMessage::Agent(AgentEvent::TurnPreempted{turn})=>app.record_progress(format!("{} {turn}",language.text("已被运行时事件打断 · 轮次","Preempted by a runtime event · turn","ランタイムイベントで中断 · ターン"))),
                 UiMessage::Agent(AgentEvent::ToolRequested(v))=>{app.record_progress(format!("{} {}",language.text("正在使用","Using","使用中"),v.name));app.tools.requested(&v.name);app.note_tool_requested(&v.name,crate::tool_detail(&v.name,&v.arguments).as_deref());},
-                UiMessage::Agent(AgentEvent::ToolCompleted{call,is_error,..})=>{app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
+                UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
                 UiMessage::Agent(AgentEvent::Usage(v))=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
                 UiMessage::Agent(AgentEvent::CompressionStarted{estimated_tokens})=>{app.context_tokens=estimated_tokens;app.record_progress(language.text("正在压缩上下文","Compressing context","コンテキストを圧縮中").to_owned());},
                 UiMessage::Agent(AgentEvent::CompressionCompleted{estimated_tokens,dropped_messages})=>{app.context_tokens=estimated_tokens;let compressed=language.text("上下文已压缩","Context compressed","コンテキストを圧縮しました");app.record_progress(if dropped_messages>0{language.pick(format!("{compressed} · 本轮请求丢弃 {dropped_messages} 条最旧消息（存档不受影响）"),format!("{compressed} · dropped {dropped_messages} oldest message(s) from this request (the archive is untouched)"),format!("{compressed} · 今回のリクエストから最も古い {dropped_messages} 件を破棄（アーカイブは無変更）"))}else{compressed.to_owned()});},

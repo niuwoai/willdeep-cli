@@ -38,6 +38,71 @@ enum OverlayLayer {
 }
 
 impl App {
+    /// Repaint the visible Esc label as a mouse affordance, using terminal-cell
+    /// widths. A clipped title gets a compact control on its right border.
+    pub(super) fn render_overlay_close_hint(
+        &mut self,
+        frame: &mut ratatui::Frame<'_>,
+        overlay: DismissibleOverlay,
+        popup: Rect,
+        title: &str,
+    ) {
+        let Some(index) = title.rfind("Esc") else {
+            return;
+        };
+        let width = popup.width.saturating_sub(2);
+        if width < 5 || popup.height == 0 {
+            return;
+        }
+        let offset = UnicodeWidthStr::width(&title[..index]) as u16;
+        let label = &title[index..];
+        let label_width = UnicodeWidthStr::width(label) as u16;
+        let (text, x, width) = if offset.saturating_add(label_width) <= width {
+            (label, popup.x + 1 + offset, label_width)
+        } else {
+            // Repaint the title row before shortening it: starting an ASCII
+            // button in the trailing cell of a CJK glyph leaves a broken glyph.
+            let style = frame.buffer_mut()[(popup.x, popup.y)].style();
+            frame.render_widget(
+                Paragraph::new("─".repeat(width as usize)).style(style),
+                Rect::new(popup.x + 1, popup.y, width, 1),
+            );
+            frame.render_widget(
+                Paragraph::new(&title[..index]).style(style),
+                Rect::new(popup.x + 1, popup.y, width.saturating_sub(6), 1),
+            );
+            ("[Esc]", popup.right() - 6, 5)
+        };
+        let rect = Rect::new(x, popup.y, width, 1);
+        frame.render_widget(
+            Paragraph::new(text).style(
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            ),
+            rect,
+        );
+        self.overlay_close_hits.push((overlay, rect));
+    }
+
+    pub(super) fn dismiss_overlay_on_close_click(&mut self, column: u16, row: u16) -> bool {
+        let Some(OverlayLayer::Dismissible(overlay, popup)) = self.topmost_overlay() else {
+            return false;
+        };
+        let point = (column, row).into();
+        if !popup.contains(point)
+            || !self
+                .overlay_close_hits
+                .iter()
+                .any(|(kind, rect)| *kind == overlay && rect.contains(point))
+        {
+            return false;
+        }
+        self.dismiss_overlay(overlay);
+        self.overlay_close_hits.clear();
+        true
+    }
+
     /// 最上层的弹层，顺序与键盘 `Esc` 的优先级严格一致（见 `tui.rs` 的按键分发）。
     fn topmost_overlay(&self) -> Option<OverlayLayer> {
         let layers = [
@@ -149,6 +214,12 @@ impl App {
         let Some(overlay) = self.overlay_dismissed_by_click(column, row) else {
             return false;
         };
+        self.dismiss_overlay(overlay);
+        self.focus_pane_after_dismiss(column, row);
+        true
+    }
+
+    fn dismiss_overlay(&mut self, overlay: DismissibleOverlay) {
         match overlay {
             DismissibleOverlay::Media => self.media.close(),
             DismissibleOverlay::MobileQr => self.mobile_qr = None,
@@ -175,8 +246,6 @@ impl App {
             DismissibleOverlay::Search => self.search = None,
             DismissibleOverlay::Help => self.help_visible = false,
         }
-        self.focus_pane_after_dismiss(column, row);
-        true
     }
 }
 
@@ -221,6 +290,57 @@ mod tests {
     }
 
     #[test]
+    fn visible_inbox_close_label_is_clickable_without_stopping_task_or_touching_draft() {
+        for language in [Language::ZhCn, Language::En, Language::Ja] {
+            for width in [100, 24] {
+                let mut app = App::new(Vec::new(), language);
+                app.begin_turn(true, "running task".into());
+                app.input.insert("unsent message");
+                app.attention_detail = Some(AttentionItem {
+                    id: "running-task".into(),
+                    source: AttentionSource::BackgroundShell,
+                    title: "Running task".into(),
+                    detail: "Turn: 51".into(),
+                    status: RuntimeStatus::Working,
+                    elapsed_millis: Some(1000),
+                });
+                let mut terminal =
+                    Terminal::new(ratatui::backend::TestBackend::new(width, 30)).unwrap();
+                terminal
+                    .draw(|frame| render_attention_detail(frame, &mut app))
+                    .unwrap();
+                let (kind, hit) = app.overlay_close_hits[0];
+                assert_eq!(kind, DismissibleOverlay::AttentionDetail);
+                assert_eq!(hit.height, 1);
+                assert!(
+                    terminal.backend().buffer()[(hit.x, hit.y)]
+                        .modifier
+                        .contains(Modifier::UNDERLINED)
+                );
+                assert!(!app.dismiss_overlay_on_close_click(hit.x.saturating_sub(1), hit.y));
+                assert!(!app.dismiss_overlay_on_close_click(hit.x, hit.y + 1));
+                assert!(app.dismiss_overlay_on_close_click(hit.right() - 1, hit.y));
+                assert!(app.attention_detail.is_none());
+                assert!(app.running && app.runtime_turn);
+                assert_eq!(app.input.text(), "unsent message");
+            }
+        }
+    }
+
+    #[test]
+    fn close_label_of_an_underlying_panel_cannot_dismiss_the_top_panel() {
+        let mut app = app_with_layout();
+        app.help_visible = true;
+        app.help_rect = Rect::new(0, 0, 80, 28);
+        app.overlay_close_hits
+            .push((DismissibleOverlay::Help, Rect::new(10, 0, 10, 1)));
+        app.mobile_qr = Some("QR".into());
+        app.mobile_qr_rect = Rect::new(0, 0, 30, 10);
+        assert!(!app.dismiss_overlay_on_close_click(11, 0));
+        assert!(app.help_visible && app.mobile_qr.is_some());
+    }
+
+    #[test]
     fn a_panel_that_has_not_been_drawn_yet_has_no_boundary_to_be_outside_of() {
         let mut app = app_with_layout();
         app.open_session_picker(uuid::Uuid::nil(), SessionPickerRequest::default());
@@ -252,7 +372,10 @@ mod tests {
         app.approval_rect = Rect::new(20, 6, 40, 9);
         app.help_visible = true;
         app.help_rect = Rect::new(10, 2, 60, 20);
+        app.overlay_close_hits
+            .push((DismissibleOverlay::Help, Rect::new(12, 2, 10, 1)));
 
+        assert!(!app.dismiss_overlay_on_close_click(13, 2));
         assert!(!app.dismiss_overlay_on_outside_click(10, 22));
         assert!(app.approval.is_some());
         assert!(app.help_visible);

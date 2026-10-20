@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.108.0-rc3] - 2026-10-20
+
+### Fixed
+- 后台命令完成通知由活动执行者领取，TUI 仅在空闲且取得会话执行锁后接管，避免与 Runtime 争领导致模型漏收完成结果或提前结束；保留插话、命令单次执行与会话进度。
+
+## [0.108.0-rc2] - 2026-10-20
+
+### Fixed
+- Inbox、后台任务、Agent、Worktree 详情与帮助弹窗的 Esc 关闭提示支持鼠标点击；窄屏使用紧凑按钮，只关闭当前顶层面板，保留运行任务和输入草稿。
+
+## [0.108.0-rc1] - 2026-10-20
+
+### Added
+- 以至少 30 秒明确 sleep 开头的命令自动整体后台执行，等待期间可继续输入并自动发送普通消息；保留原审批、工作目录、执行顺序和超时预算，完成后通知，不重复执行。
+
+## [0.107.0-rc1] - 2026-10-20
+
+### Added
+- 交互式启动按当前工作区查找最近的非空 Rust 会话，默认显示继续/新建选择并在 5 秒无操作后继续；任何操作暂停倒计时，支持键盘和鼠标。
+- 新增 agent.session_startup、willdeep config startup ask|latest|new 与 --session-startup 启动偏好，以及 --new-session 单次新建；首次启动、显式恢复、启动提问和非交互输入跳过询问。
+
 ## [0.106.0-rc1] - 2026-10-20
 
 ### Added
@@ -2956,31 +2977,6 @@
 - 新增 `digest_reports_user_input_and_reuses_the_cache_until_the_file_changes`：覆盖"空会话不算用户输入""只有附件也算用户输入"，以及文件未变动时缓存结果一致。
 - 新增 `digest_drops_cache_entries_for_deleted_sessions`：会话删除后缓存条目同步清理。
 - 原 `web.rs` 中的 `session_has_user_input` 及其两条测试随函数一起移除，语义改由上述 core 测试覆盖。
-
-## [0.21.0-rc63] - 2026-08-12
-
-### Fixed
-- Web Runtime 侧栏不再把已结束的历史 Agent 当成活动 Agent 展示。此前 `GET /api/runtime/activity` 返回该工作区 `agents.json` 中的全部记录（只按工作区过滤，无状态或时间过滤），侧栏取前 4 条渲染，结果长期被"已完成、轮次 0"的历史根 Agent 占满，真正在跑的 Agent 反而看不到。
-- Agent 时长不再产生误导。此前运行中和已结束共用同一个"XX 秒"字段，而已结束根 Agent 的 `elapsed_seconds = completed_at - created_at` 是整个会话跨度（实测显示到 47148 秒），看起来像有进程活了 13 小时。现在运行中标注"已运行"，已结束标注"耗时"，并按 `秒 / 分秒 / 时分` 分级格式化。
-
-### Changed
-- 侧栏 Agent 列表只展示：仍在运行的 Agent（`idle` / `working` / `queued` / `blocked` / `waiting_*` / `cancelling`）、Runtime 未记录结束时间的 Agent，以及结束不超过 5 分钟的 Agent；从未执行过轮次（`current_turn = 0`）的已结束根 Agent 直接过滤掉。Web 与 TUI 套用同一套规则。
-- TUI 状态栏「Runtime 智能体」同步上述过滤：`sidebar_runtime_agents()` 成为唯一可见列表来源，`runtime_agent_move()` 与 `selected_runtime_agent()` 都基于它取值，避免键盘选中项与屏幕上看到的行错位而把指令发给一个已经结束几小时的 Agent。TUI 时长同样改为「已运行 / 耗时」并按 `s / m s / h m` 分级，替换原先的 `{:.1}s`。
-- 计数行的 Agent 数量改为可见活动 Agent 数，被折叠的历史记录以 `(+N 已结束)` 附注，不再用一个只增不减的总数冒充活动量。
-- `GET /api/runtime/activity` 的 Agent 摘要新增 `finished_seconds_ago` 字段（未结束为 `null`），供前端判断"刚结束"；该字段与既有摘要一样不含 Workspace、Prompt、报告或内部错误。
-- 新增 `web/src/runtimeAgents.ts` 承载 Agent 可见性与时长格式化逻辑，供侧栏和详情面板共用，避免 `RuntimeSidebar` 与 `RuntimeDetailPanel` 之间产生运行时循环依赖。
-
-### Tests
-- 新增 `web_runtime_agent_reports_run_duration_and_time_since_completion`：校验已结束 Agent 的 `elapsed_seconds` 取运行区间、`finished_seconds_ago` 取距今时长。
-- 既有脱敏回归测试补充 `finished_seconds_ago` 在运行中 Agent 上为 `null` 的断言。
-- 新增 `sidebar_drops_long_finished_agents_and_keeps_selection_on_the_visible_ones`：13 小时前结束、轮次 0 的根 Agent 不渲染，计数行显示 `(+1 finished)`，`selected_runtime_agent()` 命中可见的子 Agent。
-- 既有 TUI 渲染测试的 Agent 时间戳改用真实时钟基准（原先用 epoch 1/2，在新规则下会被整体过滤掉，测不到渲染路径）。
-- `cargo test --bin willdeep` 181 passed；Web ESLint 与 TypeScript/Vite 构建通过。
-
-### Known gaps
-- `agents.json` 仍无保留策略，终态记录只增不删；两端侧栏已不受影响，但文件会持续增长，计划单独一版处理。
-- 可见性规则目前在 TS（`web/src/runtimeAgents.ts`）和 Rust（`tui/sidebar.rs`）各实现一份，语义手工对齐，没有跨语言的一致性测试。
-
 
 ## 历史记录
 

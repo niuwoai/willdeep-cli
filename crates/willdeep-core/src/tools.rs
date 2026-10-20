@@ -860,7 +860,7 @@ impl ToolRegistry {
             ),
             definition(
                 "run_command",
-                "Run a shell command in the workspace root and return exit code, stdout, and stderr. Requires approval.",
+                "Run a shell command in the workspace root and return exit code, stdout, and stderr. Requires approval. A command beginning with a literal sleep of 30 seconds or more is automatically backgrounded as a whole; a returned job handle means running, not completed. Handle new user input while it waits, without rerunning the command.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -1707,10 +1707,11 @@ impl ToolRegistry {
                 .await?;
             sandbox = sandbox.with_network(crate::sandbox::NetworkPolicy::Allow);
         }
-        let timeout = args
-            .timeout_seconds
-            .unwrap_or(DEFAULT_COMMAND_TIMEOUT_SECS)
-            .clamp(1, MAX_COMMAND_TIMEOUT_SECS);
+        // Verification must stay synchronous: launching a job is not a passing check.
+        let automatic_delay = (!accepted_verification && self.command_allowlist.is_none())
+            .then(|| command_wait::leading_sleep_seconds(&args.command))
+            .flatten();
+        let timeout = command_wait::timeout_seconds(args.timeout_seconds, automatic_delay);
         let command_duration = self
             .remaining_execution_time()
             .map_or(std::time::Duration::from_secs(timeout), |remaining| {
@@ -1722,7 +1723,7 @@ impl ToolRegistry {
                 output: "Run time budget exhausted; command was not started.".into(),
             });
         }
-        if args.run_in_background.unwrap_or(false) {
+        if args.run_in_background.unwrap_or(false) || automatic_delay.is_some() {
             let timeout = command_duration.as_secs();
             if timeout == 0 {
                 return Err(ToolError::CommandTimeout {
@@ -1743,9 +1744,12 @@ impl ToolRegistry {
                         timeout,
                     )
                     .map_err(ToolError::Io)?;
-                return Ok(format!(
-                    "Background job started: {} (pid {}). It survives a Runtime restart; read it with get_job_output.",
-                    job.id, job.pid
+                return Ok(command_wait::started_notice(
+                    format!(
+                        "Background job started: {} (pid {}). It survives a Runtime restart; read it with get_job_output.",
+                        job.id, job.pid
+                    ),
+                    automatic_delay,
                 ));
             }
             let command = args.command;
@@ -1792,8 +1796,11 @@ impl ToolRegistry {
                     }
                 },
             );
-            return Ok(format!(
-                "Background task started: {id}. Completion will be delivered automatically; use get_job_output for details."
+            return Ok(command_wait::started_notice(
+                format!(
+                    "Background task started: {id}. Completion will be delivered automatically; use get_job_output for details."
+                ),
+                automatic_delay,
             ));
         }
         let snapshot_id = verification::capture_accepted_snapshot(
@@ -2187,6 +2194,7 @@ use approval::ApprovalReporter;
 pub use approval::{ApprovalMode, ApprovalSource, ApprovalTrace, SharedApprovalMode};
 mod background_shell;
 mod board_tools;
+pub mod command_wait;
 mod monitor;
 mod verification;
 pub use agent_control::{DEFAULT_AWAIT_SECONDS, MAX_AGENT_MESSAGE_CHARS, MAX_AWAIT_SECONDS};

@@ -73,6 +73,8 @@ willdeep --profile some-im --workspace .
 | `--onboarding` | 重新运行首次设置：默认打开 WebApp / willdeep-config，也可选择 some.im 登录或终端手动配置；见 [首次配置指南](FIRST_USE_SETUP.md) |
 | `--json` | 在 stdout 输出 NDJSON 事件 |
 | `-r`, `--resume [ID\|latest]` | 恢复已保存的会话；省略值时直接加载最近更新的会话 |
+| `--new-session` | 本次直接新建会话，跳过启动询问；不能与 `--resume` 同用 |
+| `--session-startup <ask\|latest\|new>` | 本次覆盖交互式启动偏好；`latest` 仅选择当前工作区的历史 |
 
 短选项一览：`-c` 配置、`-p` Profile、`-m` 模型、`-w` 工作区、`-r` 恢复会话。前四个是全局选项，子命令前后都能写。
 
@@ -86,6 +88,12 @@ willdeep --profile some-im --workspace .
 - 远程图片只允许公网 HTTP(S)，并有重定向、超时、下载大小、像素尺寸和解码内存限制；本地路径必须留在当前工作区。
 
 ## 会话与项目
+
+不带提问直接启动时，默认询问是否继续当前工作区最近的非空 Rust 会话，显示标题和最后使用时间；默认选中继续，5 秒无操作后进入。方向键或 Tab 选择、Enter 确认，Y 继续、N 新建，也可直接点击选项。按键或鼠标操作立即停止倒计时，Esc 退出启动。无历史时直接新建，空会话和只读的 Xedit 桥接记录不参与自动选择；工作区路径按真实路径匹配，不跨工作区恢复。
+
+使用 `willdeep config startup ask`、`willdeep config startup latest` 或 `willdeep config startup new` 保存默认方式（配置项为 `[agent] session_startup`）；不带方式执行 `willdeep config startup` 可查看当前设置。`--new-session` 和 `--session-startup` 只影响本次启动。显式恢复、命令行提问、管道输入、Web 与其他非交互调用不弹启动窗口。
+
+继续会话会重新读取最新记录并连接原 Runtime 状态，不把历史消息当作新输入，也不因选择继续而重跑工具。显式 `-r` / `--resume latest` 仍保留原有的全局最近会话语义，与启动偏好的当前工作区范围不同。
 
 ```bash
 willdeep --list-sessions
@@ -237,6 +245,10 @@ willdeep job forget <作业 ID>
 ```
 
 显式 `run_in_background` 的命令跑在这里:进程自成进程组、输出与退出码落盘,Runtime 升级或重启都不影响,回来取结果就行。状态词分三种:`running` 是还在跑,`done` / `failed(N)` 是有退出码,`unknown` 是进程没了却没留下退出码——被 `kill -9`、断电,或者 PID 被复用。**`unknown` 不等于失败**:失败是有退出码的。
+
+以明确的至少 30 秒 `sleep` 开头的命令也自动整体转入后台，例如 `sleep 240; cd project && check`，无需模型传入后台开关。识别普通整数秒和 `s/m/h/d` 单位，支持 `sleep`、`/bin/sleep` 与 `/usr/bin/sleep`；短等待、动态参数、管道内的 sleep 与验收命令保持原执行方式。审批先于转换执行，原命令、工作目录和顺序不变。未指定超时时默认给等待后步骤留 60 秒，整体上限仍为 600 秒；显式超时和任务总预算优先。
+
+TUI 显示转入后台的原因与等待秒数；模型回复后进入后台等待时，输入区提示可以继续输入，普通文本回车后自动投递，不影响原任务。队列/附件管理面板打开时暂停自动发送，命令和附件仍按原顺序等待下一轮。完成通知通过已有事件机制接回原会话，不重新执行原命令。
 
 `forget` 只删已经有结论的记录。还在跑的不给删:删了那个进程就没人认领了,连它的输出都找不回来。
 

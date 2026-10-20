@@ -653,6 +653,26 @@ pub fn save_default_approval(path: &Path, mode: willdeep_core::ApprovalMode) -> 
     write_private_atomic(path, patched.as_bytes())
 }
 
+pub fn save_session_startup(path: &Path, mode: crate::session_startup::StartupMode) -> Result<()> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("read startup configuration"),
+    };
+    let patched = patch_key(
+        &contents,
+        Some("agent"),
+        "session_startup",
+        Some(toml_string(mode.as_str())),
+    );
+    let parsed: ConfigFile = toml::from_str(&patched).context("validate startup configuration")?;
+    crate::config::validate(&parsed, path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("create startup configuration directory")?;
+    }
+    write_private_atomic(path, patched.as_bytes())
+}
+
 fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()

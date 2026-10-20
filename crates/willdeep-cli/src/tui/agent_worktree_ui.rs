@@ -50,6 +50,12 @@ fn render_agent_detail(
             .wrap(Wrap { trim: false }),
         popup,
     );
+    app.render_overlay_close_hint(
+        frame,
+        overlay_dismiss::DismissibleOverlay::AgentDetail,
+        popup,
+        title,
+    );
     render_agent_actions(frame, app, agent, popup);
 }
 
@@ -349,5 +355,11 @@ fn render_worktree_review(
             )
             .wrap(Wrap { trim: false }),
         popup,
+    );
+    app.render_overlay_close_hint(
+        frame,
+        overlay_dismiss::DismissibleOverlay::WorktreeReview,
+        popup,
+        title,
     );
 }

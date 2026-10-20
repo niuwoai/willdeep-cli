@@ -10,6 +10,11 @@ pub const CONFIG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum ConfigAction {
+    /// Show or save the interactive session startup preference: ask, latest, new.
+    Startup {
+        #[arg(value_enum)]
+        mode: Option<crate::session_startup::StartupMode>,
+    },
     /// Show the shared credential-free runtime profile, or create its initial file.
     Runtime {
         #[arg(long)]
@@ -31,6 +36,14 @@ pub fn handle(action: ConfigAction, explicit_path: Option<&Path>) -> Result<()> 
         .map(Ok)
         .unwrap_or_else(default_config_path)?;
     match action {
+        ConfigAction::Startup { mode } => {
+            if let Some(mode) = mode {
+                crate::model_routing::save_session_startup(&path, mode)?;
+            }
+            let loaded = LoadedConfig::load(explicit_path)?;
+            println!("{}", loaded.file.agent.session_startup.as_str());
+            Ok(())
+        }
         ConfigAction::Runtime { init, max_turns } => {
             runtime_profile(init, max_turns, explicit_path)
         }
@@ -250,6 +263,9 @@ pub struct HookSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSettings {
+    /// Interactive startup only; explicit prompts and --resume bypass this preference.
+    #[serde(default)]
+    pub session_startup: crate::session_startup::StartupMode,
     /// Admission ceiling for schedules, including occupied interactive Runtime sessions.
     /// Defaults to 4; preparing runs remain durable while waiting for capacity.
     pub schedule_max_active: Option<usize>,

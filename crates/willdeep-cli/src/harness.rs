@@ -397,6 +397,8 @@ pub(crate) async fn execute_runtime(
         max_output_tokens: None,
         json: true,
         resume: request.session_id.map(|id| id.to_string()),
+        new_session: false,
+        session_startup: None,
         list_sessions: false,
         list_projects: false,
         project: None,

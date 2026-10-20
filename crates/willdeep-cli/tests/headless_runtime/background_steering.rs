@@ -3,7 +3,7 @@ use super::*;
 #[cfg(unix)]
 const STEERING: &str = "operator-message-during-silent-background-wait";
 
-pub(super) fn response(body: &[u8], index: usize, monitor: bool) -> String {
+pub(super) fn response(body: &[u8], index: usize, monitor: bool, delayed: bool) -> String {
     let text = String::from_utf8_lossy(body);
     if text.contains("<verdict>") {
         return serde_json::json!({"choices":[{"message":{"content":"<verdict>YES</verdict>"},"finish_reason":"stop"}]}).to_string();
@@ -14,7 +14,9 @@ pub(super) fn response(body: &[u8], index: usize, monitor: bool) -> String {
             "label": "silent background steering regression",
             "timeout_seconds": 60,
         });
-        if !monitor {
+        if delayed {
+            arguments["command"] = "sleep 30; cd .; printf 'delayed-%s\\n' once >> automatic-once; while [ ! -f release-background ]; do sleep 0.1; done".into();
+        } else if !monitor {
             arguments["run_in_background"] = true.into();
         }
         let name = if monitor { "monitor" } else { "run_command" };
@@ -43,7 +45,7 @@ fn wait_for(label: &str, mut condition: impl FnMut() -> bool) {
 }
 
 #[cfg(unix)]
-fn check_steering(monitor: bool) {
+fn check_steering(monitor: bool, delayed: bool) {
     let _serial = process_test_guard();
     let root = temporary_root();
     let home = root.join("home");
@@ -51,7 +53,11 @@ fn check_steering(monitor: bool) {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
     let _guard = TestGuard::new(root.clone(), home.clone());
-    let provider = MockProvider::start_with_mode(MockMode::IdleBackgroundThenSuccess { monitor });
+    let provider = MockProvider::start_with_mode(if delayed {
+        MockMode::LeadingSleepThenSuccess
+    } else {
+        MockMode::IdleBackgroundThenSuccess { monitor }
+    });
     let config = root.join("config.toml");
     write_private_config(&config, provider.api_base());
     let settings = std::fs::read_to_string(&config)
@@ -143,10 +149,21 @@ fn check_steering(monitor: bool) {
         !release.0.exists(),
         "background must remain active until steering was read"
     );
+    if delayed {
+        assert!(
+            !workspace.join("automatic-once").exists(),
+            "steering must be read before the leading sleep completes"
+        );
+    }
     std::fs::write(&release.0, "release").unwrap();
-    wait_for("Runtime client finishes", || {
-        client.0.as_mut().unwrap().try_wait().unwrap().is_some()
-    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(if delayed { 45 } else { 15 });
+    while client.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Runtime client must finish"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
     assert!(client.0.as_mut().unwrap().wait().unwrap().success());
     let saved = store.load(session_id).unwrap();
     assert_eq!(
@@ -157,16 +174,28 @@ fn check_steering(monitor: bool) {
             .count(),
         1
     );
+    if delayed {
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("automatic-once")).unwrap(),
+            "delayed-once\n"
+        );
+    }
 }
 
 #[cfg(unix)]
 #[test]
 fn runtime_steering_wakes_a_silent_monitor_after_the_turn_limit() {
-    check_steering(true);
+    check_steering(true, false);
 }
 
 #[cfg(unix)]
 #[test]
 fn runtime_steering_wakes_a_silent_detached_job_after_the_turn_limit() {
-    check_steering(false);
+    check_steering(false, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_automatically_backgrounds_a_leading_sleep_and_reads_steering_before_it_finishes() {
+    check_steering(false, true);
 }

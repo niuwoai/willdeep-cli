@@ -2,9 +2,52 @@
 //!
 //! `run_in_background` 的命令活得比宿主进程久，没有句柄可等，完成与否只能看
 //! 磁盘上的记录。TUI 与无头运行都靠这里把「作业结束」变成内核事件；投递权用
-//! 作业目录里的标记领取，同一次结束只向模型讲一遍，哪个前端先看到算哪个。
+//! 作业目录里的标记领取，同一次结束只向模型讲一遍；活跃执行者优先领取。
 
 use willdeep_core::{DetachedJobStore, EventKernel, JobState};
+
+/// An active execution owns completion delivery. A TUI is only an observer
+/// during a Runtime turn; even before its first task snapshot, the execution
+/// lock prevents it from stealing a result into a different in-memory kernel.
+pub(crate) fn publish_finished_jobs_for_tui(
+    kernel: &EventKernel,
+    jobs: &DetachedJobStore,
+    sessions: &willdeep_core::SessionStore,
+    kernel_store: &willdeep_core::kernel_store::KernelStore,
+    session_id: uuid::Uuid,
+    running: bool,
+    runtime_turn: bool,
+) -> anyhow::Result<usize> {
+    if (running && runtime_turn)
+        || !jobs.owned_by(&session_id.to_string()).iter().any(|job| {
+            jobs.state(job) != JobState::Running
+                && !jobs.directory().join(&job.id).join("delivered").exists()
+        })
+    {
+        return Ok(0);
+    }
+    let _ownership = if running {
+        // Local turns already own the execution lock and share this kernel.
+        None
+    } else {
+        match (willdeep_core::checkpoint::SessionCheckpointSink {
+            store: sessions.clone(),
+            session_id,
+        })
+        .claim()
+        {
+            Ok(ownership) => Some(ownership),
+            Err(willdeep_core::session::SessionError::ConcurrentUpdate(_)) => return Ok(0),
+            Err(error) => return Err(error.into()),
+        }
+    };
+    let published = publish_finished_jobs(kernel, jobs, session_id);
+    let failures = willdeep_core::kernel_store::flush(kernel, kernel_store);
+    if let Some((_, error)) = failures.first() {
+        anyhow::bail!("persist background completion for {session_id}: {error}");
+    }
+    Ok(published)
+}
 
 /// 把会话名下已结束、尚未投递的作业发布成内核事件，返回这次新发布了几条。
 ///
@@ -69,4 +112,90 @@ pub(crate) fn has_running_jobs(jobs: &DetachedJobStore, session_id: uuid::Uuid) 
     jobs.owned_by(&session_id.to_string())
         .iter()
         .any(|job| jobs.state(job) == JobState::Running)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_executor_keeps_completion_and_idle_tui_delivers_once() {
+        let home =
+            std::env::temp_dir().join(format!("job-delivery-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let sessions = willdeep_core::SessionStore::new(&home);
+        let mut session = willdeep_core::Session::new(home.clone(), None, "owner regression");
+        sessions.save(&mut session).unwrap();
+        let jobs = DetachedJobStore::new(&home).with_owner(session.id.to_string());
+        let job = willdeep_core::DetachedJob {
+            id: format!("job_{}", uuid::Uuid::new_v4().simple()),
+            command: "printf result".into(),
+            label: "finished job".into(),
+            workspace: home.clone(),
+            pid: std::process::id(),
+            started_marker: None,
+            created_at: 1,
+            owner: Some(session.id.to_string()),
+        };
+        let dir = jobs.directory().join(&job.id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("meta.json"), serde_json::to_vec(&job).unwrap()).unwrap();
+        std::fs::write(dir.join("exit"), "0").unwrap();
+        std::fs::write(dir.join("stdout.log"), "result").unwrap();
+        let kernel = EventKernel::new();
+        let kernel_store = willdeep_core::kernel_store::KernelStore::new(&home);
+        let deliver = |running, runtime_turn| {
+            publish_finished_jobs_for_tui(
+                &kernel,
+                &jobs,
+                &sessions,
+                &kernel_store,
+                session.id,
+                running,
+                runtime_turn,
+            )
+            .unwrap()
+        };
+        assert_eq!(deliver(true, true), 0);
+        assert!(!dir.join("delivered").exists());
+        let owner = willdeep_core::checkpoint::SessionCheckpointSink {
+            store: sessions.clone(),
+            session_id: session.id,
+        }
+        .claim()
+        .unwrap();
+        assert_eq!(
+            deliver(false, false),
+            0,
+            "a not-yet-refreshed TUI must respect another executor"
+        );
+        assert!(!dir.join("delivered").exists());
+        drop(owner);
+        assert_eq!(deliver(false, false), 1);
+        assert!(dir.join("delivered").exists());
+        assert_eq!(deliver(false, false), 0);
+        assert_eq!(kernel_store.load_session(session.id).unwrap().len(), 1);
+        let local_job = willdeep_core::DetachedJob {
+            id: format!("job_{}", uuid::Uuid::new_v4().simple()),
+            ..job
+        };
+        let local_dir = jobs.directory().join(&local_job.id);
+        std::fs::create_dir_all(&local_dir).unwrap();
+        std::fs::write(
+            local_dir.join("meta.json"),
+            serde_json::to_vec(&local_job).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(local_dir.join("exit"), "0").unwrap();
+        std::fs::write(local_dir.join("stdout.log"), "local result").unwrap();
+        let _local_owner = willdeep_core::checkpoint::SessionCheckpointSink {
+            store: sessions.clone(),
+            session_id: session.id,
+        }
+        .claim()
+        .unwrap();
+        assert_eq!(deliver(true, false), 1, "local turns share the TUI kernel");
+        assert_eq!(kernel_store.load_session(session.id).unwrap().len(), 2);
+        std::fs::remove_dir_all(home).unwrap();
+    }
 }

@@ -51,6 +51,7 @@ mod projects;
 mod prompt_cmd;
 mod provider_settings;
 mod schedule_cmd;
+mod session_startup;
 mod telemetry;
 mod titling;
 mod tui;
@@ -135,6 +136,14 @@ struct Cli {
         default_missing_value = "latest"
     )]
     resume: Option<String>,
+
+    /// Open a new session, bypassing the project startup chooser.
+    #[arg(long, conflicts_with = "resume")]
+    new_session: bool,
+
+    /// Interactive startup: ask (5-second countdown), latest project session, or new.
+    #[arg(long, value_enum)]
+    session_startup: Option<session_startup::StartupMode>,
 
     /// List saved sessions and exit.
     #[arg(long)]
@@ -773,7 +782,7 @@ async fn run() -> Result<()> {
         }
         return Ok(());
     }
-    let resumed = load_session(&store, cli.resume.as_deref()).map_err(|error| {
+    let mut resumed = load_session(&store, cli.resume.as_deref()).map_err(|error| {
         if run_args.is_some() {
             invalid_run_input(format!("load run Session: {error:#}"))
         } else {
@@ -801,6 +810,20 @@ async fn run() -> Result<()> {
         .unwrap_or_default();
 
     let interactive_tui = prompt.is_none() && std::io::stdin().is_terminal() && !cli.no_tui;
+    if session_startup::eligible(
+        &cli,
+        interactive_tui && std::io::stdout().is_terminal(),
+        run_args.is_some(),
+    ) {
+        let workspace = harness::resolve_workspace(&cli, None)?;
+        resumed = session_startup::select(
+            &store,
+            &workspace,
+            cli.session_startup
+                .unwrap_or(loaded.file.agent.session_startup),
+            language,
+        )?;
+    }
     if should_use_headless_runtime(
         &cli,
         run_args.as_ref(),
@@ -1892,6 +1915,13 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
                 "name": call.name,
                 "is_error": is_error
             });
+            if !is_error
+                && call.name == "run_command"
+                && let Some(seconds) =
+                    willdeep_core::tools::command_wait::notice_wait_seconds(&output)
+            {
+                value["background_delay_seconds"] = seconds.into();
+            }
             if let Some(detail) = tool_detail(&call.name, &call.arguments)
                 && let Some(object) = value.as_object_mut()
             {
@@ -2097,6 +2127,15 @@ mod tests {
         });
         assert_eq!(ok.get("arguments"), None);
         assert_eq!(ok.get("output"), None);
+
+        let background = agent_event_json(AgentEvent::ToolCompleted {
+            call: call.clone(),
+            output: "[background-delay seconds=240]\nBackground job started: job_fixture\nprivate output".into(),
+            is_error: false,
+        });
+        assert_eq!(background["background_delay_seconds"], 240);
+        assert_eq!(background.get("output"), None);
+        assert!(!background.to_string().contains("private output"));
 
         let failed = agent_event_json(AgentEvent::ToolCompleted {
             call,

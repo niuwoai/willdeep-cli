@@ -313,6 +313,7 @@ struct App {
     last_progress_at: Option<Instant>,
     runtime_turn: bool,
     waiting_background: bool,
+    overlay_close_hits: Vec<(overlay_dismiss::DismissibleOverlay, Rect)>,
     /// 界面显示 Runtime 轮次在跑、而新鲜快照里却找不到本会话活动任务的连续次数。
     /// 攒够 [`STALE_RUNTIME_TURN_SNAPSHOTS`] 次就去问 Runtime 一句「还有在途轮次吗」，
     /// 没有就把残留的「工作中」复位——否则排队的提示词会跟着一起死等。
@@ -1362,6 +1363,7 @@ fn draw<B: ratatui::backend::Backend>(
     skills: &SkillCatalog,
 ) -> Result<()> {
     term.draw(|f| {
+        app.overlay_close_hits.clear();
         app.sidebar_wide = f.area().width >= 110;
         let wide_sidebar = app.sidebar_visible && app.sidebar_wide && !app.composer_expanded;
         let columns = if wide_sidebar {
@@ -2090,6 +2092,9 @@ fn draw<B: ratatui::backend::Backend>(
                     .wrap(Wrap { trim: false }),
                 popup,
             );
+            app.render_overlay_close_hint(f, overlay_dismiss::DismissibleOverlay::Help, popup, app.language.text(
+                "快捷键帮助 · F1/?/Esc 关闭", "Keyboard help · F1/?/Esc closes", "キーボードヘルプ · F1/?/Esc で閉じる",
+            ));
         }
         app.task_detail_rect = Rect::default();
         if let Some(detail) = &app.task_detail {
@@ -2150,6 +2155,7 @@ fn draw<B: ratatui::backend::Backend>(
                     .wrap(Wrap { trim: false }),
                 popup,
             );
+            app.render_overlay_close_hint(f, overlay_dismiss::DismissibleOverlay::TaskDetail, popup, title);
         }
         if let Some(review) = &mut app.diff_review {
             let popup = centered_rect(
