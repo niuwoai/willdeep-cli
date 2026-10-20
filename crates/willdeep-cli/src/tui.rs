@@ -1369,12 +1369,12 @@ fn draw<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     term.draw(|f| {
         app.overlay_close_hits.clear();
+        app.sidebar_wide = f.area().width >= 110;
         app.quiet_drawn = app.quiet_mode_at(Instant::now());
         if app.quiet_drawn {
             quiet_mode::render(f, app);
             return;
         }
-        app.sidebar_wide = f.area().width >= 110;
         let wide_sidebar = app.sidebar_visible && app.sidebar_wide && !app.composer_expanded;
         let columns = if wide_sidebar {
             Layout::default()
