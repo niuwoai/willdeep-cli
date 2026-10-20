@@ -59,6 +59,7 @@ mod overlay_dismiss;
 mod permission_commands;
 mod plan_ui;
 mod prompt_queue;
+mod quiet_mode;
 mod rendering;
 mod rewind_ui;
 mod routing_settings;
@@ -268,6 +269,8 @@ struct App {
     prompt_rect: Rect,
     prompt_scroll: usize,
     composer_expanded: bool,
+    last_user_activity: Instant,
+    quiet_drawn: bool,
     notice: Option<String>,
     /// 轮次结束后预测的「你可能想说的下一句」。只在空闲且输入框为空时以灰字显示，
     /// Tab 采用（只填入，不发送），打字 / Esc / 新一轮开始即清掉。只活在内存里。
@@ -1366,6 +1369,11 @@ fn draw<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     term.draw(|f| {
         app.overlay_close_hits.clear();
+        app.quiet_drawn = app.quiet_mode_at(Instant::now());
+        if app.quiet_drawn {
+            quiet_mode::render(f, app);
+            return;
+        }
         app.sidebar_wide = f.area().width >= 110;
         let wide_sidebar = app.sidebar_visible && app.sidebar_wide && !app.composer_expanded;
         let columns = if wide_sidebar {
