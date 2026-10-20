@@ -7,7 +7,7 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
         let description = description.clone();
         let always = *always;
         let action_count = approval_decisions(always).len() as u16;
-        let popup_height = (10 + action_count * 4).min(f.area().height);
+        let popup_height = (9 + action_count * 2).min(f.area().height);
         let popup = centered_rect(modal_width(f.area()), popup_height, f.area());
         app.approval_rect = popup;
         paint_modal_halo(f, popup);
@@ -17,12 +17,8 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
         );
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-        let button_height = if inner.height > action_count * 4 {
-            3
-        } else {
-            1
-        };
-        let gap = u16::from(inner.height >= action_count * (button_height + 1));
+        let button_height = 1;
+        let gap = u16::from(inner.height >= action_count * 2 - 1);
         let actions_height = action_count * button_height + action_count.saturating_sub(1) * gap;
         let actions_height = actions_height.min(inner.height);
         let actions = Rect::new(
@@ -61,12 +57,8 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
             }
             let selected = app.approval_selected == index;
             f.render_widget(
-                Paragraph::new(format!(
-                    "{}{}",
-                    "\n".repeat(usize::from(row.height / 2)),
-                    approval_action_text(decision, app.language, selected)
-                ))
-                .style(approval_action_style(decision, selected)),
+                Paragraph::new(approval_action_text(decision, app.language, selected))
+                    .style(approval_action_style(decision, selected)),
                 row,
             );
             app.approval_action_hits.push((row, decision));

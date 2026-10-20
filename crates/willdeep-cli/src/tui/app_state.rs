@@ -40,6 +40,7 @@ impl App {
             queued_prompts: VecDeque::new(),
             prompt_queue: None,
             pending_model: None,
+            pending_provider: None,
             local_turn: None,
             latest_usage: Usage::default(),
             turn_input_tokens: 0,
@@ -181,6 +182,8 @@ impl App {
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
+        self.pending_model = None;
+        self.pending_provider = None;
         self.transcript = session_transcript(session, self.language);
         if self.transcript.is_empty() {
             self.transcript

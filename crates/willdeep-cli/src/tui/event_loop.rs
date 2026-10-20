@@ -1,5 +1,41 @@
 use super::*;
 
+async fn handle_queue_action(
+    key: KeyEvent,
+    app: &mut App,
+    session: &Session,
+    runtime: &TuiRuntime,
+    agent: &Arc<Agent>,
+) {
+    let language = app.language;
+    if key.code == KeyCode::Char('a')
+        && app
+            .prompt_queue
+            .as_ref()
+            .is_some_and(|panel| panel.editor.is_none())
+    {
+        let index = app.prompt_queue.as_ref().unwrap().selected;
+        app.open_attachments(attachment_panel::Target::Queued(index));
+        return;
+    }
+    if app.handle_queue_key(key) {
+        app.prompt_queue.as_mut().unwrap().status = None;
+        let index = app.prompt_queue.as_ref().unwrap().selected;
+        let text = app.queued_prompts[index].text.clone();
+        if app.running
+            && app.queued_prompts[index].attachments.is_empty()
+            && !text.trim_start().starts_with('/')
+            && steer_running_turn(app, session, runtime, agent, &text).await
+        {
+            app.remove_queued_prompt_row(index);
+            app.queued_prompts.remove(index);
+            app.note_steering_delivered(&text);
+        } else {
+            app.prompt_queue.as_mut().unwrap().status=Some(language.text("暂不能插话，消息仍保留在队列中（附件和命令需等待下一轮）","Cannot steer now; message remains queued (attachments and commands wait for the next turn)","今は送達できません。添付やコマンドは次のターンを待ちます").to_owned());
+        }
+    }
+}
+
 /// 落一轮已经跑完的结果；撞上并发执行冲突时，重载最新快照再写一次。
 ///
 /// 为什么这里可以「重载后照写」，而 `SessionStore::save` 的冲突判定又必须留着：
@@ -377,7 +413,13 @@ pub(super) async fn event_loop(
         if !app.running
             && let Some(model) = app.pending_model.take()
         {
-            match switch_model(&model, &mut app, session, store, runtime, &agent).await {
+            let result = if let Some(profile) = app.pending_provider.take() {
+                model_provider::switch(&profile, &model, &mut app, session, store, runtime, &agent)
+                    .await
+            } else {
+                switch_model(&model, &mut app, session, store, runtime, &agent).await
+            };
+            match result {
                 Ok(message) => app.append_transcript(format!("System: {message}")),
                 Err(error) => app.append_transcript(format!(
                     "Error: {}: {error:#}",
@@ -572,7 +614,13 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
-                    if app.prompt_queue.is_some() || app.attachment_panel.is_some() { continue; }
+                    if app.attachment_panel.is_some() { continue; }
+                    if app.prompt_queue.is_some() {
+                        if let Some(key) = app.queue_mouse_key(mouse) {
+                            handle_queue_action(key, &mut app, session, runtime, &agent).await;
+                        }
+                        continue;
+                    }
                     // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
                     // 否则「点外面」会先被下面那些 `continue` 吃掉。
                     if mouse.kind==MouseEventKind::Down(MouseButton::Left)
@@ -593,11 +641,8 @@ pub(super) async fn event_loop(
                             MouseEventKind::ScrollUp=>app.model_picker_scroll(-1),
                             MouseEventKind::ScrollDown=>app.model_picker_scroll(1),
                             MouseEventKind::Down(MouseButton::Left)=>{
-                                if let Some(model)=app.activate_model_picker_at(mouse.column,mouse.row) {
-                                    match switch_or_defer_model(&model,&mut app,session,store,runtime,&agent).await {
-                                        Ok(message)=>{app.model_picker=None;app.append_transcript(format!("System: {message}"));},
-                                        Err(error)=>{app.model_picker=None;app.append_transcript(format!("Error: {}: {error:#}",language.text("切换模型失败","Model switch failed","モデル切替に失敗")));},
-                                    }
+                                if let Some(action)=app.activate_model_picker_at(mouse.column,mouse.row) {
+                                    model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
                                 }
                             },
                             _=>{},
@@ -725,21 +770,7 @@ pub(super) async fn event_loop(
                     if app.media.is_open() { let action=app.media.handle_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.attachment_panel.is_some() { let action=app.handle_attachment_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.prompt_queue.is_some() {
-                        if key.code==KeyCode::Char('a') && app.prompt_queue.as_ref().is_some_and(|panel| panel.editor.is_none()) {
-                            let index=app.prompt_queue.as_ref().unwrap().selected; app.open_attachments(attachment_panel::Target::Queued(index)); continue;
-                        }
-                        if app.handle_queue_key(key) {
-                            app.prompt_queue.as_mut().unwrap().status=None;
-                            let index=app.prompt_queue.as_ref().unwrap().selected;
-                            let text=app.queued_prompts[index].text.clone();
-                            if app.running && app.queued_prompts[index].attachments.is_empty() && !text.trim_start().starts_with('/') && steer_running_turn(&app,session,runtime,&agent,&text).await {
-                                app.remove_queued_prompt_row(index);
-                                app.queued_prompts.remove(index);
-                                app.note_steering_delivered(&text);
-                            } else {
-                                app.prompt_queue.as_mut().unwrap().status=Some(language.text("暂不能插话，消息仍保留在队列中（附件和命令需等待下一轮）","Cannot steer now; message remains queued (attachments and commands wait for the next turn)","今は送達できません。添付やコマンドは次のターンを待ちます").to_owned());
-                            }
-                        }
+                        handle_queue_action(key, &mut app, session, runtime, &agent).await;
                         continue;
                     }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('q') {
@@ -986,16 +1017,8 @@ pub(super) async fn event_loop(
                         continue;
                     }
                     if app.model_picker.is_some(){
-                        match app.handle_model_picker_key(key) {
-                            ModelPickerAction::None=>{},
-                            ModelPickerAction::Close=>app.model_picker=None,
-                            ModelPickerAction::Select(model)=>{
-                                match switch_or_defer_model(&model,&mut app,session,store,runtime,&agent).await {
-                                    Ok(message)=>{app.model_picker=None;app.append_transcript(format!("System: {message}"));},
-                                    Err(error)=>{app.model_picker=None;app.append_transcript(format!("Error: {}: {error:#}",language.text("切换模型失败","Model switch failed","モデル切替に失敗")));},
-                                }
-                            },
-                        }
+                        let action = app.handle_model_picker_key(key);
+                        model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
                         continue;
                     }
                     if app.workspace_picker.is_some(){
@@ -1250,6 +1273,9 @@ pub(super) async fn event_loop(
                                 app.open_prompt_queue();
                                 continue;
                             }
+                            if confirmation_example::try_submit(&mut app, &runtime.tx) {
+                                continue;
+                            }
                             // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
                             // 提示词排队，其余命令说清楚为什么现在不行。
                             if app.running {
@@ -1483,7 +1509,7 @@ pub(super) async fn event_loop(
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
                 UiMessage::RuntimeResult(message)=>{app.append_transcript(message.clone());app.notice=Some(message);},
-                UiMessage::ModelsLoaded(result)=>app.set_model_picker_result(result),
+                UiMessage::ModelsLoaded { request_id, result } => model_provider::receive_models(&mut app, request_id, result),
                 UiMessage::MediaLoaded{target,result}=>app.media.finish_load(target,result),
                 UiMessage::MediaResized(result)=>{
                     if let Some(error)=app.media.finish_resize(result){

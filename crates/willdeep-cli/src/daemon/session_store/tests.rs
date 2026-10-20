@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn provider_configuration_rolls_back_metadata_if_core_cannot_be_saved() {
+    let root = std::env::temp_dir().join(format!("provider-rollback-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let session = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace: root.clone(),
+            profile: Some("old".into()),
+            model: Some("old-model".into()),
+            config: None,
+            title: None,
+        })
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let core = root.join("sessions").join(format!("{}.json", session.id));
+    std::fs::rename(&core, core.with_extension("backup")).unwrap();
+    assert!(
+        store
+            .configure_mobile(
+                session.id,
+                Some("new".into()),
+                Some("new-model".into()),
+                None,
+                None,
+                None
+            )
+            .is_err()
+    );
+    assert_eq!(
+        store.get(session.id).unwrap().unwrap().profile.as_deref(),
+        Some("old")
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn team_control_turn_requeues_after_restart_even_when_parent_history_advanced() {
     use willdeep_runtime_protocol::agent_team::AgentTeamControl;
     let root = std::env::temp_dir().join(format!("control-restart-{}", uuid::Uuid::new_v4()));

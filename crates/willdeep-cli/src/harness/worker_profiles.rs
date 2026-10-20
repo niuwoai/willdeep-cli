@@ -12,6 +12,63 @@ use willdeep_core::{SubagentProfile, build_provider, builtin_profiles};
 use crate::config::ConfigFile;
 use crate::provider_config_from_profile;
 
+// Keep a worker's explicit model while following the session connection. Hosted
+// some.im bindings apply only while the session still uses that provider.
+struct FollowingWorker {
+    parent: Arc<dyn Provider>,
+    model: String,
+    hosted: bool,
+}
+
+impl FollowingWorker {
+    fn current(
+        &self,
+    ) -> std::result::Result<Arc<dyn Provider>, willdeep_core::provider::ProviderError> {
+        if self.hosted
+            && self
+                .parent
+                .ledger_identity()
+                .is_none_or(|id| id.provider != "some.im")
+        {
+            Ok(self.parent.clone())
+        } else {
+            self.parent.with_model(&self.model)
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for FollowingWorker {
+    fn ledger_identity(&self) -> Option<willdeep_core::provider::ProviderIdentity> {
+        self.current().ok()?.ledger_identity()
+    }
+    fn with_model(
+        &self,
+        model: &str,
+    ) -> std::result::Result<Arc<dyn Provider>, willdeep_core::provider::ProviderError> {
+        self.parent.with_model(model)
+    }
+    async fn complete(
+        &self,
+        messages: &[willdeep_core::Message],
+        tools: &[willdeep_core::types::ToolDefinition],
+    ) -> std::result::Result<willdeep_core::types::Completion, willdeep_core::provider::ProviderError>
+    {
+        self.current()?.complete(messages, tools).await
+    }
+    async fn complete_with_events(
+        &self,
+        messages: &[willdeep_core::Message],
+        tools: &[willdeep_core::types::ToolDefinition],
+        events: &dyn willdeep_core::provider::ProviderEventSink,
+    ) -> std::result::Result<willdeep_core::types::Completion, willdeep_core::provider::ProviderError>
+    {
+        self.current()?
+            .complete_with_events(messages, tools, events)
+            .await
+    }
+}
+
 /// 组装全部内置工种，套上 `[subagents.*]` 的覆盖。
 ///
 /// 解析阶梯（与 `model_routing::profile_settings` 同一条）：
@@ -26,7 +83,7 @@ use crate::provider_config_from_profile;
 /// 第 3 种情况 `model` 留空，展示与派工记录在派工那一刻按 follower 现取。
 pub(super) fn configure_worker_profiles(
     file: &ConfigFile,
-    parent: &ProviderConfig,
+    _parent: &ProviderConfig,
     follow_main: &Arc<dyn Provider>,
     kind: ProviderKind,
 ) -> Result<Vec<SubagentProfile>> {
@@ -38,12 +95,13 @@ pub(super) fn configure_worker_profiles(
         let hosted = (kind == ProviderKind::SomeIm)
             .then(|| willdeep_core::subagent::hosted_worker_model(&subagent.id))
             .flatten();
-        subagent.model = hosted.clone();
         if let Some(hosted_model) = &hosted {
-            let mut configured = parent.clone();
-            configured.model = hosted_model.clone();
-            subagent.provider = build_provider(configured)
-                .with_context(|| format!("initialize hosted subagent model {hosted_model}"))?;
+            subagent.model = None;
+            subagent.provider = Arc::new(FollowingWorker {
+                parent: follow_main.clone(),
+                model: hosted_model.clone(),
+                hosted: true,
+            });
         }
         // 段落按正名找，找不到再认改名前的旧名（`[subagents.deep]` →
         // generalist、`[subagents.judge]` → reviewer），与设置面板同一个解析。
@@ -57,11 +115,15 @@ pub(super) fn configure_worker_profiles(
                 subagent.provider = build_provider(configured)
                     .with_context(|| format!("initialize subagent profile {}", subagent.id))?;
             } else if let Some(model) = &settings.model {
-                let mut configured = parent.clone();
-                configured.model = model.clone();
                 subagent.model = Some(model.clone());
-                subagent.provider = build_provider(configured)
+                follow_main
+                    .with_model(model)
                     .with_context(|| format!("initialize subagent profile {}", subagent.id))?;
+                subagent.provider = Arc::new(FollowingWorker {
+                    parent: follow_main.clone(),
+                    model: model.clone(),
+                    hosted: false,
+                });
             }
             if let Some(max_turns) = settings.max_turns {
                 subagent.max_turns = max_turns;
@@ -227,5 +289,32 @@ model = "glm-5"
         let (profiles, main_model) = build(&source, ProviderKind::SomeIm, "glm-5");
         main_model.set_model("glm-5.1").expect("switch");
         assert_eq!(effective(&profiles, "implementer"), "pinned");
+    }
+
+    #[test]
+    fn changing_provider_moves_inherited_workers_but_preserves_explicit_bindings() {
+        let source = format!(
+            "{SOMEIM_CONFIG}\n[providers.pinned]\nprovider = \"openai-compatible\"\napi_base = \"https://pinned.example/v1\"\napi_key = \"test-only\"\nmodel = \"pinned-profile-model\"\n[subagents.tester]\nprovider_profile = \"pinned\"\n[subagents.implementer]\nmodel = \"pinned-model\"\n"
+        );
+        let (profiles, handle) = build(&source, ProviderKind::SomeIm, "old-main");
+        let next = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "http://magpie.example/v1",
+            "test-only-next",
+            "flash",
+        );
+        handle.set_provider(build_provider(next).unwrap()).unwrap();
+        for (id, expected_provider, expected_model) in [
+            ("generalist", "magpie.example", "flash"),
+            ("reviewer", "magpie.example", "flash"),
+            ("implementer", "magpie.example", "pinned-model"),
+            ("tester", "pinned.example", "pinned-profile-model"),
+        ] {
+            let worker = profiles.iter().find(|p| p.id == id).unwrap();
+            let identity = worker.provider.ledger_identity().unwrap();
+            assert_eq!(identity.provider, expected_provider, "{id}");
+            assert_eq!(identity.model, expected_model, "{id}");
+        }
     }
 }
