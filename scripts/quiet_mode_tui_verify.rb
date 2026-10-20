@@ -14,31 +14,42 @@ workspace = File.join(root, 'ws')
 FileUtils.mkdir_p([home, workspace])
 server = TCPServer.new('127.0.0.1', 0)
 requests = []
+connections = []
+workers = []
 listener = Thread.new do
   loop do
     client = server.accept
-    method = client.gets.to_s.split.first
-    headers = {}
-    while (line = client.gets) && line != "\r\n"
-      key, value = line.split(':', 2)
-      headers[key.downcase] = value.strip if value
+    connections << client
+    workers << Thread.new(client) do |client|
+      begin
+        method = client.gets.to_s.split.first
+        headers = {}
+        while (line = client.gets) && line != "\r\n"
+          key, value = line.split(':', 2)
+          headers[key.downcase] = value.strip if value
+        end
+        body = client.read(headers.fetch('content-length', '0').to_i)
+        if method != 'POST'
+          client.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        else
+          requests << JSON.parse(body)
+          sleep 20
+          payload = {choices: [{index: 0, delta: {content: 'QUIET_FIXTURE_DONE'}}]}
+          client.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: #{JSON.generate(payload)}\n\n")
+          stop = {choices: [{index: 0, delta: {}, finish_reason: 'stop'}]}
+          client.write("data: #{JSON.generate(stop)}\n\ndata: [DONE]\n\n")
+        end
+      rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+        # A client may close an idle connection when the fixture shuts down.
+      ensure
+        client.close unless client.closed?
+      end
     end
-    body = client.read(headers.fetch('content-length', '0').to_i)
-    if method != 'POST'
-      client.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-    else
-      requests << JSON.parse(body)
-      sleep 12
-      payload = {choices: [{index: 0, delta: {content: 'QUIET_FIXTURE_DONE'}}]}
-      client.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: #{JSON.generate(payload)}\n\n")
-      stop = {choices: [{index: 0, delta: {}, finish_reason: 'stop'}]}
-      client.write("data: #{JSON.generate(stop)}\n\ndata: [DONE]\n\n")
-    end
-    client.close
   end
 rescue IOError, Errno::EBADF
 end
 env = {'WILLDEEP_HOME' => home, 'TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor', 'NO_COLOR' => nil, 'CLICOLOR_FORCE' => '1', 'WILLDEEP_TELEMETRY_DISABLED' => '1'}
+env['NO_PROXY'] = env['no_proxy'] = '127.0.0.1,localhost'
 %w[WILLDEEP_API_BASE WILLDEEP_API_KEY WILLDEEP_MODEL WILLDEEP_CONFIG OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY].each { |key| env[key] = nil }
 config = File.join(home, 'config.toml')
 File.write(config, "version = 1\ndefault_provider = 'fixture'\n[agent]\nmax_turns = 2\nauto_title = false\ninput_suggestions = false\nsmall_model_routing = false\nauto_dispatch_read_only = false\n[providers.fixture]\nprovider = 'openai-compatible'\napi = 'chat-completions'\napi_base = 'http://127.0.0.1:#{server.addr[1]}/v1'\napi_key = 'fixture-only'\nmodel = 'fixture'\n", perm: 0600)
@@ -61,25 +72,53 @@ begin
       end
     end
     snapshot = lambda do |name, compact|
-      path = File.join(root, "#{name}.ansi")
-      File.binwrite(path, bytes)
-      out, error, status = Open3.capture3('node', File.join(__dir__, 'terminal_snapshot.mjs'), path, '', '120', '35')
-      raise error unless status.success?
-      data = JSON.parse(out)
-      File.write(File.join(root, "#{name}.json"), JSON.pretty_generate(data))
-      if compact
-        raise "#{name}: chrome remained" if data['text'].match?(/┌|└|│|Activity|Workspace write|Your turn/)
-        raise "#{name}: input background indistinguishable" if data['input_bg'] == data['chat_bg']
-      else
-        raise "#{name}: detail did not return" unless data['text'].include?('┌')
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 12
+      data = nil
+      loop do
+        path = File.join(root, "#{name}.ansi")
+        File.binwrite(path, bytes)
+        out, error, status = Open3.capture3('node', File.join(__dir__, 'terminal_snapshot.mjs'), path, '', '120', '35')
+        raise error unless status.success?
+        data = JSON.parse(out)
+        File.write(File.join(root, "#{name}.json"), JSON.pretty_generate(data))
+        problem = if compact && data['text'].match?(/┌|└|│|Activity|Workspace write|Your turn/)
+          'chrome remained'
+        elsif compact && data['input_bg'] == data['chat_bg']
+          'input background indistinguishable'
+        elsif !compact && !data['text'].include?('┌')
+          'detail did not return'
+        elsif name == 'first-key-wakes'
+          row = data['lines'].index { |line| line.include?('Prompt [focused]') }
+          'first typed character was lost' unless row && data['lines'][row + 1].include?('a')
+        elsif name == 'draft-retained-quiet'
+          'draft vanished' unless data['lines'][32].strip == 'a'
+        elsif name == 'sidebar-pins-detailed'
+          'sidebar not displayed' unless data['text'].include?('Status')
+        elsif name == 'queue-pins-detailed'
+          'queue window missing' unless data['text'].match?(/queue/i)
+        end
+        break unless problem
+        raise "#{name}: #{problem}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        pump.call(0.2)
       end
       phases << {name: name, compact: compact, passed: true}
       data
     end
     begin
-      pump.call(2)
+      startup_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+      until bytes.include?('Hello,')
+        raise 'TUI startup timed out' if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= startup_deadline
+        pump.call(0.1)
+      end
+      writer.write("\e")
+      pump.call(0.5)
       snapshot.call('initial-detailed', false)
       writer.write("Reply QUIET_FIXTURE_DONE without tools\r")
+      request_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 60
+      until requests.size == 1
+        raise 'model request not received' if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= request_deadline
+        pump.call(0.1)
+      end
       pump.call(6)
       snapshot.call('running-quiet', true)
       writer.write('a')
@@ -96,7 +135,7 @@ begin
       writer.write("\x02")
       pump.call(6)
       data = snapshot.call('sidebar-pins-detailed', false)
-      raise 'sidebar not displayed' unless data['text'].include?('Workspace')
+      raise 'sidebar not displayed' unless data['text'].include?('Status')
       writer.write("\x02")
       pump.call(5.5)
       snapshot.call('sidebar-closed-quiet', true)
@@ -135,4 +174,6 @@ ensure
   server.close
   listener.join(2)
   listener.kill if listener.alive?
+  connections.each { |client| client.close unless client.closed? }
+  workers.each { |worker| worker.join(1); worker.kill if worker.alive? }
 end
