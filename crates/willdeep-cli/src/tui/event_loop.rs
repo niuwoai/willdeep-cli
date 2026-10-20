@@ -505,9 +505,7 @@ pub(super) async fn event_loop(
             continue;
         }
         // 本轮刚结束：响一声铃，盯着别处的用户也知道轮到自己了。
-        if std::mem::take(&mut app.bell_pending) {
-            execute!(term.backend_mut(), crossterm::style::Print("\x07"))?;
-        }
+        app.ring_turn_bell(term.backend_mut())?;
         draw(term, &mut app, &runtime.skills)?;
         tokio::select! {
             _=refresh.tick()=>{
