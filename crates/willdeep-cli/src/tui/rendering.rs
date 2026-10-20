@@ -1,5 +1,88 @@
 use super::*;
 
+/// Completed history is immutable during a text delta. Keep its styled,
+/// wrapped rows instead of parsing Markdown twice for every token.
+pub(super) struct TranscriptRenderCache {
+    source: Vec<String>,
+    width: usize,
+    expanded: bool,
+    language: Language,
+    search: Option<String>,
+    text: Text<'static>,
+}
+
+impl App {
+    pub(super) fn prepare_transcript_frame(&mut self) -> Text<'static> {
+        let search = self
+            .search
+            .as_ref()
+            .map(|s| s.editor.text().trim().to_owned())
+            .filter(|s| !s.is_empty());
+        let valid = self.transcript_render_cache.as_ref().is_some_and(|cache| {
+            cache.width == self.transcript_width
+                && cache.expanded == self.tool_rows_expanded
+                && cache.language == self.language
+                && cache.search == search
+                && cache.source == self.transcript
+        });
+        if !valid {
+            let rows = self.display_transcript().rows;
+            let text = wrap_styled_text(
+                colored_transcript_at_width(&rows, search.as_deref(), self.transcript_width),
+                self.transcript_width,
+            );
+            self.transcript_rows = text_rows(&text);
+            self.transcript_render_cache = Some(TranscriptRenderCache {
+                source: self.transcript.clone(),
+                width: self.transcript_width,
+                expanded: self.tool_rows_expanded,
+                language: self.language,
+                search: search.clone(),
+                text,
+            });
+        }
+        let history = &self
+            .transcript_render_cache
+            .as_ref()
+            .expect("prepared history")
+            .text;
+        self.transcript_rows.truncate(history.lines.len());
+        let transient = self.transient_row().map_or_else(Text::default, |row| {
+            wrap_styled_text(
+                colored_transcript_at_width(&[row], search.as_deref(), self.transcript_width),
+                self.transcript_width,
+            )
+        });
+        self.transcript_rows.extend(text_rows(&transient));
+        self.transcript_height = history.lines.len() + transient.lines.len();
+        transient
+    }
+
+    pub(super) fn transcript_viewport(
+        &self,
+        transient: &Text<'static>,
+        offset: usize,
+    ) -> Text<'static> {
+        let history = &self
+            .transcript_render_cache
+            .as_ref()
+            .expect("prepared history")
+            .text;
+        // Skip history by index. Iterating from row zero would still make
+        // every frame proportional to the complete conversation length.
+        let history_start = offset.min(history.lines.len());
+        let transient_start = offset.saturating_sub(history.lines.len());
+        Text::from(
+            history.lines[history_start..]
+                .iter()
+                .chain(transient.lines.iter().skip(transient_start))
+                .take(self.viewport_height)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -272,10 +355,20 @@ fn display_column_slice(value: &str, start: usize, end: usize) -> String {
     output
 }
 
+#[cfg(test)]
 pub(super) fn highlight_text_selection(
     text: &mut Text<'static>,
     start: (usize, usize),
     end: (usize, usize),
+) {
+    highlight_text_selection_at_offset(text, start, end, 0);
+}
+
+pub(super) fn highlight_text_selection_at_offset(
+    text: &mut Text<'static>,
+    start: (usize, usize),
+    end: (usize, usize),
+    offset: usize,
 ) {
     if start >= end {
         return;
@@ -286,6 +379,7 @@ pub(super) fn highlight_text_selection(
         .bg(super::MODAL_BG)
         .add_modifier(Modifier::BOLD);
     for (row, line) in text.lines.iter_mut().enumerate() {
+        let row = row + offset;
         if row < start.0 || row > end.0 {
             continue;
         }

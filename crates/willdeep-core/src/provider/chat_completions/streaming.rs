@@ -71,9 +71,10 @@ pub(super) async fn complete(
         })
 }
 
-/// 思维链攒到这么多字就冲刷一条 `ReasoningDelta`。思考型模型一步能吐几千字，
-/// 逐块外发会把守护进程的事件日志刷爆；界面只要「它此刻在想什么」，按段够用。
+/// 首片立即显示；连续到达的思维链按时间或字数分批，避免慢流等很久才攒够字数。
+/// 逐块外发会把守护进程的事件日志刷爆，因此后续仍保留短时间内的合并。
 const REASONING_DELTA_CHARS: usize = 120;
+const REASONING_DELTA_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Default)]
 struct State {
@@ -82,8 +83,9 @@ struct State {
     /// 但下一轮请求又必须原样带回去。
     reasoning: String,
     /// 还没外发的那截思维链；攒够 [`REASONING_DELTA_CHARS`]、遇到换行、正文或
-    /// 工具调用开始、收尾时冲刷。
+    /// 工具调用开始、收尾时冲刷；连续小片段也按时间冲刷，首片不等待。
     pending_reasoning: String,
+    last_reasoning_emit: Option<std::time::Instant>,
     calls: BTreeMap<u64, ToolCall>,
     reason: Option<String>,
     usage: Option<Usage>,
@@ -130,6 +132,9 @@ impl State {
                     self.pending_reasoning.push_str(text);
                     if text.contains('\n')
                         || self.pending_reasoning.chars().count() >= REASONING_DELTA_CHARS
+                        || self
+                            .last_reasoning_emit
+                            .is_none_or(|last| last.elapsed() >= REASONING_DELTA_INTERVAL)
                     {
                         updates.extend(self.flush_reasoning());
                     }
@@ -179,6 +184,7 @@ impl State {
         if self.pending_reasoning.is_empty() {
             return Vec::new();
         }
+        self.last_reasoning_emit = Some(std::time::Instant::now());
         vec![ProviderEvent::ReasoningDelta(std::mem::take(
             &mut self.pending_reasoning,
         ))]

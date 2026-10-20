@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "test_suite/stream_performance.rs"]
+mod stream_performance;
+
 #[cfg(test)]
 fn unix_now() -> u64 {
     std::time::SystemTime::now()

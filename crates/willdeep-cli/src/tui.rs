@@ -378,6 +378,7 @@ struct App {
     native_selection_mode: bool,
     chat_selection: Option<ChatSelection>,
     transcript_rows: Vec<String>,
+    transcript_render_cache: Option<rendering::TranscriptRenderCache>,
     transcript_render_offset: usize,
     skill_selected: usize,
     skill_menu_dismissed: bool,
@@ -1409,19 +1410,10 @@ fn draw<B: ratatui::backend::Backend>(
         app.transcript_width = areas[0].width.saturating_sub(2).max(1) as usize;
         app.transcript_rect = areas[0];
         app.viewport_height = areas[0].height.saturating_sub(2).max(1) as usize;
-        let mut visible_transcript = app.display_transcript().rows;
-        // 思维链只占最后几行、灰色；正文一开始这行就换成回复预览。宽度要先算好，
-        // 截取才知道几行是几行。
-        if let Some(row) = app.transient_row() {
-            visible_transcript.push(row);
-        }
-        app.transcript_height =
-            rendered_transcript_height(&visible_transcript, app.transcript_width);
+        let transient = app.prepare_transcript_frame();
         let max = app.max_scroll();
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
-        let offset = max
-            .saturating_sub(app.scroll_from_bottom)
-            .min(u16::MAX as usize) as u16;
+        let offset = max.saturating_sub(app.scroll_from_bottom);
         // 标题带上工作区名：并排开着几个 TUI 时，一眼能分清哪个窗口在跑哪个项目。
         let brand = chat_title_brand(app.workspace.as_deref());
         let mut title = if app.native_selection_mode {
@@ -1473,24 +1465,11 @@ fn draw<B: ratatui::backend::Backend>(
                 format_elapsed_span(elapsed.as_secs_f32(), 0)
             ));
         }
-        let search_query = app
-            .search
-            .as_ref()
-            .map(|search| search.editor.text().trim())
-            .filter(|query| !query.trim().is_empty());
-        let mut colored = wrap_styled_text(
-            colored_transcript_at_width(
-                &visible_transcript,
-                search_query,
-                app.transcript_width,
-            ),
-            app.transcript_width,
-        );
-        app.transcript_rows = text_rows(&colored);
-        app.transcript_render_offset = offset as usize;
+        let mut colored = app.transcript_viewport(&transient, offset);
+        app.transcript_render_offset = offset;
         if let Some(selection) = app.chat_selection {
             let (start, end) = selection.ordered_range();
-            highlight_text_selection(&mut colored, start, end);
+            rendering::highlight_text_selection_at_offset(&mut colored, start, end, offset);
         }
         f.render_widget(
             Paragraph::new(colored)
@@ -1503,8 +1482,7 @@ fn draw<B: ratatui::backend::Backend>(
                         } else {
                             Color::Blue
                         })),
-                )
-                .scroll((offset, 0)),
+                ),
             areas[0],
         );
         if activity > 0 {

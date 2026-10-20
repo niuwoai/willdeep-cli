@@ -1944,6 +1944,48 @@ fn a_stale_runtime_version_is_announced_once_and_stays_flagged() {
 }
 
 #[test]
+fn version_mismatch_guidance_distinguishes_client_and_runtime_upgrades() {
+    for language in [Language::ZhCn, Language::En, Language::Ja] {
+        let mut app = App::new(Vec::new(), language);
+        app.observe_runtime_version(Some("999.0.0".to_owned()));
+        assert!(
+            !app.runtime_auto_upgrade_pending,
+            "never downgrade a newer Runtime"
+        );
+        let hint = app.version_alignment_hint();
+        assert!(app.version_report().contains(hint));
+        assert!(app.transcript.last().unwrap().contains(hint));
+        assert!(!hint.contains("旧版审批策略"));
+        let count = app.transcript.len();
+        app.observe_runtime_version(Some("999.0.0".to_owned()));
+        assert_eq!(
+            app.transcript.len(),
+            count,
+            "snapshots must not repeat warnings"
+        );
+    }
+    let mut app = App::new(Vec::new(), Language::En);
+    app.observe_runtime_version(Some("999.0.0".to_owned()));
+    assert!(
+        app.version_alignment_hint()
+            .contains("running client is older")
+    );
+    assert!(
+        app.version_alignment_hint()
+            .contains("Preserve unsent input")
+    );
+    app.observe_runtime_version(Some("dev".to_owned()));
+    assert!(
+        app.version_alignment_hint()
+            .contains("Version order is unknown")
+    );
+    assert!(!app.runtime_auto_upgrade_pending);
+    app.observe_runtime_version(Some("0.1.0".to_owned()));
+    assert!(app.version_alignment_hint().contains("Runtime is older"));
+    assert!(app.runtime_auto_upgrade_pending);
+}
+
+#[test]
 fn switching_sessions_drops_pending_questions_visibly() {
     let mut app = App::new(Vec::new(), Language::En);
     let (tx, mut rx) = oneshot::channel();
