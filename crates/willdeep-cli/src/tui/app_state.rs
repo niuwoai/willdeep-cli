@@ -92,6 +92,7 @@ impl App {
             native_selection_mode: false,
             chat_selection: None,
             transcript_rows: Vec::new(),
+            transcript_render_cache: None,
             transcript_render_offset: 0,
             skill_selected: 0,
             skill_menu_dismissed: false,
@@ -216,6 +217,7 @@ impl App {
         self.native_selection_mode = false;
         self.chat_selection = None;
         self.transcript_rows.clear();
+        self.transcript_render_cache = None;
         self.transcript_render_offset = 0;
         self.progress_log.clear();
         self.search = None;
@@ -1257,9 +1259,7 @@ impl App {
         self.stale_runtime_turn_snapshots >= STALE_RUNTIME_TURN_SNAPSHOTS
     }
     /// The Runtime's version when it differs from this binary's. The TUI is
-    /// only a front end — a daemon started days ago keeps executing tools
-    /// with its own (old) approval policy, so `willdeep --version` saying
-    /// 0.22 proves nothing about what actually runs commands.
+    /// only a front end; either the client or the Runtime may be older.
     pub(crate) fn stale_runtime_version(&self) -> Option<&str> {
         self.runtime_version
             .as_deref()
@@ -1288,13 +1288,41 @@ impl App {
         let message = self
             .language
             .text(
-                "⚠ Runtime {runtime} 与客户端 {client} 版本不一致。命令实际由 Runtime 执行，当前仍按旧版审批策略运行。请运行 `/daemon upgrade` 后重试。",
-                "⚠ Runtime {runtime} does not match client {client}. Commands execute inside the Runtime, which still applies its older approval policy. Run `/daemon upgrade`, then retry.",
-                "⚠ Runtime {runtime} とクライアント {client} のバージョンが不一致です。コマンドは Runtime 側で実行され、古い承認ポリシーが適用されます。`/daemon upgrade` を実行してください。",
+                "⚠ Runtime {runtime} 与客户端 {client} 版本不一致。",
+                "⚠ Runtime {runtime} does not match client {client}.",
+                "⚠ Runtime {runtime} とクライアント {client} のバージョンが不一致です。",
             )
             .replace("{runtime}", &stale)
             .replace("{client}", willdeep_core::VERSION);
-        self.append_transcript(format!("System: {message}"));
+        self.append_transcript(format!(
+            "System: {message} {}",
+            self.version_alignment_hint()
+        ));
+    }
+
+    /// Shared by the automatic warning and `/version`. Updating a daemon
+    /// cannot replace the running client process.
+    pub(super) fn version_alignment_hint(&self) -> &'static str {
+        let runtime = self.runtime_version.as_deref().unwrap_or_default();
+        if version_is_older(runtime, willdeep_core::VERSION) {
+            self.language.text(
+                "Runtime 版本较旧，请运行 `/daemon upgrade` 更新 Runtime；该命令不会更新客户端。",
+                "The Runtime is older. Run `/daemon upgrade` to update it; this does not update the client.",
+                "Runtime が古いため、`/daemon upgrade` で更新してください。クライアントは更新されません。",
+            )
+        } else if version_is_older(willdeep_core::VERSION, runtime) {
+            self.language.text(
+                "当前客户端版本较旧。请先保留未发送内容；若已安装新版，退出并重新启动客户端，否则先通过原安装方式更新客户端。`/daemon upgrade` 只更新 Runtime，无法更新当前客户端进程。",
+                "The running client is older. Preserve unsent input, then quit and restart if a newer client is installed; otherwise update it through your installation method first. `/daemon upgrade` only updates the Runtime, not this client process.",
+                "実行中のクライアントが古くなっています。未送信内容を保存し、新版がインストール済みなら終了して再起動してください。未更新なら元の方法で更新してください。`/daemon upgrade` はクライアントを更新しません。",
+            )
+        } else {
+            self.language.text(
+                "无法确定版本先后，请核对客户端与 Runtime 的安装版本；客户端更新后需重新启动，`/daemon upgrade` 仅更新 Runtime。",
+                "Version order is unknown. Check both installed versions; restart after updating the client. `/daemon upgrade` only updates the Runtime.",
+                "バージョンの前後関係を確認できません。両方のバージョンを確認し、クライアント更新後は再起動してください。`/daemon upgrade` は Runtime のみ更新します。",
+            )
+        }
     }
 
     /// Show an approval immediately, or queue it behind the one on screen.

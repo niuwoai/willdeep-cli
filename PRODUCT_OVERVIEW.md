@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-20 | 当前版本：v0.108.0-rc5（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）
+> 最后更新：2026-10-20 | 当前版本：v0.108.0-rc6（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）
+
+流式显示：已完成历史的排版结果复用，增量只处理新内容并绘制可见区域，搜索、工具折叠、宽度和语言变化时重建缓存。Chat Completions 思考内容首片立即显示，连续小片段按短时间间隔分批；正文不增加定速延迟。性能对照见 [流式渲染验收](docs/verification/0.108.0-rc6/streaming-performance.md)。
 
 后台取消与派工：完全访问模式取消当前会话自己持有的 Job 免审批，跨会话和无主 Job 保留确认。只读自动派子 Agent 默认开启，显式关闭仍生效；写入任务仍由主 Agent 按任务包决定派工，不因只读自动派工获得额外写权限。root 侧栏、详情和 Web 时长取当前任务的开始/完成时间，旧记录缺少开始时间时不显示 Agent 存续时长。
 

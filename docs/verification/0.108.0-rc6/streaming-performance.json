@@ -1,0 +1,306 @@
+{
+  "version": "0.108.0-rc6",
+  "date": "2026-10-20",
+  "build": "cargo test --release (optimized)",
+  "backend": "ratatui TestBackend 160x50",
+  "frames_per_case": 40,
+  "input_interval_ms": 20,
+  "repeated_runs": 3,
+  "fixture": "synthetic_history in stream_performance.rs",
+  "summary": [
+    {
+      "history_entries": 20,
+      "before_mean_ms": 0.77379795,
+      "after_mean_ms": 0.7111829749999999,
+      "speedup": 1.0880434110504402,
+      "before_samples_ms": [
+        0.8042166749999998,
+        0.754856275,
+        0.7623208999999997
+      ],
+      "after_samples_ms": [
+        0.4526729499999999,
+        0.7638364250000002,
+        0.9170395499999998
+      ]
+    },
+    {
+      "history_entries": 500,
+      "before_mean_ms": 13.355136725000001,
+      "after_mean_ms": 0.635953075,
+      "speedup": 21.000192073919923,
+      "before_samples_ms": [
+        13.087159324999998,
+        13.359565525000002,
+        13.618685325000001
+      ],
+      "after_samples_ms": [
+        0.33942595000000003,
+        0.687360325,
+        0.8810729499999999
+      ]
+    },
+    {
+      "history_entries": 2000,
+      "before_mean_ms": 53.59465105,
+      "after_mean_ms": 0.801384725,
+      "speedup": 66.87755503450606,
+      "before_samples_ms": [
+        54.620569775000014,
+        52.68322189999999,
+        53.480161475
+      ],
+      "after_samples_ms": [
+        0.5960208250000001,
+        0.911405225,
+        0.8967281249999999
+      ]
+    }
+  ],
+  "before": [
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.8042166749999998,
+          "median_ms": 0.778291,
+          "p95_ms": 0.9759169999999999
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 13.087159324999998,
+          "median_ms": 12.968167,
+          "p95_ms": 14.314542
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 40,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 54.620569775000014,
+          "median_ms": 52.972458,
+          "p95_ms": 67.493375
+        }
+      ],
+      "resources": [
+        "2.81 real         2.72 user         0.04 sys",
+        "27000832  maximum resident set size"
+      ]
+    },
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.754856275,
+          "median_ms": 0.743834,
+          "p95_ms": 0.9395
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 13.359565525000002,
+          "median_ms": 13.425875,
+          "p95_ms": 14.349499999999999
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 40,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 52.68322189999999,
+          "median_ms": 52.519459,
+          "p95_ms": 55.460542000000004
+        }
+      ],
+      "resources": [
+        "2.74 real         2.67 user         0.03 sys",
+        "26918912  maximum resident set size"
+      ]
+    },
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.7623208999999997,
+          "median_ms": 0.7337090000000001,
+          "p95_ms": 0.95325
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 13.618685325000001,
+          "median_ms": 13.452708000000001,
+          "p95_ms": 14.309458000000001
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 40,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 53.480161475,
+          "median_ms": 53.179790999999994,
+          "p95_ms": 55.92825
+        }
+      ],
+      "resources": [
+        "2.79 real         2.70 user         0.03 sys",
+        "27148288  maximum resident set size"
+      ]
+    }
+  ],
+  "after": [
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.4526729499999999,
+          "median_ms": 0.284666,
+          "p95_ms": 0.6736249999999999
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 0.33942595000000003,
+          "median_ms": 0.298167,
+          "p95_ms": 0.70925
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 0.5960208250000001,
+          "median_ms": 0.39879200000000004,
+          "p95_ms": 1.93975
+        }
+      ],
+      "resources": [
+        "0.14 real         0.08 user         0.01 sys",
+        "26935296  maximum resident set size"
+      ],
+      "paced": {
+        "events": 100,
+        "input_interval_ms": 20,
+        "max_ms": 27.344166,
+        "median_ms": 0.9617910000000001,
+        "p95_ms": 4.58
+      }
+    },
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.7638364250000002,
+          "median_ms": 0.6802079999999999,
+          "p95_ms": 2.022375
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 0.687360325,
+          "median_ms": 0.692875,
+          "p95_ms": 1.532458
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 0.911405225,
+          "median_ms": 0.767709,
+          "p95_ms": 2.7087499999999998
+        }
+      ],
+      "resources": [
+        "0.19 real         0.11 user         0.00 sys",
+        "27148288  maximum resident set size"
+      ],
+      "paced": {
+        "events": 100,
+        "input_interval_ms": 20,
+        "max_ms": 8.408875,
+        "median_ms": 1.0766250000000002,
+        "p95_ms": 4.683
+      }
+    },
+    {
+      "cases": [
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 20,
+          "input_interval_ms": 20,
+          "mean_ms": 0.9170395499999998,
+          "median_ms": 0.807875,
+          "p95_ms": 1.5273750000000001
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 500,
+          "input_interval_ms": 20,
+          "mean_ms": 0.8810729499999999,
+          "median_ms": 0.7781669999999999,
+          "p95_ms": 2.462209
+        },
+        {
+          "frames": 40,
+          "frames_over_budget": 0,
+          "history_entries": 2000,
+          "input_interval_ms": 20,
+          "mean_ms": 0.8967281249999999,
+          "median_ms": 0.699875,
+          "p95_ms": 2.753292
+        }
+      ],
+      "resources": [
+        "0.26 real         0.10 user         0.01 sys",
+        "27181056  maximum resident set size"
+      ],
+      "paced": {
+        "events": 100,
+        "input_interval_ms": 20,
+        "max_ms": 4.944166,
+        "median_ms": 0.843625,
+        "p95_ms": 1.8022500000000001
+      }
+    }
+  ],
+  "checks": {
+    "tui_passed": 261,
+    "chat_streaming_passed": 12,
+    "release_performance_and_render_checks_passed": 4,
+    "clippy": "passed (-D warnings)"
+  },
+  "limitations": [
+    "Synthetic, in-process provider deltas isolate TUI processing; no external model or Magpie request.",
+    "TestBackend does not measure physical terminal painting, network latency or model first-token latency.",
+    "Sustained stream is 100 events at 20ms intervals on a separate producer thread; no original session or job is modified."
+  ]
+}

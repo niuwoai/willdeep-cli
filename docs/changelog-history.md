@@ -2,6 +2,28 @@
 
 [返回当前变更记录](../CHANGELOG.md)
 
+## [0.21.0-rc64] - 2026-08-12
+
+### Fixed
+- `GET /api/sessions` 不再把整个会话目录反复全量反序列化，Web 进程不再长期占满 CPU。此前 `SessionStore::list()` 会把每个会话文件连同全部消息正文解析成 `Session`，本机实测 290 个文件、67 MB；前端每 2 秒轮询一次，而单次请求要 40 秒以上，请求持续堆积，8 个 tokio worker 全被 serde_json 占死（`sample` 采样热点集中在 `SliceRead::parse_str` / `Value::deserialize`）。
+- 会话列表的文件解析不再阻塞 async worker：`/api/sessions` 的目录扫描改走 `spawn_blocking`。
+
+### Added
+- `willdeep_core::SessionDigest` 与 `SessionStore::digests()`：只解析列表视图需要的元数据（id、标题、工作区、时间、置顶、是否有用户输入），不物化消息正文，并按文件 `(mtime, size)` 缓存解析结果，只有变动过的文件才重新解析；缓存清理只针对本次扫过的目录，不影响其它 `SessionStore` 实例。
+- 消息正文用探针结构折叠成"是否非空"的布尔值，避免为正文分配 `String`。
+
+### Changed
+- `SessionStore::latest()`、`--list-sessions`、TUI 命令面板的会话列表、TUI 切换工作区时挑选最近会话，全部改用 `digests()`；需要完整会话的地方再按 id `load()`。`SessionStore::list()` 保留，但已不在任何轮询路径上。
+- Web 前端 `/api/sessions` + `/api/runtime/activity` 轮询加入 in-flight 去重：上一轮没返回就跳过这一轮，避免慢响应时请求叠加放大。
+
+### Performance
+- 本机真实数据（290 个会话、67 MB）实测，release 构建：首轮 `digests()` 462 ms，命中缓存后 1.3–2.7 ms；对照 `list()` 2.17 s。debug 构建：首轮 2.71 s，命中缓存后 7–16 ms；对照 `list()` 3.85 s。稳态下这条路径的开销降到千分之一量级。
+
+### Tests
+- 新增 `digest_reports_user_input_and_reuses_the_cache_until_the_file_changes`：覆盖"空会话不算用户输入""只有附件也算用户输入"，以及文件未变动时缓存结果一致。
+- 新增 `digest_drops_cache_entries_for_deleted_sessions`：会话删除后缓存条目同步清理。
+- 原 `web.rs` 中的 `session_has_user_input` 及其两条测试随函数一起移除，语义改由上述 core 测试覆盖。
+
 ## [0.21.0-rc63] - 2026-08-12
 
 ### Fixed

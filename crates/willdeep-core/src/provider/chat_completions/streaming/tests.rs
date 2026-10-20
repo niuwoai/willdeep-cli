@@ -136,7 +136,10 @@ fn reasoning_updates(updates: &[ProviderEvent]) -> Vec<&str> {
 /// 一截先发掉，顺序不乱；逐块外发会把事件日志刷爆。
 #[test]
 fn reasoning_deltas_are_flushed_in_batches_and_before_text_or_tools() {
-    let mut state = State::default();
+    let mut state = State {
+        last_reasoning_emit: Some(std::time::Instant::now()),
+        ..State::default()
+    };
     let (_, updates) = push(
         &mut state,
         json!({"choices":[{"index":0,"delta":{"reasoning_content":"先看"}}]}),
@@ -201,7 +204,10 @@ fn reasoning_deltas_are_flushed_in_batches_and_before_text_or_tools() {
     );
 
     // 工具调用开始同样先冲刷。
-    let mut state = State::default();
+    let mut state = State {
+        last_reasoning_emit: Some(std::time::Instant::now()),
+        ..State::default()
+    };
     push(
         &mut state,
         json!({"choices":[{"index":0,"delta":{"reasoning_content":"想调工具"}}]}),
@@ -218,6 +224,23 @@ fn reasoning_deltas_are_flushed_in_batches_and_before_text_or_tools() {
 }
 
 use crate::provider::stream_test_support::{Events, frame, server};
+
+#[test]
+fn reasoning_first_chunk_is_immediate_and_small_chunks_flush_by_elapsed_time() {
+    let mut state = State::default();
+    let delta = || json!({"choices":[{"index":0,"delta":{"reasoning_content":"想"}}]});
+    let (_, updates) = push(&mut state, delta()).unwrap();
+    assert_eq!(reasoning_updates(&updates), vec!["想"]);
+    let (_, updates) = push(&mut state, delta()).unwrap();
+    assert!(updates.is_empty(), "batch rapid small chunks");
+    state.last_reasoning_emit = Some(std::time::Instant::now() - REASONING_DELTA_INTERVAL);
+    let (_, updates) = push(&mut state, delta()).unwrap();
+    assert_eq!(reasoning_updates(&updates), vec!["想想"]);
+    assert_eq!(
+        state.reasoning, "想想想",
+        "batching never loses replay text"
+    );
+}
 
 /// DeepSeek 一类 thinking 模型要求上一轮的思维链原样回传，少了这条，只要历史里
 /// 出现过工具调用，整条请求就是 400；`arguments` 则必须是合法 JSON 对象，否则
