@@ -45,6 +45,7 @@ mod agent_commands;
 mod agent_worktree_ui;
 mod attachment_panel;
 mod command_catalog;
+mod composer_attention;
 mod confirmation_example;
 mod daemon_commands;
 mod diff_review_ui;
@@ -1605,15 +1606,13 @@ fn draw<B: ratatui::backend::Backend>(
         let suggestion_visible = app.visible_input_suggestion().is_some();
         let composer_body = match app.visible_input_suggestion() {
             Some(suggestion) => Text::from(Line::from(vec![
-                Span::styled(suggestion.to_owned(), Style::default().fg(Color::DarkGray)),
+                Span::styled(suggestion.to_owned(), app.composer_hint_style()),
                 Span::styled(
                     format!(
                         "  {}",
                         app.language.text("Tab 采用", "Tab to accept", "Tab で採用")
                     ),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
+                    app.composer_hint_style(),
                 ),
             ])),
             None => Text::from(wrapped_input),
@@ -1668,7 +1667,7 @@ fn draw<B: ratatui::backend::Backend>(
                 // Same cyan the transcript gives `You:` lines, so what you are
                 // typing and what you already said read as one voice instead of
                 // falling back to the terminal's default foreground.
-                .style(Style::default().fg(Color::Cyan))
+                .style(app.composer_style())
                 .scroll((app.prompt_scroll.min(u16::MAX as usize) as u16, 0));
         // 正文由编辑器按宽度预先折行；灰字预测没走编辑器，交给 Paragraph 折。
         let composer = if suggestion_visible {

@@ -1014,6 +1014,7 @@ impl App {
     }
 
     pub(super) fn finish_turn(&mut self) {
+        let was_running = self.running;
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
@@ -1039,7 +1040,7 @@ impl App {
         }
         .to_owned();
         // 铃声只给审批、提问和后台任务的话，盯着别处的用户不知道轮到自己了。
-        self.bell_pending = self.queued_prompts.is_empty();
+        self.bell_pending |= was_running && self.composer_ready();
     }
 
     fn record_suggestion(
@@ -1178,6 +1179,7 @@ impl App {
         self.abandon_accepted_suggestion();
         let now = Instant::now();
         self.running = true;
+        self.bell_pending = false;
         self.waiting_background = false;
         self.runtime_turn = runtime_turn;
         self.stale_runtime_turn_snapshots = 0;
