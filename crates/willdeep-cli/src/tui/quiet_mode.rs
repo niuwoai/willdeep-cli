@@ -5,7 +5,7 @@ const QUIET_INPUT_BACKGROUND: Color = Color::Rgb(24, 32, 46);
 
 impl App {
     pub(super) fn quiet_mode_at(&self, now: Instant) -> bool {
-        !self.sidebar_visible
+        !(self.sidebar_visible && (self.sidebar_wide || self.focus == FocusPane::Sidebar))
             && !self.has_open_overlay()
             && !self.selection_mode
             && !self.native_selection_mode
@@ -120,7 +120,25 @@ mod tests {
         app.stream_transient(narration::StreamKind::Reply, "streaming");
         assert!(app.quiet_mode_at(start + QUIET_AFTER));
         app.sidebar_visible = true;
+        app.sidebar_wide = true;
         assert!(!app.quiet_mode_at(start + Duration::from_secs(500)));
+    }
+
+    #[test]
+    fn narrow_sidebar_only_pins_details_while_it_is_actually_open() {
+        let mut app = idle_app();
+        app.sidebar_visible = true;
+        app.sidebar_wide = false;
+        app.focus = FocusPane::Sidebar;
+        assert!(!app.quiet_mode_at(Instant::now()));
+        app.focus = FocusPane::Prompt;
+        assert!(app.quiet_mode_at(Instant::now()));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        assert!(
+            !app.quiet_drawn,
+            "resizing wide reveals the sidebar immediately"
+        );
     }
 
     #[test]
