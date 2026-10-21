@@ -7,7 +7,15 @@ require 'pty'
 require 'io/console'
 require 'timeout'
 
+# ruby scripts/quiet_mode_tui_verify.rb BINARY REPORT_PREFIX [default|full|compact] [true|false]
+# All configuration, sessions, Runtime and model traffic are isolated fixtures.
+
 binary = File.expand_path(ARGV.fetch(0))
+mode = ARGV.fetch(2, 'compact')
+footer = ARGV.fetch(3, 'true') == 'true'
+raise 'invalid UI mode' unless %w[default full compact].include?(mode)
+compact = mode == 'compact'
+cols, rows = 120, 35
 root = Dir.mktmpdir('wdq-', '/tmp')
 home = File.join(root, 'home')
 workspace = File.join(root, 'ws')
@@ -49,15 +57,18 @@ listener = Thread.new do
 rescue IOError, Errno::EBADF
 end
 env = {'WILLDEEP_HOME' => home, 'TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor', 'NO_COLOR' => nil, 'CLICOLOR_FORCE' => '1', 'WILLDEEP_TELEMETRY_DISABLED' => '1'}
+env['WILLDEEP_NO_UPDATE_CHECK'] = '1'
 env['NO_PROXY'] = env['no_proxy'] = '127.0.0.1,localhost'
 %w[WILLDEEP_API_BASE WILLDEEP_API_KEY WILLDEEP_MODEL WILLDEEP_CONFIG OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY].each { |key| env[key] = nil }
 config = File.join(home, 'config.toml')
 File.write(config, "version = 1\ndefault_provider = 'fixture'\n[agent]\nmax_turns = 2\nauto_title = false\ninput_suggestions = false\nsmall_model_routing = false\nauto_dispatch_read_only = false\n[providers.fixture]\nprovider = 'openai-compatible'\napi = 'chat-completions'\napi_base = 'http://127.0.0.1:#{server.addr[1]}/v1'\napi_key = 'fixture-only'\nmodel = 'fixture'\n", perm: 0600)
+ui = mode == 'default' ? '' : "\n[ui]\nmode = '#{mode}'\ncompact_status_line = #{footer}\n"
+File.write(config, File.read(config) + ui, perm: 0600)
 bytes = ''.b
 phases = []
 begin
   PTY.spawn(env, binary, '--config', config, '--workspace', workspace, '--language', 'en', '--new-session') do |reader, writer, pid|
-    reader.winsize = [35, 120]
+    reader.winsize = [rows, cols]
     pump = lambda do |seconds|
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
       while Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
@@ -77,25 +88,28 @@ begin
       loop do
         path = File.join(root, "#{name}.ansi")
         File.binwrite(path, bytes)
-        out, error, status = Open3.capture3('node', File.join(__dir__, 'terminal_snapshot.mjs'), path, '', '120', '35')
+        out, error, status = Open3.capture3('node', File.join(__dir__, 'terminal_snapshot.mjs'), path, '', cols.to_s, rows.to_s)
         raise error unless status.success?
         data = JSON.parse(out)
         File.write(File.join(root, "#{name}.json"), JSON.pretty_generate(data))
-        problem = if compact && data['text'].match?(/┌|└|│|Activity|Workspace write|Your turn/)
-          'chrome remained'
+        problem = if compact && data['text'].include?('Activity')
+          'activity chrome remained'
         elsif compact && data['input_bg'] == data['chat_bg']
           'input background indistinguishable'
-        elsif !compact && !data['text'].include?('┌')
-          'detail did not return'
-        elsif name == 'first-key-wakes'
-          row = data['lines'].index { |line| line.include?('Prompt [focused]') }
-          'first typed character was lost' unless row && data['lines'][row + 1].include?('a')
-        elsif name == 'draft-retained-quiet'
-          'draft vanished' unless data['lines'][32].strip == 'a'
-        elsif name == 'sidebar-pins-detailed'
-          'sidebar not displayed' unless data['text'].include?('Status')
-        elsif name == 'queue-pins-detailed'
-          'queue window missing' unless data['text'].match?(/queue/i)
+        elsif compact && !name.include?('queue') && data['last_row_bgs'].uniq != [data['input_bg']]
+          'background did not fill terminal width'
+        elsif compact && footer && !name.include?('queue') && data['lines'].last.strip.empty?
+          'footer missing from last row'
+        elsif compact && !footer && !name.include?('queue') && !data['lines'].last.strip.empty?
+          'footer remained while disabled'
+        elsif !compact && !data['text'].include?('Activity')
+          'full UI chrome missing'
+        elsif name.include?('queue') && !data['text'].match?(/queue/i)
+          'queue window missing'
+        elsif name.include?('sidebar') && !name.include?('closed') && !data['text'].include?('Status')
+          'sidebar missing'
+        elsif name.include?('draft') && !data['lines'].any? { |line| line.delete('│┃').strip == 'a' }
+          'first character or draft vanished'
         end
         break unless problem
         raise "#{name}: #{problem}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
@@ -110,41 +124,51 @@ begin
         raise 'TUI startup timed out' if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= startup_deadline
         pump.call(0.1)
       end
-      writer.write("\e")
       pump.call(0.5)
-      snapshot.call('initial-detailed', false)
+      snapshot.call('initial-ui', compact)
       writer.write("Reply QUIET_FIXTURE_DONE without tools\r")
       request_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 60
       until requests.size == 1
         raise 'model request not received' if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= request_deadline
         pump.call(0.1)
       end
-      pump.call(6)
-      snapshot.call('running-quiet', true)
+      snapshot.call('running-ui', compact)
       writer.write('a')
       pump.call(0.5)
-      data = snapshot.call('first-key-wakes', false)
-      row = data['lines'].index { |line| line.include?('Prompt [focused]') }
-      raise 'first typed character was lost' unless row && data['lines'][row + 1].include?('a')
-      pump.call(5.5)
-      data = snapshot.call('draft-retained-quiet', true)
-      raise 'draft vanished' unless data['lines'][32].strip == 'a'
-      writer.write("\e[<0;3;33M\e[<0;3;33m")
-      pump.call(0.5)
-      snapshot.call('mouse-wakes', false)
-      writer.write("\x02")
+      snapshot.call('typing-retains-draft-and-ui', compact)
       pump.call(6)
-      data = snapshot.call('sidebar-pins-detailed', false)
-      raise 'sidebar not displayed' unless data['text'].include?('Status')
+      snapshot.call('idle-retains-draft-and-ui', compact)
+      writer.write("\e[<0;3;#{rows - 2}M\e[<0;3;#{rows - 2}m")
+      pump.call(0.5)
+      snapshot.call('click-retains-draft-and-ui', compact)
+      cols, rows = 160, 38
+      reader.winsize = [rows, cols]
+      pump.call(0.5)
+      snapshot.call('wide-resize', compact)
+      cols, rows = 80, 28
+      reader.winsize = [rows, cols]
+      pump.call(0.5)
+      snapshot.call('narrow-resize', compact)
+      cols, rows = 120, 35
+      reader.winsize = [rows, cols]
       writer.write("\x02")
-      pump.call(5.5)
-      snapshot.call('sidebar-closed-quiet', true)
+      pump.call(0.5)
+      snapshot.call('sidebar-retains-ui', compact)
+      writer.write("\x02")
+      pump.call(0.5)
+      snapshot.call('sidebar-closed-retains-ui', compact)
       writer.write("\x11")
-      pump.call(6)
-      data = snapshot.call('queue-pins-detailed', false)
-      raise 'queue window missing' unless data['text'].match?(/queue/i)
-      writer.write("\e")
       pump.call(0.5)
+      snapshot.call('queue-operable', compact)
+      writer.write("\e")
+      finish_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 40
+      until File.file?(File.join(home, 'runtime/tasks.json')) &&
+          JSON.parse(File.read(File.join(home, 'runtime/tasks.json'))).any? { |task| task['status'] == 'completed' }
+        raise 'fixture completion timed out' if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= finish_deadline
+        pump.call(0.2)
+      end
+      pump.call(1)
+      snapshot.call('completed-ui', compact)
       writer.write("\x7f/exit\r")
       sleep 0.2
     ensure
@@ -164,10 +188,10 @@ begin
     session.fetch('messages').any? { |message| message['role'] == 'assistant' && message['content'] == 'QUIET_FIXTURE_DONE' }
   end
   raise 'task was interrupted or submitted twice' unless requests.size == 1 && tasks.size == 1 && tasks.first['status'] == 'completed' && answer_saved
-  report = {passed: true, binary: binary, root: root, phases: phases, inference_requests: requests.size, first_character_preserved: true, task_completed: true}
+  report = {passed: true, mode: mode, compact_status_line: footer, binary: binary, root: root, phases: phases, inference_requests: requests.size, first_character_preserved: true, task_completed: true}
   output = ARGV[1] || File.join(root, 'report')
   File.write(output + '.json', JSON.pretty_generate(report))
-  File.write(output + '.md', "# Quiet mode PTY verification\n\n" + phases.map { |phase| "- #{phase[:name]}: PASS" }.join("\n") + "\n\nFirst typed character preserved; one inference completed.\n")
+  File.write(output + '.md', "# UI preferences PTY verification\n\n" + phases.map { |phase| "- #{phase[:name]}: PASS" }.join("\n") + "\n\nFirst typed character preserved; one inference completed.\n")
   puts report.to_json
 ensure
   Open3.capture3(env, binary, 'daemon', 'stop')

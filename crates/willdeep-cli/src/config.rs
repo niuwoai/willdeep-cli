@@ -8,6 +8,9 @@ use willdeep_core::McpServerConfig;
 
 pub const CONFIG_VERSION: u32 = 1;
 
+mod ui_settings;
+pub use ui_settings::{UiMode, UiSettings};
+
 #[derive(Clone, Debug, Subcommand)]
 pub enum ConfigAction {
     /// Show or save the interactive session startup preference: ask, latest, new.
@@ -161,6 +164,8 @@ fn redact_inline_api_keys(value: &mut toml::Value) {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    #[serde(default)]
+    pub ui: UiSettings,
     #[serde(default)]
     pub agent_team: willdeep_core::subagent::AgentTeamSettings,
     pub version: Option<u32>,

@@ -68,6 +68,8 @@ mod runtime_ui;
 mod session_commands;
 mod session_picker_ui;
 mod sidebar;
+mod status_line;
+mod update_notice;
 mod webapp_commands;
 mod workspace_attention;
 mod workspace_commands;
@@ -273,8 +275,9 @@ struct App {
     prompt_rect: Rect,
     prompt_scroll: usize,
     composer_expanded: bool,
-    last_user_activity: Instant,
     quiet_drawn: bool,
+    ui: crate::config::UiSettings,
+    update_available: Option<update_notice::ReleaseNotice>,
     notice: Option<String>,
     /// 轮次结束后预测的「你可能想说的下一句」。只在空闲且输入框为空时以灰字显示，
     /// Tab 采用（只填入，不发送），打字 / Esc / 新一轮开始即清掉。只活在内存里。
@@ -1374,11 +1377,7 @@ fn draw<B: ratatui::backend::Backend>(
     term.draw(|f| {
         app.overlay_close_hits.clear();
         app.sidebar_wide = f.area().width >= 110;
-        app.quiet_drawn = app.quiet_mode_at(Instant::now());
-        if app.quiet_drawn {
-            quiet_mode::render(f, app);
-            return;
-        }
+        app.quiet_drawn = app.ui.mode == crate::config::UiMode::Compact;
         let wide_sidebar = app.sidebar_visible && app.sidebar_wide && !app.composer_expanded;
         let columns = if wide_sidebar {
             Layout::default()
@@ -1392,6 +1391,9 @@ fn draw<B: ratatui::backend::Backend>(
                 .split(f.area())
         };
         let canvas = columns[0];
+        let areas = if app.quiet_drawn {
+            quiet_mode::render(f, app, canvas)
+        } else {
         let activity = if app.composer_expanded {
             0
         } else if app.tools_expanded && app.tools.requested > 0 {
@@ -1693,92 +1695,13 @@ fn draw<B: ratatui::backend::Backend>(
         if app.focus == FocusPane::Prompt && !app.help_visible && app.task_detail.is_none() {
             f.set_cursor_position((cursor_x, cursor_y));
         }
-        let status = if app.native_selection_mode {
-            app.notice.take().unwrap_or_else(|| {
-                app.language
-                    .text(
-                        "终端原生选择 · 拖选后可用右键复制 · Esc 恢复 WillDeep 鼠标操作",
-                        "Native terminal selection · drag, then right-click to copy · Esc restores WillDeep mouse controls",
-                        "端末の標準選択 · ドラッグ後に右クリックでコピー · Esc でマウス操作を復元",
-                    )
-                    .to_owned()
-            })
-        } else if app.selection_mode {
-            app.notice.take().unwrap_or_else(|| {
-                app.language
-                    .text(
-                        "文本选择模式 · 鼠标拖选 · Ctrl/Cmd+C 或 Y 复制 · Q 引用 · Esc 退出",
-                        "Text selection · drag · Ctrl/Cmd+C or Y copy · Q quote · Esc exits",
-                        "テキスト選択 · ドラッグ · Ctrl/Cmd+C / Y コピー · Q 引用 · Esc 終了",
-                    )
-                    .to_owned()
-            })
-        } else {
-            app.notice.take().unwrap_or_else(|| {
-            let input_tokens = app.latest_usage.input_tokens.unwrap_or(0);
-            let output_tokens = app.latest_usage.output_tokens.unwrap_or(0);
-            let input = format_token_count(input_tokens);
-            let output = format_token_count(output_tokens);
-            let cache = cache_hit_rate(&app.latest_usage)
-                .map(|rate| {
-                    format!(
-                        " · {} {rate:.2}%",
-                        app.language.text("缓存", "cache", "キャッシュ")
-                    )
-                })
-                .unwrap_or_default();
-            let context_tokens = app.context_tokens.max(input_tokens);
-            let context_pct = context_tokens.saturating_mul(100) / app.context_window.max(1);
-            let elapsed = format_elapsed_span(
-                app.turn_started
-                    .map(|value| value.elapsed())
-                    .or(app.last_elapsed)
-                    .unwrap_or_default()
-                    .as_secs_f32(),
-                1,
-            );
-            if app.running {
-                format!(
-                    "{} · {}: {} · {} {context_pct}% · {} ↑{input} ↓{output}{cache}{queued} · Esc {} · F1",
-                    app.working_summary().unwrap_or_else(|| app.language.text("运行中", "Running", "実行中").to_owned()),
-                    app.language.text("焦点", "Focus", "フォーカス"),
-                    focus_label(app.focus, app.language),
-                    app.language.text("上下文", "context", "コンテキスト"),
-                    app.language.text("最近", "latest", "直近"),
-                    // 运行中最该被看见的是「怎么停下来」，不是文本选择的快捷键。
-                    app.language.text("中断", "interrupt", "中断"),
-                    queued = if app.queued_prompts.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" · {} {}", app.language.text("待发", "queued", "送信待ち"), app.queued_prompts.len())
-                    }
-                )
-            } else {
-                format!(
-                    "{} · {}: {} · {} {context_pct}% · {} ↑{input} ↓{output}{cache} · {elapsed} · {} · Ctrl+S {} · F1",
-                    if app.queued_prompts.is_empty() {
-                        app.language.text("就绪", "Ready", "準備完了")
-                    } else {
-                        app.language.text("待发消息等待发送", "Queued messages waiting to send", "送信待ちがあります")
-                    },
-                    app.language.text("焦点", "Focus", "フォーカス"),
-                    focus_label(app.focus, app.language),
-                    app.language.text("上下文", "context", "コンテキスト"),
-                    app.language.text("最近", "latest", "直近"),
-                    app.language
-                        .text("Enter 发送", "Enter send", "Enter で送信"),
-                    app.language.text("选择", "select", "選択")
-                )
-            }
-        })};
-        let status = if app.peer_unread > 0 {
-            format!("{} {} · /peers | {status}",
-                app.language.text("协作未读", "Peer unread", "連携未読"), app.peer_unread)
-        } else { status };
+        let status = app.status_line();
         f.render_widget(Paragraph::new(status), areas[4]);
+        areas
+        };
         app.sidebar_rect = Rect::default();
         if app.sidebar_visible && (wide_sidebar || app.focus == FocusPane::Sidebar) {
-            let sidebar = if wide_sidebar {
+            let mut sidebar = if wide_sidebar {
                 columns[1]
             } else {
                 let width = f.area().width.min(46);
@@ -1789,6 +1712,9 @@ fn draw<B: ratatui::backend::Backend>(
                     height: f.area().height,
                 }
             };
+            if app.quiet_drawn {
+                sidebar.height = app.prompt_rect.y.saturating_sub(sidebar.y);
+            }
             app.sidebar_rect = sidebar;
             if !wide_sidebar {
                 f.render_widget(Clear, sidebar);
