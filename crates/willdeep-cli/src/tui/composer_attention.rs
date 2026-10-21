@@ -23,13 +23,18 @@ impl App {
     }
 
     pub(super) fn composer_hint_style(&self) -> Style {
-        if self.composer_ready() {
-            Style::default().fg(Color::Gray)
-        } else {
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM)
+        let ui = self.ui;
+        let mut style = Style::default().fg(ui.input_suggestion_color.ratatui());
+        if ui.input_suggestion_italic {
+            style = style.add_modifier(Modifier::ITALIC);
         }
+        if ui.input_suggestion_underline {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        if !self.composer_ready() {
+            style = style.add_modifier(Modifier::DIM);
+        }
+        style
     }
 
     pub(super) fn ring_turn_bell(&mut self, writer: &mut impl Write) -> io::Result<()> {
@@ -136,5 +141,19 @@ mod tests {
         app.ring_turn_bell(&mut output).unwrap();
         assert_eq!(output.bytes, b"\x07");
         assert_eq!(output.flushes, 1);
+    }
+
+    #[test]
+    fn input_suggestion_style_uses_configured_color_and_modifiers() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.ui.input_suggestion_italic = true;
+        app.ui.input_suggestion_underline = true;
+        let style = app.composer_hint_style();
+        assert_eq!(style.fg, Some(Color::Gray));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+
+        app.ui.input_suggestion_color = crate::config::InputSuggestionColor::DarkGray;
+        assert_eq!(app.composer_hint_style().fg, Some(Color::DarkGray));
     }
 }

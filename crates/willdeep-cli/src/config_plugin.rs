@@ -6,7 +6,7 @@ use rust_embed::RustEmbed;
 use willdeep_core::plugin::{PluginHost, installed_versions};
 
 pub(crate) const ID: &str = "willdeep-config";
-pub(crate) const VERSION: &str = "0.5.0-rc1";
+pub(crate) const VERSION: &str = "0.6.0-rc2";
 
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-config"]

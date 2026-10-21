@@ -9,6 +9,8 @@ use willdeep_core::McpServerConfig;
 pub const CONFIG_VERSION: u32 = 1;
 
 mod ui_settings;
+#[cfg(test)]
+pub use ui_settings::InputSuggestionColor;
 pub use ui_settings::{UiMode, UiSettings};
 
 #[derive(Clone, Debug, Subcommand)]

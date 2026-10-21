@@ -41,6 +41,10 @@ module ConfigSchema
     { id: "compact", label: "简洁 UI" }
   ].freeze
 
+  INPUT_SUGGESTION_COLORS = %w[reset black red green yellow blue magenta cyan gray dark_gray light_red light_green light_yellow light_blue light_magenta light_cyan white].map do |id|
+    { id: id, label: id.tr("_", " ") }
+  end.freeze
+
   def self.labels_of(list)
     list.each_with_object({}) { |m, h| h[m[:id]] = m[:label] }
   end
@@ -64,7 +68,12 @@ module ConfigSchema
         { key: "compact_status_line", label: "简洁 UI 显示底部信息行", type: "bool", default: true,
           description: "在最下面一行显示就绪、焦点、上下文、Token、缓存、用时与快捷键；只影响简洁 UI" },
         { key: "check_updates", label: "后台检查 CLI 新版本", type: "bool", default: true,
-          description: "后台低频查询公开版本，空闲时每个版本只提醒一次；不自动安装或打断任务" }
+          description: "后台低频查询公开版本，空闲时每个版本只提醒一次；不自动安装或打断任务" },
+        { key: "input_suggestion_color", label: "输入建议颜色", type: "enum", default: "gray",
+          options: INPUT_SUGGESTION_COLORS.map { |m| m[:id] }, optionLabels: labels_of(INPUT_SUGGESTION_COLORS),
+          description: "模型给出的输入建议文字颜色；支持终端 16 色名称" },
+        { key: "input_suggestion_italic", label: "输入建议斜体", type: "bool", default: false },
+        { key: "input_suggestion_underline", label: "输入建议下划线", type: "bool", default: false }
       ]
     },
     {
