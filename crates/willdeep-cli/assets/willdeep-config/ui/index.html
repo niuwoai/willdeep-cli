@@ -477,6 +477,10 @@ const I18N = {
 
 // 服务端 schema 的文字是中文；英文界面按 groupID.key 在这里补译，缺的回退到中文。
 const I18N_SCHEMA_EN = {
+  'section.ui': ['Terminal UI', 'Rust terminal preferences; reopen the client after saving'],
+  'ui.check_updates': ['Check for CLI updates in the background', 'Check public releases infrequently, notify once per version when idle; never install automatically.'],
+  'ui.mode': ['UI mode', 'Full UI is the default. Compact UI stays compact while typing, clicking or idle.'],
+  'ui.compact_status_line': ['Show bottom information line in Compact UI', 'Show status, focus, context, tokens, cache, elapsed time and shortcuts on the last row.'],
   'section.root': ['General', 'Global defaults'],
   'section.agent': ['Agent', 'Turn limits, approval and dispatch'],
   'section.local_model': ['Local model', 'How to reach a local inference server'],
@@ -522,6 +526,8 @@ const I18N_SCHEMA_EN = {
   'option.approval.smart': 'Smart: ask for risky actions (recommended)',
   'option.approval.workspace-write': 'Allow inside the workspace',
   'option.approval.full-access': 'Full access',
+  'option.mode.full': 'Full UI',
+  'option.mode.compact': 'Compact UI',
   'option.provider.auto': 'Auto-detect',
   'option.provider.openai-compatible': 'OpenAI-compatible',
   'option.api.auto': 'Auto'

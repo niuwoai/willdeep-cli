@@ -277,6 +277,9 @@ pub(super) async fn event_loop(
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     initial_transcript.extend(startup_notices(runtime, language));
     let mut app = App::new(initial_transcript, language);
+    app.ui = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?
+        .file
+        .ui;
     app.feedback = agent
         .feedback()
         .cloned()
@@ -292,6 +295,8 @@ pub(super) async fn event_loop(
     app.workspace_attention = workspace_attention(&session.workspace);
     app.attention_read = session.attention_read.clone();
     app.context_window = runtime.context_window.max(1);
+    let (_update_worker, mut update_rx) =
+        update_notice::spawn(runtime.home.clone(), app.ui.check_updates);
     app.background_tasks = runtime.background_tasks.snapshots();
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
@@ -308,6 +313,7 @@ pub(super) async fn event_loop(
         runtime_event_tx.clone(),
     );
     loop {
+        update_notice::show_when_idle(&mut app, &runtime.home);
         // Ctrl+G：终端和事件流都在这一层，按键分支里交不出去。
         if std::mem::take(&mut app.pending_external_editor) {
             open_external_editor(term, &mut events, &mut app, language).await?;
@@ -508,6 +514,7 @@ pub(super) async fn event_loop(
         app.ring_turn_bell(term.backend_mut())?;
         draw(term, &mut app, &runtime.skills)?;
         tokio::select! {
+            Some(release)=update_rx.recv()=>{app.update_available=Some(release);},
             _=refresh.tick()=>{
                 if let Err(error)=peer_commands::refresh_badge(&mut app,session.id,&runtime.home) {
                     app.notice=Some(format!("{}: {error}",language.text("读取协作未读失败","Cannot read peer inbox","連携受信箱を取得できません")));
@@ -590,7 +597,6 @@ pub(super) async fn event_loop(
             },
             event=events.next()=>if let Some(Ok(event))=event { match event {
                 Event::Paste(value)=>{
-                    app.note_user_activity();
                     if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
                         if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
@@ -613,7 +619,6 @@ pub(super) async fn event_loop(
                     }
                 },
                 Event::Mouse(mouse)=>{
-                    if app.wake_quiet_mouse(mouse) { continue; }
                     if app.question.is_some()||app.approval.is_some() {
                         if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
                             app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
@@ -734,7 +739,6 @@ pub(super) async fn event_loop(
                     _=>{}
                 }},
                 Event::Key(key) if key.kind==KeyEventKind::Press=>{
-                    app.note_user_activity();
                     if app.native_selection_mode {
                         // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
                         if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {

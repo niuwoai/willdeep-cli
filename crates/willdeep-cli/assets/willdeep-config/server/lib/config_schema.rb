@@ -3,8 +3,7 @@
 # 只收录 ~/.willdeep/config.toml 里真实存在的键。文件里出现而 schema 没有的键一律算
 # unknownKeys，页面只读展示、不改不删，避免这个插件猜错了键名就把用户配置搞坏。
 #
-# default 只在该键的类型本身就隐含默认值时才给（数组 → []），其余为 nil，
-# 也就是「本插件不知道 WillDeep 的默认值，面板显示未设置」，不编造。
+# default 只在宿主已明确约定默认值时提供，其余为 nil，页面显示未设置。
 module ConfigSchema
   TYPES = %w[string int float bool stringArray secret enum].freeze
 
@@ -37,6 +36,11 @@ module ConfigSchema
     { id: "anthropic-messages", label: "Anthropic Messages" }
   ].freeze
 
+  UI_MODES = [
+    { id: "full", label: "完全 UI" },
+    { id: "compact", label: "简洁 UI" }
+  ].freeze
+
   def self.labels_of(list)
     list.each_with_object({}) { |m, h| h[m[:id]] = m[:label] }
   end
@@ -49,6 +53,18 @@ module ConfigSchema
         { key: "version", label: "配置版本", type: "int", default: nil },
         { key: "default_provider", label: "默认提供商", type: "string", default: nil, ref: "providers",
           description: "对应 [providers.<id>] 里的 id" }
+      ]
+    },
+    {
+      id: "ui", section: "ui", title: "终端 UI", description: "Rust 终端界面偏好；保存后重新打开客户端生效",
+      fields: [
+        { key: "mode", label: "UI 模式", type: "enum", default: "full",
+          options: UI_MODES.map { |m| m[:id] }, optionLabels: labels_of(UI_MODES),
+          description: "默认完全 UI；简洁 UI 固定隐藏正文与输入边框、活动区和权限标签，不随闲置、按键或点击自动切换" },
+        { key: "compact_status_line", label: "简洁 UI 显示底部信息行", type: "bool", default: true,
+          description: "在最下面一行显示就绪、焦点、上下文、Token、缓存、用时与快捷键；只影响简洁 UI" },
+        { key: "check_updates", label: "后台检查 CLI 新版本", type: "bool", default: true,
+          description: "后台低频查询公开版本，空闲时每个版本只提醒一次；不自动安装或打断任务" }
       ]
     },
     {

@@ -29,8 +29,9 @@ impl App {
             prompt_rect: Rect::default(),
             prompt_scroll: 0,
             composer_expanded: false,
-            last_user_activity: Instant::now(),
             quiet_drawn: false,
+            ui: crate::config::UiSettings::default(),
+            update_available: None,
             notice: None,
             input_suggestion: None,
             input_suggestion_epoch: 0,
@@ -189,7 +190,6 @@ impl App {
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
-        self.note_user_activity();
         self.pending_model = None;
         self.pending_provider = None;
         self.transcript = session_transcript(session, self.language);

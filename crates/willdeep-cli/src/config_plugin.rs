@@ -3,28 +3,27 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
-use willdeep_core::plugin::PluginHost;
+use willdeep_core::plugin::{PluginHost, installed_versions};
 
 pub(crate) const ID: &str = "willdeep-config";
+pub(crate) const VERSION: &str = "0.5.0-rc1";
 
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-config"]
 struct ConfigPluginAssets;
 
 pub(crate) async fn ensure_installed(home: &Path) -> Result<()> {
-    let host = PluginHost::discover(home)?;
-    if host.packages().iter().any(|package| package.id == ID) {
+    if installed_versions(&PluginHost::shared_root(home), ID)
+        .iter()
+        .any(|version| version == VERSION)
+    {
         return Ok(());
     }
     let staging = std::env::temp_dir().join(format!("willdeep-config-{}", uuid::Uuid::new_v4()));
     let result = async {
-        for name in ConfigPluginAssets::iter() {
-            let path = staging.join(name.as_ref());
-            std::fs::create_dir_all(path.parent().context("plugin asset has no parent")?)?;
-            let asset = ConfigPluginAssets::get(&name).context("missing bundled config asset")?;
-            std::fs::write(path, asset.data)?;
-        }
-        crate::plugin_cmd::install_package(home, &staging, false).await
+        write_package(&staging)?;
+        crate::plugin_cmd::install_one(home, &staging)?;
+        Ok(())
     }
     .await;
     if let Err(error) = std::fs::remove_dir_all(&staging) {
@@ -33,9 +32,52 @@ pub(crate) async fn ensure_installed(home: &Path) -> Result<()> {
     result
 }
 
+fn write_package(directory: &Path) -> Result<()> {
+    for name in ConfigPluginAssets::iter() {
+        let path = directory.join(name.as_ref());
+        std::fs::create_dir_all(path.parent().context("plugin asset has no parent")?)?;
+        let asset = ConfigPluginAssets::get(&name).context("missing bundled config asset")?;
+        std::fs::write(path, asset.data)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn upgrading_config_plugin_keeps_old_package_config_and_approval_boundary() {
+        let home = std::env::temp_dir().join(format!("config-upgrade-{}", uuid::Uuid::new_v4()));
+        let source = home.join("old-package");
+        write_package(&source).unwrap();
+        let manifest = source.join(".codex-plugin/plugin.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        value["version"] = serde_json::json!("0.4.0-rc1");
+        std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        crate::plugin_cmd::install_one(&home, &source).unwrap();
+        PluginHost::discover(&home)
+            .unwrap()
+            .approve(ID, 1)
+            .await
+            .unwrap();
+        let config = home.join("config.toml");
+        std::fs::write(&config, "version = 1\n# retained configuration\n").unwrap();
+        ensure_installed(&home).await.unwrap();
+        let host = PluginHost::discover(&home).unwrap();
+        assert_eq!(host.package(ID).unwrap().version, VERSION);
+        assert!(host.approval_gap(ID).await.unwrap().is_some());
+        assert!(
+            home.join("plugins/willdeep-config/0.4.0-rc1/.codex-plugin/plugin.json")
+                .is_file()
+        );
+        assert_eq!(
+            std::fs::read_to_string(config).unwrap(),
+            "version = 1\n# retained configuration\n"
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[tokio::test]
     async fn fresh_install_requires_approval_and_repeated_install_preserves_it() {

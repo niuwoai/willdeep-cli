@@ -12,5 +12,6 @@ const lines = Array.from({ length: terminal.buffer.active.length }, (_, index) =
 const text = lines.join("\n");
 if (output) await writeFile(output, text);
 const bg = (x, y) => terminal.buffer.active.getLine(y)?.getCell(x)?.getBgColor();
-process.stdout.write(JSON.stringify({ text, lines, chat_bg: bg(1, 0), input_bg: bg(1, Number(rows) - 2) }));
+const last_row_bgs = Array.from({ length: Number(cols) }, (_, x) => bg(x, Number(rows) - 1));
+process.stdout.write(JSON.stringify({ text, lines, chat_bg: bg(1, 0), input_bg: bg(1, Number(rows) - 2), last_row_bgs }));
 terminal.dispose();
