@@ -1,0 +1,107 @@
+{
+  "version": "0.110.0-rc2",
+  "baseline": "d1ca7fdacce686151be54add5d887d75a9a5ca54",
+  "source_commit": "a6aba6c136cc1e6595d66f5b3a78c4e4d9cfa4c2",
+  "rust_workspace": {
+    "passed": 1713,
+    "failed": 0,
+    "ignored": 10,
+    "suite_results": [
+      [
+        808,
+        0,
+        3
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        18,
+        0,
+        1
+      ],
+      [
+        36,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        801,
+        0,
+        6
+      ],
+      [
+        3,
+        0,
+        0
+      ],
+      [
+        7,
+        0,
+        0
+      ],
+      [
+        37,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ]
+    ]
+  },
+  "web": {
+    "files": 25,
+    "passed": 160,
+    "lint": "passed",
+    "production_build": "passed",
+    "known_warning": "main JavaScript chunk over 500 kB"
+  },
+  "clippy": "passed with -D warnings",
+  "rustfmt": "passed",
+  "source_size": "passed",
+  "diff_check": "passed",
+  "ruby_ci": {
+    "tests": 67,
+    "assertions": 1058,
+    "failures": 0,
+    "model_task_checks": 20
+  },
+  "runtime_collaboration": {
+    "passed": true,
+    "loopback_model_requests": 6,
+    "external_model_requests": 0
+  },
+  "todo_contract": "old package reproduced; fixed package exact PNG and detach passed; unknown command denied",
+  "live_web": {
+    "port": 9847,
+    "version": "0.110.0-rc2",
+    "header": "0.110.0-rc2",
+    "todo_package": "1.5.0",
+    "todo_count": 40,
+    "image_previews": 4,
+    "todo_data_hash_unchanged": true,
+    "other_plugin_registrations_unchanged": true
+  },
+  "cargo_cli_version": "0.110.0-rc2",
+  "website": "CLI updates link to GitHub Releases; no pinned CLI download version"
+}
