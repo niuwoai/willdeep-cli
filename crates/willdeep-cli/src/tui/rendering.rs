@@ -115,8 +115,10 @@ pub(super) fn colored_transcript_at_width(
             lines.push(Line::default());
             continue;
         }
-        // 「· 」开头的是本轮账目：它是给人瞥一眼的，不该跟对话正文抢注意力。
-        let style = if value.starts_with("· ") || value.starts_with(TURN_DIVIDER_PREFIX) {
+        // 工具摘要需要比普通账目行更清晰，避免深色终端上低对比度的 DarkGray 难以辨认。
+        let style = if narration::is_tool_display_row(value) {
+            Style::default().fg(Color::Gray)
+        } else if value.starts_with("· ") || value.starts_with(TURN_DIVIDER_PREFIX) {
             Style::default().fg(Color::DarkGray)
         } else if value.starts_with("You:") {
             Style::default().fg(Color::Cyan)
@@ -140,6 +142,24 @@ pub(super) fn colored_transcript_at_width(
         highlight_matches(&mut text, query);
     }
     text
+}
+
+#[cfg(test)]
+mod tool_row_style_tests {
+    use super::*;
+
+    #[test]
+    fn tool_summaries_use_more_contrast_than_regular_status_lines() {
+        let tool = colored_transcript_at_width(
+            &["· ⋯ 已收起 3 条工具调用 · web_fetch×1".to_owned()],
+            None,
+            80,
+        );
+        let status = colored_transcript_at_width(&["· total 3.2s".to_owned()], None, 80);
+
+        assert_eq!(tool.lines[0].style.fg, Some(Color::Gray));
+        assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
+    }
 }
 
 fn highlight_matches(text: &mut Text<'static>, query: &str) {

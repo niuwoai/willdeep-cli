@@ -549,8 +549,8 @@ fn busy_input(prompt: &str) -> BusyInput {
     let command = value.split_whitespace().next().unwrap_or_default();
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
-        "/help" | "/version" | "/clear" | "/sidebar" | "/skills" | "/history" | "/permissions"
-        | "/permission-mode" | "/queue" => BusyInput::RunNow,
+        "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/skills" | "/history"
+        | "/permissions" | "/permission-mode" | "/queue" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" => BusyInput::RunNow,

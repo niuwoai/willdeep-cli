@@ -93,7 +93,7 @@ GUI 编辑器必须用**等文件关闭才返回**的写法，否则一打开就
 
 | 你输入的 | 行为 |
 |---|---|
-| `/help`、`/clear`、`/sidebar`、`/skills`、`/history`、`/session search` | **立即执行**。这些只改本地显示，不碰会话、模型或 Runtime |
+| `/help`、`/clear`、`/sidebar`、`/uistyle`、`/skills`、`/history`、`/session search` | **立即执行**。这些只改本地显示，不碰会话、模型或 Runtime |
 | `/permissions`、Shift+Tab | **立即执行**，而且对正在跑的这一轮生效——切档就是为了处理「跑着跑着一直弹审批」 |
 | `/model` | **当场收下**，状态行提示「本轮结束后切换到 X」；本轮结束、排队的提示词发出之前真正切过去。换模型本来就只作用于下一轮，不必等 |
 | 普通提示词、`/local <任务>`、`/runtime <任务>` | **排队**。活动区持续显示待发条数和首条摘要，本轮结束（或被中断）后按顺序自动发出；附件跟着一起排队 |
@@ -353,6 +353,7 @@ tmux set -g mouse on
 | `/rewind` | 回到第 N 步：列出 Runtime 跑完的轮次，Enter 确认后对话与文件一起回（`v` 只回对话），见 [检查点回退](CHECKPOINT_REWIND.md) |
 | `/skills` | 查看当前目录发现的技能 |
 | `/sidebar` | 显示或隐藏右侧状态栏（`on` / `off` 显式指定）。状态栏**默认隐藏**，`Ctrl+B` 等效 |
+| `/uistyle [full|compact|status|no-status]` | 裸命令在完整 UI 与简洁 UI 间切换；`full` / `compact` 显式指定。`status` / `no-status` 显示或隐藏简洁 UI 底部状态栏，不改变当前布局；仅对当前 TUI 生效 |
 | `/clear` | 清空聊天显示（会话与上下文原样保留；要换上下文用 `/new`） |
 
 ### Runtime 版本不一致

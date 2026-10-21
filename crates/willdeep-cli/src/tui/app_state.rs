@@ -2081,6 +2081,71 @@ impl App {
                 let message = self.toggle_tool_rows();
                 self.append_transcript(message);
             }
+            "/uistyle" => {
+                use crate::config::UiMode;
+
+                let argument = args.trim().to_ascii_lowercase();
+                let message = match argument.as_str() {
+                    "" | "toggle" => {
+                        self.ui.mode = match self.ui.mode {
+                            UiMode::Full => UiMode::Compact,
+                            UiMode::Compact => UiMode::Full,
+                        };
+                        if self.ui.mode == UiMode::Compact {
+                            self.language.text(
+                                "已切换到简洁 UI",
+                                "Switched to compact UI",
+                                "簡潔 UI に切り替えました",
+                            )
+                        } else {
+                            self.language.text(
+                                "已切换到完整 UI",
+                                "Switched to full UI",
+                                "完全 UI に切り替えました",
+                            )
+                        }
+                    }
+                    "full" => {
+                        self.ui.mode = UiMode::Full;
+                        self.language.text(
+                            "已切换到完整 UI",
+                            "Switched to full UI",
+                            "完全 UI に切り替えました",
+                        )
+                    }
+                    "compact" => {
+                        self.ui.mode = UiMode::Compact;
+                        self.language.text(
+                            "已切换到简洁 UI",
+                            "Switched to compact UI",
+                            "簡潔 UI に切り替えました",
+                        )
+                    }
+                    "status" => {
+                        self.ui.compact_status_line = true;
+                        self.language.text(
+                            "简洁 UI 底部状态栏已显示",
+                            "Compact UI bottom status bar shown",
+                            "簡潔 UI の下部ステータスバーを表示しました",
+                        )
+                    }
+                    "no-status" => {
+                        self.ui.compact_status_line = false;
+                        self.language.text(
+                            "简洁 UI 底部状态栏已隐藏",
+                            "Compact UI bottom status bar hidden",
+                            "簡潔 UI の下部ステータスバーを非表示にしました",
+                        )
+                    }
+                    other => {
+                        self.append_transcript(format!(
+                            "Error: usage: {command} [full|compact|status|no-status] (got `{other}`)"
+                        ));
+                        return true;
+                    }
+                };
+                self.append_transcript(format!("System: {message}"));
+            }
             "/exit" => {
                 self.quit_requested = true;
                 self.append_transcript(format!(

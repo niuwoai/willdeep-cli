@@ -57,6 +57,10 @@ fn tool_row_marker(line: &str) -> Option<&'static str> {
         })
 }
 
+pub(super) fn is_tool_display_row(line: &str) -> bool {
+    line.starts_with("· ⋯ ") || tool_row_marker(line).is_some()
+}
+
 fn tool_row_name(line: &str) -> Option<&str> {
     let marker = tool_row_marker(line)?;
     let rest = line.strip_prefix("· ")?.strip_prefix(marker)?.trim_start();

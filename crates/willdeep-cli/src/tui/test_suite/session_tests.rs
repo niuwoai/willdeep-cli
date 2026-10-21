@@ -1666,6 +1666,32 @@ fn sidebar_starts_hidden_and_the_command_toggles_it() {
     assert!(app.transcript.iter().any(|line| line.contains("usage:")));
 }
 
+#[test]
+fn uistyle_toggles_layout_and_controls_the_compact_bottom_status_bar() {
+    use crate::config::UiMode;
+
+    let mut app = App::new(Vec::new(), Language::En);
+    let skills = SkillCatalog::default();
+    assert_eq!(app.ui.mode, UiMode::Full);
+
+    assert!(app.handle_slash_command("/uistyle", &skills));
+    assert_eq!(app.ui.mode, UiMode::Compact);
+    assert!(app.handle_slash_command("/uistyle", &skills));
+    assert_eq!(app.ui.mode, UiMode::Full);
+
+    assert!(app.handle_slash_command("/uistyle compact", &skills));
+    assert_eq!(app.ui.mode, UiMode::Compact);
+    assert!(app.handle_slash_command("/uistyle no-status", &skills));
+    assert_eq!(app.ui.mode, UiMode::Compact);
+    assert!(!app.ui.compact_status_line);
+    assert!(app.handle_slash_command("/uistyle status", &skills));
+    assert_eq!(app.ui.mode, UiMode::Compact);
+    assert!(app.ui.compact_status_line);
+
+    assert!(app.handle_slash_command("/uistyle full", &skills));
+    assert_eq!(app.ui.mode, UiMode::Full);
+}
+
 /// Many Inbox rows have no action left except "stop showing me this" —
 /// a Runtime task that was interrupted days ago, for instance. Dismiss
 /// must work, must persist, and must refuse running items.
@@ -1807,6 +1833,7 @@ fn a_running_turn_no_longer_swallows_every_enter() {
         "/help",
         "/clear",
         "/sidebar off",
+        "/uistyle status",
         "/skills",
         "/history 登录",
         // 换模型只作用于下一轮：当场收下，本轮结束再切。

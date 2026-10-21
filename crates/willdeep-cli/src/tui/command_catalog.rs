@@ -54,6 +54,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:端口]",
             "/sidebar [on|off]",
+            "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <任务>",
             "/local <任务>",
@@ -85,6 +86,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:PORT]",
             "/sidebar [on|off]",
+            "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <task>",
             "/local <task>",
@@ -116,6 +118,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:ポート]",
             "/sidebar [on|off]",
+            "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <タスク>",
             "/local <タスク>",
@@ -250,6 +253,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "显示或隐藏右侧状态栏",
                 "Show or hide the status sidebar",
                 "状態サイドバーの表示・非表示",
+            ),
+        ),
+        (
+            "/uistyle",
+            language.text(
+                "切换完整/简洁 UI，或显示/隐藏简洁 UI 底部状态栏",
+                "Toggle full/compact UI or show/hide the compact bottom status bar",
+                "完全/簡潔 UI、または簡潔 UI の下部ステータスバーを切替",
             ),
         ),
         (
