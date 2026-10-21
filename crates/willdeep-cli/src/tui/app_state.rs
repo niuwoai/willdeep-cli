@@ -28,6 +28,7 @@ impl App {
             attachment_panel: None,
             prompt_rect: Rect::default(),
             prompt_scroll: 0,
+            composer_placeholder_dismissed: false,
             composer_expanded: false,
             quiet_drawn: false,
             ui: crate::config::UiSettings::default(),
@@ -780,7 +781,11 @@ impl App {
             .min(total.saturating_sub(self.viewport_height));
     }
     pub(super) fn edit_input(&mut self, edit: impl FnOnce(&mut PromptEditor)) {
+        let had_input = !self.input.is_empty();
         edit(&mut self.input);
+        if had_input && self.input.is_empty() {
+            self.composer_placeholder_dismissed = false;
+        }
         // 打字只隐藏灰字；删回空输入框仍能 Tab。真正发送别的话才算忽略。
         self.skill_selected = 0;
         self.skill_menu_dismissed = false;
@@ -2031,6 +2036,7 @@ impl App {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains((x, y).into()) {
             self.focus = FocusPane::Prompt;
+            self.composer_placeholder_dismissed = true;
             let row = y.saturating_sub(self.prompt_rect.y + 1) as usize + self.prompt_scroll;
             let col = x.saturating_sub(self.prompt_rect.x + 1) as usize;
             self.input.set_cursor_visual(

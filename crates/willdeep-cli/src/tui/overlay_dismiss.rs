@@ -204,6 +204,7 @@ impl App {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains(point) {
             self.focus = FocusPane::Prompt;
+            self.composer_placeholder_dismissed = true;
             let line = row.saturating_sub(self.prompt_rect.y + 1) as usize + self.prompt_scroll;
             let column = column.saturating_sub(self.prompt_rect.x + 1) as usize;
             self.input.set_cursor_visual(

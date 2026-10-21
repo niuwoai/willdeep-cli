@@ -1,7 +1,5 @@
 use super::*;
 
-const INPUT_BACKGROUND: Color = Color::Rgb(24, 32, 46);
-
 /// Fixed compact UI. Dialogs and the sidebar are rendered by the common layer.
 /// The composer and optional footer always span the whole terminal, including padding.
 pub(super) fn render(
@@ -49,14 +47,28 @@ pub(super) fn render(
     let visible = areas[3].height.saturating_sub(1).max(1) as usize;
     app.prompt_scroll = row.saturating_sub(visible - 1);
     let suggestion = app.visible_input_suggestion();
+    let show_placeholder = suggestion.is_none()
+        && app.composer_ready()
+        && app.input.is_empty()
+        && !app.composer_placeholder_dismissed;
     let body = match suggestion {
         Some(text) => Text::from(Span::styled(text.to_owned(), app.composer_hint_style())),
+        None if show_placeholder => Text::from(Span::styled(
+            match app.language {
+                Language::ZhCn => "请说出你的需求",
+                Language::Ja => "ご要望を入力してください",
+                Language::En => "Tell me what you need",
+            },
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
+        )),
         None => Text::from(app.input.wrapped_text(width)),
     };
     let style = if app.composer_ready() {
         app.composer_style()
     } else {
-        Style::default().fg(Color::Cyan).bg(INPUT_BACKGROUND)
+        Style::default().fg(Color::Cyan).bg(COMPOSER_BACKGROUND)
     };
     // Paint the complete rectangle first: text length and line wrapping must not
     // determine background coverage at the right edge or on empty rows.
@@ -90,7 +102,7 @@ pub(super) fn render(
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
         .scroll((app.prompt_scroll.min(u16::MAX as usize) as u16, 0));
-    let input = if suggestion.is_some() {
+    let input = if suggestion.is_some() || show_placeholder {
         input.wrap(Wrap { trim: false })
     } else {
         input
@@ -170,6 +182,7 @@ mod tests {
                     for x in 0..width {
                         let separator = &buffer[(x, top)];
                         assert_eq!(separator.symbol(), "▔");
+                        assert_eq!(separator.fg, Color::DarkGray);
                         assert_eq!(separator.bg, buffer[(x, top + 1)].bg);
                         assert_ne!(separator.bg, buffer[(x, top - 1)].bg);
                     }
@@ -194,7 +207,7 @@ mod tests {
                     draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
                     let buffer = terminal.backend().buffer();
                     let bg = buffer[(0, height - 1)].bg;
-                    assert_ne!(bg, Color::Reset);
+                    assert_eq!(bg, COMPOSER_BACKGROUND);
                     for y in app.prompt_rect.y..height {
                         for x in 0..width {
                             assert_eq!(
@@ -209,6 +222,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn placeholder_shows_only_when_idle_and_hides_after_click_or_typing() {
+        let mut app = compact_app();
+        app.language = Language::ZhCn;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        let rendered = screen(&terminal).replace(' ', "");
+        assert!(
+            rendered.contains("请说出你的需求"),
+            "rendered screen: {rendered}"
+        );
+
+        app.handle_mouse(
+            app.prompt_rect.x + 5,
+            app.prompt_rect.y + 1,
+            &BackgroundTaskRegistry::default(),
+            &SkillCatalog::default(),
+        );
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        assert!(
+            !screen(&terminal)
+                .replace(' ', "")
+                .contains("请说出你的需求")
+        );
+
+        app.handle_paste("帮我修复这个问题".into());
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        let rendered = screen(&terminal).replace(' ', "");
+        assert!(rendered.contains("帮我修复这个问题"));
+        assert!(!rendered.contains("请说出你的需求"));
     }
 
     #[test]

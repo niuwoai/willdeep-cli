@@ -447,7 +447,9 @@ pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line
             let mut spans = assistant_prefix(index == 0);
             spans.push(Span::styled(
                 raw.to_owned(),
-                Style::default().fg(Color::White).bg(Color::DarkGray),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
             output.push(Line::from(spans));
             index += 1;
@@ -759,7 +761,9 @@ fn render_inline_markdown(value: &str, base: Style) -> Vec<Span<'static>> {
                 let end = rest[1..].find('`').unwrap() + 1;
                 spans.push(Span::styled(
                     rest[1..end].to_owned(),
-                    Style::default().fg(Color::LightCyan).bg(Color::DarkGray),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 rest = &rest[end + 1..];
             }

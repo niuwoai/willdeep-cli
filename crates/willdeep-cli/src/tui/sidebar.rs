@@ -358,7 +358,8 @@ pub(super) fn render_sidebar(f: &mut ratatui::Frame<'_>, app: &mut App, area: Re
                                 && app.attention_selected == item_index
                             {
                                 attention_style(item.status)
-                                    .bg(Color::DarkGray)
+                                    .bg(Color::LightCyan)
+                                    .fg(Color::Black)
                                     .add_modifier(Modifier::BOLD)
                             } else {
                                 attention_style(item.status)

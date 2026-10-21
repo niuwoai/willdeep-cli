@@ -40,6 +40,10 @@ use willdeep_core::{
 use crate::editor::{DraftAttachment, PromptEditor};
 use crate::i18n::Language;
 
+/// Theme-mapped ANSI black gives the composer a darker surface than the
+/// terminal background while keeping cyan input and gray suggestions legible.
+const COMPOSER_BACKGROUND: Color = Color::Black;
+
 mod activity;
 mod agent_commands;
 mod agent_worktree_ui;
@@ -274,6 +278,7 @@ struct App {
     attachment_panel: Option<attachment_panel::AttachmentPanel>,
     prompt_rect: Rect,
     prompt_scroll: usize,
+    composer_placeholder_dismissed: bool,
     composer_expanded: bool,
     quiet_drawn: bool,
     ui: crate::config::UiSettings,
@@ -1855,15 +1860,25 @@ fn draw<B: ratatui::backend::Backend>(
                     } else {
                         " "
                     };
-                    Line::from(vec![
-                        Span::styled(
-                            format!("{prefix} {command} "),
+                    if position == app.command_selected {
+                        Line::styled(
+                            format!("{prefix} {command} {description}"),
                             Style::default()
-                                .fg(Color::LightMagenta)
+                                .fg(Color::Black)
+                                .bg(Color::LightCyan)
                                 .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(*description, Style::default().fg(Color::White)),
-                    ])
+                        )
+                    } else {
+                        Line::from(vec![
+                            Span::styled(
+                                format!("{prefix} {command} "),
+                                Style::default()
+                                    .fg(Color::LightMagenta)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(*description, Style::default().fg(Color::Reset)),
+                        ])
+                    }
                 })
                 .collect::<Vec<_>>();
             // 鼠标点击按屏幕行找命令，所以命中表必须跟着同一个窗口走，否则
@@ -1930,18 +1945,31 @@ fn draw<B: ratatui::backend::Backend>(
                     } else {
                         " "
                     };
-                    Line::from(vec![
-                        Span::styled(
-                            format!("{prefix} ${} ", skill.identifier),
+                    if position == app.skill_selected {
+                        Line::styled(
+                            format!(
+                                "{prefix} ${} {} · {}",
+                                skill.identifier, skill.name, skill.description
+                            ),
                             Style::default()
-                                .fg(Color::LightCyan)
+                                .fg(Color::Black)
+                                .bg(Color::LightCyan)
                                 .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("{} · {}", skill.name, skill.description),
-                            Style::default().fg(Color::White),
-                        ),
-                    ])
+                        )
+                    } else {
+                        Line::from(vec![
+                            Span::styled(
+                                format!("{prefix} ${} ", skill.identifier),
+                                Style::default()
+                                    .fg(Color::LightCyan)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!("{} · {}", skill.name, skill.description),
+                                Style::default().fg(Color::Reset),
+                            ),
+                        ])
+                    }
                 })
                 .collect::<Vec<_>>();
             app.skill_hits = (0..skill_matches.len())

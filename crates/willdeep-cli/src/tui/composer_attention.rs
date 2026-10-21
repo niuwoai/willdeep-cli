@@ -1,9 +1,6 @@
 use super::*;
 use std::io::Write;
 
-// 深青背景与浅色正文搭配，让空白输入区也能清楚标出「轮到你」。
-const READY_BACKGROUND: Color = Color::Rgb(22, 48, 48);
-
 impl App {
     pub(super) fn composer_ready(&self) -> bool {
         !self.running
@@ -16,7 +13,7 @@ impl App {
         Style::default()
             .fg(Color::Cyan)
             .bg(if self.composer_ready() {
-                READY_BACKGROUND
+                COMPOSER_BACKGROUND
             } else {
                 Color::Reset
             })
@@ -79,11 +76,13 @@ mod tests {
         app.input.insert("unsent draft");
         app.begin_turn(true, "working".into());
         app.finish_turn();
+        assert_eq!(app.composer_style().fg, Some(Color::Cyan));
+        assert_eq!(app.composer_style().bg, Some(Color::Black));
         draw(&mut terminal, &mut app, &skills).unwrap();
         let rect = app.prompt_rect;
         for y in rect.y..rect.bottom() {
             for x in rect.x..rect.right() {
-                assert_eq!(terminal.backend().buffer()[(x, y)].bg, READY_BACKGROUND);
+                assert_eq!(terminal.backend().buffer()[(x, y)].bg, COMPOSER_BACKGROUND);
             }
         }
         assert_eq!(app.input.text(), "unsent draft");

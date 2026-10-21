@@ -60,6 +60,10 @@ fn latest_project(store: &SessionStore, workspace: &Path) -> Option<SessionDiges
         .digests()
         .into_iter()
         .filter(|digest| !digest.bridged && digest.has_user_input)
+        // A relative stored path is interpreted against this process's current
+        // directory. That can make `.` sessions from unrelated launches appear
+        // to belong to whichever project starts the chooser now.
+        .filter(|digest| digest.workspace.is_absolute())
         .filter(|digest| {
             digest
                 .workspace
@@ -441,6 +445,25 @@ mod tests {
             std::fs::read(root.join("sessions").join(format!("{}.json", wanted.id))).unwrap(),
             before
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn relative_workspace_session_is_not_claimed_by_the_current_project() {
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-startup-relative-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = SessionStore::new(&root);
+        let mut relative = Session::new(Path::new(".").to_path_buf(), None, "relative session");
+        relative
+            .messages
+            .push(willdeep_core::Message::user("belongs to unknown workspace"));
+        store.save(&mut relative).unwrap();
+
+        let current_workspace = std::env::current_dir().unwrap();
+        assert!(latest_project(&store, &current_workspace).is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
