@@ -83,6 +83,9 @@ pub(super) fn render(
         .block(
             Block::default()
                 .borders(Borders::TOP)
+                // A normal box-drawing rule sits halfway down the cell,
+                // leaving a visible background strip above the separator.
+                .border_set(ratatui::symbols::border::ONE_EIGHTH_TALL)
                 .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
@@ -147,6 +150,32 @@ mod tests {
         assert!(app.quiet_drawn);
         assert_eq!(app.input.text(), "first character");
         assert!(!screen(&terminal).contains("Activity"));
+    }
+
+    #[test]
+    fn input_separator_sits_on_the_top_edge_of_the_background() {
+        for running in [false, true] {
+            for footer in [false, true] {
+                let mut app = compact_app();
+                app.running = running;
+                app.ui.compact_status_line = footer;
+                let mut terminal =
+                    Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+                for (width, height) in [(120, 30), (45, 18), (160, 40)] {
+                    terminal.backend_mut().resize(width, height);
+                    terminal.resize(Rect::new(0, 0, width, height)).unwrap();
+                    draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                    let buffer = terminal.backend().buffer();
+                    let top = app.prompt_rect.y;
+                    for x in 0..width {
+                        let separator = &buffer[(x, top)];
+                        assert_eq!(separator.symbol(), "▔");
+                        assert_eq!(separator.bg, buffer[(x, top + 1)].bg);
+                        assert_ne!(separator.bg, buffer[(x, top - 1)].bg);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
