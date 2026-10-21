@@ -121,7 +121,7 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 29);
+        assert_eq!(commands.len(), 30);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
             "/daemon",
@@ -136,6 +136,7 @@ mod command_tests {
             "/skills",
             "/clear",
             "/queue",
+            "/peers",
         ] {
             assert!(commands.contains(&command), "{command} 不在命令目录里");
         }

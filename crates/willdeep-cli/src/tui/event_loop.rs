@@ -509,6 +509,9 @@ pub(super) async fn event_loop(
         draw(term, &mut app, &runtime.skills)?;
         tokio::select! {
             _=refresh.tick()=>{
+                if let Err(error)=peer_commands::refresh_badge(&mut app,session.id,&runtime.home) {
+                    app.notice=Some(format!("{}: {error}",language.text("读取协作未读失败","Cannot read peer inbox","連携受信箱を取得できません")));
+                }
                 // Webhook delivery is detached; drain its failures here so a
                 // dead endpoint shows up as a notice instead of silence.
                 if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知 Webhook","Notification webhook","通知 Webhook")));}
@@ -1245,6 +1248,14 @@ pub(super) async fn event_loop(
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
                         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
                         KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
+                            if app.input.text().trim()=="/peers" || app.input.text().trim().starts_with("/peers ") {
+                                let command=app.input.take();
+                                if let Err(error)=peer_commands::handle(&command,&mut app,session,store,runtime).await {
+                                    app.input.insert(&command);
+                                    app.notice=Some(format!("{}: {error}",language.text("协作操作失败，输入已保留","Coordination failed; input retained","連携操作に失敗しました。入力は保持されています")));
+                                }
+                                continue;
+                            }
                             if app.input.text().trim()=="/schedule" || app.input.text().trim().starts_with("/schedule ") {
                                 let command=app.input.take();
                                 let home=runtime.home.clone(); let tx=runtime.tx.clone();

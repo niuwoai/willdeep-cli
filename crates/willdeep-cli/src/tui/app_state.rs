@@ -3,6 +3,9 @@ use super::*;
 impl App {
     pub(super) fn new(transcript: Vec<String>, language: Language) -> Self {
         Self {
+            peer_request: None,
+            peer_observed: None,
+            peer_unread: 0,
             input: PromptEditor::default(),
             transcript,
             running: false,

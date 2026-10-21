@@ -174,10 +174,8 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         }
         let mut entry = item(role, message.content.clone(), message.attachments.len());
         entry.attachment_reference = attachment_reference(&message.attachments);
-        if role == "user"
-            && let Some(authored) = user_authored_text(&message.content)
-        {
-            entry.content = authored.to_owned();
+        if role == "user" {
+            entry.content = visible_user_text(&message.content).to_owned();
             // A context-only turn has no operator bubble to display.
             if entry.content.trim().is_empty() && entry.attachment_count == 0 {
                 continue;
@@ -249,6 +247,35 @@ pub fn user_authored_text(content: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Display-only projection. Persisted prompts and model context remain intact.
+/// Recognize complete host routing envelopes at the end, never arbitrary XML
+/// snippets, inline examples, incomplete blocks, or fenced user quotations.
+pub fn visible_user_text(content: &str) -> &str {
+    let text = user_authored_text(content).unwrap_or(content);
+    let Some((authored, envelope)) = text.rsplit_once("\n\n<runtime-route ") else {
+        return text;
+    };
+    if authored.matches("```").count() % 2 != 0 {
+        return text;
+    }
+    let Some((attributes, body)) = envelope.split_once(">\n") else {
+        return text;
+    };
+    if !attributes.starts_with("tier=\"")
+        || !attributes.contains("\" profile=\"")
+        || !attributes.contains("\" confidence=\"")
+        || !attributes.ends_with('"')
+    {
+        return text;
+    }
+    let bounded = body.starts_with("The runtime classified this as bounded `")
+        && body.ends_with(" work. Compile a task packet, keep read_files separate from write_files, and delegate it before doing the implementation in the parent. Give a verifier whenever completion is command-decidable.\n</runtime-route>");
+    let worker = attributes.starts_with("tier=\"worker\"")
+        && body.starts_with("The runtime dispatched this bounded read-only preflight before the standard model. Use the report as evidence, verify citations when needed, and answer without re-reading the same material unless it is incomplete.\n<worker-report>\n")
+        && body.ends_with("\n</worker-report>\n</runtime-route>");
+    if bounded || worker { authored } else { text }
 }
 
 fn item(role: &'static str, content: String, attachment_count: usize) -> ConversationItem {

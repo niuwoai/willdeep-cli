@@ -1085,6 +1085,7 @@ impl Agent {
                 }
             }
             self.append_pending_instructions(&mut messages);
+            let (peer_message_ids, _) = self.tools.append_peer_context(&mut messages)?;
             checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             // 事件在这里进对话，而不是在工具与工具之间：一次 assistant 的
             // tool_calls 必须紧跟它那批 tool 结果，中间插一条用户消息会把这个
@@ -1211,6 +1212,8 @@ impl Agent {
             }
             let completion = match response {
                 Ok(Some(completion)) => {
+                    self.tools
+                        .peer_context_consumed(&peer_message_ids, &request_messages)?;
                     self.settle_leases(&leases, LeaseOutcome::Delivered);
                     first_response_millis
                         .get_or_insert_with(|| run_started.elapsed().as_millis() as u64);
@@ -1326,7 +1329,9 @@ impl Agent {
                     return Err(AgentError::EmptyResponse);
                 }
                 messages.push(Message::assistant(&content, Vec::new()));
-                if self.append_pending_instructions(&mut messages) {
+                if self.append_pending_instructions(&mut messages)
+                    || self.tools.append_peer_context(&mut messages)?.1
+                {
                     continue;
                 }
                 let wrapping_up = self
@@ -1920,5 +1925,7 @@ fn routing_request_from_message(content: &str) -> &str {
     if tail.is_empty() { content } else { tail }
 }
 
+#[cfg(test)]
+mod peer_session_tests;
 #[cfg(test)]
 mod tests;

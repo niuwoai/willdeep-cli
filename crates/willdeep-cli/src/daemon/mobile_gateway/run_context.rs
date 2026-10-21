@@ -216,7 +216,7 @@ async fn build_capabilities(
 ) -> Result<Value> {
     let Some(id) = id else {
         return Ok(
-            json!({"providers": [], "models": [], "skills": [], "experts": [], "plugins": [], "supports_configuration": true, "approval_modes": ["strict", "smart", "workspace-write", "full-access"]}),
+            json!({"providers": [], "models": [], "skills": [], "experts": [], "plugins": [], "supports_configuration": true, "review_kinds":["tool", "worktree"], "session_collaboration":true, "approval_modes": ["strict", "smart", "workspace-write", "full-access"]}),
         );
     };
     let (session, config) = loaded(server, id)?;
@@ -274,7 +274,8 @@ async fn build_capabilities(
         "active_provider_id": active_profile, "active_model_id": active_model,
         "active_approval_mode": effective_mode.approval_mode().as_str(),
         "approval_modes": if workspace.access == WorkspaceAccess::ReadOnly { Vec::<&str>::new() } else { vec!["strict", "smart", "workspace-write", "full-access"] },
-        "supports_configuration": true, "models_status": models_status, "experts_supported": false}),
+        "supports_configuration": true, "models_status": models_status, "experts_supported": false,
+        "review_kinds":["tool", "worktree"], "session_collaboration":true}),
     )
 }
 

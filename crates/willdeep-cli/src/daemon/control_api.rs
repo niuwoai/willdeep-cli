@@ -1,6 +1,7 @@
 use super::*;
 mod agent_team;
 mod attachments;
+pub(super) mod peer_sessions;
 mod schedules;
 use willdeep_runtime_protocol::{
     AgentPromptParams, AgentWaitParams, AnswerQuestionParams, ApiRequest, ApiResponse,
@@ -258,6 +259,9 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             },
             Err(error) => Err(error),
         },
+        "session.peers" => peer_sessions::list(state, &request),
+        "session.peer.send" => peer_sessions::send(state, &request),
+        "session.peer.inbox" | "session.peer.read" => peer_sessions::inbox(state, &request),
         "session.create" => session_create(state, &request),
         "session.attachments" => attachments::get(state, &request),
         "session.rename" => session_rename(state, &request),
@@ -740,6 +744,8 @@ fn kernel_ignore(state: &ServerState, id: uuid::Uuid) -> ApiResult {
 }
 
 const MUTATING_OPERATIONS: &[&str] = &[
+    "session.peer.send",
+    "session.peer.read",
     "schedule.create",
     "schedule.update",
     "schedule.action",
@@ -794,6 +800,7 @@ fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
         "turn.submit"
+            | "session.peer.send"
             | "agent.spawn"
             | "agent.continue"
             | "agent.prompt"

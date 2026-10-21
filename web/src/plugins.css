@@ -2,14 +2,26 @@
    插件的入口和宿主的入口必须看起来是同一个应用的两个位置。 */
 
 .plugin-rail {
-  width: 76px;
-  flex: 0 0 76px;
-  background: var(--bg-page);
-  border-right: 1px solid var(--bg-panel);
-  padding: 12px 6px;
-  gap: 4px;
+  --rail-width: 68px;
+  width: var(--rail-width);
+  flex: 0 0 var(--rail-width);
+  height: 100dvh;
+  min-height: 0;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  padding: 16px 7px 12px;
+  gap: 9px;
   overflow: visible;
 }
+.rail-brand { display: flex; justify-content: center; padding: 0 0 8px; flex: none; }
+.rail-brand img { width: 28px; height: 28px; object-fit: contain; }
+.rail-scroll { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 4px; overflow-y: auto; scrollbar-width: none; }
+.rail-scroll::-webkit-scrollbar { display: none; }
+.rail-agent-group { display: flex; justify-content: center; color: var(--text-dim); font-size: 9px; margin: 10px 0 0; }
+.rail-agent-group svg { display: none; }
 
 .rail-button {
   display: flex;
@@ -17,9 +29,10 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 9px 2px;
+  padding: 10px 2px;
+  flex-shrink: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
@@ -74,16 +87,26 @@
 .rail-overflow { position: relative; }
 
 .rail-overflow-menu {
-  position: absolute;
-  left: calc(100% + 6px);
-  top: 0;
+  position: fixed;
+  left: 76px;
+  bottom: 12px;
   z-index: 20;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   min-width: 200px;
   padding: 6px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 32px var(--shadow);
+}
+
+@media (max-width: 767px) {
+  .plugin-rail { --rail-width: 54px; padding: 14px 4px 10px; }
+  .rail-label { font-size: 9px; }
+  .rail-agent-group { display: none; }
+  .rail-brand img { width: 26px; height: 26px; }
+  .rail-overflow-menu { left: 62px; }
 }
 
 /* 「更多插件」里的行照 macOS 侧栏插件行：行高 31、图标 14、图标与文字

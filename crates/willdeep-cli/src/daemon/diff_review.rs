@@ -2196,18 +2196,82 @@ fn safe_workspace_path(workspace: &Path, path: &str) -> Result<PathBuf> {
 }
 
 fn file_diff(workspace: &Path, path: &str, area: DiffArea) -> Result<String> {
+    file_diff_bounded(workspace, path, area, MAX_DIFF_BYTES, false)
+}
+
+pub(crate) fn full_file_diff(workspace: &Path, path: &str, maximum: usize) -> Result<String> {
+    file_diff_bounded(workspace, path, DiffArea::Combined, maximum, true)
+}
+
+fn review_git(workspace: &Path, args: &[&str], maximum: usize) -> Result<Vec<u8>> {
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .context("diff stdout unavailable")?
+        .take(maximum.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > maximum {
+        let _ = child.kill();
+        let _ = child.wait();
+        bail!("Diff exceeds the mobile review limit; review on the computer");
+    }
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(output.status.success(), "Cannot read workspace diff");
+    Ok(bytes)
+}
+
+fn file_diff_bounded(
+    workspace: &Path,
+    path: &str,
+    area: DiffArea,
+    maximum: usize,
+    full: bool,
+) -> Result<String> {
     let safe_path = safe_workspace_path(workspace, path)?;
     let mut output = Vec::new();
     if matches!(area, DiffArea::Staged | DiffArea::Combined) {
-        output.extend(git(
-            workspace,
-            &["diff", "--cached", "--no-ext-diff", "--", path],
-        )?);
+        let args = [
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--",
+            path,
+        ];
+        output.extend(if full {
+            review_git(workspace, &args, maximum)?
+        } else {
+            git(workspace, &args)?
+        });
     }
     if matches!(area, DiffArea::Unstaged | DiffArea::Combined) {
-        output.extend(git(workspace, &["diff", "--no-ext-diff", "--", path])?);
+        let args = [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--",
+            path,
+        ];
+        output.extend(if full {
+            review_git(workspace, &args, maximum.saturating_sub(output.len()))?
+        } else {
+            git(workspace, &args)?
+        });
     }
-    if output.is_empty() && safe_path.is_file() {
+    if output.is_empty() && safe_path.is_file() && (!full || !tracked_in_head(workspace, path)) {
+        anyhow::ensure!(
+            !full || std::fs::metadata(&safe_path)?.len() <= maximum as u64,
+            "File exceeds the mobile review limit; review on the computer"
+        );
         let data = std::fs::read(&safe_path)?;
         if data.contains(&0) {
             return Ok("Binary untracked file".to_owned());
@@ -2224,8 +2288,12 @@ fn file_diff(workspace: &Path, path: &str, area: DiffArea) -> Result<String> {
             output.extend(format!("+{line}\n").bytes());
         }
     }
-    if output.len() > MAX_DIFF_BYTES {
-        output.truncate(MAX_DIFF_BYTES);
+    if output.len() > maximum {
+        anyhow::ensure!(
+            !full,
+            "Diff exceeds the mobile review limit; review on the computer"
+        );
+        output.truncate(maximum);
         while std::str::from_utf8(&output).is_err() {
             output.pop();
         }
@@ -2251,6 +2319,69 @@ fn git(workspace: &Path, args: &[&str]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn full_mobile_diff_handles_clean_staged_deleted_and_long_line_files() {
+        let root = std::env::temp_dir().join(format!("mobile-diff-kinds-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init", "--quiet"]);
+        run_git(&root, &["config", "user.email", "test@willdeep.invalid"]);
+        run_git(&root, &["config", "user.name", "WillDeep Test"]);
+        run_git(&root, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(root.join("space 文件.txt"), "base\n").unwrap();
+        std::fs::write(root.join("deleted.txt"), "removed content\n").unwrap();
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "--quiet", "-m", "fixture"]);
+        let limit = 4 * 1024 * 1024;
+        assert!(
+            super::full_file_diff(&root, "space 文件.txt", limit)
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::write(root.join("space 文件.txt"), "staged\n").unwrap();
+        run_git(&root, &["add", "space 文件.txt"]);
+        std::fs::write(root.join("space 文件.txt"), "staged\nunstaged\n").unwrap();
+        let both = super::full_file_diff(&root, "space 文件.txt", limit).unwrap();
+        assert!(both.contains("+staged"));
+        assert!(both.contains("+unstaged"));
+        std::fs::remove_file(root.join("deleted.txt")).unwrap();
+        assert!(
+            super::full_file_diff(&root, "deleted.txt", limit)
+                .unwrap()
+                .contains("-removed content")
+        );
+        let long = format!("{}LONG_LINE_END\n", "中文👩🏽‍💻".repeat(8000));
+        std::fs::write(root.join("long new.txt"), &long).unwrap();
+        assert!(
+            super::full_file_diff(&root, "long new.txt", limit)
+                .unwrap()
+                .contains(&long)
+        );
+        std::fs::write(root.join("empty.txt"), "").unwrap();
+        assert!(
+            super::full_file_diff(&root, "empty.txt", limit)
+                .unwrap()
+                .contains("@@ -0,0 +1,0 @@")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn full_mobile_diff_preserves_large_tail_and_refuses_oversize() {
+        let root = std::env::temp_dir().join(format!("mobile-full-diff-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init", "--quiet"]);
+        let text = format!(
+            "{}TAIL_AFTER_TEN_THOUSAND_LINES\n",
+            "long fixture line\n".repeat(40_000)
+        );
+        std::fs::write(root.join("large.txt"), text).unwrap();
+        let full = super::full_file_diff(&root, "large.txt", 4 * 1024 * 1024).unwrap();
+        assert!(full.lines().count() > 10_000);
+        assert!(full.contains("TAIL_AFTER_TEN_THOUSAND_LINES"));
+        assert!(!full.contains("[diff truncated]"));
+        assert!(super::full_file_diff(&root, "large.txt", 1024).is_err());
+        assert!(super::full_file_diff(&root, "../outside", 4096).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
 
     fn run_git(root: &Path, args: &[&str]) {

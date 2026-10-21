@@ -14,6 +14,7 @@ import { ProviderSetup, type SetupStatus } from "./ProviderSetup";
 import { PluginPage } from "./PluginPage";
 import { ScheduleManager } from "./ScheduleManager";
 import { ConversationSchedules } from "./ConversationSchedules";
+import { SessionCollaboration } from "./SessionCollaboration";
 import { scheduleText } from "./scheduleMessages";
 import { PluginRail, type RailSelection } from "./PluginRail";
 import { PluginSidebar } from "./PluginSidebar";
@@ -22,7 +23,8 @@ import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
 import { queueText } from "./queueMessages";
-import { ListPlus } from "lucide-react";
+import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
+import "./chatWorkspace.css";
 import { QueuedMessages, type QueuedMessage } from "./QueuedMessages";
 import { SentAttachments } from "./SentAttachments";
 import { AttachmentManager } from "./AttachmentManager";
@@ -228,6 +230,7 @@ export function App() {
   const displayRevisionRef = useRef("");
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   const [sessionSearch, setSessionSearch] = useState("");
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState("");
   const [version, setVersion] = useState("");
   const [chat, setChat] = useState<ChatMessage[]>([]); const [prompt, setPrompt] = useState("");
@@ -808,16 +811,16 @@ export function App() {
         setPopup({ entries: sessionContextEntries, x: event.clientX, y: event.clientY, args: { session: item.id } });
       }}>
       <button type="button" className="session-title" disabled={busy} onClick={() => void loadSession(item.id, item.active_turn_id)}>
-        {item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}>📌</span>}
+        {item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
         {/* 标题没生成时后端会带回首条用户消息。显示它而不是一排
             一模一样的 New session——那些会话是有内容的。 */}
         {item.preview ? <span className="session-untitled">{item.preview}</span> : item.title}
       </button>
       <Flex className="session-actions">
-        <button type="button" title={t.renameSession} aria-label={t.renameSession} disabled={busy || item.active} onClick={() => void renameSession(item)}>✎</button>
-        <button type="button" title={item.pinned_at != null ? t.unpinSession : t.pinSession} aria-label={item.pinned_at != null ? t.unpinSession : t.pinSession} disabled={busy} onClick={() => void togglePinSession(item)}>{item.pinned_at != null ? "↧" : "📌"}</button>
-        <button type="button" title={item.archived ? t.unarchiveSession : t.archiveSession} aria-label={item.archived ? t.unarchiveSession : t.archiveSession} disabled={busy || item.active} onClick={() => void toggleArchiveSession(item)}>{item.archived ? "↥" : "▣"}</button>
-        <button type="button" className="danger" title={t.deleteSession} aria-label={t.deleteSession} disabled={busy || item.active} onClick={() => setDeleteTarget(item)}>×</button>
+        <button type="button" title={t.renameSession} aria-label={t.renameSession} disabled={busy || item.active} onClick={() => void renameSession(item)}><Pencil size={12} /></button>
+        <button type="button" title={item.pinned_at != null ? t.unpinSession : t.pinSession} aria-label={item.pinned_at != null ? t.unpinSession : t.pinSession} disabled={busy} onClick={() => void togglePinSession(item)}>{item.pinned_at != null ? <PinOff size={12} /> : <Pin size={12} />}</button>
+        <button type="button" title={item.archived ? t.unarchiveSession : t.archiveSession} aria-label={item.archived ? t.unarchiveSession : t.archiveSession} disabled={busy || item.active} onClick={() => void toggleArchiveSession(item)}>{item.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}</button>
+        <button type="button" className="danger" title={t.deleteSession} aria-label={t.deleteSession} disabled={busy || item.active} onClick={() => setDeleteTarget(item)}><X size={12} /></button>
       </Flex>
     </Flex>;
   }
@@ -1065,15 +1068,16 @@ export function App() {
     </Flex></Box>;
   }
 
-  return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">
+  return <Box>{setupGuide}<Flex className="chat-workspace" minH="100vh" bg="var(--bg-page)" color="var(--text)">
     {railNav}
     {/* 侧栏本身不滚动：只有会话列表滚。这样列表能吃掉全部剩余高度，
         而不是被上面几块设置挤到下半屏。 */}
-    <Box as="aside" w={{ base: "0", md: "282px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--bg-panel-hover)" p="5" bg="var(--bg-surface)" overflow="hidden">
+    {mobileSessionsOpen && <button className="session-sidebar-backdrop" aria-label={t.cancel} onClick={() => setMobileSessionsOpen(false)} />}
+    <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileSessionsOpen(false); }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
       <Flex justify="space-between" align="flex-start" mb="5">
         <Box minW="0">
           <Heading size="md" lineHeight="1.2">{t.appName}</Heading>
-          <Text color="var(--text-faint)" fontSize="xs">{t.webHarness}</Text>
+          <Text color="var(--text-faint)" fontSize="xs">{t.conversation}</Text>
         </Box>
         <SidebarSettings messages={t} language={language} onLanguageChange={setLanguage} />
       </Flex>
@@ -1097,7 +1101,7 @@ export function App() {
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="5">
         <Flex mb="2" justify="space-between" align="baseline"><Text fontSize="xs" color="var(--text-dim)">{t.session}</Text><Button size="xs" variant="ghost" color="var(--text-dim)" _hover={{ bg: "var(--bg-panel)", color: "var(--text-strong)" }} disabled={busy} onClick={() => { localStorage.removeItem(`${lastSessionPrefix}${workspace}`); setSessionId(""); setChat([]); }}>{t.newSession}</Button></Flex>
-        <Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" />
+        <div className="session-search"><Search size={15} /><Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" /></div>
         <Box className="session-list" flex="1" minH="0">
           <VStack align="stretch" gap="1">{liveSessions.map(sessionRow)}{!liveSessions.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}</VStack>
           {archivedSessions.length > 0 && <Box mt="2">
@@ -1107,7 +1111,7 @@ export function App() {
             {showArchived && <VStack align="stretch" gap="1" mt="1">{archivedSessions.map(sessionRow)}</VStack>}
           </Box>}
         </Box>
-        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}>⑂</Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}>↶</Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}>⇩</Button></Flex>}
+        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
         {rewindNotice && <Text mt="1" fontSize="xs" color="var(--text-dim)">{rewindNotice}</Text>}
       </Flex>
       <Text as="footer" mt="5" pt="3" borderTop="1px solid" borderColor="var(--bg-panel-hover)" color="var(--text-ghost)" fontSize="2xs" textAlign="right">{t.version}: {version ? `v${version}` : "—"}</Text>
@@ -1167,8 +1171,12 @@ export function App() {
       </Dialog.Root>
     </Box>
     <Flex flex="1" minW="0" className="conversation-with-schedules">
-    <Container flex="1" minW="0" minH="0" maxW="920px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
-      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box py="24"><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
+    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span><h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
+      {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
+      {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
+    </div></header>
+    <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
+      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
         <VStack align="stretch" gap="3">{groupActivityMessages(chat).map((message) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{message.content}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />
       </Box>
@@ -1227,7 +1235,6 @@ export function App() {
       </Box>
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />
     </Container>
-    {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </Flex>
     {pluginOverlays}
   </Flex></Box>;

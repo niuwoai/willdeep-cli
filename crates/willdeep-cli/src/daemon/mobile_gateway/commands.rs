@@ -28,6 +28,9 @@ impl Gateway {
         let kind = envelope.kind.clone();
         let result = match kind.as_str() {
             "session.list" => return vec![self.snapshot(server, id.as_deref()).await],
+            "session.peers" | "session.peer.send" | "session.peer.inbox" | "session.peer.read" => {
+                self.peer_operation(server, &envelope).await
+            }
             "session.select" => self.select_session(server, &envelope).await,
             "workspace.list" => self.workspace_list(server, &envelope).await,
             "capabilities.get" => self.capabilities(server, &envelope).await,
@@ -36,6 +39,8 @@ impl Gateway {
             "session.create" => self.create_session(server, &envelope).await,
             "turn.stop" => self.stop_turn(server, &envelope).await,
             "tool.decide" => self.decide_tool(server, &envelope).await,
+            "review.get" => self.review(server, &envelope).await,
+            "worktree.list" => self.worktree_list(server, &envelope).await,
             "queue.update" => self.queue_update(server, &envelope).await,
             // 与 macOS 桌面端 `AgentMobileGatewayCommandError.unsupportedCommand` 逐字一致：
             // 手机端靠这个前缀区分「这条命令不支持」和「连接出错」。
@@ -47,6 +52,45 @@ impl Gateway {
             Ok(outgoing) => outgoing,
             Err(error) => vec![command_error(id.as_deref(), &kind, &error.0)],
         }
+    }
+
+    async fn peer_operation(
+        &mut self,
+        server: &ServerState,
+        envelope: &PhoneEnvelope,
+    ) -> Result<Vec<Value>, CommandError> {
+        let source = envelope_session(envelope)?
+            .ok_or_else(|| CommandError::new("Select a session before coordinating."))?;
+        open_session(server, source).await?;
+        let mut params = envelope.payload.clone();
+        if !params.is_object() {
+            return Err(CommandError::new("Invalid coordination request."));
+        }
+        match envelope.kind.as_str() {
+            "session.peers" => params = json!({"id": source}),
+            "session.peer.send" => params["source_session_id"] = json!(source),
+            _ => params["session_id"] = json!(source),
+        }
+        let operation = match envelope.kind.as_str() {
+            "session.peers" => "session.peers",
+            "session.peer.send" => "session.peer.send",
+            "session.peer.inbox" => "session.peer.inbox",
+            "session.peer.read" => "session.peer.read",
+            _ => return Err(CommandError::new("Unsupported coordination operation.")),
+        };
+        let result: Value = call(
+            server,
+            operation,
+            params,
+            Some(envelope_request_id(envelope)),
+        )
+        .await?;
+        Ok(vec![reply(
+            envelope.id.as_deref(),
+            "session.peer.result",
+            Some(source),
+            json!({"operation": envelope.kind, "data": result}),
+        )])
     }
 
     async fn select_session(
@@ -341,6 +385,21 @@ impl Gateway {
             .into_iter()
             .find(|approval| approval.id == interaction_id)
         {
+            let session_id = self.task_session(server, approval.task_id).await;
+            if envelope_session(envelope)?.is_some_and(|id| Some(id) != session_id) {
+                return Err(CommandError::new(
+                    "Approval does not belong to this session.",
+                ));
+            }
+            if approved
+                && envelope
+                    .payload
+                    .get("review_revision")
+                    .and_then(Value::as_str)
+                    .is_some_and(|expected| expected != super::review::revision(&approval))
+            {
+                return Err(CommandError::new("Review changed; reload before deciding."));
+            }
             let _: RuntimeInteractionResult = call(
                 server,
                 "approval.resolve",
@@ -398,7 +457,7 @@ impl Gateway {
 }
 
 /// 打开一条会话：必须存在且没有归档。
-async fn open_session(
+pub(super) async fn open_session(
     server: &ServerState,
     session_id: uuid::Uuid,
 ) -> Result<RuntimeSession, CommandError> {
@@ -465,7 +524,9 @@ async fn active_workspace_root(server: &ServerState) -> Result<String, CommandEr
         .ok_or_else(|| CommandError::new("No workspace is registered in the Runtime yet."))
 }
 
-fn envelope_session(envelope: &PhoneEnvelope) -> Result<Option<uuid::Uuid>, CommandError> {
+pub(super) fn envelope_session(
+    envelope: &PhoneEnvelope,
+) -> Result<Option<uuid::Uuid>, CommandError> {
     let raw = envelope
         .session_id
         .clone()
@@ -493,7 +554,7 @@ pub(super) fn derived_request_id(request_id: uuid::Uuid) -> uuid::Uuid {
     uuid::Uuid::from_u128(request_id.as_u128() ^ 0x5eed_0000_0000_0000_0000_0000_0000_0001)
 }
 
-fn payload_string(payload: &Value, keys: &[&str]) -> Option<String> {
+pub(super) fn payload_string(payload: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         payload
             .get(*key)

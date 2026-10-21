@@ -24,6 +24,7 @@ pub mod kernel_store;
 mod livefire;
 pub mod mcp;
 pub mod monitor_notice;
+pub mod peer_sessions;
 pub mod plugin;
 mod project_rules;
 pub mod prompt;

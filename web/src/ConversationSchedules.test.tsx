@@ -21,6 +21,7 @@ describe("conversation schedules", () => {
       return Response.json({ writable: true, tasks: [task, { ...task, id: "other", name: "另一会话的任务", origin_session_id: "other" }].map((task) => ({ task, next_fire_at: null, last_run: null })) });
     }));
     mount();
+    fireEvent.click(screen.getAllByText("会话定时任务")[0]);
     fireEvent.click(await screen.findByRole("button", { name: /当前会话复查/ }));
     expect(screen.queryByText("另一会话的任务")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "暂停计划" }));
@@ -40,6 +41,7 @@ describe("conversation schedules", () => {
       return Response.json({ writable: true, tasks: [] });
     }));
     mount();
+    fireEvent.click(screen.getAllByText("会话定时任务")[0]);
     const create = await screen.findByRole("button", { name: "新建任务" });
     await waitFor(() => expect(create.hasAttribute("disabled")).toBe(false));
     fireEvent.click(create);

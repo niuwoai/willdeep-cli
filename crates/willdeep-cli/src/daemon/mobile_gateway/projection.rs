@@ -108,7 +108,7 @@ pub(super) fn clip(text: &str, max_chars: usize) -> String {
 /// 助手回复里的换行、缩进和代码块全压扁。它对每个词恰好产出一个词，所以这里按原文
 /// 的空白把打码后的词逐个放回去。词数对不上（将来它的行为变了）就退回压扁的版本——
 /// 宁可难看，也不能让没打码的词漏出去。
-fn redact_preserving_layout(text: &str) -> String {
+pub(super) fn redact_preserving_layout(text: &str) -> String {
     let redacted = willdeep_core::judge::redact_credentials(text);
     if redacted.split(' ').filter(|word| !word.is_empty()).count()
         != text.split_whitespace().count()
@@ -357,7 +357,8 @@ impl Gateway {
             "patch_proposals": [],
             "jobs": [],
             "queued_messages": [],
-            "worktree_changes": [],
+            "worktree_changes": self.worktree_cache.as_ref().filter(|(session, _)| Some(*session) == self.selected)
+                .map(|(_, value)| vec![value.clone()]).unwrap_or_default(),
             "messages": messages,
         });
         if let Some(selected) = self.selected {

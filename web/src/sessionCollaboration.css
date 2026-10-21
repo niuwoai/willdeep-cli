@@ -1,0 +1,42 @@
+.conversation-disclosure > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px; min-height: 38px; border-radius: 9px; color: var(--text-dim); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.conversation-disclosure > summary::-webkit-details-marker { display: none; }
+.conversation-disclosure > summary:hover, .conversation-disclosure[open] > summary { color: var(--text); background: var(--bg-panel); }
+.conversation-disclosure > summary:focus-visible, .conversation-inspector button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.conversation-inspector { position: absolute; right: 22px; top: 68px; z-index: 20; width: 440px; max-height: calc(100dvh - 96px); overflow-y: auto; overscroll-behavior: contain; background: var(--bg-raised); border: 1px solid var(--border-subtle); border-radius: 16px; padding: 22px; box-shadow: 0 16px 60px var(--shadow); color: var(--text); scrollbar-width: thin; }
+.inspector-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }
+.inspector-heading h2 { font-size: 16px; font-weight: 600; }
+.inspector-controls { display: flex; align-items: center; }
+.inspector-heading p { font-size: 12px; color: var(--text-dim); margin-top: 5px; }
+.conversation-inspector button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; border-radius: 7px; background: transparent; padding: 6px 9px; color: var(--text-dim); cursor: pointer; font-size: 12px; }
+.conversation-inspector button:hover { background: var(--bg-panel); color: var(--text); }
+.conversation-inspector button:disabled { opacity: .45; cursor: default; }
+.conversation-inspector .inspector-icon { padding: 8px; }
+.peer-unread, .task-count { border-radius: 6px; padding: 1px 6px; background: var(--accent-surface); color: var(--accent); font-size: 11px; font-weight: 600; }
+.peer-compose { padding: 14px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-page); }
+.peer-compose label { display: grid; gap: 7px; color: var(--text-dim); font-size: 11px; margin-bottom: 12px; }
+.peer-compose select, .peer-compose textarea { width: 100%; min-width: 0; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px; padding: 10px; color: var(--text); font-size: 13px; }
+.peer-compose textarea { min-height: 100px; resize: vertical; line-height: 1.7; }
+.peer-compose textarea::placeholder { color: var(--text-faint); }
+.peer-compose select:focus-visible, .peer-compose textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.peer-compose-footer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.peer-compose-footer > span { font-size: 10px; color: var(--text-dim); margin-right: auto; font-variant-numeric: tabular-nums; }
+.peer-compose-footer .peer-send { background: var(--accent-strong); color: var(--on-accent); padding: 8px 12px; }
+.peer-compose-footer .peer-send:hover { background: var(--accent-strong); filter: brightness(1.1); color: var(--on-accent); }
+.peer-context { margin-bottom: 12px; font-size: 11px; }
+.peer-context summary { cursor: pointer; color: var(--text-dim); }
+.peer-context summary span { margin-left: 8px; color: var(--text-dim); }
+.peer-context dl { display: grid; grid-template-columns: 80px 1fr; gap: 6px; margin-top: 10px; }
+.peer-context dd { overflow-wrap: anywhere; color: var(--text-soft); }
+.peer-history-heading { display: flex; align-items: center; gap: 7px; margin: 24px 0 4px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+.peer-history-heading span { font-weight: 400; }
+.peer-history { list-style: none; margin: 0; padding: 0; }
+.peer-history > li { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
+.peer-history header { display: flex; flex-wrap: wrap; gap: 7px; justify-content: space-between; align-items: center; }
+.peer-history header strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.peer-delivery { font-size: 10px; color: var(--text-dim); }
+.peer-delivery.delivered { color: var(--success); }
+.peer-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 13px; margin: 9px 0; }
+.peer-actions { display: flex; flex-wrap: wrap; gap: 3px; margin-left: -9px; }
+.peer-trust-hint { font-size: 11px; color: var(--text-dim); line-height: 1.7; margin: 16px 0 0; }
+.inspector-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-faint); padding: 28px 0; font-size: 12px; }
+.peer-inspector > [role="alert"] { font-size: 12px; color: var(--danger-text); margin-bottom: 14px; overflow-wrap: anywhere; }

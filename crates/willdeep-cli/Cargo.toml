@@ -33,6 +33,7 @@ ratatui.workspace = true
 ratatui-image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-tungstenite.workspace = true

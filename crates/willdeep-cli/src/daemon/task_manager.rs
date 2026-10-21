@@ -1,6 +1,9 @@
 use super::*;
 
 impl TaskManager {
+    pub(super) fn notify_peer(&self, session_id: uuid::Uuid) {
+        self.steering.notify_peer(session_id);
+    }
     /// 用户在本轮进行中的插话：送进该会话正在跑的任务，返回收下它的任务；
     /// 没有在途任务返回 None，由客户端排队等本轮结束。
     pub(super) fn steer(&self, session_id: uuid::Uuid, message: String) -> Option<uuid::Uuid> {

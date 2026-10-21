@@ -1083,7 +1083,10 @@ impl RuntimeSessionStore {
         if session.status == RuntimeSessionStatus::Archived {
             bail!("Runtime Session is archived");
         }
-        let title_changed = if request.team_control.is_none() {
+        let peer_wake = request.origin_client.as_deref().is_some_and(|origin| {
+            origin.starts_with(super::control_api::peer_sessions::WAKE_ORIGIN)
+        });
+        let title_changed = if request.team_control.is_none() && !peer_wake {
             self.apply_auto_title(session_id, &request.prompt, !request.attachments.is_empty())?
         } else {
             false
@@ -1103,6 +1106,32 @@ impl RuntimeSessionStore {
             bail!("this Agent already has a pending continuation request");
         }
         let timestamp = now();
+        if peer_wake {
+            let history = turns
+                .values()
+                .filter(|turn| turn.metadata.session_id == session_id)
+                .collect::<Vec<_>>();
+            if history
+                .iter()
+                .any(|turn| !turn_status_is_terminal(turn.metadata.status))
+                || history
+                    .iter()
+                    .max_by_key(|turn| turn.metadata.queue_sequence)
+                    .is_some_and(|turn| turn.metadata.status != RuntimeTurnStatus::Completed)
+                || history
+                    .iter()
+                    .filter(|turn| {
+                        turn.origin_client.as_deref().is_some_and(|origin| {
+                            origin.starts_with(super::control_api::peer_sessions::WAKE_ORIGIN)
+                        }) && timestamp.saturating_sub(turn.metadata.created_at)
+                            < super::PEER_WAKE_WINDOW_SECONDS
+                    })
+                    .count()
+                    >= super::PEER_WAKE_MAXIMUM_TURNS
+            {
+                return Err(ScheduledSessionBusy.into());
+            }
+        }
         if request
             .origin_client
             .as_deref()

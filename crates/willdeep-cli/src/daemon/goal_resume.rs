@@ -37,6 +37,12 @@ pub(super) fn spawn(state: std::sync::Arc<ServerState>, settings: crate::config:
                 willdeep_core::judge::redact_credentials(&format!("{error:#}")),
             );
         }
+        if let Err(error) = super::control_api::peer_sessions::recover(&state) {
+            let _ = state.events.append(
+                "session.peer_recovery_error",
+                willdeep_core::judge::redact_credentials(&error.to_string()),
+            );
+        }
     });
 }
 

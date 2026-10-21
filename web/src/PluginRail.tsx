@@ -7,7 +7,7 @@
 // macOS 把插件放在侧栏「插件」分组里，一行图标 + 名称；Web 宿主保留竖向入口栏
 // 的布局（平台差异），但分组标题、图标取法和灰度层次与那边一致。
 
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, Flex, Portal, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
 import { FlaskConical, Library, Users } from "lucide-react";
 import brandIcon from "./assets/willdeep-app-icon.png";
@@ -53,8 +53,9 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
   );
 
   return (
-    <Flex as="nav" className={`plugin-rail${selection.kind === "agents" || selection.kind === "agent-experiments" ? " agent-workspace-rail" : ""}`} direction="column" aria-label={messages.pluginNavigation}>
-      {(selection.kind === "agents" || selection.kind === "agent-experiments") && <div className="agent-rail-brand"><img src={brandIcon} alt="" /><strong>{brandLabel}</strong></div>}
+    <Flex as="nav" className="plugin-rail" direction="column" aria-label={messages.pluginNavigation}>
+      <div className="rail-brand" title={brandLabel}><img src={brandIcon} alt={brandLabel ?? messages.appName} /></div>
+      <div className="rail-scroll">
       {button(
         "conversation",
         messages.conversation,
@@ -87,7 +88,7 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
             () => setShowOverflow((current) => !current)
           )}
           {showOverflow && (
-            <Box className="rail-overflow-menu" role="menu">
+            <Portal><Box className="rail-overflow-menu" role="menu">
               <Text className="rail-overflow-heading">{messages.pluginMore}</Text>
               {overflow.map(({ plugin, destination }) => (
                 <button
@@ -105,10 +106,11 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
                   <span>{destination.title}</span>
                 </button>
               ))}
-            </Box>
+            </Box></Portal>
           )}
         </Box>
       )}
+      </div>
       {button(
         "center",
         messages.pluginCenter,

@@ -224,3 +224,25 @@ fn attached_context_handles_crlf_empty_text_and_escaped_boundaries() {
     let empty = format!("{ATTACHED_CONTEXT_HEADER}\nmetadata\n{USER_TEXT_BOUNDARY}\n");
     assert!(project(&[Message::user(empty)], None).is_empty());
 }
+
+#[test]
+fn user_projection_hides_complete_host_routing_without_mutating_history() {
+    let envelope = "<runtime-route tier=\"standard\" profile=\"implementer\" confidence=\"78\">\nThe runtime classified this as bounded `implementer` work. Compile a task packet, keep read_files separate from write_files, and delegate it before doing the implementation in the parent. Give a verifier whenever completion is command-decidable.\n</runtime-route>";
+    let content = format!("检查登录模块\n\n{envelope}");
+    let message = Message::user(&content);
+    assert_eq!(
+        project(std::slice::from_ref(&message), None)[0].content,
+        "检查登录模块"
+    );
+    assert_eq!(message.content, content);
+    let attachment = format!("{ATTACHED_CONTEXT_HEADER}\ncontext\n{USER_TEXT_BOUNDARY}\n{content}");
+    assert_eq!(visible_user_text(&attachment), "检查登录模块");
+    for quoted in [
+        format!("解释这个例子：\n```xml\n\n{envelope}\n```"),
+        format!("```xml\n\n{envelope}"),
+        "用户编写的 XML\n\n<runtime-route tier=\"standard\" profile=\"implementer\" confidence=\"78\">\n用户内容\n</runtime-route>".to_owned(),
+        content.trim_end_matches("</runtime-route>").to_owned(),
+    ] {
+        assert_eq!(visible_user_text(&quoted), quoted);
+    }
+}

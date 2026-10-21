@@ -23,6 +23,8 @@ use crate::safety::CommandSafety;
 use crate::sandbox::{SandboxPolicy, SandboxSpec};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
+mod peer_sessions;
+pub use peer_sessions::SessionCollaboration;
 
 const DEFAULT_MAX_RESULTS: usize = 60;
 const MAX_RESULTS: usize = 200;
@@ -174,6 +176,7 @@ impl ToolError {
 }
 
 pub struct ToolRegistry {
+    session_collaboration: Option<Arc<dyn SessionCollaboration>>,
     completion_contract: Option<CompletionContract>,
     execution_deadline: Mutex<Option<tokio::time::Instant>>,
     workspace: PathBuf,
@@ -318,6 +321,7 @@ impl ToolRegistry {
             )));
         }
         Ok(Self {
+            session_collaboration: None,
             completion_contract: None,
             execution_deadline: Mutex::new(None),
             output_store: crate::tool_output::ToolOutputStore::new(
@@ -906,6 +910,9 @@ impl ToolRegistry {
             tools.extend(board_tools::definitions());
         }
         tools.extend(agent_control::definitions());
+        if self.session_collaboration.is_some() {
+            tools.extend(peer_sessions::definitions());
+        }
         if !self.mcp.is_empty() {
             tools.extend([
                 definition(
@@ -967,6 +974,9 @@ impl ToolRegistry {
 
     async fn dispatch(&self, call: &ToolCall) -> Result<String, ToolError> {
         match call.name.as_str() {
+            "list_workspace_sessions" | "send_session_message" | "read_session_messages" => {
+                self.session_tool(call).await
+            }
             "read_tool_output" => {
                 let args: OutputPageArgs = parse(call)?;
                 Ok(self.output_store.page(

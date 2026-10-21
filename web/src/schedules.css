@@ -1,6 +1,6 @@
 .schedule-manager { flex: 1; min-width: 0; padding: 24px; height: 100vh; overflow: auto; background: var(--bg-page); }
 .schedule-manager header { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 24px; }
-.schedule-manager > header p { font-size: 12px; color: var(--text-muted); line-height: 1.65; max-width: 560px; }
+.schedule-manager > header p { font-size: 13px; color: var(--text-dim); line-height: 1.65; max-width: 560px; }
 .schedule-manager button.schedule-new { display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; font-size: 12px; }
 .schedule-manager h1 { font-size: 24px; font-weight: 650; }
 .schedule-manager h2 { font-size: 20px; font-weight: 600; }

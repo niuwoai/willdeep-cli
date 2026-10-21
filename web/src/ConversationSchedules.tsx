@@ -1,22 +1,25 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, Clock3 } from "lucide-react";
 import type { Language, Messages } from "./i18n";
 import { ScheduleForm } from "./ScheduleForm";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { scheduleText } from "./scheduleMessages";
 import { newSchedule, scheduleJson, scheduleWrite, ScheduleRequestError, type ScheduleDraft, type ScheduleList, type ScheduleWorkspace } from "./scheduleTypes";
 import "./conversationSchedules.css";
+import { useInspectorDismiss } from "./useInspectorDismiss";
 
 export function ConversationSchedules({ sessionId, workspace, workspaces, language, messages, onOpenSession }: {
   sessionId: string; workspace: string; workspaces: ScheduleWorkspace[]; language: Language; messages: Messages;
   onOpenSession: (id: string, turnId?: string | null) => void;
 }) {
   const s = (key: Parameters<typeof scheduleText>[0]) => scheduleText(key, language);
+  const panel = useInspectorDismiss();
   const client = useQueryClient();
   const list = useQuery({ queryKey: ["schedules"], queryFn: ({ signal }) => scheduleJson<ScheduleList>("/api/schedules", { signal }), refetchInterval: 5000 });
   const tasks = list.data?.tasks.filter((view) => view.task.origin_session_id === sessionId) ?? [];
   const [selected, setSelected] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia || window.matchMedia("(min-width: 1200px)").matches);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [draft, setDraft] = useState<ScheduleDraft | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
@@ -40,8 +43,9 @@ export function ConversationSchedules({ sessionId, workspace, workspaces, langua
       setError(reason instanceof Error ? reason.message : s("unknown"));
     } finally { setPending(false); }
   };
-  return <aside className="conversation-schedules" aria-label={s("conversationTasks")}><details open={panelOpen} onToggle={(event) => setPanelOpen(event.currentTarget.open)}>
-    <summary>{s("conversationTasks")} <span>{tasks.length}</span></summary>
+  return <aside className="conversation-schedules" aria-label={s("conversationTasks")}><details ref={panel} className="conversation-disclosure" open={panelOpen} onToggle={(event) => setPanelOpen(event.currentTarget.open)}>
+    <summary aria-label={s("conversationTasks")} title={s("conversationTasks")}><Clock3 size={16} /><span>{s("conversationTasks")}</span>{tasks.length > 0 && <span className="task-count">{tasks.length}</span>}<ChevronDown size={13} /></summary>
+    <div className="conversation-inspector schedule-inspector"><div className="inspector-heading"><h2>{s("conversationTasks")}</h2></div>
     <p>{s("conversationHint")}</p>
     <button type="button" disabled={!writable} onClick={() => {
       if (!leave()) return;
@@ -69,5 +73,6 @@ export function ConversationSchedules({ sessionId, workspace, workspaces, langua
       })}>{s(current.task.enabled ? "pause" : "resume")}</button>
       <ScheduleHistory key={current.task.id} taskId={current.task.id} language={language} writable={writable && !pending} onOperation={operation} onOpenSession={onOpenSession} />
     </section>}
+    </div>
   </details></aside>;
 }

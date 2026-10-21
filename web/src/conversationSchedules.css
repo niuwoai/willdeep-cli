@@ -1,6 +1,4 @@
-.conversation-schedules { flex: 0 0 auto; order: -1; width: 100%; max-height: 40vh; padding: 1rem; border-bottom: 1px solid var(--border); overflow-y: auto; color: var(--text); }
-.conversation-schedules summary { cursor: pointer; font-weight: 600; }
-.conversation-schedules summary span { color: var(--text-dim); }
+.conversation-schedules { flex: 0 0 auto; color: var(--text); }
 .conversation-schedules p { color: var(--text-dim); font-size: .85rem; margin: .75rem 0; }
 .conversation-schedules button { border: 1px solid var(--border); background: var(--bg-surface); border-radius: .5rem; padding: .5rem; cursor: pointer; margin: .25rem 0; }
 .conversation-schedules button:disabled { opacity: .5; cursor: default; }
@@ -12,8 +10,5 @@
 .conversation-schedules .schedule-run-list { display: flex; flex-direction: column; }
 .conversation-schedules .schedule-run-list button { text-align: start; display: flex; flex-wrap: wrap; gap: .4rem; }
 .conversation-schedules .schedule-run-detail dl { font-size: .8rem; }
-.conversation-with-schedules { flex-direction: column; height: 100vh; }
-@media (min-width: 1200px) {
-  .conversation-with-schedules { flex-direction: row; }
-  .conversation-schedules { order: 0; width: 310px; height: 100vh; max-height: none; border-bottom: 0; border-left: 1px solid var(--border); }
-}
+.conversation-inspector.schedule-inspector > button { background: var(--accent-strong); color: var(--on-accent); padding: 9px 14px; }
+.conversation-inspector.schedule-inspector > button:hover { background: var(--accent-strong); color: var(--on-accent); }

@@ -1,6 +1,7 @@
 import type { Messages } from "./i18n";
 import { Markdown } from "./Markdown";
 import "./conversation.css";
+import { Workflow } from "lucide-react";
 
 type StepStatus = "pending" | "in_progress" | "done" | "skipped" | "failed";
 export type Plan = { summary: string; steps: Array<{ id: string; text: string; status: StepStatus; detail?: string | null }> };
@@ -21,6 +22,10 @@ export function ConversationCard({ plan, details = [], messages: t }: { plan?: P
     skipped: t.planSkipped, failed: t.toolFailed,
   };
   const finished = plan?.steps.filter((step) => step.status === "done" || step.status === "skipped").length ?? 0;
+  if (!plan) return <details className="host-event" aria-label={t.hostActivity}>
+    <summary><Workflow size={14} /><span>{t.hostActivity}</span><small>{t.conversationOriginal}</small></summary>
+    {details.map((content) => <pre key={content}>{content}</pre>)}
+  </details>;
   return <section className="conversation-card" aria-label={plan ? t.planTitle : t.hostActivity}>
     <div className="conversation-card-heading">
       <strong>{plan ? t.planTitle : t.hostActivity}</strong>

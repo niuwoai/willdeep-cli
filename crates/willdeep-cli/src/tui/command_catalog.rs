@@ -38,7 +38,7 @@ pub(super) fn help_text(language: Language) -> String {
 }
 
 /// 每条命令的用法签名。占位符随语言走，中文用户不该对着 `<task>` 猜要填什么。
-fn command_usages(language: Language) -> [(&'static str, &'static str); 29] {
+fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
     let descriptions = command_candidates(language);
     let usages = match language {
         Language::ZhCn => [
@@ -136,6 +136,10 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 29] {
         ],
     };
     // 用法与说明按同一顺序声明，配错了就是把说明贴到别的命令上。
+    let mut usages = usages.to_vec();
+    usages.push(
+        "/peers [list|send <session> <text>|reply <message> <text>|read <message>|open <session>]",
+    );
     debug_assert!(
         usages
             .iter()
@@ -146,11 +150,15 @@ fn command_usages(language: Language) -> [(&'static str, &'static str); 29] {
                 .is_some_and(|head| head == *command)),
         "help usages must stay aligned with command_candidates order"
     );
-    std::array::from_fn(|index| (usages[index], descriptions[index].1))
+    usages
+        .into_iter()
+        .zip(descriptions)
+        .map(|(usage, (_, description))| (usage, description))
+        .collect()
 }
 
-pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static str); 29] {
-    [
+pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'static str)> {
+    vec![
         (
             "/help",
             language.text("查看帮助", "Show help", "ヘルプを表示"),
@@ -374,6 +382,14 @@ pub(super) fn command_candidates(language: Language) -> [(&'static str, &'static
                 "管理待发消息：编辑、删除或立即插话（Ctrl+Q）",
                 "Manage queued messages: edit, delete or steer now (Ctrl+Q)",
                 "送信待ちを編集・削除・即時送達（Ctrl+Q）",
+            ),
+        ),
+        (
+            "/peers",
+            language.text(
+                "独立会话协作：查看、发送、回复、已读与跳转",
+                "Independent session coordination: list, send, reply, read and open",
+                "独立セッションの一覧・送信・返信・既読・切替",
             ),
         ),
     ]

@@ -56,6 +56,7 @@ mod model_commands;
 mod model_provider;
 mod narration;
 mod overlay_dismiss;
+mod peer_commands;
 mod permission_commands;
 mod plan_ui;
 mod prompt_queue;
@@ -240,6 +241,9 @@ struct TrackedSuggestion {
 }
 
 struct App {
+    peer_request: Option<(String, uuid::Uuid)>,
+    peer_observed: Option<(uuid::Uuid, Option<(std::time::SystemTime, u64)>)>,
+    peer_unread: usize,
     input: PromptEditor,
     transcript: Vec<String>,
     running: bool,
@@ -1767,6 +1771,10 @@ fn draw<B: ratatui::backend::Backend>(
                 )
             }
         })};
+        let status = if app.peer_unread > 0 {
+            format!("{} {} · /peers | {status}",
+                app.language.text("协作未读", "Peer unread", "連携未読"), app.peer_unread)
+        } else { status };
         f.render_widget(Paragraph::new(status), areas[4]);
         app.sidebar_rect = Rect::default();
         if app.sidebar_visible && (wide_sidebar || app.focus == FocusPane::Sidebar) {

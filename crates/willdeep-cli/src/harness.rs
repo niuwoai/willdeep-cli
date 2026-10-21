@@ -325,6 +325,7 @@ const INSTRUCTION_WAKE_PROMPT: &str = "Additional instructions arrived while bac
 const HEADLESS_BACKGROUND_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct BuiltHarness {
+    peer_wake: bool,
     event_sink: Arc<dyn EventSink>,
     pub subagents: Arc<SubagentCatalog>,
     pub goal: Arc<willdeep_core::GoalContinuation>,
@@ -568,7 +569,11 @@ pub(crate) async fn execute_noninteractive(
         {
             history.push(notice);
         }
-        let user_message = willdeep_core::Message::user_with_attachments(&prompt, attachments);
+        let user_message = if built.peer_wake {
+            willdeep_core::Message::host_instruction(&prompt)
+        } else {
+            willdeep_core::Message::user_with_attachments(&prompt, attachments)
+        };
         session.messages.push(user_message.clone());
         store.save(session)?;
         (history, user_message)
@@ -861,6 +866,8 @@ pub(crate) async fn build(
     let main_model = willdeep_core::provider::MainModelHandle::new(provider.clone());
     let follow_main = main_model.follower();
     let local_auxiliary_config = local_auxiliary_provider_config(&loaded.file.local_model);
+    let peer_wake = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
+        if usage_origin.origin_client.as_deref().is_some_and(|origin| origin.starts_with(crate::daemon::PEER_WAKE_ORIGIN)));
     let (runtime_access, runtime_approval_handle, runtime_inbox) = match &frontend {
         HarnessFrontend::Runtime {
             workspace_access,
@@ -1021,6 +1028,10 @@ pub(crate) async fn build(
     // 子 Agent 要跟随父会话的 full-access，拿同一个句柄——切档是实时的。
     let parent_approval_handle = approval_handle.clone();
     let mut tools = ToolRegistry::new(&workspace, approval_mode)?
+        .with_session_collaboration(Arc::new(crate::daemon::PeerSessionClient {
+            home: home.to_path_buf(),
+            session_id,
+        }))
         .with_shared_approval_mode(approval_handle)
         .with_output_store(&home.join("tool-outputs"))
         .with_sandbox(sandbox.clone())
@@ -1264,6 +1275,7 @@ pub(crate) async fn build(
     }
     let notifier = crate::notify::Notifier::new(&loaded.file.notifications);
     Ok(BuiltHarness {
+        peer_wake,
         event_sink: sink,
         subagents,
         goal: goal_continuation,

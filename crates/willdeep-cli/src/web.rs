@@ -23,6 +23,7 @@ use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 
 mod agent_library;
 mod composer;
+mod peer_sessions;
 mod runtime_chat;
 mod schedules;
 mod setup;
@@ -375,6 +376,15 @@ async fn serve_internal(
         .route("/api/setup", get(setup::setup_status))
         .route("/api/chat/stream", post(chat_stream))
         .route("/api/sessions", get(sessions))
+        .route("/api/sessions/{id}/peers", get(peer_sessions::peers))
+        .route(
+            "/api/sessions/{id}/peer-messages",
+            get(peer_sessions::inbox).post(peer_sessions::send),
+        )
+        .route(
+            "/api/sessions/{id}/peer-messages/{note}/read",
+            post(peer_sessions::read),
+        )
         .route(
             "/api/sessions/{id}",
             get(session_detail).delete(delete_session),

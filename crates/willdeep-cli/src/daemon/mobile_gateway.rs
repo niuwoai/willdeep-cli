@@ -22,6 +22,7 @@ use crate::mobile::{RelayCredentials, UnsafeCredentialPermissions};
 
 mod commands;
 mod projection;
+mod review;
 mod run_context;
 pub(super) use run_context::configure_run_context;
 #[cfg(test)]
@@ -41,6 +42,10 @@ const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 /// `error`，无限往返。
 const PHONE_COMMANDS: &[&str] = &[
     "session.list",
+    "session.peers",
+    "session.peer.send",
+    "session.peer.inbox",
+    "session.peer.read",
     "session.create",
     "workspace.list",
     "capabilities.get",
@@ -52,6 +57,8 @@ const PHONE_COMMANDS: &[&str] = &[
     "tool.decide",
     "patch.decide",
     "diff.get",
+    "review.get",
+    "worktree.list",
     "job.kill",
     "file.read",
     "queue.update",
@@ -63,6 +70,10 @@ const PHONE_COMMANDS: &[&str] = &[
 /// 而手机上能做什么必须是逐条想清楚之后写进来的。删除 / 归档 / 改名会话、登记
 /// 工作区、改审批档位与模型、派生子 Agent 都不在这里。
 const RUNTIME_OPERATIONS: &[&str] = &[
+    "session.peers",
+    "session.peer.send",
+    "session.peer.inbox",
+    "session.peer.read",
     "session.list",
     "session.get",
     "session.configure",
@@ -370,6 +381,7 @@ pub(super) struct HistoryCache {
 /// 一条中继连接背后的网关状态。跨重连保留：手机选中的会话、实时尾巴和缓存都不该
 /// 因为中继抖一下就丢掉。
 pub(super) struct Gateway {
+    pub(super) worktree_cache: Option<(uuid::Uuid, Value)>,
     server: Weak<ServerState>,
     shared: Arc<RelayShared>,
     /// 手机发起的轮次记在谁名下（`mobile:<进程随机 id>`），用量账本认得这个前缀。
@@ -390,6 +402,7 @@ impl Gateway {
     fn new(server: Weak<ServerState>, shared: Arc<RelayShared>) -> Self {
         Self {
             server,
+            worktree_cache: None,
             shared,
             origin_client: crate::client_identity(crate::Surface::Mobile).to_owned(),
             selected: None,
