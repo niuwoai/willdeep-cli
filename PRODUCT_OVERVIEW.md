@@ -6,9 +6,9 @@ Web 与会话协作：在 v0.109.0-rc2 基础上增加项目范围的持久收�
 
 Web 聊天使用宽正文画布，协作与定时任务从标题栏按需展开，收起保留草稿，兼顾窄屏和深浅主题。宿主路由仅在展示投影隐藏，原始模型上下文保留。
 
-终端 UI 偏好：`[ui].mode` 可选 `full`（完全 UI，未配置时默认）或 `compact`（简洁 UI）。固定使用所选模式，不按闲置、按键或点击切换。简洁 UI 隐藏主聊天、输入框的四边框、活动区与权限标签，只用一条横线分开正文与输入，整个底部背景铺满终端宽度。`compact_status_line` 默认 true，在最下面一行显示与完全 UI 一致的状态、用量与快捷键，可独立关闭。侧栏、弹窗、附件、搜索和队列照常操作，后台任务与草稿保持不变。willdeep-config 提供相同选项，保存后重新打开客户端生效。
+终端 UI 偏好：`[ui].mode` 可选 `full`（完全 UI，未配置时默认）或 `compact`（简洁 UI）。`/uistyle` 可在当前 TUI 会话中切换，`full` / `compact` 显式指定；`status` / `no-status` 显示或隐藏简洁 UI 底部状态栏，不改变当前布局。该命令不改配置文件；`willdeep-config` 保存的启动默认值仍在重启后生效。简洁 UI 隐藏主聊天、输入框的四边框、活动区与权限标签，只用一条横线分开正文与输入，整个底部背景铺满终端宽度。`compact_status_line` 默认 true，在最下面一行显示与完全 UI 一致的状态、用量与快捷键，可独立关闭。侧栏、弹窗、附件、搜索和队列照常操作，后台任务与草稿保持不变。
 
-> 最后更新：2026-10-21 | 当前版本：v0.112.0-rc1（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）；简洁 UI 分隔线贴合输入背景的上边缘。
+> 最后更新：2026-10-22 | 当前版本：v0.113.0-rc1（Magpie 验收见 docs/verification/0.105.0-rc1/README.md）；简洁 UI 分隔线贴合输入背景的上边缘。
 
 新版提醒：TUI 启动后延迟 30–90 秒查询公开 GitHub Release 元数据，此后随机间隔 6–12 小时；跨客户端共享检查缓存和版本去重。运行任务、编辑草稿、弹窗、文本选择或翻看历史时暂缓，空闲后只显示一次普通文字，不响铃、不弹审批、不自动安装。`[ui].check_updates = false` 或 `WILLDEEP_NO_UPDATE_CHECK=1` 可关闭；不向检查接口发送模型凭据、工作区或会话。
 
@@ -223,7 +223,9 @@ WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户�
 - TUI 聊天搜索、高亮与匹配跳转，以及可点击、可滚动的状态栏和后台任务详情；
 - TUI `/history`、`Ctrl+R` 和 `/session search` 打开同一个历史会话面板：默认列出当前 Workspace 最近 20 条会话，可按标题或消息内容改词重查并展示命中摘要，方向键选择并以 Enter 或鼠标点击原地进入继续；`/session search` 的 `--status` / `--profile` / `--model` / `--after` / `--before` / `--workspace` 过滤器随每次重查一起下发；已归档会话会先恢复，当前草稿会话状态在切换前保存；`Ctrl+P` 全局命令面板中的当前 Workspace 会话也可直接切换；
 - TUI `/new`（别名 `/session new`）在当前工作区开一条不带历史的新会话：沿用当前 Provider、模型与配置，事件游标从 Runtime 事件流当前位置起读，旧会话留在磁盘上可经 `/history` 回去；`/clear` 仍只清空聊天显示，不动会话与上下文；
-- TUI 在轮次运行中不再吞掉回车：`/help`、`/clear`、`/sidebar`、`/skills`、`/history`、`/session search` 立即执行，提示词与 `/local`、`/runtime` 连同附件排队并在本轮结束后按序发出，会改会话或 Runtime 状态的命令给出明确原因；`Esc` 中断当前轮次（Runtime 轮次交给 Daemon 排空，`/local` 轮次掐进程内 Harness），中断后队列立即续上；手机发来的消息不进这条队列，直接进 Runtime 的轮次队列；
+- TUI 支持 `/uistyle` 在完整 UI 与简洁 UI 间切换，`status` / `no-status` 控制简洁 UI 底部状态栏；运行中也立即生效。
+- 折叠工具调用摘要使用更清晰的前景色，避免深色终端背景下难以辨认。
+- TUI 在轮次运行中不再吞掉回车：`/help`、`/clear`、`/sidebar`、`/uistyle`、`/skills`、`/history`、`/session search` 立即执行，提示词与 `/local`、`/runtime` 连同附件排队并在本轮结束后按序发出，会改会话或 Runtime 状态的命令给出明确原因；`Esc` 中断当前轮次（Runtime 轮次交给 Daemon 排空，`/local` 轮次掐进程内 Harness），中断后队列立即续上；手机发来的消息不进这条队列，直接进 Runtime 的轮次队列；
 - TUI 审批与提问对话框按会话归属弹出：同一工作区开多个 TUI 时，别的会话的审批不再在这里弹出、也无法被就地解掉；无会话归属的任务（headless 提交）仍对所有客户端可解，Web 工作区视图维持原口径；记了发起端的审批弹回发起端，发起端退出后，同一种界面重开同一个会话也能接住，终端与浏览器之间互不代签；
 - Runtime 失败工具的原始参数与输出摘要经本机 `task.diagnostics` 提供，TUI Attention Inbox 详情直接显示退出码、失败域、失败原因、失败命令与输出；公共事件流（Web 桥接、手机中继）仍按原规则脱敏，写入日志前凭据打码且输出截断为有界首尾摘要；
 - TUI `Ctrl+P` 全局命令面板，可模糊搜索命令、Skills、会话、Agent/任务和工作区文件；
