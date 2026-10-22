@@ -650,8 +650,11 @@ pub(super) async fn event_loop(
                     }
                     if app.model_picker.is_some() {
                         match mouse.kind {
-                            MouseEventKind::ScrollUp=>app.model_picker_scroll(-1),
-                            MouseEventKind::ScrollDown=>app.model_picker_scroll(1),
+                            MouseEventKind::ScrollUp|MouseEventKind::ScrollDown=>{
+                                let delta=if mouse.kind==MouseEventKind::ScrollUp{-1}else{1};
+                                let action=app.model_picker_scroll_at(delta,mouse.column,mouse.row);
+                                model_provider::handle(action,&mut app,session,store,runtime,&agent).await;
+                            },
                             MouseEventKind::Down(MouseButton::Left)=>{
                                 if let Some(action)=app.activate_model_picker_at(mouse.column,mouse.row) {
                                     model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
@@ -1530,6 +1533,7 @@ pub(super) async fn event_loop(
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
                 UiMessage::RuntimeResult(message)=>{app.append_transcript(message.clone());app.notice=Some(message);},
                 UiMessage::ModelsLoaded { request_id, result } => model_provider::receive_models(&mut app, request_id, result),
+                UiMessage::LocalProvidersDiscovered(result) => model_provider::receive_local(&mut app, runtime, result),
                 UiMessage::MediaLoaded{target,result}=>app.media.finish_load(target,result),
                 UiMessage::MediaResized(result)=>{
                     if let Some(error)=app.media.finish_resize(result){

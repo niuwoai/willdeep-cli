@@ -88,7 +88,7 @@ File.write(config, [
   "api_key = 'fixture-only'", "model = 'fixture'", 'context_window = 2000000',
   '[ui]', "mode = '#{ui_mode}'", 'check_updates = false', ''
 ].join("\n"), perm: 0600)
-env = {'WILLDEEP_HOME' => home, 'TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor',
+env = {'WILLDEEP_HOME' => home, 'TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor', 'WILLDEEP_LOCAL_DISCOVERY' => '0',
   'WILLDEEP_TELEMETRY_DISABLED' => '1', 'NO_PROXY' => '127.0.0.1,localhost', 'no_proxy' => '127.0.0.1,localhost'}
 %w[WILLDEEP_API_BASE WILLDEEP_API_KEY WILLDEEP_MODEL WILLDEEP_CONFIG OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY].each { |key| env[key] = nil }
 bytes = ''.b
@@ -204,13 +204,13 @@ begin
     report['runtime_event_p95_ms'] = runtime_delays[(runtime_delays.size * 0.95).floor]
   end
   if ENV['STREAM_MAX_P95_MS']
-    raise 'some stream markers never reached the screen' unless report['displayed'] == count
-    raise "P95 #{report['p95_ms']}ms exceeds display latency budget" unless report['p95_ms'] <= Float(ENV['STREAM_MAX_P95_MS'])
-    report['passed'] = true
+    report['passed'] = report['displayed'] == count && report['p95_ms'] <= Float(ENV['STREAM_MAX_P95_MS'])
+    report['acceptance_p95_ms'] = Float(ENV['STREAM_MAX_P95_MS'])
   end
   File.write(report_prefix + '.json', JSON.pretty_generate(report))
   File.write(report_prefix + '.md', "# Paced stream display measurement\n\n" + report.reject { |k, _| k == 'samples' }.map { |k, v| "- #{k}: #{v}" }.join("\n") + "\n")
   puts JSON.generate(report.reject { |k, _| k == 'samples' })
+  raise 'stream display acceptance failed; see saved measurement report' if report['passed'] == false
 ensure
   File.binwrite(File.join(root, 'terminal.ansi'), bytes)
   File.write(File.join(root, 'frames.json'), JSON.generate({frames: frames, sent: sent}))

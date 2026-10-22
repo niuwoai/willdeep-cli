@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "test_suite/model_cascade.rs"]
+mod model_cascade;
 #[path = "test_suite/runtime_streaming.rs"]
 mod runtime_streaming;
 #[path = "test_suite/stream_performance.rs"]

@@ -14,8 +14,15 @@ pub(super) struct ModelPickerState {
     pub(super) active_profile: Option<String>,
     pub(super) provider_label: String,
     pub(super) profiles: Vec<String>,
+    pub(super) provider_filtered: Vec<usize>,
+    pub(super) provider_selected: usize,
+    pub(super) provider_editor: PromptEditor,
+    /// Focuses the Provider pane, or shows that page on narrow terminals.
     pub(super) choosing_provider: bool,
+    pub(super) wide: bool,
     pub(super) request_id: uuid::Uuid,
+    pub(super) load_task: Option<ModelLookupTask>,
+    pub(super) cache: std::collections::BTreeMap<Option<String>, Vec<String>>,
     pub(super) editor: PromptEditor,
     pub(super) models: Vec<String>,
     pub(super) filtered: Vec<usize>,
@@ -25,11 +32,72 @@ pub(super) struct ModelPickerState {
     pub(super) error: Option<String>,
 }
 
+pub(super) struct ModelLookupTask(pub(super) tokio::task::JoinHandle<()>);
+
+impl Drop for ModelLookupTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub(super) enum ModelPickerAction {
     None,
     Close,
     Select(String),
     Provider(Option<String>),
+    Preview(String),
+    Refresh,
+}
+
+impl ModelPickerState {
+    pub(super) fn focused_editor(&self) -> &PromptEditor {
+        if self.choosing_provider {
+            &self.provider_editor
+        } else {
+            &self.editor
+        }
+    }
+
+    fn focused_editor_mut(&mut self) -> &mut PromptEditor {
+        if self.choosing_provider {
+            &mut self.provider_editor
+        } else {
+            &mut self.editor
+        }
+    }
+
+    fn provider_action(&self, enter: bool) -> ModelPickerAction {
+        let Some(index) = self.provider_filtered.get(self.provider_selected) else {
+            return ModelPickerAction::None;
+        };
+        let profile = self.profiles[*index].clone();
+        if enter {
+            ModelPickerAction::Provider(Some(profile))
+        } else {
+            ModelPickerAction::Preview(profile)
+        }
+    }
+
+    fn navigate(&mut self, delta: isize, wrap: bool) -> ModelPickerAction {
+        let (selected, len) = if self.choosing_provider {
+            (&mut self.provider_selected, self.provider_filtered.len())
+        } else {
+            (&mut self.selected, self.filtered.len())
+        };
+        if len == 0 {
+            return ModelPickerAction::None;
+        }
+        *selected = if wrap {
+            (*selected as isize + delta).rem_euclid(len as isize) as usize
+        } else {
+            selected.saturating_add_signed(delta).min(len - 1)
+        };
+        if self.choosing_provider {
+            self.provider_action(false)
+        } else {
+            ModelPickerAction::None
+        }
+    }
 }
 
 impl App {
@@ -40,6 +108,7 @@ impl App {
         self.model_picker = Some(ModelPickerState {
             current_model,
             loading: true,
+            wide: true,
             ..Default::default()
         });
     }
@@ -51,36 +120,53 @@ impl App {
         let Some(picker) = self.model_picker.as_mut() else {
             return;
         };
+        let previous = picker
+            .filtered
+            .get(picker.selected)
+            .and_then(|i| picker.models.get(*i))
+            .cloned();
         picker.loading = false;
         match result {
             Ok(models) => {
+                picker.cache.insert(picker.profile.clone(), models.clone());
                 picker.models = models;
                 picker.error = None;
             }
-            Err(error) => {
-                picker.models.clear();
-                picker.error = Some(error);
-            }
+            Err(error) => picker.error = Some(error),
         }
+        let wanted = previous.or_else(|| {
+            (picker.profile == picker.active_profile).then(|| picker.current_model.clone())
+        });
         self.refresh_model_picker_matches();
+        let picker = self.model_picker.as_mut().unwrap();
+        if let Some(wanted) = wanted {
+            picker.selected = picker
+                .filtered
+                .iter()
+                .position(|i| picker.models[*i] == wanted)
+                .unwrap_or(0);
+        }
     }
 
     pub(super) fn refresh_model_picker_matches(&mut self) {
         let Some(picker) = self.model_picker.as_mut() else {
             return;
         };
-        let query = picker.editor.text().trim().to_lowercase();
-        let mut ranked = picker
-            .models
-            .iter()
-            .enumerate()
-            .filter_map(|(index, model)| {
-                fuzzy_score(&query, &model.to_lowercase()).map(|score| (score, index))
-            })
-            .collect::<Vec<_>>();
-        ranked.sort_by_key(|(score, index)| (*score, *index));
-        picker.filtered = ranked.into_iter().map(|(_, index)| index).collect();
+        picker.filtered = model_picker_matches(&picker.models, picker.editor.text());
         picker.selected = 0;
+    }
+
+    pub(super) fn refresh_provider_matches(&mut self) {
+        let Some(picker) = self.model_picker.as_mut() else {
+            return;
+        };
+        picker.provider_filtered =
+            model_picker_matches(&picker.profiles, picker.provider_editor.text());
+        picker.provider_selected = picker
+            .provider_filtered
+            .iter()
+            .position(|i| Some(&picker.profiles[*i]) == picker.profile.as_ref())
+            .unwrap_or(0);
     }
 
     pub(super) fn handle_model_picker_key(&mut self, key: KeyEvent) -> ModelPickerAction {
@@ -88,255 +174,175 @@ impl App {
             return ModelPickerAction::None;
         };
         if key.code == KeyCode::Esc {
+            if !picker.wide && !picker.choosing_provider && !picker.profiles.is_empty() {
+                picker.choosing_provider = true;
+                return ModelPickerAction::None;
+            }
             return ModelPickerAction::Close;
         }
         if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return ModelPickerAction::Provider(None);
         }
-        let mut query_changed = false;
+        if key.code == KeyCode::F(5) {
+            return ModelPickerAction::Refresh;
+        }
         match key.code {
-            KeyCode::Up | KeyCode::BackTab if !picker.filtered.is_empty() => {
-                picker.selected = picker
-                    .selected
-                    .checked_sub(1)
-                    .unwrap_or(picker.filtered.len() - 1);
+            KeyCode::Tab | KeyCode::BackTab => {
+                picker.choosing_provider = !picker.choosing_provider;
+                return ModelPickerAction::None;
             }
-            KeyCode::Down | KeyCode::Tab if !picker.filtered.is_empty() => {
-                picker.selected = (picker.selected + 1) % picker.filtered.len();
+            KeyCode::Up => return picker.navigate(-1, true),
+            KeyCode::Down => return picker.navigate(1, true),
+            KeyCode::PageUp => return picker.navigate(-10, false),
+            KeyCode::PageDown => return picker.navigate(10, false),
+            KeyCode::Right if picker.choosing_provider && picker.provider_editor.is_empty() => {
+                return picker.provider_action(true);
             }
-            KeyCode::PageUp if !picker.filtered.is_empty() => {
-                picker.selected = picker.selected.saturating_sub(10);
+            KeyCode::Left if !picker.choosing_provider && picker.editor.is_empty() => {
+                picker.choosing_provider = true;
+                return ModelPickerAction::None;
             }
-            KeyCode::PageDown if !picker.filtered.is_empty() => {
-                picker.selected = (picker.selected + 10).min(picker.filtered.len() - 1);
-            }
+            KeyCode::Enter if picker.choosing_provider => return picker.provider_action(true),
             KeyCode::Enter if !picker.filtered.is_empty() => {
-                let model_index = picker.filtered[picker.selected.min(picker.filtered.len() - 1)];
-                return if picker.choosing_provider {
-                    ModelPickerAction::Provider(Some(picker.models[model_index].clone()))
-                } else {
-                    ModelPickerAction::Select(picker.models[model_index].clone())
-                };
+                return ModelPickerAction::Select(
+                    picker.models[picker.filtered[picker.selected]].clone(),
+                );
             }
-            KeyCode::Enter
-                if !picker.choosing_provider && !picker.editor.is_empty() && !picker.loading =>
-            {
+            KeyCode::Enter if !picker.editor.is_empty() && !picker.loading => {
                 return ModelPickerAction::Select(picker.editor.text().trim().to_owned());
             }
-            KeyCode::Left => picker.editor.left(),
-            KeyCode::Right => picker.editor.right(),
-            KeyCode::Home => picker.editor.home(),
-            KeyCode::End => picker.editor.end(),
+            _ => {}
+        }
+        let editor = picker.focused_editor_mut();
+        let changed = match key.code {
+            KeyCode::Left => {
+                editor.left();
+                false
+            }
+            KeyCode::Right => {
+                editor.right();
+                false
+            }
+            KeyCode::Home => {
+                editor.home();
+                false
+            }
+            KeyCode::End => {
+                editor.end();
+                false
+            }
             KeyCode::Backspace => {
-                picker.editor.backspace();
-                query_changed = true;
+                editor.backspace();
+                true
             }
             KeyCode::Delete => {
-                picker.editor.delete();
-                query_changed = true;
+                editor.delete();
+                true
             }
-            KeyCode::Char(character)
+            KeyCode::Char(c)
                 if !key.modifiers.intersects(
                     KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT,
                 ) =>
             {
-                picker.editor.insert(&character.to_string());
-                query_changed = true;
+                editor.insert(&c.to_string());
+                true
             }
-            _ => {}
-        }
-        if query_changed {
+            _ => false,
+        };
+        if changed {
+            if self.model_picker.as_ref().unwrap().choosing_provider {
+                self.refresh_provider_matches();
+                return self.model_picker.as_ref().unwrap().provider_action(false);
+            }
             self.refresh_model_picker_matches();
         }
         ModelPickerAction::None
     }
 
-    pub(super) fn model_picker_scroll(&mut self, delta: isize) {
+    pub(super) fn model_picker_scroll_at(
+        &mut self,
+        delta: isize,
+        x: u16,
+        y: u16,
+    ) -> ModelPickerAction {
+        let point = (x, y).into();
         let Some(picker) = self.model_picker.as_mut() else {
-            return;
+            return ModelPickerAction::None;
         };
-        if picker.filtered.is_empty() {
-            return;
-        }
-        if delta < 0 {
-            picker.selected = picker.selected.saturating_sub(1);
+        if self.model_provider_rect.contains(point) {
+            picker.choosing_provider = true;
+        } else if self.model_list_rect.contains(point) {
+            picker.choosing_provider = false;
         } else {
-            picker.selected = (picker.selected + 1).min(picker.filtered.len() - 1);
+            return ModelPickerAction::None;
         }
+        picker.navigate(delta, false)
     }
 
     pub(super) fn activate_model_picker_at(&mut self, x: u16, y: u16) -> Option<ModelPickerAction> {
-        if !self.model_picker_rect.contains((x, y).into()) {
+        let point = (x, y).into();
+        if !self.model_picker_rect.contains(point) {
             return None;
         }
-        if y == self.model_picker_rect.y.saturating_add(1) {
-            return Some(ModelPickerAction::Provider(None));
+        let picker = self.model_picker.as_mut()?;
+        if !picker.wide && y == self.model_picker_rect.y + 1 {
+            picker.choosing_provider = !picker.choosing_provider;
+            return Some(ModelPickerAction::None);
         }
-        if y == self.model_picker_rect.y.saturating_add(2) {
-            if let Some(picker) = self.model_picker.as_mut() {
-                picker.editor.set_cursor_visual(
-                    0,
-                    x.saturating_sub(self.model_picker_rect.x + 3) as usize,
-                    self.model_picker_rect.width.saturating_sub(4).max(1) as usize,
-                );
-            }
-            return None;
+        if let Some((_, position)) = self
+            .model_provider_hits
+            .iter()
+            .find(|(rect, _)| rect.contains(point))
+        {
+            picker.provider_selected = *position;
+            picker.choosing_provider = true;
+            return Some(picker.provider_action(!picker.wide));
         }
-        let position = self
+        if let Some((_, position)) = self
             .model_picker_hits
             .iter()
-            .find_map(|(row, position)| (*row == y).then_some(*position))?;
-        let picker = self.model_picker.as_mut()?;
-        picker.selected = position.min(picker.filtered.len().saturating_sub(1));
-        let model_index = *picker.filtered.get(picker.selected)?;
-        picker.models.get(model_index).cloned().map(|value| {
-            if picker.choosing_provider {
-                ModelPickerAction::Provider(Some(value))
+            .find(|(rect, _)| rect.contains(point))
+        {
+            picker.selected = *position;
+            picker.choosing_provider = false;
+            return Some(ModelPickerAction::Select(
+                picker.models[picker.filtered[*position]].clone(),
+            ));
+        }
+        let provider = self.model_provider_rect.contains(point);
+        let model = self.model_list_rect.contains(point);
+        if provider || model {
+            picker.choosing_provider = provider;
+            let pane = if provider {
+                self.model_provider_rect
             } else {
-                ModelPickerAction::Select(value)
+                self.model_list_rect
+            };
+            if y == pane.y + 1 {
+                picker.focused_editor_mut().set_cursor_visual(
+                    0,
+                    x.saturating_sub(pane.x + 3) as usize,
+                    pane.width.saturating_sub(4).max(1) as usize,
+                );
             }
-        })
+        }
+        None
     }
 }
 
+fn model_picker_matches(values: &[String], query: &str) -> Vec<usize> {
+    let query = query.trim().to_lowercase();
+    let mut ranked = values
+        .iter()
+        .enumerate()
+        .filter_map(|(i, value)| fuzzy_score(&query, &value.to_lowercase()).map(|score| (score, i)))
+        .collect::<Vec<_>>();
+    ranked.sort_by_key(|(score, i)| (*score, *i));
+    ranked.into_iter().map(|(_, i)| i).collect()
+}
+
 pub(super) fn render_model_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
-    app.model_picker_rect = Rect::default();
-    app.model_picker_hits.clear();
-    let Some(picker) = &app.model_picker else {
-        return;
-    };
-    let width = f.area().width.min(100);
-    let desired_rows = if picker.loading || picker.error.is_some() || picker.filtered.is_empty() {
-        8
-    } else {
-        picker.filtered.len().min(18) as u16 + 4
-    };
-    let height = f.area().height.min(desired_rows.max(7));
-    let popup = centered_rect(width, height, f.area());
-    app.model_picker_rect = popup;
-    let visible = popup.height.saturating_sub(4).max(1) as usize;
-    let start = picker.selected.saturating_sub(visible - 1);
-    let provider = picker.active_profile.as_deref().unwrap_or_else(|| {
-        if picker.provider_label.is_empty() {
-            app.language
-                .text("启动配置", "Startup configuration", "起動設定")
-        } else {
-            &picker.provider_label
-        }
-    });
-    let browsing = picker.profile.as_deref().unwrap_or(provider);
-    let mut lines = vec![
-        Line::styled(
-            format!(
-                "Provider: {provider} · {}: {browsing} · Ctrl+P {}",
-                app.language.text("浏览", "Browse", "参照"),
-                app.language
-                    .text("切换 / 点击此行", "switch / click here", "切替 / クリック")
-            ),
-            Style::default().fg(Color::LightCyan),
-        ),
-        Line::styled(
-            format!("› {}", picker.editor.text()),
-            Style::default().fg(Color::Yellow),
-        ),
-    ];
-    if picker.loading {
-        lines.push(Line::styled(
-            app.language.text(
-                "正在从 /v1/models 获取模型…",
-                "Loading models from /v1/models…",
-                "/v1/models からモデルを取得中…",
-            ),
-            Style::default().fg(Color::LightCyan),
-        ));
-    } else if let Some(error) = &picker.error {
-        lines.push(Line::styled(
-            format!(
-                "{}: {error}",
-                app.language.text(
-                    "获取模型失败；仍可使用 /model <模型名>",
-                    "Model lookup failed; /model <name> still works",
-                    "モデル取得失敗。/model <名前> は使用可能です",
-                )
-            ),
-            Style::default().fg(Color::LightRed),
-        ));
-    } else if picker.filtered.is_empty() {
-        lines.push(Line::styled(
-            app.language.text(
-                "没有匹配的模型",
-                "No models match",
-                "一致するモデルがありません",
-            ),
-            Style::default().fg(Color::DarkGray),
-        ));
-    } else {
-        for (position, model_index) in picker.filtered.iter().enumerate().skip(start).take(visible)
-        {
-            let model = &picker.models[*model_index];
-            let selected = position == picker.selected;
-            let current = !picker.choosing_provider
-                && picker.profile == picker.active_profile
-                && model == &picker.current_model;
-            let style = if selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::LightCyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if current {
-                Style::default()
-                    .fg(Color::LightGreen)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            lines.push(Line::styled(
-                format!(
-                    "{} {}{}",
-                    if selected { "▶" } else { " " },
-                    model,
-                    if current {
-                        app.language.text(" · 当前", " · current", " · 現在")
-                    } else {
-                        ""
-                    }
-                ),
-                style,
-            ));
-            app.model_picker_hits
-                .push((popup.y + 3 + (position - start) as u16, position));
-        }
-    }
-    f.render_widget(Clear, popup);
-    f.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .title(format!(
-                    "{} · Ctrl+P Provider · {}/{} · ↑/↓/PgUp/PgDn · Enter · Esc",
-                    if picker.choosing_provider {
-                        app.language
-                            .text("选择 Provider", "Select Provider", "Provider 選択")
-                    } else {
-                        app.language
-                            .text("选择模型", "Select model", "モデルを選択")
-                    },
-                    if picker.filtered.is_empty() {
-                        0
-                    } else {
-                        picker.selected + 1
-                    },
-                    picker.filtered.len()
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::LightCyan)),
-        ),
-        popup,
-    );
-    if popup.width > 3 {
-        let cursor = UnicodeWidthStr::width(picker.editor.text())
-            .min(popup.width.saturating_sub(4) as usize) as u16;
-        f.set_cursor_position((popup.x + 3 + cursor, popup.y + 2));
-    }
+    super::model_picker_ui::render(f, app);
 }
 
 pub(super) fn parse(prompt: &str) -> Option<ModelCommand> {
@@ -356,6 +362,7 @@ pub(super) fn request_model_list(app: &mut App, runtime: &TuiRuntime, current_mo
     if let Err(error) = model_provider::initialize(app, runtime) {
         app.set_model_picker_result(Err(error.to_string()));
     }
+    model_provider::discover_local(runtime);
 }
 
 /// 本轮在跑时只记下来，本轮结束再切；否则当场切。

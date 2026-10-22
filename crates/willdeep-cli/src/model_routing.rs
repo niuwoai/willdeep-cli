@@ -673,7 +673,7 @@ pub fn save_session_startup(path: &Path, mode: crate::session_startup::StartupMo
     write_private_atomic(path, patched.as_bytes())
 }
 
-fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .with_context(|| format!("configuration path has no parent: {}", path.display()))?;

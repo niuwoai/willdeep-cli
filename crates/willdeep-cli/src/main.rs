@@ -34,6 +34,7 @@ mod harness;
 mod i18n;
 mod integrations;
 mod job_cmd;
+mod local_provider_discovery;
 mod mcp_cmd;
 mod mobile;
 mod model_defaults;
@@ -668,6 +669,12 @@ async fn run() -> Result<()> {
     }
     let administrative =
         cli.list_projects || cli.list_sessions || cli.list_approvals || cli.clear_approvals;
+    if !administrative
+        && !cli.onboarding
+        && let Err(error) = local_provider_discovery::discover(cli.config.as_deref()).await
+    {
+        eprintln!("Local Provider discovery: {error}");
+    }
     // 没有配置文件不等于要先设置：环境里有认得出的钥匙（或命令行给全了）就直接跑。
     let browser_setup = if cli.onboarding {
         onboarding::run(cli.config.as_deref()).await?

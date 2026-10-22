@@ -57,6 +57,7 @@ mod dispatch;
 mod human_gate_ui;
 mod media_ui;
 mod model_commands;
+mod model_picker_ui;
 mod model_provider;
 mod narration;
 mod overlay_dismiss;
@@ -139,6 +140,7 @@ pub enum UiMessage {
         request_id: uuid::Uuid,
         result: std::result::Result<Vec<String>, String>,
     },
+    LocalProvidersDiscovered(std::result::Result<usize, String>),
     MediaLoaded {
         target: String,
         result: std::result::Result<DynamicImage, String>,
@@ -435,7 +437,10 @@ struct App {
     session_picker_hits: Vec<(u16, usize)>,
     model_picker: Option<ModelPickerState>,
     model_picker_rect: Rect,
-    model_picker_hits: Vec<(u16, usize)>,
+    model_picker_hits: Vec<(Rect, usize)>,
+    model_provider_hits: Vec<(Rect, usize)>,
+    model_provider_rect: Rect,
+    model_list_rect: Rect,
     workspace_picker: Option<WorkspacePickerState>,
     workspace_picker_rect: Rect,
     workspace_picker_hits: Vec<(u16, usize)>,

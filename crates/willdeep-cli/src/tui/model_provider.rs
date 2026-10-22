@@ -1,5 +1,7 @@
 use super::*;
 
+const MODEL_LOOKUP_DEBOUNCE: Duration = Duration::from_millis(120);
+
 pub(super) fn receive_models(
     app: &mut App,
     request_id: uuid::Uuid,
@@ -8,9 +10,40 @@ pub(super) fn receive_models(
     if app
         .model_picker
         .as_ref()
-        .is_some_and(|picker| picker.request_id == request_id && !picker.choosing_provider)
+        .is_some_and(|picker| picker.request_id == request_id)
     {
         app.set_model_picker_result(result);
+    }
+}
+
+pub(super) fn discover_local(runtime: &TuiRuntime) {
+    let config = runtime.runtime_submit.config.clone();
+    let tx = runtime.tx.clone();
+    tokio::spawn(async move {
+        let result = crate::local_provider_discovery::discover(config.as_deref())
+            .await
+            .map_err(|error| error.to_string());
+        let _ = tx.send(UiMessage::LocalProvidersDiscovered(result));
+    });
+}
+
+pub(super) fn receive_local(
+    app: &mut App,
+    runtime: &TuiRuntime,
+    result: std::result::Result<usize, String>,
+) {
+    match result {
+        Ok(0) => {}
+        Ok(_) => {
+            if let Some(picker) = app.model_picker.as_mut()
+                && let Ok(loaded) =
+                    crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())
+            {
+                picker.profiles = loaded.file.providers.keys().cloned().collect();
+                app.refresh_provider_matches();
+            }
+        }
+        Err(error) => app.notice = Some(format!("Local Provider discovery: {error}")),
     }
 }
 
@@ -29,8 +62,42 @@ pub(super) async fn handle(
             return;
         }
         ModelPickerAction::Provider(profile) => {
+            if profile.is_some()
+                && let Some(picker) = app.model_picker.as_mut()
+            {
+                picker.choosing_provider = false;
+            }
             if let Err(error) = browse(app, runtime, profile) {
-                app.notice = Some(error.to_string());
+                app.set_model_picker_result(Err(error.to_string()));
+            }
+            return;
+        }
+        ModelPickerAction::Preview(profile) => {
+            if let Err(error) = browse(app, runtime, Some(profile)) {
+                app.set_model_picker_result(Err(error.to_string()));
+            }
+            return;
+        }
+        ModelPickerAction::Refresh => {
+            discover_local(runtime);
+            let profile = app
+                .model_picker
+                .as_ref()
+                .and_then(|picker| picker.profile.clone());
+            let result = (|| -> Result<_> {
+                if profile == current_profile(runtime)? {
+                    return Ok(runtime.provider_config.clone());
+                }
+                let loaded =
+                    crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
+                crate::provider_config_from_profile(
+                    &loaded.file,
+                    profile.as_deref().context("Provider is not selected")?,
+                )
+            })();
+            match result {
+                Ok(config) => load_models(app, config, &runtime.tx),
+                Err(error) => app.set_model_picker_result(Err(error.to_string())),
             }
             return;
         }
@@ -79,32 +146,56 @@ pub(super) fn initialize(app: &mut App, runtime: &TuiRuntime) -> Result<()> {
     picker.profile = profile;
     picker.profiles = loaded.file.providers.keys().cloned().collect();
     picker.profiles.sort();
+    app.refresh_provider_matches();
     load_models(app, runtime.provider_config.clone(), &runtime.tx);
     Ok(())
 }
 
 fn load_models(app: &mut App, mut config: willdeep_core::provider::ProviderConfig, tx: &TuiSender) {
     let picker = app.model_picker.as_mut().unwrap();
+    drop(picker.load_task.take());
     picker.request_id = uuid::Uuid::new_v4();
     let request_id = picker.request_id;
     picker.loading = true;
     picker.error = None;
-    picker.models.clear();
+    picker.models = picker
+        .cache
+        .get(&picker.profile)
+        .cloned()
+        .unwrap_or_default();
     picker.filtered.clear();
-    picker.editor.take();
     picker.selected = 0;
     config.request_timeout_secs = 20;
     let tx = tx.clone();
-    tokio::spawn(async move {
+    picker.load_task = Some(model_commands::ModelLookupTask(tokio::spawn(async move {
+        // Rapid keyboard navigation only requests the last highlighted Provider.
+        tokio::time::sleep(MODEL_LOOKUP_DEBOUNCE).await;
         let result = willdeep_core::provider::list_models(&config)
             .await
             .map_err(|error| error.to_string());
         let _ = tx.send(UiMessage::ModelsLoaded { request_id, result });
-    });
+    })));
+    app.refresh_model_picker_matches();
 }
 
 pub(super) fn browse(app: &mut App, runtime: &TuiRuntime, profile: Option<String>) -> Result<()> {
     if let Some(profile) = profile {
+        if app
+            .model_picker
+            .as_ref()
+            .is_some_and(|picker| picker.profile.as_deref() == Some(&profile))
+        {
+            return Ok(());
+        }
+        let picker = app
+            .model_picker
+            .as_mut()
+            .context("model picker is closed")?;
+        drop(picker.load_task.take());
+        picker.request_id = uuid::Uuid::new_v4();
+        picker.profile = Some(profile.clone());
+        picker.models.clear();
+        picker.filtered.clear();
         let loaded = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
         let config = if current_profile(runtime)?.as_deref() == Some(profile.as_str()) {
             runtime.provider_config.clone()
@@ -116,20 +207,15 @@ pub(super) fn browse(app: &mut App, runtime: &TuiRuntime, profile: Option<String
             .as_mut()
             .context("model picker is closed")?;
         picker.profile = Some(profile);
-        picker.choosing_provider = false;
+        app.refresh_provider_matches();
         load_models(app, config, &runtime.tx);
     } else {
         let picker = app
             .model_picker
             .as_mut()
             .context("model picker is closed")?;
-        picker.request_id = uuid::Uuid::new_v4(); // Invalidate an outstanding model-list response.
         picker.choosing_provider = true;
-        picker.loading = false;
-        picker.error = None;
-        picker.models = picker.profiles.clone();
-        picker.editor.take();
-        app.refresh_model_picker_matches();
+        app.refresh_provider_matches();
     }
     Ok(())
 }
@@ -320,10 +406,11 @@ mod tests {
         let picker = app.model_picker.as_mut().unwrap();
         picker.profile = Some("old".into());
         picker.active_profile = Some("old".into());
-        picker.models = vec!["old".into(), "magpie".into()];
+        picker.profiles = vec!["old".into(), "magpie".into()];
+        picker.models = vec!["old-model".into()];
         picker.loading = false;
         picker.choosing_provider = true;
-        app.refresh_model_picker_matches();
+        app.refresh_provider_matches();
         app.handle_model_picker_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert!(
             matches!(app.handle_model_picker_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), ModelPickerAction::Provider(Some(profile)) if profile == "magpie")
@@ -331,18 +418,14 @@ mod tests {
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| render_model_picker(f, &mut app)).unwrap();
         let row = app
-            .model_picker_hits
+            .model_provider_hits
             .iter()
             .find(|(_, index)| *index == 1)
             .unwrap()
             .0;
         assert!(
-            matches!(app.activate_model_picker_at(app.model_picker_rect.x + 3, row), Some(ModelPickerAction::Provider(Some(profile))) if profile == "magpie")
+            matches!(app.activate_model_picker_at(row.x, row.y), Some(ModelPickerAction::Preview(profile)) if profile == "magpie")
         );
-        assert!(matches!(
-            app.activate_model_picker_at(app.model_picker_rect.x + 3, app.model_picker_rect.y + 1),
-            Some(ModelPickerAction::Provider(None))
-        ));
         assert!(matches!(
             app.handle_model_picker_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
             ModelPickerAction::Provider(None)
@@ -354,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn late_model_lists_never_replace_a_new_provider_or_provider_choices() {
+    fn late_model_lists_never_replace_a_new_provider_and_load_in_either_pane() {
         let mut app = App::new(Vec::new(), Language::En);
         app.open_model_picker("old".into());
         let old = uuid::Uuid::new_v4();
@@ -365,8 +448,8 @@ mod tests {
         receive_models(&mut app, current, Ok(vec!["right".into()]));
         assert_eq!(app.model_picker.as_ref().unwrap().models, ["right"]);
         app.model_picker.as_mut().unwrap().choosing_provider = true;
-        receive_models(&mut app, current, Ok(vec!["wrong".into()]));
-        assert_eq!(app.model_picker.as_ref().unwrap().models, ["right"]);
+        receive_models(&mut app, current, Ok(vec!["refreshed".into()]));
+        assert_eq!(app.model_picker.as_ref().unwrap().models, ["refreshed"]);
     }
 
     #[test]

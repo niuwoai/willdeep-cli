@@ -80,8 +80,10 @@ Thread.new do
   end
 rescue IOError
 end
-env={'WILLDEEP_HOME'=>home,'TERM'=>'xterm-256color','WILLDEEP_API_KEY'=>nil,'WILLDEEP_API_BASE'=>nil,'WILLDEEP_MODEL'=>nil,'OPENAI_API_KEY'=>nil,'ANTHROPIC_API_KEY'=>nil,'OPENAI_BASE_URL'=>nil,'ANTHROPIC_BASE_URL'=>nil}
-plan=[[3,'/model'],[3.4,"\r"],[5,"\x10"],[5.5,"\e[B"],[6,"\r"],[8,"\r"],[10,'/local provider-local-check'],[10.4,"\r"],[14,'delegate-provider-check'],[14.4,"\r"],[18,'/local delegate-provider-check'],[18.4,"\r"],[22,'/model'],[22.4,"\r"],[24,"\e[<0;6;13M\e[<0;6;13m"],[25,"\e[<0;6;15M\e[<0;6;15m"],[27,"\e[<0;6;15M\e[<0;6;15m"],[29,'/local after-mouse-check'],[29.4,"\r"],[33,"\x03"]]
+env={'WILLDEEP_HOME'=>home,'TERM'=>'xterm-256color','WILLDEEP_LOCAL_DISCOVERY'=>'0','NO_PROXY'=>'127.0.0.1,localhost','no_proxy'=>'127.0.0.1,localhost','WILLDEEP_API_KEY'=>nil,'WILLDEEP_API_BASE'=>nil,'WILLDEEP_MODEL'=>nil,'OPENAI_API_KEY'=>nil,'ANTHROPIC_API_KEY'=>nil,'OPENAI_BASE_URL'=>nil,'ANTHROPIC_BASE_URL'=>nil}
+# At 100x30 the 100x24 cascade starts at row 4. Provider and model
+# entries start at row 8; selecting a Provider previews without committing.
+plan=[[3,'/model'],[3.4,"\r"],[5,"\x10"],[5.5,"\e[B"],[6,"\r"],[8,"\r"],[10,'/local provider-local-check'],[10.4,"\r"],[14,'delegate-provider-check'],[14.4,"\r"],[18,'/local delegate-provider-check'],[18.4,"\r"],[22,'/model'],[22.4,"\r"],[24,"\e[<0;6;8M\e[<0;6;8m"],[25,"\e[<0;34;8M\e[<0;34;8m"],[29,'/local after-mouse-check'],[29.4,"\r"],[33,"\x03"]]
 bytes=''.b;stage=0;start=Process.clock_gettime(Process::CLOCK_MONOTONIC)
 begin
   PTY.spawn(env,binary,'--config',config,'--workspace',workspace,'--language','en') do |reader,writer,pid|
