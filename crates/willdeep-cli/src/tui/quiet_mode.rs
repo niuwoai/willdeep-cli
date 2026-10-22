@@ -123,9 +123,14 @@ pub(super) fn render(
         .block(
             Block::default()
                 .borders(Borders::TOP)
-                // Use a standard one-pixel stroke; the top border cell shares
-                // the input background so the divider meets the transcript cleanly.
-                .border_set(ratatui::symbols::border::PLAIN)
+                // Ratatui renders line-drawing glyphs through the cell center.
+                // The upper eighth block keeps this thin divider at the top edge.
+                .border_set(ratatui::symbols::border::Set {
+                    top_left: "▔",
+                    horizontal_top: "▔",
+                    top_right: "▔",
+                    ..ratatui::symbols::border::PLAIN
+                })
                 .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
@@ -209,7 +214,7 @@ mod tests {
                     let top = app.prompt_rect.y;
                     for x in 0..width {
                         let separator = &buffer[(x, top)];
-                        assert_eq!(separator.symbol(), "─");
+                        assert_eq!(separator.symbol(), "▔");
                         assert_eq!(separator.fg, Color::DarkGray);
                         assert_eq!(separator.bg, buffer[(x, top + 1)].bg);
                         assert_ne!(separator.bg, buffer[(x, top - 1)].bg);

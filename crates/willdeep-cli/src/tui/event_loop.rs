@@ -301,6 +301,7 @@ pub(super) async fn event_loop(
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
+    let mut interrupt_esc_deadline: Option<Instant> = None;
     let (runtime_snapshot_tx, mut runtime_snapshot_rx) =
         mpsc::unbounded_channel::<crate::daemon::RuntimeSnapshot>();
     let snapshot_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -633,6 +634,7 @@ pub(super) async fn event_loop(
                     }
                 },
                 Event::Mouse(mouse)=>{
+                    interrupt_esc_deadline = None;
                     if app.question.is_some()||app.approval.is_some() {
                         if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
                             app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
@@ -756,6 +758,9 @@ pub(super) async fn event_loop(
                     _=>{}
                 }},
                 Event::Key(key) if key.kind==KeyEventKind::Press=>{
+                    if key.code != KeyCode::Esc {
+                        interrupt_esc_deadline = None;
+                    }
                     if app.native_selection_mode {
                         // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
                         if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {
@@ -1486,11 +1491,18 @@ pub(super) async fn event_loop(
                             }
                         }
                         // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。
-                        // 此前 TUI 根本没有中断入口，唯一的停止藏在侧栏 Inbox 的 K 键后面。
+                        // 连续两次按下可避免生成时误触中断。
                         KeyCode::Esc if app.running=>{
-                            match interrupt_turn(&mut app,session,runtime).await {
-                                Ok(message)=>app.notice=Some(message),
-                                Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
+                            let now = Instant::now();
+                            if interrupt_esc_deadline.is_some_and(|deadline| now <= deadline) {
+                                interrupt_esc_deadline = None;
+                                match interrupt_turn(&mut app,session,runtime).await {
+                                    Ok(message)=>app.notice=Some(message),
+                                    Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
+                                }
+                            } else {
+                                interrupt_esc_deadline = Some(now + Duration::from_millis(800));
+                                app.notice=Some(language.text("再按一次 Esc 可中断当前输出","Press Esc again within 800 ms to interrupt the current response","800 ミリ秒以内に Esc をもう一度押すと応答を中断します").to_owned());
                             }
                         },
                         KeyCode::Left=>app.edit_input(|input| input.left()),KeyCode::Right=>app.edit_input(|input| input.right()),

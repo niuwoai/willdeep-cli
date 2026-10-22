@@ -55,7 +55,7 @@ impl App {
                     self.language.text("上下文", "context", "コンテキスト"),
                     self.language.text("最近", "latest", "直近"),
                     // 运行中最该被看见的是「怎么停下来」，不是文本选择的快捷键。
-                    self.language.text("中断", "interrupt", "中断"),
+                    self.language.text("Esc×2 中断", "Esc×2 interrupt", "Esc×2 中断"),
                     queued = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
