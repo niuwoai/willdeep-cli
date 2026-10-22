@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod drain_tests;
+
 impl TaskManager {
     pub(super) fn notify_peer(&self, session_id: uuid::Uuid) {
         self.steering.notify_peer(session_id);
@@ -689,12 +692,17 @@ impl TaskManager {
 
     pub(super) async fn wait_until_idle(&self) {
         loop {
-            let has_active_tasks = self
-                .tasks
-                .read()
-                .await
-                .values()
-                .any(|task| runtime_task_status_blocks_drain(task.status));
+            let has_active_tasks = {
+                // finish() publishes the in-memory terminal status before it
+                // commits the Turn and final event. Drain must cross that
+                // same persistence barrier before declaring the Runtime idle.
+                let _persistence = self.persistence.lock().await;
+                self.tasks
+                    .read()
+                    .await
+                    .values()
+                    .any(|task| runtime_task_status_blocks_drain(task.status))
+            };
             if !has_active_tasks {
                 return;
             }
