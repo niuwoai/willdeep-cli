@@ -1,0 +1,246 @@
+{
+  "date": "2026-10-22",
+  "platform": "macOS arm64",
+  "base_commit": "3247253949b5b2c43ddf5481f09cb9e49a0a4cde",
+  "fixed_version": "0.113.0-rc3",
+  "candidate_sha256": "e7eacc25156c75f5a8e0415830c145571947ad81c335dbeb609ecef072065ff1",
+  "unit_tests": {
+    "passed": 826,
+    "failed": 0,
+    "ignored": 3,
+    "tui_passed": 286,
+    "new_streaming_regressions": 4,
+    "version_consistency": 1
+  },
+  "reports": [
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 5.325999925844371,
+      "p95_ms": 17.315999954007566,
+      "max_ms": 28.586000087670982,
+      "max_display_gap_ms": 38.68899994995445,
+      "display_updates": 160,
+      "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-32903-hnovkc",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "ui_mode": "full",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 14,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true,
+      "runtime_event_median_ms": 4.832000005990267,
+      "runtime_event_p95_ms": 16.758000012487173,
+      "passed": true,
+      "report_file": "after-release-2000-full.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 13.029999914579093,
+      "p95_ms": 78.24400009121746,
+      "max_ms": 101.07999993488193,
+      "max_display_gap_ms": 91.44600003492087,
+      "display_updates": 160,
+      "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-32656-n0h8we",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "ui_mode": "compact",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 14,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true,
+      "runtime_event_median_ms": 12.515000067651272,
+      "runtime_event_p95_ms": 85.89700004085898,
+      "passed": true,
+      "report_file": "after-release-2000-r2.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 5.520000006072223,
+      "p95_ms": 19.471999956294894,
+      "max_ms": 54.82300010044128,
+      "max_display_gap_ms": 65.85500005166978,
+      "display_updates": 160,
+      "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-33285-kmpmar",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "ui_mode": "compact",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 14,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true,
+      "runtime_event_median_ms": 5.0070000579580665,
+      "runtime_event_p95_ms": 18.56300001963973,
+      "passed": true,
+      "report_file": "after-release-2000-r3.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 5.544000072404742,
+      "p95_ms": 17.305999994277954,
+      "max_ms": 31.990999937988818,
+      "max_display_gap_ms": 49.52000000048429,
+      "display_updates": 160,
+      "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-32477-qs5h2v",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "ui_mode": "compact",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 14,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true,
+      "runtime_event_median_ms": 5.113999941386282,
+      "runtime_event_p95_ms": 17.42799999192357,
+      "passed": true,
+      "report_file": "after-release-2000.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 0.69500005338341,
+      "p95_ms": 18.626000033691525,
+      "max_ms": 27.046000002883375,
+      "max_display_gap_ms": 46.260999981313944,
+      "display_updates": 160,
+      "binary": "/Users/rocky/.cargo/bin/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-22289-fwav8u",
+      "history_entries": 2000,
+      "execution": "local",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "observed_session_rewrites": 14,
+      "saved_answer_complete": true,
+      "report_file": "before-2000-local.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 1035.6959999771789,
+      "p95_ms": 1754.2470000917092,
+      "max_ms": 1828.7150000687689,
+      "max_display_gap_ms": 65.96499995794147,
+      "display_updates": 160,
+      "binary": "/Users/rocky/.cargo/bin/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-23784-bvu3cn",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 113,
+      "saved_answer_complete": true,
+      "runtime_event_median_ms": 6.181000033393502,
+      "runtime_event_p95_ms": 32.857000012882054,
+      "report_file": "before-2000-observed.json"
+    },
+    {
+      "events": 160,
+      "displayed": 134,
+      "median_ms": 734.6979998983443,
+      "p95_ms": 3484.0609999373555,
+      "max_ms": 3534.5840000081807,
+      "max_display_gap_ms": 760.5619999812916,
+      "display_updates": 133,
+      "binary": "/Users/rocky/.cargo/bin/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-22129-5duav0",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "observed_session_rewrites": 97,
+      "saved_answer_complete": true,
+      "report_file": "before-2000.json"
+    },
+    {
+      "events": 160,
+      "displayed": 160,
+      "median_ms": 2153.6870000418276,
+      "p95_ms": 2701.528999954462,
+      "max_ms": 2757.0259999483824,
+      "max_display_gap_ms": 129.28400002419949,
+      "display_updates": 160,
+      "binary": "/Users/rocky/.cargo/bin/willdeep",
+      "root": "/private/tmp/wd-stream-20261022-33476-7cocvj",
+      "history_entries": 2000,
+      "execution": "runtime",
+      "ui_mode": "compact",
+      "requests": [
+        {
+          "path": "/v1/chat/completions",
+          "model": "fixture",
+          "stream": true
+        }
+      ],
+      "input_interval_ms": 20,
+      "runtime_stream_http_status": 200,
+      "observed_session_rewrites": 73,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true,
+      "runtime_event_median_ms": 204.3660000199452,
+      "runtime_event_p95_ms": 656.7979999817908,
+      "report_file": "before-release-2000-r2.json"
+    }
+  ]
+}

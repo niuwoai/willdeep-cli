@@ -1560,5 +1560,8 @@ pub(super) async fn event_loop(
             },
         }
     }
+    if app.runtime_event_cursor > session.runtime_event_cursor {
+        runtime_ui::sync_runtime_session(&mut app, session, store)?;
+    }
     Ok(())
 }

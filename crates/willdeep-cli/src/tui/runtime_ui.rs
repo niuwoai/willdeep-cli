@@ -150,65 +150,90 @@ pub(super) fn apply_runtime_events(
     store: &SessionStore,
 ) -> Result<()> {
     events.sort_by_key(|event| event.sequence);
-    let mut advanced = false;
+    let mut sync_needed = false;
     for event in events {
         if event.sequence <= app.runtime_event_cursor {
             continue;
         }
-        if event.visible
-            && event.session_id == Some(session.id)
-            && let Some(message) = apply_runtime_event(app, &event)
-            && !session.runtime_managed
-        {
-            session.messages.push(message);
+        if event.visible && event.session_id == Some(session.id) {
+            // Preview deltas only change the live row. Rewriting the complete
+            // Session here serializes rendering behind disk I/O and competes
+            // with the Runtime's checkpoint writer for the same Session lock.
+            // Other Sessions' traffic must not trigger a local rewrite either.
+            sync_needed |= !is_preview_delta(&event);
+            if let Some(message) = apply_runtime_event(app, &event)
+                && !session.runtime_managed
+            {
+                session.messages.push(message);
+            }
         }
         app.runtime_event_cursor = event.sequence;
-        advanced = true;
     }
-    if advanced {
-        if session.runtime_managed {
-            let attention_read = session.attention_read.clone();
-            let cursor = app.runtime_event_cursor;
-            // 这一轮由守护进程执行，**AI 输出每到一块它就写一次这个文件**。
-            // 此前这里是 load → 改 → save：基线在 load 那一刻定格，save 时磁盘
-            // 早已又变了，而游标算在执行指纹里（session/execution_state.rs），
-            // 于是每次输出到达都可能判成执行冲突，`?` 一抛整个 TUI 退出——用户
-            // 看到的就是「AI 刚要输出就闪退」，而那一轮其实已经跑完。
-            //
-            // `update` 在会话锁内从磁盘最新快照起改，没有这个窗口：守护进程
-            // 刚写进去的消息全部保留，这里只叠加自己的游标与已读标记。
-            let apply = |latest: &mut Session| {
-                latest.attention_read.extend(attention_read);
-                latest.runtime_managed = true;
-                latest.runtime_event_cursor = cursor;
-            };
-            match store.load(session.id) {
-                // 空会话不为游标落盘，与 `tui::run` 的启动写入同一条规则：
-                // 别的工作区的事件照样会推进游标，光坐着不说话不该因此多出
-                // 一条空会话。只在内存里对齐，游标随第一条消息一起写下去。
-                Ok(mut latest) if latest.messages.is_empty() => {
-                    apply(&mut latest);
-                    *session = latest;
-                }
-                Ok(_) => *session = store.update(session.id, apply)?,
-                // 托管会话理应已经落过盘；真没有就让它保持内存态，
-                // 下一次事件或提交时再写。
-                Err(willdeep_core::session::SessionError::Io(error))
-                    if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
+    if sync_needed {
+        sync_runtime_session(app, session, store)?;
+    }
+    Ok(())
+}
+
+fn is_preview_delta(event: &crate::daemon::RemoteRuntimeEvent) -> bool {
+    if event.kind != "task.output" {
+        return false;
+    }
+    let Some((_, payload)) = event.message.split_once(' ') else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return false;
+    };
+    matches!(
+        value.get("type").and_then(serde_json::Value::as_str),
+        Some("assistant_text_delta" | "reasoning_delta")
+    )
+}
+
+/// Sync at durable event boundaries and on graceful exit, never per preview
+/// token. The Runtime independently checkpoints partial answers while streaming.
+pub(super) fn sync_runtime_session(
+    app: &mut App,
+    session: &mut Session,
+    store: &SessionStore,
+) -> Result<()> {
+    if session.runtime_managed {
+        let attention_read = session.attention_read.clone();
+        let cursor = app.runtime_event_cursor;
+        // Runtime owns the messages. Merge our bookmark under the Session
+        // lock so a newer checkpoint is never replaced by a stale TUI copy.
+        let apply = |latest: &mut Session| {
+            latest.attention_read.extend(attention_read);
+            latest.runtime_managed = true;
+            latest.runtime_event_cursor = latest.runtime_event_cursor.max(cursor);
+        };
+        match store.load(session.id) {
+            // 空会话不为游标落盘，与 `tui::run` 的启动写入同一条规则：
+            // 别的工作区的事件照样会推进游标，光坐着不说话不该因此多出
+            // 一条空会话。只在内存里对齐，游标随第一条消息一起写下去。
+            Ok(mut latest) if latest.messages.is_empty() => {
+                apply(&mut latest);
+                *session = latest;
             }
-            if let Some(plan) = &session.current_plan {
-                sync_persisted_plan(&mut app.transcript, plan);
-                app.refresh_transcript_height();
-                app.scroll_from_bottom = app.scroll_from_bottom.min(app.max_scroll());
-            }
-        } else {
-            session.runtime_event_cursor = app.runtime_event_cursor;
-            // 同上：空会话不为游标落盘。托管分支不走这里——那边已经在锁内
-            // 写过了，再存一次又会开一个新的竞态窗口。
-            if !session.messages.is_empty() {
-                store.save(session)?;
-            }
+            Ok(_) => *session = store.update(session.id, apply)?,
+            // 托管会话理应已经落过盘；真没有就让它保持内存态，
+            // 下一次事件或提交时再写。
+            Err(willdeep_core::session::SessionError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(plan) = &session.current_plan {
+            sync_persisted_plan(&mut app.transcript, plan);
+            app.refresh_transcript_height();
+            app.scroll_from_bottom = app.scroll_from_bottom.min(app.max_scroll());
+        }
+    } else {
+        session.runtime_event_cursor = app.runtime_event_cursor;
+        // 同上：空会话不为游标落盘。托管分支不走这里——那边已经在锁内
+        // 写过了，再存一次又会开一个新的竞态窗口。
+        if !session.messages.is_empty() {
+            store.save(session)?;
         }
     }
     Ok(())
