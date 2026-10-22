@@ -313,6 +313,15 @@ pub(super) async fn event_loop(
         runtime_event_tx.clone(),
     );
     loop {
+        if let Some(after) = app.runtime_follow_after.take() {
+            while runtime_event_rx.try_recv().is_ok() {}
+            _runtime_event_follower = crate::daemon::start_runtime_event_follower(
+                runtime.home.clone(),
+                after,
+                runtime.runtime_submit.workspace.clone(),
+                runtime_event_tx.clone(),
+            );
+        }
         update_notice::show_when_idle(&mut app, &runtime.home);
         // Ctrl+G：终端和事件流都在这一层，按键分支里交不出去。
         if std::mem::take(&mut app.pending_external_editor) {
@@ -581,7 +590,12 @@ pub(super) async fn event_loop(
                     execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;
                 }
             },
-            Some(events)=runtime_event_rx.recv()=>{
+            Some(mut events)=runtime_event_rx.recv()=>{
+                const RUNTIME_EVENT_BATCH_LIMIT: usize = 1024;
+                while events.len() < RUNTIME_EVENT_BATCH_LIMIT {
+                    let Ok(mut next) = runtime_event_rx.try_recv() else { break; };
+                    events.append(&mut next);
+                }
                 runtime_ui::apply_runtime_events(&mut app,events,session,store)?;
                 // Runtime 轮次正常收尾后会话已从磁盘刷新，此时的消息就是预测要看的那份。
                 if app.take_runtime_turn_settled() { dispatch_input_suggestion(&app,session,&agent,&runtime.tx); }

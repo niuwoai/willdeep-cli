@@ -49,9 +49,6 @@ pub(super) async fn submit_turn(
         .collect();
     let prompt = app.enrich_prompt(&prompt, &runtime.skills);
     persist_missing_core_session(session, store)?;
-    let event_head = crate::daemon::runtime_event_head(&runtime.home)
-        .await
-        .unwrap_or(app.runtime_event_cursor);
     let remote_session = crate::daemon::ensure_runtime_session(
         &runtime.home,
         session.id,
@@ -61,11 +58,13 @@ pub(super) async fn submit_turn(
     )
     .await?;
     super::permission_commands::sync_session(app, session, runtime).await?;
+    // The first submission may have just started a stopped Runtime. Read its
+    // durable head now, rather than bookmarking zero before it existed.
+    let event_head = crate::daemon::runtime_event_head(&runtime.home)
+        .await
+        .unwrap_or(app.runtime_event_cursor);
     session.runtime_managed = true;
-    if app.runtime_event_cursor == 0 {
-        app.runtime_event_cursor = event_head;
-        session.runtime_event_cursor = event_head;
-    }
+    initialize_submission_cursor(app, session, event_head);
     // Persist ownership before scheduling the Turn. A very fast Harness must
     // never be overwritten by this client's stale history.
     store.save(session)?;
@@ -89,6 +88,14 @@ pub(super) async fn submit_turn(
             .to_owned(),
     );
     Ok(())
+}
+
+pub(super) fn initialize_submission_cursor(app: &mut App, session: &mut Session, head: u64) {
+    if app.runtime_event_cursor == 0 && head > 0 {
+        app.runtime_event_cursor = head;
+        session.runtime_event_cursor = head;
+        app.runtime_follow_after = Some(head);
+    }
 }
 
 /// 快照连续几次都说本会话没有活动任务，而界面还显示 Runtime 轮次在跑：去问
@@ -169,7 +176,9 @@ pub(super) fn apply_runtime_events(
         }
         app.runtime_event_cursor = event.sequence;
     }
-    if sync_needed {
+    // Runtime owns checkpoints while its turn is active. Even a startup or
+    // tool boundary must not make the UI contend for that Session file.
+    if sync_needed && !(session.runtime_managed && app.running && app.runtime_turn) {
         sync_runtime_session(app, session, store)?;
     }
     Ok(())
@@ -191,8 +200,8 @@ fn is_preview_delta(event: &crate::daemon::RemoteRuntimeEvent) -> bool {
     )
 }
 
-/// Sync at durable event boundaries and on graceful exit, never per preview
-/// token. The Runtime independently checkpoints partial answers while streaming.
+/// Sync after Runtime turns settle and on graceful exit. The Runtime
+/// independently checkpoints partial answers while streaming.
 pub(super) fn sync_runtime_session(
     app: &mut App,
     session: &mut Session,

@@ -17,6 +17,7 @@ require 'tmpdir'
 binary = File.expand_path(ARGV.fetch(0))
 report_prefix = File.expand_path(ARGV.fetch(1))
 history_count = Integer(ARGV.fetch(2, '400'))
+journal_count = Integer(ENV.fetch('STREAM_JOURNAL_EVENTS', '0'))
 execution = ARGV.fetch(3, 'runtime')
 raise 'execution must be runtime or local' unless %w[runtime local].include?(execution)
 count = Integer(ENV.fetch('STREAM_EVENTS', '160'))
@@ -26,6 +27,14 @@ raise 'STREAM_UI_MODE must be compact or full' unless %w[compact full].include?(
 root = Dir.mktmpdir('wd-stream-', '/private/tmp')
 home, workspace = %w[home workspace].map { |name| File.join(root, name) }
 FileUtils.mkdir_p([File.join(home, 'sessions'), workspace, File.dirname(report_prefix)])
+if journal_count > 0
+  FileUtils.mkdir_p(File.join(home, 'runtime'))
+  File.open(File.join(home, 'runtime/events.ndjson'), 'w', 0600) do |file|
+    journal_count.times do |index|
+      file.puts(JSON.generate(sequence: index + 1, timestamp: 1, kind: 'fixture.historical', message: 'pre-existing unrelated Runtime event'))
+    end
+  end
+end
 session_id = SecureRandom.uuid
 session_path = File.join(home, 'sessions', "#{session_id}.json")
 history = Array.new(history_count) do |index|
@@ -121,7 +130,7 @@ begin
           state = JSON.parse(File.read(File.join(home, 'runtime', 'daemon.json')))
           host, port = state.fetch('address').split(':')
           observer_socket = TCPSocket.new(host, Integer(port))
-          observer_socket.write("GET /v1/events/stream.ndjson?after=0&limit=1000 HTTP/1.1\r\nHost: localhost\r\nx-willdeep-token: #{state.fetch('token')}\r\nConnection: close\r\n\r\n")
+          observer_socket.write("GET /v1/events/stream.ndjson?after=#{journal_count}&limit=1000 HTTP/1.1\r\nHost: localhost\r\nx-willdeep-token: #{state.fetch('token')}\r\nConnection: close\r\n\r\n")
           runtime_stream_status = observer_socket.gets.split[1].to_i
           raise "Runtime stream HTTP #{runtime_stream_status}" unless runtime_stream_status == 200
           while (header_line = observer_socket.gets) && header_line != "\r\n"
@@ -186,7 +195,7 @@ begin
   raise "terminal reconstruction failed: #{error}" unless status.success?
   measured = JSON.parse(output)
   raise "expected one inference request, got #{requests.size}" unless requests.size == 1
-  report = measured.merge('binary' => binary, 'root' => root, 'history_entries' => history_count,
+  report = measured.merge('binary' => binary, 'root' => root, 'history_entries' => history_count, 'historical_runtime_events' => journal_count,
     'execution' => execution, 'ui_mode' => ui_mode, 'requests' => requests, 'input_interval_ms' => interval * 1000,
     'runtime_stream_http_status' => runtime_stream_status,
     'observed_session_rewrites' => write_times.count { |t| t >= sent.first[:at] && t <= sent.last[:at] },

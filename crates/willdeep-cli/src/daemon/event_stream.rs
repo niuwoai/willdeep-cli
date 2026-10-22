@@ -10,10 +10,16 @@ use super::*;
 
 const LIVE_BACKLOG_LIMIT: usize = 1_000;
 
+#[cfg(test)]
+mod group_commit_tests;
+mod writer;
+
 pub(super) struct EventLog {
+    #[cfg(test)]
     path: PathBuf,
     state: Mutex<EventLogState>,
     live: tokio::sync::broadcast::Sender<RuntimeEvent>,
+    writer: writer::Writer,
 }
 
 struct EventLogState {
@@ -26,10 +32,14 @@ impl EventLog {
             .last()
             .map_or(1, |event| event.sequence.saturating_add(1));
         let (live, _) = tokio::sync::broadcast::channel(512);
+        let writer =
+            writer::Writer::start(path.clone(), live.clone(), next_sequence.saturating_sub(1))?;
         Ok(Self {
+            #[cfg(test)]
             path,
             state: Mutex::new(EventLogState { next_sequence }),
             live,
+            writer,
         })
     }
 
@@ -48,12 +58,22 @@ impl EventLog {
             kind: kind.into(),
             message: message.into(),
         };
-        let mut file = append_log(&self.path)?;
-        serde_json::to_writer(&mut file, &event)?;
-        std::io::Write::write_all(&mut file, b"\n")?;
-        file.sync_data()?;
+        let preview = event.kind == "task.output"
+            && event
+                .message
+                .split_once(' ')
+                .and_then(|(_, payload)| serde_json::from_str::<serde_json::Value>(payload).ok())
+                .and_then(|value| {
+                    value
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .is_some_and(|kind| {
+                    matches!(kind.as_str(), "assistant_text_delta" | "reasoning_delta")
+                });
+        self.writer.append(event.clone(), preview)?;
         state.next_sequence = state.next_sequence.saturating_add(1);
-        let _ = self.live.send(event.clone());
         Ok(event)
     }
 
@@ -65,7 +85,7 @@ impl EventLog {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("Runtime event log lock poisoned"))?;
-        read_events(&self.path, after, limit)
+        self.writer.read(after, limit)
     }
 
     pub(super) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
@@ -73,10 +93,7 @@ impl EventLog {
     }
 
     pub(super) fn latest_sequence(&self) -> u64 {
-        self.state
-            .lock()
-            .map(|state| state.next_sequence.saturating_sub(1))
-            .unwrap_or_default()
+        self.writer.head()
     }
 }
 
@@ -285,6 +302,26 @@ async fn next_event(state: &mut LiveEventState) -> Option<RuntimeEvent> {
                 return Some(event);
             }
         }
+        // Drain contiguous live events before consulting the durable journal.
+        // Reopening and scanning all historical NDJSON on every token makes a
+        // long-running Runtime progressively slower even when SSE is healthy.
+        match state.receiver.try_recv() {
+            Ok(event) if event.sequence == state.cursor.saturating_add(1) => {
+                state.cursor = event.sequence;
+                return Some(event);
+            }
+            Ok(event) if event.sequence <= state.cursor => continue,
+            Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
+                state.backlog = state
+                    .log
+                    .read_after(state.cursor, LIVE_BACKLOG_LIMIT)
+                    .unwrap_or_default()
+                    .into();
+                continue;
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return None,
+        }
         if state.log.latest_sequence() > state.cursor {
             state.backlog = state
                 .log
@@ -305,9 +342,16 @@ async fn next_event(state: &mut LiveEventState) -> Option<RuntimeEvent> {
             received = state.receiver.recv() => received,
         };
         match received {
-            Ok(event) if event.sequence > state.cursor => {
+            Ok(event) if event.sequence == state.cursor.saturating_add(1) => {
                 state.cursor = event.sequence;
                 return Some(event);
+            }
+            Ok(event) if event.sequence > state.cursor => {
+                state.backlog = state
+                    .log
+                    .read_after(state.cursor, LIVE_BACKLOG_LIMIT)
+                    .unwrap_or_default()
+                    .into();
             }
             Ok(_) => {}
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {

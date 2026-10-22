@@ -374,6 +374,7 @@ struct App {
     worktree_review: Option<crate::daemon::WorktreeReview>,
     diff_review: Option<DiffReviewState>,
     runtime_event_cursor: u64,
+    runtime_follow_after: Option<u64>,
     workspace_status: String,
     progress_log: VecDeque<String>,
     language: Language,

@@ -85,6 +85,7 @@ impl App {
             worktree_review: None,
             diff_review: None,
             runtime_event_cursor: 0,
+            runtime_follow_after: None,
             workspace_status: String::new(),
             progress_log: VecDeque::new(),
             language,
@@ -194,6 +195,7 @@ impl App {
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
+        self.runtime_follow_after = None;
         self.pending_model = None;
         self.pending_provider = None;
         self.transcript = session_transcript(session, self.language);

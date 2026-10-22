@@ -117,7 +117,12 @@ begin
     ensure
       File.binwrite(File.join(root, 'terminal.ansi'), bytes)
       Process.kill('TERM', pid) rescue Errno::ESRCH
-      Process.wait(pid) rescue Errno::ECHILD
+      begin
+        Timeout.timeout(5) { Process.wait(pid) }
+      rescue Timeout::Error
+        Process.kill('KILL', pid) rescue Errno::ESRCH
+      rescue Errno::ECHILD
+      end
     end
   end
   report = {passed: true, binary: binary, root: root, phases: phases, requests: requests, default_preserved: true, deduplicated: true}

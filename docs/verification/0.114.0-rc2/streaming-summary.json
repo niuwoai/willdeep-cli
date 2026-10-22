@@ -1,0 +1,98 @@
+[
+  {
+    "events": 160,
+    "displayed": 160,
+    "median_ms": 70164.60200003348,
+    "p95_ms": 75733.06700005196,
+    "max_ms": 75766.53099991381,
+    "max_display_gap_ms": 757.8259999863803,
+    "display_updates": 147,
+    "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+    "root": "/private/tmp/wd-stream-20261022-89096-ticcd0",
+    "history_entries": 2000,
+    "historical_runtime_events": 20000,
+    "execution": "runtime",
+    "ui_mode": "compact",
+    "requests": [
+      {
+        "path": "/v1/chat/completions",
+        "model": "fixture",
+        "stream": true
+      }
+    ],
+    "input_interval_ms": 20.0,
+    "runtime_stream_http_status": 200,
+    "observed_session_rewrites": 14,
+    "graceful_exit": true,
+    "saved_answer_complete": true,
+    "cursor_flushed_on_exit": true,
+    "runtime_event_median_ms": 34.28399993572384,
+    "runtime_event_p95_ms": 89.69900000374764,
+    "passed": false,
+    "acceptance_p95_ms": 200.0
+  },
+  {
+    "events": 160,
+    "displayed": 160,
+    "median_ms": 24.81400000397116,
+    "p95_ms": 49.01600000448525,
+    "max_ms": 75.80300001427531,
+    "max_display_gap_ms": 62.159999972209334,
+    "display_updates": 106,
+    "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+    "root": "/private/tmp/wd-stream-20261022-97925-5ly8u6",
+    "history_entries": 2000,
+    "historical_runtime_events": 20000,
+    "execution": "runtime",
+    "ui_mode": "compact",
+    "requests": [
+      {
+        "path": "/v1/chat/completions",
+        "model": "fixture",
+        "stream": true
+      }
+    ],
+    "input_interval_ms": 20.0,
+    "runtime_stream_http_status": 200,
+    "observed_session_rewrites": 14,
+    "graceful_exit": true,
+    "saved_answer_complete": true,
+    "cursor_flushed_on_exit": true,
+    "runtime_event_median_ms": 23.518000030890107,
+    "runtime_event_p95_ms": 42.23200003616512,
+    "passed": true,
+    "acceptance_p95_ms": 200.0
+  },
+  {
+    "events": 160,
+    "displayed": 160,
+    "median_ms": 24.60200001951307,
+    "p95_ms": 65.87900000158697,
+    "max_ms": 185.45800005085766,
+    "max_display_gap_ms": 134.12900001276284,
+    "display_updates": 100,
+    "binary": "/private/tmp/willdeep-rs-input-suggestion-style/target/release/willdeep",
+    "root": "/private/tmp/wd-stream-20261022-5155-qua9ke",
+    "history_entries": 2000,
+    "historical_runtime_events": 20000,
+    "execution": "runtime",
+    "ui_mode": "full",
+    "requests": [
+      {
+        "path": "/v1/chat/completions",
+        "model": "fixture",
+        "stream": true
+      }
+    ],
+    "input_interval_ms": 20.0,
+    "runtime_stream_http_status": 200,
+    "observed_session_rewrites": 14,
+    "graceful_exit": true,
+    "saved_answer_complete": true,
+    "cursor_flushed_on_exit": true,
+    "runtime_event_median_ms": 23.965999949723482,
+    "runtime_event_p95_ms": 65.01499994192272,
+    "passed": true,
+    "acceptance_p95_ms": 200.0
+  }
+]
