@@ -1,4 +1,32 @@
 use super::*;
+use std::sync::OnceLock;
+
+const INPUT_BREATH_PERIOD: Duration = Duration::from_secs(8);
+const INPUT_BREATH_PEAK_START: Duration = Duration::from_secs(5);
+const INPUT_BREATH_PEAK_END: Duration = Duration::from_millis(6_500);
+
+fn idle_input_background(app: &App, elapsed: Duration) -> Color {
+    let can_breathe = app.composer_ready()
+        && app.input.is_empty()
+        && app.visible_input_suggestion().is_none()
+        && !app.has_open_overlay();
+    if !can_breathe {
+        return COMPOSER_BACKGROUND;
+    }
+
+    let phase_ms = elapsed.as_millis() % INPUT_BREATH_PERIOD.as_millis();
+    if (INPUT_BREATH_PEAK_START.as_millis()..INPUT_BREATH_PEAK_END.as_millis()).contains(&phase_ms)
+    {
+        Color::DarkGray
+    } else {
+        COMPOSER_BACKGROUND
+    }
+}
+
+fn current_idle_input_background(app: &App) -> Color {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    idle_input_background(app, EPOCH.get_or_init(Instant::now).elapsed())
+}
 
 /// Fixed compact UI. Dialogs and the sidebar are rendered by the common layer.
 /// The composer and optional footer always span the whole terminal, including padding.
@@ -66,7 +94,7 @@ pub(super) fn render(
         None => Text::from(app.input.wrapped_text(width)),
     };
     let style = if app.composer_ready() {
-        app.composer_style()
+        app.composer_style().bg(current_idle_input_background(app))
     } else {
         Style::default().fg(Color::Cyan).bg(COMPOSER_BACKGROUND)
     };
@@ -95,9 +123,9 @@ pub(super) fn render(
         .block(
             Block::default()
                 .borders(Borders::TOP)
-                // A normal box-drawing rule sits halfway down the cell,
-                // leaving a visible background strip above the separator.
-                .border_set(ratatui::symbols::border::ONE_EIGHTH_TALL)
+                // Use a standard one-pixel stroke; the top border cell shares
+                // the input background so the divider meets the transcript cleanly.
+                .border_set(ratatui::symbols::border::PLAIN)
                 .padding(Padding::horizontal(1))
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
@@ -181,7 +209,7 @@ mod tests {
                     let top = app.prompt_rect.y;
                     for x in 0..width {
                         let separator = &buffer[(x, top)];
-                        assert_eq!(separator.symbol(), "▔");
+                        assert_eq!(separator.symbol(), "─");
                         assert_eq!(separator.fg, Color::DarkGray);
                         assert_eq!(separator.bg, buffer[(x, top + 1)].bg);
                         assert_ne!(separator.bg, buffer[(x, top - 1)].bg);
@@ -189,6 +217,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn idle_input_background_breathes_slowly_and_stops_for_interaction() {
+        let mut app = compact_app();
+        assert_eq!(
+            idle_input_background(&app, Duration::from_secs(1)),
+            COMPOSER_BACKGROUND
+        );
+        assert_eq!(
+            idle_input_background(&app, Duration::from_secs(5)),
+            Color::DarkGray
+        );
+        assert_eq!(
+            idle_input_background(&app, Duration::from_secs(7)),
+            COMPOSER_BACKGROUND
+        );
+
+        app.input.insert("draft");
+        assert_eq!(
+            idle_input_background(&app, Duration::from_secs(5)),
+            COMPOSER_BACKGROUND
+        );
+        app.input.take();
+        app.begin_turn(false, "working".into());
+        assert_eq!(
+            idle_input_background(&app, Duration::from_secs(5)),
+            COMPOSER_BACKGROUND
+        );
     }
 
     #[test]
