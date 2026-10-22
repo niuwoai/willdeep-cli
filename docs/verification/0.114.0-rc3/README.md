@@ -2,6 +2,8 @@
 
 日期：2026-10-22。基于 rc2 的流式、模型选择和本地 Provider 发现验收继续验证。
 
+发布目标为 `v0.114.0-rc3`，所有安装入口与 Runtime 均须核对这一版本；rc2 不作为本次最终交付。
+
 ## CI 发现的问题
 
 独立 tag CI `39746216187` 的 Windows `daemon_upgrade_drains_active_work_and_hands_off_without_loss` 失败：活动 Turn 在交接后被恢复为 Interrupted，CLI 退出码 5。rc2 发布流水线 `39746216312` 在公开发行之前取消；保留原 tag，不移动。
