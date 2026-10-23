@@ -197,6 +197,7 @@ Agent 回复完，空输入框里会以灰字显示一句最可能的下一条�
 - `/permissions strict|smart|workspace-write|full-access` 直接切换。
 - **Shift+Tab** 在严格 → 智能审核 → 工作区可写之间循环，不会切到完全访问。
 - 选「完全访问」一定会进确认页，按 `y` 才生效，`n` / `Esc` 返回。
+- 完全访问下，明确的项目子路径或临时目录子路径（`/tmp`、`/private/tmp`、`/var/tmp` 和系统临时目录）可通过 `rm` / `rmdir` 免审批清理，支持多个目标与清理后的只读命令。项目根目录、临时根目录、`.git`、越界符号链接、变量/通配符/命令替换及无法确定范围的组合命令仍需确认；其他审批模式不受影响。
 - 切换只对当前 TUI 有效，退出后回到配置里的默认档；`/permissions default <档位>` 写回配置文件。
 - 每次切换写一行 `approvals.jsonl`（来源 `mode-change`）。各档的判定细节见 [审批与自动化](APPROVALS.md)。
 
