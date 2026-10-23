@@ -19,7 +19,7 @@ async fn handle_queue_action(
         return;
     }
     if app.handle_queue_key(key) {
-        app.prompt_queue.as_mut().unwrap().status = None;
+        app.prompt_queue.as_mut().unwrap().set_status(None);
         let index = app.prompt_queue.as_ref().unwrap().selected;
         let text = app.queued_prompts[index].text.clone();
         if app.running
@@ -30,8 +30,18 @@ async fn handle_queue_action(
             app.remove_queued_prompt_row(index);
             app.queued_prompts.remove(index);
             app.note_steering_delivered(&text);
+            app.prompt_queue.as_mut().unwrap().show_feedback(
+                language
+                    .text(
+                        "已送达本轮",
+                        "Delivered to current turn",
+                        "現在のターンに送達しました",
+                    )
+                    .to_owned(),
+                Instant::now(),
+            );
         } else {
-            app.prompt_queue.as_mut().unwrap().status=Some(language.text("暂不能插话，消息仍保留在队列中（附件和命令需等待下一轮）","Cannot steer now; message remains queued (attachments and commands wait for the next turn)","今は送達できません。添付やコマンドは次のターンを待ちます").to_owned());
+            app.prompt_queue.as_mut().unwrap().set_status(Some(language.text("暂不能插话，消息仍保留在队列中（附件和命令需等待下一轮）","Cannot steer now; message remains queued (attachments and commands wait for the next turn)","今は送達できません。添付やコマンドは次のターンを待ちます").to_owned()));
         }
     }
 }
@@ -455,7 +465,7 @@ pub(super) async fn event_loop(
                 app.note_steering_delivered(&text);
             } else {
                 app.open_prompt_queue();
-                app.prompt_queue.as_mut().unwrap().status = Some(
+                app.prompt_queue.as_mut().unwrap().set_status(Some(
                     language
                         .text(
                             "自动发送失败，消息已保留；关闭列表后重试",
@@ -463,7 +473,7 @@ pub(super) async fn event_loop(
                             "自動送信失敗。メッセージを保持。閉じると再試行",
                         )
                         .to_owned(),
-                );
+                ));
             }
             continue;
         }
@@ -508,14 +518,14 @@ pub(super) async fn event_loop(
                 Err(error) => {
                     app.queued_prompts.push_front(queued);
                     app.open_prompt_queue();
-                    app.prompt_queue.as_mut().unwrap().status = Some(format!(
+                    app.prompt_queue.as_mut().unwrap().set_status(Some(format!(
                         "{}: {error}",
                         language.text(
                             "发送失败，消息与附件已保留；关闭列表后重试",
                             "Send failed; message and attachments retained. Close to retry",
                             "送信失敗。メッセージと添付を保持。閉じると再試行"
                         )
-                    ));
+                    )));
                 }
             }
             continue;
@@ -523,7 +533,15 @@ pub(super) async fn event_loop(
         // 本轮刚结束：响一声铃，盯着别处的用户也知道轮到自己了。
         app.ring_turn_bell(term.backend_mut())?;
         draw(term, &mut app, &runtime.skills)?;
+        let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
+            _ = async {
+                if let Some(deadline) = queue_feedback_deadline {
+                    tokio::time::sleep_until(deadline.into()).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => { app.expire_queue_feedback(Instant::now()); },
             Some(release)=update_rx.recv()=>{app.update_available=Some(release);},
             _=refresh.tick()=>{
                 if let Err(error)=peer_commands::refresh_badge(&mut app,session.id,&runtime.home) {

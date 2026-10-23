@@ -1,17 +1,46 @@
 use super::*;
 use ratatui::Frame;
 
+const QUEUE_FEEDBACK_DURATION: Duration = Duration::from_secs(3);
+
 #[derive(Default)]
 pub(super) struct QueuePanel {
     pub(super) selected: usize,
     pub(super) editor: Option<PromptEditor>,
     pub(super) status: Option<String>,
+    status_deadline: Option<Instant>,
     scroll: u16,
     hits: Vec<(Rect, KeyCode)>,
     rows: Vec<(Rect, usize)>,
 }
 
+impl QueuePanel {
+    pub(super) fn set_status(&mut self, message: Option<String>) {
+        self.status = message;
+        self.status_deadline = None;
+    }
+
+    pub(super) fn show_feedback(&mut self, message: String, now: Instant) {
+        self.status = Some(message);
+        self.status_deadline = Some(now + QUEUE_FEEDBACK_DURATION);
+    }
+}
+
 impl App {
+    pub(super) fn queue_feedback_deadline(&self) -> Option<Instant> {
+        self.prompt_queue.as_ref()?.status_deadline
+    }
+
+    pub(super) fn expire_queue_feedback(&mut self, now: Instant) {
+        if self
+            .queue_feedback_deadline()
+            .is_some_and(|deadline| now >= deadline)
+            && let Some(panel) = self.prompt_queue.as_mut()
+        {
+            panel.set_status(None);
+        }
+    }
+
     pub(super) fn queue_mouse_key(&mut self, mouse: MouseEvent) -> Option<KeyEvent> {
         let panel = self.prompt_queue.as_mut()?;
         match mouse.kind {
@@ -170,7 +199,15 @@ impl App {
             .min(self.queued_prompts.len().saturating_sub(1));
         if let Some(editor) = panel.editor.as_mut() {
             match key.code {
-                KeyCode::Esc => panel.editor = None,
+                KeyCode::Esc => {
+                    panel.editor = None;
+                    panel.show_feedback(
+                        self.language
+                            .text("已取消编辑", "Edit cancelled", "編集をキャンセルしました")
+                            .to_owned(),
+                        Instant::now(),
+                    );
+                }
                 KeyCode::Enter
                     if key
                         .modifiers
@@ -192,6 +229,12 @@ impl App {
                         self.refresh_transcript_height();
                     }
                     panel.editor = None;
+                    panel.show_feedback(
+                        self.language
+                            .text("已保存修改", "Changes saved", "変更を保存しました")
+                            .to_owned(),
+                        Instant::now(),
+                    );
                 }
                 KeyCode::Backspace => editor.backspace(),
                 KeyCode::Delete => editor.delete(),
@@ -237,7 +280,18 @@ impl App {
                 }
                 KeyCode::Char('d') | KeyCode::Delete => {
                     self.remove_queued_prompt_row(panel.selected);
-                    self.queued_prompts.remove(panel.selected);
+                    if self.queued_prompts.remove(panel.selected).is_some() {
+                        panel.show_feedback(
+                            self.language
+                                .text(
+                                    "已从待发队列删除",
+                                    "Removed from queue",
+                                    "送信待ちから削除しました",
+                                )
+                                .to_owned(),
+                            Instant::now(),
+                        );
+                    }
                 }
                 KeyCode::Char('s') if !self.queued_prompts.is_empty() => {
                     self.prompt_queue = Some(panel);
@@ -261,6 +315,7 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
 }
 
 pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
+    app.expire_queue_feedback(Instant::now());
     let Some(panel) = app.prompt_queue.as_ref() else {
         return;
     };
@@ -327,7 +382,7 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
             x = 0;
             row += 1;
         }
-        footer_labels.push((x, row, length, label));
+        footer_labels.push((x, row, length, label, code));
         footer_hits.push((Rect::new(x, row, length, 1), code));
         x += length + 2;
     }
@@ -474,12 +529,11 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
         paragraph.scroll((scroll.min(u16::MAX as usize) as u16, 0)),
         content,
     );
-    for (x, row, length, label) in footer_labels {
+    for (x, row, length, label, code) in footer_labels {
         if row < footer_height {
-            f.render_widget(
-                Paragraph::new(label).style(Style::default().fg(Color::Cyan)),
-                Rect::new(rect.x + 1 + x, footer_y + row, length, 1),
-            );
+            let button = Rect::new(rect.x + 1 + x, footer_y + row, length, 1);
+            let style = queue_button_style(code);
+            f.render_widget(Paragraph::new(label).style(style), button);
         }
     }
     let rows = list_rows
@@ -522,6 +576,18 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
             ));
         }
     }
+}
+
+fn queue_button_style(code: KeyCode) -> Style {
+    let (foreground, background) = match code {
+        KeyCode::Char('s') | KeyCode::Enter => (Color::Black, Color::Cyan),
+        KeyCode::Delete => (Color::LightRed, Color::DarkGray),
+        _ => (Color::White, Color::DarkGray),
+    };
+    Style::default()
+        .fg(foreground)
+        .bg(background)
+        .add_modifier(Modifier::BOLD)
 }
 
 #[cfg(test)]
@@ -607,6 +673,102 @@ mod tests {
             let first = panel.hits[0].0;
             assert!(app.queue_mouse_key(click(first.right(), first.y)).is_none());
         }
+    }
+
+    #[test]
+    fn localized_buttons_paint_only_their_clickable_cells() {
+        for language in [Language::ZhCn, Language::En, Language::Ja] {
+            for width in [32, 60, 100] {
+                let mut app = queued_app();
+                app.language = language;
+                let mut terminal =
+                    Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                let panel = app.prompt_queue.as_ref().unwrap();
+                let buffer = terminal.backend().buffer();
+                for (rect, _) in &panel.hits {
+                    let mut x = rect.x;
+                    while x < rect.right() {
+                        let cell = &buffer[(x, rect.y)];
+                        assert_ne!(
+                            cell.bg,
+                            Color::Reset,
+                            "{language:?}, width={width}, rect={rect:?}, x={x}, symbol={:?}",
+                            cell.symbol()
+                        );
+                        // A terminal paints a wide glyph and its background
+                        // from its first cell; TestBackend skips continuation cells.
+                        x += UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
+                    }
+                    if rect.right() < width - 1 {
+                        assert_eq!(
+                            buffer[(rect.right(), rect.y)].bg,
+                            Color::Reset,
+                            "gap must not look clickable"
+                        );
+                    }
+                }
+                let key = click_action(&mut app, KeyCode::Char('s'));
+                assert!(app.handle_queue_key(key));
+                assert_eq!(
+                    app.queued_prompts.len(),
+                    3,
+                    "click must still await delivery"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn delete_feedback_expires_without_closing_the_queue_or_sending_another_message() {
+        let mut app = queued_app();
+        app.handle_queue_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert_eq!(app.queued_prompts.len(), 2);
+        assert!(app.prompt_queue.as_ref().unwrap().status.is_some());
+        let deadline = app.queue_feedback_deadline().unwrap();
+        app.expire_queue_feedback(deadline - Duration::from_millis(1));
+        assert!(app.prompt_queue.as_ref().unwrap().status.is_some());
+        app.expire_queue_feedback(deadline);
+        assert!(app.prompt_queue.as_ref().unwrap().status.is_none());
+        assert!(app.queue_feedback_deadline().is_none());
+        assert_eq!(app.queued_prompts.len(), 2);
+        assert!(
+            !app.queued_prompt_ready(),
+            "the panel keeps automatic dispatch paused"
+        );
+    }
+
+    #[test]
+    fn feedback_restarts_its_timer_and_never_expires_a_later_error() {
+        let mut app = queued_app();
+        let now = Instant::now();
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .show_feedback("sent".into(), now);
+        assert_eq!(
+            app.queue_feedback_deadline(),
+            Some(now + Duration::from_secs(3))
+        );
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .show_feedback("deleted".into(), now + Duration::from_secs(2));
+        app.expire_queue_feedback(now + Duration::from_secs(3));
+        assert_eq!(
+            app.prompt_queue.as_ref().unwrap().status.as_deref(),
+            Some("deleted")
+        );
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .set_status(Some("message retained after failure".into()));
+        app.expire_queue_feedback(now + Duration::from_secs(30));
+        assert_eq!(
+            app.prompt_queue.as_ref().unwrap().status.as_deref(),
+            Some("message retained after failure")
+        );
+        assert!(app.queue_feedback_deadline().is_none());
     }
 
     #[test]
