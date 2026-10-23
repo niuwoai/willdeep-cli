@@ -296,18 +296,15 @@ impl App {
         }
     }
 
-    /// 排队的提示词真正发出时，把那行「待发」标记去掉。
+    /// 真正发出后移除最早的同文待发占位，并在当前轮次边界回显原文。
+    /// 只改旧行会把用户消息留在上一轮中间，下一轮回复前就看不到提问。
     pub(super) fn mark_queued_prompt_sent(&mut self, text: &str) {
         let queued = self.queued_prompt_row(text);
-        if let Some(line) = self
-            .transcript
-            .iter_mut()
-            .rev()
-            .find(|line| **line == queued)
-        {
-            *line = format!("You: {}", terminal_safe_text(text));
+        if let Some(index) = self.transcript.iter().position(|line| *line == queued) {
+            self.transcript.remove(index);
             self.refresh_transcript_height();
         }
+        self.append_transcript(format!("You: {text}"));
     }
 }
 
@@ -836,16 +833,69 @@ mod tests {
     }
 
     #[test]
-    fn queued_prompts_are_marked_until_they_are_sent() {
+    fn queued_prompt_is_echoed_after_the_previous_turn_before_the_next_reply() {
+        for language in [Language::ZhCn, Language::En, Language::Ja] {
+            let mut app = App::new(Vec::new(), language);
+            app.begin_turn(false, "working".to_owned());
+            app.input.insert("fix it");
+            app.queue_submitted_prompt();
+            app.note_reply("previous reply");
+            app.append_turn_stats(None);
+            app.finish_turn();
+            let divider = app.transcript.last().unwrap().clone();
+            app.queued_prompts.pop_front().unwrap();
+
+            app.mark_queued_prompt_sent("fix it");
+            app.note_reply("next reply");
+
+            assert_eq!(
+                app.transcript,
+                vec![
+                    "WillDeep: previous reply".to_owned(),
+                    divider,
+                    "You: fix it".to_owned(),
+                    "WillDeep: next reply".to_owned(),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn identical_queued_prompts_keep_their_own_delivery_positions() {
         let mut app = App::new(Vec::new(), Language::En);
-        let row = app.queued_prompt_row("fix it");
-        app.append_transcript(row);
-        assert_eq!(app.transcript, vec!["You: [queued] fix it"]);
-        app.mark_queued_prompt_sent("fix it");
-        assert_eq!(app.transcript, vec!["You: fix it"]);
-        // 找不到对应的待发行时什么都不动。
-        app.mark_queued_prompt_sent("other");
-        assert_eq!(app.transcript, vec!["You: fix it"]);
+        let queued = app.queued_prompt_row("again");
+        app.append_transcript(queued.clone());
+        app.note_reply("between submissions");
+        app.append_transcript(queued.clone());
+        app.note_reply("previous reply");
+
+        app.mark_queued_prompt_sent("again");
+        assert_eq!(app.transcript[0], "WillDeep: between submissions");
+        assert_eq!(app.transcript[1], queued);
+        assert_eq!(app.transcript.last().unwrap(), "You: again");
+        app.note_reply("first queued reply");
+        app.mark_queued_prompt_sent("again");
+        app.note_reply("second queued reply");
+        assert_eq!(
+            &app.transcript[2..],
+            [
+                "You: again",
+                "WillDeep: first queued reply",
+                "You: again",
+                "WillDeep: second queued reply",
+            ]
+        );
+    }
+
+    #[test]
+    fn queued_prompt_without_a_placeholder_is_still_echoed_safely() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.note_reply("previous reply");
+        app.mark_queued_prompt_sent("first\tline\nsecond line");
+        assert_eq!(
+            app.transcript.last().unwrap(),
+            &terminal_safe_text("You: first\tline\nsecond line")
+        );
     }
 
     #[test]
