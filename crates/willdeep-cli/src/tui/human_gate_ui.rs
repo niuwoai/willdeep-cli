@@ -14,7 +14,8 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
         let block = modal_block(
             approval_title(app.language, app.approval_queue.len()),
             Color::LightYellow,
-        );
+        )
+        .title_alignment(Alignment::Center);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
         let button_height = 1;

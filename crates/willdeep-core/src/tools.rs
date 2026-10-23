@@ -675,8 +675,9 @@ impl ToolRegistry {
         }
         let action =
             format!("allow ops_runner subagent to run this exact command once:\n{command}");
-        // 完全访问免的是审核，不是破坏性黑名单：`rm -rf` 形态照样问人。
-        let destructive = crate::safety::classify(command) == CommandSafety::AlwaysDangerous;
+        // 完全访问仅豁免可静态确定范围的项目/临时目录清理。
+        let destructive = crate::safety::classify(command) == CommandSafety::AlwaysDangerous
+            && !crate::safety::allows_full_access_removal(command, &self.workspace);
         if destructive || !self.allowed_by_full_access(&action) {
             self.require_approval(&action, false).await?;
         }

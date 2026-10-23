@@ -9,7 +9,7 @@
 //! | `strict` | 每次问 | 每次问 | 每次问 |
 //! | `smart` | 放行 | 静态规则 → AI 审核 → 问 | 问 |
 //! | `workspace-write` | 放行 | 工作区内围栏写入直接放行；外部命令走 AI 审核，风险/不可用时问 | 外部访问走 AI 审核，风险/不可用时问 |
-//! | `full-access` | 放行 | 放行，破坏性形态照样问 | 放行 |
+//! | `full-access` | 放行 | 放行；明确的项目内/临时目录清理免审，其余破坏性形态仍问 | 放行 |
 //!
 //! 档位在会话中途可以换：[`SharedApprovalMode`] 是一个原子量，TUI、Runtime
 //! 与注册表持有同一份，切换后下一次工具调用就按新档位判。
@@ -288,9 +288,17 @@ impl ToolRegistry {
                 return Ok(());
             }
             CommandSafety::AlwaysDangerous => {
-                // Destructive shapes never reach the judge — a model must not
-                // be able to talk its way into `rm -rf`. Full access does not
-                // change that: it skips review, not the denylist.
+                if mode == ApprovalMode::FullAccess
+                    && crate::safety::allows_full_access_removal(command, &self.workspace)
+                {
+                    self.report_approval(
+                        command,
+                        ApprovalSource::FullAccess,
+                        "full access: literal cleanup confined to project descendants or temporary directories".to_owned(),
+                    );
+                    return Ok(());
+                }
+                // Other destructive shapes never reach the AI judge.
                 escalate(
                     self,
                     "static rule: destructive shape, judge bypassed".to_owned(),
@@ -719,10 +727,88 @@ mod tests {
                 .any(|trace| trace.source == ApprovalSource::FullAccess)
         );
 
-        let destructive = registry.execute(&command("rm -rf out.txt")).await;
+        let destructive = registry
+            .execute(&command(&format!("rm -rf '{}'", root.display())))
+            .await;
         assert!(matches!(destructive, Err(ToolError::ApprovalDenied(_))));
         assert!(root.join("out.txt").exists());
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn full_access_bounded_cleanup_runs_without_human_or_judge() {
+        let root = fixture("bounded-cleanup");
+        let temp = fixture("cleanup-target");
+        std::fs::create_dir_all(root.join("build/nested")).unwrap();
+        std::fs::write(root.join("build/nested/artifact"), "fixture").unwrap();
+        let judged = Arc::new(AtomicUsize::new(0));
+        let (registry, traces) = traced(
+            ToolRegistry::new(&root, ApprovalMode::FullAccess)
+                .unwrap()
+                .with_safety_judge(Arc::new(CountingJudge(judged.clone()))),
+        );
+        registry
+            .execute(&command(&format!(
+                "rm -rf -- build '{}'\ncd '{}'\necho done | head -1",
+                temp.display(),
+                root.display()
+            )))
+            .await
+            .expect("bounded cleanup must not ask");
+        assert!(!root.join("build").exists());
+        assert!(!temp.exists());
+        assert_eq!(judged.load(Ordering::SeqCst), 0);
+        assert!(traces.lock().unwrap().iter().any(|trace| {
+            trace.source == ApprovalSource::FullAccess && trace.detail.contains("literal cleanup")
+        }));
+        for mode in [
+            ApprovalMode::Strict,
+            ApprovalMode::Smart,
+            ApprovalMode::WorkspaceAccess,
+        ] {
+            let registry = ToolRegistry::new(&root, mode).unwrap();
+            assert!(matches!(
+                registry.gate_main_command("rm -rf build", "cleanup").await,
+                Err(ToolError::ApprovalDenied(_))
+            ));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bounded_cleanup_follows_full_access_without_widening_child_duties() {
+        let root = fixture("bounded-child-cleanup");
+        let registry = ToolRegistry::new(&root, ApprovalMode::FullAccess).unwrap();
+        registry
+            .approve_subagent_command("rm -rf build")
+            .await
+            .unwrap();
+        assert!(registry.approve_subagent_command("rm -rf .").await.is_err());
+        let parent = SharedApprovalMode::new(ApprovalMode::FullAccess);
+        let child = ToolRegistry::new(&root, ApprovalMode::Smart)
+            .unwrap()
+            .with_reviewed_subagent_shell(true)
+            .with_parent_approval_mode(parent.clone());
+        child.gate_command("rm -rf build", "cleanup").await.unwrap();
+        assert!(child.gate_command("rm -rf .", "cleanup").await.is_err());
+        parent.set(ApprovalMode::Smart);
+        assert!(child.gate_command("rm -rf build", "cleanup").await.is_err());
+        parent.set(ApprovalMode::FullAccess);
+        let verifier = ToolRegistry::new(&root, ApprovalMode::Smart)
+            .unwrap()
+            .with_command_allowlist(Some(std::collections::HashSet::from([
+                "echo verified".to_owned()
+            ])))
+            .with_parent_approval_mode(parent);
+        assert!(
+            verifier
+                .gate_command("rm -rf build", "cleanup")
+                .await
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

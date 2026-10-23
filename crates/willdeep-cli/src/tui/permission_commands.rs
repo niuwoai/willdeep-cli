@@ -106,9 +106,9 @@ fn summary(mode: ApprovalMode, language: Language) -> &'static str {
             "ワークスペース内の書き込みと囲い内のコマンドは AI 審査なしで実行（囲いは通信遮断）。通信・リモート操作は確認",
         ),
         ApprovalMode::FullAccess => language.text(
-            "联网、任意文件、MCP 都不再问；只有 rm -rf 这类破坏性命令仍问",
-            "Network, any file, and MCP run without asking; only destructive commands like rm -rf still ask",
-            "通信・任意ファイル・MCP も確認なし。rm -rf などの破壊的コマンドのみ確認",
+            "联网、文件、MCP 免审；明确的项目内/临时目录清理免审，其他破坏性操作仍问",
+            "Network, files, and MCP skip approval; literal project/temp cleanup also skips approval; other destructive actions still ask",
+            "通信・ファイル・MCP と明確なプロジェクト内/一時領域の削除は確認不要。その他の破壊的操作は確認",
         ),
     }
 }

@@ -20,6 +20,9 @@
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+mod bounded_removal;
+pub(crate) use bounded_removal::allows_full_access_removal;
+
 /// Maximum `$(...)` nesting the expansion resolver will walk before giving up.
 const MAX_SUBSTITUTION_DEPTH: usize = 6;
 
