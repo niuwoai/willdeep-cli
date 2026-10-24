@@ -10,6 +10,7 @@ impl App {
             transcript,
             message_times: message_time::MessageTimes::default(),
             running: false,
+            qterm_gate_generation: 0,
             approval: None,
             approval_selected: 0,
             approval_queue: VecDeque::new(),
@@ -1370,6 +1371,7 @@ impl App {
             return false;
         }
         self.approval = Some(request);
+        self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
         true
     }
@@ -1445,6 +1447,7 @@ impl App {
         };
         let _ = sender.send(decide(always));
         self.approval = self.approval_queue.pop_front();
+        self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
     }
 
@@ -1468,12 +1471,14 @@ impl App {
             return false;
         }
         self.question = Some(dialog);
+        self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         true
     }
 
     /// Promote the next queued question after the visible one is answered.
     pub(super) fn promote_next_question(&mut self) {
         self.question = self.question_queue.pop_front();
+        self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
     }
 
     /// 收起已经没人等着回答的对话框：接收端被丢掉了（gate 在手机或别的终端上
@@ -1492,6 +1497,7 @@ impl App {
             .is_some_and(|(_, _, sender)| sender.is_closed())
         {
             self.approval = self.approval_queue.pop_front();
+            self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
             self.approval_selected = 0;
         }
         self.question_queue

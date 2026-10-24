@@ -324,7 +324,27 @@ pub(super) async fn event_loop(
         runtime.runtime_submit.workspace.clone(),
         runtime_event_tx.clone(),
     );
+    let mut qterm = crate::qterm::ViewState::from_env();
     loop {
+        qterm.observe(
+            session.id,
+            app.running,
+            app.runtime_turn,
+            app.approval.is_some(),
+            app.question.is_some(),
+            app.qterm_gate_generation,
+        );
+        if qterm.reporter.take_error() {
+            app.notice = Some(
+                language
+                    .text(
+                        "QTerm 状态连接暂不可用；任务继续运行",
+                        "QTerm status connection unavailable; task continues",
+                        "QTerm 状態接続を利用できません。タスクは継続します",
+                    )
+                    .to_owned(),
+            );
+        }
         if let Some(after) = app.runtime_follow_after.take() {
             while runtime_event_rx.try_recv().is_ok() {}
             _runtime_event_follower = crate::daemon::start_runtime_event_follower(
@@ -591,6 +611,7 @@ pub(super) async fn event_loop(
                 }
             },
             Some(snapshot)=runtime_snapshot_rx.recv()=>{
+                qterm.runtime_snapshot(&snapshot, session.id, app.runtime_event_cursor, app.running);
                 runtime.notifier.attention_snapshot(&snapshot.attention);
                 if app.observe_runtime_tasks(&snapshot.tasks,session.id,snapshot.event_sequence) {
                     runtime_ui::reconcile_stale_runtime_turn(&mut app,session,runtime).await;
@@ -1570,8 +1591,8 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::GoalBudgetLimited{reason})=>app.record_progress(format!("{} · {reason:?}",language.text("目标预算耗尽 · 转入收尾","Goal budget exhausted · wrapping up","目標の予算を使い切りました · まとめに移ります"))),
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
-                UiMessage::Finished(Ok(mut outcome), ownership)=>{crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
-                UiMessage::Finished(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));app.finish_turn();},
+                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
+                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));app.finish_turn();},
                 UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});app.finish_turn();},
                 UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));app.finish_turn();},
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
@@ -1614,5 +1635,6 @@ pub(super) async fn event_loop(
         runtime_ui::sync_runtime_session(&mut app, session, store)?;
     }
     app.save_message_times();
+    qterm.reporter.finish(false).await;
     Ok(())
 }
