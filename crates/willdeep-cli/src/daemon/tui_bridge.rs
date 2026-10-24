@@ -96,6 +96,7 @@ pub(crate) struct RemoteAgent {
 #[derive(Clone)]
 pub(crate) struct RemoteRuntimeEvent {
     pub sequence: u64,
+    pub timestamp: u64,
     pub kind: String,
     pub message: String,
     pub visible: bool,
@@ -648,6 +649,7 @@ pub(crate) async fn runtime_events(
                 .and_then(|task_id| visible_tasks.get(&task_id).copied().flatten());
             RemoteRuntimeEvent {
                 sequence: event.sequence,
+                timestamp: event.timestamp,
                 kind: event.kind,
                 message: event.message,
                 visible: session_id.is_some(),
@@ -757,6 +759,7 @@ async fn follow_runtime_events_once(
         if tx
             .send(vec![RemoteRuntimeEvent {
                 sequence: event.sequence,
+                timestamp: event.timestamp,
                 kind: event.kind,
                 message: event.message,
                 visible: session_id.is_some(),

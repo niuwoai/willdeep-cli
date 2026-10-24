@@ -8,11 +8,15 @@ pub(super) struct TranscriptRenderCache {
     expanded: bool,
     language: Language,
     search: Option<String>,
+    time_labels: Vec<Option<String>>,
     text: Text<'static>,
 }
 
 impl App {
     pub(super) fn prepare_transcript_frame(&mut self) -> Text<'static> {
+        let time_labels =
+            self.message_times
+                .labels(self.transcript.len(), self.language, message_time::now());
         let search = self
             .search
             .as_ref()
@@ -24,11 +28,15 @@ impl App {
                 && cache.language == self.language
                 && cache.search == search
                 && cache.source == self.transcript
+                && cache.time_labels == time_labels
         });
         if !valid {
-            let rows = self.display_transcript().rows;
-            let text = wrap_styled_text(
-                colored_transcript_at_width(&rows, search.as_deref(), self.transcript_width),
+            let folded = self.display_transcript();
+            let labels = self.message_time_labels(&folded, message_time::now());
+            let text = message_time::render_with_times(
+                &folded.rows,
+                &labels,
+                search.as_deref(),
                 self.transcript_width,
             );
             self.transcript_rows = text_rows(&text);
@@ -38,6 +46,7 @@ impl App {
                 expanded: self.tool_rows_expanded,
                 language: self.language,
                 search: search.clone(),
+                time_labels,
                 text,
             });
         }
@@ -206,6 +215,7 @@ fn highlight_matches(text: &mut Text<'static>, query: &str) {
     }
 }
 
+#[cfg(test)]
 pub(super) fn rendered_transcript_height(entries: &[String], width: usize) -> usize {
     wrap_styled_text(colored_transcript_at_width(entries, None, width), width)
         .lines
