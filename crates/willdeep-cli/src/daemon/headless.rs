@@ -32,7 +32,24 @@ pub(crate) struct HeadlessRuntimeRequest {
 pub(crate) async fn execute_headless_turn(
     home: &Path,
     request: HeadlessRuntimeRequest,
+    on_event: impl FnMut(serde_json::Value),
+) -> Result<Result<HeadlessRuntimeOutcome, HeadlessRuntimeStatus>> {
+    let reporter = crate::qterm::Reporter::from_env();
+    let session = request.session_id;
+    reporter.update(session, None, None, willdeep_core::RuntimeStatus::Working);
+    let result = execute_reported_turn(home, request, on_event, &reporter).await;
+    if result.is_err() {
+        reporter.unavailable(session);
+    }
+    reporter.finish(true).await;
+    result
+}
+
+async fn execute_reported_turn(
+    home: &Path,
+    request: HeadlessRuntimeRequest,
     mut on_event: impl FnMut(serde_json::Value),
+    reporter: &crate::qterm::Reporter,
 ) -> Result<Result<HeadlessRuntimeOutcome, HeadlessRuntimeStatus>> {
     let mut cursor = runtime_event_head(home).await?;
     ensure_runtime_session(
@@ -67,6 +84,9 @@ pub(crate) async fn execute_headless_turn(
             }
         };
         task_id = turn.active_task_id.or(task_id);
+        if reporter.is_enabled() {
+            report_headless_status(reporter, &client, &turn).await;
+        }
         loop {
             let events = match client
                 .events(&willdeep_runtime_protocol::EventListParams {
@@ -168,11 +188,72 @@ pub(crate) async fn execute_headless_turn(
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 let _ = client.stop_turn(submitted.id, uuid::Uuid::new_v4()).await;
+                reporter.update(request.session_id, task_id.map(|id| id.to_string()), None,
+                    willdeep_core::RuntimeStatus::Cancelled);
                 return Ok(Err(HeadlessRuntimeStatus::Cancelled));
             }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
     }
+}
+
+async fn report_headless_status(
+    reporter: &crate::qterm::Reporter,
+    client: &willdeep_runtime_client::RuntimeClient,
+    turn: &willdeep_runtime_protocol::RuntimeTurn,
+) {
+    use willdeep_core::RuntimeStatus as Status;
+    use willdeep_runtime_protocol::TurnStatus;
+    let status = match turn.status {
+        TurnStatus::Queued => Status::Queued,
+        TurnStatus::Running => Status::Working,
+        TurnStatus::Completed => Status::Done,
+        TurnStatus::Partial => Status::Partial,
+        TurnStatus::WaitingApproval => Status::WaitingApproval,
+        TurnStatus::WaitingAnswer => Status::WaitingAnswer,
+        TurnStatus::Failed => Status::Failed,
+        TurnStatus::Cancelled => Status::Cancelled,
+        TurnStatus::Interrupted => Status::Interrupted,
+    };
+    let gate = match turn.status {
+        TurnStatus::WaitingApproval => client
+            .approvals()
+            .await
+            .ok()
+            .and_then(|r| api_data(r).ok())
+            .and_then(|gates| {
+                gates
+                    .into_iter()
+                    .find(|g| Some(g.task_id) == turn.active_task_id)
+                    .map(|g| g.id)
+            }),
+        TurnStatus::WaitingAnswer => client
+            .questions()
+            .await
+            .ok()
+            .and_then(|r| api_data(r).ok())
+            .and_then(|gates| {
+                gates
+                    .into_iter()
+                    .find(|g| Some(g.task_id) == turn.active_task_id)
+                    .map(|g| g.id)
+            }),
+        _ => None,
+    };
+    if matches!(
+        turn.status,
+        TurnStatus::WaitingApproval | TurnStatus::WaitingAnswer
+    ) && gate.is_none()
+    {
+        reporter.unavailable(turn.session_id);
+        return;
+    }
+    reporter.update(
+        turn.session_id,
+        turn.active_task_id.map(|id| id.to_string()),
+        gate.map(|id| id.to_string()),
+        status,
+    );
 }
 
 async fn wait_for_runtime_handoff(home: &Path, previous_token: &str) -> bool {

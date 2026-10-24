@@ -1,5 +1,7 @@
 # Product Overview
 
+QTerm 原生接入按当前 TUI/无头会话及 Runtime 主任务报告工作、审批、回答与终态；只共享状态元数据，既有 Runtime 不随 CLI 更新重启。
+
 手机网关与 Mac / Android 共用待发队列协议：返回完整可编辑正文，支持原位编辑、删除、清空与立即发送；修改校验原文并保留附件及宿主上下文。
 
 Runtime 只读查询只连接现有进程，包括 `daemon tasks`、`daemon sessions`、`session list`、定时任务与通用 API 查询；停止或状态失效时返回错误，不自动启动、重启或清理状态。需要启动时显式运行 `willdeep daemon start`；实际提交和修改操作继续按原规则启动 Runtime。
