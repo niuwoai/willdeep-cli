@@ -433,7 +433,7 @@ pub(super) async fn register_cli(
 }
 
 pub(super) async fn list_cli(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let workspaces = workspace_data(runtime_client(&state)?.workspaces().await?)?;
     for workspace in workspaces.into_iter().map(local_workspace) {
         print_workspace(&workspace);
@@ -469,7 +469,7 @@ pub(super) async fn activate_cli(home: &Path, id: uuid::Uuid) -> Result<()> {
 }
 
 pub(crate) async fn remote_workspaces(home: &Path) -> Result<Vec<RuntimeWorkspace>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?.workspaces().await?;
     workspace_data(response).map(|items| items.into_iter().map(local_workspace).collect())
 }

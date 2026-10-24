@@ -128,7 +128,7 @@ pub(crate) struct RemoteActiveTurn {
 }
 
 pub(crate) async fn remote_session_states(home: &Path) -> Result<Vec<RemoteSessionState>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let sessions = api_data(runtime_client(&state)?.sessions().await?)?;
     Ok(sessions
         .into_iter()
@@ -271,7 +271,7 @@ pub(crate) async fn remote_rewind_points(
     home: &Path,
     session_id: uuid::Uuid,
 ) -> Result<Vec<RewindPoint>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let turns = api_data(runtime_client(&state)?.turns(session_id).await?)?;
     let session = willdeep_core::SessionStore::new(home)
         .load(session_id)
@@ -337,7 +337,7 @@ pub(crate) async fn export_remote_session(
     home: &Path,
     id: uuid::Uuid,
 ) -> Result<serde_json::Value> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     api_data(runtime_client(&state)?.export_session(id).await?)
 }
 
@@ -345,7 +345,7 @@ pub(crate) async fn search_remote_session_results(
     home: &Path,
     parameters: &[(String, String)],
 ) -> Result<Vec<willdeep_runtime_protocol::SessionSearchResult>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let mut params = willdeep_runtime_protocol::SearchSessionsParams {
         query: None,
         workspace: None,
@@ -536,7 +536,7 @@ pub(crate) async fn stop_remote_turn(home: &Path, id: uuid::Uuid) -> Result<()> 
 /// against their own Workspace allowlist. Returns `None` when the Runtime does
 /// not know the Turn at all.
 pub(crate) async fn remote_turn_session(home: &Path, id: uuid::Uuid) -> Result<Option<uuid::Uuid>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     match runtime_client(&state)?.turn(id).await? {
         willdeep_runtime_protocol::ApiResponse::Ok { data, .. } => Ok(Some(data.session_id)),
         willdeep_runtime_protocol::ApiResponse::Error { error, .. } => {
@@ -553,7 +553,7 @@ pub(crate) async fn remote_active_turn(
     home: &Path,
     session_id: uuid::Uuid,
 ) -> Result<Option<RemoteActiveTurn>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let client = runtime_client(&state)?;
     let session = api_data(client.session(session_id).await?)?;
     let Some(turn_id) = session.active_turn_id else {
@@ -597,7 +597,7 @@ pub(crate) async fn remote_latest_turn(
     home: &Path,
     session_id: uuid::Uuid,
 ) -> Result<Option<willdeep_runtime_protocol::RuntimeTurn>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let mut turns = api_data(runtime_client(&state)?.turns(session_id).await?)?;
     if turns.iter().any(|turn| turn.session_id != session_id) {
         bail!("Runtime returned a Turn owned by another Session")
@@ -996,7 +996,7 @@ pub(crate) async fn runtime_snapshot(
 }
 
 pub(crate) async fn remote_agent_detail(home: &Path, id: uuid::Uuid) -> Result<RemoteAgent> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let agent = api_data(runtime_client(&state)?.agent(id).await?)?;
     if agent.parent_id.is_some() {
         return Ok(remote_agent(agent));
@@ -1510,7 +1510,7 @@ pub(crate) async fn remote_task_diagnostics(
     home: &Path,
     id: uuid::Uuid,
 ) -> Result<willdeep_runtime_protocol::RuntimeTaskDiagnostics> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     api_data(runtime_client(&state)?.task_diagnostics(id).await?)
 }
 

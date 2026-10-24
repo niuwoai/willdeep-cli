@@ -2142,7 +2142,7 @@ pub(super) async fn create_session_cli(
 }
 
 pub(super) async fn list_sessions_cli(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let sessions = cli_api_data(runtime_client(&state)?.sessions().await?)?;
     for session in sessions {
         print_public_session(&session);
@@ -2151,7 +2151,7 @@ pub(super) async fn list_sessions_cli(home: &Path) -> Result<()> {
 }
 
 pub(super) async fn show_session_cli(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let session = cli_api_data(runtime_client(&state)?.session(id).await?)?;
     print_public_session(&session);
     Ok(())
@@ -2192,7 +2192,7 @@ pub(super) async fn search_sessions_cli(
     {
         bail!("Session search requires text or at least one filter");
     }
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let results = cli_api_data(
         runtime_client(&state)?
             .search_sessions(&willdeep_runtime_protocol::SearchSessionsParams {
@@ -2342,7 +2342,7 @@ pub(super) async fn export_session_cli(
     id: uuid::Uuid,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let export = cli_api_data(runtime_client(&state)?.export_session(id).await?)?;
     let data = serde_json::to_vec_pretty(&export)?;
     if let Some(output) = output {
@@ -2415,7 +2415,7 @@ pub(super) async fn submit_turn_cli(
 }
 
 pub(super) async fn list_turns_cli(home: &Path, session_id: uuid::Uuid) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let turns = cli_api_data(runtime_client(&state)?.turns(session_id).await?)?;
     for turn in turns {
         print_public_turn(&turn);
@@ -2424,7 +2424,7 @@ pub(super) async fn list_turns_cli(home: &Path, session_id: uuid::Uuid) -> Resul
 }
 
 pub(super) async fn show_turn_cli(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let turn = cli_api_data(runtime_client(&state)?.turn(id).await?)?;
     print_public_turn(&turn);
     Ok(())

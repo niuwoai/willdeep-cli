@@ -18,7 +18,7 @@ pub(crate) async fn peer_operation(
     let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
     let params = &params;
     request_with_retry(request_id, |id| async move {
-        let state = ensure_running(home).await?;
+        let state = state_for_operation(home, operation, params).await?;
         Ok(runtime_client(&state)?
             .call::<_, serde_json::Value>(operation, params, Some(id))
             .await?)
