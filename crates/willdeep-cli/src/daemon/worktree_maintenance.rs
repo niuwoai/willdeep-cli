@@ -134,7 +134,7 @@ fn public_audit(audit: ManagedWorktreeAudit) -> willdeep_runtime_protocol::Runti
 }
 
 pub(crate) async fn audit_cli(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let entries = runtime_client(&state)?
         .audit_worktrees()
         .await?

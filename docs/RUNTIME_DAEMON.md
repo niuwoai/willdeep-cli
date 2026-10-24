@@ -110,6 +110,8 @@ willdeep daemon cancel <task-id>
 
 `submit` 会在必要时自动启动 Runtime 并立即返回任务 ID。Prompt 保留在 Runtime 内存和受保护的 Session/Turn 存储中，**不会出现在进程参数里**。
 
+只读查询不会自动启动 Runtime：`daemon tasks/sessions/agents/workspaces/pending/capabilities`、单条记录查询、`session list/get/turns`、Diff 与定时任务查询，以及 `api task.list` 等只读 API，都只连接已运行的进程。Runtime 已停止、不可达或状态文件失效时，查询返回错误，不清理租约、重启进程或恢复任务；需要启动时请显式执行 `willdeep daemon start`。`daemon status` 继续直接报告停止状态。实际提交、创建和修改操作保留原有启动行为。
+
 Daemon 直接调度进程内 Harness Future，不再为每个 Turn 启动 CLI 子进程。任务执行、模型输出、最终 session_id 和终态都可以在事件流中恢复。
 
 ## Session 与 Turn

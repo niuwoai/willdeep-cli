@@ -659,7 +659,7 @@ pub(super) async fn commit_preview_cli(
 }
 
 pub(crate) async fn remote_snapshot(home: &Path, workspace: &Path) -> Result<DiffSnapshot> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_snapshot(&willdeep_runtime_protocol::DiffSnapshotParams {
             workspace: workspace.to_string_lossy().into_owned(),
@@ -675,7 +675,7 @@ pub(crate) async fn remote_content(
     path: &str,
     area: DiffArea,
 ) -> Result<String> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_content(&willdeep_runtime_protocol::DiffContentParams {
             workspace: workspace.to_string_lossy().into_owned(),
@@ -750,7 +750,7 @@ pub(crate) async fn remote_reviews(
     workspace: &Path,
     snapshot_id: &str,
 ) -> Result<Vec<DiffReviewRecord>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_reviews(&willdeep_runtime_protocol::DiffSnapshotQueryParams {
             workspace: workspace.to_string_lossy().into_owned(),
@@ -768,7 +768,7 @@ pub(crate) async fn remote_verifications(
     workspace: &Path,
     snapshot_id: &str,
 ) -> Result<Vec<DiffVerificationRecord>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_verifications(&willdeep_runtime_protocol::DiffSnapshotQueryParams {
             workspace: workspace.to_string_lossy().into_owned(),
@@ -786,7 +786,7 @@ pub(crate) async fn remote_attributions(
     workspace: &Path,
     snapshot_id: &str,
 ) -> Result<Vec<DiffAttributionRecord>> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_attributions(&willdeep_runtime_protocol::DiffSnapshotQueryParams {
             workspace: workspace.to_string_lossy().into_owned(),
@@ -807,7 +807,7 @@ pub(crate) async fn remote_commit_preview(
     remote: &str,
     tag: Option<&str>,
 ) -> Result<CommitPreview> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .diff_commit_preview(&willdeep_runtime_protocol::DiffCommitPreviewParams {
             workspace: workspace.to_string_lossy().into_owned(),

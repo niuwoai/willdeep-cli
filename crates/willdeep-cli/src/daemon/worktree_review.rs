@@ -47,7 +47,7 @@ pub(crate) struct WorktreeMergeResult {
 }
 
 pub(crate) async fn remote_review(home: &Path, id: uuid::Uuid) -> Result<WorktreeReview> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?
         .worktree_review(&willdeep_runtime_protocol::WorktreeReviewParams { agent_id: id })
         .await?;

@@ -29,6 +29,8 @@ mod monitor_events;
 mod prompt_variant;
 #[path = "headless_runtime/provider_environment.rs"]
 mod provider_environment;
+#[path = "headless_runtime/readonly_queries.rs"]
+mod readonly_queries;
 #[path = "headless_runtime/retry_wait.rs"]
 mod retry_wait;
 #[path = "headless_runtime/runtime_parameters.rs"]

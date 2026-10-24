@@ -781,7 +781,7 @@ pub async fn api(
         bail!("API params must be a JSON object");
     }
     let home = crate::config::willdeep_home()?;
-    let state = ensure_running(&home).await?;
+    let state = state_for_operation(&home, &operation, &params).await?;
     if operation == "event.stream" {
         if !ndjson {
             bail!("event.stream is an NDJSON stream; pass --ndjson");
@@ -910,7 +910,7 @@ pub(crate) async fn submit_runtime_prompt(
 }
 
 async fn list_tasks(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     for task in runtime_client(&state)?.tasks().await?.into_result()? {
         print_public_task(&task);
     }
@@ -918,14 +918,14 @@ async fn list_tasks(home: &Path) -> Result<()> {
 }
 
 async fn show_task(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let task = runtime_client(&state)?.task(id).await?.into_result()?;
     print_public_task(&task);
     Ok(())
 }
 
 async fn list_agents(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     for agent in runtime_client(&state)?.agents().await?.into_result()? {
         print_public_agent(&agent);
     }
@@ -933,7 +933,7 @@ async fn list_agents(home: &Path) -> Result<()> {
 }
 
 async fn show_agent(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let agent = runtime_client(&state)?.agent(id).await?.into_result()?;
     print_public_agent(&agent);
     println!(
@@ -983,7 +983,7 @@ async fn report_agent_metrics(home: &Path, json: bool, since: Option<&str>) -> R
     let since = since
         .map(|window| crate::agent_metrics::parse_since(window, now()))
         .transpose()?;
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let agents = runtime_client(&state)?.agents().await?.into_result()?;
     let metrics = crate::agent_metrics::AgentMetrics::compute(&agents, since);
     if json {
@@ -1002,6 +1002,38 @@ async fn cancel_task(home: &Path, id: uuid::Uuid) -> Result<()> {
         .into_result()?;
     print_public_task(&task);
     Ok(())
+}
+
+/// Observe an existing Runtime without acquiring a lease, cleaning stale files,
+/// migrating stores, or starting a replacement process.
+async fn require_running(home: &Path) -> Result<DaemonState> {
+    let state = load_state(&DaemonPaths::new(home).state).context(
+        "Runtime is not running or its state is unreadable; query did not start it. Use `willdeep daemon start` explicitly if needed",
+    )?;
+    probe(&state)
+        .await
+        .context("Runtime is unavailable or its state is stale; query left its state unchanged")?;
+    Ok(state)
+}
+
+async fn state_for_operation(
+    home: &Path,
+    operation: &str,
+    params: &serde_json::Value,
+) -> Result<DaemonState> {
+    // Cleanup previews share an operation name with deletion. Mobile/Web
+    // settings are mutations even though their handlers bypass idempotency.
+    let cleanup_preview = operation == "schedule.cleanup" && params["preview"] == true;
+    let mutating = control_api::is_mutating_operation(operation)
+        || matches!(
+            operation,
+            "mobile.enable" | "mobile.disable" | "webapp.start" | "webapp.stop"
+        );
+    if mutating && !cleanup_preview {
+        ensure_running(home).await
+    } else {
+        require_running(home).await
+    }
 }
 
 async fn ensure_running(home: &Path) -> Result<DaemonState> {
@@ -1061,7 +1093,7 @@ fn print_public_agent(agent: &willdeep_runtime_protocol::RuntimeAgent) {
 }
 
 async fn list_pending(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let client = runtime_client(&state)?;
     for approval in client.approvals().await?.into_result()? {
         println!(
@@ -1357,7 +1389,7 @@ async fn status(home: &Path) -> Result<String> {
 }
 
 async fn capabilities_cli(home: &Path) -> Result<()> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     let response = runtime_client(&state)?.capabilities(None).await?;
     println!("{}", serde_json::to_string_pretty(&response)?);
     Ok(())
@@ -2664,5 +2696,7 @@ fn now() -> u64 {
         .as_secs()
 }
 
+#[cfg(test)]
+mod readonly_query_tests;
 #[cfg(test)]
 mod tests;

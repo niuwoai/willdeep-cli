@@ -784,7 +784,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "kernel.ignore",
 ];
 
-fn is_mutating_operation(operation: &str) -> bool {
+pub(super) fn is_mutating_operation(operation: &str) -> bool {
     MUTATING_OPERATIONS.contains(&operation)
         || (operation.starts_with("agent_library.")
             && !matches!(
