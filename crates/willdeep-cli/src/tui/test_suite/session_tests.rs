@@ -352,6 +352,7 @@ fn runtime_events_resume_by_cursor_without_duplicate_chat_rows() {
     let mut session = Session::new(root.clone(), None, "runtime test");
     let mut app = App::new(Vec::new(), Language::En);
     let event = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 7,
         kind: "task.output".to_owned(),
         message: concat!(
@@ -397,6 +398,7 @@ fn runtime_partial_turn_shows_final_text_and_finishes() {
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task_id} {value}"),
@@ -447,6 +449,7 @@ fn runtime_partial_turn_shows_final_text_and_finishes() {
             serde_json::json!({"type":"partial","stop_reason":"max_turns","turns":64,"text":"turn limit reached"}),
         ),
         crate::daemon::RemoteRuntimeEvent {
+            timestamp: 0,
             sequence: 7,
             kind: "task.partial".to_owned(),
             message: format!("task_id={task_id} session_id={session_id}"),
@@ -488,6 +491,7 @@ fn runtime_tool_calls_land_in_chat_and_settle_in_place() {
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task_id} {value}"),
@@ -547,6 +551,7 @@ fn runtime_reply_only_adds_what_narration_has_not_shown() {
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task_id} {value}"),
@@ -634,6 +639,7 @@ fn runtime_reasoning_delta_shows_as_transient_thought_only() {
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task_id} {value}"),
@@ -686,6 +692,7 @@ fn runtime_hands_back_undelivered_steering_and_the_tui_requeues_it() {
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task_id} {value}"),
@@ -730,6 +737,7 @@ fn runtime_partial_terminal_event_alone_releases_busy_state() {
     app.ensure_runtime_turn();
     assert!(app.running);
     let event = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 1,
         kind: "turn.partial".to_owned(),
         message: format!("session_id={} turn_id={}", session.id, uuid::Uuid::new_v4()),
@@ -753,6 +761,7 @@ fn runtime_chat_ignores_events_owned_by_another_session() {
     let mut session = Session::new(root.clone(), None, "current");
     let mut app = App::new(Vec::new(), Language::En);
     let event = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 1,
         kind: "task.output".to_owned(),
         message: format!(
@@ -785,6 +794,7 @@ fn runtime_managed_session_reloads_core_history_at_turn_terminal() {
     let mut app = App::new(Vec::new(), Language::En);
     let task_id = uuid::Uuid::new_v4();
     let output = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 1,
         kind: "task.output".to_owned(),
         message: format!(
@@ -795,6 +805,7 @@ fn runtime_managed_session_reloads_core_history_at_turn_terminal() {
         session_id: Some(visible.id),
     };
     let terminal = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 2,
         kind: "turn.completed".to_owned(),
         message: format!(
@@ -843,6 +854,7 @@ fn runtime_events_render_child_agent_activity() {
     let task = "12345678-0000-0000-0000-000000000000";
     let child = "87654321-0000-0000-0000-000000000000";
     let event = |sequence, payload: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task} {payload}"),
@@ -920,6 +932,7 @@ fn runtime_chat_renders_tool_rows_then_the_assistant_answer() {
     let mut app = App::new(Vec::new(), Language::En);
     let task = uuid::Uuid::new_v4();
     let event = |sequence, payload: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id={task} {payload}"),
@@ -982,6 +995,7 @@ fn runtime_terminal_failure_stops_the_busy_indicator() {
     let mut app = App::new(Vec::new(), Language::En);
     app.begin_turn(true, "Submitted to Runtime".to_owned());
     let event = crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence: 1,
         kind: "task.failed".to_owned(),
         message: format!(
@@ -2256,6 +2270,7 @@ fn runtime_compression_events_reach_the_status_bar_and_the_progress_line() {
     let mut app = App::new(Vec::new(), Language::En);
     let session_id = session.id;
     let output = |sequence: u64, payload: &str| crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".to_owned(),
         message: format!("task_id=12345678-0000-0000-0000-000000000000 {payload}"),

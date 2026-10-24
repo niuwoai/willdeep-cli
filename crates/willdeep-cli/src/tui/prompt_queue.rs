@@ -62,14 +62,10 @@ impl App {
         None
     }
 
-    pub(super) fn queued_background_prompt_ready(&self) -> bool {
+    pub(super) fn queued_steering_ready(&self) -> bool {
         self.running
-            && self.runtime_turn
-            && self.waiting_background
             && self.prompt_queue.is_none()
             && self.attachment_panel.is_none()
-            && self.approval.is_none()
-            && self.question.is_none()
             && self.queued_prompts.front().is_some_and(|item| {
                 item.attachments.is_empty() && !item.text.trim_start().starts_with('/')
             })
@@ -93,9 +89,9 @@ impl App {
         self.notice = Some(format!(
             "{} · {} {}",
             self.language.text(
-                "已排队，模型回复后或本轮结束后发送",
-                "Queued · sends after the model replies or this turn finishes",
-                "キューに追加 · モデル応答後またはターン終了後に送信"
+                "文字自动送达，模型下一步读取；命令和附件等下一轮",
+                "Text auto-delivers for the next model step; commands and attachments wait for the next turn",
+                "テキストは次のモデル処理へ自動送達。コマンド・添付は次のターン待ち"
             ),
             self.queued_prompts.len(),
             self.language.text(
@@ -140,29 +136,60 @@ impl App {
             .queued_prompts
             .front()
             .map(|item| item.text.as_str())
-            .or_else(|| self.deferred_steering.first().map(String::as_str))
+            .or_else(|| {
+                self.deferred_steering
+                    .first()
+                    .map(|item| item.text.as_str())
+            })
             .unwrap_or_default();
         let preview = terminal_safe_text(preview)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        let delivered_hint = if delivered > 0 {
-            format!(
-                " · {} {delivered}",
+        let mut parts = Vec::new();
+        if queued > 0 {
+            parts.push(format!(
+                "{} {queued}",
+                self.language.text("待发", "Queued", "送信待ち")
+            ));
+        }
+        if delivered > 0 {
+            parts.push(format!(
+                "{} {delivered}",
                 self.language.text(
                     "已送达待读取",
                     "Delivered, awaiting next step",
                     "送達済み・次のステップ待ち"
                 )
-            )
-        } else {
-            String::new()
-        };
-        Some(format!(
-            "{} {queued} · Ctrl+Q /queue{delivered_hint} · {}",
-            self.language.text("待发", "Queued", "送信待ち"),
-            preview.chars().take(48).collect::<String>()
-        ))
+            ));
+        }
+        if self.approval.is_some() || self.question.is_some() || !self.runtime_gates.is_empty() {
+            parts.push(
+                self.language
+                    .text(
+                        "等待审批/回答后处理",
+                        "Processed after approval/answer",
+                        "承認・回答後に処理",
+                    )
+                    .to_owned(),
+            );
+        }
+        if self.queued_prompts.front().is_some_and(|item| {
+            !item.attachments.is_empty() || item.text.trim_start().starts_with('/')
+        }) {
+            parts.push(
+                self.language
+                    .text(
+                        "命令/附件等待下一轮",
+                        "Commands/attachments wait for next turn",
+                        "コマンド・添付は次のターン待ち",
+                    )
+                    .to_owned(),
+            );
+        }
+        parts.push("Ctrl+Q /queue".to_owned());
+        parts.push(preview.chars().take(48).collect());
+        Some(parts.join(" · "))
     }
 
     fn queued_transcript_index(&self, selected: usize) -> Option<usize> {
@@ -185,8 +212,15 @@ impl App {
     pub(super) fn remove_queued_prompt_row(&mut self, selected: usize) {
         if let Some(index) = self.queued_transcript_index(selected) {
             self.transcript.remove(index);
+            self.message_times.remove(index);
             self.refresh_transcript_height();
         }
+    }
+
+    pub(super) fn queued_submission_time(&self, selected: usize) -> u64 {
+        self.queued_transcript_index(selected)
+            .and_then(|index| self.message_times.time_at(index))
+            .unwrap_or_else(message_time::now)
     }
 
     /// 返回 true 时由事件循环尝试插话，只有 Runtime 接收成功才移除消息。
@@ -445,16 +479,35 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 .iter()
                 .map(|line| wrapped_rows(line, available.max(1) as usize))
                 .sum::<usize>();
-            lines.push(format!(
-                "{} {}. [{} {}] {}",
+            let age = app
+                .queued_transcript_index(index)
+                .and_then(|row| app.message_times.time_at(row))
+                .map(|sent| {
+                    format!(
+                        " · {}",
+                        message_time::relative_time(sent, message_time::now(), app.language)
+                    )
+                })
+                .unwrap_or_default();
+            let prefix = format!(
+                "{} {}. [{} {}] ",
                 if index == panel.selected { "▶" } else { " " },
                 index + 1,
                 item.attachments.len(),
                 app.language.text("附件", "attachments", "添付"),
-                text.chars()
-                    .take(width.saturating_sub(22) as usize)
-                    .collect::<String>()
-            ));
+            );
+            let capacity = usize::from(available).saturating_sub(
+                UnicodeWidthStr::width(prefix.as_str()) + UnicodeWidthStr::width(age.as_str()),
+            );
+            let mut used = 0;
+            let preview: String = text
+                .chars()
+                .take_while(|ch| {
+                    used += UnicodeWidthChar::width(*ch).unwrap_or_default();
+                    used <= capacity
+                })
+                .collect();
+            lines.push(format!("{prefix}{preview}{age}"));
             let count = wrapped_rows(lines.last().unwrap(), available.max(1) as usize);
             list_rows.push((start, count, index));
         }
@@ -469,15 +522,16 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 terminal_safe_text(&item.text)
             ));
         }
-        for text in &app.deferred_steering {
+        for message in &app.deferred_steering {
             lines.push(format!(
-                "{}: {}",
+                "{}: {} · {}",
                 app.language.text(
                     "已送达，不可撤回",
                     "Delivered, cannot recall",
                     "送達済み・取消不可"
                 ),
-                terminal_safe_text(text)
+                terminal_safe_text(&message.text),
+                message_time::relative_time(message.sent_at, message_time::now(), app.language)
             ));
         }
     }
@@ -836,22 +890,19 @@ mod tests {
     }
 
     #[test]
-    fn background_wait_automatically_dispatches_only_the_queue_head() {
+    fn plain_text_delivers_without_waiting_for_background_or_turn_completion() {
         let mut app = queued_app();
         app.prompt_queue = None;
         app.begin_turn(true, "running".into());
-        assert!(!app.queued_background_prompt_ready());
+        assert!(app.queued_steering_ready());
         app.waiting_background = true;
-        assert!(app.queued_background_prompt_ready());
+        assert!(app.queued_steering_ready());
         app.open_prompt_queue();
-        assert!(
-            !app.queued_background_prompt_ready(),
-            "editing pauses auto-send"
-        );
+        assert!(!app.queued_steering_ready(), "editing pauses auto-send");
         app.prompt_queue = None;
         app.queued_prompts.front_mut().unwrap().text = "/goal new goal".into();
         assert!(
-            !app.queued_background_prompt_ready(),
+            !app.queued_steering_ready(),
             "commands cannot bypass turn ownership"
         );
         app.queued_prompts.front_mut().unwrap().text = "first".into();
@@ -861,19 +912,55 @@ mod tests {
             .attachments
             .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
         assert!(
-            !app.queued_background_prompt_ready(),
+            !app.queued_steering_ready(),
             "attachments must stay with their message"
         );
         app.queued_prompts.front_mut().unwrap().attachments.clear();
-        app.note_steering_delivered("first");
+        app.note_steering_delivered("first", message_time::now());
+        app.remove_queued_prompt_row(0);
+        app.queued_prompts.pop_front();
         assert!(
-            !app.queued_background_prompt_ready(),
-            "wait for the next background boundary before sending another message"
+            app.queued_steering_ready(),
+            "the next plain message can be delivered in FIFO order"
         );
         assert!(
             app.running,
             "sending a message must not complete or cancel background work"
         );
+    }
+
+    #[test]
+    fn approval_wait_does_not_trap_text_in_queue_or_answer_the_gate() {
+        let mut app = queued_app();
+        app.prompt_queue = None;
+        app.begin_turn(true, "waiting for approval".into());
+        let id = uuid::Uuid::new_v4();
+        app.runtime_gates.push(crate::daemon::RemoteGate::Approval {
+            id,
+            task_id: uuid::Uuid::new_v4(),
+            description: "pending tool".into(),
+            always_allow_available: false,
+        });
+        assert!(app.queued_steering_ready());
+        app.note_steering_delivered("first", message_time::now());
+        app.remove_queued_prompt_row(0);
+        app.queued_prompts.pop_front();
+        let hint = app.queue_activity().unwrap();
+        assert!(hint.contains("Delivered") && hint.contains("approval/answer"));
+        assert_eq!(app.runtime_gates[0].id(), id);
+        assert!(app.running);
+        assert_eq!(app.deferred_steering.len(), 1);
+        assert!(!app.transcript.iter().any(|row| row == "You: first"));
+        app.note_model_step_started();
+        assert!(app.deferred_steering.is_empty());
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|row| *row == "You: first")
+                .count(),
+            1
+        );
+        assert_eq!(app.runtime_gates[0].id(), id);
     }
 
     #[test]
@@ -907,6 +994,7 @@ mod tests {
         runtime_ui::apply_runtime_events(
             &mut app,
             vec![crate::daemon::RemoteRuntimeEvent {
+                timestamp: 0,
                 sequence: 1,
                 kind: "turn.completed".into(),
                 message: format!("session_id={} turn_id={}", session.id, uuid::Uuid::new_v4()),
@@ -1147,7 +1235,7 @@ mod tests {
         app.notice = None;
         assert!(app.queue_activity().unwrap().contains("Queued 3"));
         app.queued_prompts.clear();
-        app.deferred_steering.push("steered".to_owned());
+        app.deferred_steering.push("steered".into());
         assert!(
             app.queue_activity()
                 .unwrap()
@@ -1230,7 +1318,7 @@ mod tests {
                 app.language = language;
                 app.prompt_queue = None;
                 app.running = true;
-                app.model_step_in_flight = true;
+                app.note_model_step_started();
                 app.stream_transient(StreamKind::Reply, "Streaming reply");
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();

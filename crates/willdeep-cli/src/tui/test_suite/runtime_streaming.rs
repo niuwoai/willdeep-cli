@@ -18,6 +18,7 @@ fn output(
     text: &str,
 ) -> crate::daemon::RemoteRuntimeEvent {
     crate::daemon::RemoteRuntimeEvent {
+        timestamp: 0,
         sequence,
         kind: "task.output".into(),
         message: format!(
