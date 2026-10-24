@@ -5,6 +5,8 @@ use base64::Engine;
 use super::commands::{approved_decision, derived_request_id, phone_image};
 use super::projection::{clip, tool_updated};
 use super::*;
+mod queue;
+mod queue_safety;
 
 /// 一个真的 Runtime 控制面：命令一路走 `control_api::execute`，不打桩。调度通道的
 /// 接收端留着但没人消费，所以提交的轮次停在排队状态，不会真去调模型。
@@ -365,7 +367,6 @@ async fn unsupported_phone_commands_use_the_mac_gateway_wording() {
         "diff.get",
         "file.read",
         "job.kill",
-        "queue.update",
         "push.register",
     ] {
         let outgoing = phone(
@@ -535,7 +536,7 @@ async fn queued_messages_from_a_busy_session_become_runtime_turns() {
         .await;
     assert_eq!(turns.as_array().unwrap().len(), 2);
 
-    for action in ["remove", "clear", "send_now"] {
+    for action in ["unsupported_action"] {
         let refused = phone(
             &mut gateway,
             json!({
@@ -548,7 +549,7 @@ async fn queued_messages_from_a_busy_session_become_runtime_turns() {
         .await;
         assert_eq!(
             one(&refused, "error")["payload"]["message"],
-            "Unsupported mobile command: queue.update."
+            "Unsupported queue action."
         );
     }
 }
@@ -1115,6 +1116,53 @@ async fn the_gateway_serves_a_phone_through_the_relay() {
         Some("relay-model")
     );
     // 手机在场时，Runtime 里新冒出来的审批直接推过去。
+    // Queue management crosses the actual WebSocket relay, not just dispatch.
+    for text in ["relay-first", "relay-second"] {
+        socket
+            .send(WebSocketMessage::Text(
+                json!({"id": uuid::Uuid::new_v4(), "type":"queue.update",
+            "session_id":session_id,"payload":{"action":"add","text":text}})
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_of_type(&mut socket, "ack").await["payload"]["type"],
+            "queue.update"
+        );
+        let _ = next_of_type(&mut socket, "state.snapshot").await;
+    }
+    let pending = harness.state.sessions.queued_messages(session_id).unwrap();
+    let first = pending[0].id;
+    let second = pending[1].id;
+    for payload in [
+        json!({"action":"edit","message_id":second,"expected_text":"relay-second","text":"edited via relay"}),
+        json!({"action":"send_now","message_id":second}),
+        json!({"action":"remove","message_id":first}),
+        json!({"action":"clear"}),
+    ] {
+        socket
+            .send(WebSocketMessage::Text(
+                json!({"id":uuid::Uuid::new_v4(),"type":"queue.update",
+            "session_id":session_id,"payload":payload})
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let ack = next_of_type(&mut socket, "ack").await;
+        assert_eq!(ack["payload"]["type"], "queue.update");
+        let _ = next_of_type(&mut socket, "state.snapshot").await;
+    }
+    assert!(
+        harness
+            .state
+            .sessions
+            .queued_messages(session_id)
+            .unwrap()
+            .is_empty()
+    );
     let task_id = harness.running_task(session_id).await;
     let receiver = harness
         .state

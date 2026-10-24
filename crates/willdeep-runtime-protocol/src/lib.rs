@@ -12,6 +12,8 @@ pub use kernel_event::{
 pub mod agent_team;
 pub mod model_catalog;
 pub mod schedule;
+pub mod turn_queue;
+pub use turn_queue::{QueueAction, QueuedTurnMessage, UpdateTurnQueueParams};
 pub mod web_app;
 pub use agent_team::{
     AgentRun, AgentRunReason, AgentRunsPage, AgentUsageSummary, ContinueAgentParams,
@@ -1364,6 +1366,8 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "task.cancel",
     "turn.submit",
     "turn.steer",
+    "turn.queue.list",
+    "turn.queue.update",
     "turn.list",
     "turn.get",
     "turn.stop",

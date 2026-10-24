@@ -2,7 +2,14 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.21.0-rc63
+> 当前实现版本：v0.115.0-rc3
+
+### 待发队列（0.115.0-rc3）
+
+- `turn.queue.list`：参数 `session_id`，返回未认领的用户消息，含稳定的 `id`、`session_id`、完整 `text`、`text_preview`、`image_count`、`text_attachment_count`、`can_edit`。内部团队控制、会话唤醒和目标恢复消息不对手机暴露。
+- `turn.queue.update`：参数 `session_id`、`action`。`edit` 需要 `message_id`、新 `text`、快照 `expected_text`，原位保留附件、来源、顺序和宿主上下文；`remove` / `send_now` 需要 `message_id`；`clear` 只清除该会话未认领的用户消息。
+- `send_now` 将目标排到所有待执行轮次之前，取消旧活动轮次并等待正常串行调度消费。编辑、删除与调度认领共享锁，持久化失败保留内存状态，过期和跨会话操作被拒绝。
+- 修改操作继续经过幂等和 Drain 闸门，手机网关的 Runtime 字面量白名单新增上述两个操作。
 
 ## 1. 目标
 
@@ -89,6 +96,8 @@ kernel.ignore
 turn.submit
 turn.steer
 turn.list
+turn.queue.list
+turn.queue.update
 turn.stop
 task.diagnostics
 tool.list

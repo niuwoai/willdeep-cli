@@ -3,6 +3,7 @@ mod agent_team;
 mod attachments;
 pub(super) mod peer_sessions;
 mod schedules;
+mod turn_queue;
 use willdeep_runtime_protocol::{
     AgentPromptParams, AgentWaitParams, AnswerQuestionParams, ApiRequest, ApiResponse,
     ApprovalDecision, ErrorCode, EventListParams, IdParams, KernelListParams,
@@ -359,6 +360,8 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             },
             Err(error) => Err(error),
         },
+        "turn.queue.list" => turn_queue::list(state, &request),
+        "turn.queue.update" => turn_queue::update(state, &request).await,
         "turn.submit" => turn_submit(state, &request).await,
         "turn.stop" => turn_stop(state, &request).await,
         "tool.list" => match params::<willdeep_runtime_protocol::ListToolsParams>(&request) {
@@ -775,6 +778,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "session.delete",
     "turn.submit",
     "turn.steer",
+    "turn.queue.update",
     "turn.stop",
     "diff.review",
     "diff.verification.record",
@@ -800,6 +804,7 @@ fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
         "turn.submit"
+            | "turn.queue.update"
             | "session.peer.send"
             | "agent.spawn"
             | "agent.continue"

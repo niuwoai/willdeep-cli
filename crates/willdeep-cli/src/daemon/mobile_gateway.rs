@@ -86,6 +86,8 @@ const RUNTIME_OPERATIONS: &[&str] = &[
     "question.list",
     "question.answer",
     "turn.submit",
+    "turn.queue.list",
+    "turn.queue.update",
     "turn.stop",
 ];
 

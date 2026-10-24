@@ -2,6 +2,8 @@
 
 # 决策单：手机中继从 TUI 挪进 Runtime Daemon（2026-09-23）
 
+> 2026-10-24 更新（0.115.0-rc3）：已补齐真实队列快照与 edit/remove/clear/send_now，复用公开 `turn.queue.list` / `turn.queue.update`。编辑验证 expected_text 并保留附件、来源和宿主上下文；认领后的轮次不可再修改。详见 `../RUNTIME_CONTROL_API.md`。
+
 > 状态：已实现（0.82.0-rc1，未发布；见文末「完成记录」） | 基于 `fix/cli-mobile-command-alignment` @ 0.81.0-rc9 | 关联：`docs/MOBILE.md`、`docs/RUNTIME_DAEMON.md`、`docs/RUNTIME_CONTROL_API.md`、Android `docs/MOBILE_GATEWAY_REQUIREMENTS.md`「Desktop Command Matrix」
 > 一句话：手机成为 Runtime 的又一个**受限客户端**——看得到整个 Runtime（所有会话、所有待处理审批），能做的写操作只有四件。
 
@@ -72,8 +74,9 @@ TUI /mobile ──本机控制面──▶ mobile.enable / mobile.disable / mobi
 | `session.create` | `session.create`，工作区必须已登记 | `session.upsert` |
 | `turn.stop` | `turn.stop`（会话的 `active_turn_id`） | `ack` |
 | `tool.decide` | 审批：`approval.resolve`（`allow_once` / `deny`）；提问：`question.answer` | `ack` + `tool.updated` |
-| `queue.update`（`action: add`） | 同 `message.send`：Android 在选中会话正跑着时发的就是它，Runtime 的轮次本来就按会话串行排队 | `ack` + 用户消息回显 + 新快照 |
-| `queue.update`（`remove` / `clear` / `send_now`）、`push.register`、`patch.decide`、`diff.get`、`job.kill`、`file.read` | — | `error`：`Unsupported mobile command: <type>.`（与 Mac 端逐字一致） |
+| `queue.update`（`action: add`） | `turn.submit`，按会话串行排队 | `ack` + 新快照，待发消息不提前显示为已送达 |
+| `queue.update`（`edit` / `remove` / `clear` / `send_now`） | `turn.queue.update`，列表由 `turn.queue.list` 投影 | `ack` + 新快照，冲突或已认领时 `error` |
+| `push.register`、`patch.decide`、`diff.get`、`job.kill`、`file.read` | — | `error`：`Unsupported mobile command: <type>.`（与 Mac 端逐字一致） |
 
 `message.send` 的目标会话按顺序解析（与 Mac 端语义对齐）：
 
@@ -145,7 +148,6 @@ TUI /mobile ──本机控制面──▶ mobile.enable / mobile.disable / mobi
 | `patch.decide` / `diff.get` | rs 没有「补丁提案」这一层，写入走审批，已由 `tool.decide` 覆盖 |
 | `file.read` | 手机直接读文件等于绕过工作区边界，不开 |
 | `job.kill` | 后台 Shell 不是 Runtime 对象，没有可复用的操作 |
-| `queue.update` 的 `remove` / `clear` / `send_now` | 要改动 Runtime 里排队中的轮次（撤回、插队），快照也得先把排队轮次暴露出来；`add` 已支持（见第 5 节） |
 | `push.register` | 没有推送通道；Android 对它静默降级 |
 | token 级流式 | 见第 6 节 |
 | 端到端加密 | 见第 8 节第 5 条 |

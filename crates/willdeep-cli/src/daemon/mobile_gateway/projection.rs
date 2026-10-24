@@ -350,13 +350,24 @@ impl Gateway {
             }
             None => Vec::new(),
         };
+        let mut queued_messages = Vec::new();
+        for session in &sessions {
+            let pending: Vec<willdeep_runtime_protocol::QueuedTurnMessage> = call(
+                server,
+                "turn.queue.list",
+                json!({ "session_id": session.id }),
+                None,
+            )
+            .await?;
+            queued_messages.extend(pending);
+        }
         let mut payload = json!({
             "sessions": session_values,
             "pending_tools": gates.into_iter().map(|(_, _, value)| value).collect::<Vec<_>>(),
             // 这几类 rs 没有对应对象；写空数组，让手机清掉上一个桌面端留下的卡片。
             "patch_proposals": [],
             "jobs": [],
-            "queued_messages": [],
+            "queued_messages": queued_messages,
             "worktree_changes": self.worktree_cache.as_ref().filter(|(session, _)| Some(*session) == self.selected)
                 .map(|(_, value)| vec![value.clone()]).unwrap_or_default(),
             "messages": messages,
@@ -558,6 +569,7 @@ impl Gateway {
             }
             "turn.started" | "turn.requeued" | "turn.completed" | "turn.partial"
             | "turn.failed" | "turn.cancelled" | "turn.interrupted" => {
+                self.snapshot_dirty = true;
                 let Some(session_id) = event_field(&event.message, "session_id") else {
                     return Vec::new();
                 };
@@ -570,7 +582,9 @@ impl Gateway {
                 }
                 self.session_upsert(server, session_id).await
             }
-            "session.renamed"
+            "turn.queued"
+            | "turn.queue_updated"
+            | "session.renamed"
             | "session.archived"
             | "session.unarchived"
             | "session.deleted"

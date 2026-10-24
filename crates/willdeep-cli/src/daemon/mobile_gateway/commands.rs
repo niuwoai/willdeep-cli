@@ -252,6 +252,17 @@ impl Gateway {
         )
         .await?;
         self.selected = Some(session_id);
+        if envelope.kind == "queue.update" {
+            return Ok(vec![
+                ack(
+                    envelope.id.as_deref(),
+                    &envelope.kind,
+                    Some(session_id),
+                    None,
+                ),
+                self.snapshot(server, None).await,
+            ]);
+        }
         let echo = self.push_user_echo(session_id, request_id, &text, image_count);
         Ok(vec![
             // 回执的类型跟着信封走（`message.send` 或 `queue.update`），与 macOS 桌面端一致。
@@ -266,20 +277,56 @@ impl Gateway {
         ])
     }
 
-    /// Android 在选中会话正跑着的时候，新消息发的是 `queue.update`（`action: add`），
-    /// 不是 `message.send`。Runtime 的轮次本来就按会话严格串行排队，所以 `add` 就是
-    /// 给这个会话提交一轮。`remove` / `clear` / `send_now` 要改动排队中的轮次，暂不开放。
+    /// Pending user messages share the Runtime queue and stable turn IDs.
     async fn queue_update(
         &mut self,
         server: &ServerState,
         envelope: &PhoneEnvelope,
     ) -> Result<Vec<Value>, CommandError> {
-        match payload_string(&envelope.payload, &["action"]).as_deref() {
-            Some("add") => self.send_message(server, envelope).await,
-            _ => Err(CommandError::new(
-                "Unsupported mobile command: queue.update.",
-            )),
+        let action = payload_string(&envelope.payload, &["action"])
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .replace('-', "_");
+        if action == "add" {
+            return self.send_message(server, envelope).await;
         }
+        let action = match action.as_str() {
+            "edit" | "update" => "edit",
+            "remove" | "delete" => "remove",
+            "clear" => "clear",
+            "send_now" => "send_now",
+            _ => return Err(CommandError::new("Unsupported queue action.")),
+        };
+        let session_id = envelope_session(envelope)?
+            .or(self.selected)
+            .ok_or_else(|| CommandError::new("Select a session before updating its queue."))?;
+        let mut params = json!({"session_id": session_id, "action": action});
+        if action != "clear" {
+            let id = payload_string(&envelope.payload, &["message_id", "id", "queued_id"])
+                .ok_or_else(|| CommandError::new("Queue action needs a message_id."))?;
+            params["message_id"] = json!(id);
+        }
+        for key in ["text", "expected_text"] {
+            if let Some(value) = envelope.payload.get(key) {
+                params[key] = value.clone();
+            }
+        }
+        let _: Value = call(
+            server,
+            "turn.queue.update",
+            params,
+            Some(envelope_request_id(envelope)),
+        )
+        .await?;
+        Ok(vec![
+            ack(
+                envelope.id.as_deref(),
+                "queue.update",
+                Some(session_id),
+                None,
+            ),
+            self.snapshot(server, None).await,
+        ])
     }
 
     /// `message.send` 的目标会话，与 macOS 桌面端同一套顺序：
@@ -538,13 +585,14 @@ pub(super) fn envelope_session(
     .transpose()
 }
 
-/// 手机信封的 `id` 是 UUID 时直接当幂等键：手机重发同一条命令不会跑两遍。
+/// Preserve UUIDs and deterministically map legacy string IDs for safe retries.
 fn envelope_request_id(envelope: &PhoneEnvelope) -> uuid::Uuid {
-    envelope
-        .id
-        .as_deref()
-        .and_then(|id| id.parse().ok())
-        .unwrap_or_else(uuid::Uuid::new_v4)
+    match envelope.id.as_deref() {
+        Some(id) => id
+            .parse()
+            .unwrap_or_else(|_| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes())),
+        None => uuid::Uuid::new_v4(),
+    }
 }
 
 /// 同一条手机命令里要连做两个写操作（先建会话再提交轮次）时，第二个不能复用
