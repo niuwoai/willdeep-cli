@@ -8,6 +8,7 @@ impl App {
             peer_unread: 0,
             input: PromptEditor::default(),
             transcript,
+            message_times: message_time::MessageTimes::default(),
             running: false,
             approval: None,
             approval_selected: 0,
@@ -90,7 +91,6 @@ impl App {
             progress_log: VecDeque::new(),
             language,
             transient_thought: None,
-            model_step_in_flight: false,
             deferred_steering: Vec::new(),
             turn_narration: None,
             tool_rows_expanded: false,
@@ -203,6 +203,7 @@ impl App {
             self.transcript
                 .push(welcome_message(&session.workspace, self.language));
         }
+        self.reload_message_times(session.id);
         self.input = PromptEditor::default();
         self.clear_input_suggestion();
         self.abandon_accepted_suggestion();
@@ -774,11 +775,24 @@ impl App {
         };
         // 高度按折叠视图算；命中被收起的工具行时，落在替它说话的汇总行上。
         let folded = self.display_transcript();
-        let total = rendered_transcript_height(&folded.rows, self.transcript_width);
+        let labels = self.message_time_labels(&folded, message_time::now());
+        let total =
+            message_time::render_with_times(&folded.rows, &labels, None, self.transcript_width)
+                .lines
+                .len();
         let through_match = folded
             .index_of
             .get(entry)
-            .map(|&row| rendered_transcript_height(&folded.rows[..=row], self.transcript_width))
+            .map(|&row| {
+                message_time::render_with_times(
+                    &folded.rows[..=row],
+                    &labels[..=row],
+                    None,
+                    self.transcript_width,
+                )
+                .lines
+                .len()
+            })
             .unwrap_or(total);
         self.follow_bottom = false;
         self.scroll_from_bottom = total
@@ -1042,7 +1056,6 @@ impl App {
         self.local_turn = None;
         self.transient_thought = None;
         // 没被交回排队的插话已经送进了任务，收尾时补上，一句都不丢。
-        self.model_step_in_flight = false;
         self.flush_deferred_steering();
         self.turn_narration = None;
         self.activity_line = if self.queued_prompts.is_empty() {
@@ -1677,13 +1690,17 @@ impl App {
     pub(super) fn append_transcript(&mut self, v: String) {
         // 所有进记录的文字先过终端安全处理，制表符和控制字符不许碰终端光标。
         let v = terminal_safe_text(&v);
-        let previous_height =
-            rendered_transcript_height(&self.display_transcript().rows, self.transcript_width);
+        let previous_len = self.transcript.len();
+        let previous_height = self.timed_transcript_height();
         if !v
             .strip_prefix("WillDeep: ")
             .is_some_and(|reply| append_plan_reply(&mut self.transcript, reply))
         {
             self.transcript.push(v);
+        }
+        if self.transcript.len() > previous_len {
+            self.message_times
+                .observe(&self.transcript, self.message_times.recording_time());
         }
         self.refresh_transcript_height();
         if !self.follow_bottom {
@@ -2215,6 +2232,7 @@ impl App {
                 self.append_transcript(format!("System: Available skills\n{}", skills.summary()))
             }
             "/clear" => {
+                self.message_times.clear_rows(&self.transcript);
                 self.transcript.clear();
                 self.scroll_to_bottom();
             }

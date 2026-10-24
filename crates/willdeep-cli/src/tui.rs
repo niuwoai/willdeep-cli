@@ -56,6 +56,7 @@ mod diff_review_ui;
 mod dispatch;
 mod human_gate_ui;
 mod media_ui;
+mod message_time;
 mod model_commands;
 mod model_picker_ui;
 mod model_provider;
@@ -254,6 +255,7 @@ struct App {
     peer_unread: usize,
     input: PromptEditor,
     transcript: Vec<String>,
+    message_times: message_time::MessageTimes,
     running: bool,
     approval: Option<ApprovalRequest>,
     approval_selected: usize,
@@ -379,12 +381,8 @@ struct App {
     progress_log: VecDeque<String>,
     language: Language,
     transient_thought: Option<String>,
-    /// 模型这一步正在生成：`TurnStarted` 之后、第一次调工具之前。此时送达的插话
-    /// 模型要到下一步才读到，这一步的输出却会比它晚落进聊天区。
-    model_step_in_flight: bool,
-    /// 模型这一步还在生成时送达的插话。等下一步开始（模型真正读到它）或本轮
-    /// 收尾时再落进聊天区，免得正在流的回复定稿后排到它后面、像是在回答它。
-    deferred_steering: Vec<String>,
+    /// Runtime 已接收、等待下一次模型读取的插话；保留原始提交时间。
+    deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
     turn_narration: Option<String>,
     /// `/tools`：临时展开聊天区里收起的工具行。只影响显示，记录不动。
@@ -509,6 +507,20 @@ struct AttentionDiagnostics {
 struct QueuedPrompt {
     text: String,
     attachments: Vec<DraftAttachment>,
+}
+
+struct DeliveredPrompt {
+    text: String,
+    sent_at: u64,
+}
+
+impl From<&str> for DeliveredPrompt {
+    fn from(text: &str) -> Self {
+        Self {
+            text: text.to_owned(),
+            sent_at: message_time::now(),
+        }
+    }
 }
 
 #[derive(Default)]

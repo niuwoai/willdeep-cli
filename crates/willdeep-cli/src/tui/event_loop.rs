@@ -27,15 +27,15 @@ async fn handle_queue_action(
             && !text.trim_start().starts_with('/')
             && steer_running_turn(app, session, runtime, agent, &text).await
         {
+            app.note_steering_delivered(&text, app.queued_submission_time(index));
             app.remove_queued_prompt_row(index);
             app.queued_prompts.remove(index);
-            app.note_steering_delivered(&text);
             app.prompt_queue.as_mut().unwrap().show_feedback(
                 language
                     .text(
-                        "已送达本轮",
-                        "Delivered to current turn",
-                        "現在のターンに送達しました",
+                        "已送达，待模型读取",
+                        "Delivered, awaiting model read",
+                        "送達済み・モデルの読込待ち",
                     )
                     .to_owned(),
                 Instant::now(),
@@ -287,6 +287,7 @@ pub(super) async fn event_loop(
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     initial_transcript.extend(startup_notices(runtime, language));
     let mut app = App::new(initial_transcript, language);
+    app.load_message_times(&runtime.home, session.id);
     app.ui = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?
         .file
         .ui;
@@ -456,13 +457,13 @@ pub(super) async fn event_loop(
         // 用户已提交的队列本身就是启动下一轮的理由。待处理内核事件会在模型
         // 边界投递，不能要求它们先被另一个自动唤醒消费；Runtime 终态、恢复的
         // 事件或被限流的唤醒都可能没有后续回调，否则会永久饿死用户队列。
-        if app.queued_background_prompt_ready() {
+        if app.queued_steering_ready() {
             let text = app.queued_prompts.front().unwrap().text.clone();
             if steer_running_turn(&app, session, runtime, &agent, &text).await {
+                app.note_steering_delivered(&text, app.queued_submission_time(0));
                 app.remove_queued_prompt_row(0);
                 app.queued_prompts.pop_front();
                 app.waiting_background = false;
-                app.note_steering_delivered(&text);
             } else {
                 app.open_prompt_queue();
                 app.prompt_queue.as_mut().unwrap().set_status(Some(
@@ -544,6 +545,7 @@ pub(super) async fn event_loop(
             } => { app.expire_queue_feedback(Instant::now()); },
             Some(release)=update_rx.recv()=>{app.update_available=Some(release);},
             _=refresh.tick()=>{
+                app.save_message_times();
                 if let Err(error)=peer_commands::refresh_badge(&mut app,session.id,&runtime.home) {
                     app.notice=Some(format!("{}: {error}",language.text("读取协作未读失败","Cannot read peer inbox","連携受信箱を取得できません")));
                 }
@@ -1611,5 +1613,6 @@ pub(super) async fn event_loop(
     if app.runtime_event_cursor > session.runtime_event_cursor {
         runtime_ui::sync_runtime_session(&mut app, session, store)?;
     }
+    app.save_message_times();
     Ok(())
 }

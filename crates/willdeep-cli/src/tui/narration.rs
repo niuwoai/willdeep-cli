@@ -188,9 +188,9 @@ impl App {
         } else if self.running {
             (
                 self.language.text(
-                    "本轮进行中 · 回车排队 · Ctrl+Q 管理 · Esc 中止",
-                    "Turn running · Enter queues · Ctrl+Q manage · Esc stops",
-                    "ターン実行中 · Enter で待機 · Ctrl+Q 管理 · Esc 中断",
+                    "本轮进行中 · 回车发送文字 · Ctrl+Q 队列 · Esc 中止",
+                    "Turn running · Enter sends text · Ctrl+Q queue · Esc stops",
+                    "ターン実行中 · Enter で送達 · Ctrl+Q キュー · Esc 中断",
                 ),
                 Color::Yellow,
             )
@@ -260,11 +260,11 @@ impl App {
         if let Some(index) = self
             .deferred_steering
             .iter()
-            .position(|value| *value == text)
+            .position(|value| value.text == text)
         {
-            self.deferred_steering.remove(index);
+            let delivered = self.deferred_steering.remove(index);
             let row = self.queued_prompt_row(&text);
-            self.append_transcript(row);
+            self.append_transcript_at(row, delivered.sent_at);
         }
         self.queued_prompts.push_back(QueuedPrompt {
             text,
@@ -272,14 +272,20 @@ impl App {
         });
     }
 
-    /// 插话已送进正在跑的这一轮。模型这一步还在生成时先压着，见 `deferred_steering`。
-    pub(super) fn note_steering_delivered(&mut self, text: &str) {
+    /// 送达只代表收件箱接收成功；到模型下一步读取前持续显示待阅状态。
+    pub(super) fn note_steering_delivered(&mut self, text: &str, sent_at: u64) {
         self.waiting_background = false;
-        if self.model_step_in_flight {
-            self.deferred_steering.push(text.to_owned());
-        } else {
-            self.append_transcript(format!("You: {text}"));
-        }
+        let pending_copies = self
+            .deferred_steering
+            .iter()
+            .filter(|item| item.text == text)
+            .count();
+        self.message_times
+            .reserve_delivery(&self.transcript, text, pending_copies, sent_at);
+        self.deferred_steering.push(DeliveredPrompt {
+            text: text.to_owned(),
+            sent_at,
+        });
     }
 
     /// 模型新的一步开始。插话正是在这之前注入对话的，压着的这时落进聊天区。
@@ -287,12 +293,11 @@ impl App {
         self.waiting_background = false;
         self.transient_thought = None;
         self.flush_deferred_steering();
-        self.model_step_in_flight = true;
     }
 
     pub(super) fn flush_deferred_steering(&mut self) {
-        for text in std::mem::take(&mut self.deferred_steering) {
-            self.append_transcript(format!("You: {text}"));
+        for message in std::mem::take(&mut self.deferred_steering) {
+            self.append_transcript_at(format!("You: {}", message.text), message.sent_at);
         }
     }
 
@@ -300,11 +305,14 @@ impl App {
     /// 只改旧行会把用户消息留在上一轮中间，下一轮回复前就看不到提问。
     pub(super) fn mark_queued_prompt_sent(&mut self, text: &str) {
         let queued = self.queued_prompt_row(text);
+        let mut sent_at = message_time::now();
         if let Some(index) = self.transcript.iter().position(|line| *line == queued) {
+            sent_at = self.message_times.time_at(index).unwrap_or(sent_at);
             self.transcript.remove(index);
+            self.message_times.remove(index);
             self.refresh_transcript_height();
         }
-        self.append_transcript(format!("You: {text}"));
+        self.append_transcript_at(format!("You: {text}"), sent_at);
     }
 }
 
@@ -423,8 +431,7 @@ impl App {
 
     /// 记录变了之后按折叠视图重算总高度；滚动、跟随底部全靠它。
     pub(super) fn refresh_transcript_height(&mut self) {
-        self.transcript_height =
-            rendered_transcript_height(&self.display_transcript().rows, self.transcript_width);
+        self.transcript_height = self.timed_transcript_height();
     }
 
     /// `/tools`：临时展开或收起全部工具行。返回给用户看的一句反馈。
@@ -468,8 +475,6 @@ impl App {
     /// 工具刚发起：先占一行，完成时原地改标记。
     pub(super) fn note_tool_requested(&mut self, name: &str, detail: Option<&str>) {
         self.transient_thought = None;
-        // 模型这一步已定稿，接下来是跑工具；此后的插话下一步就能读到，当场显示。
-        self.model_step_in_flight = false;
         self.append_transcript(tool_line(TOOL_PENDING, name, detail));
     }
 
@@ -787,7 +792,7 @@ mod tests {
         app.begin_turn(false, "working".to_owned());
         app.note_model_step_started();
         app.stream_transient(StreamKind::Reply, "listing");
-        app.note_steering_delivered("clean it up");
+        app.note_steering_delivered("clean it up", message_time::now());
         assert!(app.transcript.iter().all(|row| !row.starts_with("You:")));
 
         app.note_narration("listing done");
@@ -806,9 +811,11 @@ mod tests {
             app.transcript
         );
 
-        // 工具在跑时送达的插话，下一步就能读到，当场显示。
+        // 工具在跑时也要等模型读取，不能把“已送达”当成“已处理”。
         app.note_tool_requested("run_command", None);
-        app.note_steering_delivered("stop");
+        app.note_steering_delivered("stop", message_time::now());
+        assert!(app.queue_activity().unwrap().contains("Delivered"));
+        app.note_model_step_started();
         assert_eq!(app.transcript.last().map(String::as_str), Some("You: stop"));
     }
 
@@ -817,8 +824,8 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         app.begin_turn(false, "working".to_owned());
         app.note_model_step_started();
-        app.note_steering_delivered("missed");
-        app.note_steering_delivered("consumed");
+        app.note_steering_delivered("missed", message_time::now());
+        app.note_steering_delivered("consumed", message_time::now());
         app.requeue_steering("missed".to_owned());
         assert_eq!(
             app.transcript.last().map(String::as_str),
@@ -903,7 +910,7 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         assert_eq!(app.composer_state().0, "Your turn");
         app.begin_turn(false, "working".to_owned());
-        assert!(app.composer_state().0.contains("Enter queues"));
+        assert!(app.composer_state().0.contains("Enter sends text"));
         assert!(!app.bell_pending);
 
         app.note_tool_requested("read_file", None);
@@ -930,7 +937,7 @@ mod tests {
         assert!(app.working_summary().unwrap().contains("Enter sends text"));
         assert_eq!(app.input.text(), "unsent draft");
         app.set_background_wait(false);
-        assert!(app.composer_state().0.contains("Enter queues"));
+        assert!(app.composer_state().0.contains("Enter sends text"));
     }
 
     #[test]
