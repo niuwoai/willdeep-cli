@@ -21,7 +21,7 @@ pub(crate) async fn schedule_response(
     if !operation.starts_with("schedule.") && !operation.starts_with("agent_library.") {
         bail!("not a library or schedule operation");
     }
-    let state = ensure_running(home).await?;
+    let state = state_for_operation(home, operation, &params).await?;
     Ok(runtime_client(&state)?
         .call::<_, serde_json::Value>(operation, &params, request_id)
         .await?)
@@ -39,7 +39,7 @@ pub(crate) async fn read_session_attachments(
     id: uuid::Uuid,
     reference: &str,
 ) -> Result<serde_json::Value> {
-    let state = ensure_running(home).await?;
+    let state = require_running(home).await?;
     runtime_client(&state)?
         .call::<_, serde_json::Value>(
             "session.attachments",
