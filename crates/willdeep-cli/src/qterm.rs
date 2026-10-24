@@ -225,9 +225,9 @@ impl Reporter {
             }
             return;
         }
-        if !snapshot
+        if snapshot
             .event_sequence
-            .is_some_and(|sequence| sequence >= cursor)
+            .is_none_or(|sequence| sequence < cursor)
         {
             return;
         }
