@@ -627,11 +627,11 @@ export function PluginPage({
             src={url}
             title={destination.title}
             className="plugin-frame"
-            // 只给 allow-scripts。不给 allow-same-origin，页面就是 opaque
+            // 工坊需要下载定稿；其余插件保持原有权限。不给 allow-same-origin，页面就是 opaque
             // origin，拿不到父窗口的 DOM、cookie 与 localStorage；给了等于
             // 把整个宿主界面交到插件手里。也不给 popups：一个能逃出沙箱的
             // 新窗口，等于这道围栏没设。
-            sandbox="allow-scripts"
+            sandbox={plugin.id === "willdeep-video-studio" ? "allow-scripts allow-downloads" : "allow-scripts"}
             onLoad={() => {
               setLoadedFrameKey(frameKey);
               pushContext();

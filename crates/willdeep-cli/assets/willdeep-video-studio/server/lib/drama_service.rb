@@ -13,8 +13,10 @@ require_relative "drama_canon"
 require_relative "consistency_check"
 require_relative "video_selection"
 require_relative "speech_rate"
+require_relative "shot_lifecycle"
 
 class DramaService
+  include ShotLifecycle
   IMAGE_MODELS = %w[gpt-image-2 nano-banana-2].freeze
   FRAME_KINDS = %w[start end].freeze
   QA_OVERRIDE_SOURCES = %w[user agent auto].freeze
@@ -101,6 +103,9 @@ class DramaService
     "drama_not_found" => "Short drama was not found.",
     "episode_not_found" => "Episode was not found.",
     "shot_not_found" => "Storyboard shot was not found.",
+    "removed_shot_not_found" => "Removed storyboard shot was not found.",
+    "shot_already_exists" => "This storyboard shot is already in the active timeline.",
+    "episode_busy" => "This episode has active generation, review or composition work; wait until it finishes before changing the shot list.",
     "character_not_found" => "Character was not found.",
     "candidate_not_found" => "Image candidate was not found.",
     "asset_not_found" => "Asset was not found.",

@@ -35,9 +35,13 @@ class DramaStore
     list.find { |drama| drama["requestID"] == token }
   end
 
-  def create(plan, request_id: "")
+  def create(plan, request_id: "", screenplay: nil, screenplay_task: nil)
     with_lock do
       current = data
+      if screenplay
+        existing = current["dramas"].find { |entry| entry["requestID"] == request_id }
+        next existing if existing
+      end
       now = Time.now.utc.iso8601
       drama = {
         "id" => SecureRandom.uuid,
@@ -69,6 +73,10 @@ class DramaStore
         "createdAt" => now,
         "updatedAt" => now
       }
+      if screenplay
+        drama["screenplay"] = screenplay
+        drama["screenplay"]["creationTaskID"] = screenplay_task
+      end
       current["dramas"].unshift(drama)
       current["dramas"] = current["dramas"].first(MAX_DRAMAS)
       write(current)

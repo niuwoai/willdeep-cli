@@ -12,6 +12,7 @@ pub use kernel_event::{
 pub mod agent_team;
 pub mod model_catalog;
 pub mod schedule;
+pub mod screenplay;
 pub mod turn_queue;
 pub use turn_queue::{QueueAction, QueuedTurnMessage, UpdateTurnQueueParams};
 pub mod web_app;
@@ -1293,6 +1294,12 @@ impl RuntimeCapabilities {
 }
 
 pub const SUPPORTED_OPERATIONS: &[&str] = &[
+    "screenplay.start",
+    "screenplay.status",
+    "screenplay.list",
+    "screenplay.resume",
+    "screenplay.cancel",
+    "screenplay.budget",
     "agent_library.list",
     "agent_library.save",
     "agent_library.import",

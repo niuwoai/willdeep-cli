@@ -46,6 +46,79 @@ async fn chat_completions_runs_a_tool_round_with_some_im_headers() {
 }
 
 #[tokio::test]
+async fn bounded_structured_chat_preserves_limits_and_auth_in_buffered_and_streamed_calls() {
+    use willdeep_core::provider::NoopProviderEvents;
+    use willdeep_core::types::Message;
+    let (base, requests, server) = mock_server(MockDialect::Chat).await;
+    let mut config = ProviderConfig::new(
+        ProviderKind::SomeIm,
+        ApiDialect::ChatCompletions,
+        base,
+        "test-key",
+        "deepseek-v4-flash",
+    );
+    config.max_output_tokens = 512;
+    config.non_thinking = true;
+    let provider = build_provider(config).unwrap();
+    let messages = [Message::user("Return structured review")];
+    provider.complete(&messages, &[]).await.unwrap();
+    provider
+        .complete_with_events(&messages, &[], &NoopProviderEvents)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    let requests = requests.lock().unwrap();
+    for (index, request) in requests.iter().enumerate() {
+        let body: serde_json::Value =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body["max_tokens"], 512);
+        assert_eq!(body["reasoning_effort"], "none");
+        assert_eq!(body["stream"], index == 1);
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-key")
+        );
+    }
+}
+
+#[tokio::test]
+async fn bounded_responses_preserves_output_limit_in_buffered_and_streamed_calls() {
+    use willdeep_core::provider::NoopProviderEvents;
+    use willdeep_core::types::Message;
+    let (base, requests, server) = mock_server(MockDialect::Responses).await;
+    let mut config = ProviderConfig::new(
+        ProviderKind::SomeIm,
+        ApiDialect::Responses,
+        base,
+        "test-key",
+        "deepseek-v4-flash",
+    );
+    config.max_output_tokens = 512;
+    config.non_thinking = true;
+    let provider = build_provider(config).unwrap();
+    let messages = [Message::user("Return structured review")];
+    provider.complete(&messages, &[]).await.unwrap();
+    provider
+        .complete_with_events(&messages, &[], &NoopProviderEvents)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    for (index, request) in requests.lock().unwrap().iter().enumerate() {
+        let body: serde_json::Value =
+            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body["max_output_tokens"], 512);
+        assert_eq!(body["reasoning"]["effort"], "none");
+        assert_eq!(body["stream"], index == 1);
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-key")
+        );
+    }
+}
+
+#[tokio::test]
 async fn responses_runs_a_typed_function_call_round() {
     let (base, requests, server) = mock_server(MockDialect::Responses).await;
     run_agent(&base, ProviderKind::SomeIm, ApiDialect::Responses).await;

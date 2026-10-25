@@ -58,6 +58,11 @@ impl Provider for ResponsesProvider {
             tools: wire_tools,
             stream: false,
             store: false,
+            max_output_tokens: self.config.max_output_tokens.max(1),
+            reasoning: self
+                .config
+                .non_thinking
+                .then_some(ResponseReasoning { effort: "none" }),
         };
         let request =
             openai_auth(self.client.post(self.endpoint.clone()), &self.config).json(&body);
@@ -111,6 +116,14 @@ struct ResponsesRequest<'a> {
     tools: Vec<ResponseTool<'a>>,
     stream: bool,
     store: bool,
+    max_output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ResponseReasoning>,
+}
+
+#[derive(Serialize)]
+struct ResponseReasoning {
+    effort: &'static str,
 }
 
 #[derive(Serialize)]

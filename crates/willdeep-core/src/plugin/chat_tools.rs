@@ -262,7 +262,16 @@ impl LazyToolSource for PluginChatTools {
         let (plugin_id, server, tool) = self
             .route(name)
             .ok_or_else(|| McpError::UnknownTool(name.to_owned()))?;
-        let arguments = self.scoped_arguments(&plugin_id, arguments);
+        let mut arguments = self.scoped_arguments(&plugin_id, arguments);
+        if plugin_id == "willdeep-video-studio"
+            && tool == "screenplay.start"
+            && let Some(object) = arguments.as_object_mut()
+        {
+            object.remove("_workspace");
+            if let Some((_, workspace)) = &self.session_context {
+                object.insert("_workspace".into(), json!(workspace));
+            }
+        }
         let result = self
             .request(
                 &plugin_id,
