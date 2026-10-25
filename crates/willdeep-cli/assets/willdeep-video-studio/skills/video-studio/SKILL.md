@@ -28,6 +28,37 @@ for the episode you are working on to get its shots and its own next steps. `nex
 (pass `maxSteps` if the list is cut off). It also carries per-shot `continuity`
 issues; fix those before spending on frames or video.
 
+### Multi-episode work supervised by WillDeep CLI
+
+WillDeep CLI is the supervisor; this plugin is the production executor. For a
+user-approved episode range, call `drama.get_stage_context stage=episodes
+from=… to=…` for the shared story context, then
+`drama.get_progress episodeOrders=[…]` to inspect only the selected episodes
+with full shot details and actionable next steps. Keep the exact episode IDs
+and orders as the batch manifest. The CLI may fan out independent episode
+work in parallel, but it owns the concurrency window, task IDs, retries,
+cancellation, review gates, and stage advancement. The plugin must not silently
+advance an episode into a later stage just because another episode passed.
+
+Parallelize at the same production stage: fill selected episode summaries with
+`drama.save_episode_drafts`; write/revise each episode script with a separate
+`drama.write_with_panel` job; then storyboard each eligible episode using its
+own `drama.get_stage_context stage=storyboard` and atomic
+`drama.save_shot_drafts`. Poll all returned job IDs together with `jobs.wait`
+and inspect each result with `jobs.status`. Re-read `drama.get_progress
+episodeOrders=[…]` after every stage. Do not move an episode forward while its
+content or storyboard review has `block` or nonzero `mustFix`; retain `warn`
+risks for an explicit acknowledgement. A failed or needs-human episode does
+not stop independent episodes, but it remains parked at that stage.
+
+The same supervision contract applies to production: only after the applicable
+review and consistency gates are resolved, queue `episode.generate_frames`,
+`episode.dub`, `episode.generate_videos`, and `episode.compose` independently
+for approved episodes. Each tool remains episode-scoped and reports its own
+job state. Count planned image/video submissions and disclose billed work
+before generation. Global image/video/QA concurrency settings remain plugin
+resource limits; CLI should avoid flooding the plugin with duplicate jobs.
+
 **Before writing anything, call `drama.get_stage_context`** for that stage and
 target. Treat its `system` text as your instructions (it includes the content
 compliance guard, which is not optional), use its `context` as material, and
@@ -138,6 +169,13 @@ wardrobe, jump cut, speech pace) so the review is quick.
    is ambient and action sound in English without dialogue, `music` is
    off-screen score or `N/A`). After each batch, `drama.check_consistency`
    and fix what it lists before storyboarding or drawing frames.
+   To remove a redundant shot, use `drama.remove_shot` with its immutable ID,
+   current episode rev/draftRev and current shot rev/draftRev. It archives the
+   full shot in `episode.removedShots` and renumbers remaining shots; media and
+   video jobs remain untouched. `drama.restore_shot` restores that snapshot.
+   Both refuse while the episode has active work. Re-read IDs and versions
+   afterward, check the returned total duration and re-review the storyboard;
+   neither tool rewrites the script nor redistributes the missing duration.
 5. **Reference package per shot.** `stage=package` gives the catalogue;
    `drama.set_reference_package` binds scene (+variant), cast (each with
    appearance, voice, role, screenPosition, `appearanceChange` when the look

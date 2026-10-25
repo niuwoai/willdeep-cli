@@ -928,6 +928,7 @@ pub(crate) async fn build(
                 .with_host_requests(host_requests),
         ));
     }
+    let screenplay_plugins_allowed = allowed_mcp_servers.is_empty();
     let mcp = Arc::new(mcp_registry);
     let (approver, sink, runtime_connection): (
         Arc<dyn Approver>,
@@ -1089,6 +1090,11 @@ pub(crate) async fn build(
     ));
     let tools = tools.with_board(board.clone(), "parent");
     let mut system_prompt = willdeep_core::prompt::build_system_prompt(&workspace)?;
+    if let Some(guidance) =
+        crate::plugin_screenplay::routing_guidance(home, screenplay_plugins_allowed).await
+    {
+        system_prompt.push_str(&guidance);
+    }
     if !skills.list().is_empty() {
         system_prompt.push_str(
             "\n\n# Available skills\nUse list_skills to search and read_skill before applying a relevant skill. Entries may carry a tier: `tier=worker` marks a skill whose steps fit a small-context worker — prefer dispatching it via spawn_agent with a task packet instead of running it inline; `tier=deep` marks work that needs the largest window available. Untagged skills run at the session's default tier.\n",

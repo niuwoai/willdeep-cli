@@ -47,12 +47,14 @@ mod plugin_cmd;
 mod plugin_gateway;
 mod plugin_host_requests;
 mod plugin_roundtable;
+mod plugin_screenplay;
 mod plugin_web;
 mod projects;
 mod prompt_cmd;
 mod provider_settings;
 mod qterm;
 mod schedule_cmd;
+mod screenplay_cmd;
 mod session_startup;
 mod telemetry;
 mod titling;
@@ -194,6 +196,11 @@ struct Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 enum CliCommand {
+    /// Organize an autonomous three-episode screenplay through the Runtime.
+    Screenplay {
+        #[command(subcommand)]
+        action: screenplay_cmd::ScreenplayCommand,
+    },
     /// Define, install and synchronize versioned specialist agents.
     Agents {
         #[command(subcommand)]
@@ -600,6 +607,9 @@ async fn run() -> Result<()> {
     if let Some(command) = cli.command.clone() {
         return match command {
             CliCommand::Run(_) => unreachable!("run command is normalized above"),
+            CliCommand::Screenplay { action } => {
+                screenplay_cmd::run(action, &willdeep_home()?).await
+            }
             CliCommand::Completions { shell } => generate_completions(shell),
             CliCommand::Man => generate_man_page(),
             CliCommand::Agents { action } => agent_registry::run(action, &willdeep_home()?).await,

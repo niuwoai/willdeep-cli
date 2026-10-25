@@ -18,6 +18,9 @@ module ToolI18n
   LOCALE = "zh-Hans"
 
   TITLES = {
+    "screenplay.start" => "启动三集自动剧本", "screenplay.list" => "列出自动剧本任务", "screenplay.inspect" => "查看写审改进度",
+    "screenplay.cancel" => "取消后续剧本创作", "screenplay.resume" => "继续自动剧本", "screenplay.budget" => "追加剧本总额度", "screenplay.download" => "读取定稿文件",
+    "screenplay.step" => "推进自动剧本阶段", "screenplay.status" => "查看自动剧本进度",
     "system.status" => "查看插件运行版本",
     "drama.get_progress" => "查看短剧进度", "drama.get_stage_context" => "读取创作阶段材料", "review.run" => "内容审核",
     "drama.list" => "列出短剧", "drama.get" => "读取短剧", "drama.confirm_plan" => "确认策划并建剧",
@@ -27,6 +30,7 @@ module ToolI18n
     "drama.list_history" => "查看版本历史", "drama.save_canon" => "保存全剧设定账本", "drama.check_consistency" => "检查前后一致性",
     "drama.read_version" => "读取历史版本", "drama.restore_version" => "恢复历史版本", "drama.list_shots" => "列出分镜",
     "drama.save_shot_drafts" => "批量保存分镜草稿", "drama.save_episode_drafts" => "批量保存分集草稿",
+    "drama.remove_shot" => "移除分镜", "drama.restore_shot" => "恢复分镜",
     "drama.commit_episode_drafts" => "采用分集草稿", "drama.commit_draft" => "采用草稿", "drama.discard_draft" => "丢弃草稿",
     "skill.list" => "列出创作技能", "skill.get" => "读取创作技能", "skill.save" => "保存创作技能", "skill.reset" => "恢复默认技能",
     "skill.compose" => "组合创作技能", "chat.append" => "记录共创对话", "chat.list" => "读取共创对话", "chat.clear" => "清空共创对话",
@@ -52,6 +56,8 @@ module ToolI18n
   }.freeze
 
   ARGUMENTS = {
+    "workspace" => "工作区", "maxCalls" => "总调用上限", "maxTokens" => "总 token 上限", "expectedCalls" => "原调用上限", "expectedTokens" => "原 token 上限", "format" => "导出格式",
+    "workflowID" => "创作任务", "taskID" => "阶段任务", "grant" => "任务授权", "step" => "创作阶段", "expectedBasis" => "输入版本",
     "expectedContent" => "保存前的文字快照", "expectedCanonRev" => "期望账本版本号",
     "brief" => "创作要求", "maxRevisions" => "最多修订次数", "regenerate" => "重新出初稿",
     "dramaID" => "短剧", "episodeID" => "分集", "shotID" => "镜头", "assetID" => "资产", "characterID" => "角色",
@@ -75,7 +81,7 @@ module ToolI18n
     "retryOnBlock" => "全被拦截时重出轮数", "skipFresh" => "跳过结论仍有效的", "state" => "状态", "limit" => "数量上限",
     "timeoutSeconds" => "最多等待（秒）", "lessonID" => "经验", "applyAs" => "应用方式", "enabled" => "启用", "createdBy" => "创建者",
     "onlyPassing" => "只选通过的", "replaceSelected" => "替换已选", "reviewModel" => "审核模型", "maxSteps" => "最多列几步",
-    "episodeOrder" => "第几集", "detail" => "详细程度", "from" => "起", "to" => "止", "plan" => "策划", "aspectRatio" => "画幅",
+    "episodeOrder" => "第几集", "episodeOrders" => "并行分集", "detail" => "详细程度", "from" => "起", "to" => "止", "plan" => "策划", "aspectRatio" => "画幅",
     "episodeDurationSeconds" => "每集时长（秒）", "description" => "描述", "visualPrompt" => "形象描述", "identityVersion" => "形象版本",
     "script" => "剧本", "order" => "序号", "dialogue" => "台词", "actionStart" => "开场动作", "actionEnd" => "收尾动作",
     "cameraIntent" => "运镜", "soundscape" => "环境声", "music" => "配乐", "caption" => "画面字幕", "startPrompt" => "首帧描述",

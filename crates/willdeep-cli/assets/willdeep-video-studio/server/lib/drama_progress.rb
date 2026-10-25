@@ -92,15 +92,19 @@ class DramaProgress
     limit = [limit, MAX_STEPS_LIMIT].min
     focus = focus_episode(drama, arguments)
     return focus if focus.is_a?(Hash)
+    selected = focus_episodes(drama, arguments)
+    return selected if selected.is_a?(Hash)
 
     # 只看一集（0.41.0-rc5）：下一步只留这一集的；其余集与整剧层面的步骤由不带参数的调用给出。
-    steps = steps.select { |entry| entry.dig("target", "episodeID") == focus } if focus
+    selected_ids = focus ? [focus] : selected
+    steps = steps.select { |entry| selected_ids.include?(entry.dig("target", "episodeID")) } if selected_ids
     background = Array(@background_jobs.call(drama["id"]))
+    background.select! { |job| selected_ids.include?(job["episodeID"]) } if selected_ids
     steps.each { |entry| attach_batch(entry, drama["id"]) }
-    compact = focus || (arguments["detail"] != "full" && episodes.length > COMPACT_EPISODES_OVER)
+    compact = selected_ids || (arguments["detail"] != "full" && episodes.length > COMPACT_EPISODES_OVER)
     # 只看一集时其余集不列（整剧计数在 summary 里）；不指定集的长剧各集只给摘要。
-    listed = if focus
-               episodes.select { |episode| episode["id"] == focus }
+    listed = if selected_ids
+               selected_ids.map { |episode_id| episodes.find { |episode| episode["id"] == episode_id } }.compact
              elsif compact
                episodes.map { |episode| compact_episode(episode) }
              else
@@ -119,10 +123,11 @@ class DramaProgress
       "assets" => assets,
       "episodes" => listed,
       "focusEpisodeID" => focus,
+      "focusEpisodeIDs" => selected_ids,
       "episodesCompact" => compact ? true : nil,
       "nextSteps" => steps.first(limit),
       "remainingSteps" => [steps.length - limit, 0].max,
-      "batchSteps" => batch_steps(drama, steps, focus ? listed : episodes, background),
+      "batchSteps" => batch_steps(drama, steps, selected_ids ? listed : episodes, background),
       "backgroundJobs" => background
     }.reject { |_key, value| value.nil? }
   end
@@ -137,6 +142,20 @@ class DramaProgress
     return episode["id"] if episode
 
     { "ok" => false, "error" => { "code" => "episode_not_found", "message" => "Episode #{id.empty? ? "order #{order}" : id} was not found." } }
+  end
+
+  # 多集视图供 CLI 监督并行生产；保留调用方给出的集序，不重复、不静默忽略无效集。
+  def focus_episodes(drama, arguments)
+    orders = arguments["episodeOrders"]
+    return nil if orders.nil?
+    return { "ok" => false, "error" => { "code" => "invalid_episode_orders", "message" => "episodeOrders must be a non-empty array of unique integers." } } unless orders.is_a?(Array) && !orders.empty? && orders.all? { |value| value.is_a?(Integer) } && orders.uniq == orders
+    return { "ok" => false, "error" => { "code" => "conflicting_episode_focus", "message" => "Use either episodeOrders or episodeID/episodeOrder, not both." } } unless arguments["episodeID"].to_s.empty? && arguments["episodeOrder"].nil?
+
+    by_order = drama["episodes"].to_h { |episode| [episode["order"].to_i, episode["id"]] }
+    missing = orders.reject { |order| by_order.key?(order) }
+    return { "ok" => false, "error" => { "code" => "episode_not_found", "message" => "Episode orders not found: #{missing.join(', ')}." } } unless missing.empty?
+
+    orders.map { |order| by_order.fetch(order) }
   end
 
   # 一集的摘要：去掉逐镜明细，只留计数（0.41.0-rc5）。24 集的剧逐镜全给有 200 KB，主会话的模型吃不下也用不上。

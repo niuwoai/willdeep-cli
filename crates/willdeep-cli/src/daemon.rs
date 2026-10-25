@@ -47,6 +47,7 @@ mod local_transport;
 mod mobile_cli;
 mod mobile_gateway;
 mod peer_client;
+mod screenplay;
 pub(crate) use control_api::peer_sessions::WAKE_ORIGIN as PEER_WAKE_ORIGIN;
 pub(crate) use peer_client::{PeerSessionClient, peer_operation};
 const PEER_WAKE_WINDOW_SECONDS: u64 = 600;
@@ -1711,6 +1712,7 @@ async fn run(home: &Path) -> Result<()> {
     server_state.web_app.resume(shutdown_signal.subscribe());
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
     scheduler::spawn(server_state.clone());
+    screenplay::recover(home);
     let scheduler_state = server_state.clone();
     tokio::spawn(async move {
         while let Some(session_id) = scheduled_sessions.recv().await {

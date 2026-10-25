@@ -69,6 +69,8 @@
   "command.drama.saveEpisodeDrafts": "批量保存分集草稿",
   "command.drama.listShots": "读取分镜清单",
   "command.drama.saveShotDrafts": "批量保存分镜草稿",
+  "command.drama.removeShot": "移除分镜",
+  "command.drama.restoreShot": "恢复分镜",
   "command.drama.listAssets": "列出资产",
   "command.drama.getAsset": "读取资产",
   "command.drama.saveAsset": "保存资产",
@@ -106,5 +108,12 @@
   "command.qa.saveLesson": "保存或开关一条质检经验",
   "command.episode.generateMusic": "生成背景音乐",
   "command.episode.importMusic": "导入背景音乐",
-  "command.episode.revealOutput": "在访达中显示成片"
+  "command.episode.revealOutput": "在访达中显示成片",
+  "command.screenplay.start": "启动自动剧本",
+  "command.screenplay.list": "列出自动剧本",
+  "command.screenplay.inspect": "查看写审改进度",
+  "command.screenplay.cancel": "取消后续创作",
+  "command.screenplay.resume": "继续自动剧本",
+  "command.screenplay.budget": "追加剧本总额度",
+  "command.screenplay.download": "下载定稿"
 }

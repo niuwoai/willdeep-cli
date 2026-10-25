@@ -155,6 +155,7 @@ class StreamableHTTPServer
     payload = JSON.generate(body)
     headers = {
       "Content-Type" => "application/json",
+      "X-App-Version" => defined?(SERVER_VERSION) ? SERVER_VERSION : "unknown",
       "Content-Length" => payload.bytesize.to_s,
       "Connection" => "close"
     }.merge(extra_headers)

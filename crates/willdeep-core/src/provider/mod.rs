@@ -60,6 +60,9 @@ pub struct ProviderConfig {
     pub workspace_id: String,
     pub request_timeout_secs: u64,
     pub max_output_tokens: u32,
+    /// Explicit non-thinking mode for bounded structured auxiliary requests.
+    /// Independent of authentication and local-endpoint trust.
+    pub non_thinking: bool,
     /// Explicitly allow an OpenAI-compatible endpoint to run without an API
     /// key. This is set only for the user-configured auxiliary model; normal
     /// Provider profiles continue to fail closed when credentials are absent.
@@ -84,6 +87,7 @@ impl ProviderConfig {
             workspace_id: Uuid::new_v4().to_string(),
             request_timeout_secs: 600,
             max_output_tokens: 16_384,
+            non_thinking: false,
             allow_unauthenticated: false,
         }
     }

@@ -26,6 +26,8 @@ require_relative "lib/drama_progress"
 require_relative "lib/stage_context"
 require_relative "lib/review_runner"
 require_relative "lib/script_creation"
+require_relative "lib/screenplay_service"
+require_relative "lib/screenplay_control"
 require_relative "lib/image_backend"
 require_relative "lib/voice_generation"
 require_relative "lib/export_manifest"
@@ -44,7 +46,7 @@ require_relative "lib/clip_trim"
 require_relative "lib/image_qa"
 
 # 与插件清单、ui/package.json 一致；scripts/version_test.rb 断言三处相同。
-SERVER_VERSION = "0.46.0-rc1"
+SERVER_VERSION = "0.51.0-rc2"
 
 # 宿主按 pluginID 给每个插件分一个目录，本插件的 pluginID 是
 # willdeep-video-studio，生成的图片也由宿主写进这个目录。任务存档早先落在
@@ -267,8 +269,12 @@ EPISODE_BATCH = EpisodeBatch.new(
   poll_limit_seconds: (ENV["VIDEO_STUDIO_JOB_POLL_LIMIT_SECONDS"] || EpisodeBatch::DEFAULT_POLL_LIMIT_SECONDS).to_f
 )
 SCRIPT_CREATION = ScriptCreation.new(dramas: DRAMA_SERVICE, stages: STAGE_CONTEXT, reviews: REVIEW_RUNNER)
+SCREENPLAY = ScreenplayService.new(store: DramaStore.new(drama_store_path), host: HOST, settings: -> { STORE.settings },
+                                  skills: CREATIVE_SKILLS, export_root: File.join(plugin_data_directory, "screenplay-exports"))
+SCREENPLAY_CONTROL = ScreenplayControl.new(host: HOST, service: SCREENPLAY)
 BACKGROUND = BackgroundTools.new(runner: JOB_RUNNER, batch: EPISODE_BATCH, images: IMAGE_GENERATION, voices: VOICE_GENERATION,
                                  reviews: REVIEW_RUNNER, videos: SERVICE, remediator: VIDEO_REMEDIATION, image_qa: IMAGE_QA, script_creation: SCRIPT_CREATION)
+DRAMA_SERVICE.shot_lifecycle_activity = -> { JOB_RUNNER.store.jobs + STORE.jobs + COMPOSE_STORE.jobs }
 
 # 读出的剧挂上候选图推荐与过期标记（0.40.0-rc1）：drama.get / drama.list / drama.list_shots。只读字段，不落库。
 def with_image_qa(result)
@@ -669,8 +675,8 @@ ASSET_TOOLS = [
 TOOLS = [
   {
     name: "drama.get_progress",
-    description: "Where a short drama stands and what to do next. Returns per-character, per-asset, per-episode and per-shot readiness (adopted content only), review verdicts (reviewDetail on a node gives must / advice counts and whether a warn is acknowledged; the drama and each scripted episode also carry the expert panel verdict under review.panel while video.settings panelReview is on), a `consistency` summary from drama.check_consistency (bannedTerms, unknownSpeakers, facts, visualRules, total), continuity issues per shot (missing or archived package references, unexplained appearance changes, stale or over-long dialogue audio, reference limits), video job state per shot (linked by shotID), and an ordered nextSteps list (review blocks first, then warn verdicts with must-fix issues that nobody acknowledged, then unreviewed or stale content, then fix_consistency when the canon check found issues, then characters, identity images, assets, scripts, storyboards, frame prompts, start frames, continuity fixes, videos). maxSteps raises the default cap of 12. For dramas with more than 6 episodes each episode comes back as a summary; pass episodeOrder (or episodeID) to get one episode with per-shot detail and its own nextSteps. Call this instead of re-reading the whole drama with drama.get.",
-    inputSchema: { type: "object", properties: { dramaID: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: DramaProgress::MAX_STEPS_LIMIT }, episodeOrder: { type: "integer", minimum: 1, description: "Focus on one episode: only it keeps per-shot detail and nextSteps are limited to it." }, episodeID: { type: "string", description: "Same as episodeOrder, by ID." }, detail: { type: "string", enum: ["compact", "full"], description: "Without a focus episode, dramas with more than 6 episodes list each episode as a summary (shot counts, frames, videos, QA blocks) unless detail is full." } }, required: ["dramaID"] }
+    description: "Where a short drama stands and what to do next. Returns per-character, per-asset, per-episode and per-shot readiness (adopted content only), review verdicts, consistency and continuity issues, video job state, and ordered next steps. maxSteps raises the default cap of 12. For dramas with more than 6 episodes each episode comes back as a summary; episodeOrder / episodeID focuses on one episode, while episodeOrders selects several episodes for WillDeep CLI to supervise parallel production. The CLI schedules stage tools, checks each job and review gate, and decides when an episode advances; this plugin executes the requested stage and reports per-item status. Call this instead of re-reading the whole drama with drama.get.",
+    inputSchema: { type: "object", properties: { dramaID: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: DramaProgress::MAX_STEPS_LIMIT }, episodeOrder: { type: "integer", minimum: 1, description: "Focus on one episode: only it keeps per-shot detail and nextSteps are limited to it." }, episodeID: { type: "string", description: "Same as episodeOrder, by ID." }, episodeOrders: { type: "array", minItems: 1, uniqueItems: true, items: { type: "integer", minimum: 1 }, description: "Focus on multiple episodes for supervised parallel work." }, detail: { type: "string", enum: ["compact", "full"], description: "Without a focus episode, dramas with more than 6 episodes list each episode as a summary unless detail is full." } }, required: ["dramaID"] }
   },
   {
     name: "drama.get_stage_context",
@@ -814,6 +820,7 @@ TOOLS = [
     description: "Write drafts for many shots at once, matched by shot order. Atomic: either every listed shot is written or none is. Shots whose order is not found are reported in `skipped` rather than dropped silently.",
     inputSchema: { type: "object", properties: { dramaID: { type: "string" }, episodeID: { type: "string" }, create: { type: "boolean" }, commit: { type: "boolean" }, expectedEpisodeRev: { type: "integer" }, expectedEpisodeDraftRev: { type: "integer" }, expectedShots: { type: "array", items: { type: "object", properties: { id: { type: "string" }, rev: { type: "integer" }, draftRev: { type: "integer" } }, required: %w[id rev draftRev] } }, shots: { type: "array", items: { type: "object", properties: { order: { type: "integer" }, title: { type: "string" }, summary: { type: "string" }, actionStart: { type: "string" }, actionEnd: { type: "string" }, cameraIntent: { type: "string" }, soundscape: { type: "string" }, music: { type: "string" }, caption: { type: "string", description: "On-screen caption burned in at compose time over the start of the shot (e.g. a day count like 第 3 天), max 60 chars. Keep caption text out of startPrompt/endPrompt: image and video models paint it into the picture and video QA blocks it." }, holdFull: { type: "boolean", description: "Hold shot: keep the whole clip under dialogue pacing." }, startPrompt: { type: "string" }, endPrompt: { type: "string" }, dialogue: { type: "array", items: { type: "object" } }, duration: { type: "integer" } }, required: ["order"] } } }, required: %w[dramaID episodeID shots] }
   },
+  *ShotLifecycle.tools,
   {
     name: "drama.save_episode_drafts",
     description: "Write drafts for many episodes at once, matched by episode order. Atomic: either every listed episode is written or none is. Episodes whose order is not found are reported in `skipped` rather than dropped silently.",
@@ -1078,7 +1085,12 @@ TOOLS = [
     description: "Reveal a completed job's downloaded MP4 in Finder.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] }
   }
-].concat(ASSET_TOOLS).concat(JOB_TOOLS).concat(QA_TOOLS).concat(IMAGE_QA_TOOLS).map { |tool| READ_ONLY_TOOLS.include?(tool[:name]) ? tool.merge(annotations: { readOnlyHint: true }) : tool }
+].concat([
+  { name: "screenplay.step", description: "Execute exactly one authorized Rust Runtime screenplay step. Requires a host-verified task grant; never starts an autonomous loop. Input revisions, issue verification and exports are checked atomically.",
+    inputSchema: { type: "object", properties: { workflowID: { type: "string" }, taskID: { type: "string" }, grant: { type: "string" }, step: { type: "string", enum: ScreenplayRules::STEPS }, brief: { type: "string" }, expectedBasis: { type: "string" }, episodeOrder: { type: "integer" } }, required: %w[workflowID taskID grant step] } },
+  { name: "screenplay.status", description: "Read screenplay-only domain progress, unresolved issues and final export without media production prerequisites.", annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: { workflowID: { type: "string" } }, required: ["workflowID"] } }
+]).concat(ScreenplayControl::TOOLS).concat(ASSET_TOOLS).concat(JOB_TOOLS).concat(QA_TOOLS).concat(IMAGE_QA_TOOLS).map { |tool| READ_ONLY_TOOLS.include?(tool[:name]) ? tool.merge(annotations: { readOnlyHint: true }) : tool }
  .map { |tool| ToolI18n.annotate(tool) }.freeze
 
 def async?(arguments)
@@ -1094,6 +1106,15 @@ end
 
 def dispatch_tool(name, arguments, transport)
   case name
+  when "screenplay.start" then SCREENPLAY_CONTROL.call("start", arguments)
+  when "screenplay.list" then SCREENPLAY_CONTROL.call("list", arguments)
+  when "screenplay.inspect" then SCREENPLAY_CONTROL.call("inspect", arguments)
+  when "screenplay.cancel" then SCREENPLAY_CONTROL.call("cancel", arguments)
+  when "screenplay.resume" then SCREENPLAY_CONTROL.call("resume", arguments)
+  when "screenplay.budget" then SCREENPLAY_CONTROL.call("budget", arguments)
+  when "screenplay.download" then SCREENPLAY_CONTROL.call("download", arguments)
+  when "screenplay.step" then SCREENPLAY.step(arguments)
+  when "screenplay.status" then SCREENPLAY.status(arguments)
   when "system.status" then { "ok" => true, "version" => SERVER_VERSION, "packageRoot" => File.realpath(File.expand_path("..", __dir__)), "pid" => Process.pid, "parentPID" => Process.ppid }
   when "image.qa" then BACKGROUND.image_qa(arguments)
   when "episode.accept_recommended_frames" then IMAGE_QA.accept_recommended(arguments)
@@ -1131,6 +1152,8 @@ def dispatch_tool(name, arguments, transport)
   when "drama.restore_version" then DRAMA_SERVICE.restore_version(arguments)
   when "drama.list_shots" then list_shots_with_recommendations(arguments)
   when "drama.save_shot_drafts" then DRAMA_SERVICE.save_shot_drafts(arguments)
+  when "drama.remove_shot" then DRAMA_SERVICE.remove_shot(arguments)
+  when "drama.restore_shot" then DRAMA_SERVICE.restore_shot(arguments)
   when "drama.save_episode_drafts" then DRAMA_SERVICE.save_episode_drafts(arguments)
   when "drama.commit_episode_drafts" then DRAMA_SERVICE.commit_episode_drafts(arguments)
   when "drama.commit_draft" then DRAMA_SERVICE.commit_draft(arguments)

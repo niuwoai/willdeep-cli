@@ -14,18 +14,7 @@ pub(super) async fn complete(
     tools: &[ToolDefinition],
     events: &dyn ProviderEventSink,
 ) -> Result<Completion, ProviderError> {
-    let wire_messages = wire_messages(messages);
-    let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
-    let body = ChatRequest {
-        model: &provider.config.model,
-        messages: &wire_messages,
-        tools: &wire_tools,
-        tool_choice: (!tools.is_empty()).then_some("auto"),
-        stream: true,
-        reasoning_effort: provider.is_auxiliary_or_loopback().then_some("none"),
-        think: provider.is_auxiliary_or_loopback().then_some(false),
-    };
-    let mut body = serde_json::to_value(body).map_err(|error| invalid(error.to_string()))?;
+    let mut body = provider.request_body(messages, tools, true)?;
     body["stream_options"] = serde_json::json!({"include_usage": true});
     let request = openai_auth(
         provider.client.post(provider.endpoint.clone()),
