@@ -22,6 +22,11 @@ pub(super) async fn complete(
         tools: tools.iter().map(ResponseTool::from).collect(),
         stream: true,
         store: false,
+        max_output_tokens: provider.config.max_output_tokens.max(1),
+        reasoning: provider
+            .config
+            .non_thinking
+            .then_some(ResponseReasoning { effort: "none" }),
     };
     let request = openai_auth(
         provider.client.post(provider.endpoint.clone()),

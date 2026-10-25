@@ -69,6 +69,8 @@
   "command.drama.saveEpisodeDrafts": "Save many episode drafts",
   "command.drama.listShots": "List storyboard shots",
   "command.drama.saveShotDrafts": "Save many shot drafts",
+  "command.drama.removeShot": "Remove storyboard shot",
+  "command.drama.restoreShot": "Restore storyboard shot",
   "command.drama.listAssets": "List assets",
   "command.drama.getAsset": "Read an asset",
   "command.drama.saveAsset": "Save an asset",
@@ -106,5 +108,12 @@
   "command.qa.saveLesson": "Save or toggle a QA lesson",
   "command.episode.generateMusic": "Generate background music",
   "command.episode.importMusic": "Import background music",
-  "command.episode.revealOutput": "Show the final cut in Finder"
+  "command.episode.revealOutput": "Show the final cut in Finder",
+  "command.screenplay.start": "Start screenplay",
+  "command.screenplay.list": "List screenplays",
+  "command.screenplay.inspect": "Screenplay progress",
+  "command.screenplay.cancel": "Cancel screenplay",
+  "command.screenplay.resume": "Resume screenplay",
+  "command.screenplay.budget": "Increase screenplay budget",
+  "command.screenplay.download": "Download final screenplay"
 }

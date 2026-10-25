@@ -21,6 +21,13 @@
       "entryPath": "ui/dist/index.html"
     }],
     "commands": [
+      {"id":"screenplay.start","titleKey":"command.screenplay.start","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.start"}},
+      {"id":"screenplay.list","titleKey":"command.screenplay.list","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.list"}},
+      {"id":"screenplay.inspect","titleKey":"command.screenplay.inspect","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.inspect"}},
+      {"id":"screenplay.cancel","titleKey":"command.screenplay.cancel","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.cancel"}},
+      {"id":"screenplay.resume","titleKey":"command.screenplay.resume","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.resume"}},
+      {"id":"screenplay.budget","titleKey":"command.screenplay.budget","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.budget"}},
+      {"id":"screenplay.download","titleKey":"command.screenplay.download","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.download"}},
       {"id":"drama.list","titleKey":"command.drama.list","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.list"}},
       {"id":"drama.get","titleKey":"command.drama.get","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.get"}},
       {"id":"drama.confirmPlan","titleKey":"command.drama.confirmPlan","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.confirm_plan"}},
@@ -31,6 +38,8 @@
       {"id":"drama.write_with_panel","titleKey":"command.drama.write_with_panel","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.write_with_panel"}},
       {"id":"drama.listShots","titleKey":"command.drama.listShots","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.list_shots"}},
       {"id":"drama.saveShotDrafts","titleKey":"command.drama.saveShotDrafts","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.save_shot_drafts"}},
+      {"id":"drama.removeShot","titleKey":"command.drama.removeShot","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.remove_shot"}},
+      {"id":"drama.restoreShot","titleKey":"command.drama.restoreShot","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.restore_shot"}},
       {"id":"drama.saveEpisodeDrafts","titleKey":"command.drama.saveEpisodeDrafts","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.save_episode_drafts"}},
       {"id":"drama.commitEpisodeDrafts","titleKey":"command.drama.commitEpisodeDrafts","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.commit_episode_drafts"}},
       {"id":"drama.commitDraft","titleKey":"command.drama.commitDraft","handler":{"type":"mcpTool","server":"video-studio","tool":"drama.commit_draft"}},

@@ -1024,6 +1024,7 @@ async fn ai_complete(
     let host = crate::plugin_capabilities::PluginAiHost {
         home: &state.home,
         config_path: &state.config_path,
+        usage_context: None,
         workspaces: state
             .workspaces
             .read()
@@ -1104,13 +1105,26 @@ pub(crate) async fn complete(
         .max_output_tokens
         .unwrap_or(1_024)
         .clamp(1, MAX_AI_OUTPUT_TOKENS);
+    // Structured screenplay requests have a finite output reservation. DeepSeek's
+    // default thinking mode can otherwise consume it before returning any JSON.
+    provider_config.non_thinking = host.usage_context.is_some()
+        && provider_config
+            .model
+            .to_ascii_lowercase()
+            .starts_with("deepseek");
     let model_name = provider_config.model.clone();
 
     let provider = build_provider(provider_config)
         .map_err(|_| PluginWebError::BadRequest("unavailable".to_owned()))?;
     // 插件页的 AI 请求同样进本机用量账本（辅助请求）。
-    let provider =
-        crate::harness::standalone_usage_ledger(host.home, None, None).auxiliary(provider);
+    let provider = crate::harness::standalone_usage_ledger(
+        host.home,
+        host.usage_context.as_ref().map(|(id, _)| *id),
+        host.usage_context
+            .as_ref()
+            .map(|(_, workspace)| workspace.as_path()),
+    )
+    .auxiliary(provider);
 
     if request.skills.len() > MAX_AI_SKILLS {
         return Err(PluginWebError::BadRequest("tooManySkills".to_owned()));
@@ -1241,6 +1255,7 @@ pub(crate) async fn complete(
         "model": model_name,
         "providerID": profile_name,
         "toolCalls": tool_calls,
+        "usage": completion.usage,
     }))
 }
 

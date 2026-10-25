@@ -49,17 +49,7 @@ impl Provider for ChatCompletionsProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<Completion, ProviderError> {
-        let wire_messages = wire_messages(messages);
-        let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
-        let body = ChatRequest {
-            model: &self.config.model,
-            messages: &wire_messages,
-            tools: &wire_tools,
-            tool_choice: (!tools.is_empty()).then_some("auto"),
-            stream: false,
-            reasoning_effort: self.is_auxiliary_or_loopback().then_some("none"),
-            think: self.is_auxiliary_or_loopback().then_some(false),
-        };
+        let body = self.request_body(messages, tools, false)?;
         let request =
             openai_auth(self.client.post(self.endpoint.clone()), &self.config).json(&body);
         let bytes = send_retrying(request, &self.config).await?;
@@ -68,6 +58,59 @@ impl Provider for ChatCompletionsProvider {
 }
 
 impl ChatCompletionsProvider {
+    fn request_body(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        stream: bool,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let mut wire_messages = wire_messages(messages);
+        // Compression can remove the last thinking message. DeepSeek still requires
+        // this field on assistant summaries and tool calls in the remaining history.
+        if self
+            .config
+            .model
+            .to_ascii_lowercase()
+            .starts_with("deepseek-")
+        {
+            for message in &mut wire_messages {
+                if message.role == "assistant" && message.reasoning_content.is_none() {
+                    message.reasoning_content = Some("");
+                }
+            }
+        }
+        let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
+        let body = ChatRequest {
+            model: &self.config.model,
+            messages: &wire_messages,
+            tools: &wire_tools,
+            tool_choice: (!tools.is_empty()).then_some("auto"),
+            stream,
+            reasoning_effort: (self.is_auxiliary_or_loopback() || self.config.non_thinking)
+                .then_some("none"),
+            think: self.is_auxiliary_or_loopback().then_some(false),
+        };
+        let mut body = serde_json::to_value(body)
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        self.apply_output_limit(&mut body);
+        Ok(body)
+    }
+}
+
+impl ChatCompletionsProvider {
+    fn apply_output_limit(&self, body: &mut serde_json::Value) {
+        let model = self.config.model.to_ascii_lowercase();
+        let modern = ["gpt-5", "o1", "o3", "o4"]
+            .iter()
+            .any(|prefix| model.starts_with(prefix));
+        let key = if modern {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        body[key] = serde_json::json!(self.config.max_output_tokens.max(1));
+    }
+
     fn is_auxiliary_or_loopback(&self) -> bool {
         self.config.allow_unauthenticated
             || reqwest::Url::parse(&self.config.base_url)
@@ -269,6 +312,82 @@ impl ChatUsage {
 #[derive(Deserialize)]
 struct PromptTokensDetails {
     cached_tokens: Option<u64>,
+}
+
+#[cfg(test)]
+mod generation_limit_tests {
+    use super::*;
+    use crate::provider::{ApiDialect, ProviderKind};
+
+    #[test]
+    fn deepseek_compressed_history_keeps_required_reasoning_field() {
+        let config = ProviderConfig::new(
+            ProviderKind::SomeIm,
+            ApiDialect::ChatCompletions,
+            "https://some.im/v1",
+            "test-key",
+            "deepseek-v4-flash",
+        );
+        let history = [
+            Message::user("topic"),
+            Message::assistant("summary", vec![]),
+        ];
+        let body = ChatCompletionsProvider::new(config)
+            .unwrap()
+            .request_body(&history, &[], true)
+            .unwrap();
+        assert_eq!(body["messages"][1]["reasoning_content"], "");
+        assert!(body["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn remote_main_reasoning_is_unchanged_but_explicit_structured_calls_disable_it() {
+        let mut config = ProviderConfig::new(
+            ProviderKind::SomeIm,
+            ApiDialect::ChatCompletions,
+            "https://some.im/v1",
+            "test-key",
+            "deepseek-v4-flash",
+        );
+        config.max_output_tokens = 512;
+        let normal = ChatCompletionsProvider::new(config.clone())
+            .unwrap()
+            .request_body(&[Message::user("review")], &[], false)
+            .unwrap();
+        assert!(normal.get("reasoning_effort").is_none());
+        config.non_thinking = true;
+        let bounded = ChatCompletionsProvider::new(config.clone())
+            .unwrap()
+            .request_body(&[Message::user("review")], &[], false)
+            .unwrap();
+        assert_eq!(bounded["reasoning_effort"], "none");
+        assert_eq!(bounded["max_tokens"], 512);
+        config.api_key.clear();
+        assert!(matches!(
+            config.validate(),
+            Err(ProviderError::MissingApiKey)
+        ));
+    }
+
+    #[test]
+    fn modern_chat_models_use_completion_token_limit_for_streaming_too() {
+        for model in ["gpt-5", "o3", "o4-mini"] {
+            let mut config = ProviderConfig::new(
+                ProviderKind::OpenAiCompatible,
+                ApiDialect::ChatCompletions,
+                "https://example.test/v1",
+                "test-key",
+                model,
+            );
+            config.max_output_tokens = 700;
+            let body = ChatCompletionsProvider::new(config)
+                .unwrap()
+                .request_body(&[Message::user("write")], &[], true)
+                .unwrap();
+            assert_eq!(body["max_completion_tokens"], 700);
+            assert!(body.get("max_tokens").is_none());
+        }
+    }
 }
 
 #[cfg(test)]

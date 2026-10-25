@@ -24,6 +24,7 @@ pub(crate) struct HostRequests {
     config_path: PathBuf,
     /// 与聊天端、页面桥同一份工作区白名单（Web 进程里是同一个 Arc）。
     workspaces: Arc<RwLock<Vec<PathBuf>>>,
+    usage_context: Option<(uuid::Uuid, PathBuf)>,
 }
 
 impl HostRequests {
@@ -36,13 +37,20 @@ impl HostRequests {
             home,
             config_path,
             workspaces,
+            usage_context: None,
         }
+    }
+
+    pub(crate) fn with_usage_context(mut self, session: uuid::Uuid, workspace: PathBuf) -> Self {
+        self.usage_context = Some((session, workspace));
+        self
     }
 
     fn ai_host(&self) -> PluginAiHost<'_> {
         PluginAiHost {
             home: &self.home,
             config_path: &self.config_path,
+            usage_context: self.usage_context.clone(),
             workspaces: self
                 .workspaces
                 .read()
@@ -85,6 +93,7 @@ impl PluginHostRequests for HostRequests {
             IMAGE_GENERATE.to_owned(),
             AI_COMPLETE.to_owned(),
             ROUNDTABLE_RUN.to_owned(),
+            crate::plugin_screenplay::CONTROL.to_owned(),
         ]
     }
 
@@ -95,6 +104,18 @@ impl PluginHostRequests for HostRequests {
         params: Value,
     ) -> Result<Value, HostRequestError> {
         match method {
+            crate::plugin_screenplay::CONTROL => {
+                context.require(PluginPermission::AiChat)?;
+                if context.plugin_id != "willdeep-video-studio" {
+                    return Err(HostRequestError::failed("screenplay_plugin_denied"));
+                }
+                let workspaces = self
+                    .workspaces
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone();
+                crate::plugin_screenplay::control(&self.home, &workspaces, params).await
+            }
             ROUNDTABLE_RUN => {
                 context.require(PluginPermission::AiChat)?;
                 let request: crate::plugin_roundtable::Request = parse(params)?;
@@ -223,7 +244,15 @@ mod tests {
     fn advertises_only_what_is_implemented() {
         let home = scratch();
         let methods = handler(&home).methods();
-        assert_eq!(methods, vec![IMAGE_GENERATE, AI_COMPLETE, ROUNDTABLE_RUN]);
+        assert_eq!(
+            methods,
+            vec![
+                IMAGE_GENERATE,
+                AI_COMPLETE,
+                ROUNDTABLE_RUN,
+                crate::plugin_screenplay::CONTROL
+            ]
+        );
         assert!(
             !methods
                 .iter()
