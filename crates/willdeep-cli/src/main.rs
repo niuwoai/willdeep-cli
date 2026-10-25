@@ -52,6 +52,7 @@ mod plugin_web;
 mod projects;
 mod prompt_cmd;
 mod provider_settings;
+mod qterm;
 mod schedule_cmd;
 mod screenplay_cmd;
 mod session_startup;

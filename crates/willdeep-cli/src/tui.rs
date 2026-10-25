@@ -257,6 +257,7 @@ struct App {
     transcript: Vec<String>,
     message_times: message_time::MessageTimes,
     running: bool,
+    qterm_gate_generation: u64,
     approval: Option<ApprovalRequest>,
     approval_selected: usize,
     /// Approvals that arrived while another one was on screen. Without this
