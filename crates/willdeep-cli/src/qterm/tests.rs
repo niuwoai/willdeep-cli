@@ -339,6 +339,7 @@ fn runtime_unavailable_becomes_unknown_and_preserves_pending_gate_identity() {
         RuntimeStatus::WaitingApproval,
     );
     let snapshot = crate::daemon::RuntimeSnapshot {
+        queue: None,
         attention: vec![],
         gates: vec![],
         agents: vec![],
@@ -440,6 +441,7 @@ fn old_completed_snapshot_cannot_finish_a_new_queued_turn() {
     let mut old = task(session, Uuid::new_v4(), 1, TaskStatus::Completed);
     old.agent_id = None;
     let snapshot = crate::daemon::RuntimeSnapshot {
+        queue: None,
         attention: vec![],
         gates: vec![],
         agents: vec![],
@@ -486,6 +488,7 @@ fn runtime_history_does_not_overwrite_a_local_turn() {
     let mut old = task(session, Uuid::new_v4(), 1, TaskStatus::Completed);
     old.agent_id = None;
     let snapshot = crate::daemon::RuntimeSnapshot {
+        queue: None,
         attention: vec![],
         gates: vec![],
         agents: vec![],
