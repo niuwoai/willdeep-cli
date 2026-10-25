@@ -1,5 +1,75 @@
 use super::*;
 
+#[tokio::test]
+async fn android_and_control_clients_share_one_durable_queue() {
+    let h = Harness::new();
+    let session = h.session().await;
+    let mut gateway = h.gateway();
+    let added = add(&mut gateway, session, "from Android").await;
+    let id = added["id"].as_str().unwrap();
+    let listed = h
+        .execute("turn.queue.list", json!({"session_id":session}))
+        .await;
+    assert_eq!(listed[0]["id"], id);
+    assert_eq!(listed[0]["text"], "from Android");
+    h.execute(
+        "turn.queue.update",
+        json!({"session_id":session,"action":"edit", "message_id":id,
+        "expected_text":"from Android","text":"edited by Web/TUI"}),
+    )
+    .await;
+    let replies = phone(
+        &mut gateway,
+        json!({"id":"refresh-queue","type":"session.select", "session_id":session}),
+    )
+    .await;
+    let pending = &one(&replies, "state.snapshot")["payload"]["queued_messages"];
+    assert_eq!(pending[0]["id"], id);
+    assert_eq!(pending[0]["text"], "edited by Web/TUI");
+    h.execute(
+        "turn.queue.update",
+        json!({"session_id":session,"action":"remove", "message_id":id}),
+    )
+    .await;
+    let replies = phone(
+        &mut gateway,
+        json!({"id":"refresh-removed","type":"session.select", "session_id":session}),
+    )
+    .await;
+    assert!(
+        one(&replies, "state.snapshot")["payload"]["queued_messages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn editing_from_another_client_revokes_the_previous_independent_override() {
+    let h = Harness::new();
+    let session = h.session().await;
+    let mut gateway = h.gateway();
+    let added = add(&mut gateway, session, "original queued work").await;
+    let id = added["id"].as_str().unwrap();
+    let replies = update(
+        &mut gateway,
+        session,
+        json!({"action":"run_independently","message_id":id}),
+    )
+    .await;
+    one(&replies, "ack");
+    let queue = h
+        .execute("turn.queue.list", json!({"session_id":session}))
+        .await;
+    assert_eq!(queue[0]["independence_confirmed"], true);
+    h.execute("turn.queue.update", json!({"session_id":session,"action":"edit","message_id":id,"expected_text":"original queued work","text":"changed scope"})).await;
+    let queue = h
+        .execute("turn.queue.list", json!({"session_id":session}))
+        .await;
+    assert_eq!(queue[0]["id"], id);
+    assert_eq!(queue[0]["independence_confirmed"], false);
+}
+
 async fn add(gateway: &mut Gateway, session: uuid::Uuid, text: &str) -> Value {
     let replies = phone(
         gateway,

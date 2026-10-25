@@ -22,10 +22,12 @@ import { fetchPlugins, orderedDestinations, type PluginFailureView, type PluginV
 import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
+import { replayToolState } from "./replayTools";
 import { queueText } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
 import "./chatWorkspace.css";
-import { QueuedMessages, type QueuedMessage } from "./QueuedMessages";
+import { RuntimeQueue, IndependentTasks, queueRequest } from "./RuntimeQueue";
+import { RuntimeHumanGates } from "./RuntimeHumanGates";
 import { SentAttachments } from "./SentAttachments";
 import { AttachmentManager } from "./AttachmentManager";
 import { attachmentText } from "./attachmentMessages";
@@ -72,14 +74,13 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   const chat: ChatMessage[] = [];
   detail.messages.forEach((message, index) => {
     const id = `${detail.id}-${index}`;
-    // 回放的工具调用先落成运行卡片，再跟正文。记录里没有成败，只分「有结果 / 被打断」。
+    // Missing output may be a suspended live request, not an interrupted tool.
     if (message.tools?.length) {
       const now = Date.now();
       chat.push({ id: `${id}-tools`, role: "activity", content: "", steps: message.tools.map((tool, order) => ({
         id: `${id}-tool-${order}`,
-        label: `${tool.completed ? t.toolDone : t.interrupted} ${tool.name}`,
+        ...replayToolState(tool.completed, tool.name, t),
         detail: tool.detail,
-        status: tool.completed ? "done" as const : "failed" as const,
         startedAt: now,
       })) });
     }
@@ -263,16 +264,8 @@ export function App() {
   }
   const [runtimeActivity, setRuntimeActivity] = useState<RuntimeActivity>({ tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
   const [busy, setBusy] = useState(false); const [activity, setActivity] = useState("");
-  const [queuedMessages, updateQueuedMessages] = useState<QueuedMessage[]>([]);
-  const queuedRef = useRef<QueuedMessage[]>([]);
-  const [queueOpen, setQueueOpen] = useState(false);
   const draftSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
-  const queueSending = useRef<string | null>(null);
-  const queuedSendRef = useRef<(item: QueuedMessage) => Promise<void>>(async () => undefined);
-  const setQueuedMessages = (items: QueuedMessage[] | ((current: QueuedMessage[]) => QueuedMessage[])) => {
-    const next = typeof items === "function" ? items(queuedRef.current) : items;
-    queuedRef.current = next; updateQueuedMessages(next);
-  };
+  const queueSubmitting = useRef(false);
   const inputSuggestion = useInputSuggestion();
   // 预测回包时要看「此刻」输入框空不空、有没有新一轮，闭包里的值是发起时的旧值。
   const composerEmptyRef = useRef(true);
@@ -286,18 +279,27 @@ export function App() {
   const activeTurnRef = useRef<string | null>(null);
   const activeSessionRef = useRef<string | null>(null);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState("");
-  useEffect(() => {
-    const next = queuedMessages[0];
-    if (!busy && !queueOpen && next && !next.failed && !queueSending.current && next.workspace === workspace && next.sessionId === sessionId) {
-      queueSending.current = next.id; void queuedSendRef.current(next);
-    }
-  }, [busy, queueOpen, queuedMessages, workspace, sessionId]);
-  const enqueueDraft = () => {
+  async function enqueueDraft(content = prompt.trim() || t.attachmentPrompt) {
     const target = activeSessionRef.current || sessionId;
-    if (!target || !activeTurnRef.current || (!prompt.trim() && !attachmentsRef.current.length)) return;
-    setQueuedMessages([...queuedRef.current, { id: crypto.randomUUID(), prompt: prompt.trim() || t.attachmentPrompt, attachments: attachmentsRef.current, workspace, sessionId: target, failed: false }]);
-    setPrompt(""); setAttachments([]);
-  };
+    if (!target || queueSubmitting.current || (!content && !attachmentsRef.current.length)) return;
+    const outgoingPrompt = prompt;
+    const outgoingAttachments = attachmentsRef.current;
+    const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
+    const fingerprint = JSON.stringify(payload);
+    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
+    const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
+    if (new TextEncoder().encode(body).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
+    queueSubmitting.current = true;
+    try {
+      await queueRequest(`/api/sessions/${encodeURIComponent(target)}/queue`, { method: "POST", headers: { "content-type": "application/json" }, body });
+      draftSendRequest.current = null;
+      setPrompt((current) => current === outgoingPrompt ? "" : current);
+      if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+      setError("");
+    } catch (reason) {
+      setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally { queueSubmitting.current = false; }
+  }
 
   const pendingStopRef = useRef(false);
   const loadSessionRef = useRef<(id: string, activeTurnId?: string | null) => Promise<void>>(async () => undefined);
@@ -446,14 +448,15 @@ export function App() {
     const refresh = () => {
       if (inFlight) return Promise.resolve();
       inFlight = true;
+      const requestedSession = sessionIdRef.current;
       // 事件按会话取，且只在选中会话时取：浏览器端没有应用层鉴权，跨会话
       // 列表没有归属可校验。
       const eventsRequest = sessionIdRef.current
         ? json<RuntimeEvent[]>(`/api/runtime/events?session=${encodeURIComponent(sessionIdRef.current)}`).catch(() => [] as RuntimeEvent[])
         : Promise.resolve([] as RuntimeEvent[]);
-      return Promise.all([json<RuntimeActivity>(`/api/runtime/activity?workspace=${encodeURIComponent(workspace)}`), json<Session[]>("/api/sessions"), eventsRequest])
+      return Promise.all([json<RuntimeActivity>(`/api/runtime/activity?workspace=${encodeURIComponent(workspace)}${sessionIdRef.current ? `&session=${encodeURIComponent(sessionIdRef.current)}` : ""}`), json<Session[]>("/api/sessions"), eventsRequest])
         .then(async ([runtime, currentSessions, events]) => {
-          if (!active) return;
+          if (!active || requestedSession !== sessionIdRef.current) return;
           setRuntimeActivity(runtime); setSessions(currentSessions); setRuntimeEvents(events);
           const visible = currentSessions.find((item) => item.id === sessionIdRef.current);
           const revision = visible ? `${visible.id}:${visible.updated_at}:${t.attachmentCount}` : "";
@@ -725,19 +728,19 @@ export function App() {
 
   async function refreshRuntimeActivity() {
     if (!workspace) return;
-    setRuntimeActivity(await json<RuntimeActivity>(`/api/runtime/activity?workspace=${encodeURIComponent(workspace)}`));
+    setRuntimeActivity(await json<RuntimeActivity>(`/api/runtime/activity?workspace=${encodeURIComponent(workspace)}${sessionIdRef.current ? `&session=${encodeURIComponent(sessionIdRef.current)}` : ""}`));
   }
 
   async function resolveRuntimeApproval(id: string, decision: "allow_once" | "deny" | "always_allow") {
     try {
-      await mutate(`/api/runtime/approvals/${encodeURIComponent(id)}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace, decision }) });
+      await mutate(`/api/runtime/approvals/${encodeURIComponent(id)}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace, session: sessionId, decision }) });
       await refreshRuntimeActivity();
     } catch (reason) { setError(`${t.runtimeActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
   }
 
   async function answerRuntimeQuestion(id: string, answer: string | null) {
     try {
-      await mutate(`/api/runtime/questions/${encodeURIComponent(id)}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace, answer }) });
+      await mutate(`/api/runtime/questions/${encodeURIComponent(id)}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace, session: sessionId, answer }) });
       await refreshRuntimeActivity();
     } catch (reason) { setError(`${t.runtimeActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
   }
@@ -914,24 +917,8 @@ export function App() {
   // `override` 给插件的 `window.willdeep.chat.send` 用：它递进来的文本要
   // 立刻起一个回合，而 setPrompt 是异步的——读 state 会读到上一轮的值。
   // 走的是与用户敲回车完全相同的这条路：审批档位与沙箱一个都不绕。
-  async function steer(content: string) {
-    const target = activeSessionRef.current || activeRuntimeSessionId;
-    if (!target || attachments.length) { setError(t.steerUnavailable); return; }
-    try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(target)}/steer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: content }) });
-      if (!response.ok) throw new Error(await response.text());
-      const result = (await response.json()) as { delivered: boolean };
-      if (!result.delivered) { setError(t.steerUnavailable); return; }
-      setPrompt(""); setError("");
-      setChat((current) => [...current, { id: nextId("user"), role: "user", content }]);
-      setActivity(t.steered);
-    } catch (cause) {
-      setError(`${t.requestFailed}: ${cause instanceof Error ? cause.message : String(cause)}`);
-    }
-  }
-
-  async function send(override?: string, queued?: QueuedMessage) {
-    const sendAttachments = queued?.attachments ?? attachmentsRef.current;
+  async function send(override?: string) {
+    const sendAttachments = attachmentsRef.current;
     const typed = (override ?? prompt).trim();
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
     if (typed === "/clear") { setChat([]); setPrompt(""); return; }
@@ -947,18 +934,17 @@ export function App() {
     const content = goalToStart || typed || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
     // 采用过的建议在真正发出去这一刻结算（插话也算）：原样 / 改过 / 重写由服务端判定。
     inputSuggestion.settleSent(typed);
-    // 本轮在跑时回车不是排队也不是被吞：直接送进正在跑的这一轮，下一次调模型前注入。
-    if (busy) { if (sendAttachments.length) enqueueDraft(); else await steer(content); return; }
+    // Runtime owns submitted messages; clients never keep a second execution queue.
+    if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
     const activeGoal = goalToStart || goal;
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
     const outgoingAttachments = sendAttachments;
     const outgoingPrompt = prompt;
-    const payload = { prompt: harnessPrompt, session_id: queued?.sessionId || sessionId || null, workspace: queued?.workspace || workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
+    const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
     const fingerprint = JSON.stringify(payload);
-    if (!queued && draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
-    const requestBody = queued?.requestBody ?? JSON.stringify({ ...payload, request_id: queued?.id ?? draftSendRequest.current?.id });
+    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
+    const requestBody = JSON.stringify({ ...payload, request_id: draftSendRequest.current?.id });
     if (new TextEncoder().encode(requestBody).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
-    if (queued && !queued.requestBody) setQueuedMessages((items) => items.map((item) => item.id === queued.id ? { ...item, requestBody } : item));
     const runId = nextId("run"); const controller = new AbortController(); abortRef.current = controller;
     const startedAt = Date.now();
     activeRunRef.current = runId;
@@ -975,10 +961,9 @@ export function App() {
       let terminal = false;
       await readSse(response, async (event) => {
         if (event.type === "submitted" && event.turn_id) {
-          if (!queued) draftSendRequest.current = null;
-          if (queued) setQueuedMessages((items) => items.filter((item) => item.id !== queued.id));
+          draftSendRequest.current = null;
           if (override === undefined) setPrompt((current) => current === outgoingPrompt ? "" : current);
-          if (!queued && attachmentsRef.current === outgoingAttachments) setAttachments([]);
+          if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
         }
         if (event.session_id) completedSessionId = event.session_id;
         if (event.turn_id) completedTurnId = event.turn_id;
@@ -1017,16 +1002,6 @@ export function App() {
       }
     } finally { if (abortRef.current === controller) abortRef.current = null; if (activeRunRef.current === runId) activeRunRef.current = null; activeTurnRef.current = null; activeSessionRef.current = null; setActiveRuntimeSessionId(""); pendingStopRef.current = false; setBusy(false); setActivity(""); }
   }
-
-  queuedSendRef.current = async (item) => {
-    setQueuedMessages((items) => items.map((entry) => entry.id === item.id ? { ...entry, sending: true } : entry));
-    await send(item.prompt, item);
-    queueSending.current = null;
-    if (queuedRef.current.some((entry) => entry.id === item.id)) {
-      setQueuedMessages((items) => items.map((entry) => entry.id === item.id ? { ...entry, failed: true, sending: false } : entry));
-      setQueueOpen(true);
-    } else { setQueuedMessages([...queuedRef.current]); }
-  };
 
   // 一级入口栏之后，右侧要么是对话（原有侧栏 + 聊天），要么是一个插件目的地
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
@@ -1178,6 +1153,8 @@ export function App() {
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
         <VStack align="stretch" gap="3">{groupActivityMessages(chat).map((message) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{message.content}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <RuntimeHumanGates gates={runtimeActivity.gates.filter((gate) => runtimeActivity.tasks.some((task) => task.id === gate.task_id && task.session_id === sessionId))} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
+        <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />
       </Box>
       {/* 聊天正文选中气泡。插件拿到的 `text` 是用户真正看到的那段字，
@@ -1191,13 +1168,13 @@ export function App() {
           onClose={() => setChatSelection(null)}
         />
       )}
+      <RuntimeQueue key={sessionId ?? "new"} sessionId={sessionId || null} language={language} />
       <Box className="composer-shell">
         {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
         {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); setPrompt(command); }}>{command}</button>)}</Box>}
         {skillQuery !== undefined && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill) => <button key={skill.identifier} type="button" onMouseDown={(event) => { event.preventDefault(); setSkillSearch(""); setPrompt((current) => current.replace(/\$[\w-]*$/, `$${skill.identifier} `)); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
-        <QueuedMessages items={queuedMessages} open={queueOpen} onOpen={setQueueOpen} onChange={setQueuedMessages} language={language} />
-        {busy && (prompt.trim() || attachments.length > 0) && <button type="button" className="queue-enqueue" title={queueText("enqueue", language)} disabled={!activeRuntimeSessionId} onClick={enqueueDraft}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
+        {busy && (prompt.trim() || attachments.length > 0) && <button type="button" className="queue-enqueue" title={queueText("enqueue", language)} disabled={!activeRuntimeSessionId} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
         <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
         <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {

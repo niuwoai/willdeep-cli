@@ -19,10 +19,31 @@ pub(super) async fn update(state: &ServerState, request: &ApiRequest) -> ApiResu
         )
         .map_err(ApiFailure::internal)?;
     if let Some(id) = active {
-        // Cancel only the previous active turn. The selected message remains first
-        // until its cancellation completes, then the ordinary scheduler claims it.
-        let stop = ApiRequest::new("turn.stop", serde_json::json!({ "id": id }));
-        super::turn_stop(state, &stop).await?;
+        let waiting = state
+            .sessions
+            .get_turn(id)
+            .map_err(ApiFailure::internal)?
+            .is_some_and(|turn| {
+                matches!(
+                    turn.status,
+                    session_store::RuntimeTurnStatus::WaitingApproval
+                        | session_store::RuntimeTurnStatus::WaitingAnswer
+                )
+            });
+        if !waiting && params.action == willdeep_runtime_protocol::QueueAction::SendNow {
+            let stop = ApiRequest::new("turn.stop", serde_json::json!({ "id": id }));
+            super::turn_stop(state, &stop).await?;
+        }
+    }
+    if matches!(
+        params.action,
+        willdeep_runtime_protocol::QueueAction::SendNow
+            | willdeep_runtime_protocol::QueueAction::RunIndependently
+    ) {
+        state
+            .sessions
+            .set_yield_suppressed(params.session_id, false)
+            .map_err(ApiFailure::internal)?;
     }
     state
         .tasks

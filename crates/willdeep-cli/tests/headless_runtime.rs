@@ -17,6 +17,8 @@ mod background_steering;
 mod background_supervisor;
 #[path = "headless_runtime/control_policy.rs"]
 mod control_policy;
+#[path = "headless_runtime/deferred_gates.rs"]
+mod deferred_gates;
 #[path = "headless_runtime/detached_background.rs"]
 mod detached_background;
 #[path = "headless_runtime/foreground_recovery.rs"]
@@ -2642,6 +2644,7 @@ impl MockProvider {
 
 #[derive(Clone, Copy)]
 enum MockMode {
+    DeferredHumanWait,
     // 这两种只给经 `scripts/lib/agent_eval_process.rb` 中断的测试用，那两条仅 Unix。
     #[cfg_attr(not(unix), allow(dead_code))]
     ForegroundRecovery,
@@ -2702,6 +2705,19 @@ async fn mock_provider_response(
         serde_json::from_slice::<serde_json::Value>(&body).expect("parse Provider request JSON"),
     );
     let request_index = state.requests.fetch_add(1, Ordering::Relaxed);
+    if matches!(state.mode, MockMode::DeferredHumanWait) {
+        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        if request["messages"].as_array().is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message["role"] == "system"
+                    && message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("Classify scheduling dependency only."))
+            })
+        }) {
+            return deferred_gates::classification_response(&request);
+        }
+    }
     if matches!(state.mode, MockMode::ForegroundRecovery) {
         return foreground_recovery::response(state, body, request_index).await;
     }
@@ -2768,6 +2784,7 @@ async fn mock_provider_response(
         tokio::time::sleep(delay).await;
     }
     let status = match state.mode {
+        MockMode::DeferredHumanWait => 200,
         MockMode::Status(status) => status,
         MockMode::Success
         | MockMode::ForegroundRecovery
@@ -2813,7 +2830,9 @@ async fn mock_provider_response(
         )
     } else if matches!(state.mode, MockMode::LeadingSleepThenSuccess) {
         background_steering::response(&body, request_index, false, true)
-    } else if mode_is_waiting_root(state.mode, request_index) {
+    } else if mode_is_waiting_root(state.mode, request_index)
+        || matches!(state.mode, MockMode::DeferredHumanWait) && request_index == 0
+    {
         r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"ask_root","type":"function","function":{"name":"ask_user","arguments":"{\"question\":\"keep the root active?\",\"options\":[\"yes\"]}"}}]},"finish_reason":"tool_calls"}]}"#.to_owned()
     } else if matches!(state.mode, MockMode::IncompleteThenSuccess) && request_index < 3 {
         serde_json::json!({

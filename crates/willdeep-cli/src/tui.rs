@@ -70,6 +70,7 @@ mod quiet_mode;
 mod rendering;
 mod rewind_ui;
 mod routing_settings;
+mod runtime_queue;
 mod runtime_ui;
 mod session_commands;
 mod session_picker_ui;
@@ -314,6 +315,7 @@ struct App {
     /// 本轮在跑时收到的提示词，本轮一结束就按顺序发出去；中断当前轮次同样会让
     /// 队列立刻续上。手机发来的消息不进这里，直接进 Runtime 的轮次队列。
     queued_prompts: VecDeque<QueuedPrompt>,
+    runtime_queue_submission: Option<(String, uuid::Uuid)>,
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
@@ -363,6 +365,11 @@ struct App {
     /// Runtime interactions already turned into a dialog, so a snapshot that
     /// still lists them does not reopen the same card every second.
     surfaced_gates: BTreeSet<uuid::Uuid>,
+    active_remote_gate: Option<uuid::Uuid>,
+    requested_gate_presentations: BTreeSet<uuid::Uuid>,
+    display_home: Option<PathBuf>,
+    seen_runtime_inputs: BTreeSet<String>,
+    parked_remote_dialogs: BTreeMap<uuid::Uuid, runtime_queue::ParkedRemoteDialog>,
     /// 每张已弹出的 Runtime 对话框背后那个等回答的任务的取消信号。gate 在别处
     /// （手机、另一个终端）被答掉时丢掉它：任务不再等，接收端随之丢弃，对话框的
     /// 发送端变成 closed，下一次快照据此撤回。已经答了、请求正在路上的不受影响。
@@ -508,6 +515,7 @@ struct AttentionDiagnostics {
 struct QueuedPrompt {
     text: String,
     attachments: Vec<DraftAttachment>,
+    remote: Option<willdeep_runtime_protocol::QueuedTurnMessage>,
 }
 
 struct DeliveredPrompt {

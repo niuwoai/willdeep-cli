@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueuedTurnMessage {
+    #[serde(default)]
+    pub priority_requested: bool,
+    #[serde(default)]
+    pub independence_confirmed: bool,
     pub id: uuid::Uuid,
     pub session_id: uuid::Uuid,
     pub text: String,
@@ -18,6 +22,7 @@ pub enum QueueAction {
     Remove,
     Clear,
     SendNow,
+    RunIndependently,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

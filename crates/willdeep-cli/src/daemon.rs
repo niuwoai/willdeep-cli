@@ -58,10 +58,12 @@ mod scheduler;
 pub(crate) use schedule_client::{
     read_session_attachments, schedule_operation, schedule_policy, schedule_response,
 };
+mod deferred_gates;
 mod session_store;
 mod steering;
 mod tool_store;
 pub(crate) mod tui_bridge;
+pub(crate) mod turn_queue;
 mod workspace_checkpoint;
 mod workspace_store;
 mod worktree_maintenance;
@@ -363,6 +365,9 @@ fn task_prompt_excerpt(prompt: &str) -> Option<String> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SubmitTask {
+    /// Internal execution lane: the visible Session remains `session_id`.
+    #[serde(skip)]
+    pub(crate) execution_session_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub(crate) team_control: Option<willdeep_runtime_protocol::agent_team::AgentTeamControl>,
     pub(crate) prompt: String,
@@ -461,6 +466,10 @@ pub(crate) enum InteractionStatus {
 /// 直接读 `runtime/interactions.json`，不经过 Runtime。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeInteraction {
+    #[serde(default)]
+    pub(crate) parked: bool,
+    #[serde(default)]
+    pub(crate) foreground_since: Option<u64>,
     pub(crate) id: uuid::Uuid,
     pub(crate) task_id: uuid::Uuid,
     pub(crate) kind: InteractionKind,
@@ -888,6 +897,7 @@ pub(crate) async fn submit_runtime_prompt(
             .post(
                 "/v1/internal/tasks",
                 &SubmitTask {
+                    execution_session_id: None,
                     team_control: None,
                     prompt,
                     attachments,
@@ -1713,6 +1723,7 @@ async fn run(home: &Path) -> Result<()> {
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
     scheduler::spawn(server_state.clone());
     screenplay::recover(home);
+    deferred_gates::spawn(server_state.clone());
     let scheduler_state = server_state.clone();
     tokio::spawn(async move {
         while let Some(session_id) = scheduled_sessions.recv().await {

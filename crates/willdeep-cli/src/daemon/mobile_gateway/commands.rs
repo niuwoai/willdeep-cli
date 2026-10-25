@@ -295,6 +295,7 @@ impl Gateway {
             "remove" | "delete" => "remove",
             "clear" => "clear",
             "send_now" => "send_now",
+            "run_independently" => "run_independently",
             _ => return Err(CommandError::new("Unsupported queue action.")),
         };
         let session_id = envelope_session(envelope)?

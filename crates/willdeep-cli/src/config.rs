@@ -270,6 +270,9 @@ pub struct HookSettings {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSettings {
+    /// Yield an unanswered human gate to independent queued work after this
+    /// many seconds. Default 300; zero disables automatic yielding.
+    pub human_wait_yield_seconds: Option<u64>,
     /// Interactive startup only; explicit prompts and --resume bypass this preference.
     #[serde(default)]
     pub session_startup: crate::session_startup::StartupMode,

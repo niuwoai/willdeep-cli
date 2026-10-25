@@ -864,6 +864,7 @@ async fn run() -> Result<()> {
     let frontend =
         if let Some(connection) = web_input.as_ref().and_then(|input| input.runtime.clone()) {
             harness::HarnessFrontend::Runtime {
+                independent_execution: false,
                 connection,
                 sink: Arc::new(TerminalSink {
                     json: cli.json,

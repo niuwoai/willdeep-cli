@@ -1,0 +1,195 @@
+{
+  "generated_at": "2026-10-24T18:21:03Z",
+  "verification_status": "complete_after_related_retests",
+  "versions": {
+    "rust": "0.116.0-rc1",
+    "mac": "1.424.0-rc1 (936)",
+    "android": "1.27.0-rc1 (127)"
+  },
+  "branch": "codex/deferred-gates-runtime",
+  "worktrees": {
+    "rust": "/private/tmp/willdeep-deferred-gates-runtime",
+    "mac": "/private/tmp/xedit-deferred-gates-runtime",
+    "android": "/private/tmp/android-deferred-gates-runtime"
+  },
+  "rust": {
+    "command": "cargo test -p willdeep -p willdeep-runtime-protocol --offline --locked -- --test-threads=4",
+    "log": "/private/tmp/willdeep-deferred-gates-runtime/build/deferred-gates/rust.log",
+    "results": [
+      "test result: ok. 883 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 835.12s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.01s",
+      "test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.78s",
+      "test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 271.06s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "final_related": {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "willdeep",
+        "deferred_gates",
+        "--offline",
+        "--locked",
+        "--",
+        "--test-threads=2"
+      ],
+      "started_at": "2026-10-24T17:50:38Z",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 881 filtered out; finished in 1.87s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 9.33s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+      ],
+      "log": "/private/tmp/willdeep-deferred-gates-runtime/build/deferred-gates/rust-final.log"
+    },
+    "reporting_note": "全套测试结果从完整原始日志核对。首次 JSON 汇总因 time 库未加载而失败，未据此伪造命令退出码；最终定向回归退出码单独记录。"
+  },
+  "mac": {
+    "full": {
+      "ok": false,
+      "status": "failed",
+      "source": "xcresult",
+      "xcresult": "/private/tmp/xedit-deferred-gates-runtime/build/deferred-gates/MacFullInitial.xcresult",
+      "log": "/private/tmp/xedit-deferred-gates-runtime/build/deferred-gates/mac-full-initial.log",
+      "test_exit": 65,
+      "reasons": [
+        "xcodebuild exited 65; a non-zero exit can never be reported as a pass."
+      ],
+      "stats": {
+        "total": 5083,
+        "passed": 5075,
+        "failed": 7,
+        "skipped": 1,
+        "duration": 1058.85
+      },
+      "log_stats": {
+        "total": 5083,
+        "passed": 5073,
+        "failed": 7,
+        "skipped": 3,
+        "duration": 616.35
+      },
+      "total_mismatch": false,
+      "failures": [
+        {
+          "name": "独立消息先持久保存正文和附件，再离开原队列；并发排队不重复正文",
+          "details": [
+            "Expectation failed: saved.messages.first(where: \\.isOperatorInput)?.textAttachments == [attachment]\nsaved.messages.first(where: \\.isOperatorInput)?.textAttachments → [WillDeep.AgentTextAttachment(id: 651C204E-7858-4E1D-8218-D7D008E77111, filename: \"context.txt\", content: \"retained attachment\", createdAt: 2026-10-24 17:59:45 +0000)]\n[attachment] → [WillDeep.AgentTextAttachment(id: 651C204E-7858-4E1D-8218-D7D008E77111, filename: \"context.txt\", content: \"retained attachment\", createdAt: 2026-10-24 17:59:45 +0000)]"
+          ]
+        },
+        {
+          "name": "realWorkerNonStreamingBrokerPathUsesToolsAndObservedUsageWithoutNetwork()",
+          "details": [
+            "Caught error: Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“suite.json”，因为它不存在。\" UserInfo={NSFilePath=/private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSURL=file:///private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSUnderlyingError=0x7796d5b570 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}"
+          ]
+        },
+        {
+          "name": "fourToolRoundsAreBudgetExhaustedWithoutAFifthRequest()",
+          "details": [
+            "Caught error: Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“suite.json”，因为它不存在。\" UserInfo={NSFilePath=/private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSURL=file:///private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSUnderlyingError=0x7796d5b870 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}"
+          ]
+        },
+        {
+          "name": "missingUsageRemainsInfrastructureFailureInsteadOfBudgetExhaustion()",
+          "details": [
+            "Caught error: Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“suite.json”，因为它不存在。\" UserInfo={NSFilePath=/private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSURL=file:///private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSUnderlyingError=0x7796d5a670 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}"
+          ]
+        },
+        {
+          "name": "finalResponseOnFourthRoundIsNotBudgetExhausted()",
+          "details": [
+            "Caught error: Error Domain=NSCocoaErrorDomain Code=260 \"未能打开文件“suite.json”，因为它不存在。\" UserInfo={NSFilePath=/private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSURL=file:///private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json, NSUnderlyingError=0x7796d5b390 {Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\"}}"
+          ]
+        },
+        {
+          "name": "sendingQueuedMessageNowDeniesAwaitingUserAnswer()",
+          "details": [
+            "Expectation failed: runtime.toolCalls.first?.status == .denied\nruntime.toolCalls.first?.status → .awaitingUserAnswer",
+            "Expectation failed: runtime.toolCalls.first?.errorMessage == \"Sending queued message\"\nruntime.toolCalls.first?.errorMessage → nil",
+            "Expectation failed: runtime.shouldConsumeQueueAfterStop == true\nruntime.shouldConsumeQueueAfterStop → false"
+          ]
+        },
+        {
+          "name": "sendingQueuedMessageNowDeniesAwaitingConfirm()",
+          "details": [
+            "Expectation failed: runtime.toolCalls.first?.status == .denied\nruntime.toolCalls.first?.status → .awaitingConfirm",
+            "Expectation failed: runtime.toolCalls.first?.errorMessage == \"Sending queued message\"\nruntime.toolCalls.first?.errorMessage → nil",
+            "Expectation failed: runtime.shouldConsumeQueueAfterStop == true\nruntime.shouldConsumeQueueAfterStop → false"
+          ]
+        }
+      ]
+    },
+    "final_related": {
+      "ok": true,
+      "status": "passed",
+      "source": "xcresult",
+      "xcresult": "/private/tmp/xedit-deferred-gates-runtime/build/deferred-gates/MacFinalRelated.xcresult",
+      "log": "/private/tmp/xedit-deferred-gates-runtime/build/deferred-gates/mac-final.log",
+      "test_exit": 0,
+      "reasons": [],
+      "stats": {
+        "total": 87,
+        "passed": 87,
+        "failed": 0,
+        "skipped": 0,
+        "duration": 337.95
+      },
+      "log_stats": {
+        "total": 87,
+        "passed": 87,
+        "failed": 0,
+        "skipped": 0,
+        "duration": 1.524
+      },
+      "total_mismatch": false,
+      "failures": []
+    },
+    "initial_failures_resolved": true,
+    "latest_status": "all_initial_failures_resolved_by_targeted_retests",
+    "resolution_note": "保留初次全套 7 项失败的原始结果。1 项时间精度夹具、2 项旧行为断言、4 项共享数据缺失均已修正并在覆盖全部失败所属测试组的最终复测中通过。没有将初次失败结果改写为全套命令通过。"
+  },
+  "android": {
+    "tests": 142,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 3,
+    "passed": 139,
+    "command": "gradlew testReleaseUnitTest lintRelease assembleRelease",
+    "lint": "passed",
+    "assembly": "passed"
+  },
+  "web": {
+    "command": "yarn build && yarn vitest run",
+    "files_passed": 27,
+    "tests_passed": 165,
+    "source": "本次已核对的终端输出"
+  },
+  "test_environment": {
+    "mac_shared_suite": "/private/tmp/willdeep-agent-registry/bench/agent-rsi/reviewer-original-24-v1/suite.json",
+    "fixture_source": "/private/tmp/willdeep-deferred-gates-runtime/bench/agent-rsi/reviewer-original-24-v1",
+    "canonical_sha256": "281f7dadf99f4cf86c4de5a922cdac7531c933654f878bb6b8f532d502a96575",
+    "note": "只补充缺少的 suite.json 与 manifest.json，未替换原有文件；按宿主 canonical JSON 规则核对批准哈希。"
+  },
+  "verified_behaviors": [
+    "Android 网关和控制 API 读写同一持久队列；跨端编辑、删除和附件保持身份",
+    "真实临时 Runtime 跳过依赖队首，连续处理两条独立消息，恢复同一个原问题",
+    "真实 Web HTTP 队列读写、旧文本冲突拒绝、重复提交去重和会话权限检查",
+    "原审批和多选问题恢复到原始等待句柄，独立执行不覆盖原核心会话及租约",
+    "超时后即使所有消息都无法确定依赖，仍收起原卡片并保留队列与等待句柄",
+    "独立执行期间收到的旧答案在安全边界投递；停止后抑制自动认领和恢复",
+    "Web 收起恢复保留回答草稿，队列消息被另一端启动或删除后保留编辑草稿",
+    "Mac 队列与子会话引用持久化、服务商并发名额释放和重新获取、活动组保留",
+    "独立执行启动失败时仍保留可见用户原文；Mac 先保存正文及附件再提交队列交接"
+  ],
+  "boundaries": [
+    "未发布、未推送版本标签、未安装替换应用、未升级或重启现有 Runtime",
+    "真实 Runtime 和 Web 集成使用隔离 HOME 与回环模拟模型，没有调用生产模型",
+    "没有将单测和模拟协议快照等同于 Android 真机与多设备真实 UI 验收",
+    "默认 Rust Runtime TUI 覆盖同步与调度；显式 /local 离线执行保留原有本地执行语义",
+    "Mac 独立调度当前覆盖 WillDeep 原生执行链，外部 CLI 委派消息继续沿用原执行流程"
+  ]
+}

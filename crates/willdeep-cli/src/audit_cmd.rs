@@ -1908,6 +1908,8 @@ mod tests {
         }]);
         home.write("runtime/tasks.json", &tasks.to_string());
         let interactions = vec![RuntimeInteraction {
+            parked: false,
+            foreground_since: None,
             id: Uuid::new_v4(),
             task_id: task,
             kind: InteractionKind::Approval {

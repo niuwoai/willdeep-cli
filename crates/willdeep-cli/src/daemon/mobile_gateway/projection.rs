@@ -172,6 +172,7 @@ fn approval_json(approval: &PendingApproval, session_id: Option<uuid::Uuid>) -> 
     };
     let mut value = json!({
         "id": approval.id.to_string(),
+        "parked": approval.parked,
         "title": clip(&title, MAX_TITLE_CHARS),
         "summary": summary,
         "tool_name": "approval",
@@ -192,6 +193,7 @@ fn question_json(question: &PendingQuestion, session_id: Option<uuid::Uuid>) -> 
         .collect::<Vec<_>>();
     let mut value = json!({
         "id": question.id.to_string(),
+        "parked": question.parked,
         "title": clip(&question.question, MAX_APPROVAL_CHARS),
         "summary": options.join(" / "),
         "tool_name": "ask_user",
@@ -237,8 +239,9 @@ fn project_history(home: &Path, session_id: uuid::Uuid) -> Vec<Value> {
     let Ok(session) = SessionStore::new(home).load(session_id) else {
         return Vec::new();
     };
+    let display = super::super::turn_queue::display_session(home, &session).unwrap_or(session);
     let items =
-        willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
+        willdeep_core::conversation::project(&display.messages, display.current_plan.as_ref());
     let skip = items.len().saturating_sub(MAX_SNAPSHOT_MESSAGES);
     items
         .into_iter()
@@ -417,8 +420,12 @@ impl Gateway {
         digest: Option<&SessionDigest>,
     ) -> Vec<Value> {
         let key = digest.map(|digest| (digest.updated_at, digest.message_count));
+        let independent_revision = std::fs::metadata(home.join("independent/sessions"))
+            .and_then(|metadata| metadata.modified())
+            .ok();
         if let (Some(key), Some(cache)) = (key, self.history.get(&session_id))
             && cache.key == key
+            && cache.independent_revision == independent_revision
         {
             return cache.items.clone();
         }
@@ -433,6 +440,7 @@ impl Gateway {
             self.history.insert(
                 session_id,
                 HistoryCache {
+                    independent_revision,
                     key,
                     items: items.clone(),
                 },

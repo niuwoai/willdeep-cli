@@ -103,6 +103,7 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         app.begin_turn(true, "working".into());
         app.queued_prompts.push_back(QueuedPrompt {
+            remote: None,
             text: "queued follow-up".into(),
             attachments: Vec::new(),
         });

@@ -27,6 +27,7 @@ mod peer_sessions;
 mod runtime_chat;
 mod schedules;
 mod setup;
+mod turn_queue;
 
 const MAX_PROMPT_CHARS: usize = 100_000;
 const MAX_AGENT_LABEL_CHARS: usize = 128;
@@ -149,6 +150,7 @@ struct WorkspaceSummary {
 #[derive(Deserialize)]
 struct RuntimeActivityQuery {
     workspace: String,
+    session: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -260,6 +262,7 @@ enum WebApprovalDecision {
 #[serde(deny_unknown_fields)]
 struct WebApprovalAction {
     workspace: String,
+    session: Option<uuid::Uuid>,
     decision: WebApprovalDecision,
 }
 
@@ -267,6 +270,7 @@ struct WebApprovalAction {
 #[serde(deny_unknown_fields)]
 struct WebQuestionAction {
     workspace: String,
+    session: Option<uuid::Uuid>,
     answer: Option<String>,
 }
 
@@ -318,12 +322,14 @@ struct WebRuntimeTask {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WebRuntimeGate {
     Approval {
+        parked: bool,
         id: uuid::Uuid,
         task_id: uuid::Uuid,
         description: String,
         always_allow_available: bool,
     },
     Question {
+        parked: bool,
         id: uuid::Uuid,
         task_id: uuid::Uuid,
         question: String,
@@ -409,6 +415,16 @@ async fn serve_internal(
         .route("/api/sessions/{id}/unpin", post(unpin_session))
         .route("/api/sessions/{id}/export", get(export_session))
         .route("/api/turns/{id}/stop", post(stop_turn))
+        .route(
+            "/api/sessions/{id}/queue",
+            get(turn_queue::list)
+                .post(turn_queue::enqueue)
+                .patch(turn_queue::update),
+        )
+        .route(
+            "/api/sessions/{id}/independent",
+            get(turn_queue::independent),
+        )
         .route("/api/workspaces", get(workspaces).post(add_workspace))
         .route("/api/runtime/activity", get(runtime_activity))
         .route("/api/runtime/events", get(runtime_events))
@@ -734,10 +750,14 @@ async fn runtime_activity(
     Query(query): Query<RuntimeActivityQuery>,
 ) -> Result<Json<RuntimeActivitySummary>, WebError> {
     let workspace = select_workspace(&state, Some(&query.workspace)).await?;
-    let snapshot =
-        crate::daemon::runtime_snapshot(&state.home, &workspace.root, None, crate::Surface::Web)
-            .await
-            .map_err(WebError::from_anyhow)?;
+    let snapshot = crate::daemon::runtime_snapshot(
+        &state.home,
+        &workspace.root,
+        query.session,
+        crate::Surface::Web,
+    )
+    .await
+    .map_err(WebError::from_anyhow)?;
     let mut teams = Vec::new();
     let mut team_statistics_unavailable = false;
     for agent in snapshot
@@ -779,23 +799,27 @@ async fn runtime_activity(
             .into_iter()
             .map(|gate| match gate {
                 crate::daemon::RemoteGate::Approval {
+                    parked,
                     id,
                     task_id,
                     description,
                     always_allow_available,
                 } => WebRuntimeGate::Approval {
+                    parked,
                     id,
                     task_id,
                     description,
                     always_allow_available,
                 },
                 crate::daemon::RemoteGate::Question {
+                    parked,
                     id,
                     task_id,
                     question,
                     options,
                     multi_select,
                 } => WebRuntimeGate::Question {
+                    parked,
                     id,
                     task_id,
                     question,
@@ -907,7 +931,7 @@ async fn resolve_runtime_approval(
     Path(id): Path<uuid::Uuid>,
     Json(action): Json<WebApprovalAction>,
 ) -> Result<StatusCode, WebError> {
-    let snapshot = authorized_runtime_snapshot(&state, &action.workspace).await?;
+    let snapshot = authorized_gate_snapshot(&state, &action.workspace, action.session).await?;
     let allowed = snapshot_has_approval(&snapshot, id);
     if !allowed {
         return Err(WebError::not_found(
@@ -930,7 +954,7 @@ async fn answer_runtime_question(
     Path(id): Path<uuid::Uuid>,
     Json(action): Json<WebQuestionAction>,
 ) -> Result<StatusCode, WebError> {
-    let snapshot = authorized_runtime_snapshot(&state, &action.workspace).await?;
+    let snapshot = authorized_gate_snapshot(&state, &action.workspace, action.session).await?;
     let allowed = snapshot_has_question(&snapshot, id);
     if !allowed {
         return Err(WebError::not_found(
@@ -1089,6 +1113,17 @@ async fn authorized_runtime_snapshot(
 ) -> Result<crate::daemon::RuntimeSnapshot, WebError> {
     let workspace = select_workspace(state, Some(workspace)).await?;
     crate::daemon::runtime_snapshot(&state.home, &workspace.root, None, crate::Surface::Web)
+        .await
+        .map_err(WebError::from_anyhow)
+}
+
+async fn authorized_gate_snapshot(
+    state: &WebState,
+    workspace: &str,
+    session: Option<uuid::Uuid>,
+) -> Result<crate::daemon::RuntimeSnapshot, WebError> {
+    let workspace = select_workspace(state, Some(workspace)).await?;
+    crate::daemon::runtime_snapshot(&state.home, &workspace.root, session, crate::Surface::Web)
         .await
         .map_err(WebError::from_anyhow)
 }
@@ -2477,16 +2512,19 @@ mod tests {
         let approval_id = uuid::Uuid::new_v4();
         let question_id = uuid::Uuid::new_v4();
         let snapshot = crate::daemon::RuntimeSnapshot {
+            queue: None,
             attention: Vec::new(),
             gates: vec![
                 crate::daemon::RemoteGate::Approval {
                     id: approval_id,
+                    parked: false,
                     task_id: uuid::Uuid::new_v4(),
                     description: "approval".to_owned(),
                     always_allow_available: true,
                 },
                 crate::daemon::RemoteGate::Question {
                     id: question_id,
+                    parked: false,
                     task_id: uuid::Uuid::new_v4(),
                     question: "question".to_owned(),
                     options: vec!["A".to_owned()],

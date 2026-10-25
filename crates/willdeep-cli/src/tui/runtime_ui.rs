@@ -465,6 +465,19 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                 return Some(Message::assistant(text, Vec::new()));
             }
         }
+        Some("queued_user_message") => {
+            if let (Some(id), Some(text)) = (
+                value.get("turn_id").and_then(|v| v.as_str()),
+                value.get("text").and_then(|v| v.as_str()),
+            ) {
+                if app.seen_runtime_inputs.insert(id.to_owned()) {
+                    let row = format!("You: {}", terminal_safe_text(text));
+                    if app.transcript.last() != Some(&row) {
+                        app.append_transcript(row);
+                    }
+                }
+            }
+        }
         Some("assistant_text_delta") => {
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
                 app.stream_transient(StreamKind::Reply, text);
@@ -781,6 +794,7 @@ pub(super) fn surface_pending_gates(
     // 在手机或别的终端上先被答掉的：丢掉取消信号，背后等回答的任务随即退出，
     // 对话框在下一次快照时撤回——免得人按下去才看到「interaction is no longer pending」。
     app.remote_gate_waiters.retain(|id, _| live.contains(id));
+    super::runtime_queue::reconcile_parked_dialogs(app);
     if app.withdraw_abandoned_dialogs() > 0 {
         app.notice = Some(
             app.language
@@ -795,7 +809,11 @@ pub(super) fn surface_pending_gates(
     let fresh = app
         .runtime_gates
         .iter()
-        .filter(|gate| !app.surfaced_gates.contains(&gate.id()))
+        .filter(|gate| {
+            !gate.parked()
+                && (!app.surfaced_gates.contains(&gate.id())
+                    || app.parked_remote_dialogs.contains_key(&gate.id()))
+        })
         .cloned()
         .collect::<Vec<_>>();
     let mut shown = false;
@@ -813,9 +831,37 @@ pub(super) fn open_remote_gate(
     home: PathBuf,
     ui: mpsc::UnboundedSender<UiMessage>,
 ) -> bool {
+    if app.approval.is_some() || app.question.is_some() {
+        return false;
+    }
+    let id = gate.id();
+    if gate.parked() {
+        app.requested_gate_presentations.insert(id);
+        let home = home.clone();
+        let ui = ui.clone();
+        tokio::spawn(async move {
+            if let Err(error) = crate::daemon::turn_queue::present(&home, id).await {
+                let _ = ui.send(UiMessage::RuntimeNotice(format!("{error:#}")));
+            }
+        });
+    }
+    if let Some(dialog) = app.parked_remote_dialogs.remove(&id) {
+        match dialog {
+            super::runtime_queue::ParkedRemoteDialog::Approval(request) => {
+                app.enqueue_approval(request);
+            }
+            super::runtime_queue::ParkedRemoteDialog::Question(dialog) => {
+                app.enqueue_question(dialog);
+            }
+        }
+        app.active_remote_gate = Some(id);
+        return true;
+    }
+    app.active_remote_gate = Some(id);
     app.surfaced_gates.insert(gate.id());
     match gate {
         crate::daemon::RemoteGate::Approval {
+            parked: _,
             id,
             task_id: _,
             description,
@@ -828,17 +874,18 @@ pub(super) fn open_remote_gate(
             app.remote_gate_waiters.insert(id, cancel);
             tokio::spawn(async move {
                 let decision = tokio::select! {
-                    decision = receiver => decision.unwrap_or(ApprovalDecision::Deny),
+                    biased;
                     // 在别处答掉了：不替用户做决定，直接退出。
                     _ = cancelled => return,
+                    decision = receiver => match decision { Ok(decision) => decision, Err(_) => return },
                 };
                 let result = crate::daemon::resolve_remote_approval(&home, id, decision).await;
                 let notice = match result {
                     Ok(()) => language
                         .text(
-                            "Runtime 审批已解决",
-                            "Runtime approval resolved",
-                            "Runtime 承認を解決しました",
+                            "Runtime 已收到审批决定，将在安全边界继续所属任务",
+                            "Runtime received the decision; its task continues at a safe boundary",
+                            "Runtime が承認結果を受信。安全な区切りで対象タスクを再開します",
                         )
                         .to_owned(),
                     Err(error) => format!(
@@ -855,6 +902,7 @@ pub(super) fn open_remote_gate(
             visible
         }
         crate::daemon::RemoteGate::Question {
+            parked: _,
             id,
             task_id: _,
             question,
@@ -880,16 +928,17 @@ pub(super) fn open_remote_gate(
             app.remote_gate_waiters.insert(id, cancel);
             tokio::spawn(async move {
                 let answer = tokio::select! {
-                    answer = receiver => answer.unwrap_or(None),
+                    biased;
                     _ = cancelled => return,
+                    answer = receiver => match answer { Ok(answer) => answer, Err(_) => return },
                 };
                 let result = crate::daemon::answer_remote_question(&home, id, answer).await;
                 let notice = match result {
                     Ok(()) => language
                         .text(
-                            "Runtime 问题已回答",
-                            "Runtime question answered",
-                            "Runtime の質問に回答しました",
+                            "Runtime 已收到回答，将在安全边界继续所属任务",
+                            "Runtime received the answer; its task continues at a safe boundary",
+                            "Runtime が回答を受信。安全な区切りで対象タスクを再開します",
                         )
                         .to_owned(),
                     Err(error) => format!(

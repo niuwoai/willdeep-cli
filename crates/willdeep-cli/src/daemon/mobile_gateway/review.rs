@@ -196,6 +196,7 @@ mod tests {
 
     fn approval(description: String) -> PendingApproval {
         PendingApproval {
+            parked: false,
             id: uuid::Uuid::new_v4(),
             task_id: uuid::Uuid::new_v4(),
             description,

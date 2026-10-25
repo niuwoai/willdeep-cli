@@ -67,13 +67,19 @@ impl App {
             && self.prompt_queue.is_none()
             && self.attachment_panel.is_none()
             && self.queued_prompts.front().is_some_and(|item| {
-                item.attachments.is_empty() && !item.text.trim_start().starts_with('/')
+                item.remote.is_none()
+                    && item.attachments.is_empty()
+                    && !item.text.trim_start().starts_with('/')
             })
     }
 
     pub(super) fn queued_prompt_ready(&self) -> bool {
         !self.running
             && !self.queued_prompts.is_empty()
+            && self
+                .queued_prompts
+                .front()
+                .is_some_and(|item| item.remote.is_none())
             && self.prompt_queue.is_none()
             && self.attachment_panel.is_none()
     }
@@ -82,6 +88,7 @@ impl App {
         let text = self.take_submitted_input();
         self.append_transcript(self.queued_prompt_row(&text));
         self.queued_prompts.push_back(QueuedPrompt {
+            remote: None,
             text,
             attachments: std::mem::take(&mut self.attachments),
         });
@@ -380,6 +387,17 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
     } else {
         let mut actions = Vec::new();
         if !app.queued_prompts.is_empty() {
+            if app
+                .queued_prompts
+                .iter()
+                .any(|prompt| prompt.remote.is_some())
+            {
+                actions.push((
+                    KeyCode::Char('i'),
+                    app.language
+                        .text("I 独立处理", "I Independent", "I 独立処理"),
+                ));
+            }
             actions.extend([
                 (
                     KeyCode::Char('s'),
@@ -431,13 +449,17 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 "↑/↓ またはクリックで選択。下の操作をクリック",
             )
             .to_owned(),
-        app.language
-            .text(
-                "管理期间暂停自动发送；关闭后按顺序发送。",
-                "Auto-send paused while managing; resumes in order on close.",
-                "管理中は自動送信を停止。閉じると順番に送信。",
-            )
-            .to_owned(),
+        if app.queued_prompts.iter().any(|item| item.remote.is_some()) {
+            app.language.text("Runtime 队列与其他端同步；打开面板不会暂停执行。", "Runtime queue is synced across clients; opening this panel does not pause execution.", "Runtime キューは端末間で同期。パネルを開いても実行は停止しません。").to_owned()
+        } else {
+            app.language
+                .text(
+                    "管理期间暂停自动发送；关闭后按顺序发送。",
+                    "Auto-send paused while managing; resumes in order on close.",
+                    "管理中は自動送信を停止。閉じると順番に送信。",
+                )
+                .to_owned()
+        },
     ];
     if let Some(editor) = &panel.editor {
         lines.push(
@@ -493,7 +515,10 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 "{} {}. [{} {}] ",
                 if index == panel.selected { "▶" } else { " " },
                 index + 1,
-                item.attachments.len(),
+                item.remote
+                    .as_ref()
+                    .map(|item| item.image_count + item.text_attachment_count)
+                    .unwrap_or(item.attachments.len()),
                 app.language.text("附件", "attachments", "添付"),
             );
             let capacity = usize::from(available).saturating_sub(
@@ -881,6 +906,7 @@ mod tests {
         for text in ["first", "second", "first"] {
             app.append_transcript(app.queued_prompt_row(text));
             app.queued_prompts.push_back(QueuedPrompt {
+                remote: None,
                 text: text.to_owned(),
                 attachments: Vec::new(),
             });
@@ -936,6 +962,7 @@ mod tests {
         app.begin_turn(true, "waiting for approval".into());
         let id = uuid::Uuid::new_v4();
         app.runtime_gates.push(crate::daemon::RemoteGate::Approval {
+            parked: false,
             id,
             task_id: uuid::Uuid::new_v4(),
             description: "pending tool".into(),

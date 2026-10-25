@@ -321,6 +321,7 @@ fn runtime_attention_selects_remote_gate_and_task_actions() {
         elapsed_millis: None,
     });
     app.runtime_gates.push(crate::daemon::RemoteGate::Approval {
+        parked: false,
         id: interaction_id,
         task_id,
         description: "run tests".to_owned(),

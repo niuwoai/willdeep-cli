@@ -429,6 +429,13 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
                 .collect::<Vec<_>>(),
         ),
         "question.answer" => answer_question(state, &request).await,
+        "interaction.present" => match params::<IdParams>(&request) {
+            Ok(params) => match state.tasks.present_gate(params.id).await {
+                Ok(()) => json(serde_json::json!({"id":params.id})),
+                Err(error) => Err(ApiFailure::internal(error)),
+            },
+            Err(error) => Err(error),
+        },
         "event.list" => match params::<EventListParams>(&request) {
             Ok(params) => json_result(
                 state
@@ -760,6 +767,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "screenplay.resume",
     "screenplay.cancel",
     "screenplay.budget",
+    "interaction.present",
     "session.peer.send",
     "session.peer.read",
     "schedule.create",
@@ -943,6 +951,7 @@ fn public_turn(turn: session_store::RuntimeTurn) -> willdeep_runtime_protocol::R
     use willdeep_runtime_protocol::TurnStatus as Target;
 
     willdeep_runtime_protocol::RuntimeTurn {
+        execution_session_id: turn.execution_session_id,
         id: turn.id,
         session_id: turn.session_id,
         request_id: turn.request_id,
@@ -1167,6 +1176,7 @@ fn public_approval(
         return None;
     };
     Some(willdeep_runtime_protocol::PendingApproval {
+        parked: interaction.parked,
         id: interaction.id,
         task_id: interaction.task_id,
         description,
@@ -1187,6 +1197,7 @@ fn public_question(
         return None;
     };
     Some(willdeep_runtime_protocol::PendingQuestion {
+        parked: interaction.parked,
         id: interaction.id,
         task_id: interaction.task_id,
         question,
@@ -1686,10 +1697,13 @@ fn validate_turn_submission(
 
 async fn turn_stop(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let params = params::<IdParams>(request)?;
-    let cancellation = state
-        .sessions
-        .request_cancel(params.id)
-        .map_err(|_| ApiFailure::not_found("Runtime Turn not found"))?;
+    let cancellation = {
+        let _guard = state.tasks.persistence.lock().await;
+        state
+            .sessions
+            .request_cancel(params.id)
+            .map_err(|_| ApiFailure::not_found("Runtime Turn not found"))?
+    };
     if let Some(task_id) = cancellation.task_id {
         state
             .tasks

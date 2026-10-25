@@ -63,8 +63,8 @@ export type RuntimeTask = {
 };
 
 export type RuntimeGate =
-  | { kind: "approval"; id: string; task_id: string; description: string; always_allow_available: boolean }
-  | { kind: "question"; id: string; task_id: string; question: string; options: string[]; multi_select: boolean };
+  | { kind: "approval"; id: string; task_id: string; description: string; always_allow_available: boolean; parked?: boolean }
+  | { kind: "question"; id: string; task_id: string; question: string; options: string[]; multi_select: boolean; parked?: boolean };
 
 /// 一条运行时事件。正文不在这里：服务端只给打码截断过的标题摘要。
 export type RuntimeEvent = {
@@ -221,9 +221,10 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
       {!canSpawnAgent && <Text mt="1" fontSize="2xs" color="var(--text-faint)">{t.activeSessionRequired}</Text>}
     </Box>
     {activity.gates.length > 0 && <VStack align="stretch" gap="2" mt="3">
-      {activity.gates.slice(0, 3).map((gate) => <Box key={gate.id} p="2" borderRadius="sm" bg="var(--bg-panel)">
+      {activity.gates.map((gate) => <Box key={gate.id} p="2" borderRadius="sm" bg="var(--bg-panel)">
         <Flex justify="space-between" gap="2"><Text fontSize="xs" color="var(--warning)">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</Text><Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "task", id: gate.task_id })}>{t.details}</Button></Flex>
         <Text fontSize="xs" lineClamp="2">{gate.kind === "approval" ? gate.description : gate.question}</Text>
+        <details open={!gate.parked}><summary>{t.details}</summary>
         {gate.kind === "approval" ? <Flex gap="1" mt="2" wrap="wrap">
           <Button size="2xs" disabled={controlBusy} onClick={() => void runControl(() => onResolveApproval(gate.id, "allow_once"))}>{t.allowOnce}</Button>
           <Button size="2xs" disabled={controlBusy} variant="outline" onClick={() => void runControl(() => onResolveApproval(gate.id, "deny"))}>{t.deny}</Button>
@@ -237,6 +238,7 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
           {gate.multi_select && <Button mt="1" size="2xs" disabled={controlBusy || !(multiAnswers[gate.id]?.length)} onClick={() => void runControl(() => onAnswerQuestion(gate.id, (multiAnswers[gate.id] ?? []).join(", ")))}>{t.submitAnswer}</Button>}
           <Flex mt="1" gap="1"><Input size="xs" value={answers[gate.id] ?? ""} placeholder={t.otherAnswer} onChange={(event) => setAnswers((current) => ({ ...current, [gate.id]: event.target.value }))} /><Button size="2xs" disabled={controlBusy || !(answers[gate.id]?.trim())} onClick={() => void runControl(() => onAnswerQuestion(gate.id, answers[gate.id].trim()))}>{t.submitAnswer}</Button></Flex>
         </Box>}
+        </details>
       </Box>)}
     </VStack>}
     {activity.tasks.length > 0 && <VStack align="stretch" gap="1" mt="3">

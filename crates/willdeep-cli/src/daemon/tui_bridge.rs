@@ -3,12 +3,14 @@ use super::*;
 #[derive(Clone)]
 pub(crate) enum RemoteGate {
     Approval {
+        parked: bool,
         id: uuid::Uuid,
         task_id: uuid::Uuid,
         description: String,
         always_allow_available: bool,
     },
     Question {
+        parked: bool,
         id: uuid::Uuid,
         task_id: uuid::Uuid,
         question: String,
@@ -18,6 +20,11 @@ pub(crate) enum RemoteGate {
 }
 
 impl RemoteGate {
+    pub(crate) fn parked(&self) -> bool {
+        match self {
+            Self::Approval { parked, .. } | Self::Question { parked, .. } => *parked,
+        }
+    }
     pub(crate) fn id(&self) -> uuid::Uuid {
         match self {
             Self::Approval { id, .. } | Self::Question { id, .. } => *id,
@@ -32,6 +39,10 @@ impl RemoteGate {
 }
 
 pub(crate) struct RuntimeSnapshot {
+    pub queue: Option<(
+        uuid::Uuid,
+        Vec<willdeep_runtime_protocol::QueuedTurnMessage>,
+    )>,
     pub attention: Vec<willdeep_core::AttentionItem>,
     pub gates: Vec<RemoteGate>,
     pub agents: Vec<RemoteAgent>,
@@ -798,6 +809,7 @@ pub(crate) async fn runtime_snapshot(
             Ok(health) => (state, Some(health.version), Some(health.event_sequence)),
             Err(_) => {
                 return Ok(RuntimeSnapshot {
+                    queue: None,
                     attention: Vec::new(),
                     gates: Vec::new(),
                     agents: Vec::new(),
@@ -812,6 +824,7 @@ pub(crate) async fn runtime_snapshot(
         },
         Err(_) => {
             return Ok(RuntimeSnapshot {
+                queue: None,
                 attention: Vec::new(),
                 gates: Vec::new(),
                 agents: Vec::new(),
@@ -944,6 +957,7 @@ pub(crate) async fn runtime_snapshot(
         .filter(|approval| owned(&approval.task_id))
     {
         gates.push(RemoteGate::Approval {
+            parked: approval.parked,
             id: approval.id,
             task_id: approval.task_id,
             description: approval.description.clone(),
@@ -962,6 +976,7 @@ pub(crate) async fn runtime_snapshot(
         .filter(|question| owned(&question.task_id))
     {
         gates.push(RemoteGate::Question {
+            parked: question.parked,
             id: question.id,
             task_id: question.task_id,
             question: question.question.clone(),
@@ -983,6 +998,13 @@ pub(crate) async fn runtime_snapshot(
         .ok()
         .and_then(|response| response.into_result().ok());
     Ok(RuntimeSnapshot {
+        queue: match session {
+            Some(id) => super::turn_queue::list(home, id)
+                .await
+                .ok()
+                .map(|items| (id, items)),
+            None => None,
+        },
         attention,
         gates,
         agents,
@@ -1316,31 +1338,13 @@ fn gate_belongs_here(
         // 任务不在本工作区：本来就看不见。
         return false;
     };
+    // An explicitly selected session owns its gates across all clients. Origin
+    // identifies delivery, not a permission to strand a disconnected client.
+    if let (Some(viewer), Some(owner_session)) = (viewer, owner_session) {
+        return viewer == *owner_session;
+    }
     if let Some(origin) = origin_client.as_deref() {
-        // 认得出发起端的任务只回发起端。看不出自己是谁的观察者（工作区级
-        // 视图）也不该抢答：它连「这是不是我发起的」都回答不了。
-        if viewer_client == Some(origin) {
-            return true;
-        }
-        // 手机是遥控器，不是工作台：人回到电脑前，打开同一条会话的桌面端也得能答。
-        // 两边都弹是安全的——谁先答算谁的，另一边撤回（TUI 靠快照里 gate 消失，
-        // 手机靠 `tool.updated`）。工作区级视图（Web）仍然不抢答。
-        if origin.starts_with("mobile:") {
-            return matches!(
-                (viewer, owner_session),
-                (Some(viewer), Some(owner_session)) if viewer == *owner_session
-            );
-        }
-        // 客户端身份是「界面:进程随机 id」，进程一退就再也匹配不上。发起这一轮
-        // 的 TUI 关掉之后，重开的 TUI 看着同一个会话，却永远弹不出那条审批，
-        // 任务就吊在那里（侧栏看得见、弹不出、也解不开）。所以同一种界面、同一
-        // 个会话也算自己人；跨界面（终端 vs 浏览器）仍然只回发起端。
-        return match (viewer, owner_session, viewer_client) {
-            (Some(viewer), Some(owner_session), Some(viewer_client)) => {
-                viewer == *owner_session && same_surface(origin, viewer_client)
-            }
-            _ => false,
-        };
+        return viewer_client == Some(origin);
     }
     match owner_session {
         // 工作区级视图（Web）：维持旧口径，工作区里的都归它管。
@@ -1348,15 +1352,6 @@ fn gate_belongs_here(
         // 没有会话归属的任务（headless 提交的）：谁都能解，否则没人解得开。
         None => true,
         Some(owner_session) => Some(*owner_session) == viewer,
-    }
-}
-
-/// 两个客户端身份（`tui:<id>` / `web:<id>`）是不是同一种界面。认不出前缀的
-/// 一律不算，宁可不弹也不替别的界面签字。
-fn same_surface(left: &str, right: &str) -> bool {
-    match (left.split_once(':'), right.split_once(':')) {
-        (Some((left, _)), Some((right, _))) => !left.is_empty() && left == right,
-        _ => false,
     }
 }
 
@@ -1638,12 +1633,12 @@ mod tests {
             "别的会话照样不弹"
         );
         assert!(
-            !gate_belongs_here(Some(session), Some("web:1"), Some(&raised_by_old_tui)),
-            "浏览器仍不替终端签字"
+            gate_belongs_here(Some(session), Some("web:1"), Some(&raised_by_old_tui)),
+            "浏览器选中同一会话后可以恢复原请求"
         );
         assert!(
-            !gate_belongs_here(Some(session), Some("tui"), Some(&raised_by_old_tui)),
-            "认不出的身份不算同一种界面"
+            gate_belongs_here(Some(session), Some("tui"), Some(&raised_by_old_tui)),
+            "会话身份决定归属，不依赖客户端进程标识"
         );
         assert!(!gate_belongs_here(
             None,
@@ -1652,12 +1647,9 @@ mod tests {
         ));
     }
 
-    /// 记了发起端的任务只弹回发起端，哪怕两端开着同一个会话。
-    ///
-    /// 这是浏览器里发起、审批却弹到终端那个毛病的回归：TUI 里用 `/webapp` 起的
-    /// Web 与 TUI 同进程，所以身份必须按界面分而不是按进程分。
+    /// 选择同一会话的客户端可以接续人工请求；不能跨会话抢答。
     #[test]
-    fn a_gate_goes_back_to_the_surface_that_raised_it() {
+    fn a_gate_is_shared_by_clients_on_the_same_session() {
         let shared_session = uuid::Uuid::new_v4();
         let web = (Some(shared_session), Some("web:1".to_owned()));
 
@@ -1666,8 +1658,8 @@ mod tests {
             "发起端要收到自己的审批"
         );
         assert!(
-            !gate_belongs_here(Some(shared_session), Some("tui:1"), Some(&web)),
-            "同一个会话开在终端里，也不该替浏览器签字"
+            gate_belongs_here(Some(shared_session), Some("tui:1"), Some(&web)),
+            "终端选中同一会话时能够恢复浏览器原请求"
         );
         // 工作区级视图同样不能抢答：它连「这是不是我发起的」都回答不了。
         assert!(!gate_belongs_here(None, None, Some(&web)));
@@ -1797,6 +1789,7 @@ mod rewind_point_tests {
         checkpoint: Option<&str>,
     ) -> willdeep_runtime_protocol::RuntimeTurn {
         willdeep_runtime_protocol::RuntimeTurn {
+            execution_session_id: None,
             id: uuid::Uuid::new_v4(),
             session_id,
             request_id: uuid::Uuid::new_v4(),

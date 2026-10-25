@@ -1,0 +1,199 @@
+{
+  "generated_at": "2026-10-25T18:31:46+08:00",
+  "versions": {
+    "rust": "0.116.0-rc2",
+    "android": "1.27.0-rc2 (128)",
+    "mac": "1.424.0-rc1 (936)"
+  },
+  "status": "Android/Web/TUI live accepted; Mac UI pending at user request",
+  "environment": {
+    "runtime_home": "/private/tmp/deferred-live-qa-20261025/home",
+    "workspace": "/private/tmp/deferred-live-qa-20261025/workspace",
+    "android_sdk": 36,
+    "android_package": "com.willdeep.android.deferredqa",
+    "provider": "loopback deterministic HTTP/SSE fixture",
+    "relay": "loopback WebSocket fanout only; Runtime owns all scheduling and persistence"
+  },
+  "tests": {
+    "android_live": {
+      "command": [
+        "/Users/rocky/Library/Android/sdk/platform-tools/adb",
+        "shell",
+        "am",
+        "instrument",
+        "-w",
+        "-r",
+        "-e",
+        "class",
+        "com.willdeep.android.DeferredRuntimeInstrumentedTest",
+        "-e",
+        "deferred_session",
+        "895fe73c-690b-4b6c-8d6f-e5c695cf240b",
+        "com.willdeep.android.deferredqa.test/androidx.test.runner.AndroidJUnitRunner"
+      ],
+      "started_at": "2026-10-25T18:14:38+08:00",
+      "finished_at": "2026-10-25T18:15:02+08:00",
+      "exit_code": 0,
+      "passed": true
+    },
+    "android_ui": {
+      "command": [
+        "/Users/rocky/Library/Android/sdk/platform-tools/adb",
+        "shell",
+        "am",
+        "instrument",
+        "-w",
+        "-r",
+        "-e",
+        "class",
+        "com.willdeep.android.QueueEditingInstrumentedTest,com.willdeep.android.ComposerSendButtonInstrumentedTest",
+        "com.willdeep.android.deferredqa.test/androidx.test.runner.AndroidJUnitRunner"
+      ],
+      "started_at": "2026-10-25T18:20:26+08:00",
+      "finished_at": "2026-10-25T18:20:35+08:00",
+      "exit_code": 0,
+      "passed": true
+    },
+    "android_unit": {
+      "total": 142,
+      "passed": 139,
+      "failed": 0,
+      "skipped": 3
+    },
+    "android_lint": {
+      "passed": true,
+      "report": "/private/tmp/android-deferred-gates-runtime/app/build/reports/lint-results-debug.html"
+    },
+    "web": {
+      "files": 28,
+      "passed": 167,
+      "failed": 0,
+      "build_passed": true,
+      "source": "current tool transcript"
+    },
+    "rust_live": {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "willdeep",
+        "--test",
+        "headless_runtime",
+        "deferred_gates",
+        "--offline",
+        "--locked",
+        "--",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-10-25T18:13:14+08:00",
+      "finished_at": "2026-10-25T18:13:22+08:00",
+      "exit_code": 0,
+      "passed": true
+    },
+    "rust_gate_projection": {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "willdeep",
+        "daemon::tui_bridge::tests",
+        "--offline",
+        "--locked",
+        "--",
+        "--test-threads=2"
+      ],
+      "started_at": "2026-10-25T18:20:27+08:00",
+      "finished_at": "2026-10-25T18:20:46+08:00",
+      "exit_code": 0,
+      "passed": true
+    },
+    "rust_scheduler_unit": {
+      "passed": 8,
+      "failed": 0,
+      "source": "current tool transcript"
+    },
+    "mac_related": {
+      "ok": true,
+      "status": "passed",
+      "source": "xcresult",
+      "xcresult": "/private/tmp/xedit-deferred-gates-runtime/build/fast-tests/XeditFastTests.xcresult",
+      "log": "/private/tmp/xedit-deferred-gates-runtime/build/fast-tests/xcodebuild.log",
+      "test_exit": 0,
+      "reasons": [],
+      "stats": {
+        "total": 57,
+        "passed": 57,
+        "failed": 0,
+        "skipped": 0,
+        "duration": 22.55
+      },
+      "log_stats": {
+        "total": 57,
+        "passed": 57,
+        "failed": 0,
+        "skipped": 0,
+        "duration": 0.755
+      },
+      "total_mismatch": false,
+      "failures": []
+    }
+  },
+  "live_checks": [
+    "Web failed submission preserved draft; reconnect retry created one durable queue entry",
+    "Web and TUI recovered the same original question across client disconnect/restart",
+    "Dependency at queue head stayed queued; independent TUI submission edited on Web executed once",
+    "After two independent tasks, original exact question was answered while side task ran; resumed at safe boundary",
+    "Real Android ViewModel and Compose queue/approval components connected to real Runtime through USB reverse",
+    "Android reconnect retained queue ID and original gate ID; Android edit appeared on Web",
+    "Web edited the Android queue entry; Android received same ID with updated text",
+    "Android independent task completed before original; original answer completed original turn; queue empty",
+    "5-second test timeout parked gates without answering; production default remains 300 seconds"
+  ],
+  "fixes": [
+    "Gate ownership now follows explicit selected session across clients; foreign session cannot read or answer gate",
+    "Web activity and decisions carry session identity; stale activity responses after session switch are ignored",
+    "Replay without tool output is pending, not a failed/interrupted tool",
+    "Android opt-in QA applicationIdSuffix prevents overwriting installed user application",
+    "Web queue editor sits above composer with a bounded height; empty queue takes no space"
+  ],
+  "initial_failures": [
+    "First Rust integration attempt could not bind loopback under sandbox; elevated isolated rerun passed",
+    "Initial new Android test referenced wrong state field; corrected to conversationMessages before device rerun",
+    "First Android live final assertion overfit fixture answer text; Runtime had completed original. Retest verifies original gate ID, idle session and new reply; full rerun passed"
+  ],
+  "mac_pending": {
+    "reason": "Desktop automation helper crashed on accessibility tree; EXC_BREAKPOINT/SIGTRAP at Array.remove(at:). QA app sample showed idle event loop, no observed hang",
+    "user_decision": "稍后手动验收，先记录未完成项",
+    "qa_app": "/private/tmp/deferred-live-qa-20261025/WillDeepQA.app",
+    "qa_home": "/private/tmp/deferred-live-qa-20261025/mac-home",
+    "provider_command": "ruby /private/tmp/deferred-mac-provider.rb",
+    "sample": "/private/tmp/willdeep-deferred-gates-runtime/build/deferred-live-20261025/mac-qa.sample.txt",
+    "unverified": [
+      "Mac UI queue/gate folding and recovery",
+      "Android connected to Mac native host",
+      "Mac native execution disconnect/reconnect interaction"
+    ]
+  },
+  "boundaries": [
+    "No commit, integration, push, tag or release",
+    "No installed production app replaced",
+    "No normal user Runtime upgrade or restart requested",
+    "Deterministic local model; not production-model classification quality acceptance",
+    "Android UI is instrumentation of production ViewModel and Compose components; full manual navigation is not claimed",
+    "Rust /local and Mac external CLI delegation preserve existing semantics"
+  ],
+  "web_layout": {
+    "viewport_height": 717,
+    "chat_height": 231.90625,
+    "queue_height": 215.09375,
+    "queue_above_composer": true,
+    "queue_inside_composer": false
+  },
+  "cleanup": {
+    "android_qa_packages_removed": true,
+    "production_android_package_retained": true,
+    "usb_reverse_19853_removed": true,
+    "mac_qa_app_retained_for_later_manual_acceptance": true
+  },
+  "artifacts": "/private/tmp/willdeep-deferred-gates-runtime/build/deferred-live-20261025"
+}

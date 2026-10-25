@@ -186,6 +186,7 @@ pub(crate) enum HarnessFrontend {
         tx: crate::tui::TuiSender,
     },
     Runtime {
+        independent_execution: bool,
         connection: RuntimeConnection,
         sink: Arc<dyn EventSink>,
         workspace_access: Option<crate::daemon::WorkspaceAccess>,
@@ -397,7 +398,10 @@ pub(crate) async fn execute_runtime(
         max_turns: None,
         max_output_tokens: None,
         json: true,
-        resume: request.session_id.map(|id| id.to_string()),
+        resume: request
+            .execution_session_id
+            .or(request.session_id)
+            .map(|id| id.to_string()),
         new_session: false,
         session_startup: None,
         list_sessions: false,
@@ -412,9 +416,13 @@ pub(crate) async fn execute_runtime(
         language: None,
         web_input_json: false,
     };
-    let store = willdeep_core::SessionStore::new(home);
-    let ownership = request
-        .session_id
+    let execution_session_id = request.execution_session_id.or(request.session_id);
+    let store = willdeep_core::SessionStore::new(&if request.execution_session_id.is_some() {
+        home.join("independent")
+    } else {
+        home.to_path_buf()
+    });
+    let ownership = execution_session_id
         .map(|session_id| {
             willdeep_core::checkpoint::SessionCheckpointSink {
                 store: store.clone(),
@@ -423,7 +431,7 @@ pub(crate) async fn execute_runtime(
             .claim()
         })
         .transpose()?;
-    let resumed = request.session_id.map(|id| store.load(id)).transpose()?;
+    let resumed = execution_session_id.map(|id| store.load(id)).transpose()?;
     if let Some(session) = &resumed {
         prepare_execution(session)?;
     }
@@ -434,6 +442,7 @@ pub(crate) async fn execute_runtime(
         language,
         resumed.as_ref(),
         HarnessFrontend::Runtime {
+            independent_execution: request.execution_session_id.is_some(),
             connection,
             sink,
             workspace_access: request.workspace_access,
@@ -868,6 +877,13 @@ pub(crate) async fn build(
     let local_auxiliary_config = local_auxiliary_provider_config(&loaded.file.local_model);
     let peer_wake = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
         if usage_origin.origin_client.as_deref().is_some_and(|origin| origin.starts_with(crate::daemon::PEER_WAKE_ORIGIN)));
+    let independent_execution = matches!(
+        &frontend,
+        HarnessFrontend::Runtime {
+            independent_execution: true,
+            ..
+        }
+    );
     let (runtime_access, runtime_approval_handle, runtime_inbox) = match &frontend {
         HarnessFrontend::Runtime {
             workspace_access,
@@ -1029,10 +1045,6 @@ pub(crate) async fn build(
     // 子 Agent 要跟随父会话的 full-access，拿同一个句柄——切档是实时的。
     let parent_approval_handle = approval_handle.clone();
     let mut tools = ToolRegistry::new(&workspace, approval_mode)?
-        .with_session_collaboration(Arc::new(crate::daemon::PeerSessionClient {
-            home: home.to_path_buf(),
-            session_id,
-        }))
         .with_shared_approval_mode(approval_handle)
         .with_output_store(&home.join("tool-outputs"))
         .with_sandbox(sandbox.clone())
@@ -1081,6 +1093,12 @@ pub(crate) async fn build(
         // no way to act on.
         .with_delegation_hints(true)
         .with_always_allow_store(home.join("always-allow.json"))?;
+    if !independent_execution {
+        tools = tools.with_session_collaboration(Arc::new(crate::daemon::PeerSessionClient {
+            home: home.to_path_buf(),
+            session_id,
+        }));
+    }
     if let Some(judge) = safety_judge.clone() {
         tools = tools.with_safety_judge(judge);
     }

@@ -1,4 +1,4 @@
-type ActivityStep = { label: string; status: "active" | "done" | "failed" };
+type ActivityStep = { label: string; status: "active" | "pending" | "done" | "failed" };
 
 export type RunStep = ActivityStep & { id: string; detail?: string; startedAt: number; elapsedMs?: number };
 

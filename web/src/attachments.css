@@ -49,6 +49,11 @@
 .management-editor-actions button.management-primary { background: var(--accent); color: white; border-color: var(--accent); }
 .queued-messages { margin: 8px 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); max-height: 330px; overflow: auto; font-size: 12px; }
 .queued-messages > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.runtime-queue { flex: 0 0 auto; max-height: min(240px, 30dvh); margin-bottom: 8px; }
+.runtime-queue li { padding: 8px 0; border-top: 1px solid var(--border); }
+.runtime-queue li > button, .runtime-queue .queue-editor > button { margin: 4px 6px 0 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-surface); }
+.runtime-queue .queue-editor { margin-left: 0; }
+.runtime-queue .queue-editor textarea { min-height: 90px; margin: 8px 0; }
 .queue-heading > strong { font-weight: 500; }
 .queue-summary { display: flex; align-items: center; gap: 12px; margin: 0 0 3px 25px; }
 .queue-summary > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }

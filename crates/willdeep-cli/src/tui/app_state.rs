@@ -47,6 +47,7 @@ impl App {
             mobile_status: None,
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
+            runtime_queue_submission: None,
             prompt_queue: None,
             pending_model: None,
             pending_provider: None,
@@ -76,6 +77,11 @@ impl App {
             runtime_auto_upgrade_pending: false,
             runtime_auto_upgrade_tried: false,
             surfaced_gates: BTreeSet::new(),
+            active_remote_gate: None,
+            requested_gate_presentations: BTreeSet::new(),
+            display_home: None,
+            seen_runtime_inputs: BTreeSet::new(),
+            parked_remote_dialogs: BTreeMap::new(),
             remote_gate_waiters: BTreeMap::new(),
             runtime_agents: Vec::new(),
             runtime_tools: Vec::new(),
@@ -196,10 +202,19 @@ impl App {
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
+        self.active_remote_gate = None;
+        self.remote_gate_waiters.clear();
+        self.parked_remote_dialogs.clear();
+        self.queued_prompts.retain(|item| item.remote.is_none());
+        self.runtime_queue_submission = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
         self.pending_provider = None;
-        self.transcript = session_transcript(session, self.language);
+        let display = self
+            .display_home
+            .as_ref()
+            .and_then(|home| crate::daemon::turn_queue::display_session(home, session).ok());
+        self.transcript = session_transcript(display.as_ref().unwrap_or(session), self.language);
         if self.transcript.is_empty() {
             self.transcript
                 .push(welcome_message(&session.workspace, self.language));

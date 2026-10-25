@@ -1062,6 +1062,8 @@ fn task_recovery_interrupts_waiting_task_and_cancels_its_interaction() {
         &HashMap::from([(
             interaction_id,
             RuntimeInteraction {
+                parked: false,
+                foreground_since: None,
                 id: interaction_id,
                 task_id,
                 kind: InteractionKind::Approval {

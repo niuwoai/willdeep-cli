@@ -7,6 +7,9 @@ async fn handle_queue_action(
     runtime: &TuiRuntime,
     agent: &Arc<Agent>,
 ) {
+    if runtime_queue::handle_key(key, app, session, runtime).await {
+        return;
+    }
     let language = app.language;
     if key.code == KeyCode::Char('a')
         && app
@@ -305,6 +308,10 @@ pub(super) async fn event_loop(
     app.workspace_status = workspace_status(&session.workspace, language);
     app.workspace_attention = workspace_attention(&session.workspace);
     app.attention_read = session.attention_read.clone();
+    app.display_home = Some(runtime.home.clone());
+    if let Ok(display) = crate::daemon::turn_queue::display_session(&runtime.home, session) {
+        app.transcript = session_transcript(&display, app.language);
+    }
     app.context_window = runtime.context_window.max(1);
     let (_update_worker, mut update_rx) =
         update_notice::spawn(runtime.home.clone(), app.ui.check_updates);
@@ -612,6 +619,9 @@ pub(super) async fn event_loop(
             },
             Some(snapshot)=runtime_snapshot_rx.recv()=>{
                 qterm.runtime_snapshot(&snapshot, session.id, app.runtime_event_cursor, app.running);
+                if let Some((id, items)) = snapshot.queue {
+                    if id == session.id { app.sync_runtime_queue(items); }
+                }
                 runtime.notifier.attention_snapshot(&snapshot.attention);
                 if app.observe_runtime_tasks(&snapshot.tasks,session.id,snapshot.event_sequence) {
                     runtime_ui::reconcile_stale_runtime_turn(&mut app,session,runtime).await;
@@ -1365,6 +1375,12 @@ pub(super) async fn event_loop(
                                 match busy_input(app.input.text()) {
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
+                                        if app.runtime_turn {
+                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime).await {
+                                                app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
+                                            }
+                                            continue;
+                                        }
                                         app.queue_submitted_prompt();
                                         continue;
                                     },

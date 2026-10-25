@@ -517,6 +517,8 @@ pub enum TurnStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeTurn {
+    #[serde(default)]
+    pub execution_session_id: Option<uuid::Uuid>,
     pub id: uuid::Uuid,
     pub session_id: uuid::Uuid,
     pub request_id: uuid::Uuid,
@@ -783,6 +785,8 @@ pub struct RuntimeToolFailure {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingApproval {
+    #[serde(default)]
+    pub parked: bool,
     pub id: uuid::Uuid,
     pub task_id: uuid::Uuid,
     pub description: String,
@@ -792,6 +796,8 @@ pub struct PendingApproval {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingQuestion {
+    #[serde(default)]
+    pub parked: bool,
     pub id: uuid::Uuid,
     pub task_id: uuid::Uuid,
     pub question: String,
@@ -1386,6 +1392,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "approval.resolve",
     "question.list",
     "question.answer",
+    "interaction.present",
     "event.list",
     "event.stream",
     "kernel.list",
@@ -1807,6 +1814,7 @@ mod tests {
         assert!(json.get("last_error").is_none());
 
         let turn = RuntimeTurn {
+            execution_session_id: None,
             id: uuid::Uuid::new_v4(),
             session_id: session.id,
             request_id: uuid::Uuid::new_v4(),
@@ -1892,6 +1900,7 @@ mod tests {
         );
 
         let approval = PendingApproval {
+            parked: false,
             id: uuid::Uuid::new_v4(),
             task_id: task.id,
             description: "run tests".to_owned(),

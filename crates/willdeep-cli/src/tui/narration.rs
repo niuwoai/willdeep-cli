@@ -267,6 +267,7 @@ impl App {
             self.append_transcript_at(row, delivered.sent_at);
         }
         self.queued_prompts.push_back(QueuedPrompt {
+            remote: None,
             text,
             attachments: Vec::new(),
         });

@@ -21,8 +21,9 @@ export function RunCard({ steps, messages: t }: { steps: RunStep[]; messages: Me
   const tools = steps.filter(step => !step.id.startsWith("turn-"));
   const failed = tools.filter(step => step.status === "failed");
   const active = [...steps].reverse().find(step => step.status === "active");
-  const preview = active ?? failed[failed.length - 1];
-  const status = active ? "active" : failed.length ? "failed" : "done";
+  const pending = [...steps].reverse().find(step => step.status === "pending");
+  const preview = active ?? pending ?? failed[failed.length - 1];
+  const status = active ? "active" : pending ? "pending" : failed.length ? "failed" : "done";
   const label = `${tools.length ? t.toolActivitySummary.replace("{count}", String(tools.length)) : t.foldedSteps.replace("{count}", String(steps.length))}${failed.length ? t.foldedFailed.replace("{count}", String(failed.length)) : ""}`;
   return <div className="run-card">
     <div className={`run-step run-summary ${status}`}>

@@ -421,6 +421,7 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         app.attachments = vec![text("draft")];
         app.queued_prompts.push_back(QueuedPrompt {
+            remote: None,
             text: "queued".to_owned(),
             attachments: vec![text("original")],
         });

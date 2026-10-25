@@ -376,6 +376,7 @@ pub(super) struct TailMessage {
 /// 一条会话的历史投影缓存。键是会话摘要里的 (updated_at, message_count)：摘要本身
 /// 按文件 mtime 缓存，5 秒一次的心跳因此不会反复解析大会话文件。
 pub(super) struct HistoryCache {
+    pub(super) independent_revision: Option<std::time::SystemTime>,
     pub(super) key: (u64, usize),
     pub(super) items: Vec<Value>,
 }

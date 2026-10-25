@@ -21,6 +21,21 @@ struct LiveInbox {
 }
 
 impl SteeringInboxes {
+    pub(super) fn steer_task(&self, task_id: uuid::Uuid, message: String) -> Option<uuid::Uuid> {
+        let tasks = self.tasks.lock().ok()?;
+        tasks
+            .get(&task_id)?
+            .inbox
+            .push_operator(message)
+            .then_some(task_id)
+    }
+    pub(super) fn push_parent(&self, task_id: uuid::Uuid, text: String) {
+        if let Ok(tasks) = self.tasks.lock() {
+            if let Some(live) = tasks.get(&task_id) {
+                live.inbox.push(text);
+            }
+        }
+    }
     pub(super) fn notify_peer(&self, session_id: uuid::Uuid) {
         if let Ok(tasks) = self.tasks.lock()
             && let Some(live) = tasks
@@ -49,6 +64,7 @@ impl SteeringInboxes {
     }
 
     /// 把用户的话送进该会话正在跑的任务，返回收下它的任务；没有在途任务返回 None。
+    #[cfg(test)]
     pub(super) fn steer(&self, session_id: uuid::Uuid, message: String) -> Option<uuid::Uuid> {
         let tasks = self.tasks.lock().ok()?;
         let (task_id, live) = tasks

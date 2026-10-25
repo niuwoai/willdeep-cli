@@ -18,6 +18,8 @@ impl RuntimeSessionStore {
         Ok(pending
             .into_iter()
             .map(|turn| QueuedTurnMessage {
+                priority_requested: turn.metadata.independent_requested,
+                independence_confirmed: turn.metadata.independent_override,
                 id: turn.metadata.id,
                 session_id,
                 text: editable_text(&turn.prompt).unwrap_or_default().to_owned(),
@@ -100,6 +102,7 @@ impl RuntimeSessionStore {
                     bail!("Turn prompt exceeds 1 MiB");
                 }
                 turn.prompt = replacement;
+                turn.metadata.independent_override = false;
             }
             QueueAction::Remove | QueueAction::Clear => {
                 for (_, pending_id) in &pending {
@@ -111,8 +114,11 @@ impl RuntimeSessionStore {
                     turn.metadata.completed_at = Some(now());
                 }
             }
-            QueueAction::SendNow => {
+            QueueAction::SendNow | QueueAction::RunIndependently => {
                 let id = id.unwrap();
+                updated.get_mut(&id).unwrap().metadata.independent_requested = true;
+                updated.get_mut(&id).unwrap().metadata.independent_override =
+                    params.action == QueueAction::RunIndependently;
                 // Explicit send-now precedes internal wakeups too, matching Mac.
                 let mut slots = updated
                     .values()
@@ -134,11 +140,16 @@ impl RuntimeSessionStore {
         }
         persist_turns(&self.turns_path, &updated)?;
         *turns = updated;
-        Ok(if params.action == QueueAction::SendNow {
-            session.active_turn_id
-        } else {
-            None
-        })
+        Ok(
+            if matches!(
+                params.action,
+                QueueAction::SendNow | QueueAction::RunIndependently
+            ) {
+                session.active_turn_id
+            } else {
+                None
+            },
+        )
     }
 }
 
@@ -157,7 +168,7 @@ fn is_unclaimed(turn: &StoredRuntimeTurn, session: &RuntimeSession) -> bool {
         && session.active_turn_id != Some(turn.metadata.id)
 }
 
-fn editable_text(prompt: &str) -> Option<&str> {
+pub(super) fn editable_text(prompt: &str) -> Option<&str> {
     if prompt
         .trim_start()
         .starts_with(willdeep_runtime_protocol::ATTACHED_CONTEXT_HEADER)

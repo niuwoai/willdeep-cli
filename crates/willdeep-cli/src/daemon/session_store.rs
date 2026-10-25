@@ -1,5 +1,6 @@
 use super::*;
 
+mod deferred;
 mod mobile_context;
 mod turn_queue;
 
@@ -29,6 +30,8 @@ pub(crate) enum RuntimeSessionStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeSession {
+    #[serde(default)]
+    pub human_wait_yield_suppressed: bool,
     pub schema: u32,
     pub id: uuid::Uuid,
     pub root_agent_id: uuid::Uuid,
@@ -108,6 +111,16 @@ pub(super) fn turn_status_is_terminal(status: RuntimeTurnStatus) -> bool {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeTurn {
+    #[serde(default)]
+    pub independent_requested: bool,
+    #[serde(default)]
+    pub independent_override: bool,
+    #[serde(default)]
+    pub execution_session_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub display_after_message: Option<usize>,
+    #[serde(default)]
+    pub display_generation: Option<u64>,
     pub id: uuid::Uuid,
     pub session_id: uuid::Uuid,
     pub request_id: uuid::Uuid,
@@ -291,6 +304,14 @@ pub(super) struct ClaimedRuntimeTurn {
     pub request: SubmitTask,
 }
 
+pub(crate) struct IndependentHistory {
+    pub id: uuid::Uuid,
+    pub status: RuntimeTurnStatus,
+    pub display_after: usize,
+    pub display_generation: u64,
+    pub messages: Vec<willdeep_core::Message>,
+}
+
 pub(super) struct CancelRuntimeTurn {
     pub task_id: Option<uuid::Uuid>,
     pub session_id: uuid::Uuid,
@@ -298,6 +319,7 @@ pub(super) struct CancelRuntimeTurn {
 }
 
 pub(super) struct RuntimeSessionStore {
+    independent_core: willdeep_core::SessionStore,
     path: PathBuf,
     turns_path: PathBuf,
     core: willdeep_core::SessionStore,
@@ -333,6 +355,24 @@ impl RuntimeSessionStore {
         let core = willdeep_core::SessionStore::new(home);
         let mut turns_changed = false;
         for turn in turns.values_mut() {
+            if turn.metadata.execution_session_id.is_some()
+                && matches!(
+                    turn.metadata.status,
+                    RuntimeTurnStatus::Queued
+                        | RuntimeTurnStatus::Running
+                        | RuntimeTurnStatus::WaitingApproval
+                        | RuntimeTurnStatus::WaitingAnswer
+                )
+            {
+                turn.metadata.status = RuntimeTurnStatus::Interrupted;
+                turn.metadata.completed_at = Some(now());
+                turn.metadata.error = Some(
+                    "Runtime restarted during independent execution; manual recovery required"
+                        .to_owned(),
+                );
+                turns_changed = true;
+                continue;
+            }
             if matches!(
                 turn.metadata.status,
                 RuntimeTurnStatus::Running
@@ -397,6 +437,7 @@ impl RuntimeSessionStore {
             persist_sessions(&path, &sessions)?;
         }
         Ok(Self {
+            independent_core: willdeep_core::SessionStore::new(&home.join("independent")),
             path,
             turns_path,
             core,
@@ -478,6 +519,7 @@ impl RuntimeSessionStore {
         };
         let timestamp = now();
         let session = RuntimeSession {
+            human_wait_yield_suppressed: false,
             schema: RUNTIME_SESSION_SCHEMA,
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
@@ -616,6 +658,7 @@ impl RuntimeSessionStore {
         core.model = model.clone().or_else(|| source.model.clone());
         self.core.save(&mut core)?;
         let fork = RuntimeSession {
+            human_wait_yield_suppressed: false,
             schema: RUNTIME_SESSION_SCHEMA,
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
@@ -1177,6 +1220,11 @@ impl RuntimeSessionStore {
             .unwrap_or_default()
             .saturating_add(1);
         let metadata = RuntimeTurn {
+            independent_requested: false,
+            independent_override: false,
+            execution_session_id: None,
+            display_after_message: None,
+            display_generation: None,
             id: uuid::Uuid::new_v4(),
             session_id,
             request_id: request.request_id,
@@ -1209,6 +1257,12 @@ impl RuntimeSessionStore {
                     prev_turn_id: Some(&prev_turn_id),
                 });
         }
+        let operator_input = request.team_control.is_none()
+            && !peer_wake
+            && !request
+                .origin_client
+                .as_deref()
+                .is_some_and(|origin| origin.starts_with(super::goal_resume::ORIGIN_PREFIX));
         turns.insert(
             metadata.id,
             StoredRuntimeTurn {
@@ -1221,6 +1275,10 @@ impl RuntimeSessionStore {
             },
         );
         persist_turns(&self.turns_path, &turns)?;
+        drop(turns);
+        if operator_input {
+            self.set_yield_suppressed(session_id, false)?;
+        }
         Ok((metadata, true, title_changed))
     }
 
@@ -1401,6 +1459,7 @@ impl RuntimeSessionStore {
         let claimed = ClaimedRuntimeTurn {
             metadata: turn.metadata.clone(),
             request: SubmitTask {
+                execution_session_id: None,
                 team_control: turn.team_control.clone(),
                 prompt: turn.prompt.clone(),
                 attachments: turn.attachments.clone(),
@@ -1426,14 +1485,14 @@ impl RuntimeSessionStore {
 
     pub fn bind_task(&self, turn_id: uuid::Uuid, task_id: uuid::Uuid) -> Result<bool> {
         let mut sessions = self.lock()?;
-        let Some(session) = sessions
-            .values_mut()
-            .find(|session| session.active_turn_id == Some(turn_id))
-        else {
-            return Ok(false);
-        };
         let mut turns = self.turns_lock()?;
         let turn = turns.get_mut(&turn_id).context("Runtime Turn not found")?;
+        let Some(session) = sessions.get_mut(&turn.metadata.session_id) else {
+            return Ok(false);
+        };
+        if session.active_turn_id != Some(turn_id) && turn.metadata.execution_session_id.is_none() {
+            return Ok(false);
+        }
         if turn.metadata.status != RuntimeTurnStatus::Queued {
             return Ok(false);
         }
@@ -1448,7 +1507,9 @@ impl RuntimeSessionStore {
         turn.metadata.error = None;
         persist_turns(&self.turns_path, &turns)?;
         drop(turns);
-        session.status = RuntimeSessionStatus::Running;
+        if session.active_turn_id == Some(turn_id) {
+            session.status = RuntimeSessionStatus::Running;
+        }
         session.updated_at = now();
         persist_sessions(&self.path, &sessions)?;
         Ok(true)
@@ -1468,7 +1529,10 @@ impl RuntimeSessionStore {
             return Ok(()); // Legacy tasks need not belong to a Runtime Turn.
         };
         anyhow::ensure!(
-            turn.metadata.session_id == core.id
+            turn.metadata
+                .execution_session_id
+                .unwrap_or(turn.metadata.session_id)
+                == core.id
                 && turn.metadata.status == RuntimeTurnStatus::Running,
             "Runtime Turn is no longer eligible for execution"
         );
@@ -1556,22 +1620,43 @@ impl RuntimeSessionStore {
             turn.prompt.clear();
             turn.attachments.clear();
             if turn.metadata.message_end.is_none() {
-                let core = self
-                    .core
-                    .load(session_id)
-                    .with_context(|| format!("load completed Core Session {session_id}"))?;
+                let core = if let Some(id) = turn.metadata.execution_session_id {
+                    self.independent_core.load(id)
+                } else {
+                    self.core.load(session_id)
+                }
+                .with_context(|| format!("load completed Core Session {session_id}"))?;
                 turn.metadata.message_end = Some(core.messages.len());
                 turn.metadata.message_generation = core.compression_generation;
             }
         }
         persist_turns(&self.turns_path, &turns)?;
+        let resume = turns
+            .values()
+            .filter(|other| {
+                other.metadata.session_id == session_id
+                    && matches!(
+                        other.metadata.status,
+                        RuntimeTurnStatus::WaitingApproval
+                            | RuntimeTurnStatus::WaitingAnswer
+                            | RuntimeTurnStatus::Running
+                    )
+            })
+            .min_by_key(|other| other.metadata.queue_sequence)
+            .map(|other| (other.metadata.id, other.metadata.status));
         drop(turns);
         let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
-        session.active_turn_id = None;
-        session.status = if matches!(
+        session.active_turn_id = resume.map(|(id, _)| id);
+        session.status = if let Some((_, status)) = resume {
+            match status {
+                RuntimeTurnStatus::WaitingAnswer => RuntimeSessionStatus::WaitingAnswer,
+                RuntimeTurnStatus::WaitingApproval => RuntimeSessionStatus::WaitingApproval,
+                _ => RuntimeSessionStatus::Running,
+            }
+        } else if matches!(
             status,
             RuntimeTaskStatus::Completed | RuntimeTaskStatus::Partial
         ) {
@@ -1599,12 +1684,19 @@ impl RuntimeSessionStore {
         };
         turn.metadata.status = turn_status;
         let session_id = turn.metadata.session_id;
+        let turn_id = turn.metadata.id;
         persist_turns(&self.turns_path, &turns)?;
         drop(turns);
         let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
+        if turn_status == RuntimeTurnStatus::Running {
+            session.active_turn_id = Some(turn_id);
+        }
+        if session.active_turn_id != Some(turn_id) {
+            return Ok(());
+        }
         session.status = match turn_status {
             RuntimeTurnStatus::WaitingApproval => RuntimeSessionStatus::WaitingApproval,
             RuntimeTurnStatus::WaitingAnswer => RuntimeSessionStatus::WaitingAnswer,
@@ -1615,6 +1707,11 @@ impl RuntimeSessionStore {
     }
 
     pub fn request_cancel(&self, turn_id: uuid::Uuid) -> Result<CancelRuntimeTurn> {
+        if let Some(turn) = self.get_turn(turn_id)? {
+            if !turn_status_is_terminal(turn.status) {
+                self.set_yield_suppressed(turn.session_id, true)?;
+            }
+        }
         let mut turns = self.turns_lock()?;
         let turn = turns.get_mut(&turn_id).context("Runtime Turn not found")?;
         let session_id = turn.metadata.session_id;
@@ -1677,14 +1774,29 @@ impl RuntimeSessionStore {
         turn.metadata.completed_at = Some(now());
         turn.metadata.error = Some(error.clone());
         let session_id = turn.metadata.session_id;
+        let resume = turns
+            .values()
+            .filter(|other| {
+                other.metadata.session_id == session_id
+                    && matches!(
+                        other.metadata.status,
+                        RuntimeTurnStatus::WaitingApproval | RuntimeTurnStatus::WaitingAnswer
+                    )
+            })
+            .min_by_key(|other| other.metadata.queue_sequence)
+            .map(|other| (other.metadata.id, other.metadata.status));
         persist_turns(&self.turns_path, &turns)?;
         drop(turns);
         let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
-        session.active_turn_id = None;
-        session.status = RuntimeSessionStatus::Failed;
+        session.active_turn_id = resume.map(|(id, _)| id);
+        session.status = match resume.map(|(_, status)| status) {
+            Some(RuntimeTurnStatus::WaitingAnswer) => RuntimeSessionStatus::WaitingAnswer,
+            Some(RuntimeTurnStatus::WaitingApproval) => RuntimeSessionStatus::WaitingApproval,
+            _ => RuntimeSessionStatus::Failed,
+        };
         session.updated_at = now();
         session.last_error = Some(error);
         persist_sessions(&self.path, &sessions)
