@@ -4,6 +4,7 @@ import type { Language } from "./i18n";
 import { queueText } from "./queueMessages";
 import { Markdown } from "./Markdown";
 import type { ConversationItem } from "./ConversationCard";
+import { queueRequest } from "./runtimeQueueApi";
 
 type IndependentTask = { id: string; status: string; messages: ConversationItem[] };
 export function IndependentTasks({ sessionId, language }: { sessionId: string | null; language: Language }) {
@@ -25,11 +26,6 @@ export type RuntimeQueueItem = {
   id: string; session_id: string; text: string; text_preview: string;
   can_edit: boolean; image_count: number; text_attachment_count: number;
 };
-export async function queueRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
-  return response.json() as Promise<T>;
-}
 export function RuntimeQueue({ sessionId, language }: { sessionId: string | null; language: Language }) {
   const client = useQueryClient();
   const key = ["runtime-queue", sessionId];

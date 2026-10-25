@@ -469,12 +469,11 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             if let (Some(id), Some(text)) = (
                 value.get("turn_id").and_then(|v| v.as_str()),
                 value.get("text").and_then(|v| v.as_str()),
-            ) {
-                if app.seen_runtime_inputs.insert(id.to_owned()) {
-                    let row = format!("You: {}", terminal_safe_text(text));
-                    if app.transcript.last() != Some(&row) {
-                        app.append_transcript(row);
-                    }
+            ) && app.seen_runtime_inputs.insert(id.to_owned())
+            {
+                let row = format!("You: {}", terminal_safe_text(text));
+                if app.transcript.last() != Some(&row) {
+                    app.append_transcript(row);
                 }
             }
         }

@@ -321,25 +321,22 @@ impl TaskManager {
             }
             (interaction.clone(), interactions.clone())
         };
-        if !automatic {
-            if let Some(task) = self.get(interaction.task_id).await {
-                if let Some(session_id) = task.session_id {
-                    if self.sessions.has_running_lane(session_id)?
-                        || (replaying
-                            && self
-                                .sessions
-                                .get(session_id)?
-                                .is_some_and(|session| session.human_wait_yield_suppressed))
-                    {
-                        persist_interactions(&self.interactions_path, &interaction_snapshot)?;
-                        self.events.append(
-                            "task.decision_buffered",
-                            format!("session_id={session_id} interaction_id={id}"),
-                        )?;
-                        return Ok(Some(interaction));
-                    }
-                }
-            }
+        if !automatic
+            && let Some(task) = self.get(interaction.task_id).await
+            && let Some(session_id) = task.session_id
+            && (self.sessions.has_running_lane(session_id)?
+                || (replaying
+                    && self
+                        .sessions
+                        .get(session_id)?
+                        .is_some_and(|session| session.human_wait_yield_suppressed)))
+        {
+            persist_interactions(&self.interactions_path, &interaction_snapshot)?;
+            self.events.append(
+                "task.decision_buffered",
+                format!("session_id={session_id} interaction_id={id}"),
+            )?;
+            return Ok(Some(interaction));
         }
         let task_snapshot = {
             let mut tasks = self.tasks.write().await;

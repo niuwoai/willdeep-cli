@@ -336,19 +336,18 @@ impl TaskManager {
                 continue;
             }
             if let Some(task) = self.get(task_id).await {
-                if let Some(session) = task.session_id {
-                    if self.sessions.has_running_lane(session)? {
-                        continue;
-                    }
+                if let Some(session) = task.session_id
+                    && self.sessions.has_running_lane(session)?
+                {
+                    continue;
                 }
-                if let Some(session) = task.session_id {
-                    if self
+                if let Some(session) = task.session_id
+                    && self
                         .sessions
                         .get(session)?
                         .is_some_and(|s| s.human_wait_yield_suppressed)
-                    {
-                        continue;
-                    }
+                {
+                    continue;
                 }
                 self.resolve_interaction_as(id, resolution, false, true)
                     .await?;

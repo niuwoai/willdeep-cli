@@ -249,7 +249,11 @@ async fn old_decision_is_buffered_during_independent_work_then_resumes_exact_wai
     let before =
         serde_json::to_vec(&SessionStore::new(&home).load(session).unwrap().messages).unwrap();
     let next = enqueue(&state, session, "independent question");
-    state.tasks.park_gates(&[gate.clone()]).await.unwrap();
+    state
+        .tasks
+        .park_gates(std::slice::from_ref(&gate))
+        .await
+        .unwrap();
     let claimed = state
         .sessions
         .claim_independent(session, next.id, "independent question")
@@ -350,7 +354,11 @@ async fn independent_completion_restores_pending_gate_without_resolving_or_dropp
         .unwrap();
     let gate = state.tasks.pending_interactions().await[0].clone();
     let next = enqueue(&state, session, "another task");
-    state.tasks.park_gates(&[gate.clone()]).await.unwrap();
+    state
+        .tasks
+        .park_gates(std::slice::from_ref(&gate))
+        .await
+        .unwrap();
     state
         .sessions
         .claim_independent(session, next.id, "another task")

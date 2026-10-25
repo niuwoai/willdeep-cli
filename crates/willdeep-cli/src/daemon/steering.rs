@@ -30,10 +30,10 @@ impl SteeringInboxes {
             .then_some(task_id)
     }
     pub(super) fn push_parent(&self, task_id: uuid::Uuid, text: String) {
-        if let Ok(tasks) = self.tasks.lock() {
-            if let Some(live) = tasks.get(&task_id) {
-                live.inbox.push(text);
-            }
+        if let Ok(tasks) = self.tasks.lock()
+            && let Some(live) = tasks.get(&task_id)
+        {
+            live.inbox.push(text);
         }
     }
     pub(super) fn notify_peer(&self, session_id: uuid::Uuid) {

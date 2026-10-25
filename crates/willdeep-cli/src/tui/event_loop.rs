@@ -619,8 +619,9 @@ pub(super) async fn event_loop(
             },
             Some(snapshot)=runtime_snapshot_rx.recv()=>{
                 qterm.runtime_snapshot(&snapshot, session.id, app.runtime_event_cursor, app.running);
-                if let Some((id, items)) = snapshot.queue {
-                    if id == session.id { app.sync_runtime_queue(items); }
+                if let Some((id, items)) = snapshot.queue
+                    && id == session.id {
+                    app.sync_runtime_queue(items);
                 }
                 runtime.notifier.attention_snapshot(&snapshot.attention);
                 if app.observe_runtime_tasks(&snapshot.tasks,session.id,snapshot.event_sequence) {

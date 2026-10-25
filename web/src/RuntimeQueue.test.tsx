@@ -46,7 +46,10 @@ it("keeps the draft visible when another client starts the message before save",
 });
 it("refreshes cross-client removals without resubmitting queued work", async () => {
   let pending = [item];
-  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => pending }));
+  const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+    expect(init?.method ?? "GET").toBe("GET");
+    return { ok: true, json: async () => pending };
+  });
   vi.stubGlobal("fetch", fetcher);
   const client = mount();
   await screen.findByText(item.text);

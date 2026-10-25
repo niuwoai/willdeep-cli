@@ -437,7 +437,7 @@ impl RuntimeSessionStore {
             persist_sessions(&path, &sessions)?;
         }
         Ok(Self {
-            independent_core: willdeep_core::SessionStore::new(&home.join("independent")),
+            independent_core: willdeep_core::SessionStore::new(home.join("independent")),
             path,
             turns_path,
             core,
@@ -1707,10 +1707,10 @@ impl RuntimeSessionStore {
     }
 
     pub fn request_cancel(&self, turn_id: uuid::Uuid) -> Result<CancelRuntimeTurn> {
-        if let Some(turn) = self.get_turn(turn_id)? {
-            if !turn_status_is_terminal(turn.status) {
-                self.set_yield_suppressed(turn.session_id, true)?;
-            }
+        if let Some(turn) = self.get_turn(turn_id)?
+            && !turn_status_is_terminal(turn.status)
+        {
+            self.set_yield_suppressed(turn.session_id, true)?;
         }
         let mut turns = self.turns_lock()?;
         let turn = turns.get_mut(&turn_id).context("Runtime Turn not found")?;
