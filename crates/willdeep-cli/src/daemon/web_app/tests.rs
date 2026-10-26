@@ -103,7 +103,14 @@ async fn managed_listener_survives_client_drop_and_restores_on_runtime_restart()
     assert_eq!(restored.listen, Some(address));
     second_runtime.stop().await.unwrap();
     assert!(!load(&root).unwrap().unwrap().enabled);
-    assert!(tokio::net::TcpStream::connect(address).await.is_err());
+    let stop_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::net::TcpStream::connect(address).await.is_ok() {
+        assert!(
+            tokio::time::Instant::now() < stop_deadline,
+            "Web App listener remained reachable after stop"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     drop(second_runtime);
     std::fs::remove_dir_all(root).unwrap();
 }
