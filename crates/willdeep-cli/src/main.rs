@@ -134,7 +134,9 @@ struct Cli {
     /// Resume a saved session. Omit the value to load the most recently updated session.
     #[arg(
         short = 'r',
+        visible_short_alias = 's',
         long,
+        visible_alias = "session",
         value_name = "ID|latest",
         num_args = 0..=1,
         default_missing_value = "latest"
@@ -312,6 +314,10 @@ enum CliCommand {
         #[command(subcommand)]
         action: usage_cmd::UsageAction,
     },
+    /// Start the Runtime-hosted Web App if needed and open it in a browser.
+    Web,
+    /// Enable the mobile relay and print its pairing QR code.
+    Qr,
     /// Diagnose local configuration and runtime readiness without contacting a Provider.
     Doctor {
         /// Emit one stable JSON report.
@@ -556,6 +562,51 @@ fn runtime_failure_domain(error: &anyhow::Error) -> willdeep_runtime_protocol::F
     FailureDomain::Internal
 }
 
+async fn open_web_app(cli: &Cli) -> Result<()> {
+    use willdeep_runtime_protocol::web_app::WebAppStartParams;
+
+    let home = willdeep_home()?;
+    let language = administrative_language(cli)?;
+    let mut status = daemon::web_app::remote_status(&home).await?;
+    if !status.running {
+        let workspace = cli.workspace.clone().unwrap_or(std::env::current_dir()?);
+        let workspace = workspace
+            .canonicalize()
+            .with_context(|| format!("invalid Web workspace: {}", workspace.display()))?;
+        let config =
+            std::path::absolute(cli.config.clone().unwrap_or(config::default_config_path()?))?;
+        status = daemon::web_app::remote_start(
+            &home,
+            &WebAppStartParams {
+                listen: "127.0.0.1:9847".parse().expect("valid Web App address"),
+                workspace,
+                config: Some(config),
+                profile: cli.profile.clone(),
+                language: language.text("zh-CN", "en", "ja").to_owned(),
+            },
+        )
+        .await?;
+    }
+    let address = status
+        .listen
+        .context("Web App did not report a listening address")?;
+    let url = format!("http://{address}");
+    if !onboarding::open_browser(&url) {
+        eprintln!("Could not open a browser automatically.");
+    }
+    println!("{url}");
+    Ok(())
+}
+
+async fn print_pairing_qr(home: &std::path::Path) -> Result<()> {
+    let enabled = daemon::mobile_enable(home).await?;
+    println!("{}", mobile::render_qr(&enabled.pairing_url)?);
+    eprintln!(
+        "Scan with your own WillDeep Mobile device. The QR contains a relay token; do not share screenshots."
+    );
+    Ok(())
+}
+
 async fn run() -> Result<()> {
     // Branch before Clap constructs the global credential-aware parser.
     if let Some(result) = agent_rsi::run_free_review_standalone().await {
@@ -650,6 +701,8 @@ async fn run() -> Result<()> {
                 audit_cmd::run(action, &willdeep_home()?, language)
             }
             CliCommand::Usage { action } => usage_cmd::run(action, &willdeep_home()?),
+            CliCommand::Web => open_web_app(&cli).await,
+            CliCommand::Qr => print_pairing_qr(&willdeep_home()?).await,
             CliCommand::Feedback { action } => feedback_review_cmd::run(action, &cli).await,
             CliCommand::Prompt { action } => prompt_cmd::run(action, &cli).await,
             CliCommand::Mcp { action } => {

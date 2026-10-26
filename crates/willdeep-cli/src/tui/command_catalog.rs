@@ -47,6 +47,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/goal <文本>|off",
             "/plan",
             "/tools",
+            "/thinking [show|hide]",
             "/compress",
             "/model [模型名]",
             "/permissions [档位]",
@@ -79,6 +80,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/goal <text>|off",
             "/plan",
             "/tools",
+            "/thinking [show|hide]",
             "/compress",
             "/model [model]",
             "/permissions [mode]",
@@ -111,6 +113,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/goal <テキスト>|off",
             "/plan",
             "/tools",
+            "/thinking [show|hide]",
             "/compress",
             "/model [モデル名]",
             "/permissions [モード]",
@@ -196,6 +199,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "展开或收起聊天区里收起的工具调用行",
                 "Toggle folded tool-call rows in the chat",
                 "チャットで畳まれたツール行を展開・折りたたむ",
+            ),
+        ),
+        (
+            "/thinking",
+            language.text(
+                "显示或隐藏模型思考内容；Thought 摘要可点击展开",
+                "Show or hide model reasoning; click Thought summaries to expand",
+                "モデルの思考を表示・非表示。Thought の要約をクリックして展開",
             ),
         ),
         (

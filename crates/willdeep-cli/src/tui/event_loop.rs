@@ -285,7 +285,7 @@ pub(super) async fn event_loop(
 
     let mut initial_transcript = session_transcript(session, language);
     if initial_transcript.is_empty() {
-        initial_transcript.push(welcome_message(&session.workspace, language));
+        initial_transcript.push(welcome_message(&session.workspace, session.id, language));
     }
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     initial_transcript.extend(startup_notices(runtime, language));
@@ -294,6 +294,9 @@ pub(super) async fn event_loop(
     app.ui = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?
         .file
         .ui;
+    if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
+        app.ui.show_thinking = show_thinking;
+    }
     app.feedback = agent
         .feedback()
         .cloned()

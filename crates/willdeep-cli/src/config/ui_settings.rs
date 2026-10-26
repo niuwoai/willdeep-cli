@@ -1,5 +1,6 @@
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -62,6 +63,7 @@ impl InputSuggestionColor {
 pub struct UiSettings {
     pub mode: UiMode,
     pub compact_status_line: bool,
+    pub show_thinking: bool,
     pub check_updates: bool,
     pub input_suggestion_color: InputSuggestionColor,
     pub input_suggestion_italic: bool,
@@ -73,12 +75,52 @@ impl Default for UiSettings {
         Self {
             mode: UiMode::Full,
             compact_status_line: true,
+            show_thinking: true,
             check_updates: true,
             input_suggestion_color: InputSuggestionColor::Gray,
             input_suggestion_italic: false,
             input_suggestion_underline: false,
         }
     }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct UiPreferenceOverride {
+    show_thinking: bool,
+}
+
+pub fn load_thinking_visibility(home: &Path) -> anyhow::Result<Option<bool>> {
+    let path = home.join("ui-preferences.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path)?;
+    let preference: UiPreferenceOverride = serde_json::from_slice(&bytes)?;
+    Ok(Some(preference.show_thinking))
+}
+
+pub fn save_thinking_visibility(home: &Path, show: bool) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    std::fs::create_dir_all(home)?;
+    let path = home.join("ui-preferences.json");
+    let temporary = home.join(format!("ui-preferences-{}.tmp", std::process::id()));
+    let contents = serde_json::to_vec(&UiPreferenceOverride {
+        show_thinking: show,
+    })?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    file.write_all(&contents)?;
+    file.sync_all()?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
 }
 
 #[cfg(test)]

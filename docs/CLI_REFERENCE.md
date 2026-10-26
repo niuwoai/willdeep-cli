@@ -13,6 +13,8 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | 命令 | 用途 |
 |---|---|
 | `run` | 执行一次非交互 Coding Agent 轮次 |
+| `web` | 未运行时启动 Runtime Web App，并打开浏览器 |
+| `qr` | 开启手机中继并直接显示配对二维码 |
 | `session` | 查询或停止持久 Runtime Session |
 | `config` | 创建、校验或脱敏查看 TOML 配置 |
 | `daemon` | 管理持久本地 Runtime Daemon |
@@ -30,6 +32,10 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | `doctor` | 不联系 Provider 的本地就绪诊断 |
 | `completions` | 生成 Shell 补全脚本 |
 | `man` | 输出 roff man page |
+
+`willdeep web` 复用已运行的 Runtime Web App；如果服务未运行，则在当前工作区以 `127.0.0.1:9847` 启动。每次执行都会尝试打开浏览器并打印地址。`willdeep qr` 会启用手机中继并打印配对码；二维码包含配对凭据，只应由自己的 WillDeep Mobile 扫描。
+
+TUI 中的 `/thinking [show|hide]` 控制思考内容是否显示；显示时每段思考先以可点击的 Thought 耗时摘要呈现。`[ui].show_thinking` 是初始默认值，TUI 中切换后会保存到本机偏好文件。显示设置只影响界面，不会改变模型收到的推理配置；模型推理档位仍由 Provider/API 能力决定。
 
 ## 全局选项
 
@@ -74,7 +80,7 @@ willdeep --profile some-im --workspace .
 | `--web-workspace <PATH>` | Web 模式额外允许的工作区，可重复 |
 | `--onboarding` | 重新运行首次设置：默认打开 WebApp / willdeep-config，也可选择 some.im 登录或终端手动配置；见 [首次配置指南](FIRST_USE_SETUP.md) |
 | `--json` | 在 stdout 输出 NDJSON 事件 |
-| `-r`, `--resume [ID\|latest]` | 恢复已保存的会话；省略值时直接加载最近更新的会话 |
+| `-r` / `-s`, `--resume` / `--session [ID\|latest]` | 恢复已保存的会话；省略值时直接加载最近更新的会话 |
 | `--new-session` | 本次直接新建会话，跳过启动询问；不能与 `--resume` 同用 |
 | `--session-startup <ask\|latest\|new>` | 本次覆盖交互式启动偏好；`latest` 仅选择当前工作区的历史 |
 
@@ -100,9 +106,10 @@ willdeep --profile some-im --workspace .
 ```bash
 willdeep --list-sessions
 willdeep -r                                      # 直接进入最近一次会话
+willdeep -s                                      # -r 的兼容别名
 willdeep --resume                                # 与 willdeep -r 等价
-willdeep -r latest "继续检查刚才的问题"          # 也可显式写 latest
-willdeep --resume 550e8400-e29b-41d4-a716-446655440000 "继续"
+willdeep -s 550e8400-e29b-41d4-a716-446655440000 # 按 ID 恢复指定会话
+willdeep --session 550e8400-e29b-41d4-a716-446655440000 "继续"
 ```
 
 macOS 上还会发现 Swift WillDeep 的 Project 与历史会话：

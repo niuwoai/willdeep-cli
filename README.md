@@ -51,6 +51,8 @@ willdeep --onboarding            # 打开 WebApp 配置引导，也可选择终�
 ```bash
 willdeep --workspace .                          # 终端界面（TUI）
 willdeep --web --workspace .                    # 浏览器界面，默认 127.0.0.1:9847
+willdeep web                                     # 复用或启动 Runtime Web App，并打开浏览器
+willdeep qr                                      # 显示手机配对二维码
 willdeep run --output json "总结当前风险"        # 无头自动化：稳定退出码，可进 CI
 ```
 

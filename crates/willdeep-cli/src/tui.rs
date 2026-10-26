@@ -390,6 +390,8 @@ struct App {
     progress_log: VecDeque<String>,
     language: Language,
     transient_thought: Option<String>,
+    thought_started_at: Option<Instant>,
+    thought_hit_rows: Vec<(u16, usize)>,
     /// Runtime 已接收、等待下一次模型读取的插话；保留原始提交时间。
     deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
@@ -682,6 +684,13 @@ pub async fn run(
         terminal::LeaveAlternateScreen
     )?;
     term.show_cursor()?;
+    println!(
+        "\n{}: {}\n{}: willdeep -s {}",
+        ui.6.text("会话", "Session", "セッション"),
+        session.id,
+        ui.6.text("继续", "Continue", "続行"),
+        session.id
+    );
     result
 }
 
@@ -1515,6 +1524,28 @@ fn draw<B: ratatui::backend::Backend>(
         }
         let mut colored = app.transcript_viewport(&transient, offset);
         app.transcript_render_offset = offset;
+        app.thought_hit_rows = colored
+            .lines
+            .iter()
+            .enumerate()
+            .filter_map(|(line_index, line)| {
+                let text = line.to_string();
+                if !(text.contains("+ Thought:") || text.contains("− Thought:")) {
+                    return None;
+                }
+                let thought_order = app
+                    .transcript_rows
+                    .iter()
+                    .take(offset + line_index + 1)
+                    .filter(|row| row.contains("+ Thought:") || row.contains("− Thought:"))
+                    .count()
+                    .saturating_sub(1);
+                Some((
+                    areas[0].y.saturating_add(1).saturating_add(line_index as u16),
+                    thought_order,
+                ))
+            })
+            .collect();
         if let Some(selection) = app.chat_selection {
             let (start, end) = selection.ordered_range();
             rendering::highlight_text_selection_at_offset(&mut colored, start, end, offset);

@@ -499,7 +499,6 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             }
         }
         Some("tool_requested") => {
-            app.transient_thought = None;
             if let Some(name) = value.get("name").and_then(|value| value.as_str()) {
                 app.tools.requested(name);
                 app.record_progress(format!(

@@ -6,6 +6,7 @@ default_provider = "some-im"
 [ui]
 mode = "full"
 compact_status_line = true # 简洁 UI 最底行显示状态、用量和快捷键；false 隐藏
+show_thinking = true # 思考内容显示默认值；摘要点击后展开完整思考内容，TUI 中可用 /thinking 切换
 check_updates = true # 后台低频查询公开版本；空闲时每版本只提醒一次，不自动安装
 
 [agent_team]

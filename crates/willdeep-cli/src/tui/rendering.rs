@@ -108,6 +108,18 @@ pub(super) fn colored_transcript_at_width(
 ) -> Text<'static> {
     let mut lines = Vec::new();
     for value in entries {
+        if let Some((header, body, expanded)) = thought_entry_parts(value) {
+            lines.push(Line::styled(
+                format!("· {} Thought: {header}", if expanded { "−" } else { "+" }),
+                Style::default().fg(Color::LightYellow),
+            ));
+            if expanded {
+                lines.extend(body.lines().map(|line| {
+                    Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray))
+                }));
+            }
+            continue;
+        }
         if let Some(card) = decode_plan_entry(value) {
             lines.extend(render_plan(&card.plan, width));
             if card.expanded {
@@ -125,7 +137,10 @@ pub(super) fn colored_transcript_at_width(
             continue;
         }
         // 工具摘要需要比普通账目行更清晰，避免深色终端上低对比度的 DarkGray 难以辨认。
-        let style = if narration::is_tool_display_row(value) {
+        let style = if value.starts_with("· + Thought: ") || value.starts_with("· − Thought: ")
+        {
+            Style::default().fg(Color::LightYellow)
+        } else if narration::is_tool_display_row(value) {
             Style::default().fg(Color::Gray)
         } else if value.starts_with("· ") || value.starts_with(TURN_DIVIDER_PREFIX) {
             Style::default().fg(Color::DarkGray)
@@ -153,9 +168,45 @@ pub(super) fn colored_transcript_at_width(
     text
 }
 
+fn thought_entry_parts(value: &str) -> Option<(&str, &str, bool)> {
+    let (expanded, prefix) = if let Some(rest) = value.strip_prefix("· + Thought: ") {
+        (false, rest)
+    } else if let Some(rest) = value.strip_prefix("· − Thought: ") {
+        (true, rest)
+    } else {
+        return None;
+    };
+    let (header, body) = prefix.split_once('\n').unwrap_or((prefix, ""));
+    Some((header, body, expanded))
+}
+
 #[cfg(test)]
 mod tool_row_style_tests {
     use super::*;
+
+    #[test]
+    fn thought_transcript_row_hides_details_until_expanded() {
+        let folded = colored_transcript_at_width(
+            &["· + Thought: 1.8s\nprivate reasoning".to_owned()],
+            None,
+            80,
+        );
+        assert_eq!(folded.lines.len(), 1);
+        assert!(folded.lines[0].to_string().contains("Thought: 1.8s"));
+        assert!(!folded.lines[0].to_string().contains("private reasoning"));
+
+        let expanded = colored_transcript_at_width(
+            &["· − Thought: 1.8s\nprivate reasoning".to_owned()],
+            None,
+            80,
+        );
+        assert!(
+            expanded
+                .lines
+                .iter()
+                .any(|line| line.to_string() == "private reasoning")
+        );
+    }
 
     #[test]
     fn tool_summaries_use_more_contrast_than_regular_status_lines() {
@@ -906,7 +957,13 @@ pub(super) fn cache_hit_rate(usage: &willdeep_core::types::Usage) -> Option<f64>
     Some(cached as f64 / input as f64 * 100.0)
 }
 
-pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -> String {
+const WILLDEEP_BANNER: &str = "█   █ █████ █     █     ████  █████ █████ ████\n█   █   █   █     █     █   █ █     █     █   █\n█ █ █   █   █     █     █   █ ████  ████  ████\n██ ██   █   █     █     █   █ █     █     █\n█   █ █████ █████ █████ ████  █████ █████ █";
+
+pub(super) fn welcome_message(
+    workspace: &std::path::Path,
+    session_id: uuid::Uuid,
+    language: Language,
+) -> String {
     let project = workspace
         .file_name()
         .and_then(|value| value.to_str())
@@ -914,13 +971,13 @@ pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -
         .unwrap_or(language.text("当前工作区", "current workspace", "現在のワークスペース"));
     match language {
         Language::ZhCn => format!(
-            "WillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
+            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
         ),
         Language::En => format!(
-            "WillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
+            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
         ),
         Language::Ja => format!(
-            "WillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
+            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
     }
 }

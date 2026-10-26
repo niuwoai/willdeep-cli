@@ -23,6 +23,8 @@ const TOOL_FAILED: &str = "✗";
 const LAST_TOOL_RUN_ROWS: usize = 2;
 /// 汇总行的标记，与三种工具行标记都不同；渲染层照样按 `· ` 账目行的灰色画。
 const TOOL_FOLD_MARKER: &str = "⋯";
+const THOUGHT_ENTRY_PREFIX: &str = "· + Thought: ";
+const THOUGHT_EXPANDED_PREFIX: &str = "· − Thought: ";
 
 /// 一行工具记录。`· ` 前缀让渲染层按账目行的灰色画，不与正文抢注意力。
 fn tool_line(marker: &str, name: &str, detail: Option<&str>) -> String {
@@ -74,11 +76,13 @@ pub(super) enum StreamKind {
     Reply,
 }
 
-/// 思维链临时行最多占这么多行：像滚动字幕，只看得到它此刻在想什么。
+/// 旧的滚动字幕测试使用的最大高度。
+#[cfg(test)]
 const THINKING_ROWS: usize = 3;
 
 /// 从尾部截取一段，使 `prefix + 结果` 在 `width` 列内不超过 `rows` 行。空白折叠成
 /// 单个空格，截过的以 `…` 开头。
+#[cfg(test)]
 pub(super) fn tail_within_rows(prefix: &str, text: &str, width: usize, rows: usize) -> String {
     let width = width.max(1);
     let fits = |candidate: &str| visual_lines(&format!("{prefix}{candidate}"), width) <= rows;
@@ -101,17 +105,12 @@ pub(super) fn tail_within_rows(prefix: &str, text: &str, width: usize, rows: usi
 }
 
 impl App {
-    /// 聊天区底部的临时行：思维链灰色、只留最后 [`THINKING_ROWS`] 行；正文预览
-    /// 照旧整段黄色。正文一开始，思维链缓冲已被清掉，这里自然只剩正文。
+    /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
     pub(super) fn transient_row(&self) -> Option<String> {
         let thought = self.transient_thought.as_deref()?;
         let label = self.transient_label();
         Some(match self.transient_kind {
-            StreamKind::Reasoning => {
-                let prefix = format!("· {label}: ");
-                let tail = tail_within_rows(&prefix, thought, self.transcript_width, THINKING_ROWS);
-                format!("{prefix}{tail}")
-            }
+            StreamKind::Reasoning => format!("· + Thought: {}", self.thought_elapsed_label()),
             StreamKind::Reply => format!("WillDeep · {label}: {thought}"),
         })
     }
@@ -122,8 +121,15 @@ impl App {
     pub(super) fn stream_transient(&mut self, kind: StreamKind, text: &str) {
         let text = terminal_safe_text(text);
         if self.transient_kind != kind {
-            self.transient_thought = None;
+            if self.transient_kind == StreamKind::Reasoning {
+                self.finish_thought();
+            } else {
+                self.transient_thought = None;
+            }
             self.transient_kind = kind;
+        }
+        if kind == StreamKind::Reasoning && self.thought_started_at.is_none() {
+            self.thought_started_at = Some(Instant::now());
         }
         self.activity_line = match kind {
             StreamKind::Reasoning => self.language.text("正在思考", "Thinking", "思考中"),
@@ -133,13 +139,71 @@ impl App {
             }
         }
         .to_owned();
-        let mut preview = self.transient_thought.take().unwrap_or_default();
-        preview.push_str(&text);
-        let skip = preview
-            .chars()
-            .count()
-            .saturating_sub(THOUGHT_PREVIEW_CHARS);
-        self.transient_thought = Some(preview.chars().skip(skip).collect());
+        let mut content = self.transient_thought.take().unwrap_or_default();
+        content.push_str(&text);
+        if kind == StreamKind::Reply {
+            let skip = content
+                .chars()
+                .count()
+                .saturating_sub(THOUGHT_PREVIEW_CHARS);
+            content = content.chars().skip(skip).collect();
+        }
+        self.transient_thought = Some(content);
+    }
+
+    fn thought_elapsed_label(&self) -> String {
+        let elapsed = self
+            .thought_started_at
+            .map_or(Duration::ZERO, |started| started.elapsed());
+        if elapsed.as_secs_f32() < 1.0 {
+            format!("{}ms", elapsed.as_millis())
+        } else {
+            format!("{:.1}s", elapsed.as_secs_f32())
+        }
+    }
+
+    pub(super) fn finish_thought(&mut self) {
+        if self.transient_kind != StreamKind::Reasoning {
+            return;
+        }
+        if let Some(thought) = self
+            .transient_thought
+            .take()
+            .filter(|text| !text.trim().is_empty())
+        {
+            let elapsed = self.thought_elapsed_label();
+            self.append_transcript(format!("{THOUGHT_ENTRY_PREFIX}{elapsed}\n{thought}"));
+        }
+        self.thought_started_at = None;
+    }
+
+    pub(super) fn toggle_thought_at(&mut self, y: u16) -> bool {
+        let Some((_, thought_order)) = self.thought_hit_rows.iter().find(|(row, _)| *row == y)
+        else {
+            return false;
+        };
+        let Some(index) = self
+            .transcript
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                row.starts_with(THOUGHT_ENTRY_PREFIX) || row.starts_with(THOUGHT_EXPANDED_PREFIX)
+            })
+            .nth(*thought_order)
+            .map(|(index, _)| index)
+        else {
+            return false;
+        };
+        let row = &mut self.transcript[index];
+        if row.starts_with(THOUGHT_ENTRY_PREFIX) {
+            *row = row.replacen(THOUGHT_ENTRY_PREFIX, THOUGHT_EXPANDED_PREFIX, 1);
+        } else {
+            *row = row.replacen(THOUGHT_EXPANDED_PREFIX, THOUGHT_ENTRY_PREFIX, 1);
+        }
+        self.transcript_render_cache = None;
+        self.refresh_transcript_height();
+        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+        true
     }
 
     /// 临时行前面的标签，随来源变。
@@ -292,6 +356,7 @@ impl App {
     /// 模型新的一步开始。插话正是在这之前注入对话的，压着的这时落进聊天区。
     pub(super) fn note_model_step_started(&mut self) {
         self.waiting_background = false;
+        self.finish_thought();
         self.transient_thought = None;
         self.flush_deferred_steering();
     }
@@ -427,7 +492,18 @@ fn fold_summary(hidden: &[String], with_hint: bool, language: Language) -> Strin
 impl App {
     /// 聊天区实际画出来的记录：工具行按规则收起，其余原样。
     pub(super) fn display_transcript(&self) -> FoldedTranscript {
-        fold_tool_rows(&self.transcript, self.tool_rows_expanded, self.language)
+        if self.ui.show_thinking {
+            return fold_tool_rows(&self.transcript, self.tool_rows_expanded, self.language);
+        }
+        let entries = self
+            .transcript
+            .iter()
+            .filter(|row| {
+                !row.starts_with(THOUGHT_ENTRY_PREFIX) && !row.starts_with(THOUGHT_EXPANDED_PREFIX)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        fold_tool_rows(&entries, self.tool_rows_expanded, self.language)
     }
 
     /// 记录变了之后按折叠视图重算总高度；滚动、跟随底部全靠它。
@@ -464,6 +540,7 @@ impl App {
         if text.is_empty() {
             return;
         }
+        self.finish_thought();
         self.transient_thought = None;
         self.activity_line = self
             .language
@@ -475,6 +552,7 @@ impl App {
 
     /// 工具刚发起：先占一行，完成时原地改标记。
     pub(super) fn note_tool_requested(&mut self, name: &str, detail: Option<&str>) {
+        self.finish_thought();
         self.transient_thought = None;
         self.append_transcript(tool_line(TOOL_PENDING, name, detail));
     }
@@ -502,6 +580,7 @@ impl App {
 
     /// 收尾文字：只追加还没显示过的部分，返回追加了什么，供会话镜像持久化。
     pub(super) fn note_reply(&mut self, final_text: &str) -> Option<String> {
+        self.finish_thought();
         self.transient_thought = None;
         let remainder = unshown_reply(final_text, self.turn_narration.as_deref());
         if let Some(text) = &remainder {
@@ -691,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn transient_line_switches_source_and_keeps_only_the_tail() {
+    fn transient_line_switches_source_and_preserves_reasoning_separately() {
         let mut app = App::new(Vec::new(), Language::En);
         app.stream_transient(StreamKind::Reasoning, "先看日志");
         app.stream_transient(StreamKind::Reasoning, "，再改");
@@ -699,8 +778,10 @@ mod tests {
         assert_eq!(app.transient_label(), "thinking");
         assert_eq!(app.activity_line, "Thinking");
 
-        // 正文一来，思维链缓冲清掉，标签跟着换，两种文字不拼在一起。
+        // 正文一来，思维链进入独立折叠记录，两种文字不拼在一起。
         app.stream_transient(StreamKind::Reply, "好的");
+        assert!(app.transcript[0].starts_with(THOUGHT_ENTRY_PREFIX));
+        assert!(app.transcript[0].ends_with("先看日志，再改"));
         assert_eq!(app.transient_thought.as_deref(), Some("好的"));
         assert_eq!(app.transient_label(), "replying");
         assert_eq!(app.activity_line, "Receiving reply");
@@ -739,21 +820,25 @@ mod tests {
     }
 
     #[test]
-    fn transient_row_is_capped_grey_thinking_until_the_reply_starts() {
+    fn transient_reasoning_is_a_compact_summary_and_full_thought_is_retained() {
         let mut app = App::new(Vec::new(), Language::En);
         app.transcript_width = 30;
-        app.stream_transient(StreamKind::Reasoning, &"think\t".repeat(100));
+        app.stream_transient(StreamKind::Reasoning, &"think ".repeat(100));
         let row = app.transient_row().unwrap();
-        assert!(row.starts_with("· thinking: "), "{row}");
-        assert!(!row.contains('\t'));
-        assert!(visual_lines(&row, 30) <= THINKING_ROWS);
+        assert!(row.starts_with("· + Thought: "), "{row}");
+        assert!(!row.contains("think"));
 
-        // 正文一开始，思维链整段消失，只剩回复预览。
+        // 正文开始后，完整思维链折叠进可展开的记录，回复继续单独预览。
         app.stream_transient(StreamKind::Reply, "Hello");
+        assert!(app.transcript[0].starts_with(THOUGHT_ENTRY_PREFIX));
+        assert!(app.transcript[0].contains(&"think ".repeat(100)));
         assert_eq!(
             app.transient_row().as_deref(),
             Some("WillDeep · replying: Hello")
         );
+        app.thought_hit_rows = vec![(7, 0)];
+        assert!(app.toggle_thought_at(7));
+        assert!(app.transcript[0].starts_with(THOUGHT_EXPANDED_PREFIX));
     }
 
     #[test]

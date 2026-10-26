@@ -99,6 +99,8 @@ impl App {
             progress_log: VecDeque::new(),
             language,
             transient_thought: None,
+            thought_started_at: None,
+            thought_hit_rows: Vec::new(),
             deferred_steering: Vec::new(),
             turn_narration: None,
             tool_rows_expanded: false,
@@ -217,8 +219,11 @@ impl App {
             .and_then(|home| crate::daemon::turn_queue::display_session(home, session).ok());
         self.transcript = session_transcript(display.as_ref().unwrap_or(session), self.language);
         if self.transcript.is_empty() {
-            self.transcript
-                .push(welcome_message(&session.workspace, self.language));
+            self.transcript.push(welcome_message(
+                &session.workspace,
+                session.id,
+                self.language,
+            ));
         }
         self.reload_message_times(session.id);
         self.input = PromptEditor::default();
@@ -243,6 +248,8 @@ impl App {
         self.notice = None;
         self.goal = session.goal.clone();
         self.transient_thought = None;
+        self.thought_started_at = None;
+        self.thought_hit_rows.clear();
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
@@ -1062,6 +1069,7 @@ impl App {
 
     pub(super) fn finish_turn(&mut self) {
         let was_running = self.running;
+        self.finish_thought();
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
@@ -2076,6 +2084,7 @@ impl App {
             }
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
+            self.toggle_thought_at(y);
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains((x, y).into()) {
@@ -2130,6 +2139,50 @@ impl App {
             "/tools" => {
                 let message = self.toggle_tool_rows();
                 self.append_transcript(message);
+            }
+            "/thinking" => {
+                self.ui.show_thinking = match args.trim().to_ascii_lowercase().as_str() {
+                    "" | "toggle" => !self.ui.show_thinking,
+                    "show" | "on" => true,
+                    "hide" | "off" => false,
+                    other => {
+                        self.append_transcript(format!(
+                            "Error: usage: {command} [show|hide] (got `{other}`)"
+                        ));
+                        return true;
+                    }
+                };
+                if let Some(home) = self.display_home.as_deref()
+                    && let Err(error) =
+                        crate::config::save_thinking_visibility(home, self.ui.show_thinking)
+                {
+                    self.append_transcript(format!(
+                        "Error: could not save thinking preference: {error}"
+                    ));
+                    return true;
+                }
+                self.refresh_transcript_height();
+                self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+                self.append_transcript(format!(
+                    "System: {}",
+                    self.language.text(
+                        if self.ui.show_thinking {
+                            "思考内容已显示；可点击 Thought 摘要展开"
+                        } else {
+                            "思考内容已隐藏"
+                        },
+                        if self.ui.show_thinking {
+                            "Thinking is visible; click a Thought summary to expand it"
+                        } else {
+                            "Thinking is hidden"
+                        },
+                        if self.ui.show_thinking {
+                            "思考を表示しました。Thought の要約をクリックすると展開します"
+                        } else {
+                            "思考を非表示にしました"
+                        },
+                    )
+                ));
             }
             "/uistyle" => {
                 use crate::config::UiMode;
