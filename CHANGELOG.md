@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.122.0-rc3 - 2026-10-27
+
+### Fixed
+- Match destructive command names at executable positions instead of ordinary arguments; preserve execution checks through env, xargs, timeout and find payloads.
+- Classify dd and mkfs executable names structurally instead of scanning unrelated text for substrings.
+
 ## [0.122.0-rc2] - 2026-10-26
 
 ### Fixed

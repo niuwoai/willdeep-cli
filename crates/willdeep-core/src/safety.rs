@@ -174,10 +174,9 @@ static ALWAYS_SAFE_HEADS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 static SAFE_WORKSPACE_CREATE_HEADS: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| ["mkdir", "touch", "mktemp"].into_iter().collect());
 
-/// Token-level dangerous words. Every *unquoted* token of a segment is
-/// checked, not just the head, so `find . | xargs rm` is caught by the `rm`
-/// token in the second segment. Quoted tokens are data (`grep "rm" file`)
-/// and are skipped.
+/// Executable names checked only at command positions, including supported
+/// wrapper and find execution payloads. Arguments remain data, while a quoted
+/// executable such as `'rm'` retains its command semantics.
 static DANGEROUS_TOKENS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         // removal
@@ -211,7 +210,7 @@ static DANGEROUS_TOKENS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 
 /// Shapes that do not tokenize cleanly. Kept short on purpose — each entry
 /// is a known one-off.
-const DANGEROUS_SUBSTRINGS: &[&str] = &[":(){:|:&};:", ":(){ :|:& };:", "dd if=", "mkfs."];
+const DANGEROUS_SUBSTRINGS: &[&str] = &[":(){:|:&};:", ":(){ :|:& };:"];
 
 /// `cp` / `ln` with any flag are the destructive shapes (recursive
 /// overwrite, symlink replacement). Plain `cp src dst` still needs judgment.
@@ -528,17 +527,12 @@ fn redirection_verdict(unquoted: &str) -> Option<CommandSafety> {
 }
 
 fn classify_segment(segment: &str) -> CommandSafety {
-    let tokens = tokenize(segment);
+    classify_tokens(tokenize(segment))
+}
+
+fn classify_tokens(tokens: Vec<Token>) -> CommandSafety {
     if tokens.is_empty() {
         return CommandSafety::AlwaysSafe;
-    }
-
-    // Dangerous tokens anywhere in the segment, but only when unquoted:
-    // `grep "rm -rf" log` must stay a plain search.
-    for token in &tokens {
-        if !token.quoted && DANGEROUS_TOKENS.contains(basename(&token.text)) {
-            return CommandSafety::AlwaysDangerous;
-        }
     }
 
     let tokens = strip_prefix_keywords(strip_env_assignments(tokens));
@@ -546,10 +540,61 @@ fn classify_segment(segment: &str) -> CommandSafety {
         // Nothing but assignments / keywords — no payload to run.
         return CommandSafety::AlwaysSafe;
     };
+    let head = basename(&head_token.text).to_ascii_lowercase();
+    // Quoting an executable does not turn it into data. Conversely, arguments
+    // such as `grep rm log` are never executable merely because of a keyword.
+    if DANGEROUS_TOKENS.contains(head.as_str()) || head == "dd" || head.starts_with("mkfs.") {
+        return CommandSafety::AlwaysDangerous;
+    }
+    if matches!(head.as_str(), "xargs" | "env" | "nohup" | "timeout") {
+        let mut index = 1;
+        while index < tokens.len() {
+            let value = tokens[index].text.as_str();
+            if value == "--" {
+                index += 1;
+                break;
+            }
+            if value.starts_with('-') {
+                let takes_value = match head.as_str() {
+                    "xargs" => matches!(value, "-I" | "-L" | "-n" | "-P" | "-s" | "-E" | "-d"),
+                    "env" => matches!(value, "-u" | "--unset" | "-C" | "--chdir"),
+                    "timeout" => matches!(value, "-k" | "--kill-after" | "-s" | "--signal"),
+                    _ => false,
+                };
+                index += if takes_value { 2 } else { 1 };
+            } else if head == "env" && is_env_assignment(value) {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+        if head == "timeout" {
+            index += 1;
+        }
+        return if index < tokens.len() {
+            classify_tokens(tokens.into_iter().skip(index).collect())
+        } else {
+            CommandSafety::NeedsJudgment
+        };
+    }
+    if head == "find" {
+        for (index, token) in tokens.iter().enumerate() {
+            if matches!(token.text.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir") {
+                let payload = tokens
+                    .iter()
+                    .skip(index + 1)
+                    .take_while(|token| !matches!(token.text.as_str(), ";" | "+"))
+                    .cloned()
+                    .collect();
+                if classify_tokens(payload) == CommandSafety::AlwaysDangerous {
+                    return CommandSafety::AlwaysDangerous;
+                }
+            }
+        }
+    }
     if head_token.quoted {
         return CommandSafety::NeedsJudgment;
     }
-    let head = basename(&head_token.text).to_ascii_lowercase();
     if BARE_CONTROL_KEYWORDS.contains(&head.as_str()) {
         return CommandSafety::AlwaysSafe;
     }
@@ -1293,6 +1338,34 @@ mod tests {
     fn quoted_dangerous_words_stay_data() {
         safe("grep -rn 'rm -rf' logs");
         safe("echo \"sudo is not used here\"");
+    }
+
+    #[test]
+    fn keyword_arguments_are_not_executables() {
+        for command in [
+            "grep rm logfile",
+            "echo sudo",
+            "printf mkfs.ext4",
+            "echo dd if=example",
+            "echo 'mkfs.ext4 /dev/sda'",
+            "grep -c 'gateway images sync bridge wait' logfile",
+            "env MODE=test printf rm",
+            "xargs -I rm printf safe",
+        ] {
+            safe(command);
+        }
+        for command in [
+            "'rm' -rf /",
+            "/bin/rm -rf /",
+            "xargs rm -rf /",
+            "env MODE=test rm -rf /",
+            "find . -exec rm -rf / \\;",
+            "timeout 5 rm -rf /",
+            "dd if=x of=/dev/sda",
+            "mkfs.ext4 /dev/sda",
+        ] {
+            dangerous(command);
+        }
     }
 
     #[test]

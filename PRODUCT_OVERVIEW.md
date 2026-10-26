@@ -1,8 +1,10 @@
 # Product Overview
 
-0.122.0-rc2 联合发布候选集成短剧工坊 0.53.0-rc9：Runtime 持久管理完整制作、预算、暂停恢复及交付文件；与完整配置工作台共存。Magpie 为本地网关后的远程推理，账本不再计入本地模型。
+0.122.0-rc3 修复命令关键词误判：危险词仅在真实命令位置参与判断，普通 grep/echo 参数保持为数据；wrapper 和 find 执行载荷仍检查真实危险命令。
 
-当前开发版本：0.122.0-rc2。Web 主包内置 Provider 快速设置与完整配置工作台，支持配置快照/schema、变更预览与应用、配置校验、备份恢复、模板生成、Provider 模型列表，以及 Provider、MCP 服务和子代理集合管理；无需启用或安装 willdeep-config 插件。配置工作台通过 loopback Web API 调用随 CLI 内嵌的配置服务，API Key 仍按原有规则脱敏。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
+0.122.0-rc3 联合发布候选集成短剧工坊 0.53.0-rc9：Runtime 持久管理完整制作、预算、暂停恢复及交付文件；与完整配置工作台共存。Magpie 为本地网关后的远程推理，账本不再计入本地模型。
+
+当前开发版本：0.122.0-rc3。Web 主包内置 Provider 快速设置与完整配置工作台，支持配置快照/schema、变更预览与应用、配置校验、备份恢复、模板生成、Provider 模型列表，以及 Provider、MCP 服务和子代理集合管理；无需启用或安装 willdeep-config 插件。配置工作台通过 loopback Web API 调用随 CLI 内嵌的配置服务，API Key 仍按原有规则脱敏。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
 
 人工请求归属会话，同一会话可跨端恢复，其他会话不能代答；Web 请求携带选中的会话身份，切换时忽略旧快照。重连回放中的缺失工具结果只表示尚未记录结果，不推断为失败。
 
