@@ -36,6 +36,7 @@ impl App {
             ui: crate::config::UiSettings::default(),
             update_available: None,
             notice: None,
+            notice_hold: None,
             input_suggestion: None,
             input_suggestion_epoch: 0,
             suggestion_track: None,

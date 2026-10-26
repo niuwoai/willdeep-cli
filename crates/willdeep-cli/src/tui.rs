@@ -290,6 +290,7 @@ struct App {
     ui: crate::config::UiSettings,
     update_available: Option<update_notice::ReleaseNotice>,
     notice: Option<String>,
+    notice_hold: Option<(String, Instant)>,
     /// 轮次结束后预测的「你可能想说的下一句」。只在空闲且输入框为空时以灰字显示，
     /// Tab 采用（只填入，不发送），打字 / Esc / 新一轮开始即清掉。只活在内存里。
     input_suggestion: Option<String>,

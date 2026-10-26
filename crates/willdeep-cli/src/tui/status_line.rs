@@ -1,9 +1,19 @@
 use super::*;
 
 impl App {
+    fn take_status_notice(&mut self) -> Option<String> {
+        if let Some((held_notice, deadline)) = &self.notice_hold {
+            if self.notice.as_deref() == Some(held_notice.as_str()) && Instant::now() < *deadline {
+                return self.notice.clone();
+            }
+        }
+        self.notice_hold = None;
+        self.notice.take()
+    }
+
     pub(super) fn status_line(&mut self) -> String {
         let status = if self.native_selection_mode {
-            self.notice.take().unwrap_or_else(|| {
+            self.take_status_notice().unwrap_or_else(|| {
                 self.language
                     .text(
                         "终端原生选择 · 拖选后可用右键复制 · Esc 恢复 WillDeep 鼠标操作",
@@ -13,7 +23,7 @@ impl App {
                     .to_owned()
             })
         } else if self.selection_mode {
-            self.notice.take().unwrap_or_else(|| {
+            self.take_status_notice().unwrap_or_else(|| {
                 self.language
                     .text(
                         "文本选择模式 · 鼠标拖选 · Ctrl/Cmd+C 或 Y 复制 · Q 引用 · Esc 退出",
@@ -23,7 +33,7 @@ impl App {
                     .to_owned()
             })
         } else {
-            self.notice.take().unwrap_or_else(|| {
+            self.take_status_notice().unwrap_or_else(|| {
             let input_tokens = self.latest_usage.input_tokens.unwrap_or(0);
             let output_tokens = self.latest_usage.output_tokens.unwrap_or(0);
             let input = format_token_count(input_tokens);

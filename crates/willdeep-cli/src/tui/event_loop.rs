@@ -1386,11 +1386,13 @@ pub(super) async fn event_loop(
                                         continue;
                                     },
                                     BusyInput::Refuse=>{
-                                        app.notice=Some(language.text(
+                                        let notice = language.text(
                                             "该命令会改动会话或 Runtime，本轮结束后才能执行；Esc 可立即中断",
                                             "That command changes Session or Runtime state; it runs after this turn. Esc interrupts now",
                                             "このコマンドはセッション/Runtime を変更するため、ターン終了後に実行されます。Esc で即中断",
-                                        ).to_owned());
+                                        ).to_owned();
+                                        app.notice = Some(notice.clone());
+                                        app.notice_hold = Some((notice, Instant::now() + Duration::from_secs(10)));
                                         continue;
                                     },
                                 }
