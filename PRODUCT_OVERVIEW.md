@@ -1,6 +1,6 @@
 # Product Overview
 
-当前开发版本：0.120.0-rc2。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
+当前开发版本：0.120.0-rc3。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
 
 人工请求归属会话，同一会话可跨端恢复，其他会话不能代答；Web 请求携带选中的会话身份，切换时忽略旧快照。重连回放中的缺失工具结果只表示尚未记录结果，不推断为失败。
 
@@ -38,7 +38,7 @@ Web 聊天使用宽正文画布，协作与定时任务从标题栏按需展开�
 
 终端 UI 偏好：`[ui].mode` 可选 `full`（完全 UI，未配置时默认）或 `compact`（简洁 UI）。`/uistyle` 可在当前 TUI 会话中切换，`full` / `compact` 显式指定；`status` / `no-status` 显示或隐藏简洁 UI 底部状态栏，不改变当前布局。该命令不改配置文件；`willdeep-config` 保存的启动默认值仍在重启后生效。简洁 UI 隐藏主聊天、输入框的四边框、活动区与权限标签，只用一条标准细线分开正文与输入，整个底部背景铺满终端右下边缘；输入区使用跟随 QTerm 主题的 ANSI 黑色背景，青色输入文字与灰色建议文字保持可读。空输入且等待用户时背景以 ANSI 暗色低频轻柔呼吸，输入、建议或任务运行时保持稳定。`compact_status_line` 默认 true，在最下面一行显示与完全 UI 一致的状态、用量与快捷键，可独立关闭。侧栏、弹窗、附件、搜索和队列照常操作，后台任务与草稿保持不变。
 
-> 最后更新：2026-10-26 | 当前版本：v0.120.0-rc2；Thought 折叠摘要与按需展开、思考显示开关、`willdeep web` 与 `willdeep qr` 快捷入口、新会话标识与 `-s <session-id>` 恢复；Provider 与模型两栏联动、自动发现本地 Ollama / Magpie；生成中的输出需在 800 毫秒内连续按两次 Esc 才能中断；流式增量由专用线程分组持久化后广播，活动轮次由 Runtime 独立保存会话检查点；Runtime 交接等待完整终态提交。[交接回归](docs/verification/0.114.0-rc3/README.md) · [流式验收](docs/verification/0.114.0-rc2/README.md)。
+> 最后更新：2026-10-26 | 当前版本：v0.120.0-rc3；Thought 折叠摘要与按需展开、思考显示开关、`willdeep web` 与 `willdeep qr` 快捷入口、新会话标识与 `-s <session-id>` 恢复；Provider 与模型两栏联动、自动发现本地 Ollama / Magpie；生成中的输出需在 800 毫秒内连续按两次 Esc 才能中断；流式增量由专用线程分组持久化后广播，活动轮次由 Runtime 独立保存会话检查点；Runtime 交接等待完整终态提交。[交接回归](docs/verification/0.114.0-rc3/README.md) · [流式验收](docs/verification/0.114.0-rc2/README.md)。
 
 模型选择：`/model` 在宽窗口显示 Provider 与模型两栏，打开时聚焦当前模型；Tab 切换栏，↑↓ 与翻页键移动，支持各栏搜索、鼠标点击和滚轮。左栏浏览联动右栏模型，确认模型后才切换实际配置；窄窗口使用 Provider › 模型的两步页面，Esc 返回上级。列表在窗口内缓存并后台刷新，过期请求取消，F5 重试。
 
