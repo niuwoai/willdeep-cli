@@ -1,6 +1,6 @@
 # Product Overview
 
-当前开发版本：0.120.0-rc5。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
+当前开发版本：0.121.0-rc3。Web 主包内置 Provider 快速设置与完整配置工作台，支持配置快照/schema、变更预览与应用、配置校验、备份恢复、模板生成、Provider 模型列表，以及 Provider、MCP 服务和子代理集合管理；无需启用或安装 willdeep-config 插件。配置工作台通过 loopback Web API 调用随 CLI 内嵌的配置服务，API Key 仍按原有规则脱敏。TUI 推理过程折叠为可点击的 Thought 耗时摘要，展开后查看完整内容。Runtime 是已提交队列的权威来源，Android、Web 与 Runtime TUI 同步展示和修改同一队列；输入框草稿仍属于客户端。Web 刷新和 TUI 退出不会移除 Runtime 已接受的消息。
 
 人工请求归属会话，同一会话可跨端恢复，其他会话不能代答；Web 请求携带选中的会话身份，切换时忽略旧快照。重连回放中的缺失工具结果只表示尚未记录结果，不推断为失败。
 
