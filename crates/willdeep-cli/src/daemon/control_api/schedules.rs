@@ -836,16 +836,17 @@ mod tests {
     #[tokio::test]
     async fn ended_once_task_can_be_renamed_but_requires_future_time_to_resume() {
         let mut fixture = Fixture::new();
+        let ended_at = now() - 60;
         fixture.draft["schedule"] = serde_json::json!({"kind":"onceAt","at":now()+3600});
         let id = fixture.create().await;
         ScheduleStore::new(&fixture.state.home)
             .update(|tasks| {
                 let task = tasks.iter_mut().find(|task| task.id == id).unwrap();
                 task.enabled = false;
-                task.schedule = Schedule::OnceAt { at: now() - 60 };
+                task.schedule = Schedule::OnceAt { at: ended_at };
             })
             .unwrap();
-        fixture.draft["schedule"] = serde_json::json!({"kind":"onceAt","at":now()-60});
+        fixture.draft["schedule"] = serde_json::json!({"kind":"onceAt","at":ended_at});
         fixture.draft["name"] = serde_json::json!("renamed ended task");
         let updated = fixture
             .call(

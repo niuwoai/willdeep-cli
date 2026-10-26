@@ -6,6 +6,7 @@ use rust_embed::RustEmbed;
 #[cfg(test)]
 use willdeep_core::plugin::{PluginHost, installed_versions};
 
+#[cfg(test)]
 pub(crate) const ID: &str = "willdeep-config";
 pub(crate) const VERSION: &str = "0.6.0-rc2";
 
