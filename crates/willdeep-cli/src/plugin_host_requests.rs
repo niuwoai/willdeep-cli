@@ -25,6 +25,7 @@ pub(crate) struct HostRequests {
     /// 与聊天端、页面桥同一份工作区白名单（Web 进程里是同一个 Arc）。
     workspaces: Arc<RwLock<Vec<PathBuf>>>,
     usage_context: Option<(uuid::Uuid, PathBuf)>,
+    production_prompt: bool,
 }
 
 impl HostRequests {
@@ -38,6 +39,7 @@ impl HostRequests {
             config_path,
             workspaces,
             usage_context: None,
+            production_prompt: false,
         }
     }
 
@@ -46,11 +48,17 @@ impl HostRequests {
         self
     }
 
+    pub(crate) fn with_production_prompt(mut self) -> Self {
+        self.production_prompt = true;
+        self
+    }
+
     fn ai_host(&self) -> PluginAiHost<'_> {
         PluginAiHost {
             home: &self.home,
             config_path: &self.config_path,
             usage_context: self.usage_context.clone(),
+            production_prompt: self.production_prompt,
             workspaces: self
                 .workspaces
                 .read()
@@ -94,6 +102,7 @@ impl PluginHostRequests for HostRequests {
             AI_COMPLETE.to_owned(),
             ROUNDTABLE_RUN.to_owned(),
             crate::plugin_screenplay::CONTROL.to_owned(),
+            crate::plugin_production::CONTROL.to_owned(),
         ]
     }
 
@@ -104,6 +113,24 @@ impl PluginHostRequests for HostRequests {
         params: Value,
     ) -> Result<Value, HostRequestError> {
         match method {
+            crate::plugin_production::CONTROL => {
+                context.require(PluginPermission::AiChat)?;
+                if context.plugin_id != "willdeep-video-studio" {
+                    return Err(HostRequestError::failed("production_plugin_denied"));
+                }
+                let workspaces = self
+                    .workspaces
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone();
+                crate::plugin_production::control(
+                    &self.home,
+                    &workspaces,
+                    self.usage_context.as_ref().map(|(id, _)| *id),
+                    params,
+                )
+                .await
+            }
             crate::plugin_screenplay::CONTROL => {
                 context.require(PluginPermission::AiChat)?;
                 if context.plugin_id != "willdeep-video-studio" {
@@ -214,6 +241,21 @@ impl crate::plugin_roundtable::Completion for RoundtableModel<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn production_prompt_scope_is_host_only_and_not_implied_by_usage_linkage() {
+        let host = HostRequests::new(
+            PathBuf::from("/tmp/fixture-home"),
+            PathBuf::from("/tmp/fixture-config"),
+            Arc::new(RwLock::new(vec![])),
+        )
+        .with_usage_context(
+            uuid::Uuid::new_v4(),
+            PathBuf::from("/tmp/fixture-workspace"),
+        );
+        assert!(!host.ai_host().production_prompt);
+        assert!(host.with_production_prompt().ai_host().production_prompt);
+    }
     use serde_json::json;
 
     fn scratch() -> PathBuf {
@@ -250,7 +292,8 @@ mod tests {
                 IMAGE_GENERATE,
                 AI_COMPLETE,
                 ROUNDTABLE_RUN,
-                crate::plugin_screenplay::CONTROL
+                crate::plugin_screenplay::CONTROL,
+                crate::plugin_production::CONTROL
             ]
         );
         assert!(

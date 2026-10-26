@@ -47,6 +47,8 @@ mod local_transport;
 mod mobile_cli;
 mod mobile_gateway;
 mod peer_client;
+mod plugin_workflow;
+pub(crate) mod production;
 mod screenplay;
 pub(crate) use control_api::peer_sessions::WAKE_ORIGIN as PEER_WAKE_ORIGIN;
 pub(crate) use peer_client::{PeerSessionClient, peer_operation};
@@ -1623,7 +1625,8 @@ async fn run(home: &Path) -> Result<()> {
     let address = listener.local_addr()?;
     let started_at = now();
     let token = uuid::Uuid::new_v4().simple().to_string();
-    let (local_listener, local_transport) = local_transport::bind(&paths.local_socket, &token)?;
+    let (local_listener, local_transport, local_endpoint) =
+        local_transport::bind(&paths.local_socket, &token)?;
     let state = DaemonState {
         schema: STATE_SCHEMA,
         version: willdeep_core::VERSION.to_owned(),
@@ -1639,7 +1642,7 @@ async fn run(home: &Path) -> Result<()> {
         token: state.token.clone(),
         lock_path: paths.lock.clone(),
         lock_token,
-        local_socket: paths.local_socket.clone(),
+        local_endpoint: Some(local_endpoint),
     };
     let lock_heartbeat = spawn_lock_heartbeat(paths.lock.clone(), cleanup.lock_token.clone());
     let (shutdown_signal, shutdown_receiver) = watch::channel(false);
@@ -1724,6 +1727,7 @@ async fn run(home: &Path) -> Result<()> {
     scheduler::spawn(server_state.clone());
     screenplay::recover(home);
     deferred_gates::spawn(server_state.clone());
+    production::recover(home);
     let scheduler_state = server_state.clone();
     tokio::spawn(async move {
         while let Some(session_id) = scheduled_sessions.recv().await {
@@ -2547,7 +2551,7 @@ struct StateCleanup {
     token: String,
     lock_path: PathBuf,
     lock_token: String,
-    local_socket: PathBuf,
+    local_endpoint: Option<local_transport::EndpointCleanup>,
 }
 
 impl Drop for StateCleanup {
@@ -2555,8 +2559,8 @@ impl Drop for StateCleanup {
         if load_state(&self.path).is_ok_and(|state| state.token == self.token) {
             let _ = std::fs::remove_file(&self.path);
         }
+        drop(self.local_endpoint.take());
         remove_owned_lock(&self.lock_path, &self.lock_token);
-        local_transport::remove_if_owned(&self.local_socket);
     }
 }
 

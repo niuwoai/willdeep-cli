@@ -39,6 +39,7 @@ class VideoStore
     # 算出来的内容指纹才和页面一致。
     "reviewProviderID" => nil,
     "reviewModel" => nil,
+    "productionTextReviewUsePlanning" => false,
     "uiLocale" => "zh-Hans",
     "videoModel" => "MiniMax-H3",
     "duration" => 4,
@@ -219,6 +220,7 @@ class VideoStore
     value["assistantModel"] = optional_string(value["assistantModel"])
     value["reviewProviderID"] = optional_string(value["reviewProviderID"])
     value["reviewModel"] = optional_string(value["reviewModel"])
+    value["productionTextReviewUsePlanning"] = value["productionTextReviewUsePlanning"] == true
     value["uiLocale"] = value["uiLocale"] == "en" ? "en" : "zh-Hans"
     value["videoModel"] = clean_string(value["videoModel"], "MiniMax-H3", 160)
     # Hub 教程的合同区间是 4~15 秒（2026-09-17 核实）；低于 4 秒不受支持。

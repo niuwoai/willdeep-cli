@@ -42,7 +42,7 @@ module MusicBackend
 
     AceStepBackend.new(
       base_url: env["VIDEO_STUDIO_MUSIC_API_BASE"],
-      api_key: env["VIDEO_STUDIO_MUSIC_API_KEY"],
+      api_key: env["VIDEO_STUDIO_HOST_MUSIC_API_KEY"].to_s.strip.empty? ? env["VIDEO_STUDIO_MUSIC_API_KEY"] : env["VIDEO_STUDIO_HOST_MUSIC_API_KEY"],
       media_root: media_root,
       timeout_seconds: positive_number(env["VIDEO_STUDIO_MUSIC_TIMEOUT"], AceStepBackend::DEFAULT_TIMEOUT_SECONDS),
       poll_interval: positive_number(env["VIDEO_STUDIO_MUSIC_POLL_SECONDS"], AceStepBackend::POLL_INTERVAL_SECONDS),
@@ -130,6 +130,32 @@ module MusicBackend
       file = wait_for_file(task_id, deadline)
       binary = download(file)
       write(binary, file)
+    end
+
+    # Production persists the returned ID before polling. These calls never hide
+    # another submit inside a poll or a download.
+    def start(prompt:, duration_seconds:)
+      caption = prompt.to_s.strip
+      raise Error.new("empty_prompt", "Music prompt is empty.") if caption.empty?
+      seconds = clamp_duration(duration_seconds)
+      { "externalID" => submit(caption, seconds), "requestedSeconds" => seconds }
+    end
+
+    def poll(external_id:)
+      raise Error.new("invalid_music_task", "Music task ID is empty.") if external_id.to_s.strip.empty?
+      data = post_json("/query_result", { "task_id_list" => [external_id] })
+      entry = Array(data).find { |item| item.is_a?(Hash) && item["task_id"].to_s == external_id }
+      return { "state" => "running" } unless entry
+      status = entry["status"].to_i
+      return { "state" => "failed", "code" => "music_api_error" } if status == STATUS_FAILED
+      return { "state" => "running" } unless status == STATUS_SUCCEEDED
+      file = parse_results(entry["result"]).map { |item| item["file"].to_s.strip }.find { |value| !value.empty? }
+      raise Error.new("invalid_music_response", "Music finished without an audio file.") unless file
+      { "state" => "completed", "source" => file }
+    end
+
+    def finish(source:)
+      write(download(source), source)
     end
 
     private

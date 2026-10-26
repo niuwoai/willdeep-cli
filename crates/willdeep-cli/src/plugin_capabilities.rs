@@ -817,6 +817,8 @@ pub(crate) struct PluginAiHost<'a> {
     pub home: &'a Path,
     pub config_path: &'a Path,
     pub usage_context: Option<(uuid::Uuid, PathBuf)>,
+    /// Set only by the metered production executor, never by page parameters.
+    pub production_prompt: bool,
     /// 参照图、技能读取用的工作区白名单。
     pub workspaces: Vec<PathBuf>,
 }
@@ -857,6 +859,7 @@ pub(crate) async fn ai_generate_image(
         home: &state.home,
         config_path: &state.config_path,
         usage_context: None,
+        production_prompt: false,
         workspaces: workspace_roots(&state),
     };
     generate_image(&host, &plugin, request).await.map(Json)

@@ -17,7 +17,8 @@ module ScreenplayRules
   end
 
   def text!(value, label, max = 4_000)
-    require!(value.is_a?(String) && !value.strip.empty? && value.length <= max, "Invalid #{label}")
+    require!(value.is_a?(String) && !value.strip.empty? && value.length <= max,
+      "Invalid #{label}: expected a non-empty string of at most #{max} characters; received #{value.class}#{value.is_a?(String) ? " (#{value.length} characters)" : ''}")
   end
 
   def digest(value)
@@ -112,7 +113,7 @@ module ScreenplayRules
     end.join("\n\n")
   end
 
-  def beats!(beats, cast)
+  def beats!(beats, cast, allow_silent: false)
     require!(beats.is_a?(Array) && beats.length.between?(2, 80), "Scene needs ordered action and dialogue beats")
     dialogue = 0
     actions = 0
@@ -128,7 +129,8 @@ module ScreenplayRules
         dialogue += 1
       end
     end
-    require!(actions.positive? && dialogue.positive?, "Each scene needs visible action and dialogue")
+    require!(actions.positive?, "Each scene needs visible action")
+    require!(allow_silent || dialogue.positive?, "Each scene needs visible action and dialogue")
     dialogue
   end
 
@@ -138,11 +140,11 @@ module ScreenplayRules
     text!(value["summary"], "review summary", 1_500)
     require!(value["issues"].is_a?(Array) && value["issues"].length <= 30, "Invalid review issues")
     require!(value["issues"].all? { |entry| entry.is_a?(Hash) }, "Issues must be objects")
-    value["issues"].each do |issue|
+    value["issues"].each_with_index do |issue, index|
       %w[rule reason suggestion excerpt].each { |key| text!(issue[key], "issue #{key}", 1_000) }
       require!(%w[must advice].include?(issue["level"]) && %w[warn block].include?(issue["severity"]), "Issue severity and level must be explicit")
-      require!(source.include?(issue["excerpt"]), "Review excerpt is absent from its source")
-      require!(coverage.include?(issue["episodeOrder"]), "Issue target is outside review coverage")
+      require!(source.include?(issue["excerpt"]), "Review excerpt is absent from its source at issues[#{index}].excerpt. Copy a contiguous substring from source exactly; do not add speaker labels, quotes, ellipses or fact metadata.")
+      require!(coverage.include?(issue["episodeOrder"]), "Issue episodeOrder must be one of #{coverage.to_json}; received #{issue['episodeOrder'].to_json}. 0 means the whole outline; episode numbers quoted inside the source are context, not targets. Preserve the finding and its original evidence.")
     end
     require!(value["status"] != "pass" || value["issues"].none? { |issue| mandatory?(issue) }, "A pass cannot hide mandatory issues")
     require!(value["status"] != "block" || value["issues"].any? { |issue| mandatory?(issue) }, "A block requires an actionable mandatory issue")

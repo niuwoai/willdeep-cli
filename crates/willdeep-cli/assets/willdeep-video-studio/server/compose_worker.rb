@@ -43,14 +43,14 @@ begin
   video_store = VideoStore.new(spec.fetch("videoStore"))
   # 设置填错（非法 provider / 地址）时 select 会抛 *_misconfigured：当作没有配置，
   # 流水线记 tts_unavailable / music_unavailable 警告，其余步骤照常。
-  tts_ready = begin
+  tts_ready = !job["production"] && begin
     !TTSBackend.select(media_root: dramas.media_root).nil?
   rescue TTSBackend::Error => error
     warn "compose worker: TTS unavailable (#{error.code})"
     false
   end
   voice = tts_ready ? VoiceGeneration.new(drama_service: dramas) : nil
-  music = begin
+  music = job["production"] ? nil : begin
     MusicBackend.select(env: ENV, media_root: dramas.media_root)
   rescue MusicBackend::Error => error
     warn "compose worker: music backend unavailable (#{error.code})"
@@ -66,9 +66,9 @@ begin
     music: music
   )
   pipeline.run(job)
-rescue ComposePipeline::Failed, FFmpegTool::Failed => error
+rescue ComposePipeline::Failed, FFmpegTool::Failed, ProductionSnapshot::Error => error
   store.update_job(job_id, "state" => "failed", "finishedAt" => Time.now.utc.iso8601,
-                           "error" => { "code" => error.code, "message" => error.message })
+                           "error" => { "code" => error.respond_to?(:code) ? error.code : "production_snapshot_invalid", "message" => error.message })
   exit(1)
 rescue StandardError, ScriptError => error
   warn "compose worker failed: #{error.class}: #{error.message}\n#{Array(error.backtrace).first(8).join("\n")}"

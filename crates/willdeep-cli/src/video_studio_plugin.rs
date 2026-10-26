@@ -6,7 +6,7 @@ use rust_embed::RustEmbed;
 use willdeep_core::plugin::{PluginHost, installed_versions};
 
 pub(crate) const ID: &str = "willdeep-video-studio";
-pub(crate) const VERSION: &str = "0.51.0-rc2";
+pub(crate) const VERSION: &str = "0.53.0-rc9";
 
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-video-studio"]
@@ -55,6 +55,27 @@ mod tests {
         assert_eq!(package.version, VERSION);
         assert!(package.root.join("ui/dist/index.html").is_file());
         assert!(package.root.join("server/video_studio.rb").is_file());
+        assert!(
+            package
+                .root
+                .join("server/lib/production_service.rb")
+                .is_file()
+        );
+        assert!(
+            package
+                .root
+                .join("server/lib/production_remote.rb")
+                .is_file()
+        );
+        assert!(
+            package
+                .manifest
+                .as_ref()
+                .unwrap()
+                .commands
+                .iter()
+                .any(|command| command.id == "production.start")
+        );
         assert!(!host.is_enabled(ID).await);
         assert!(host.approval_gap(ID).await.unwrap().is_some());
         let marker = package.root.join("preserved.txt");

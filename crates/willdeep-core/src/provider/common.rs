@@ -155,7 +155,12 @@ pub async fn send_open_retrying(
     events: &dyn super::ProviderEventSink,
     deadline: tokio::time::Instant,
 ) -> Result<reqwest::Response, ProviderError> {
-    for attempt in 1..MAX_ATTEMPTS {
+    let max_attempts = if config.allow_request_replay {
+        MAX_ATTEMPTS
+    } else {
+        1
+    };
+    for attempt in 1..max_attempts {
         ensure_request_deadline(deadline)?;
         // 拿不到副本说明 body 不可重放（流式请求），那就没有重发一说，
         // 直接跳出去把原件发掉。
@@ -506,6 +511,27 @@ mod tests {
             "test-key",
             "test-model",
         )
+    }
+
+    #[tokio::test]
+    async fn metered_generation_does_not_replay_server_errors_rate_limits_or_lost_responses() {
+        for status in [Some(500), Some(429), None] {
+            let (url, hits, server) = scripted_server(vec![status, Some(200)]).await;
+            let mut config = probe_config(&url);
+            config.allow_request_replay = false;
+            let result =
+                send_retrying(client(&config).unwrap().post(&url).body("{}"), &config).await;
+            assert!(
+                result.is_err(),
+                "must preserve the original uncertain failure: {status:?}"
+            );
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "no hidden generation replay: {status:?}"
+            );
+            server.abort();
+        }
     }
 
     #[test]

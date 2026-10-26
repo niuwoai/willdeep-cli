@@ -170,7 +170,14 @@ impl PluginChatTools {
         method: &str,
         params: Value,
     ) -> Result<Value, McpError> {
-        if self.use_gateway {
+        // A shared Web gateway has no originating chat context. Production start
+        // must use this session's host; never trust a model-supplied session ID.
+        let session_bound_start = self.session_context.is_some()
+            && self.host_requests.is_some()
+            && plugin_id == "willdeep-video-studio"
+            && method == "tools/call"
+            && params["name"] == "production.start";
+        if self.use_gateway && !session_bound_start {
             match call_via_gateway(&self.home, plugin_id, server, method, params.clone()).await {
                 Ok(result) => return Ok(result),
                 Err(GatewayCallError::Failed(error)) => return Err(error),
@@ -264,7 +271,7 @@ impl LazyToolSource for PluginChatTools {
             .ok_or_else(|| McpError::UnknownTool(name.to_owned()))?;
         let mut arguments = self.scoped_arguments(&plugin_id, arguments);
         if plugin_id == "willdeep-video-studio"
-            && tool == "screenplay.start"
+            && matches!(tool.as_str(), "screenplay.start" | "production.start")
             && let Some(object) = arguments.as_object_mut()
         {
             object.remove("_workspace");

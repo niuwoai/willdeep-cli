@@ -34,6 +34,7 @@ class CreativeSkillStore
     "voice" => "assets",
     "package" => "assets",
     "review" => "review",
+    "productionReview" => "production-review",
     # 候选图质检（0.40.0-rc1，lib/image_qa.rb）：只用这一份，不拼合规红线（它查的是画面对不对，不是内容尺度）。
     "imageQA" => "image-qa",
     # 专家席审稿（0.42.0-rc1，lib/review_panel.rb）：一份技能里是整张专家席；由 ReviewPanel 自己解析，
@@ -104,7 +105,7 @@ class CreativeSkillStore
     end
     # 审核只对照红线，不叠题材偏好：言情技能里「拉扯要到位」之类的话会把
     # 审核员带偏。
-    Array(stage.to_s == "review" ? [] : common).each do |raw|
+    Array(%w[review productionReview].include?(stage.to_s) ? [] : common).each do |raw|
       key = sanitized(raw)
       next unless common_ids.include?(key)
       entry = get(key)

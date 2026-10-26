@@ -21,6 +21,7 @@ pub(crate) async fn schedule_response(
     if !operation.starts_with("schedule.")
         && !operation.starts_with("agent_library.")
         && !operation.starts_with("screenplay.")
+        && !operation.starts_with("production.")
     {
         bail!("not a library or schedule operation");
     }

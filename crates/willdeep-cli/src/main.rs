@@ -46,6 +46,7 @@ mod plugin_capabilities;
 mod plugin_cmd;
 mod plugin_gateway;
 mod plugin_host_requests;
+mod plugin_production;
 mod plugin_roundtable;
 mod plugin_screenplay;
 mod plugin_web;

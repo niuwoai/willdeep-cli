@@ -112,6 +112,9 @@ impl ChatCompletionsProvider {
     }
 
     fn is_auxiliary_or_loopback(&self) -> bool {
+        if super::is_magpie_gateway(&self.config.base_url, &self.config.api_key) {
+            return self.config.allow_unauthenticated;
+        }
         self.config.allow_unauthenticated
             || reqwest::Url::parse(&self.config.base_url)
                 .ok()

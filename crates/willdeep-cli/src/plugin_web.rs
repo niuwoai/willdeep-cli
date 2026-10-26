@@ -38,6 +38,8 @@ const MAX_STORAGE_BYTES: usize = 256 * 1024;
 /// `ai.complete` 的硬上限，与 macOS 宿主同值。页面报什么都夹到这里面。
 const MAX_AI_MESSAGES: usize = 24;
 const MAX_AI_CHARS: usize = 32_000;
+/// Long-form production has a separate grant, byte limit and cumulative meter.
+const MAX_PRODUCTION_AI_CHARS: usize = 64_000;
 const MAX_AI_OUTPUT_TOKENS: u32 = 4_096;
 
 const BRIDGE_SCRIPT: &str = include_str!("plugin_bridge.js");
@@ -156,6 +158,10 @@ pub(crate) fn router(state: Arc<PluginWebState>) -> Router {
         )
         .route("/api/plugins/{plugin}/files", post(upload_plugin_file))
         .route("/plugin-media/{plugin}/{file}", get(serve_plugin_media))
+        .route(
+            "/plugin-production/{workflow}/{selector}",
+            get(production_delivery::serve),
+        )
         .route("/plugin-page/{plugin}/{page}", get(serve_plugin_page))
         .route("/plugin-host/{plugin}/{*path}", get(serve_plugin_asset))
         .with_state(state)
@@ -856,7 +862,9 @@ async fn read_plugin_resource(
 // ---------------------------------------------------------------- 问模型
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProviderView {
+    #[serde(rename = "providerID")]
     provider_id: String,
     display_name: String,
     is_active: bool,
@@ -897,7 +905,13 @@ async fn ai_providers(
                 provider_id: name.clone(),
                 display_name: name.clone(),
                 is_active: file.default_provider.as_deref() == Some(name.as_str()),
-                is_local: base.contains("localhost") || base.contains("127.0.0.1"),
+                is_local: !name.eq_ignore_ascii_case("magpie")
+                    && !willdeep_core::provider::is_magpie_gateway(
+                        &base,
+                        profile.api_key.as_deref().unwrap_or_default(),
+                    )
+                    && reqwest::Url::parse(&base)
+                        .is_ok_and(|url| willdeep_core::provider::is_loopback_base_url(&url)),
                 flash_model: profile.model.clone(),
                 models,
                 // baseURL 与 api_key 一个都不给：插件拿得到的只有能标识和展示的字段。
@@ -1025,6 +1039,7 @@ async fn ai_complete(
         home: &state.home,
         config_path: &state.config_path,
         usage_context: None,
+        production_prompt: false,
         workspaces: state
             .workspaces
             .read()
@@ -1037,6 +1052,30 @@ async fn ai_complete(
     complete(&host, &plugin, request, &permits, Some(&state.ai_streams))
         .await
         .map(Json)
+}
+
+fn validate_prompt_length(
+    request: &AiCompleteRequest,
+    production: bool,
+) -> Result<(), PluginWebError> {
+    let total = request
+        .messages
+        .iter()
+        .map(|message| message.content.chars().count())
+        .sum::<usize>()
+        + request
+            .system
+            .as_deref()
+            .map_or(0, |system| system.chars().count());
+    let limit = if production {
+        MAX_PRODUCTION_AI_CHARS
+    } else {
+        MAX_AI_CHARS
+    };
+    if total > limit {
+        return Err(PluginWebError::BadRequest("tooLong".to_owned()));
+    }
+    Ok(())
 }
 
 /// 问一次模型的本体：页面桥与插件 MCP 反向请求（`willdeep/ai/complete`）共用。
@@ -1055,18 +1094,7 @@ pub(crate) async fn complete(
     if request.messages.len() > MAX_AI_MESSAGES {
         return Err(PluginWebError::BadRequest("tooManyMessages".to_owned()));
     }
-    let total: usize = request
-        .messages
-        .iter()
-        .map(|message| message.content.chars().count())
-        .sum::<usize>()
-        + request
-            .system
-            .as_deref()
-            .map_or(0, |item| item.chars().count());
-    if total > MAX_AI_CHARS {
-        return Err(PluginWebError::BadRequest("tooLong".to_owned()));
-    }
+    validate_prompt_length(&request, host.production_prompt)?;
     let image_count = media_attachment_count(&request.messages)
         .map_err(|code| PluginWebError::BadRequest(code.to_owned()))?;
 
@@ -1105,13 +1133,7 @@ pub(crate) async fn complete(
         .max_output_tokens
         .unwrap_or(1_024)
         .clamp(1, MAX_AI_OUTPUT_TOKENS);
-    // Structured screenplay requests have a finite output reservation. DeepSeek's
-    // default thinking mode can otherwise consume it before returning any JSON.
-    provider_config.non_thinking = host.usage_context.is_some()
-        && provider_config
-            .model
-            .to_ascii_lowercase()
-            .starts_with("deepseek");
+    configure_metered_request(&mut provider_config, host.usage_context.is_some());
     let model_name = provider_config.model.clone();
 
     let provider = build_provider(provider_config)
@@ -1972,9 +1994,77 @@ impl IntoResponse for PluginWebError {
     }
 }
 
+fn configure_metered_request(config: &mut willdeep_core::provider::ProviderConfig, metered: bool) {
+    // Replays before successful headers can still duplicate paid generations.
+    // Only the workflow may authorize and reserve the next attempt.
+    config.allow_request_replay = !metered;
+    config.non_thinking = metered && config.model.to_ascii_lowercase().starts_with("deepseek");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metered_requests_disable_transport_replay_without_changing_normal_requests() {
+        use willdeep_core::provider::{ApiDialect, ProviderConfig, ProviderKind};
+        let mut config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "https://example.invalid",
+            "fixture",
+            "deepseek-test",
+        );
+        configure_metered_request(&mut config, true);
+        assert!(!config.allow_request_replay);
+        assert!(config.non_thinking);
+        config.model = "vision-test".into();
+        configure_metered_request(&mut config, true);
+        assert!(!config.allow_request_replay);
+        assert!(!config.non_thinking);
+        configure_metered_request(&mut config, false);
+        assert!(config.allow_request_replay);
+        assert!(!config.non_thinking);
+    }
+
+    #[test]
+    fn provider_directory_uses_the_plugin_bridge_contract() {
+        let provider = ProviderView {
+            provider_id: "fixture".into(),
+            display_name: "Fixture".into(),
+            is_active: true,
+            is_local: false,
+            models: vec!["text".into(), "vision".into()],
+            flash_model: Some("text".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(provider).unwrap(),
+            json!({
+                "providerID":"fixture", "displayName":"Fixture", "isActive":true,
+                "isLocal":false, "models":["text", "vision"], "flashModel":"text"
+            })
+        );
+    }
+
+    #[test]
+    fn production_prompt_limit_preserves_page_limits_and_counts_system_and_unicode() {
+        let request: AiCompleteRequest =
+            serde_json::from_value(json!({"system":"系".repeat(4_000),
+            "messages":[{"role":"user","content":"剧".repeat(30_000)}],"production_prompt":true}))
+            .unwrap();
+        assert!(validate_prompt_length(&request, false).is_err());
+        assert!(validate_prompt_length(&request, true).is_ok());
+        let at_limit: AiCompleteRequest =
+            serde_json::from_value(json!({"system":"系".repeat(4_000),
+            "messages":[{"role":"user","content":"剧".repeat(60_000)}]}))
+            .unwrap();
+        assert!(validate_prompt_length(&at_limit, true).is_ok());
+        let too_long: AiCompleteRequest =
+            serde_json::from_value(json!({"system":"系".repeat(4_001),
+            "messages":[{"role":"user","content":"剧".repeat(60_000)}]}))
+            .unwrap();
+        assert!(validate_prompt_length(&too_long, true).is_err());
+    }
 
     #[test]
     fn bootstrap_lands_inside_an_existing_head() {
@@ -2237,3 +2327,5 @@ console.log(JSON.stringify({ values: style.values, colorScheme: style.colorSchem
 
 #[cfg(test)]
 mod file_picker_tests;
+
+mod production_delivery;

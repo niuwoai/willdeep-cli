@@ -11,6 +11,7 @@ pub use kernel_event::{
 
 pub mod agent_team;
 pub mod model_catalog;
+pub mod production;
 pub mod schedule;
 pub mod screenplay;
 pub mod turn_queue;
@@ -1300,6 +1301,15 @@ impl RuntimeCapabilities {
 }
 
 pub const SUPPORTED_OPERATIONS: &[&str] = &[
+    "plugin.workflow",
+    "production.start",
+    "production.status",
+    "production.list",
+    "production.resume",
+    "production.cancel",
+    "production.budget",
+    "production.pause",
+    "production.music",
     "screenplay.start",
     "screenplay.status",
     "screenplay.list",

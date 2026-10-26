@@ -210,6 +210,21 @@ async fn dispatch_idempotent(state: &ServerState, request: ApiRequest) -> Unifie
 
 async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
     let result = match request.operation.as_str() {
+        // The nested workflow operation owns idempotency and the drain gate.
+        // Do not hold the outer idempotency lock while the plugin calls back.
+        "plugin.workflow" => super::plugin_workflow::call(&state.home, request.params.clone())
+            .await
+            .map_err(ApiFailure::internal)
+            .and_then(json),
+        operation if operation.starts_with("production.") => super::production::operation(
+            &state.home,
+            request.request_id,
+            operation,
+            request.params.clone(),
+        )
+        .await
+        .map_err(ApiFailure::internal)
+        .and_then(json),
         operation if operation.starts_with("screenplay.") => super::screenplay::operation(
             &state.home,
             request.request_id,
@@ -763,6 +778,12 @@ fn kernel_ignore(state: &ServerState, id: uuid::Uuid) -> ApiResult {
 }
 
 const MUTATING_OPERATIONS: &[&str] = &[
+    "production.start",
+    "production.resume",
+    "production.cancel",
+    "production.budget",
+    "production.pause",
+    "production.music",
     "screenplay.start",
     "screenplay.resume",
     "screenplay.cancel",
@@ -825,6 +846,8 @@ fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
         "turn.submit"
+            | "production.start"
+            | "production.resume"
             | "screenplay.start"
             | "screenplay.resume"
             | "turn.queue.update"

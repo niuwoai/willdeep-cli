@@ -1,6 +1,6 @@
 {
   "name": "willdeep-video-studio",
-  "version": "0.51.0-rc2",
+  "version": "0.53.0-rc9",
   "description": "Turn ideas and reference frames into locally tracked asynchronous AI video jobs, with an optional WillDeep chat model acting as the creative director.",
   "author": {
     "name": "WillDeep Contributors"

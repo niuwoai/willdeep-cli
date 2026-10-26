@@ -11,6 +11,7 @@ require_relative "episode_plan"
 require_relative "clip_trim"
 require_relative "ffmpeg_tool"
 require_relative "caption_overlay"
+require_relative "production_snapshot"
 
 # 分集成片流水线（设计稿 docs/design/episode-compose.md 第 1 节），只在后台合成进程里跑：
 # 补配音 → 背景音乐 → 逐镜合成 → 拼接 → 混背景音乐 → 发布。
@@ -61,14 +62,19 @@ class ComposePipeline
 
     @job = job
     @warnings = []
+    @strict_context = nil
     Dir.mktmpdir("episode-compose-") do |work|
+      if job["production"]
+        raise Failed.new("production_compose_kind_invalid", "自动制作快照只允许本地合成。") unless job["kind"] == "compose"
+        @strict_context = ProductionSnapshot.freeze_inputs(job["production"], work)
+      end
       if job["kind"] == "music"
         generate_music(force: true)
         return finish({})
       end
 
-      dub
-      bgm = prepare_music
+      dub unless @strict_context
+      bgm = @strict_context ? @strict_context["bgmPath"] : prepare_music
       drama, episode, plan = load_plan
       raise Failed.new("compose_blocked", plan["blocking"].map { |entry| entry["message"] }.join(" ")) unless plan["blocking"].empty?
 
@@ -86,6 +92,11 @@ class ComposePipeline
       progress("mix", 93, "统一响度")
       normalized = File.join(work, "normalized.mp4")
       final = normalized if normalize_loudness(final, normalized)
+      if @strict_context
+        info = FFmpegTool.probe(final, env: @env)
+        raise Failed.new("production_compose_output_invalid", "本地合成未产出约定时长的完整音视频。") unless info && info["hasVideo"] && info["hasAudio"] && (info["durationMs"].to_i - @strict_context["expectedDurationMs"]).abs <= 500
+        raise Failed.new("production_compose_warning", "本地合成有未完成项，保留日志并停止交付。") unless @warnings.empty?
+      end
       progress("publish", 95, "写出成片")
       finish(publish(drama, episode, final))
     end
@@ -107,6 +118,7 @@ class ComposePipeline
   end
 
   def load_plan
+    return @strict_context.values_at("drama", "episode", "plan") if @strict_context
     loaded = @dramas.get("id" => @job["dramaID"])
     raise Failed.new("drama_not_found", "这部剧已经不存在了。") unless loaded["ok"]
 
@@ -121,6 +133,7 @@ class ComposePipeline
 
   # 第 1 步：给走「单独配音」的镜头补缺失或过期的台词配音。
   def dub
+    raise Failed.new("production_hidden_generation_denied", "自动制作合成禁止隐式配音。") if @job["production"]
     _, _, plan = load_plan
     targets = plan["shots"].map do |shot|
       ids = shot["lines"].select { |line| %w[missing stale].include?(line["audio"]) }.map { |line| line["lineID"] }
@@ -175,6 +188,7 @@ class ComposePipeline
   end
 
   def generate_music(force:)
+    raise Failed.new("production_hidden_generation_denied", "自动制作合成禁止隐式生成音乐。") if @job["production"]
     settings = @store.settings(@job["dramaID"], @job["episodeID"])
     bgm = settings["bgm"]
     unless @music
@@ -286,7 +300,8 @@ class ComposePipeline
       cursor += line["durationMs"].to_i + (track ? 0 : EpisodePlan::GAP_MS)
     end
     speech_end = lines.empty? ? 0 : cursor
-    total_ms = [clip_ms, speech_end].max
+    total_ms = @strict_context ? shot["duration"].to_i * 1000 : [clip_ms, speech_end].max
+    raise Failed.new("production_dialogue_exceeds_shot", "已审对白不能在约定镜头时长内完整呈现。") if @strict_context && speech_end > total_ms
     total = format("%.3f", total_ms / 1000.0)
     extend_seconds = format("%.3f", [(total_ms - clip_ms) / 1000.0, 0].max)
 
@@ -346,7 +361,7 @@ class ComposePipeline
     total = info["durationMs"].to_f / 1000
     raise Failed.new("concat_failed", "拼接后的成片读不出时长。") unless total.positive?
 
-    settings = @store.settings(@job["dramaID"], @job["episodeID"])
+    settings = @strict_context ? @strict_context["plan"]["settings"] : @store.settings(@job["dramaID"], @job["episodeID"])
     volume = settings["bgm"]["volume"].to_f
     fade_out_start = format("%.3f", [total - BGM_FADE_OUT_SECONDS, 0].max)
     duration = format("%.3f", total)
@@ -389,6 +404,9 @@ class ComposePipeline
   # 第 6 步：写到输出目录，再镜像进媒体根供页面播放。
   def publish(drama, episode, final)
     folder = File.join(@output_directory, safe_segment(drama["title"], "短剧"))
+    if @strict_context
+      folder = File.join(folder, "production-#{@job['production']['workflowID']}", @job["id"])
+    end
     FileUtils.mkdir_p(folder)
     title = safe_segment(episode["title"], "")
     name = format("第%02d集", episode["order"].to_i) + (title.empty? ? "" : "-#{title}") + ".mp4"

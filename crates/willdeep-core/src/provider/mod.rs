@@ -63,6 +63,9 @@ pub struct ProviderConfig {
     /// Explicit non-thinking mode for bounded structured auxiliary requests.
     /// Independent of authentication and local-endpoint trust.
     pub non_thinking: bool,
+    /// A lost response can still represent billable work. Metered workflows
+    /// disable replay so each new attempt receives its own budget reservation.
+    pub allow_request_replay: bool,
     /// Explicitly allow an OpenAI-compatible endpoint to run without an API
     /// key. This is set only for the user-configured auxiliary model; normal
     /// Provider profiles continue to fail closed when credentials are absent.
@@ -88,6 +91,7 @@ impl ProviderConfig {
             request_timeout_secs: 600,
             max_output_tokens: 16_384,
             non_thinking: false,
+            allow_request_replay: true,
             allow_unauthenticated: false,
         }
     }
@@ -126,6 +130,14 @@ pub fn is_loopback_base_url(url: &Url) -> bool {
     }
 }
 
+/// A local Magpie transport forwards requests to remote model services.
+pub fn is_magpie_gateway(base_url: &str, api_key: &str) -> bool {
+    Url::parse(base_url.trim()).is_ok_and(|url| {
+        is_loopback_base_url(&url)
+            && (url.port() == Some(3425) || matches!(api_key, "magpie" | "magpie-willdeep"))
+    })
+}
+
 /// The usage ledger's view of a Provider: a display label, the model and
 /// whether the endpoint is a local model. Carries no credentials or URLs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,22 +146,28 @@ pub struct ProviderIdentity {
     /// profiles (`api.deepseek.com`, `localhost`).
     pub provider: String,
     pub model: String,
-    /// A loopback endpoint, or the explicitly configured unauthenticated
-    /// auxiliary model (Ollama / LM Studio on the LAN).
+    /// Local inference (including explicitly configured LAN auxiliary models),
+    /// excluding known remote gateways such as Magpie.
     pub local: bool,
 }
 
 impl ProviderIdentity {
     pub fn from_config(config: &ProviderConfig) -> Self {
         let url = Url::parse(config.base_url.trim()).ok();
-        let local = config.allow_unauthenticated || url.as_ref().is_some_and(is_loopback_base_url);
-        let provider = match config.kind {
-            ProviderKind::SomeIm => "some.im".to_owned(),
-            ProviderKind::Anthropic => "anthropic".to_owned(),
-            ProviderKind::OpenAiCompatible => url
-                .as_ref()
-                .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
-                .unwrap_or_else(|| "openai-compatible".to_owned()),
+        let magpie = is_magpie_gateway(&config.base_url, &config.api_key);
+        let local = !magpie
+            && (config.allow_unauthenticated || url.as_ref().is_some_and(is_loopback_base_url));
+        let provider = if magpie {
+            "magpie".to_owned()
+        } else {
+            match config.kind {
+                ProviderKind::SomeIm => "some.im".to_owned(),
+                ProviderKind::Anthropic => "anthropic".to_owned(),
+                ProviderKind::OpenAiCompatible => url
+                    .as_ref()
+                    .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+                    .unwrap_or_else(|| "openai-compatible".to_owned()),
+            }
         };
         Self {
             provider,
@@ -383,5 +401,26 @@ mod tests {
             parse_model_list(br#"{"models":[{"name":"local-model"}]}"#).unwrap(),
             ["local-model"]
         );
+    }
+
+    #[test]
+    fn magpie_gateway_has_remote_ledger_identity() {
+        for (base, key) in [
+            ("http://localhost:3425/v1", "fixture"),
+            ("http://127.0.0.1:4567/v1", "magpie"),
+        ] {
+            let config = ProviderConfig::new(
+                ProviderKind::OpenAiCompatible,
+                ApiDialect::ChatCompletions,
+                base,
+                key,
+                "codex/gpt-6.1-sol",
+            );
+            let identity = ProviderIdentity::from_config(&config);
+            assert!(!identity.local);
+            assert_eq!(identity.provider, "magpie");
+        }
+        assert!(!is_magpie_gateway("https://example.com/v1", "magpie"));
+        assert!(!is_magpie_gateway("http://localhost:11434/v1", "ollama"));
     }
 }

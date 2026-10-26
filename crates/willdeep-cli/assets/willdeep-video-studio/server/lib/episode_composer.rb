@@ -10,6 +10,7 @@ require "time"
 require_relative "compose_store"
 require_relative "episode_plan"
 require_relative "ffmpeg_tool"
+require_relative "production_snapshot"
 
 # 「成片」阶段的 MCP 工具（设计稿 docs/design/episode-compose.md 第 3 节）。
 #
@@ -95,7 +96,19 @@ class EpisodeComposer
     { "ok" => true, "settings" => decorate_settings(saved) }
   end
 
-  def compose(arguments)
+  def compose(arguments, production: nil)
+    if production
+      ProductionSnapshot.verify!(production)
+      raise ProductionSnapshot::Error, "production_snapshot_target_invalid" unless production.dig("drama", "id") == arguments["dramaID"] && production.dig("episode", "id") == arguments["episodeID"]
+      existing = @store.jobs.find { |job| job["requestID"] == arguments["requestID"] && job["kind"] == "compose" }
+      if existing
+        raise ProductionSnapshot::Error, "production_compose_request_conflict" unless existing["productionSourceDigest"] == production["sourceDigest"]
+        return { "ok" => true, "job" => present(refresh(existing, persist: true)), "deduplicated" => true }
+      end
+      running = refresh(@store.active_job(arguments["dramaID"], arguments["episodeID"], "compose"), persist: true)
+      return failure("production_episode_already_composing", "本集已有合成任务，先核对原任务。") if running && ComposeStore::ACTIVE_STATES.include?(running["state"])
+      return start("compose", arguments["dramaID"], arguments["episodeID"], arguments["requestID"], production: production)
+    end
     planned = plan(arguments)
     return planned unless planned["ok"]
 
@@ -192,9 +205,10 @@ class EpisodeComposer
     { "ok" => true, "drama" => loaded["drama"], "episode" => episode }
   end
 
-  def start(kind, drama_id, episode_id, request_id)
+  def start(kind, drama_id, episode_id, request_id, production: nil)
     job = @store.create_job("kind" => kind, "dramaID" => drama_id, "episodeID" => episode_id,
-                            "requestID" => request_id.to_s[0, 200], "step" => kind == "music" ? "music" : "dub")
+                            "requestID" => request_id.to_s[0, 200], "step" => kind == "music" ? "music" : "dub",
+                            "production" => production, "productionSourceDigest" => production && production["sourceDigest"])
     spec_path = File.join(File.dirname(@store.path), "compose-work", "#{job['id']}.json")
     FileUtils.mkdir_p(File.dirname(spec_path))
     File.write(spec_path, JSON.generate(@worker_spec.merge("jobID" => job["id"], "composeStore" => @store.path)))
@@ -258,7 +272,7 @@ class EpisodeComposer
   def present(job)
     return nil unless job
 
-    shown = job.reject { |key, _| %w[pid mediaPath].include?(key) }
+    shown = job.reject { |key, _| %w[pid mediaPath production].include?(key) }
     @media_host.rewrite_urls(shown)
   end
 

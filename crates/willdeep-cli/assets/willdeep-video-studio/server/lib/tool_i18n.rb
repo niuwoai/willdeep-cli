@@ -18,6 +18,10 @@ module ToolI18n
   LOCALE = "zh-Hans"
 
   TITLES = {
+    "production.configuration" => "检查自动创作配置", "production.delivery" => "复核成片定稿", "production.file" => "读取定稿文件信息",
+    "production.start" => "启动整部自动创作", "production.list" => "列出自动创作任务", "production.inspect" => "查看整部制作进度",
+    "production.cancel" => "取消后续制作", "production.resume" => "继续自动制作", "production.budget" => "追加制作总额度", "production.step" => "推进自动制作阶段",
+    "production.pause" => "暂停自动制作", "production.music" => "设置配乐制作时机",
     "screenplay.start" => "启动三集自动剧本", "screenplay.list" => "列出自动剧本任务", "screenplay.inspect" => "查看写审改进度",
     "screenplay.cancel" => "取消后续剧本创作", "screenplay.resume" => "继续自动剧本", "screenplay.budget" => "追加剧本总额度", "screenplay.download" => "读取定稿文件",
     "screenplay.step" => "推进自动剧本阶段", "screenplay.status" => "查看自动剧本进度",
@@ -56,6 +60,10 @@ module ToolI18n
   }.freeze
 
   ARGUMENTS = {
+    "inputDigest" => "阶段输入指纹", "input" => "阶段材料", "episodeCount" => "集数", "episodeSeconds" => "每集时长（秒）",
+    "limits" => "累计资源额度", "expected" => "原资源额度", "sourceScreenplayID" => "已验收剧本任务",
+    "maxModelCallsPerEpisode" => "单集模型调用上限", "historicalUsageHold" => "历史用量暂留",
+    "retryUnknownTextRequests" => "已授权重试的未知文字请求", "deferred" => "暂缓配乐", "selector" => "交付文件",
     "workspace" => "工作区", "maxCalls" => "总调用上限", "maxTokens" => "总 token 上限", "expectedCalls" => "原调用上限", "expectedTokens" => "原 token 上限", "format" => "导出格式",
     "workflowID" => "创作任务", "taskID" => "阶段任务", "grant" => "任务授权", "step" => "创作阶段", "expectedBasis" => "输入版本",
     "expectedContent" => "保存前的文字快照", "expectedCanonRev" => "期望账本版本号",
@@ -91,6 +99,7 @@ module ToolI18n
     "qaOverrideBy" => "放行人", "inSeconds" => "入点（秒）", "outSeconds" => "出点（秒）", "clear" => "清除", "reason" => "原因",
     "status" => "状态", "query" => "查询", "draftID" => "草稿", "negativePrompt" => "反向提示词", "seed" => "随机种子",
     "assistantProviderID" => "策划模型服务", "assistantModel" => "策划模型", "reviewProviderID" => "审核模型服务", "uiLocale" => "界面语言",
+    "productionTextReviewUsePlanning" => "文字审核沿用策划模型",
     "videoModel" => "视频模型", "autoDownload" => "自动下载", "autoRemediate" => "自动补救", "remediateMaxRetries" => "补救最多次数",
     "remediateCategories" => "补救的问题类别", "remediateAutoOverride" => "补救不成自动放行", "autoTrim" => "自动裁剪",
     "trimMinSeconds" => "裁剪后至少保留（秒）", "aspects" => "只审这些方面", "panelReview" => "专家席审稿", "panel" => "专家发言记录",

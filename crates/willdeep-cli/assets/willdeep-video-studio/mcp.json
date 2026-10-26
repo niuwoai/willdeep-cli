@@ -14,7 +14,12 @@
         "VIDEO_STUDIO_TTS_API_KEY": "${setting:ttsApiKey}",
         "VIDEO_STUDIO_TTS_MODEL": "${setting:ttsModel}",
         "VIDEO_STUDIO_MUSIC_PROVIDER": "${setting:musicProvider}",
-        "VIDEO_STUDIO_MUSIC_API_BASE": "${setting:musicApiBase}"
+        "VIDEO_STUDIO_MUSIC_API_BASE": "${setting:musicApiBase}",
+        "VIDEO_STUDIO_HOST_MUSIC_API_KEY": "${setting:musicApiKey}",
+        "VIDEO_STUDIO_HOST_AUDIO_REVIEW_API_BASE": "${setting:audioReviewApiBase}",
+        "VIDEO_STUDIO_HOST_AUDIO_REVIEW_API_KEY": "${setting:audioReviewApiKey}",
+        "VIDEO_STUDIO_HOST_AUDIO_REVIEW_MODEL": "${setting:audioReviewModel}",
+        "VIDEO_STUDIO_HOST_STOCK_VOICES": "${setting:productionStockVoices}"
       },
       "startup_timeout_sec": 180
     }

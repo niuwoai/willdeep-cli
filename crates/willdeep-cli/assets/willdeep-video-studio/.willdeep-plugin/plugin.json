@@ -21,6 +21,16 @@
       "entryPath": "ui/dist/index.html"
     }],
     "commands": [
+      {"id":"production.start","titleKey":"command.production.start","handler":{"type":"mcpTool","server":"video-studio","tool":"production.start"}},
+      {"id":"production.list","titleKey":"command.production.list","handler":{"type":"mcpTool","server":"video-studio","tool":"production.list"}},
+      {"id":"production.inspect","titleKey":"command.production.inspect","handler":{"type":"mcpTool","server":"video-studio","tool":"production.inspect"}},
+      {"id":"production.cancel","titleKey":"command.production.cancel","handler":{"type":"mcpTool","server":"video-studio","tool":"production.cancel"}},
+      {"id":"production.resume","titleKey":"command.production.resume","handler":{"type":"mcpTool","server":"video-studio","tool":"production.resume"}},
+      {"id":"production.pause","titleKey":"command.production.pause","handler":{"type":"mcpTool","server":"video-studio","tool":"production.pause"}},
+      {"id":"production.music","titleKey":"command.production.music","handler":{"type":"mcpTool","server":"video-studio","tool":"production.music"}},
+      {"id":"production.budget","titleKey":"command.production.budget","handler":{"type":"mcpTool","server":"video-studio","tool":"production.budget"}},
+      {"id":"production.delivery","titleKey":"command.production.delivery","handler":{"type":"mcpTool","server":"video-studio","tool":"production.delivery"}},
+      {"id":"production.configuration","titleKey":"command.production.configuration","handler":{"type":"mcpTool","server":"video-studio","tool":"production.configuration"}},
       {"id":"screenplay.start","titleKey":"command.screenplay.start","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.start"}},
       {"id":"screenplay.list","titleKey":"command.screenplay.list","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.list"}},
       {"id":"screenplay.inspect","titleKey":"command.screenplay.inspect","handler":{"type":"mcpTool","server":"video-studio","tool":"screenplay.inspect"}},
@@ -263,6 +273,36 @@
         "titleKey": "setting.musicApiBase",
         "descriptionKey": "setting.musicApiBase.description",
         "defaultValue": "http://127.0.0.1:8001"
+      },
+      {
+        "id": "musicApiKey",
+        "type": "secret",
+        "titleKey": "setting.musicApiKey",
+        "descriptionKey": "setting.musicApiKey.description"
+      },
+      {
+        "id": "audioReviewApiBase",
+        "type": "string",
+        "titleKey": "setting.audioReviewApiBase",
+        "descriptionKey": "setting.audioReviewApiBase.description"
+      },
+      {
+        "id": "audioReviewApiKey",
+        "type": "secret",
+        "titleKey": "setting.audioReviewApiKey",
+        "descriptionKey": "setting.audioReviewApiKey.description"
+      },
+      {
+        "id": "audioReviewModel",
+        "type": "string",
+        "titleKey": "setting.audioReviewModel",
+        "descriptionKey": "setting.audioReviewModel.description"
+      },
+      {
+        "id": "productionStockVoices",
+        "type": "string",
+        "titleKey": "setting.productionStockVoices",
+        "descriptionKey": "setting.productionStockVoices.description"
       }
     ]
   },

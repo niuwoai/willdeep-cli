@@ -1,4 +1,16 @@
 {
+  "command.production.configuration": "检查自动创作配置",
+  "setting.musicApiKey": "音乐服务 API Key",
+  "setting.musicApiKey.description": "ACE-Step 服务启用鉴权时填写。空白时沿用进程环境中的音乐服务凭据；只在宿主保存，不返回页面。",
+  "setting.audioReviewApiBase": "声音审核 API 地址",
+  "setting.audioReviewApiBase.description": "支持实际 WAV 输入的 Chat Completions 兼容服务。地址、密钥和模型需完整填写；三项都为空时沿用环境配置。",
+  "setting.audioReviewApiKey": "声音审核 API Key",
+  "setting.audioReviewApiKey.description": "只在宿主保存。部分配置不会借用其他服务的环境密钥；配置检查不提交付费审核。",
+  "setting.audioReviewModel": "声音审核模型",
+  "setting.audioReviewModel.description": "明确填写支持 input_audio/WAV 并返回用量的模型。配置存在不代表已验证其听音能力，不会自动切换文字模型。",
+  "setting.productionStockVoices": "自动创作预设音色 JSON",
+  "setting.productionStockVoices.description": "最多20项的数组，每项含 id、kind=stock、name、provider、voice。voice须来自服务可用预设，provider须匹配当前TTS后端：dashscope、direct（OpenAI兼容）或host。仅匹配后端的项参与自动分配；空白沿用环境配置。不用于声音克隆。",
+  "command.production.delivery": "复核并下载成片定稿",
   "command.drama.write_with_panel": "写作并专家审改",
   "command.download": "下载视频",
   "command.drama.list": "列出短剧",
@@ -115,5 +127,13 @@
   "command.screenplay.cancel": "取消后续创作",
   "command.screenplay.resume": "继续自动剧本",
   "command.screenplay.budget": "追加剧本总额度",
-  "command.screenplay.download": "下载定稿"
+  "command.screenplay.download": "下载定稿",
+  "command.production.start": "启动整部自动创作",
+  "command.production.list": "列出自动创作任务",
+  "command.production.inspect": "查看整部制作进度",
+  "command.production.cancel": "取消后续制作",
+  "command.production.resume": "继续自动制作",
+  "command.production.pause": "安全暂停自动制作",
+  "command.production.music": "调整配乐制作顺序",
+  "command.production.budget": "追加制作总额度"
 }

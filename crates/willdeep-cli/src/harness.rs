@@ -933,11 +933,14 @@ pub(crate) async fn build(
             .config
             .clone()
             .unwrap_or_else(|| home.join("config.toml"));
-        let host_requests = Arc::new(crate::plugin_host_requests::HostRequests::new(
-            home.to_path_buf(),
-            config_path,
-            Arc::new(std::sync::RwLock::new(vec![workspace.clone()])),
-        ));
+        let host_requests = Arc::new(
+            crate::plugin_host_requests::HostRequests::new(
+                home.to_path_buf(),
+                config_path,
+                Arc::new(std::sync::RwLock::new(vec![workspace.clone()])),
+            )
+            .with_usage_context(session_id, workspace.clone()),
+        );
         mcp_registry = mcp_registry.with_lazy_tools(Arc::new(
             willdeep_core::plugin::PluginChatTools::new(home)
                 .with_session(session_id, workspace.clone())
@@ -1108,6 +1111,11 @@ pub(crate) async fn build(
     ));
     let tools = tools.with_board(board.clone(), "parent");
     let mut system_prompt = willdeep_core::prompt::build_system_prompt(&workspace)?;
+    if let Some(guidance) =
+        crate::plugin_production::routing_guidance(home, screenplay_plugins_allowed).await
+    {
+        system_prompt.push_str(&guidance);
+    }
     if let Some(guidance) =
         crate::plugin_screenplay::routing_guidance(home, screenplay_plugins_allowed).await
     {

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require "digest"
 require_relative "media_mirror"
 require_relative "review_record"
 require_relative "reference_package"
@@ -98,6 +99,7 @@ class VideoService
     copy_optional_string(arguments, changes, "assistantModel", 300)
     copy_optional_string(arguments, changes, "reviewProviderID", 300)
     copy_optional_string(arguments, changes, "reviewModel", 300)
+    changes["productionTextReviewUsePlanning"] = boolean(arguments["productionTextReviewUsePlanning"]) if arguments.key?("productionTextReviewUsePlanning")
     changes["uiLocale"] = arguments["uiLocale"].to_s if arguments.key?("uiLocale")
     copy_optional_string(arguments, changes, "videoModel", 160)
     copy_integer(arguments, changes, "duration")
@@ -135,14 +137,14 @@ class VideoService
   # 不再靠参考图路径反查。prompt 没给时用编译出来的 PromptIR。
   # dryRun: true 只返回将要发的请求与展开结果，不建任务、不花钱。
   # requestID：同一个 ID 的重复提交返回上一次建的任务。
-  def generate(arguments)
+  def generate(arguments, production: nil)
     request_id = optional_string(arguments["requestID"])
     if request_id
       existing = @store.jobs.find { |job| job["requestID"] == request_id }
       return { "ok" => true, "job" => with_media_path(existing), "deduplicated" => true } if existing
     end
 
-    linkage = shot_linkage(arguments)
+    linkage = shot_linkage(arguments, stable_track: !production.nil?)
     return linkage if linkage["ok"] == false
 
     merged = arguments.merge({})
@@ -160,6 +162,9 @@ class VideoService
       merged["referenceImagePath"] = linkage["mode"] == "t2va" || linkage["combo"] == "videos" ? nil : (optional_string(merged["referenceImagePath"]) || linkage["referenceImagePath"])
     end
     request = normalized_request(merged)
+    if production && !production["preview"] && production["requestDigest"] != Digest::SHA256.hexdigest(JSON.generate(request))
+      return failure("production_video_request_changed", "The prepared production video request changed; no new video was submitted.")
+    end
     validation = validate_request(request)
     return validation if validation
 
@@ -474,7 +479,7 @@ class VideoService
   end
 
   # 带 shotID 的提交：找到镜头，按 Provider 能力编译参考包。返回失败时原样交回。
-  def shot_linkage(arguments)
+  def shot_linkage(arguments, stable_track: false)
     shot_id = optional_string(arguments["shotID"])
     return { "ok" => true } if shot_id.nil?
     return failure("drama_service_unavailable", "This server was started without the drama store; omit shotID.") unless @dramas
@@ -503,7 +508,21 @@ class VideoService
       track = compiled["audioTrack"]
       if track["needsConcat"]
         # 多句对白拼成一条音轨，落在媒体目录里；dryRun 也拼，好让快照里有文件名。
-        built = WavTools.concat(track["lines"].map { |line| line["filePath"] }, File.join(@dramas.media_root, WavTools.track_name(shot["id"])), gap_ms: ReferencePackage::DIALOGUE_GAP_MS)
+        paths = track["lines"].map { |line| line["filePath"] }
+        if stable_track
+          token = Digest::SHA256.hexdigest(JSON.generate([shot["id"], ReferencePackage::DIALOGUE_GAP_MS, paths.map { |path| Digest::SHA256.file(path).hexdigest }]))
+          stable_path = File.join(@dramas.media_root, "track-#{token[0, 40]}.wav")
+          temporary = File.join(@dramas.media_root, WavTools.track_name(shot["id"]))
+          begin
+            built = WavTools.concat(paths, temporary, gap_ms: ReferencePackage::DIALOGUE_GAP_MS)
+            File.rename(temporary, stable_path)
+            built["filePath"] = stable_path
+          ensure
+            File.unlink(temporary) if File.file?(temporary)
+          end
+        else
+          built = WavTools.concat(paths, File.join(@dramas.media_root, WavTools.track_name(shot["id"])), gap_ms: ReferencePackage::DIALOGUE_GAP_MS)
+        end
         audio["fileName"] = File.basename(built["filePath"])
         audio["filePath"] = built["filePath"]
       end

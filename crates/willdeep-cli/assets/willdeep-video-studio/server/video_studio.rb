@@ -28,6 +28,19 @@ require_relative "lib/review_runner"
 require_relative "lib/script_creation"
 require_relative "lib/screenplay_service"
 require_relative "lib/screenplay_control"
+require_relative "lib/production_service"
+require_relative "lib/production_control"
+require_relative "lib/production_preflight"
+require_relative "lib/production_media"
+require_relative "lib/production_voices"
+require_relative "lib/production_remote"
+require_relative "lib/production_audio_audit"
+require_relative "lib/production_video_audit"
+require_relative "lib/production_composition"
+require_relative "lib/production_film_audit"
+require_relative "lib/production_series_review"
+require_relative "lib/production_delivery"
+require_relative "lib/production_configuration"
 require_relative "lib/image_backend"
 require_relative "lib/voice_generation"
 require_relative "lib/export_manifest"
@@ -46,7 +59,7 @@ require_relative "lib/clip_trim"
 require_relative "lib/image_qa"
 
 # 与插件清单、ui/package.json 一致；scripts/version_test.rb 断言三处相同。
-SERVER_VERSION = "0.51.0-rc2"
+SERVER_VERSION = "0.53.0-rc9"
 
 # 宿主按 pluginID 给每个插件分一个目录，本插件的 pluginID 是
 # willdeep-video-studio，生成的图片也由宿主写进这个目录。任务存档早先落在
@@ -272,6 +285,36 @@ SCRIPT_CREATION = ScriptCreation.new(dramas: DRAMA_SERVICE, stages: STAGE_CONTEX
 SCREENPLAY = ScreenplayService.new(store: DramaStore.new(drama_store_path), host: HOST, settings: -> { STORE.settings },
                                   skills: CREATIVE_SKILLS, export_root: File.join(plugin_data_directory, "screenplay-exports"))
 SCREENPLAY_CONTROL = ScreenplayControl.new(host: HOST, service: SCREENPLAY)
+PRODUCTION_VOICES = ProductionVoices.new(presets: -> { ProductionVoices.configured_presets },
+  provider: -> { TTSBackend.select(host: HOST, media_root: DRAMA_SERVICE.media_root)&.name })
+PRODUCTION_TEXT = ProductionText.new(host: HOST, settings: -> { STORE.settings }, skills: CREATIVE_SKILLS)
+PRODUCTION_AUDIO = ProductionAudioAudit.new(store: DramaStore.new(drama_store_path), media_root: -> { DRAMA_SERVICE.media_root },
+  backend: -> { ProductionAudioBackend.select(media_root: DRAMA_SERVICE.media_root) })
+PRODUCTION_VISUAL = ProductionVisualAudit.new(text: PRODUCTION_TEXT, video_qa: VideoQA.new(media_host: DRAMA_SERVICE.media_host), media_root: -> { DRAMA_SERVICE.media_root })
+PRODUCTION_VIDEO_AUDIT = ProductionVideoAudit.new(videos: SERVICE, video_store: STORE, dramas: DRAMA_SERVICE, visual: PRODUCTION_VISUAL, audio: PRODUCTION_AUDIO, reviews: REVIEW_RUNNER)
+PRODUCTION_REMOTE = ProductionRemote.new(store: DramaStore.new(drama_store_path), videos: SERVICE, video_store: STORE,
+  music_backend: -> { MusicBackend.select(media_root: DRAMA_SERVICE.media_root) }, compose_store: COMPOSE_STORE, video_audit: PRODUCTION_VIDEO_AUDIT, text: PRODUCTION_TEXT)
+PRODUCTION_COMPOSITION = ProductionComposition.new(dramas: DRAMA_SERVICE, videos: SERVICE, composer: EPISODE_COMPOSER, compose_store: COMPOSE_STORE,
+  video_audit: PRODUCTION_VIDEO_AUDIT, audio: PRODUCTION_AUDIO)
+PRODUCTION_FILM = ProductionFilmAudit.new(visual: PRODUCTION_VISUAL, audio: PRODUCTION_AUDIO, composition: PRODUCTION_COMPOSITION)
+PRODUCTION_SERIES = ProductionSeriesReview.new(film: PRODUCTION_FILM, visual: PRODUCTION_VISUAL, audio: PRODUCTION_AUDIO, text: PRODUCTION_TEXT, media_root: -> { DRAMA_SERVICE.media_root })
+PRODUCTION_DELIVERY = ProductionDelivery.new(film: PRODUCTION_FILM, export_root: -> {
+  base = DRAMA_SERVICE.media_host.web? ? File.join(DRAMA_SERVICE.media_host.willdeep_home, "plugin-data", MediaHost::PLUGIN_ID) : plugin_data_directory
+  File.join(base, "production-exports")
+})
+PRODUCTION_MEDIA = ProductionMedia.new(store: DramaStore.new(drama_store_path), dramas: DRAMA_SERVICE, host: HOST,
+  image_backend: -> { ImageBackend.select(host: HOST, media_root: DRAMA_SERVICE.media_root) },
+  speech_backend: -> { TTSBackend.select(host: HOST, media_root: DRAMA_SERVICE.media_root) }, image_qa: IMAGE_QA, remote: PRODUCTION_REMOTE,
+  audio: PRODUCTION_AUDIO, video_audit: PRODUCTION_VIDEO_AUDIT, composition: PRODUCTION_COMPOSITION, film: PRODUCTION_FILM, series: PRODUCTION_SERIES, delivery: PRODUCTION_DELIVERY)
+PRODUCTION_PREFLIGHT = ProductionPreflight.new(host: HOST,
+  image: -> { ImageBackend.select(host: HOST, media_root: DRAMA_SERVICE.media_root) },
+  compose: -> { EPISODE_COMPOSER.capabilities }, video: -> { SERVICE.status },
+  pipeline: -> { PRODUCTION_MEDIA.pipeline_capabilities.merge("stockVoices" => PRODUCTION_VOICES.available?) })
+PRODUCTION = ProductionService.new(store: DramaStore.new(drama_store_path), host: HOST, settings: -> { STORE.settings },
+  skills: CREATIVE_SKILLS, preflight: PRODUCTION_PREFLIGHT, source_service: SCREENPLAY, media: PRODUCTION_MEDIA, voices: PRODUCTION_VOICES, delivery: PRODUCTION_DELIVERY)
+PRODUCTION_CONTROL = ProductionControl.new(host: HOST, service: PRODUCTION)
+PRODUCTION_CONFIGURATION = ProductionConfiguration.new(audio: -> { ProductionAudioBackend.configuration(media_root: DRAMA_SERVICE.media_root) },
+  voices: PRODUCTION_VOICES, compose: -> { EPISODE_COMPOSER.capabilities }, video: -> { SERVICE.status })
 BACKGROUND = BackgroundTools.new(runner: JOB_RUNNER, batch: EPISODE_BATCH, images: IMAGE_GENERATION, voices: VOICE_GENERATION,
                                  reviews: REVIEW_RUNNER, videos: SERVICE, remediator: VIDEO_REMEDIATION, image_qa: IMAGE_QA, script_creation: SCRIPT_CREATION)
 DRAMA_SERVICE.shot_lifecycle_activity = -> { JOB_RUNNER.store.jobs + STORE.jobs + COMPOSE_STORE.jobs }
@@ -1041,6 +1084,7 @@ TOOLS = [
         assistantModel: { type: ["string", "null"] },
         reviewProviderID: { type: ["string", "null"], description: "Review model provider; null follows the assistant routing." },
         reviewModel: { type: ["string", "null"] },
+        productionTextReviewUsePlanning: { type: "boolean", description: "Use the planning model for production text-only audits and old-issue reassessment. Image and video audits retain the review model. Default false." },
         uiLocale: { type: "string", enum: %w[zh-Hans en], description: "Language the plugin page uses; review material labels follow it." },
         videoModel: { type: "string" },
         duration: { type: "integer", minimum: 4, maximum: 15 },
@@ -1090,7 +1134,11 @@ TOOLS = [
     inputSchema: { type: "object", properties: { workflowID: { type: "string" }, taskID: { type: "string" }, grant: { type: "string" }, step: { type: "string", enum: ScreenplayRules::STEPS }, brief: { type: "string" }, expectedBasis: { type: "string" }, episodeOrder: { type: "integer" } }, required: %w[workflowID taskID grant step] } },
   { name: "screenplay.status", description: "Read screenplay-only domain progress, unresolved issues and final export without media production prerequisites.", annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: { workflowID: { type: "string" } }, required: ["workflowID"] } }
-]).concat(ScreenplayControl::TOOLS).concat(ASSET_TOOLS).concat(JOB_TOOLS).concat(QA_TOOLS).concat(IMAGE_QA_TOOLS).map { |tool| READ_ONLY_TOOLS.include?(tool[:name]) ? tool.merge(annotations: { readOnlyHint: true }) : tool }
+]).concat(ScreenplayControl::TOOLS).concat(ProductionControl::TOOLS).concat([
+  { name: "production.configuration", description: "Read sanitized production setup checks, including audio review configuration, usable stock voices and music health. No model probes or generation; does not return credentials, URLs or voice IDs. Configuration is not proof of model capability.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", additionalProperties: false } },
+  { name: "production.step", description: "Execute one host-authorized production node. Runtime grants, frozen inputs, domain revisions, reviews and metering are required; does not launch a second scheduler.",
+    inputSchema: { type: "object", properties: { workflowID: { type: "string" }, taskID: { type: "string" }, grant: { type: "string" }, inputDigest: { type: "string" }, input: { type: "object" } }, required: %w[workflowID taskID grant inputDigest input] } }
+]).concat(ASSET_TOOLS).concat(JOB_TOOLS).concat(QA_TOOLS).concat(IMAGE_QA_TOOLS).map { |tool| READ_ONLY_TOOLS.include?(tool[:name]) ? tool.merge(annotations: { readOnlyHint: true }) : tool }
  .map { |tool| ToolI18n.annotate(tool) }.freeze
 
 def async?(arguments)
@@ -1106,6 +1154,18 @@ end
 
 def dispatch_tool(name, arguments, transport)
   case name
+  when "production.start" then PRODUCTION_CONTROL.call("start", arguments)
+  when "production.configuration" then PRODUCTION_CONFIGURATION.call
+  when "production.list" then PRODUCTION_CONTROL.call("list", arguments)
+  when "production.inspect" then PRODUCTION_CONTROL.call("inspect", arguments)
+  when "production.cancel" then PRODUCTION_CONTROL.call("cancel", arguments)
+  when "production.resume" then PRODUCTION_CONTROL.call("resume", arguments)
+  when "production.pause" then PRODUCTION_CONTROL.call("pause", arguments)
+  when "production.music" then PRODUCTION_CONTROL.call("music", arguments)
+  when "production.budget" then PRODUCTION_CONTROL.call("budget", arguments)
+  when "production.delivery" then PRODUCTION_CONTROL.call("delivery", arguments)
+  when "production.file" then PRODUCTION_CONTROL.call("file", arguments)
+  when "production.step" then PRODUCTION.step(arguments)
   when "screenplay.start" then SCREENPLAY_CONTROL.call("start", arguments)
   when "screenplay.list" then SCREENPLAY_CONTROL.call("list", arguments)
   when "screenplay.inspect" then SCREENPLAY_CONTROL.call("inspect", arguments)

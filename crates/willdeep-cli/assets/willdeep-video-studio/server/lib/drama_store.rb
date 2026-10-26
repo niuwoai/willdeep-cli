@@ -35,13 +35,14 @@ class DramaStore
     list.find { |drama| drama["requestID"] == token }
   end
 
-  def create(plan, request_id: "", screenplay: nil, screenplay_task: nil)
+  def create(plan, request_id: "", screenplay: nil, screenplay_task: nil, production: nil)
     with_lock do
       current = data
-      if screenplay
+      if screenplay || production
         existing = current["dramas"].find { |entry| entry["requestID"] == request_id }
         next existing if existing
       end
+      raise Unavailable, "production_drama_limit_reached" if production && current["dramas"].length >= MAX_DRAMAS
       now = Time.now.utc.iso8601
       drama = {
         "id" => SecureRandom.uuid,
@@ -76,6 +77,13 @@ class DramaStore
       if screenplay
         drama["screenplay"] = screenplay
         drama["screenplay"]["creationTaskID"] = screenplay_task
+      end
+      if production
+        drama["production"] = production
+        drama["characters"].each do |character|
+          source = Array(plan["characters"]).find { |entry| entry["name"] == character["name"] }
+          character["visualPrompt"] = text(source && source["visualPrompt"], 4_000, "")
+        end
       end
       current["dramas"].unshift(drama)
       current["dramas"] = current["dramas"].first(MAX_DRAMAS)

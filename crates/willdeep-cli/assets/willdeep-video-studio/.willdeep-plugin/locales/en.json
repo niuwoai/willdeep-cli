@@ -1,4 +1,16 @@
 {
+  "command.production.configuration": "Check production setup",
+  "setting.musicApiKey": "Music service API key",
+  "setting.musicApiKey.description": "For authenticated ACE-Step services. Blank uses the process environment credential. Stored by the host and never returned to the page.",
+  "setting.audioReviewApiBase": "Audio review API base",
+  "setting.audioReviewApiBase.description": "Chat Completions compatible service accepting actual WAV input. Configure base, key and model together. All three blank uses the environment configuration.",
+  "setting.audioReviewApiKey": "Audio review API key",
+  "setting.audioReviewApiKey.description": "Stored by the host. Partial configuration never borrows another service's environment key. Setup checks do not submit paid reviews.",
+  "setting.audioReviewModel": "Audio review model",
+  "setting.audioReviewModel.description": "Explicit model supporting input_audio/WAV and reporting usage. Configuration does not prove listening capability; no automatic text-model substitution.",
+  "setting.productionStockVoices": "Production stock voices JSON",
+  "setting.productionStockVoices.description": "Array of up to 20 presets, each with id, kind=stock, name, provider and voice. Use provider-issued stock voice IDs. Only entries matching the current TTS backend (dashscope, direct for OpenAI-compatible, or host) are assigned. Blank uses the environment catalog. No voice cloning.",
+  "command.production.delivery": "Verify final film downloads",
   "command.drama.write_with_panel": "Write and revise with experts",
   "command.download": "Download video",
   "command.drama.list": "List short dramas",
@@ -115,5 +127,13 @@
   "command.screenplay.cancel": "Cancel screenplay",
   "command.screenplay.resume": "Resume screenplay",
   "command.screenplay.budget": "Increase screenplay budget",
-  "command.screenplay.download": "Download final screenplay"
+  "command.screenplay.download": "Download final screenplay",
+  "command.production.start": "Start full production",
+  "command.production.list": "List production tasks",
+  "command.production.inspect": "Inspect production progress",
+  "command.production.cancel": "Cancel future production",
+  "command.production.resume": "Resume production",
+  "command.production.pause": "Pause production safely",
+  "command.production.music": "Change music scheduling",
+  "command.production.budget": "Increase production budget"
 }
