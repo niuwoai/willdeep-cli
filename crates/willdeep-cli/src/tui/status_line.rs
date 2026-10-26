@@ -2,10 +2,11 @@ use super::*;
 
 impl App {
     fn take_status_notice(&mut self) -> Option<String> {
-        if let Some((held_notice, deadline)) = &self.notice_hold {
-            if self.notice.as_deref() == Some(held_notice.as_str()) && Instant::now() < *deadline {
-                return self.notice.clone();
-            }
+        if let Some((held_notice, deadline)) = &self.notice_hold
+            && self.notice.as_deref() == Some(held_notice.as_str())
+            && Instant::now() < *deadline
+        {
+            return self.notice.clone();
         }
         self.notice_hold = None;
         self.notice.take()
