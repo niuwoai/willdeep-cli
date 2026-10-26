@@ -525,7 +525,12 @@ pub(crate) fn toml_string(value: &str) -> String {
     toml::Value::String(value.to_owned()).to_string()
 }
 
-pub(crate) fn patch_key(contents: &str, section: Option<&str>, key: &str, value: Option<String>) -> String {
+pub(crate) fn patch_key(
+    contents: &str,
+    section: Option<&str>,
+    key: &str,
+    value: Option<String>,
+) -> String {
     let trailing_newline = contents.ends_with('\n');
     let mut lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
     let range = section.and_then(|name| section_range(&lines, name));

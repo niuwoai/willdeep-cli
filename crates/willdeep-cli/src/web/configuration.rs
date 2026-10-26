@@ -114,17 +114,25 @@ pub(super) async fn execute_config_tool(
         name => name,
     };
     if !CONFIG_TOOLS.contains(&tool) {
-        return Err(WebError::bad_request("unknown configuration command".to_owned()));
+        return Err(WebError::bad_request(
+            "unknown configuration command".to_owned(),
+        ));
     }
     let registry = state
         .config_tools
         .get_or_try_init(|| async { connect_config_tools(&state).await.map(Arc::new) })
         .await
-        .map_err(|error| WebError::from_anyhow(anyhow::anyhow!("configuration service unavailable: {error}")))?;
+        .map_err(|error| {
+            WebError::from_anyhow(anyhow::anyhow!(
+                "configuration service unavailable: {error}"
+            ))
+        })?;
     let result = registry
         .call_tool_on("willdeep-config", tool, request.arguments)
         .await
-        .map_err(|error| WebError::from_anyhow(anyhow::anyhow!("configuration command failed: {error}")))?;
+        .map_err(|error| {
+            WebError::from_anyhow(anyhow::anyhow!("configuration command failed: {error}"))
+        })?;
     Ok(Json(result))
 }
 
@@ -134,15 +142,24 @@ async fn connect_config_tools(state: &WebState) -> anyhow::Result<willdeep_core:
         .join("plugin-data/willdeep-config/runtime")
         .join(crate::config_plugin::VERSION);
     let server_path = package_root.join("server/config_server.rb");
-    anyhow::ensure!(server_path.is_file(), "bundled configuration service is missing");
+    anyhow::ensure!(
+        server_path.is_file(),
+        "bundled configuration service is missing"
+    );
     let ruby = find_ruby().context("Ruby is required by the bundled configuration service")?;
     let backup_dir = state.home.join("plugin-data/willdeep-config/backups");
     let server = willdeep_core::McpServerConfig {
         command: Some(ruby.display().to_string()),
         args: vec![server_path.display().to_string()],
         env: [
-            ("WD_CONFIG_FILE".to_owned(), state.config_path.display().to_string()),
-            ("WD_CONFIG_BACKUP_DIR".to_owned(), backup_dir.display().to_string()),
+            (
+                "WD_CONFIG_FILE".to_owned(),
+                state.config_path.display().to_string(),
+            ),
+            (
+                "WD_CONFIG_BACKUP_DIR".to_owned(),
+                backup_dir.display().to_string(),
+            ),
         ]
         .into_iter()
         .collect(),
@@ -150,24 +167,30 @@ async fn connect_config_tools(state: &WebState) -> anyhow::Result<willdeep_core:
         enabled: true,
         ..willdeep_core::McpServerConfig::default()
     };
-    let servers = [("willdeep-config".to_owned(), server)].into_iter().collect();
+    let servers = [("willdeep-config".to_owned(), server)]
+        .into_iter()
+        .collect();
     willdeep_core::McpRegistry::connect_in(Some(&state.home), &servers)
         .await
         .map_err(anyhow::Error::new)
 }
 
 fn find_ruby() -> Option<std::path::PathBuf> {
-    ["/usr/bin/ruby", "/usr/local/bin/ruby", "/opt/homebrew/bin/ruby"]
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .find(|path| path.is_file())
-        .or_else(|| {
-            std::env::var_os("PATH").and_then(|paths| {
-                std::env::split_paths(&paths)
-                    .map(|directory| directory.join("ruby"))
-                    .find(|path| path.is_file())
-            })
+    [
+        "/usr/bin/ruby",
+        "/usr/local/bin/ruby",
+        "/opt/homebrew/bin/ruby",
+    ]
+    .into_iter()
+    .map(std::path::PathBuf::from)
+    .find(|path| path.is_file())
+    .or_else(|| {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|directory| directory.join("ruby"))
+                .find(|path| path.is_file())
         })
+    })
 }
 
 #[derive(Serialize)]
@@ -204,7 +227,9 @@ pub(super) struct ProviderUpdate {
 pub(super) async fn list(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<ProviderSettings>, WebError> {
-    read_settings(&state.config_path).map(Json).map_err(WebError::from_anyhow)
+    read_settings(&state.config_path)
+        .map(Json)
+        .map_err(WebError::from_anyhow)
 }
 
 pub(super) async fn update(
@@ -219,13 +244,20 @@ pub(super) async fn update(
     let _guard = state.settings_write_lock.lock().await;
     save_provider(&state.config_path, update)
         .map_err(|error| {
-            if error.to_string().contains(crate::model_routing::STALE_CONFIG_MESSAGE) {
+            if error
+                .to_string()
+                .contains(crate::model_routing::STALE_CONFIG_MESSAGE)
+            {
                 WebError::conflict(error.to_string())
             } else {
                 WebError::bad_request(error.to_string())
             }
         })
-        .and_then(|_| read_settings(&state.config_path).map(Json).map_err(WebError::from_anyhow))
+        .and_then(|_| {
+            read_settings(&state.config_path)
+                .map(Json)
+                .map_err(WebError::from_anyhow)
+        })
 }
 
 fn read_settings(path: &std::path::Path) -> anyhow::Result<ProviderSettings> {
@@ -244,12 +276,21 @@ fn read_settings(path: &std::path::Path) -> anyhow::Result<ProviderSettings> {
         .iter()
         .map(|(id, profile)| ProviderSummary {
             id: id.clone(),
-            provider: profile.provider.clone().unwrap_or_else(|| "openai-compatible".to_owned()),
-            api: profile.api.clone().unwrap_or_else(|| "chat-completions".to_owned()),
+            provider: profile
+                .provider
+                .clone()
+                .unwrap_or_else(|| "openai-compatible".to_owned()),
+            api: profile
+                .api
+                .clone()
+                .unwrap_or_else(|| "chat-completions".to_owned()),
             api_base: profile.api_base.clone().unwrap_or_default(),
             model: profile.model.clone().unwrap_or_default(),
             api_key_configured: profile.api_key.as_ref().is_some_and(|key| !key.is_empty())
-                || profile.api_key_env.as_ref().is_some_and(|key| !key.is_empty()),
+                || profile
+                    .api_key_env
+                    .as_ref()
+                    .is_some_and(|key| !key.is_empty()),
         })
         .collect();
     Ok(ProviderSettings {
@@ -273,10 +314,16 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
     if !safe_provider_id(&update.id) {
         bail!("provider id must use ASCII letters, numbers, '_' or '-' (1 to 64 characters)");
     }
-    if !matches!(update.provider.as_str(), "openai-compatible" | "anthropic" | "some-im") {
+    if !matches!(
+        update.provider.as_str(),
+        "openai-compatible" | "anthropic" | "some-im"
+    ) {
         bail!("unsupported provider type");
     }
-    if !matches!(update.api.as_str(), "chat-completions" | "anthropic-messages" | "responses") {
+    if !matches!(
+        update.api.as_str(),
+        "chat-completions" | "anthropic-messages" | "responses"
+    ) {
         bail!("unsupported API protocol");
     }
     let base = reqwest::Url::parse(update.api_base.trim()).context("invalid API Base URL")?;
@@ -292,7 +339,9 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
         bail!("API key must be at most 8192 bytes and contain no control characters");
     }
     if (update.provider == "anthropic") != (update.api == "anthropic-messages") {
-        bail!("Anthropic providers require Anthropic Messages; other provider types require a compatible API protocol");
+        bail!(
+            "Anthropic providers require Anthropic Messages; other provider types require a compatible API protocol"
+        );
     }
     let model = update.model.trim();
     if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
@@ -305,8 +354,14 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
     };
     let existing = old.providers.get(&update.id);
     let has_existing_auth = existing.is_some_and(|profile| {
-        profile.api_key.as_ref().is_some_and(|value| !value.is_empty())
-            || profile.api_key_env.as_ref().is_some_and(|value| !value.is_empty())
+        profile
+            .api_key
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+            || profile
+                .api_key_env
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
     });
     if key.is_empty() && !has_existing_auth {
         bail!("API key is required for a new provider");
@@ -314,12 +369,7 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
 
     let mut patched = current;
     if old.version.is_none() {
-        patched = crate::model_routing::patch_key(
-            &patched,
-            None,
-            "version",
-            Some("1".to_owned()),
-        );
+        patched = crate::model_routing::patch_key(&patched, None, "version", Some("1".to_owned()));
     }
     let section = format!("providers.{}", update.id);
     for (name, value) in [
@@ -336,12 +386,7 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
         );
     }
     if !key.is_empty() {
-        patched = crate::model_routing::patch_key(
-            &patched,
-            Some(&section),
-            "api_key_env",
-            None,
-        );
+        patched = crate::model_routing::patch_key(&patched, Some(&section), "api_key_env", None);
         patched = crate::model_routing::patch_key(
             &patched,
             Some(&section),
