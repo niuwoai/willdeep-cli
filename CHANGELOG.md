@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.120.0-rc1] - 2026-10-26
+
+### Added
+- TUI 思维链折叠为 Thought 耗时摘要，结束后可点击展开完整内容；流式期间不再反复排版思维链全文。
+- 新增 `/thinking [show|hide]` 与 `[ui].show_thinking`，可控制思考内容显示；此项不改变模型的推理能力。
+- 新增 `willdeep web` 复用或启动 Runtime Web App 并打开浏览器，以及 `willdeep qr` 直接显示手机配对二维码。
+- 新会话欢迎页显示 WillDeep 大字样与会话 ID；退出 TUI 时打印可复制的恢复命令，并支持 `willdeep -s <session-id>` / `--session <session-id>`。
+
 ## [0.119.0-rc5] - 2026-10-26
 
 ### Fixed
