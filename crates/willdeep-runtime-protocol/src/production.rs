@@ -332,7 +332,7 @@ mod tests {
             source_screenplay_id: None,
             max_model_calls_per_episode: None,
             origin_session_id: None,
-            workspace: PathBuf::from("/workspace"),
+            workspace: std::env::temp_dir().join("production-protocol-fixture"),
             spec: SeriesSpec::default(),
             limits: [
                 (ProductionUnit::ModelCalls, 1_000),

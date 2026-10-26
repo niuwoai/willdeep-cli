@@ -362,8 +362,11 @@ mod tests {
                 .await
                 .unwrap();
         }
+        tokio::io::AsyncWriteExt::flush(&mut target).await.unwrap();
         drop(target);
-        assert_eq!(std::fs::read(&destination).unwrap(), expected);
+        let downloaded = std::fs::read(&destination).unwrap();
+        assert_eq!(downloaded.len(), expected.len());
+        assert_eq!(Sha256::digest(&downloaded), Sha256::digest(&expected));
         let response = client
             .get(format!("http://{address}/fixture"))
             .header(header::RANGE, "bytes=65530-65545")
