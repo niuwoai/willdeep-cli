@@ -46,7 +46,11 @@ fn command_menu_discovers_webapp() {
 
 #[test]
 fn welcome_mentions_workspace_without_entering_model_history() {
-    let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::ZhCn);
+    let welcome = welcome_message(
+        std::path::Path::new("/tmp/willdeep-rs"),
+        uuid::Uuid::nil(),
+        Language::ZhCn,
+    );
     assert!(welcome.starts_with("WillDeep:"));
     assert!(welcome.contains("willdeep-rs"));
 }
@@ -55,7 +59,11 @@ fn welcome_mentions_workspace_without_entering_model_history() {
 #[test]
 fn welcome_points_at_help_and_model_in_every_language() {
     for language in [Language::ZhCn, Language::En, Language::Ja] {
-        let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), language);
+        let welcome = welcome_message(
+            std::path::Path::new("/tmp/willdeep-rs"),
+            uuid::Uuid::nil(),
+            language,
+        );
         assert!(welcome.contains("/help"), "{language:?} must mention /help");
         assert!(
             welcome.contains("/model"),
