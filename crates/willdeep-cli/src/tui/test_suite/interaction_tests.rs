@@ -51,7 +51,8 @@ fn welcome_mentions_workspace_without_entering_model_history() {
         uuid::Uuid::nil(),
         Language::ZhCn,
     );
-    assert!(welcome.starts_with("WillDeep:"));
+    assert!(welcome.starts_with("█   █"));
+    assert!(welcome.contains("WillDeep:"));
     assert!(welcome.contains("willdeep-rs"));
 }
 

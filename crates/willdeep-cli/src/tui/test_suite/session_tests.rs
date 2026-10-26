@@ -674,7 +674,10 @@ fn runtime_reasoning_delta_shows_as_transient_thought_only() {
     )];
     runtime_ui::apply_runtime_events(&mut app, events, &mut session, &store).unwrap();
     assert!(app.transient_thought.is_none());
-    assert_eq!(app.transcript, vec!["· … read_file"]);
+    assert_eq!(app.transcript.len(), 2);
+    assert!(app.transcript[0].starts_with("· + Thought:"));
+    assert!(app.transcript[0].contains("先看日志，再改"));
+    assert_eq!(app.transcript[1], "· … read_file");
     std::fs::remove_dir_all(root).unwrap();
 }
 

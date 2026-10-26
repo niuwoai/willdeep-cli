@@ -843,13 +843,15 @@ impl App {
             return Vec::new();
         }
         let query = query.to_ascii_lowercase();
-        command_candidates(self.language)
+        let mut matches: Vec<_> = command_candidates(self.language)
             .into_iter()
             .filter(|(command, description)| {
                 command[1..].starts_with(&query)
                     || description.to_ascii_lowercase().contains(&query)
             })
-            .collect()
+            .collect();
+        matches.sort_by_key(|(command, _)| !command[1..].starts_with(&query));
+        matches
     }
     pub(super) fn handle_command_key(&mut self, key: KeyEvent) -> bool {
         if self.command_menu_dismissed || self.input.marker_query('/').is_none() {
