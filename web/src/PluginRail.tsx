@@ -9,14 +9,14 @@
 
 import { Box, Flex, Portal, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
-import { FlaskConical, Library, Users } from "lucide-react";
+import { FlaskConical, Library, Settings2, Users } from "lucide-react";
 import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
 import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
 
-export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
+export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
 type Props = {
   entries: Array<{ plugin: PluginView; destination: PluginDestinationView }>;
@@ -111,6 +111,7 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
         </Box>
       )}
       </div>
+      {button("configuration", messages.configEntry, <Settings2 size={20} />, selection.kind === "configuration", () => onSelect({ kind: "configuration" }))}
       {button(
         "center",
         messages.pluginCenter,

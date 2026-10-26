@@ -1,8 +1,9 @@
 //! Pinned first-party configuration plugin; installation never grants permissions.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rust_embed::RustEmbed;
+#[cfg(test)]
 use willdeep_core::plugin::{PluginHost, installed_versions};
 
 pub(crate) const ID: &str = "willdeep-config";
@@ -12,6 +13,7 @@ pub(crate) const VERSION: &str = "0.6.0-rc2";
 #[folder = "assets/willdeep-config"]
 struct ConfigPluginAssets;
 
+#[cfg(test)]
 pub(crate) async fn ensure_installed(home: &Path) -> Result<()> {
     if installed_versions(&PluginHost::shared_root(home), ID)
         .iter()
@@ -30,6 +32,16 @@ pub(crate) async fn ensure_installed(home: &Path) -> Result<()> {
         eprintln!("warning: config_plugin_staging_cleanup_failed error={error}");
     }
     result
+}
+
+/// Prepare the configuration service for the built-in Web settings page without
+/// registering or enabling it as a user-facing plugin.
+pub(crate) fn prepare_builtin_runtime(home: &Path) -> Result<PathBuf> {
+    let root = home
+        .join("plugin-data/willdeep-config/runtime")
+        .join(VERSION);
+    write_package(&root)?;
+    Ok(root)
 }
 
 fn write_package(directory: &Path) -> Result<()> {

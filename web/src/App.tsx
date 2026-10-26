@@ -10,7 +10,8 @@ import { SidebarSettings } from "./SidebarSettings";
 import { QuickSettings } from "./QuickSettings";
 import { applyThemeMode, storedThemeMode, useResolvedColorScheme, type ThemeMode } from "./theme";
 import { PluginCenter } from "./PluginCenter";
-import { ProviderSetup, type SetupStatus } from "./ProviderSetup";
+import { ConfigurationSettings } from "./ConfigurationSettings";
+import { BuiltinConfigurationWorkspace } from "./BuiltinConfigurationWorkspace";
 import { PluginPage } from "./PluginPage";
 import { ScheduleManager } from "./ScheduleManager";
 import { ConversationSchedules } from "./ConversationSchedules";
@@ -135,6 +136,7 @@ function railFromHash(): RailSelection {
   if (hash === "agents") return { kind: "agents" };
   if (hash === "agent-experiments") return { kind: "agent-experiments" };
   if (hash === "schedules") return { kind: "schedules" };
+  if (hash === "configuration") return { kind: "configuration" };
   if (hash === "plugins") return { kind: "center" };
   const plugin = hash.startsWith("plugin/") ? hash.slice("plugin/".length) : "";
   return plugin ? { kind: "plugin", qualifiedId: decodeURIComponent(plugin) } : { kind: "conversation" };
@@ -144,6 +146,7 @@ function hashForRail(selection: RailSelection): string {
   if (selection.kind === "agents") return "#agents";
   if (selection.kind === "agent-experiments") return "#agent-experiments";
   if (selection.kind === "schedules") return "#schedules";
+  if (selection.kind === "configuration") return "#configuration";
   if (selection.kind === "center") return "#plugins";
   if (selection.kind === "plugin") return `#plugin/${encodeURIComponent(selection.qualifiedId)}`;
   return "";
@@ -316,16 +319,16 @@ export function App() {
   const trackAgentDirty = useCallback((dirty: boolean) => {agentDirtyRef.current = dirty;}, []);
   const [pluginSelectedItem, setPluginSelectedItem] = useState<string | null>(null);
   const [pluginReloadToken, setPluginReloadToken] = useState(0);
-  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [setupLoadFailed, setSetupLoadFailed] = useState(false);
   const [showSetup, setShowSetup] = useState(new URLSearchParams(window.location.search).get("setup") === "1");
   const checkSetup = useCallback(async () => {
-    const value = await json<SetupStatus>("/api/setup");
-    setSetupStatus(value);
+    const value = await json<{ ready: boolean }>("/api/setup");
     setSetupLoadFailed(false);
     return value;
   }, []);
-  useEffect(() => { checkSetup().catch(() => setSetupLoadFailed(true)); }, [checkSetup]);
+  useEffect(() => {
+    checkSetup().then((value) => { if (!value.ready) setShowSetup(true); }).catch(() => setSetupLoadFailed(true));
+  }, [checkSetup]);
   const finishSetup = () => {
     setShowSetup(false);
     setRail({ kind: "conversation" });
@@ -1008,7 +1011,11 @@ export function App() {
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
   const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
-  const setupGuide = showSetup ? <ProviderSetup status={setupStatus} loadFailed={setupLoadFailed} plugin={plugins.find((plugin) => plugin.id === "willdeep-config")} messages={t} onCheck={checkSetup} onDone={finishSetup} onOpen={(destination) => { if (destination) navigateToDestination(destination); else setRail({ kind: "center" }); }} /> : null;
+  const setupGuide = showSetup ? <ConfigurationSettings compact messages={t} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null;
+
+  if (rail.kind === "configuration") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<Box as="main" flex="1" minW="0" overflow="hidden"><BuiltinConfigurationWorkspace messages={t} locale={language} colorScheme={colorScheme} /></Box>{pluginOverlays}</Flex></Box>;
+  }
 
   if (rail.kind === "agents" || rail.kind === "agent-experiments") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<AgentLibrary mode={rail.kind === "agents" ? "library" : "experiments"} onDirty={trackAgentDirty} onNavigate={mode => setRail({kind:mode === "library" ? "agents" : "agent-experiments"})} language={language} onTrial={(text) => { setPrompt(text); setRail({ kind: "conversation" }); }} />{pluginOverlays}</Flex></Box>;

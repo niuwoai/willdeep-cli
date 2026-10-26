@@ -517,15 +517,15 @@ fn default_context_window(id: &str) -> u64 {
     }
 }
 
-fn revision(contents: &str) -> String {
+pub(crate) fn revision(contents: &str) -> String {
     format!("{:08x}", crc32fast::hash(contents.as_bytes()))
 }
 
-fn toml_string(value: &str) -> String {
+pub(crate) fn toml_string(value: &str) -> String {
     toml::Value::String(value.to_owned()).to_string()
 }
 
-fn patch_key(contents: &str, section: Option<&str>, key: &str, value: Option<String>) -> String {
+pub(crate) fn patch_key(contents: &str, section: Option<&str>, key: &str, value: Option<String>) -> String {
     let trailing_newline = contents.ends_with('\n');
     let mut lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
     let range = section.and_then(|name| section_range(&lines, name));

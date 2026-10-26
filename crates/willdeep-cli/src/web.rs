@@ -23,6 +23,7 @@ use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 
 mod agent_library;
 mod composer;
+mod configuration;
 mod peer_sessions;
 mod runtime_chat;
 mod schedules;
@@ -67,6 +68,7 @@ struct WebState {
     harness_slots: Arc<Semaphore>,
     settings_writable: bool,
     settings_write_lock: Mutex<()>,
+    config_tools: tokio::sync::OnceCell<Arc<willdeep_core::McpRegistry>>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -355,11 +357,11 @@ async fn serve_internal(
 ) -> Result<()> {
     crate::favorites_plugin::ensure_installed(&config.home).await?;
     crate::video_studio_plugin::ensure_installed(&config.home).await?;
-    if config.open_setup && config.listen.ip().is_loopback() {
+    if config.listen.ip().is_loopback() {
         if let Some(parent) = config.config_path.parent() {
-            std::fs::create_dir_all(parent).context("create setup configuration directory")?;
+            std::fs::create_dir_all(parent).context("create Web configuration directory")?;
         }
-        crate::config_plugin::ensure_installed(&config.home).await?;
+        crate::config_plugin::prepare_builtin_runtime(&config.home)?;
     }
     if shutdown.is_none() {
         for workspace in &config.workspaces {
@@ -375,11 +377,21 @@ async fn serve_internal(
         harness_slots: Arc::new(Semaphore::new(2)),
         settings_writable: config.listen.ip().is_loopback(),
         settings_write_lock: Mutex::new(()),
+        config_tools: tokio::sync::OnceCell::new(),
     });
     let app = Router::new()
         .merge(schedules::routes())
         .route("/health", get(health))
         .route("/api/setup", get(setup::setup_status))
+        .route(
+            "/api/settings/providers",
+            get(configuration::list).put(configuration::update),
+        )
+        .route("/api/settings/config-page", get(configuration::page))
+        .route(
+            "/api/settings/config-command",
+            post(configuration::execute_config_tool),
+        )
         .route("/api/chat/stream", post(chat_stream))
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{id}/peers", get(peer_sessions::peers))
@@ -520,7 +532,7 @@ async fn serve_internal(
     let address = listener.local_addr()?;
     println!("WillDeep Web: http://{address}");
     if config.open_setup && address.ip().is_loopback() {
-        let url = format!("http://{address}/?setup=1#plugins");
+        let url = format!("http://{address}/?setup=1#configuration");
         println!("Provider setup: {url}");
         if config.setup_started.is_none()
             && std::io::stdin().is_terminal()
@@ -2836,6 +2848,7 @@ mod tests {
             harness_slots: Arc::new(Semaphore::new(1)),
             settings_writable: false,
             settings_write_lock: Mutex::new(()),
+            config_tools: tokio::sync::OnceCell::new(),
         });
         (state, root)
     }

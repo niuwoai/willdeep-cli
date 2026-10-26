@@ -1,0 +1,13 @@
+.builtin-configuration-workspace {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.builtin-configuration-workspace iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-page);
+}

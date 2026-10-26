@@ -41,14 +41,14 @@ it("keeps overflow plugin destinations selectable outside the scrolling rail", (
 it("keeps the same navigation structure and order across every top-level page", () => {
   const props = { entries: [], messages: messages["zh-CN"], schedulesLabel: "定时任务", brandLabel: "WillDeep",
     agentsLabel: "智能体库", experimentsLabel: "RSI 实验", agentsGroupLabel: "智能体", onSelect: vi.fn() };
-  const selections: RailSelection[] = [{kind:"conversation"}, {kind:"schedules"}, {kind:"agents"}, {kind:"agent-experiments"}, {kind:"center"}];
+  const selections: RailSelection[] = [{kind:"conversation"}, {kind:"schedules"}, {kind:"agents"}, {kind:"agent-experiments"}, {kind:"configuration"}, {kind:"center"}];
   const view = render(<ChakraProvider value={defaultSystem}><PluginRail {...props} selection={selections[0]} /></ChakraProvider>);
   for (const selection of selections) {
     view.rerender(<ChakraProvider value={defaultSystem}><PluginRail {...props} selection={selection} /></ChakraProvider>);
     const nav = screen.getByRole("navigation");
     expect(nav.classList.contains("plugin-rail")).toBe(true);
     expect(nav.classList.contains("agent-workspace-rail")).toBe(false);
-    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["对话", "定时任务", "智能体库", "RSI 实验", "插件中心"]);
+    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["对话", "定时任务", "智能体库", "RSI 实验", messages["zh-CN"].configEntry, "插件中心"]);
     expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
     expect(screen.getByRole("img", {name:"WillDeep"})).toBeTruthy();
   }

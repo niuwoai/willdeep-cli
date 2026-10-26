@@ -48,7 +48,7 @@ pub async fn run(explicit_path: Option<&Path>) -> Result<bool> {
     }
     println!("WillDeep 首次设置");
     println!(
-        "1) 打开 WebApp，在 willdeep-config 中配置 Provider（推荐）\n2) some.im 浏览器登录\n3) 在终端填写 API Base / API Key"
+        "1) 打开 WebApp，在内置配置页添加 Provider 和模型（推荐）\n2) some.im 浏览器登录\n3) 在终端填写 API Base / API Key"
     );
     let choice = prompt("选择 [1]: ")?;
     if choice.trim().is_empty() || choice.trim() == "1" {
@@ -124,11 +124,11 @@ pub(crate) async fn configure_in_browser(cli: &crate::Cli) -> Result<SetupServer
         .context("等待配置 WebApp 启动超时")?
         .context("配置 WebApp 启动失败，请使用 --web 查看错误")?;
     println!(
-        "尚未配置 Provider。willdeep-config 已随 CLI 内置。\n请打开 WebApp 配置地址：http://{address}/?setup=1#plugins\n配置插件地址：http://{address}/?setup=1#plugin/willdeep-config%3Aconfig\n首次使用请先在插件中心批准并启用 willdeep-config，然后添加 Provider、模型并设置默认 Provider。\n配置文件：{}\n终端正在等待保存配置，完成后自动继续；按 Ctrl+C 取消。",
+        "尚未配置 Provider。WebApp 已提供内置快速设置。\n请打开配置地址：http://{address}/?setup=1#configuration\n添加 Provider、模型并设置默认模型后，终端会自动继续。\n配置文件：{}\n终端正在等待保存配置，完成后自动继续；按 Ctrl+C 取消。",
         config_path.display()
     );
     println!(
-        "插件需要 /usr/bin/ruby；缺少 Ruby 或无法使用浏览器时，可取消后运行 willdeep --onboarding，选择 3 在终端配置。"
+        "完整配置工作台的校验、备份和模型列表服务需要 Ruby；快速模型设置不依赖 Ruby。缺少 Ruby 或无法使用浏览器时，可取消后运行 willdeep --onboarding，选择 3 在终端配置。"
     );
     loop {
         if crate::web::setup_ready(&config_path, cli.profile.as_deref()) {
