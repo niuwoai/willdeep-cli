@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { Messages } from "./i18n";
-import { formatStepElapsed, type RunStep } from "./runActivity";
+import { formatStepElapsed, type RunStep, type ThoughtRecord } from "./runActivity";
 
 function StepRow({ step, expanded = false }: { step: RunStep; expanded?: boolean }) {
   return <div className={`run-step ${step.status}${expanded ? " run-step-expanded" : ""}`}>
@@ -8,6 +8,22 @@ function StepRow({ step, expanded = false }: { step: RunStep; expanded?: boolean
     <span className="run-step-label">{step.label}</span>
     {step.detail && <span className="run-step-detail" title={step.detail}>{step.detail}</span>}
     {step.elapsedMs !== undefined && <span className="run-step-elapsed">{formatStepElapsed(step.elapsedMs)}</span>}
+  </div>;
+}
+
+/** 思考默认只显示耗时，点击才展开正文。 */
+export function ThoughtCard({ thought, now = Date.now(), messages: t }: { thought: ThoughtRecord; now?: number; messages: Messages }) {
+  const [expanded, setExpanded] = useState(false);
+  const elapsed = thought.elapsedMs ?? Math.max(0, now - thought.startedAt);
+  const live = thought.elapsedMs === undefined;
+  const label = `${t.thought} ${formatStepElapsed(elapsed)}`;
+  return <div className={`thought-card${expanded ? " thought-expanded" : ""}${live ? " thought-live" : ""}`}>
+    <button type="button" className="thought-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      <span>{expanded ? "−" : "+"}</span>
+      <span>{label}</span>
+      <span className="thought-hint">{expanded ? t.thoughtCollapse : t.thoughtExpand}</span>
+    </button>
+    {expanded && <pre className="thought-body">{thought.text.trim() || t.thinking}</pre>}
   </div>;
 }
 

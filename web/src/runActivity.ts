@@ -2,13 +2,16 @@ type ActivityStep = { label: string; status: "active" | "pending" | "done" | "fa
 
 export type RunStep = ActivityStep & { id: string; detail?: string; startedAt: number; elapsedMs?: number };
 
+/** 思考卡片：折叠时只显示耗时，点击才展开正文。 */
+export type ThoughtRecord = { text: string; startedAt: number; elapsedMs?: number };
+
 /** 只合并显示数据，原始消息的 ID 和步骤仍用于接收运行时更新。正文和思考是分组边界。 */
-export function groupActivityMessages<T extends { role: string; content: string; steps?: RunStep[]; thinking?: string }>(messages: T[]): T[] {
+export function groupActivityMessages<T extends { role: string; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord }>(messages: T[]): T[] {
   const grouped: T[] = [];
   for (const message of messages) {
     const previous = grouped[grouped.length - 1];
-    if (message.role === "activity" && previous?.role === "activity" && !previous.content && !previous.thinking) {
-      grouped[grouped.length - 1] = { ...previous, content: message.content, thinking: message.thinking,
+    if (message.role === "activity" && previous?.role === "activity" && !previous.content && !previous.thinking && !previous.thought) {
+      grouped[grouped.length - 1] = { ...previous, content: message.content, thinking: message.thinking, thought: message.thought,
         steps: [...(previous.steps ?? []), ...(message.steps ?? [])] };
     } else grouped.push(message);
   }

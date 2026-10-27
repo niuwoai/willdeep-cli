@@ -19,21 +19,19 @@ pub struct ToolTrace {
 
 /// 工具调用的一句话摘要：够回答「执行了什么」，又不把路径和凭据带出去。
 ///
-/// - 命令只取前三个词。整条命令行常带路径，而「路径不下发浏览器」是既有承诺；
-/// - 看起来像路径的词换成 `…`，包括 `/abs`、`~/x` 与 `--flag=/abs` 这种；
+/// - 命令保留词序，看起来像路径的词换成 `…`，包括 `/abs`、`~/x` 与 `--flag=/abs`；
 /// - 按命令审批同一套规则打码，再按**字符**截断——用户完全可能把 token 粘进
-///   命令行。
+///   命令行。不能只留前几个词，否则 `for u in …` 这种循环看起来像半截命令。
 ///
 /// 认不出的工具返回 `None`：宁可不显示，也不要把一段不知道含什么的参数漏出去。
 pub fn tool_detail(name: &str, arguments: &str) -> Option<String> {
-    const MAX_DETAIL_CHARS: usize = 60;
+    const MAX_DETAIL_CHARS: usize = 96;
     let parsed = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
     let detail = match name {
         "run_command" => {
             let command = parsed.get("command")?.as_str()?;
             command
                 .split_whitespace()
-                .take(3)
                 .map(elide_path_like)
                 .collect::<Vec<_>>()
                 .join(" ")

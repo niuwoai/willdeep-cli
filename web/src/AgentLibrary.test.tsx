@@ -123,3 +123,17 @@ it("does not display late history from a previous account",async()=>{
   await new Promise(resolve=>setTimeout(resolve,0));
   expect(screen.queryByText(/private-account-a-history/)).toBeNull();
 });
+
+it("hosted loopback still loads the some.im catalog",async()=>{
+  vi.stubGlobal("fetch",vi.fn(async(url:string)=>{
+    const operation=url.split("/").at(-1)!;
+    if(operation==="list") return {ok:false,json:async()=>({error:"agent library requires a loopback Web server"})};
+    if(operation==="catalog") return {ok:true,json:async()=>({items:[{definition_id:"official/reviewer",version:"1.0.0",name:{"zh-Hans":"官方审稿","en":"Official reviewer"},purpose:"Review a pull request",base_role:"reviewer",sha256:"c".repeat(64),discovery:{category:"review",rank:1,summary:{"zh-Hans":"审阅补丁","en":"Review a patch"},example:{"zh-Hans":"审这个 PR","en":"Review this PR"}}}]})};
+    return {ok:false,json:async()=>({error:"unexpected "+operation})};
+  }));
+  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><AgentLibrary language="zh-CN" onTrial={vi.fn()}/></QueryClientProvider>);
+  await screen.findByText("官方审稿");
+  expect(screen.getByText("审阅补丁")).toBeTruthy();
+  expect(screen.getByText("当前站点不能安装智能体。精选目录仍可浏览；安装请在本机 WillDeep 中操作。")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

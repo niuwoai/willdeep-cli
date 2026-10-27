@@ -27,6 +27,7 @@ import { replayToolState } from "./replayTools";
 import { queueText } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
 import "./chatWorkspace.css";
+import "./runCard.css";
 import { RuntimeQueue, IndependentTasks } from "./RuntimeQueue";
 import { queueRequest } from "./runtimeQueueApi";
 import { RuntimeHumanGates } from "./RuntimeHumanGates";
@@ -35,8 +36,8 @@ import { AttachmentManager } from "./AttachmentManager";
 import { attachmentText } from "./attachmentMessages";
 import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
-import { formatStepElapsed, groupActivityMessages, needsActivityStrip, turnDividerText, type RunStep } from "./runActivity";
-import { RunCard } from "./RunCard";
+import { formatStepElapsed, groupActivityMessages, needsActivityStrip, turnDividerText, type RunStep, type ThoughtRecord } from "./runActivity";
+import { RunCard, ThoughtCard } from "./RunCard";
 import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
@@ -65,13 +66,7 @@ function settleActiveSteps(steps: RunStep[], now: number): RunStep[] {
     ? { ...step, status: "done" as const, elapsedMs: step.elapsedMs ?? now - step.startedAt }
     : step);
 }
-type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider"; content: string; steps?: RunStep[]; thinking?: string; attachmentReference?: string; plan?: Plan; details?: string[] };
-/// 思维链只留尾巴：像滚动字幕，看得到它此刻在想什么就够了，正文一来就隐藏。
-const THINKING_TAIL_CHARS = 240;
-function thinkingTail(text: string): string {
-  const compact = text.replace(/\s+/g, " ");
-  return compact.length > THINKING_TAIL_CHARS ? `…${compact.slice(-THINKING_TAIL_CHARS)}` : compact;
-}
+type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[] };
 function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   const chat: ChatMessage[] = [];
   detail.messages.forEach((message, index) => {
@@ -541,7 +536,14 @@ export function App() {
     const currentTurnId = event.turn_id || activeTurnRef.current;
     if (currentSessionId && currentTurnId) saveRuntimeCursor(currentSessionId, currentTurnId, event.cursor);
     if (event.type === "completed" || event.type === "partial") {
-      setChat((current) => current.map((message) => message.id === runId ? { ...message, content: "", thinking: "" } : message));
+      setChat((current) => current.map((message) => {
+        if (message.id !== runId) return message;
+        const now = Date.now();
+        const thought = message.thought && !message.thought.elapsedMs
+          ? { ...message.thought, elapsedMs: now - message.thought.startedAt }
+          : message.thought;
+        return { ...message, content: "", thinking: "", thought };
+      }));
       setActiveRuntimeSessionId("");
       activeSessionRef.current = null;
       activeTurnRef.current = null;
@@ -550,16 +552,35 @@ export function App() {
     if (event.type === "error") return { terminal: true as const, error: event.message || t.requestFailed };
     if (event.type === "assistant_text_delta") {
       // 正文一开始，思维链尾巴就隐藏。
-      setChat((current) => current.map((message) => message.id === runId ? { ...message, content: message.content + (event.text || ""), thinking: "" } : message));
+      setChat((current) => current.map((message) => {
+        if (message.id !== runId) return message;
+        const now = Date.now();
+        const thought = message.thought && !message.thought.elapsedMs
+          ? { ...message.thought, elapsedMs: now - message.thought.startedAt }
+          : message.thought;
+        return { ...message, content: message.content + (event.text || ""), thinking: "", thought };
+      }));
     }
     else if (event.type === "reasoning_delta") {
       setActivity(t.thinking);
-      setChat((current) => current.map((message) => message.id === runId ? { ...message, thinking: thinkingTail(`${message.thinking ?? ""}${event.text || ""}`) } : message));
+      setChat((current) => current.map((message) => {
+        if (message.id !== runId) return message;
+        const now = Date.now();
+        const thought = message.thought ?? { text: "", startedAt: now };
+        return { ...message, thinking: "", thought: { ...thought, text: `${thought.text}${event.text || ""}` } };
+      }));
     }
     else if (["provider_retry_wait", "subagent_retry_wait", "provider_retry_started", "subagent_retry_started", "runtime_handoff_wait"].includes(event.type)) setActivity(event.label || t.thinking);
     else if (event.type === "thought") setActivity(event.text || t.thinking);
     else if (event.type === "turn_started") {
-      setChat((current) => current.map((message) => message.id === runId ? { ...message, content: "", thinking: "" } : message));
+      setChat((current) => current.map((message) => {
+        if (message.id !== runId) return message;
+        const now = Date.now();
+        const thought = message.thought && !message.thought.elapsedMs
+          ? { ...message.thought, elapsedMs: now - message.thought.startedAt }
+          : message.thought;
+        return { ...message, content: "", thinking: "", thought };
+      }));
       setActivity(event.label || t.thinking);
       const stepId = event.id || `turn-${event.cursor ?? nextId("turn")}`;
       updateRun(runId, (steps) => {
@@ -570,7 +591,14 @@ export function App() {
     }
     else if (event.type === "tool_requested") {
       setActivity(event.label || t.toolRunning);
-      setChat((current) => current.map((message) => message.id === runId ? { ...message, thinking: "" } : message));
+      setChat((current) => current.map((message) => {
+        if (message.id !== runId) return message;
+        const now = Date.now();
+        const thought = message.thought && !message.thought.elapsedMs
+          ? { ...message.thought, elapsedMs: now - message.thought.startedAt }
+          : message.thought;
+        return { ...message, thinking: "", thought };
+      }));
       const stepId = event.id || `tool-${event.cursor ?? nextId("tool")}`;
       updateRun(runId, (steps) => steps.some((step) => step.id === stepId) ? steps : [...steps, { id: stepId, label: event.label || t.toolRunning, detail: event.detail, status: "active", startedAt: Date.now() }]);
     }
@@ -1160,7 +1188,7 @@ export function App() {
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{groupActivityMessages(chat).map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">{groupActivityMessages(chat).map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={runtimeActivity.gates.filter((gate) => runtimeActivity.tasks.some((task) => task.id === gate.task_id && task.session_id === sessionId))} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />

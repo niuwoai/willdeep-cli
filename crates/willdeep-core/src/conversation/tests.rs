@@ -36,7 +36,7 @@ fn tool_only_assistant_messages_project_their_calls_with_results() {
         vec![
             ToolTrace {
                 name: "run_command".into(),
-                detail: Some("cargo test -p".into()),
+                detail: Some("cargo test -p x --manifest-path …".into()),
                 completed: true,
             },
             ToolTrace {

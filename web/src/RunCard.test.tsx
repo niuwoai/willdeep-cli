@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunCard } from "./RunCard";
+import { RunCard, ThoughtCard } from "./RunCard";
 import { messages } from "./i18n";
 import { groupActivityMessages, type RunStep } from "./runActivity";
 
@@ -58,6 +58,21 @@ describe("连续工具调用", () => {
     expect(screen.getByText("2 次工具调用")).toBeTruthy();
     expect(screen.getByRole("button", { name: t.collapse }).getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTitle("command 2 argument 2")).toBeTruthy();
+  });
+
+  it("思考默认只显示耗时，点击才展开正文", () => {
+    render(<ThoughtCard thought={{ text: "private reasoning", startedAt: 0, elapsedMs: 1800 }} messages={t} />);
+    expect(screen.getByText("思考 1.8s")).toBeTruthy();
+    expect(screen.queryByText("private reasoning")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /思考 1.8s/ }));
+    expect(screen.getByText("private reasoning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /思考 1.8s/ }));
+    expect(screen.queryByText("private reasoning")).toBeNull();
+  });
+
+  it("不足一秒时显示毫秒", () => {
+    render(<ThoughtCard thought={{ text: "fast", startedAt: 0, elapsedMs: 240 }} messages={t} />);
+    expect(screen.getByText("思考 240ms")).toBeTruthy();
   });
 
   for (const [language, dictionary] of Object.entries(messages)) it(`${language} 的摘要和操作来自字典`, () => {

@@ -2692,14 +2692,13 @@ mod tests {
             r#"{"command":"cargo test --manifest-path /Users/rocky/secret/Cargo.toml"}"#,
         )
         .expect("run_command detail");
-        // 只取前三个词,路径根本没机会进来。
-        assert_eq!(detail, "cargo test --manifest-path");
+        assert_eq!(detail, "cargo test --manifest-path …");
         assert!(
             !detail.contains("/Users/rocky"),
             "路径不下发浏览器: {detail}"
         );
 
-        // 路径出现在前三个词里时才需要那道省略。
+        // 路径出现在任意位置都要省略，不能只看前几个词。
         let flagged = tool_detail(
             "run_command",
             r#"{"command":"cargo --manifest-path=/Users/rocky/Cargo.toml test"}"#,
@@ -2711,6 +2710,14 @@ mod tests {
         let bare =
             tool_detail("run_command", r#"{"command":"ls /Users/rocky/private"}"#).expect("detail");
         assert!(!bare.contains("/Users"), "{bare}");
+
+        // 循环头不能只剩前三个词，否则界面上像半截命令。
+        let loop_command = tool_detail(
+            "run_command",
+            r#"{"command":"for u in a b; do echo $u; done"}"#,
+        )
+        .expect("loop detail");
+        assert_eq!(loop_command, "for u in a b; do echo $u; done");
 
         // 凭据按命令审批同一套规则打码。
         let secret = tool_detail(

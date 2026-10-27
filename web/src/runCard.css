@@ -10,6 +10,12 @@
 .run-step-expanded .run-step-label { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .run-card .run-step-expanded .run-step-detail { flex-basis: 100%; padding-left: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .run-card .run-step-expanded .run-step-elapsed { margin-left: 15px; }
+.thought-card { color: var(--text-ghost); font-size: 12px; padding: 2px 2px 4px; }
+.thought-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 2px 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.thought-toggle:hover { color: var(--text-dim); }
+.thought-hint { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.thought-live .thought-toggle span:nth-child(2) { color: var(--text-dim); }
+.thought-body { margin: 6px 0 0; padding: 10px 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-page); border-radius: 8px; color: var(--text-dim); font: inherit; font-size: 12px; }
 .chat-viewport, .session-list, .run-details { scrollbar-width: auto; scrollbar-color: auto; scrollbar-gutter: stable; }
 .chat-viewport::-webkit-scrollbar, .session-list::-webkit-scrollbar, .run-details::-webkit-scrollbar { width: 14px; }
 .chat-viewport::-webkit-scrollbar-track, .session-list::-webkit-scrollbar-track, .run-details::-webkit-scrollbar-track { background: transparent; }

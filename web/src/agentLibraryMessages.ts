@@ -1,6 +1,7 @@
 import type { Language } from "./i18n";
 const text = {
   catalogUnavailable: ["目录响应不可用，请刷新重试。", "The catalog response is unavailable. Refresh to retry.", "カタログを取得できません。更新して再試行してください。"],
+  catalogLoopback: ["当前站点不能安装智能体。精选目录仍可浏览；安装请在本机 WillDeep 中操作。", "This hosted site can browse the official catalog but cannot install agents. Install them in local WillDeep.", "このサイトでは公式カタログの閲覧のみ可能です。導入はローカルの WillDeep で行ってください。"],
   category: ["分类", "Category", "カテゴリ"],
   allCategories: ["全部分类", "All categories", "すべてのカテゴリ"],
   implementation: ["开发修复", "Implementation", "開発・修正"],
