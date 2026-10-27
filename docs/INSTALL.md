@@ -1,5 +1,23 @@
 # 安装与构建
 
+## 用 npm 安装（macOS、Linux、Windows）
+
+需要 Node.js 18 或更新版本。安装器按包版本下载对应的 GitHub Release，校验 SHA256 后安装单个可执行文件：
+
+```bash
+npm install -g willdeep@rc
+willdeep --version
+```
+
+当前版本使用 npm 的 `rc` 发布标签。正式版发布后，`npm install -g willdeep` 会安装 `latest`。升级与卸载：
+
+```bash
+npm install -g willdeep@rc
+npm uninstall -g willdeep
+```
+
+已运行的 Runtime 不会因安装新 CLI 自动替换，升级后执行 `willdeep daemon upgrade`。
+
 ## 用 Homebrew 安装（macOS，推荐）
 
 WillDeep 通过第三方 Homebrew Tap `niuwoai/tap` 发布（非 Homebrew 官方收录），安装的是 macOS 通用二进制（Apple Silicon 与 Intel 均可用），不需要本地 Rust 或 Node 环境：

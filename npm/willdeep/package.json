@@ -1,0 +1,31 @@
+{
+  "name": "willdeep",
+  "version": "0.123.0-rc3",
+  "description": "Install the WillDeep CLI from its verified GitHub Release.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/niuwoai/willdeep-cli.git",
+    "directory": "npm/willdeep"
+  },
+  "homepage": "https://github.com/niuwoai/willdeep-cli",
+  "bugs": "https://github.com/niuwoai/willdeep-cli/issues",
+  "bin": {
+    "willdeep": "bin/willdeep.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "install-manifest.json"
+  ],
+  "scripts": {
+    "postinstall": "node lib/install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "rc"
+  }
+}
