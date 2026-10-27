@@ -22,11 +22,18 @@ willdeep --workspace . "检查当前仓库并修复测试"
 
 ## 30 秒上手
 
-**1. 装二进制。** [Releases](https://github.com/niuwoai/willdeep-rs/releases/latest) 提供四个平台的发行包，解开就是一个 `willdeep`：
+**1. 装二进制。** 有 Node.js 18 或更新版本时：
+
+```bash
+npm install -g willdeep@rc
+willdeep --version
+```
+
+安装器下载与 npm 包版本对应的 [GitHub Release](https://github.com/niuwoai/willdeep-cli/releases)，校验 SHA256 后把单个 `willdeep` 放进 npm 的 bin 目录。也可以直接取发行包：
 
 ```bash
 # macOS（Universal，Apple Silicon 与 Intel 通用）
-curl -fsSL https://github.com/niuwoai/willdeep-rs/releases/latest/download/willdeep-macos-universal.tar.gz | tar -xz
+curl -fsSL https://github.com/niuwoai/willdeep-cli/releases/latest/download/willdeep-macos-universal.tar.gz | tar -xz
 sudo install -m 0755 willdeep /usr/local/bin/willdeep
 willdeep --version
 ```

@@ -72,6 +72,10 @@ jobs:
       - name: SDK crates package
         if: runner.os == 'Linux'
         run: cargo publish --dry-run --locked -p willdeep-runtime-protocol -p willdeep-runtime-client
+      - name: npm package contract
+        if: runner.os == 'Linux'
+        working-directory: npm/willdeep
+        run: ruby ../../scripts/test/npm_willdeep_test.rb && npm pack --dry-run --json --pack-destination "${RUNNER_TEMP}"
 
   linux-architectures:
     name: Linux ${{ matrix.target }}
