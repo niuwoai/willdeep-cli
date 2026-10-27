@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.123.0-rc5] - 2026-10-27
+
+### Fixed
+- npm 发布接受 GitHub Release 跳到 `release-assets.githubusercontent.com` 默认端口 443 的重定向；显式非默认端口仍然拒绝。
+
 ## [0.123.0-rc4] - 2026-10-27
 
 ### Fixed

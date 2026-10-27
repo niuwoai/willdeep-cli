@@ -27,17 +27,18 @@ ASSETS = {
 MAX_BYTES = 128 * 1024 * 1024
 TRUSTED_HOSTS = %w[github.com release-assets.githubusercontent.com].freeze
 
-options = { dry_run: false }
-OptionParser.new do |parser|
-  parser.on('--version VERSION') { |value| options[:version] = value }
-  parser.on('--dry-run') { options[:dry_run] = true }
-end.parse!
-abort '缺少 --version' unless options[:version]
-
 def read_json(path)
   JSON.parse(File.read(path))
 rescue JSON::ParserError, Errno::ENOENT => error
   abort "#{path} 无法读取：#{error.message}"
+end
+
+def trusted_redirect?(target)
+  # URI 会把 https 的默认端口填成 443。GitHub Release 现在就跳到带 :443 的地址，
+  # 只认 port.nil? 会把这条合法重定向拒掉。显式非默认端口仍然拒绝。
+  target.scheme == 'https' &&
+    target.port == URI::HTTPS.default_port &&
+    TRUSTED_HOSTS.include?(target.host)
 end
 
 def follow(uri, limit = 5)
@@ -51,7 +52,7 @@ def follow(uri, limit = 5)
     raise '空的重定向' if location.nil? || location.empty?
 
     target = URI.join(uri, location)
-    raise "不受信任的重定向：#{target.host}" unless target.scheme == 'https' && target.port.nil? && TRUSTED_HOSTS.include?(target.host)
+    raise "不受信任的重定向：#{target.host}" unless trusted_redirect?(target)
     follow(target, limit - 1)
   end
 end
@@ -86,27 +87,39 @@ def verify_assets(manifest)
   assets
 end
 
-package = read_json(File.join(PACKAGE, 'package.json'))
-manifest = read_json(File.join(PACKAGE, 'install-manifest.json'))
-abort '版本不一致' unless [package['version'], manifest['version'], manifest['tag'].to_s.delete_prefix('v')].uniq == [options[:version]]
-abort '仓库不一致' unless manifest['repository'] == 'niuwoai/willdeep-cli'
-manifest['assets'] = verify_assets(manifest)
-unless options[:dry_run]
-  File.write(File.join(PACKAGE, 'install-manifest.json'), JSON.pretty_generate(manifest) + "\n")
+def publish(version, dry_run: false)
+  package = read_json(File.join(PACKAGE, 'package.json'))
+  manifest = read_json(File.join(PACKAGE, 'install-manifest.json'))
+  abort '版本不一致' unless [package['version'], manifest['version'], manifest['tag'].to_s.delete_prefix('v')].uniq == [version]
+  abort '仓库不一致' unless manifest['repository'] == 'niuwoai/willdeep-cli'
+  manifest['assets'] = verify_assets(manifest)
+  unless dry_run
+    File.write(File.join(PACKAGE, 'install-manifest.json'), JSON.pretty_generate(manifest) + "\n")
+  end
+
+  if dry_run
+    warn 'dry-run：已核验四个产物，不发布。'
+    return
+  end
+
+  view_out, view_err, view_status = Open3.capture3('npm', 'view', "willdeep@#{version}", 'version')
+  if view_status.success? && view_out.strip == version
+    warn "willdeep@#{version} 已存在，跳过发布。"
+    return
+  end
+  abort "无法确认 npm 版本：#{view_err}" unless view_err.include?('E404')
+
+  _out, err, status = Open3.capture3('npm', 'publish', '--access', 'public', '--tag', 'rc', chdir: PACKAGE)
+  abort "npm publish 失败：#{err}" unless status.success?
+  warn "已发布 willdeep@#{version}（tag rc）"
 end
 
-if options[:dry_run]
-  warn 'dry-run：已核验四个产物，不发布。'
-  exit 0
+if $PROGRAM_NAME == __FILE__
+  options = { dry_run: false }
+  OptionParser.new do |parser|
+    parser.on('--version VERSION') { |value| options[:version] = value }
+    parser.on('--dry-run') { options[:dry_run] = true }
+  end.parse!
+  abort '缺少 --version' unless options[:version]
+  publish(options[:version], dry_run: options[:dry_run])
 end
-
-view_out, view_err, view_status = Open3.capture3('npm', 'view', "willdeep@#{options[:version]}", 'version')
-if view_status.success? && view_out.strip == options[:version]
-  warn "willdeep@#{options[:version]} 已存在，跳过发布。"
-  exit 0
-end
-abort "无法确认 npm 版本：#{view_err}" unless view_err.include?('E404')
-
-_out, err, status = Open3.capture3('npm', 'publish', '--access', 'public', '--tag', 'rc', chdir: PACKAGE)
-abort "npm publish 失败：#{err}" unless status.success?
-warn "已发布 willdeep@#{options[:version]}（tag rc）"
