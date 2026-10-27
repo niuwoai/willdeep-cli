@@ -1,5 +1,9 @@
 # CLI Harness 架构
 
+## 分发
+
+npm 包 `willdeep` 不携带 Rust 二进制。`npm install` 读取 `npm/willdeep/install-manifest.json` 中与包版本绑定的 GitHub Release，下载当前平台的一个发行包，校验 SHA256 并确认包内只有预期的可执行文件，然后写入 npm 包的 `bin/`。命令入口 `bin/willdeep.js` 只转发参数和标准流。macOS Universal 同时覆盖 x64 与 arm64；Linux 区分 amd64/arm64；Windows 目前只覆盖 x64。Homebrew 继续直接安装 macOS Universal 发行包，两条路径都消费同一个 GitHub Release。
+
 ## 边界
 
 当前实现以同一个 Agent Runtime 支撑一次性 CLI、TUI 与内嵌 Web 模式。子 Agent、后台任务与常驻 Runtime Daemon 均已接入，任务在 Daemon 进程内执行并可跨客户端断连恢复（见 [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)）；Computer Use 与 Browser Use 仍在后续范围内。

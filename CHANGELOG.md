@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.123.0-rc2] - 2026-10-27
+
+### Added
+- 新增 npm 包 `willdeep`：安装时下载对应版本的 GitHub Release，校验 SHA256 后安装 macOS、Linux amd64/arm64 或 Windows x64 二进制；预发布版本使用 `rc` 标签。
+
 ## [0.123.0-rc1] - 2026-10-27
 
 ### Added
