@@ -273,7 +273,7 @@ mod tests {
             vec![
                 "You: go",
                 "WillDeep: Looking around first.",
-                "· ✓ run_command · cargo test -p",
+                "· ✓ run_command · cargo test -p x",
                 "· … read_file",
                 "WillDeep: done",
             ]

@@ -255,7 +255,11 @@ mod tool_row_style_tests {
             80,
             Language::En,
         );
-        let rows = text.lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let rows = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(rows[0], "WillDeep: done");
         assert!(rows[1].contains("turn finished"), "{rows:?}");
         assert_eq!(rows[2], "You: next");
@@ -962,9 +966,7 @@ pub(super) fn divider_without_your_turn(row: &str, language: Language) -> String
         return row.to_owned();
     };
     let label = your_turn_label(language);
-    let body = body
-        .strip_suffix(&format!(" · {label}"))
-        .unwrap_or(body);
+    let body = body.strip_suffix(&format!(" · {label}")).unwrap_or(body);
     format!("{TURN_DIVIDER_PREFIX}{body} ──")
 }
 
@@ -977,7 +979,10 @@ pub(super) fn with_your_turn(row: &str, language: Language) -> String {
     else {
         return row;
     };
-    format!("{TURN_DIVIDER_PREFIX}{body} · {} ──", your_turn_label(language))
+    format!(
+        "{TURN_DIVIDER_PREFIX}{body} · {} ──",
+        your_turn_label(language)
+    )
 }
 
 /// 进聊天区之前把终端会「吃掉」的字符处理掉：制表符按 4 列展开，换行保留，
