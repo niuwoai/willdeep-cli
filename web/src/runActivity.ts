@@ -21,6 +21,18 @@ export function formatStepElapsed(elapsedMs: number): string {
   return `${(elapsedMs / 60_000).toFixed(1)}m`;
 }
 
+/**
+ * 分隔线文案。「轮到你」只在它还是聊天区最后一条时成立：新输出一来就不再显示。
+ * 记录里可能带着旧版本写进去的这几个字，先去掉再决定，避免显示两次。
+ */
+export function turnDividerText(content: string, yourTurn: string, isLast: boolean): string {
+  const label = ` · ${yourTurn}`;
+  const trimmed = content.endsWith(" ──") && content.slice(0, -3).endsWith(label)
+    ? `${content.slice(0, -3 - label.length)} ──`
+    : content;
+  return isLast && trimmed.endsWith(" ──") ? `${trimmed.slice(0, -3)}${label} ──` : trimmed;
+}
+
 /** 运行卡片已展示的当前状态，无需在输入框上方再播报一次。 */
 export function needsActivityStrip(activity: string, steps: ActivityStep[], thinking: string): boolean {
   return !steps.some((step, index) => {

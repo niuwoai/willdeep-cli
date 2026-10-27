@@ -1037,7 +1037,10 @@ mod tests {
         let divider = app.transcript.last().cloned().unwrap();
         assert!(divider.starts_with(TURN_DIVIDER_PREFIX), "{divider}");
         assert!(divider.contains("turn finished"), "{divider}");
-        assert!(divider.ends_with("your turn ──"), "{divider}");
+        assert!(
+            !divider.contains("your turn"),
+            "记录里不带「轮到你」，它只在画最后一行时补: {divider}"
+        );
 
         app.finish_turn();
         assert!(std::mem::take(&mut app.bell_pending));

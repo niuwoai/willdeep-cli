@@ -38,6 +38,7 @@ impl App {
                 &labels,
                 search.as_deref(),
                 self.transcript_width,
+                self.language,
             );
             self.transcript_rows = text_rows(&text);
             self.transcript_render_cache = Some(TranscriptRenderCache {
@@ -106,8 +107,26 @@ pub(super) fn colored_transcript_at_width(
     search_query: Option<&str>,
     width: usize,
 ) -> Text<'static> {
+    colored_transcript(entries, search_query, width, Language::En)
+}
+
+/// 画聊天区。分隔线只有在最后一行时才带「轮到你」，语言跟界面走。
+pub(super) fn colored_transcript(
+    entries: &[String],
+    search_query: Option<&str>,
+    width: usize,
+    language: Language,
+) -> Text<'static> {
+    let last = entries.len().saturating_sub(1);
     let mut lines = Vec::new();
-    for value in entries {
+    for (index, raw) in entries.iter().enumerate() {
+        // 「轮到你」只属于最后一行。逐行画的路径先统一拿掉，这里再补回来。
+        let displayed = if index == last {
+            with_your_turn(raw, language)
+        } else {
+            divider_without_your_turn(raw, language)
+        };
+        let value = displayed.as_str();
         if let Some((header, body, expanded)) = thought_entry_parts(value) {
             lines.push(Line::styled(
                 format!("· {} Thought: {header}", if expanded { "−" } else { "+" }),
@@ -133,7 +152,7 @@ pub(super) fn colored_transcript_at_width(
         }
         if let Some(content) = value.strip_prefix("WillDeep: ") {
             lines.extend(render_assistant_markdown(content, width));
-            lines.push(Line::default());
+            // 回复后面跟的是浅色分隔线，两者已经分开了，不再多空一行。
             continue;
         }
         // 工具摘要需要比普通账目行更清晰，避免深色终端上低对比度的 DarkGray 难以辨认。
@@ -156,8 +175,9 @@ pub(super) fn colored_transcript_at_width(
                 .lines()
                 .map(|line| Line::styled(line.to_owned(), style)),
         );
-        // 一问一答之间、一轮结束之后各留一行空白，否则整屏文字挤成一坨，读着累。
-        if value.starts_with("You:") || value.starts_with(TURN_DIVIDER_PREFIX) {
+        // 用户消息后面留一行空白，问答之间才分得开。分隔线本身已经是浅色，
+        // 紧贴着上一轮输出画，不再额外空一行。
+        if value.starts_with("You:") {
             lines.push(Line::default());
         }
     }
@@ -219,6 +239,51 @@ mod tool_row_style_tests {
 
         assert_eq!(tool.lines[0].style.fg, Some(Color::Gray));
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
+    }
+
+    /// 分隔线紧贴上一轮输出：回复后面不再多空一行，分隔线后面也不再空一行。
+    /// 用户消息后面的空白仍在，问答之间才分得开。
+    #[test]
+    fn the_turn_divider_sits_against_the_reply_it_closes() {
+        let text = colored_transcript(
+            &[
+                "WillDeep: done".to_owned(),
+                "── turn finished · total 1.0s ──".to_owned(),
+                "You: next".to_owned(),
+            ],
+            None,
+            80,
+            Language::En,
+        );
+        let rows = text.lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(rows[0], "WillDeep: done");
+        assert!(rows[1].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[2], "You: next");
+        assert_eq!(rows.last().map(String::as_str), Some(""));
+    }
+
+    /// 「轮到你」只属于最后一行。后面有了新输出，旧分隔线就不再说这话。
+    #[test]
+    fn your_turn_appears_only_on_the_last_divider() {
+        let rows = [
+            "── turn finished ──".to_owned(),
+            "You: next".to_owned(),
+            "── turn finished ──".to_owned(),
+        ];
+        let text = colored_transcript(&rows, None, 80, Language::ZhCn);
+        let drawn = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .filter(|row| row.starts_with(TURN_DIVIDER_PREFIX))
+            .collect::<Vec<_>>();
+        assert_eq!(drawn.len(), 2, "{drawn:?}");
+        assert!(!drawn[0].contains("轮到你"), "{drawn:?}");
+        assert!(drawn[1].ends_with("· 轮到你 ──"), "{drawn:?}");
+
+        // 旧版本把「轮到你」写进了记录：画的时候先拿掉，再只补最后一行。
+        let legacy = divider_without_your_turn("── turn finished · your turn ──", Language::En);
+        assert_eq!(legacy, "── turn finished ──");
     }
 }
 
@@ -877,8 +942,43 @@ fn render_inline_markdown(value: &str, base: Style) -> Vec<Span<'static>> {
 /// 流式回复预览只留最后这么多字符，进程内与 Runtime 轮次共用。
 pub(super) const THOUGHT_PREVIEW_CHARS: usize = 1200;
 
-/// 「本轮结束」分隔线的前缀。按账目行的灰色画，后面留一行空白，一眼看出轮到谁。
+/// 「本轮结束」分隔线的前缀。按账目行的灰色画，紧贴上一轮输出，不另占空行。
 pub(super) const TURN_DIVIDER_PREFIX: &str = "── ";
+
+/// 分隔线末尾的「轮到你」。只在聊天区最后一行才有意义：新输出一来它就不再是事实。
+pub(super) fn your_turn_label(language: Language) -> &'static str {
+    language.text("轮到你", "your turn", "あなたの番")
+}
+
+/// 分隔线去掉末尾的「轮到你」。
+///
+/// 旧版本把它写进了记录，新版本只在画的时候决定。逐行画的路径分不清这行是不是
+/// 聊天区最后一行，所以先统一拿掉，由整段渲染在最后一行补回去。
+pub(super) fn divider_without_your_turn(row: &str, language: Language) -> String {
+    let Some(body) = row
+        .strip_prefix(TURN_DIVIDER_PREFIX)
+        .and_then(|value| value.strip_suffix(" ──"))
+    else {
+        return row.to_owned();
+    };
+    let label = your_turn_label(language);
+    let body = body
+        .strip_suffix(&format!(" · {label}"))
+        .unwrap_or(body);
+    format!("{TURN_DIVIDER_PREFIX}{body} ──")
+}
+
+/// 聊天区最后一行是分隔线时，补上「轮到你」。
+pub(super) fn with_your_turn(row: &str, language: Language) -> String {
+    let row = divider_without_your_turn(row, language);
+    let Some(body) = row
+        .strip_prefix(TURN_DIVIDER_PREFIX)
+        .and_then(|value| value.strip_suffix(" ──"))
+    else {
+        return row;
+    };
+    format!("{TURN_DIVIDER_PREFIX}{body} · {} ──", your_turn_label(language))
+}
 
 /// 进聊天区之前把终端会「吃掉」的字符处理掉：制表符按 4 列展开，换行保留，
 /// `\r` 丢弃，其余控制字符转成可见转义。模型思维链和代码里的原始 `\t` 直接写到

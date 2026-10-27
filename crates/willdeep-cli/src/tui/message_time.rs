@@ -230,9 +230,15 @@ impl App {
     pub(super) fn timed_transcript_height(&self) -> usize {
         let folded = self.display_transcript();
         let labels = self.message_time_labels(&folded, now());
-        render_with_times(&folded.rows, &labels, None, self.transcript_width)
-            .lines
-            .len()
+        render_with_times(
+            &folded.rows,
+            &labels,
+            None,
+            self.transcript_width,
+            self.language,
+        )
+        .lines
+        .len()
     }
 
     fn message_time_error(&mut self, error: anyhow::Error) {
@@ -272,11 +278,18 @@ pub(super) fn render_with_times(
     labels: &[Option<String>],
     search: Option<&str>,
     width: usize,
+    language: Language,
 ) -> Text<'static> {
+    let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
     for (index, row) in rows.iter().enumerate() {
+        // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
+        // 真正画整段聊天区的最后一行时才补上。
+        // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
+        // 里面再补一次就会叠成两句。
+        let displayed = divider_without_your_turn(row, language);
         let mut entry = wrap_styled_text(
-            colored_transcript_at_width(std::slice::from_ref(row), search, width),
+            colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
             width,
         );
         if let Some(Some(label)) = labels.get(index) {
@@ -294,6 +307,14 @@ pub(super) fn render_with_times(
                 } else {
                     entry.lines.insert(last + 1, Line::from(span));
                 }
+            }
+        }
+        // 放在时间标签之后：时间标签按原行宽决定贴在行尾还是另起一行，
+        // 「轮到你」不能先把行撑宽，否则窄屏上时间会被挤到下一行。
+        if index == last && displayed.starts_with(TURN_DIVIDER_PREFIX) {
+            let label = format!(" · {}", your_turn_label(language));
+            if let Some(line) = entry.lines.iter_mut().rev().find(|line| line.width() > 0) {
+                line.push_span(Span::raw(label));
             }
         }
         text.lines.extend(entry.lines);
@@ -353,8 +374,13 @@ mod tests {
             "WillDeep: | A | B |\n|---|---|\n| 1 | 2 |",
         ] {
             for width in [8, 30, 80] {
-                let rendered =
-                    render_with_times(&[body.into()], &[Some("1分前".into())], None, width);
+                let rendered = render_with_times(
+                    &[body.into()],
+                    &[Some("1分前".into())],
+                    None,
+                    width,
+                    Language::ZhCn,
+                );
                 assert!(rendered.lines.iter().all(|line| line.width() <= width));
                 assert!(
                     text_rows(&rendered)

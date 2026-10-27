@@ -35,7 +35,7 @@ import { AttachmentManager } from "./AttachmentManager";
 import { attachmentText } from "./attachmentMessages";
 import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
-import { formatStepElapsed, groupActivityMessages, needsActivityStrip, type RunStep } from "./runActivity";
+import { formatStepElapsed, groupActivityMessages, needsActivityStrip, turnDividerText, type RunStep } from "./runActivity";
 import { RunCard } from "./RunCard";
 import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
@@ -504,8 +504,9 @@ export function App() {
     setChat((current) => current.map((message) => message.id === runId ? { ...message, steps: updater(message.steps ?? []) } : message));
   }
 
-  /// 「── 本轮结束 · 总耗时 · 工具 N 次 · 轮到你 ──」：与 TUI 同一条分隔线。会话重载
-  /// 后运行卡片就没了，所以在重载前算好，重载后再追加。
+  /// 「── 本轮结束 · 总耗时 · 工具 N 次 ──」：与 TUI 同一条分隔线。会话重载
+  /// 后运行卡片就没了，所以在重载前算好，重载后再追加。「轮到你」不写进内容，
+  /// 只在它还是最后一条时由渲染补上，新输出一来就不再显示。
   function turnDivider(runId: string, startedAt: number | null): ChatMessage {
     const steps = chatRef.current.find((message) => message.id === runId)?.steps ?? [];
     const tools = steps.filter((step) => !step.id.startsWith("turn-"));
@@ -513,7 +514,6 @@ export function App() {
     const parts = [t.turnFinished];
     if (startedAt !== null) parts.push(`${t.totalElapsed} ${formatStepElapsed(Date.now() - startedAt)}`);
     if (tools.length) parts.push(`${t.toolCount.replace("{count}", String(tools.length))}${failed ? t.foldedFailed.replace("{count}", String(failed)) : ""}`);
-    parts.push(t.yourTurn);
     return { id: nextId("divider"), role: "divider", content: `── ${parts.join(" · ")} ──` };
   }
 
@@ -1160,7 +1160,7 @@ export function App() {
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{groupActivityMessages(chat).map((message) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{message.content}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">{groupActivityMessages(chat).map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thinking && <Text fontSize="xs" color="var(--text-dim)" px="3" py="1" whiteSpace="pre-wrap" wordBreak="break-word">{t.thinking}: {message.thinking}</Text>}{message.content &&<Box className="message assistant"><Markdown content={message.content} /></Box>}</Box> : <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={runtimeActivity.gates.filter((gate) => runtimeActivity.tasks.some((task) => task.id === gate.task_id && task.session_id === sessionId))} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />

@@ -27,7 +27,7 @@ fn reference_frame(app: &App) -> Text<'static> {
         .map(|s| s.editor.text().trim())
         .filter(|s| !s.is_empty());
     wrap_styled_text(
-        colored_transcript_at_width(&rows, search, app.transcript_width),
+        colored_transcript(&rows, search, app.transcript_width, app.language),
         app.transcript_width,
     )
 }

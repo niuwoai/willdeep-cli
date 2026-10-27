@@ -20,7 +20,9 @@
 .chat-workspace .conversation-stage { width: 100%; padding-top: 32px; padding-bottom: 16px; }
 .chat-viewport { scrollbar-width: thin; scrollbar-color: var(--border) transparent; overscroll-behavior: contain; padding-right: 8px; }
 .chat-viewport .chat-timeline { gap: 8px; }
-.chat-timeline > .message.user:not(:first-child), .chat-timeline > .turn-divider { margin-top: 16px; }
+.chat-timeline > .message.user:not(:first-child) { margin-top: 16px; }
+/* 分隔线颜色已经够淡，紧贴上一轮输出；抵消时间线条目之间的间距。 */
+.chat-timeline > .turn-divider { margin-top: -8px; }
 .chat-timeline > .message.user + * { margin-top: 12px; }
 .chat-timeline .run-card { padding: 2px; }
 .chat-workspace .message { font-size: 15px; line-height: 1.85; }

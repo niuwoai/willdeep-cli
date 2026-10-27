@@ -43,7 +43,12 @@ mod command_tests {
             line.starts_with(TURN_DIVIDER_PREFIX),
             "分隔线前缀决定它按浅色画、不跟正文抢注意力: {line}"
         );
-        assert!(line.ends_with("your turn ──"), "{line}");
+        // 「轮到你」不进记录，只在画最后一行时补上。
+        assert!(!line.contains("your turn"), "{line}");
+        assert_eq!(
+            with_your_turn(line, Language::En),
+            format!("{} · your turn ──", line.trim_end_matches(" ──"))
+        );
         assert!(line.contains("first reply"));
         assert!(line.contains("total"));
         // 输入含系统提示词与整段历史，所以它本来就该比用户那句话大得多。
@@ -189,7 +194,7 @@ mod command_tests {
         empty.output_tokens = 0;
         empty.turns = 1;
         app.append_turn_stats(Some(&empty));
-        assert_eq!(app.transcript, vec!["── turn finished · your turn ──"]);
+        assert_eq!(app.transcript, vec!["── turn finished ──"]);
     }
 
     #[test]

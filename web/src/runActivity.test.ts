@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { messages } from "./i18n";
-import { needsActivityStrip } from "./runActivity";
+import { needsActivityStrip, turnDividerText } from "./runActivity";
 
 describe("运行状态去重", () => {
   for (const [language, t] of Object.entries(messages)) {
@@ -31,5 +31,20 @@ describe("运行状态去重", () => {
       { label: "thinking", status: "done" },
       { label: "tool", status: "done" },
     ], "thinking")).toBe(true);
+  });
+});
+
+describe("回合分隔线", () => {
+  const line = "── 本轮结束 · 总耗时 1.0s ──";
+
+  it("只有最后一条才带「轮到你」", () => {
+    expect(turnDividerText(line, "轮到你", true)).toBe("── 本轮结束 · 总耗时 1.0s · 轮到你 ──");
+    expect(turnDividerText(line, "轮到你", false)).toBe(line);
+  });
+
+  it("旧记录里写死的「轮到你」在有新输出后拿掉，不再显示两次", () => {
+    const legacy = "── 本轮结束 · 总耗时 1.0s · 轮到你 ──";
+    expect(turnDividerText(legacy, "轮到你", false)).toBe(line);
+    expect(turnDividerText(legacy, "轮到你", true)).toBe(legacy);
   });
 });

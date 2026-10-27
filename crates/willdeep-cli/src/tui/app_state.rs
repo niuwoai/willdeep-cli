@@ -812,10 +812,15 @@ impl App {
         // 高度按折叠视图算；命中被收起的工具行时，落在替它说话的汇总行上。
         let folded = self.display_transcript();
         let labels = self.message_time_labels(&folded, message_time::now());
-        let total =
-            message_time::render_with_times(&folded.rows, &labels, None, self.transcript_width)
-                .lines
-                .len();
+        let total = message_time::render_with_times(
+            &folded.rows,
+            &labels,
+            None,
+            self.transcript_width,
+            self.language,
+        )
+        .lines
+        .len();
         let through_match = folded
             .index_of
             .get(entry)
@@ -825,6 +830,7 @@ impl App {
                     &labels[..=row],
                     None,
                     self.transcript_width,
+                    self.language,
                 )
                 .lines
                 .len()
@@ -1068,18 +1074,19 @@ impl App {
                 self.tools.requested
             ));
         }
-        parts.push(
-            if self.queued_prompts.is_empty() {
-                self.language.text("轮到你", "your turn", "あなたの番")
-            } else {
-                self.language.text(
-                    "继续发送待发消息",
-                    "sending queued messages next",
-                    "送信待ちを続行",
-                )
-            }
-            .to_owned(),
-        );
+        // 「轮到你」不写进记录：它只在这行还是聊天区最后一行时成立，画的时候再补。
+        // 待发消息还没发完时这行就不是轮到用户，所以那句话仍写在记录里。
+        if !self.queued_prompts.is_empty() {
+            parts.push(
+                self.language
+                    .text(
+                        "继续发送待发消息",
+                        "sending queued messages next",
+                        "送信待ちを続行",
+                    )
+                    .to_owned(),
+            );
+        }
         self.append_transcript(format!("{TURN_DIVIDER_PREFIX}{} ──", parts.join(" · ")));
     }
 

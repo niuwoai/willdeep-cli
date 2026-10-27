@@ -972,7 +972,11 @@ fn runtime_chat_renders_tool_rows_then_the_assistant_answer() {
         "{}",
         app.transcript[2]
     );
-    assert!(app.transcript[2].ends_with("your turn ──"));
+    assert!(
+        !app.transcript[2].contains("your turn"),
+        "轮到你只在画最后一行时补，不进记录: {}",
+        app.transcript[2]
+    );
     assert!(!app.transcript[2].contains("in 0"));
     assert!(
         !app.running,
