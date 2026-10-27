@@ -372,6 +372,11 @@ fn failure_reason_text(message: &str, language: Language) -> Option<&'static str
         .split_whitespace()
         .find_map(|part| part.strip_prefix("reason="))?;
     Some(match reason {
+        "execution_owner_conflict" => language.text(
+            "执行归属冲突：这支 Agent 团队已被另一个执行宿主持有，无法保存检查点；请确认原执行端的任务状态",
+            "Execution ownership conflict: another host owns this Agent team, so its checkpoint cannot be saved; check the original execution host",
+            "実行所有権の競合：別のホストがこの Agent チームを保持しているためチェックポイントを保存できません。元の実行状態を確認してください",
+        ),
         "context_overflow" => language.text(
             "上下文超出模型窗口，先 /compress 或开新会话",
             "Context exceeds the model window — run /compress or start a new session",
@@ -413,9 +418,9 @@ fn failure_reason_text(message: &str, language: Language) -> Option<&'static str
             "provider が一時的に利用不可",
         ),
         _ => language.text(
-            "原因未分类，侧栏 Inbox 里有完整错误",
-            "Unclassified — the sidebar Inbox carries the full error",
-            "未分類 — 詳細はサイドバー Inbox に",
+            "失败原因尚未分类，打开 Inbox 查看诊断",
+            "Unclassified failure — open Inbox for diagnostics",
+            "未分類の失敗 — Inbox で診断を確認してください",
         ),
     })
 }

@@ -324,7 +324,7 @@ pub(super) async fn event_loop(
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
     let (runtime_snapshot_tx, mut runtime_snapshot_rx) =
-        mpsc::unbounded_channel::<crate::daemon::RuntimeSnapshot>();
+        mpsc::unbounded_channel::<Result<crate::daemon::RuntimeSnapshot, String>>();
     let snapshot_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (runtime_event_tx, mut runtime_event_rx) =
         mpsc::unbounded_channel::<Vec<crate::daemon::RemoteRuntimeEvent>>();
@@ -563,6 +563,36 @@ pub(super) async fn event_loop(
         }
         // 本轮刚结束：响一声铃，盯着别处的用户也知道轮到自己了。
         app.ring_turn_bell(term.backend_mut())?;
+        if app.input.marker_query('@').is_none() {
+            app.references = None;
+        } else if app.references.is_none() {
+            let config =
+                crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
+            let root = session.workspace.clone();
+            let home = runtime.home.clone();
+            let allowed = if app.runtime_version.is_some() {
+                match crate::daemon::remote_workspaces(&runtime.home).await {
+                    Ok(workspaces) => workspaces
+                        .into_iter()
+                        .find(|w| w.root == root)
+                        .map(|w| w.mcp_servers)
+                        .unwrap_or_else(|| vec![String::new()]),
+                    Err(_) => {
+                        app.notice = Some(language.text("工作区 MCP 列表加载失败，仍可选择智能体和文件", "Workspace MCP list unavailable; agents and files remain available", "MCP 一覧を取得できません。エージェントとファイルは選択できます").to_owned());
+                        vec![String::new()]
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            app.references = Some(
+                tokio::task::spawn_blocking(move || {
+                    crate::composer_references::collect(&root, &home, &config.file, &allowed, "")
+                })
+                .await??,
+            );
+        }
+        load_attention_diagnostics(&mut app, runtime);
         draw(term, &mut app, &runtime.skills)?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
@@ -612,15 +642,34 @@ pub(super) async fn event_loop(
                     let tx=runtime_snapshot_tx.clone();
                     let workspace=runtime.runtime_submit.workspace.clone();
                     let session_id=session.id;
+                    let home_for_diagnostics=home.clone();
                     let in_flight=snapshot_in_flight.clone();
                     tokio::spawn(async move {
-                        let result=crate::daemon::runtime_snapshot(&home,&workspace,Some(session_id),crate::Surface::Tui).await;
+                        let result=crate::daemon::runtime_snapshot(&home,&workspace,Some(session_id),crate::Surface::Tui)
+                            .await
+                            .map_err(|error| {
+                                let home = home_for_diagnostics.display().to_string();
+                                format!("{error:#}").replace(&home, "~")
+                            });
                         in_flight.store(false,std::sync::atomic::Ordering::Release);
-                        if let Ok(snapshot)=result{let _=tx.send(snapshot);}
+                        let _=tx.send(result);
                     });
                 }
             },
-            Some(snapshot)=runtime_snapshot_rx.recv()=>{
+            Some(snapshot_result)=runtime_snapshot_rx.recv()=>{
+                let snapshot = match snapshot_result {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        // Health may have succeeded while a later snapshot endpoint
+                        // failed. Keep the last confirmed Runtime version and expose
+                        // the partial-snapshot error instead of silently dropping it.
+                        app.runtime_reachable = true;
+                        app.runtime_diagnostic = Some(format!(
+                            "Runtime 已响应，但读取快照失败：{error}"
+                        ));
+                        continue;
+                    }
+                };
                 qterm.runtime_snapshot(&snapshot, session.id, app.runtime_event_cursor, app.running);
                 if let Some((id, items)) = snapshot.queue
                     && id == session.id {
@@ -637,6 +686,23 @@ pub(super) async fn event_loop(
                 app.runtime_artifacts=snapshot.artifacts;
                 app.mobile_status=snapshot.mobile;
                 app.observe_runtime_version(snapshot.runtime_version);
+                app.runtime_reachable = app.runtime_version.is_some();
+                app.runtime_diagnostic = snapshot.runtime_diagnostic;
+                if app.runtime_version.is_some() {
+                    app.runtime_auto_start_tried = false;
+                }
+                if app.runtime_version.is_none()
+                    && app.runtime_diagnostic.is_some()
+                    && !app.runtime_auto_start_tried
+                {
+                    app.runtime_auto_start_tried = true;
+                    daemon_commands::dispatch(
+                        daemon_commands::DaemonCommand::Start,
+                        runtime.home.clone(),
+                        language,
+                        runtime.tx.clone(),
+                    );
+                }
                 if app.runtime_auto_upgrade_pending && !app.running {
                     app.runtime_auto_upgrade_pending=false;
                     app.runtime_auto_upgrade_tried=true;
@@ -652,7 +718,15 @@ pub(super) async fn event_loop(
                     let Ok(mut next) = runtime_event_rx.try_recv() else { break; };
                     events.append(&mut next);
                 }
+                let failures: Vec<uuid::Uuid> = events.iter().filter(|event| event.sequence > app.runtime_event_cursor && event.visible && event.session_id == Some(session.id) && event.kind == "task.failed")
+                    .filter_map(|event| event.message.split_whitespace().find_map(|part| part.strip_prefix("task_id=")).and_then(|id| id.parse().ok())).collect();
                 runtime_ui::apply_runtime_events(&mut app,events,session,store)?;
+                task_diagnostics::surface_failures(
+                    runtime.tx.clone(),
+                    runtime.home.clone(),
+                    language,
+                    failures,
+                );
                 // Runtime 轮次正常收尾后会话已从磁盘刷新，此时的消息就是预测要看的那份。
                 if app.take_runtime_turn_settled() { dispatch_input_suggestion(&app,session,&agent,&runtime.tx); }
             },
@@ -804,6 +878,8 @@ pub(super) async fn event_loop(
                     MouseEventKind::ScrollDown if app.agent_detail.is_some()=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_add(3),
                     MouseEventKind::ScrollUp if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_sub(3),
                     MouseEventKind::ScrollDown if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_add(3),
+                    MouseEventKind::ScrollUp if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(3),
+                    MouseEventKind::ScrollDown if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(3),
                     MouseEventKind::ScrollUp if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(-3),
                     MouseEventKind::ScrollDown if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(3),
                     MouseEventKind::ScrollUp if app.transcript_rect.contains((mouse.column,mouse.row).into())=>{app.focus=FocusPane::Chat;app.scroll_up(3);},
@@ -887,8 +963,22 @@ pub(super) async fn event_loop(
                             } else if key.code==KeyCode::Esc {
                                 app.attention_detail=None;
                             }
-                        } else if key.code==KeyCode::Esc{app.attention_detail=None;}
-                        else if matches!(key.code,KeyCode::Char('m')|KeyCode::Char('M')) {
+                        } else {
+                            match key.code {
+                                KeyCode::Esc => app.attention_detail=None,
+                                KeyCode::Enter => {
+                                    app.attention_diagnostics = None;
+                                    app.attention_diagnostics_loading = None;
+                                }
+                                KeyCode::Up => app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(1),
+                                KeyCode::Down => app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(1),
+                                KeyCode::PageUp => app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(10),
+                                KeyCode::PageDown => app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(10),
+                                KeyCode::Home => app.attention_detail_scroll=0,
+                                _ => {},
+                            }
+                        }
+                        if detail.source != AttentionSource::DiffReview && matches!(key.code,KeyCode::Char('m')|KeyCode::Char('M')) {
                             // Dismiss from the detail popup itself. Until now
                             // `M` only worked with the sidebar focused on the
                             // Inbox section, so an item whose only sane action
@@ -1248,7 +1338,7 @@ pub(super) async fn event_loop(
                                 }else{
                                     app.sidebar_activate(&runtime.background_tasks);
                                     // 打开的是 Runtime 任务详情时，把「哪条命令、为什么挂」一并取回来。
-                                    load_attention_diagnostics(&mut app,runtime).await;
+                                    load_attention_diagnostics(&mut app,runtime);
                                 }
                             },
                             KeyCode::Char(' ')=>app.sidebar_toggle(),
@@ -1314,7 +1404,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
-                    if app.handle_command_key(key) || app.handle_skill_key(key, &runtime.skills) { continue; }
+                    if app.handle_command_key(key) || app.handle_skill_key(key, &runtime.skills) || app.handle_reference_key(key) { continue; }
                     if is_clipboard_image_paste_key(key) {
                         app.paste_clipboard_image();
                         continue;
@@ -1621,6 +1711,14 @@ pub(super) async fn event_loop(
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
                 UiMessage::RuntimeResult(message)=>{app.append_transcript(message.clone());app.notice=Some(message);},
+                UiMessage::AttentionDiagnosticsLoaded { item_id, text } => {
+                    if app.attention_diagnostics_loading.as_deref() == Some(item_id.as_str()) {
+                        app.attention_diagnostics_loading = None;
+                    }
+                    if app.attention_detail.as_ref().is_some_and(|item| item.id == item_id) {
+                        app.attention_diagnostics = Some(AttentionDiagnostics { item_id, text });
+                    }
+                },
                 UiMessage::ModelsLoaded { request_id, result } => model_provider::receive_models(&mut app, request_id, result),
                 UiMessage::LocalProvidersDiscovered(result) => model_provider::receive_local(&mut app, runtime, result),
                 UiMessage::MediaLoaded{target,result}=>app.media.finish_load(target,result),

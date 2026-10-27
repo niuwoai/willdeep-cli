@@ -347,6 +347,7 @@ fn runtime_unavailable_becomes_unknown_and_preserves_pending_gate_identity() {
         tools: vec![],
         artifacts: vec![],
         runtime_version: None,
+        runtime_diagnostic: None,
         event_sequence: None,
         mobile: None,
     };
@@ -449,6 +450,7 @@ fn old_completed_snapshot_cannot_finish_a_new_queued_turn() {
         tools: vec![],
         artifacts: vec![],
         runtime_version: None,
+        runtime_diagnostic: None,
         event_sequence: Some(5),
         mobile: None,
     };
@@ -496,6 +498,7 @@ fn runtime_history_does_not_overwrite_a_local_turn() {
         tools: vec![],
         artifacts: vec![],
         runtime_version: None,
+        runtime_diagnostic: None,
         event_sequence: Some(5),
         mobile: None,
     };

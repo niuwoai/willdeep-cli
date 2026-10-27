@@ -199,18 +199,39 @@ pub(crate) fn render_qr(payload: &str) -> Result<String> {
 }
 
 fn desktop_name() -> String {
-    let name = std::env::var("HOSTNAME")
+    let hostname = std::env::var("HOSTNAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(system_hostname)
+        .unwrap_or_else(|| "WillDeep CLI".to_owned());
+    desktop_name_for(std::env::consts::OS, &hostname)
+}
+
+fn system_hostname() -> Option<String> {
+    // 直接执行系统工具，不经过 shell；launchd/systemd 通常不会导出 HOSTNAME。
+    let output = std::process::Command::new("hostname").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "WillDeep CLI".to_owned());
-    // 按字节截断（在字符边界上切）：URL 里每个非 ASCII 字节要百分号转义成三个字符，
-    // 按字符数截断的话一个中文主机名就能把二维码顶大一圈。
-    if name.len() <= MAX_DESKTOP_NAME_LEN {
-        return name;
-    }
-    let mut end = MAX_DESKTOP_NAME_LEN;
-    while end > 0 && !name.is_char_boundary(end) {
+}
+
+fn desktop_name_for(os: &str, hostname: &str) -> String {
+    let platform = match os {
+        "macos" => "macOS",
+        "linux" => "Linux",
+        "windows" => "Windows",
+        other => other,
+    };
+    let name = format!("{platform}:{}", hostname.trim());
+    // 保留系统前缀，按 UTF-8 字节上限截断，保持终端二维码尺寸不变。
+    let mut end = name.len().min(MAX_DESKTOP_NAME_LEN);
+    while !name.is_char_boundary(end) {
         end -= 1;
     }
     name[..end].to_owned()
@@ -288,6 +309,21 @@ mod tests {
             url.contains("u=https%3A%2F%2Frelay.example.com"),
             "自建中继地址必须随二维码下发：{url}"
         );
+    }
+
+    #[test]
+    fn desktop_name_includes_platform_and_actual_hostname() {
+        assert_eq!(desktop_name_for("macos", "home-mac"), "macOS:home-mac");
+        assert_eq!(desktop_name_for("linux", "h2"), "Linux:h2");
+        assert_eq!(desktop_name_for("windows", "pc"), "Windows:pc");
+    }
+
+    #[test]
+    fn desktop_name_keeps_utf8_and_qr_size_limit() {
+        let name = desktop_name_for("linux", "家里的服务器很长的名字");
+        assert!(name.starts_with("Linux:"));
+        assert!(name.len() <= MAX_DESKTOP_NAME_LEN);
+        assert_eq!(name, "Linux:家里的");
     }
 
     #[test]

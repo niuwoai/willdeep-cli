@@ -53,6 +53,9 @@ pub(crate) struct RuntimeSnapshot {
     /// is only a front end: a long-lived daemon can be several releases
     /// behind this binary, and every policy change lives in the daemon.
     pub runtime_version: Option<String>,
+    /// Connection or snapshot failure retained for `/version`; otherwise the
+    /// TUI silently turned every probe error into "not connected".
+    pub runtime_diagnostic: Option<String>,
     /// 探测 Runtime 时它的事件流头部序号；Runtime 不可达时为 `None`。
     ///
     /// 快照是每秒另起一个任务去拉的，和事件流各走各的通道，谁先到没有保证。
@@ -61,6 +64,34 @@ pub(crate) struct RuntimeSnapshot {
     pub event_sequence: Option<u64>,
     /// 手机中继的状态。Runtime 不可达或版本早于中继归属 Runtime 时为 `None`。
     pub mobile: Option<willdeep_runtime_protocol::MobileRelayStatus>,
+}
+
+impl RuntimeSnapshot {
+    fn unavailable(diagnostic: String) -> Self {
+        Self {
+            queue: None,
+            attention: Vec::new(),
+            gates: Vec::new(),
+            agents: Vec::new(),
+            tasks: Vec::new(),
+            tools: Vec::new(),
+            artifacts: Vec::new(),
+            runtime_version: None,
+            runtime_diagnostic: Some(diagnostic),
+            event_sequence: None,
+            mobile: None,
+        }
+    }
+}
+
+fn runtime_error_message(error: &anyhow::Error, home: &Path) -> String {
+    let home = home.display().to_string();
+    let message = format!("{error:#}").replace(&home, "~");
+    willdeep_core::judge::redact_credentials(&message)
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(1000)
+        .collect()
 }
 
 #[derive(Clone)]
@@ -807,34 +838,20 @@ pub(crate) async fn runtime_snapshot(
     let (state, runtime_version, event_sequence) = match load_state(&paths.state) {
         Ok(state) => match probe(&state).await {
             Ok(health) => (state, Some(health.version), Some(health.event_sequence)),
-            Err(_) => {
-                return Ok(RuntimeSnapshot {
-                    queue: None,
-                    attention: Vec::new(),
-                    gates: Vec::new(),
-                    agents: Vec::new(),
-                    tasks: Vec::new(),
-                    tools: Vec::new(),
-                    artifacts: Vec::new(),
-                    runtime_version: None,
-                    event_sequence: None,
-                    mobile: None,
-                });
+            Err(error) => {
+                return Ok(RuntimeSnapshot::unavailable(format!(
+                    "健康检查失败（PID {}，地址 {}）：{}",
+                    state.pid,
+                    state.address,
+                    runtime_error_message(&error, home)
+                )));
             }
         },
-        Err(_) => {
-            return Ok(RuntimeSnapshot {
-                queue: None,
-                attention: Vec::new(),
-                gates: Vec::new(),
-                agents: Vec::new(),
-                tasks: Vec::new(),
-                tools: Vec::new(),
-                artifacts: Vec::new(),
-                runtime_version: None,
-                event_sequence: None,
-                mobile: None,
-            });
+        Err(error) => {
+            return Ok(RuntimeSnapshot::unavailable(format!(
+                "读取 Runtime 状态失败：{}",
+                runtime_error_message(&error, home)
+            )));
         }
     };
     let workspace = workspace.canonicalize()?;
@@ -1012,6 +1029,7 @@ pub(crate) async fn runtime_snapshot(
         tools,
         artifacts,
         runtime_version,
+        runtime_diagnostic: None,
         event_sequence,
         mobile,
     })

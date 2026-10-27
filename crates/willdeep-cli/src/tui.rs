@@ -57,6 +57,7 @@ mod dispatch;
 mod human_gate_ui;
 mod media_ui;
 mod message_time;
+mod mobile_qr_ui;
 mod model_commands;
 mod model_picker_ui;
 mod model_provider;
@@ -67,6 +68,7 @@ mod permission_commands;
 mod plan_ui;
 mod prompt_queue;
 mod quiet_mode;
+mod reference_menu;
 mod rendering;
 mod rewind_ui;
 mod routing_settings;
@@ -138,6 +140,10 @@ pub enum UiMessage {
     /// Runtime 操作的最终结果：同时进聊天记录与状态行。只进状态行的话，下一条
     /// 提示一来就被覆盖，用户看到的只剩「操作已提交」。
     RuntimeResult(String),
+    AttentionDiagnosticsLoaded {
+        item_id: String,
+        text: String,
+    },
     ModelsLoaded {
         request_id: uuid::Uuid,
         result: std::result::Result<Vec<String>, String>,
@@ -355,8 +361,11 @@ struct App {
     kernel_attention: Vec<AttentionItem>,
     runtime_gates: Vec<crate::daemon::RemoteGate>,
     /// Version of the Runtime that actually executes tools, when one is
-    /// reachable. `None` means no Runtime (everything runs in-process).
+    /// reachable. `None` means no successful Runtime health snapshot yet.
     runtime_version: Option<String>,
+    runtime_reachable: bool,
+    runtime_diagnostic: Option<String>,
+    runtime_auto_start_tried: bool,
     /// A version mismatch is announced once in the transcript; the sidebar
     /// warning then stays up on its own.
     runtime_version_warned: bool,
@@ -409,6 +418,11 @@ struct App {
     transcript_render_cache: Option<rendering::TranscriptRenderCache>,
     transcript_render_offset: usize,
     skill_selected: usize,
+    references: Option<Vec<crate::composer_references::Reference>>,
+    reference_selected: usize,
+    reference_dismissed: bool,
+    reference_rect: Rect,
+    reference_hits: Vec<(u16, usize)>,
     skill_menu_dismissed: bool,
     command_selected: usize,
     command_menu_dismissed: bool,
@@ -433,6 +447,8 @@ struct App {
     attention_detail: Option<AttentionItem>,
     /// 当前详情对应的失败排查材料；打开另一条时作废。
     attention_diagnostics: Option<AttentionDiagnostics>,
+    attention_diagnostics_loading: Option<String>,
+    attention_detail_scroll: u16,
     attention_diff_rect: Rect,
     attention_allow_rect: Rect,
     attention_deny_rect: Rect,
@@ -1145,108 +1161,10 @@ async fn interrupt_turn(app: &mut App, session: &Session, runtime: &TuiRuntime) 
         .to_owned())
 }
 
-/// Inbox 里打开的如果是 Runtime 任务，就顺带把失败详情取回来。
-/// 拿不到（旧版 Daemon 没有这个操作、或任务已被清理）就安静跳过——
-/// 详情弹窗本身仍然有用，不该因为附加信息拉不到就打不开。
-async fn load_attention_diagnostics(app: &mut App, runtime: &TuiRuntime) {
-    let Some(item) = app.attention_detail.as_ref() else {
-        app.attention_diagnostics = None;
-        return;
-    };
-    if app
-        .attention_diagnostics
-        .as_ref()
-        .is_some_and(|loaded| loaded.item_id == item.id)
-    {
-        return;
-    }
-    let Some(id) = item
-        .id
-        .strip_prefix("runtime-task:")
-        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-    else {
-        return;
-    };
-    let item_id = item.id.clone();
-    if let Ok(diagnostics) = crate::daemon::remote_task_diagnostics(&runtime.home, id).await
-        && let Some(text) = format_task_diagnostics(&diagnostics, app.language)
-    {
-        app.attention_diagnostics = Some(AttentionDiagnostics { item_id, text });
-    }
-}
-
-/// 把诊断对象排成人能读的几行。没有任何失败痕迹时返回 `None`，
-/// 免得在成功的任务详情下面挂一个空的「失败详情」标题。
-fn format_task_diagnostics(
-    diagnostics: &willdeep_runtime_protocol::RuntimeTaskDiagnostics,
-    language: Language,
-) -> Option<String> {
-    let mut lines = Vec::new();
-    if let Some(exit_code) = diagnostics.task.exit_code {
-        lines.push(format!(
-            "{}: {exit_code}",
-            language.text("退出码", "Exit code", "終了コード")
-        ));
-    }
-    if let Some(domain) = diagnostics.task.failure_domain {
-        lines.push(format!(
-            "{}: {domain:?}",
-            language.text("失败域", "Failure domain", "失敗ドメイン")
-        ));
-    }
-    if let Some(failure) = &diagnostics.failure {
-        // 事件原文形如 `task_id=… exit_code=1 error=…`，task_id 详情里已经有了。
-        let failure = failure
-            .split_once(' ')
-            .map_or(failure.as_str(), |(_, rest)| rest);
-        if !failure.trim().is_empty() {
-            lines.push(format!(
-                "{}: {failure}",
-                language.text("失败原因", "Failure", "失敗理由")
-            ));
-        }
-    }
-    for tool in &diagnostics.failed_tools {
-        lines.push(String::new());
-        lines.push(format!(
-            "{} {}",
-            language.text("失败的工具", "Failed tool", "失敗したツール"),
-            tool.name
-        ));
-        if let Some(arguments) = &tool.arguments {
-            for (key, value) in tool_arguments(arguments) {
-                lines.push(format!("  {key}: {value}"));
-            }
-        }
-        if let Some(output) = tool
-            .output
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            lines.push(format!("  {}:", language.text("输出", "Output", "出力")));
-            lines.extend(output.lines().map(|line| format!("    {line}")));
-        }
-    }
-    (!lines.is_empty()).then(|| lines.join("\n"))
-}
-
-/// 工具入参是 JSON 字符串。能解析成对象就按 `键: 值` 逐行摊开，
-/// `run_command` 的 `command` 就落在这里；解析不了就原样给一行。
-fn tool_arguments(arguments: &str) -> Vec<(String, String)> {
-    let Ok(serde_json::Value::Object(object)) = serde_json::from_str(arguments) else {
-        return vec![("arguments".to_owned(), arguments.replace('\n', " "))];
-    };
-    object
-        .into_iter()
-        .map(|(key, value)| {
-            let value = match value {
-                serde_json::Value::String(value) => value,
-                other => other.to_string(),
-            };
-            (key, value)
-        })
-        .collect()
-}
+mod task_diagnostics;
+#[cfg(test)]
+use task_diagnostics::format_task_diagnostics;
+use task_diagnostics::load_attention_diagnostics;
 
 mod event_loop;
 mod external_editor;
@@ -1978,6 +1896,7 @@ fn draw<B: ratatui::backend::Backend>(
             );
         }
         app.skill_rect = Rect::default();
+        reference_menu::draw(f, app, areas[3]);
         app.skill_hits.clear();
         let skill_matches = app.skill_matches(skills);
         if !app.skill_menu_dismissed
@@ -2049,31 +1968,7 @@ fn draw<B: ratatui::backend::Backend>(
                 popup,
             );
         }
-        app.mobile_qr_rect = Rect::default();
-        if let Some(qr) = &app.mobile_qr {
-            let width = qr.lines().map(UnicodeWidthStr::width).max().unwrap_or(40) as u16 + 4;
-            let height = qr.lines().count() as u16 + 4;
-            let popup = centered_rect(
-                width.min(f.area().width),
-                height.min(f.area().height),
-                f.area(),
-            );
-            app.mobile_qr_rect = popup;
-            f.render_widget(Clear, popup);
-            f.render_widget(
-                Paragraph::new(qr.clone()).block(
-                    Block::default()
-                        .title(app.language.text(
-                            "使用 WillDeep Mobile 扫码 · Esc 隐藏",
-                            "Scan with WillDeep Mobile · Esc hides",
-                            "WillDeep Mobile でスキャン · Esc で非表示",
-                        ))
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
-                ),
-                popup,
-            );
-        }
+        mobile_qr_ui::draw(f, app);
         app.help_rect = Rect::default();
         if app.help_visible {
             let popup = centered_rect(
@@ -2648,6 +2543,15 @@ fn help_content(language: Language) -> String {
         .replace(
             "Ctrl/Command+Shift+V",
             "Alt+V / Ctrl+V / Ctrl/Command+Shift+V",
+        )
+        .replace("$ 技能候选", "$ 技能候选\n  @ MCP → 智能体 → 文件候选")
+        .replace(
+            "$ Skill suggestions",
+            "$ Skill suggestions\n  @ MCP → Agents → Files",
+        )
+        .replace(
+            "$ スキル候補",
+            "$ スキル候補\n  @ MCP → エージェント → ファイル",
         )
         .replace(
             "Ctrl+S 文本选择/复制模式",

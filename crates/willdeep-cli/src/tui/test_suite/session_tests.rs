@@ -1918,7 +1918,7 @@ fn failed_task_details_name_the_command_and_the_reason() {
 
     assert!(text.contains("退出码: 101"));
     assert!(text.contains("失败域: Tool"));
-    assert!(text.contains("error=harness exited"));
+    assert!(text.contains("失败原因: harness exited"));
     assert!(!text.contains("task_id=abc"), "task_id 详情里已经有了");
     assert!(text.contains("run_command"));
     assert!(text.contains("command: cargo build --release"), "{text}");
@@ -1930,6 +1930,7 @@ fn failed_task_details_name_the_command_and_the_reason() {
             origin_client: None,
             exit_code: None,
             failure_domain: None,
+            status: willdeep_runtime_protocol::TaskStatus::Completed,
             ..diagnostics.task.clone()
         },
         failure: None,

@@ -118,7 +118,9 @@ pub(super) fn public_event(mut event: RuntimeEvent) -> RuntimeEvent {
 fn failure_reason(error: &str) -> &'static str {
     let error = error.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|needle| error.contains(needle));
-    if has(&[
+    if has(&["already owned by another execution host"]) {
+        "execution_owner_conflict"
+    } else if has(&[
         "maximum context length",
         "context_length_exceeded",
         "context window",
@@ -598,9 +600,24 @@ mod tests {
             ("HTTP 503 upstream overloaded", "provider_unavailable"),
             ("insufficient balance", "quota"),
             ("something nobody predicted", "unclassified"),
+            (
+                "cannot persist agent execution checkpoint: this Agent team is already owned by another execution host",
+                "execution_owner_conflict",
+            ),
         ] {
             assert_eq!(failure_reason(error), expected, "for {error}");
         }
+    }
+
+    #[test]
+    fn execution_conflict_reason_does_not_expose_private_error_text() {
+        let event = public_event(RuntimeEvent {
+            sequence: 1, timestamp: 1, kind: "task.failed".into(),
+            message: "task_id=example error=cannot persist agent execution checkpoint: this Agent team is already owned by another execution host token=test-secret-value".into(),
+        });
+        assert!(event.message.contains("reason=execution_owner_conflict"));
+        assert!(!event.message.contains("test-secret-value"));
+        assert!(!event.message.contains("cannot persist"));
     }
 
     /// 失败的工具事件现在会带上参数和输出，供本机 `task.diagnostics` 排查。

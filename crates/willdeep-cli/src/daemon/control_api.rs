@@ -1116,6 +1116,16 @@ async fn task_diagnostics(state: &ServerState, id: uuid::Uuid) -> ApiResult {
             }
         }
     }
+    // Persisted errors survive event-log truncation and early startup failures.
+    let failure = failure.or_else(|| {
+        task.error.as_ref().map(|error| {
+            format!(
+                "task_id={} error={}",
+                task.id,
+                willdeep_core::judge::redact_credentials(error)
+            )
+        })
+    });
     json(willdeep_runtime_protocol::RuntimeTaskDiagnostics {
         task: public_task(task),
         failure,

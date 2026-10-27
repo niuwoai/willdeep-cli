@@ -17,6 +17,18 @@ pub(super) fn render_attention_detail(f: &mut ratatui::Frame<'_>, app: &mut App)
         .as_ref()
         .filter(|loaded| loaded.item_id == detail.id)
         .map(|loaded| format!("\n\n{loaded}", loaded = loaded.text))
+        .or_else(|| {
+            (app.attention_diagnostics_loading.as_deref() == Some(detail.id.as_str())).then(|| {
+                format!(
+                    "\n\n{}",
+                    app.language.text(
+                        "正在读取失败诊断…",
+                        "Loading failure diagnostics…",
+                        "失敗診断を読み込み中…",
+                    )
+                )
+            })
+        })
         .unwrap_or_default();
     let content = format!(
         "{} · {}\n\n{}\n\n{}{diagnostics}{}",
@@ -61,13 +73,20 @@ pub(super) fn render_attention_detail(f: &mut ratatui::Frame<'_>, app: &mut App)
         // Many Inbox entries have no action left but "stop showing me this" —
         // a task that failed days ago, for instance. Advertise the key.
         app.language.text(
-            "Inbox 详情 · M 忽略 · Esc 关闭",
-            "Inbox detail · M dismiss · Esc closes",
-            "Inbox 詳細 · M 削除 · Esc 閉じる",
+            "Inbox 详情 · ↑/↓ 滚动 · Enter 重载 · M 忽略 · Esc 关闭",
+            "Inbox detail · ↑/↓ scroll · Enter reload · M dismiss · Esc closes",
+            "Inbox 詳細 · ↑/↓ スクロール · Enter 再読込 · M 削除 · Esc 閉じる",
         )
     };
+    let total = visual_lines(&content, popup.width.saturating_sub(2).max(1) as usize);
+    app.attention_detail_scroll = app.attention_detail_scroll.min(
+        total
+            .saturating_sub(popup.height.saturating_sub(2) as usize)
+            .min(u16::MAX as usize) as u16,
+    );
     f.render_widget(
         Paragraph::new(content)
+            .scroll((app.attention_detail_scroll, 0))
             .block(
                 Block::default()
                     .title(title)

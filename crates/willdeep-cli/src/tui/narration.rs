@@ -219,7 +219,23 @@ impl App {
     pub(super) fn version_report(&self) -> String {
         let runtime = self.runtime_version.clone().unwrap_or_else(|| {
             self.language
-                .text("未连接", "not connected", "未接続")
+                .text(
+                    if self.runtime_reachable {
+                        "版本未知（已连接）"
+                    } else {
+                        "未连接"
+                    },
+                    if self.runtime_reachable {
+                        "version unknown (connected)"
+                    } else {
+                        "not connected"
+                    },
+                    if self.runtime_reachable {
+                        "接続済み（バージョン不明）"
+                    } else {
+                        "未接続"
+                    },
+                )
                 .to_owned()
         });
         let mut report = format!("System: CLI {} · Runtime {runtime}", willdeep_core::VERSION);
@@ -230,6 +246,31 @@ impl App {
                 " · バージョン不一致：",
             ));
             report.push_str(self.version_alignment_hint());
+        }
+        if let Some(diagnostic) = &self.runtime_diagnostic {
+            report.push_str(
+                self.language
+                    .text(" · 诊断：", " · Diagnostic: ", " · 診断："),
+            );
+            let diagnostic = willdeep_core::judge::redact_credentials(diagnostic);
+            report.extend(
+                diagnostic
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(1000),
+            );
+            report.push_str(self.language.text(
+                " · 恢复：可运行 `/daemon status` 查看状态，再用 `/daemon start` 重试。",
+                " · Recovery: run `/daemon status` for details, then `/daemon start` to retry.",
+                " · 復旧：`/daemon status` で状態を確認し、`/daemon start` で再試行してください。",
+            ));
+        }
+        if self.runtime_auto_start_tried && self.runtime_version.is_none() {
+            report.push_str(self.language.text(
+                " · 已自动尝试启动一次；请查看启动结果，或再次运行 `/daemon start` 重试。",
+                " · Automatic startup was attempted once; check its result or run `/daemon start` to retry.",
+                " · 自動起動を一度試しました。結果を確認するか、`/daemon start` で再試行してください。",
+            ));
         }
         report
     }
@@ -846,13 +887,8 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         assert!(app.handle_slash_command("/version", &SkillCatalog::default()));
         let line = app.transcript.last().cloned().unwrap();
-        assert_eq!(
-            line,
-            format!(
-                "System: CLI {} · Runtime not connected",
-                willdeep_core::VERSION
-            )
-        );
+        assert!(line.contains(&format!("CLI {}", willdeep_core::VERSION)));
+        assert!(line.contains("Runtime not connected"));
 
         app.runtime_version = Some(willdeep_core::VERSION.to_owned());
         assert!(!app.version_report().contains("versions differ"));

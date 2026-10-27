@@ -74,6 +74,9 @@ impl App {
             kernel_attention: Vec::new(),
             runtime_gates: Vec::new(),
             runtime_version: None,
+            runtime_reachable: false,
+            runtime_diagnostic: None,
+            runtime_auto_start_tried: false,
             runtime_version_warned: false,
             runtime_auto_upgrade_pending: false,
             runtime_auto_upgrade_tried: false,
@@ -113,6 +116,11 @@ impl App {
             transcript_render_cache: None,
             transcript_render_offset: 0,
             skill_selected: 0,
+            references: None,
+            reference_selected: 0,
+            reference_dismissed: false,
+            reference_rect: Rect::default(),
+            reference_hits: Vec::new(),
             skill_menu_dismissed: false,
             command_selected: 0,
             command_menu_dismissed: false,
@@ -137,6 +145,8 @@ impl App {
             task_detail_scroll: 0,
             attention_detail: None,
             attention_diagnostics: None,
+            attention_diagnostics_loading: None,
+            attention_detail_scroll: 0,
             attention_diff_rect: Rect::default(),
             attention_allow_rect: Rect::default(),
             attention_deny_rect: Rect::default(),
@@ -337,6 +347,8 @@ impl App {
             self.worktree_review = None;
             self.diff_review = None;
             self.attention_diagnostics = None;
+            self.attention_diagnostics_loading = None;
+            self.attention_detail_scroll = 0;
             self.attention_detail = Some(item);
         }
     }
@@ -831,6 +843,8 @@ impl App {
         }
         // 打字只隐藏灰字；删回空输入框仍能 Tab。真正发送别的话才算忽略。
         self.skill_selected = 0;
+        self.reference_selected = 0;
+        self.reference_dismissed = false;
         self.skill_menu_dismissed = false;
         self.command_selected = 0;
         self.command_menu_dismissed = false;
@@ -2061,6 +2075,16 @@ impl App {
             {
                 self.command_selected = selected;
                 self.handle_command_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            }
+        } else if self.reference_rect.contains((x, y).into()) {
+            if let Some((_, selected)) = self
+                .reference_hits
+                .iter()
+                .find(|(row, _)| *row == y)
+                .copied()
+            {
+                self.reference_selected = selected;
+                self.handle_reference_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
             }
         } else if self.skill_rect.contains((x, y).into()) {
             if let Some((_, selected)) = self.skill_hits.iter().find(|(row, _)| *row == y).copied()

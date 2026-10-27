@@ -2548,6 +2548,7 @@ mod tests {
             tools: Vec::new(),
             artifacts: Vec::new(),
             runtime_version: None,
+            runtime_diagnostic: None,
             event_sequence: None,
             mobile: None,
         };

@@ -89,7 +89,13 @@ impl PromptEditor {
         let query = token.strip_prefix(marker)?;
         query
             .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+            .all(|character| {
+                if marker == '@' {
+                    !character.is_whitespace() && !matches!(character, '@' | '"')
+                } else {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                }
+            })
             .then_some((start, query))
     }
     pub fn replace_before_cursor(&mut self, start: usize, value: &str) {

@@ -90,6 +90,10 @@ impl Default for MediaState {
 }
 
 impl MediaState {
+    pub(super) fn font_size(&self) -> (u16, u16) {
+        self.picker.font_size()
+    }
+
     pub(super) fn detect(resize_tx: mpsc::UnboundedSender<ResizeRequest>) -> Self {
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
         Self::with_picker(picker, resize_tx)
