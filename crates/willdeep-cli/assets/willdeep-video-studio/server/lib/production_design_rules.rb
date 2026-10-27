@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "production_text_rules"
+require_relative "production_text_contracts"
 
 # Code owns durations, dialogue and identities. Models may propose only creative fields.
 module ProductionDesignRules
@@ -10,6 +11,17 @@ module ProductionDesignRules
              "startPrompt" => 8_000, "endPrompt" => 8_000 }.freeze
   KEY = /\A[a-z][a-z0-9_-]{0,63}\z/
   BATCH = 6
+
+  class CastInvalid < ProductionTextRules::Invalid
+    attr_reader :repair_material
+
+    def initialize(code, order, names, invalid: [], missing: [])
+      @repair_material = { "shotOrder" => order, "allowedCharacters" => names,
+        "invalidCharacters" => invalid, "missingSpeakers" => missing,
+        "instruction" => "仅修正该镜cast中的锁定角色姓名和缺失说话人；画外声音保持画外，不改写对白、镜号或时长。" }
+      super(code)
+    end
+  end
 
   def require!(condition, code)
     ProductionTextRules.require!(condition, code)
@@ -59,12 +71,19 @@ module ProductionDesignRules
       FIELDS.each { |key, maximum| ProductionTextRules.text!(shot[key], key, maximum) }
       key!(shot["sceneKey"])
       require!(shot["cast"].is_a?(Array) && shot["cast"].length.between?(1, names.length), "production_shot_cast_invalid")
+      invalid = shot["cast"].reject { |entry| entry.is_a?(Hash) && names.include?(entry["name"]) }
+      unless invalid.empty?
+        raise CastInvalid.new("production_shot_character_invalid", slot["order"], names,
+          invalid: invalid.map { |entry| entry.is_a?(Hash) ? entry["name"].to_s[0, 120] : "invalid_cast_entry" })
+      end
       cast_names = shot["cast"].map do |entry|
-        require!(entry.is_a?(Hash) && names.include?(entry["name"]), "production_shot_character_invalid")
         key!(entry["appearanceKey"])
         entry["name"]
       end
-      require!(cast_names.uniq == cast_names && (dialogue.select { |line| slot["dialogueIDs"].include?(line["sourceID"]) }.map { |line| line["speaker"] } - cast_names).empty?, "production_dialogue_speaker_missing")
+      missing = dialogue.select { |line| slot["dialogueIDs"].include?(line["sourceID"]) }.map { |line| line["speaker"] }.uniq - cast_names
+      unless cast_names.uniq == cast_names && missing.empty?
+        raise CastInvalid.new("production_dialogue_speaker_missing", slot["order"], names, missing: missing)
+      end
       require!(shot["propKeys"].is_a?(Array) && shot["propKeys"].length <= 8 && shot["propKeys"].uniq == shot["propKeys"], "production_shot_props_invalid")
       shot["propKeys"].each { |key| key!(key) }
     end
@@ -79,11 +98,32 @@ module ProductionDesignRules
     end.uniq
   end
 
+  def exact_array(items)
+    { "type" => "array", "prefixItems" => items, "items" => false,
+      "minItems" => items.length, "maxItems" => items.length }
+  end
+
+  def asset_schema(expected, names, voice_catalog, locked)
+    contract = ProductionTextContracts
+    assets = expected.map do |identity|
+      contract.object(identity.transform_values { |value| { "const" => value } }.merge(
+        "name" => contract.text(120), "prompt" => contract.text(8_000), "notes" => contract.text(4_000)))
+    end
+    characters = names.map do |name|
+      properties = { "name" => { "const" => name }, "visualPrompt" => contract.text(8_000) }
+      unless voice_catalog.empty?
+        properties["voicePresetID"] = locked.key?(name) ? { "const" => locked.fetch(name) } : { "enum" => voice_catalog.map { |entry| entry.fetch("id") } }
+      end
+      contract.object(properties)
+    end
+    contract.object("assets" => exact_array(assets), "characters" => exact_array(characters), "musicPrompt" => contract.text(2_000))
+  end
+
   def assets!(value, expected, names)
     require!(value.is_a?(Hash) && value["assets"].is_a?(Array), "production_asset_definitions_invalid")
     require!(value["assets"].map { |entry| entry.slice("key", "kind", "character") } == expected, "production_asset_coverage_invalid")
-    value["assets"].each do |entry|
-      %w[name prompt notes].each { |key| ProductionTextRules.text!(entry[key], key, key == "prompt" ? 8_000 : key == "notes" ? 4_000 : 120) }
+    value["assets"].each_with_index do |entry, index|
+      %w[name prompt notes].each { |key| ProductionTextRules.text!(entry[key], "assets[#{index}].#{key}", key == "prompt" ? 8_000 : key == "notes" ? 4_000 : 120) }
     end
     require!(value["characters"].is_a?(Array) && value["characters"].map { |entry| entry["name"] } == names, "production_visual_character_coverage_invalid")
     value["characters"].each { |entry| ProductionTextRules.text!(entry["visualPrompt"], "visualPrompt", 8_000) }

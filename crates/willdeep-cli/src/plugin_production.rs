@@ -80,6 +80,21 @@ pub(crate) async fn control(
             )))
         })
 }
+fn resume_parameters(id: Uuid, args: &Value) -> Value {
+    let mut params = json!({"id":id,"detail":false});
+    for key in [
+        "retryUnknownTextRequests",
+        "retryUnknownImageRequests",
+        "historicalUsageHold",
+        "imageRetryPolicy",
+    ] {
+        if let Some(value) = args.get(key) {
+            params[key] = value.clone();
+        }
+    }
+    params
+}
+
 async fn dispatch(
     home: &Path,
     roots: &[PathBuf],
@@ -150,13 +165,7 @@ async fn dispatch(
         } else if operation == "music" {
             json!({"id":id,"deferred":args["deferred"],"detail":false})
         } else if operation == "resume" {
-            let mut params = json!({"id":id,"detail":false});
-            for key in ["retryUnknownTextRequests", "historicalUsageHold"] {
-                if let Some(value) = args.get(key) {
-                    params[key] = value.clone();
-                }
-            }
-            params
+            resume_parameters(id, &args)
         } else {
             json!({"id":id,"detail":args.get("detail").cloned().unwrap_or(json!(false))})
         };
@@ -182,11 +191,39 @@ async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_forwards_one_exact_image_recovery_without_an_implicit_override() {
+        let args = json!({"retryUnknownImageRequests":[{"requestID":Uuid::new_v4(),"subject":"d".repeat(64)}],"overrideUnknown":true});
+        let forwarded = resume_parameters(Uuid::new_v4(), &args);
+        assert_eq!(
+            forwarded["retryUnknownImageRequests"],
+            args["retryUnknownImageRequests"]
+        );
+        assert!(forwarded.get("overrideUnknown").is_none());
+    }
     #[test]
     fn requests_are_scoped_to_registered_host_roots() {
         let root = std::env::temp_dir().canonicalize().unwrap();
         assert_eq!(workspace(None, std::slice::from_ref(&root)).unwrap(), root);
         assert!(workspace(Some("/"), &[root]).is_err());
         assert!(workspace(None, &[]).is_err());
+    }
+    #[test]
+    fn resume_forwards_the_exact_authorized_image_policy_with_existing_recovery_fields() {
+        let id = Uuid::new_v4();
+        let args = json!({"imageRetryPolicy":{"mode":"per_material_v1","legacyBindings":[{"requestID":Uuid::new_v4(),"subject":"a".repeat(64),"fileName":"old.png"}]},
+            "historicalUsageHold":{"tokens":12},"retryUnknownTextRequests":[Uuid::new_v4()],"unrelated":"must not forward"});
+        let forwarded = resume_parameters(id, &args);
+        assert_eq!(forwarded["id"], json!(id));
+        for key in [
+            "imageRetryPolicy",
+            "historicalUsageHold",
+            "retryUnknownTextRequests",
+        ] {
+            assert_eq!(forwarded[key], args[key]);
+        }
+        assert_eq!(forwarded["detail"], false);
+        assert!(forwarded.get("unrelated").is_none());
     }
 }

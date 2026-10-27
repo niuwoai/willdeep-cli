@@ -8,6 +8,8 @@ require_relative "image_qa"
 # Adapters own their media writes. No stale DramaStore snapshot is written over a
 # backend's newly saved candidates, audio or reviews.
 class ProductionMedia
+  IMAGE_REVIEW_POLICY = "reference-canvas-v2"
+  IMAGE_BATCH_LIMIT = ProductionMeter::IMAGE_BATCH_LIMIT
   STAGES = %w[generate_assets review_assets generate_frames review_frames generate_dialogue review_dialogue generate_music review_music generate_video review_video compose_episode review_film review_series deliver].freeze
   CREATIVE_KEYS = %w[id order title summary script visualPrompt name description kind prompt notes characterID
                      providerVoiceID consent package dialogue speaker text sourceID actionStart actionEnd cameraIntent
@@ -57,6 +59,18 @@ class ProductionMedia
     key = "#{arguments['taskID']}:#{input['attempt']}"
     creative = creative_basis(drama)
     receipt = drama.dig("production", "mediaSteps", key)
+    if receipt && input["stage"] == "review_assets" && receipt["imageReviewPolicy"] != IMAGE_REVIEW_POLICY
+      require!(receipt["inputDigest"] == arguments["inputDigest"] && receipt["creativeBasis"] == creative, "production_revision_conflict")
+      update(drama["id"], creative) do |current|
+        cached = current["production"]["mediaSteps"][key]
+        (cached["materialHistory"] ||= []) << cached.slice("items", "result", "progress", "imageReviewPolicy")
+        cached["items"] = {}
+        cached.delete("result")
+        cached.delete("progress")
+        cached["imageReviewPolicy"] = IMAGE_REVIEW_POLICY
+      end
+      receipt = @store.find(drama["id"])["production"]["mediaSteps"][key]
+    end
     if receipt
       require!(receipt["inputDigest"] == arguments["inputDigest"] && receipt["creativeBasis"] == creative, "production_revision_conflict")
       return receipt["result"].merge("deduplicated" => true) if receipt["result"]
@@ -64,14 +78,16 @@ class ProductionMedia
       require!(drama["production"]["lastBasis"] == basis.call(drama), "production_revision_conflict")
       update(drama["id"], creative) do |current|
         (current["production"]["mediaSteps"] ||= {})[key] = { "inputDigest" => arguments["inputDigest"], "creativeBasis" => creative, "items" => {},
-          "stage" => input["stage"], "episodeOrder" => input["episodeOrder"], "taskID" => arguments["taskID"], "attempt" => input["attempt"] }
+          "stage" => input["stage"], "episodeOrder" => input["episodeOrder"], "taskID" => arguments["taskID"], "attempt" => input["attempt"],
+          "imageReviewPolicy" => IMAGE_REVIEW_POLICY }
       end
     end
     drama = @store.find(drama["id"])
     record = drama["production"]["mediaSteps"][key]
     episode = drama["episodes"].find { |entry| entry["order"] == input["episodeOrder"] }
     require!(%w[review_series deliver].include?(input["stage"]) || episode && !episode["shots"].empty?, "production_storyboard_not_adopted")
-    meter = ProductionMeter.new(host: @host, task_id: arguments["taskID"], grant: arguments["grant"], input_digest: arguments["inputDigest"], attempt: input["attempt"])
+    image_policy = input["imageRetryPolicy"] == "per_material_v1" && %w[generate_assets review_assets generate_frames review_frames].include?(input["stage"])
+    meter = ProductionMeter.new(host: @host, task_id: arguments["taskID"], grant: arguments["grant"], input_digest: arguments["inputDigest"], attempt: input["attempt"], image_policy: image_policy)
     items = case input["stage"]
             when "generate_dialogue", "review_dialogue" then dialogue_items(episode)
             when "generate_music", "review_music", "compose_episode", "review_film" then [{ "episodeOrder" => episode["order"] }]
@@ -114,7 +130,7 @@ class ProductionMedia
                  reusable || @remote.step(drama: drama, item: item, arguments: arguments, meter: meter,
                    update: ->(&block) { update(drama["id"], creative, &block) }, authorize: authorize)
                else
-                 image(drama, item, meter, key, review_only: input["stage"].start_with?("review_"))
+                 image(drama, item, meter, key, review_only: input["stage"].start_with?("review_"), image_policy: image_policy)
                end
       authorize.call
       unless output["pending"]
@@ -124,6 +140,7 @@ class ProductionMedia
     latest = @store.find(drama["id"])
     completed = latest["production"]["mediaSteps"][key]["items"]
     rejected = input["stage"].start_with?("generate_") && completed.values.any? { |value| value["accepted"] == false }
+    rejected = completed.values.any? { |value| value["blocksDependentImages"] } if image_policy && input["stage"].start_with?("generate_")
     pending = completed.length < items.length && !rejected
     result = { "ok" => true, "workflowID" => arguments["workflowID"], "inputDigest" => arguments["inputDigest"],
       "dramaID" => drama["id"], "episodeOrder" => input["episodeOrder"], "state" => pending ? "waiting_external" : "completed",
@@ -139,6 +156,7 @@ class ProductionMedia
         "coverage" => input["episodeOrder"] ? [input["episodeOrder"]] : input["range"] ? (input["range"]["first"]..input["range"]["last"]).to_a : (1..drama["episodeCount"]).to_a,
         "issues" => failed.map { |id, value| { "subject" => id, "details" => value["issues"] } } }
       result["reworkTarget"] = failed.values.map { |value| value["reworkTarget"] }.compact.first || input.fetch("repairTargets", []).first.to_h["id"] unless failed.empty?
+      result["repairExhausted"] = true if image_policy && failed.values.any? { |value| value["retryExhausted"] }
     end
     update(drama["id"], creative) do |current|
       current["production"]["mediaSteps"][key]["result"] = result unless pending
@@ -238,19 +256,26 @@ class ProductionMedia
     { "generated" => result["generated"], "repairIssues" => corrections }
   end
 
-  def image(drama, item, meter, key, review_only:)
+  def image(drama, item, meter, key, review_only:, image_policy: false)
     common = item.merge("dramaID" => drama["id"])
+    recheck_stale_images(drama, common)
+    drama = @store.find(drama["id"])
     recommended = @qa.current_recommendation(drama["id"], item["target"], ImageQA.ids_for(item["target"], item))
     if recommended && recommended["eligible"]
       select(drama, common, recommended["candidateID"])
       return { "accepted" => true, "candidateID" => recommended["candidateID"], "reused" => true }
     end
+    counter = image_policy ? meter.image_status(item_key(item)) : nil
+    exhausted = counter && counter["attempts"] >= counter["limit"]
     if review_only
-      return { "accepted" => false, "issues" => ["production_no_approved_candidate"] }
+      return { "accepted" => false, "issues" => ["production_no_approved_candidate"], "retryExhausted" => exhausted == true }
+    end
+    if exhausted
+      return { "accepted" => false, "retryExhausted" => true, "issues" => ["production_image_material_limit"], "blocksDependentImages" => item["target"] == "character" }
     end
     backend = @image_backend.call
     require!(backend, "production_image_unavailable")
-    wrapped = ProductionBackends::Image.new(backend: backend, meter: meter, identity: item_key(item))
+    wrapped = ProductionBackends::Image.new(backend: backend, meter: meter, identity: item_key(item), image_subject: image_policy ? item_key(item) : nil)
     service = ImageGeneration.new(drama_service: @dramas, host: @host, backend_selector: -> { wrapped })
     node = image_node(drama, item)
     candidates = %w[start end].include?(item["target"]) ? node["#{item['target']}Candidates"] : node["candidates"]
@@ -271,7 +296,24 @@ class ProductionMedia
     accepted = ImageQA.eligible?(verdict)
     select(drama, common, id) if accepted
     { "accepted" => accepted, "candidateID" => id, "issues" => verdict["issues"], "repairDirectives" => corrections,
+      "blocksDependentImages" => !accepted && item["target"] == "character",
       "previousCandidateID" => previous && previous["id"] }
+  end
+
+  def recheck_stale_images(drama, common)
+    target = common["target"]
+    node = image_node(drama, common)
+    candidates = %w[start end].include?(target) ? node["#{target}Candidates"] : node["candidates"]
+    return unless Array(candidates).any? { |candidate| candidate["qa"].is_a?(Hash) }
+
+    ids = ImageQA.ids_for(target, common)
+    material = @qa.material(drama, target, ids)
+    require!(material["ok"], "production_image_review_material_unavailable")
+    stale = Array(candidates).select { |candidate| candidate["qa"].is_a?(Hash) && !ImageQA.fresh_qa(candidate, material["basis"]) }
+    stale.map { |candidate| candidate["id"] }.each_slice(ImageQA::MAX_CANDIDATES) do |ids_to_check|
+      checked = @qa.run_tool(common.merge("candidateIDs" => ids_to_check))
+      require!(checked["ok"] && checked["failed"].empty? && checked["checked"].length == ids_to_check.length, "production_image_review_unavailable")
+    end
   end
 
   def image_node(drama, arguments)

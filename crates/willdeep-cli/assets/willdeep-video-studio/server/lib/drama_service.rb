@@ -1077,6 +1077,8 @@ class DramaService
         candidate = list.find { |entry| entry["id"] == arguments["candidateID"].to_s }
         raise NotFound, "candidate_not_found" unless candidate
 
+        previous = candidate["qa"]
+        (candidate["qaHistory"] ||= []) << previous if previous.is_a?(Hash) && previous != qa
         candidate["qa"] = qa
       end
       { "ok" => true, "drama" => drama }

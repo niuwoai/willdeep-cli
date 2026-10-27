@@ -125,7 +125,7 @@ class ProductionDelivery
 
   def dossier(drama, usage)
     series = drama["production"]
-    selected = series.slice("plan", "outlines", "outlineReviews", "episodes", "storyStates", "scriptReviews", "issues", "history", "storyboards", "assetCatalog", "audioAudits", "visualAudits", "videoAudits", "filmAudits", "boundaryAudits", "seriesReviews", "remoteRequests", "filmRepairs", "sourceFrozen")
+    selected = series.slice("plan", "outlines", "outlineReviews", "episodes", "storyStates", "scriptReviews", "scriptReviewHistory", "finalReviewEvidence", "finalReviewHistory", "issues", "history", "storyboards", "assetCatalog", "audioAudits", "visualAudits", "videoAudits", "filmAudits", "boundaryAudits", "seriesReviews", "remoteRequests", "filmRepairs", "sourceFrozen")
     selected["mediaSteps"] = series.fetch("mediaSteps", {}).reject { |_key, step| step["stage"] == "deliver" }
     selected.merge!(series.slice("sourceCanon", "sourceCandidates", "sourceDerivative", "sourceSnapshotDigest", "conversationUsage"))
     clean({ "schema" => "willdeep-production-records-v1", "workflowID" => series["workflowID"], "title" => drama["title"], "spec" => series["spec"],

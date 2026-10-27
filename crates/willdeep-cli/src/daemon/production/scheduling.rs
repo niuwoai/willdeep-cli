@@ -1,4 +1,29 @@
 use super::*;
+use std::collections::HashSet;
+
+pub(super) fn next_index(
+    workflow: &ProductionWorkflow,
+    completed: &HashSet<Uuid>,
+) -> Option<usize> {
+    workflow
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.state == NodeState::Pending
+                && !deferred(workflow, node.stage)
+                && node.dependencies.iter().all(|id| completed.contains(id))
+        })
+        .min_by_key(|(index, node)| {
+            let priority = if node.stage == ProductionStage::ReviewScripts && node.range.is_some() {
+                0
+            } else {
+                1
+            };
+            (priority, *index)
+        })
+        .map(|(index, _)| index)
+}
 
 pub(super) fn control(
     workflow: &mut ProductionWorkflow,
@@ -102,6 +127,122 @@ mod tests {
         };
         let workflow = Store::new(&home).create(Uuid::new_v4(), input).unwrap();
         (home, workflow)
+    }
+
+    fn ready_after_episode(home: &Path, workflow: &mut ProductionWorkflow, episode: u16) {
+        let index = workflow
+            .nodes
+            .iter()
+            .position(|node| {
+                node.stage == ProductionStage::WriteEpisode && node.episode == Some(episode)
+            })
+            .unwrap();
+        for node in &mut workflow.nodes[..index] {
+            node.state = NodeState::Completed;
+        }
+        Store::new(home)
+            .update(workflow.id, |current| {
+                *current = workflow.clone();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn ready_script_batch_review_precedes_later_episode_writing() {
+        let (home, mut workflow) = fixture();
+        ready_after_episode(&home, &mut workflow, 9);
+        let input = workflow.input.clone();
+        let next = engine::prepare(&home, workflow.id).unwrap();
+        assert_eq!(next.stage, ProductionStage::ReviewScripts);
+        assert_eq!(next.range.unwrap().first, 1);
+        assert_eq!(next.range.unwrap().last, 8);
+        let saved = Store::new(&home).get(workflow.id).unwrap();
+        assert_eq!(saved.input, input);
+        assert!(saved.generations.is_empty());
+        assert!(saved.budget_changes.is_empty());
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn script_review_priority_never_bypasses_missing_dependencies() {
+        let (home, mut workflow) = fixture();
+        ready_after_episode(&home, &mut workflow, 8);
+        let next = engine::prepare(&home, workflow.id).unwrap();
+        assert_eq!(next.stage, ProductionStage::WriteEpisode);
+        assert_eq!(next.episode, Some(8));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn ready_script_review_does_not_preempt_an_inflight_episode() {
+        let (home, mut workflow) = fixture();
+        ready_after_episode(&home, &mut workflow, 9);
+        let active = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| node.stage == ProductionStage::WriteEpisode && node.episode == Some(9))
+            .unwrap();
+        active.state = NodeState::WaitingExternal;
+        active.attempt = 1;
+        let id = active.id;
+        Store::new(&home)
+            .update(workflow.id, |current| {
+                *current = workflow.clone();
+                Ok(())
+            })
+            .unwrap();
+        let next = engine::prepare(&home, workflow.id).unwrap();
+        assert_eq!(next.id, id);
+        assert_eq!(next.attempt, 1);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn existing_rework_graph_reviews_earliest_ready_batch_before_later_writing() {
+        let (home, mut workflow) = fixture();
+        ready_after_episode(&home, &mut workflow, 30);
+        let first = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| {
+                node.stage == ProductionStage::ReviewScripts
+                    && node.range.is_some_and(|range| range.first == 1)
+            })
+            .unwrap();
+        first.state = NodeState::Completed;
+        let target = workflow
+            .nodes
+            .iter_mut()
+            .find(|node| {
+                node.stage == ProductionStage::ReviewScripts
+                    && node.range.is_some_and(|range| range.first == 9)
+            })
+            .unwrap();
+        target.attempt = 2;
+        target
+            .history
+            .push(json!({"attempt":1,"trigger":"preserved prior review"}));
+        let id = target.id;
+        Store::new(&home)
+            .update(workflow.id, |current| {
+                *current = workflow.clone();
+                Ok(())
+            })
+            .unwrap();
+        let next = engine::prepare(&home, workflow.id).unwrap();
+        assert_eq!(next.id, id);
+        assert_eq!(next.attempt, 3);
+        assert_eq!(
+            next.history,
+            workflow
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .unwrap()
+                .history
+        );
+        std::fs::remove_dir_all(home).unwrap();
     }
     #[test]
     fn music_deferral_selects_video_then_next_episode_without_changing_music_proofs_or_budget() {

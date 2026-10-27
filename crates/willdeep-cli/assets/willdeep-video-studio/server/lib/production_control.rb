@@ -9,6 +9,12 @@ class ProductionControl
              description: "Cumulative cap. Media null means explicitly authorized unlimited quantity, still metered. Omission is not authorization." }]
   }, required: UNITS }.freeze
   ID = { type: "string", format: "uuid" }.freeze
+  IMAGE_RETRY_POLICY = { type: "object", additionalProperties: false,
+    properties: { mode: { type: "string", enum: ["per_material_v1"] },
+      legacyBindings: { type: "array", items: { type: "object", additionalProperties: false,
+        properties: { requestID: ID, subject: { type: "string", pattern: "^[0-9a-f]{64}$" }, fileName: { type: "string", minLength: 1 } },
+        required: %w[requestID subject fileName] } } }, required: %w[mode legacyBindings],
+    description: "Explicit human-approved migration to four image requests per stable material, counting every existing request. Legacy bindings must cover every old image receipt and match verified response filenames. Cannot reset counts or bypass uncertain media." }.freeze
   HISTORICAL_HOLD = { type: "object", additionalProperties: false,
     properties: { tokens: { type: "integer", minimum: 1 }, modelCalls: { type: "integer", minimum: 1 },
       episodeCalls: { type: "object", patternProperties: { "^[1-9][0-9]?$" => { type: "integer", minimum: 1 } }, additionalProperties: false },
@@ -27,7 +33,11 @@ class ProductionControl
                  when "inspect" then { id: ID, detail: { type: "boolean", default: false } }
                  when "budget" then { id: ID, expected: LIMITS, limits: LIMITS }
                  when "music" then { id: ID, deferred: { type: "boolean" } }
-                 when "resume" then { id: ID, historicalUsageHold: HISTORICAL_HOLD, retryUnknownTextRequests: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: ID,
+                 when "resume" then { id: ID, historicalUsageHold: HISTORICAL_HOLD, imageRetryPolicy: IMAGE_RETRY_POLICY,
+                   retryUnknownImageRequests: { type: "array", minItems: 1, maxItems: 1,
+                     items: { type: "object", additionalProperties: false, properties: { requestID: ID, subject: { type: "string", pattern: "^[0-9a-f]{64}$" } }, required: %w[requestID subject] },
+                     description: "ONLY with separate explicit human authorization for this exact synchronous unknown image request and stable material subject, after reconciliation. Retain the complete unknown receipt and one-image reservation; allow one new image purchase, counting both against the existing four-per-material cap. Duplicate cost is possible. A replacement unknown needs new approval; other media and final delivery settlement stay protected." },
+                   retryUnknownTextRequests: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: ID,
                    description: "ONLY with explicit human authorization for these exact unknown text request IDs. Keeps their unknown state and full reservation; opens one new episode writing or text dual-review attempt within existing caps. May incur duplicate cost. Never applies to media, running/reserved requests or final delivery settlement." } }
                  when "file" then { id: ID, selector: { type: "string", pattern: "^(manifest|records|episode-[1-9][0-9]?)$" } }
                  else { id: ID }
@@ -39,7 +49,7 @@ class ProductionControl
                   when "budget" then "Increase cumulative resource limits ONLY after explicit human authorization. expected must match current limits; preserve all usage, receipts and revisions; does not resume automatically."
                   when "pause" then "Pause after current generation receipts settle. Preserve the original task, content, usage and revisions; does not cancel or interrupt a paid request."
                   when "music" then "Set deferred=true when the human asks to postpone music. Keep music nodes pending; continue eligible images, speech, videos and reviews across episodes. Composition, whole-film acceptance and delivery still require music. Setting false does not resume a paused task. No budget change."
-                  when "resume" then "Continue a paused production within its current limits, preserving content, usage and upstream IDs. Uncertain requests remain blocked unless the human explicitly authorizes the exact retryUnknownTextRequests for synchronous episode writing or text dual-review. Media uncertainty cannot be bypassed; unknown text reservations remain held and do not count as settled delivery."
+                  when "resume" then "Continue a paused production within its current limits, preserving content, usage and upstream IDs. Uncertain text requires exact retryUnknownTextRequests authorization. A synchronous unknown image requires separate exact requestID and stable-subject approval through retryUnknownImageRequests after reconciliation, allowing only one replacement within the original material cap. Other media uncertainty stays blocked. All retained unknown reservations remain held and never count as settled delivery."
                   when "delivery" then "List freshly verified final film files, SHA256 and streaming download routes. Requires completed Runtime, full audiovisual acceptance and settled usage. No media bytes returned through MCP."
                   when "file" then "Resolve one accepted final file descriptor for the Rust streaming host. Accepts only manifest or episode-N, never a path; rechecks current Runtime and domain acceptance. No media bytes."
                   else "Stop future production dispatch. Already submitted work may still settle; preserve all existing content and usage."

@@ -2603,9 +2603,13 @@ fn write_state(path: &Path, state: &DaemonState) -> Result<()> {
 }
 
 fn write_json_atomic<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {
-    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
     let data = serde_json::to_vec_pretty(value)?;
-    write_private(&temporary, &data)?;
+    write_serialized_atomic(path, &data)
+}
+
+fn write_serialized_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
+    write_private(&temporary, data)?;
     if cfg!(windows) && path.exists() {
         std::fs::remove_file(path)?;
     }

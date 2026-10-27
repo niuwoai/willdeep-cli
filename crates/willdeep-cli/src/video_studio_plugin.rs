@@ -6,7 +6,7 @@ use rust_embed::RustEmbed;
 use willdeep_core::plugin::{PluginHost, installed_versions};
 
 pub(crate) const ID: &str = "willdeep-video-studio";
-pub(crate) const VERSION: &str = "0.53.0-rc9";
+pub(crate) const VERSION: &str = "0.53.0-rc27";
 
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-video-studio"]

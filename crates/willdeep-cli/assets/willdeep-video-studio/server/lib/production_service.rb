@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "production_host_diagnostic"
+
 require_relative "production_text"
 require_relative "production_meter"
 require_relative "production_design"
@@ -15,7 +17,7 @@ class ProductionService
                     compose_episode review_film review_series deliver].freeze
   STAGES = (["preflight"] + ProductionText::STAGES + MEDIA_STAGES).freeze
   MAX_TEXT_ATTEMPTS = 8
-  MAX_EPISODE_REVIEW_ATTEMPTS = 24
+  MAX_EPISODE_TEXT_ATTEMPTS = 24
   MAX_MEDIA_ATTEMPTS = 4
 
   def initialize(store:, host:, settings:, skills:, preflight:, source_service: nil, media: nil, voices: nil, delivery: nil)
@@ -76,7 +78,7 @@ class ProductionService
              elsif input["stage"] == "series_plan"
                replace_plan(drama, input)
              elsif ProductionText::STAGES.include?(input["stage"])
-               @text.execute(drama, input)
+               @text.execute(drama, input, task_id: arguments["taskID"])
              elsif ProductionDesign::STAGES.include?(input["stage"])
                @design.execute(drama, input)
              else
@@ -96,8 +98,8 @@ class ProductionService
     result
   rescue HostBridge::Unsupported
     failure("production_runtime_unsupported")
-  rescue HostBridge::RequestFailed
-    failure("production_host_request_failed")
+  rescue HostBridge::RequestFailed => error
+    failure("production_host_request_failed", ProductionHostDiagnostic.describe(error))
   rescue ProductionTextRules::Invalid, ProductionMeter::Error, ProductionAudioBackend::Error, ProductionSnapshot::Error, KeyError, JSON::ParserError => error
     failure("production_step_invalid", error.message)
   end
@@ -155,10 +157,12 @@ class ProductionService
     spec = input["spec"]
     ProductionTextRules.require!(spec.is_a?(Hash) && spec["episode_count"].is_a?(Integer) && spec["episode_count"].between?(1, 80) &&
       spec["episode_seconds"].is_a?(Integer) && spec["episode_seconds"].between?(30, 300) && %w[portrait landscape square].include?(spec["aspect"]), "production_spec_invalid")
-    attempt_limit = if input["stage"] == "review_episode"
-                      MAX_EPISODE_REVIEW_ATTEMPTS
+    attempt_limit = if input["imageRetryPolicy"] == "per_material_v1" && %w[generate_assets review_assets generate_frames review_frames].include?(input["stage"])
+                      ProductionMedia::IMAGE_BATCH_LIMIT
+                    elsif %w[write_episode review_episode].include?(input["stage"])
+                      MAX_EPISODE_TEXT_ATTEMPTS
                     else
-                      ProductionText::STAGES.include?(input["stage"]) ? MAX_TEXT_ATTEMPTS : MAX_MEDIA_ATTEMPTS
+                      (ProductionText::STAGES + ProductionDesign::STAGES).include?(input["stage"]) ? MAX_TEXT_ATTEMPTS : MAX_MEDIA_ATTEMPTS
                     end
     ProductionTextRules.require!(input["attempt"].is_a?(Integer) && input["attempt"].between?(1, attempt_limit), "production_attempt_invalid")
     if input["episodeOrder"]

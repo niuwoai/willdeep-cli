@@ -175,11 +175,13 @@ module ImageBackend
       "host"
     end
 
-    def generate(prompt:, model:, size:, reference_paths:)
-      @host.request(HostBridge::IMAGE_GENERATE, {
+    def generate(prompt:, model:, size:, reference_paths:, production_subject: nil)
+      arguments = {
         "prompt" => prompt, "provider" => "some-im", "model" => model, "size" => size,
         "referenceImagePaths" => Array(reference_paths)
-      })
+      }
+      arguments["productionImageSubject"] = production_subject if production_subject
+      @host.request(HostBridge::IMAGE_GENERATE, arguments)
     rescue HostBridge::RequestFailed => error
       # 宿主把上游的 HTTP 状态和响应体拼成一句原话交回来，只能从原话里认。
       status = ImageBackend.http_status_in(error.message)

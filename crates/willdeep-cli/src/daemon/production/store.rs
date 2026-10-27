@@ -34,9 +34,8 @@ impl Store {
     }
 
     pub(super) fn get(&self, id: Uuid) -> Result<ProductionWorkflow> {
-        let workflow: ProductionWorkflow =
-            serde_json::from_slice(&std::fs::read(self.root.join(format!("{id}.json")))?)
-                .context("read production state")?;
+        let workflow = decode_workflow(&std::fs::read(self.root.join(format!("{id}.json")))?)
+            .context("read production state")?;
         anyhow::ensure!(
             workflow.schema == SCHEMA_VERSION && workflow.id == id,
             "production_archive_identity_mismatch"
@@ -45,7 +44,11 @@ impl Store {
     }
 
     fn put(&self, workflow: &ProductionWorkflow) -> Result<()> {
-        super::super::write_json_atomic(&self.root.join(format!("{}.json", workflow.id)), workflow)
+        let bytes = encode_workflow(workflow)?;
+        super::super::write_serialized_atomic(
+            &self.root.join(format!("{}.json", workflow.id)),
+            &bytes,
+        )
     }
 
     pub(super) fn create(
@@ -154,5 +157,92 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::*;
+
+    struct Directory(PathBuf);
+
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            if let Err(error) = std::fs::remove_dir_all(&self.0) {
+                eprintln!("remove isolated production codec test directory: {error}");
+            }
+        }
+    }
+
+    fn fixture() -> (Directory, Store, ProductionWorkflow) {
+        let root =
+            Directory(std::env::temp_dir().join(format!("production-codec-{}", Uuid::new_v4())));
+        std::fs::create_dir_all(&root.0).unwrap();
+        let store = Store::new(&root.0);
+        let limits = [
+            (ProductionUnit::ModelCalls, Some(8)),
+            (ProductionUnit::Tokens, Some(100)),
+            (ProductionUnit::Images, None),
+            (ProductionUnit::TtsCharacters, None),
+            (ProductionUnit::MusicCalls, None),
+            (ProductionUnit::MusicSeconds, None),
+            (ProductionUnit::VideoCalls, None),
+            (ProductionUnit::VideoSeconds, None),
+        ]
+        .into_iter()
+        .collect();
+        let workflow = store
+            .create(
+                Uuid::new_v4(),
+                ProductionStart {
+                    brief: Some("fixture".into()),
+                    source_screenplay_id: None,
+                    workspace: root.0.clone(),
+                    spec: SeriesSpec::default(),
+                    limits,
+                    max_model_calls_per_episode: None,
+                    origin_session_id: None,
+                },
+            )
+            .unwrap();
+        (root, store, workflow)
+    }
+
+    #[test]
+    fn codec_keeps_the_existing_archive_bytes_and_private_file_permissions() {
+        let (_root, store, workflow) = fixture();
+        let path = store.root.join(format!("{}.json", workflow.id));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            serde_json::to_vec_pretty(&workflow).unwrap()
+        );
+        assert_eq!(store.get(workflow.id).unwrap(), workflow);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn codec_still_rejects_mismatched_archive_identity() {
+        let (_root, store, mut workflow) = fixture();
+        let original = workflow.id;
+        workflow.id = Uuid::new_v4();
+        std::fs::write(
+            store.root.join(format!("{original}.json")),
+            serde_json::to_vec_pretty(&workflow).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            store
+                .get(original)
+                .unwrap_err()
+                .to_string()
+                .contains("production_archive_identity_mismatch")
+        );
     }
 }

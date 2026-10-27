@@ -1919,3 +1919,9 @@ fn concurrent_reservations_cannot_overdraw_a_shared_media_quota() {
         1
     );
 }
+
+#[path = "image_retry_tests.rs"]
+mod image_retry_tests;
+
+#[path = "image_recovery_tests.rs"]
+mod image_recovery_tests;

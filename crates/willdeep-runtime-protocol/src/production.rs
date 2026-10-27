@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 use uuid::Uuid;
 
+mod codec;
+pub use codec::{decode_workflow, encode_workflow};
+
 pub const MAX_EPISODES: u16 = 80;
 pub const DEFAULT_EPISODES: u16 = 40;
 pub const OUTLINE_BATCH_SIZE: u16 = 8;

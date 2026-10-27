@@ -11,6 +11,9 @@ fn synchronous_episode_text(stage: ProductionStage) -> bool {
 // of an unknown synchronous text call. Its entire reservation remains charged
 // against the available budget; this is never a settlement or a replay grant.
 pub(super) fn retained_unknown(workflow: &ProductionWorkflow, receipt: &GenerationReceipt) -> bool {
+    if receipt.kind == GenerationKind::Image {
+        return image_recovery::retained_unknown(workflow, receipt);
+    }
     if receipt.state != GenerationState::Unknown
         || receipt.kind != GenerationKind::Model
         || receipt.external_id.is_some()

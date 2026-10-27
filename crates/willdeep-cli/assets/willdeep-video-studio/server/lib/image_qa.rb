@@ -158,7 +158,9 @@ class ImageQA
     return context unless context["ok"]
 
     references = Array(plan["references"]).map { |path| File.basename(path.to_s) }
-    basis = ReviewMaterial.fingerprint([RUBRIC_VERSION, target, plan["prompt"], references.join("|"), context["requirements"], context["size"]].join("\n"))
+    parts = [RUBRIC_VERSION, target, plan["prompt"], references.join("|"), context["requirements"], context["size"]]
+    parts << context["aspect"] unless ImageGeneration::ASPECT_TARGETS.include?(target)
+    basis = ReviewMaterial.fingerprint(parts.join("\n"))
     { "ok" => true, "plan" => plan, "basis" => basis, "context" => context }
   end
 
@@ -430,7 +432,10 @@ class ImageQA
     labels = TARGET_LABELS.fetch(locale)
     frame = @dramas.frame(drama)
     size = ImageGeneration::ASPECT_TARGETS.include?(target) ? frame["image"] : ImageGeneration::IMAGE_SIZE
-    base = { "ok" => true, "dramaID" => drama["id"], "target" => target, "ids" => ids, "size" => size, "aspect" => frame["aspect"], "locale" => locale }
+    width, height = size.split("x").map(&:to_i)
+    divisor = width.gcd(height)
+    aspect = ImageGeneration::ASPECT_TARGETS.include?(target) ? frame["aspect"] : "#{width / divisor}:#{height / divisor}"
+    base = { "ok" => true, "dramaID" => drama["id"], "target" => target, "ids" => ids, "size" => size, "aspect" => aspect, "locale" => locale }
     case target
     when "start", "end"
       episode = Array(drama["episodes"]).find { |entry| entry["id"] == ids["episodeID"] }

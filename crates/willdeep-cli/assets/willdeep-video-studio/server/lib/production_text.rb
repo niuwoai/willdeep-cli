@@ -5,9 +5,18 @@ require_relative "production_text_rules"
 require_relative "production_text_contracts"
 require_relative "production_review_citations"
 require_relative "production_review_reconciliation"
+require_relative "production_text_reuse"
+require_relative "production_knowledge_evidence"
+require_relative "production_text_review_policy"
+require_relative "production_script_review_cache"
+require_relative "production_final_evidence"
 
 # One bounded domain action per call. Scheduling, grants and every model charge belong to Runtime.
 class ProductionText
+  include ProductionTextReuse
+  include ProductionKnowledgeEvidence
+  include ProductionScriptReviewCache
+  include ProductionFinalEvidence
   STAGES = %w[series_plan review_series_plan outline_batch review_outline_batch write_episode review_episode review_scripts].freeze
   FENCE = "production_result"
   SOURCE_LIMIT = 110_000
@@ -19,18 +28,19 @@ class ProductionText
 
   def create(input)
     instruction = '比较选题的可持续冲突与可拍性，自行决定缺失创作信息，先确定结局，再设计完整长篇。只输出全剧骨架，不输出逐集细纲或正文。输出 {title,genre,logline,coreConflict,arc,tone,audience,visualStyle,ending,characters:[{name,role,visualPrompt}],facts:[{id,text,knownBy:[角色名]}],threads:[{id,promise,plantEpisode,payoffEpisode}],arcs:[{first,last,goal,turn,exit}]}。arcs 的 first/last 必须逐一等于 expectedRanges。角色2到12人；facts是锁定真相，knownBy仅写开场已经知道该事实的人。角色 visualPrompt 写年龄、性别、脸型、发型、体态与日常衣着。重要伏笔1到16个，必须在约定集数内回收。不得擅自缩短集数。'
+    instruction += "每条facts只表达一个可单独验证的命题；发生时间、参与者或知情范围不同的信息拆成不同ID，不将多段披露合并为一个复合事实。"
     checked("全剧总策划", instruction, input.slice("brief", "spec").merge("expectedRanges" => ProductionTextRules.range(input["spec"]),
       "revisionNotes" => input["previousAttempts"]), writing: true) do |value|
       ProductionTextRules.plan!(value, input["spec"])
     end
   end
 
-  def execute(drama, input)
+  def execute(drama, input, task_id: nil)
     case input.fetch("stage")
     when "review_series_plan" then review_plan(drama, input)
     when "outline_batch" then outline(drama, input)
     when "review_outline_batch" then review_outline(drama, input)
-    when "write_episode" then write(drama, input)
+    when "write_episode" then write(drama, input, task_id: task_id)
     when "review_episode" then review_episode(drama, input)
     when "review_scripts" then review_scripts(drama, input)
     else raise ProductionTextRules::Invalid, "production_text_stage_invalid"
@@ -99,6 +109,9 @@ class ProductionText
   private
 
   def ask(role, instruction, material, writing:, image_paths:)
+    instruction = "#{instruction}\n#{ProductionKnowledgeEvidence::SEMANTICS}"
+    instruction = "#{instruction}\n#{ProductionTextReviewPolicy::THREAD_SEMANTICS}" if image_paths.empty?
+    instruction = "#{instruction}\n#{ProductionTextReviewPolicy::INSTRUCTION}" if !writing && image_paths.empty?
     settings = @settings.call
     text_review = !writing && image_paths.empty? && settings["productionTextReviewUsePlanning"] == true
     prefix = writing || text_review ? "assistant" : "review"
@@ -142,11 +155,14 @@ class ProductionText
       (!role || issue["reviewer"] == role) && ScreenplayRules.mandatory?(issue) }
   end
 
-  def record_review(drama, target, role, verdict)
+  def record_review(drama, target, role, verdict, verified_previous: [])
     registry = state(drama).fetch("issues")
     Array(verdict["resolved"]).each do |resolved|
-      issue = registry.find { |entry| entry["id"] == resolved["id"] && entry["scope"] == target && entry["reviewer"] == role }
+      issue = registry.find { |entry| entry["id"] == resolved["id"] && entry["scope"] == target }
       next unless issue
+      same_reviewer = issue["reviewer"] == role
+      verified_peer = verified_previous.any? { |entry| entry["id"] == issue["id"] && entry["scope"] == target && entry["reviewer"] == issue["reviewer"] }
+      next unless same_reviewer || verified_peer
       issue["state"], issue["resolution"] = "resolved", resolved["evidence"]
     end
     verdict["issues"].each do |issue|
@@ -157,11 +173,14 @@ class ProductionText
     end
   end
 
-  def review(drama, input, source, material, coverage:, role: "editor", target: scope(input))
+  def review(drama, input, source, material, coverage:, role: "editor", target: scope(input), prior_issues: nil, record: true, finding_validator: nil)
     citations = ProductionReviewCitations.new(source) if input["stage"]
     instruction = "独立审读source，其他材料仅作对照。不要把尚未创作的细节误判为缺失。输出 {status:pass|warn|block,summary,coverage:#{coverage.to_json},issues:[{rule,episodeOrder,level:must|advice,severity:warn|block,excerpt,reason,suggestion}],resolved:[{id,evidence}]}。excerpt和evidence必须逐字来自source；coverage必须恰好等于给定范围。真实因果、知情、连续性、可拍性及合规缺陷列must，口味提升列advice。必须逐条验证previousIssues，已修复的用resolved和新原文证据关闭，不可直接忽略。"
     instruction += "每条issues.episodeOrder只能取expectedIssueTargets中的一个整数。全剧提纲审核用0代表当前整份提纲，不能把提纲里引用的第6集、第65集等编号当作问题归属；该情节编号可保留在reason和原文excerpt中。分集审核只能指向实际给定分集。不得删掉真实问题来迎合校验。"
-    previous = open_issues(drama, target, role).select { |issue| coverage.include?(issue["episodeOrder"]) }
+    previous = (prior_issues || open_issues(drama, target, role)).select { |issue| coverage.include?(issue["episodeOrder"]) }
+    if material["proposedEvents"]
+      material = material.merge("currentMetadata" => material["proposedEvents"], "currentMetadataBasis" => ScreenplayRules.digest(material["proposedEvents"]))
+    end
     material = material.merge("referencedPriorScenes" => referenced_prior_scenes(drama, previous, coverage.min))
     instruction += "审核意见及旧摘要也须对照原文核验。referencedPriorScenes是历史问题引用的已通过场次原文；引用集号、事实、物件位置及身份必须准确，不可把没有明确同一性证据的物品或地点强行视为同一个。发现旧意见前提错误时用当前原文证据关闭，不编造过去事件迎合旧意见。"
     instruction += "excerpt只从source复制连续逐字子串，不引用proposedEvents或事实元数据，不添加角色名、引号或省略号。动作不是台词，不能擅自加上角色名冒号。若元数据与剧情不符，引用source中的真实场次文字，在reason中解释差异。"
@@ -174,18 +193,24 @@ class ProductionText
       schema: citations ? citations.schema(coverage) : ProductionTextContracts.review(coverage)) do |value|
       citations.resolve!(value) if citations
       ScreenplayRules.review!(value, source, coverage)
+      finding_validator&.call(value)
       ScreenplayRules.require!(value.fetch("resolved", []).empty?, "production_independent_review_cannot_resolve_unseen_issues") if citations
     end
-    verdict = reconcile_review(source, previous, coverage, verdict, role, material) if citations && !previous.empty?
-    record_review(drama, target, role, verdict)
+    verdict = reconcile_review(source, previous, coverage, verdict, role, material, finding_validator: finding_validator) if citations && !previous.empty?
+    record_review(drama, target, role, verdict, verified_previous: previous) if record
     verdict
   end
 
-  def reconcile_review(source, previous, coverage, fresh, role, context)
+  def reconcile_review(source, previous, coverage, fresh, role, context, finding_validator: nil)
     reconciliation = ProductionReviewReconciliation.new(source, previous, coverage)
     instruction = "逐项复核previousIssues中的旧指控，不把它们当作事实或照抄模板。independentAudit是刚对当前稿独立审读的结果，必须对照当前source核验。每个旧ID恰好评估一次，输出严格遵循expectedOutputSchema的assessments。已修复、旧前提错误或旧指控与当前原文相反时，明确decision=resolved；仍成立时decision=open并提供完整当前issue。每项都提供当前sourceRef及具体reason。若旧台词已删除，不能把新台词选作引用却继续声称旧台词存在；即使oldExcerptPresentInCurrentSource为true，也必须核实reason是否真的得到该句支持。旧问题仍成立才能保留，不得为追求通过关闭真实缺陷。不要输出excerpt/evidence或normalized字段。"
-    assessment = checked("#{role}旧问题复核", instruction, reconciliation.material(fresh).merge("referenceContext" => context), schema: reconciliation.schema) do |value|
+    instruction += "若旧意见指控knownBy、to或某条newFacts的当前字段值，必须逐项读取currentMetadata中相同ID的实际值，不能从另一条事实的知情者推断本条。字段已不含旧指控角色且不存在独立新缺陷时，以当前值和原文证据关闭旧指控；相同正文摘录仍存在不证明元数据没改。"
+    material = reconciliation.material(fresh).merge("referenceContext" => context.reject { |key, _| %w[proposedEvents currentMetadata currentMetadataBasis].include?(key) })
+    metadata = context["currentMetadata"] || context["proposedEvents"]
+    material.merge!("currentMetadata" => metadata, "currentMetadataBasis" => ScreenplayRules.digest(metadata)) if metadata
+    assessment = checked("#{role}旧问题复核", instruction, material, schema: reconciliation.schema) do |value|
       reconciliation.validate!(value)
+      finding_validator&.call(value.fetch("normalized"))
     end
     verdict = reconciliation.combine(fresh, assessment)
     ScreenplayRules.review!(verdict, source, coverage)
@@ -199,7 +224,7 @@ class ProductionText
   def reviewed(drama, input, verdicts, target: scope(input), coverage: orders(input, drama))
     mandatory = open_issues(drama, target)
     targets = input.fetch("repairTargets", [])
-    episode = mandatory.first && mandatory.first["episodeOrder"]
+    episode = mandatory.map { |issue| issue["episodeOrder"] }.select { |order| order.is_a?(Integer) && order.positive? }.min
     repair = targets.find { |entry| !episode || episode == 0 || entry["episodeOrder"] == episode } || targets.first
     output = result(drama, input, "review" => { "verdict" => mandatory.empty? ? (verdicts.all? { |v| v["status"] == "pass" } ? "pass" : "warn") : "block",
       "mustFix" => mandatory.length, "coverage" => coverage, "summaries" => verdicts.map { |verdict| verdict["summary"] }, "issues" => mandatory })
@@ -250,7 +275,7 @@ class ProductionText
       "allowedThreadEvents" => series["plan"]["threads"].map { |thread|
         { "id" => thread["id"], "events" => ProductionTextContracts.thread_events(order, thread) }
       },
-      "priorState" => prompt_story_state(series["storyStates"][(order - 1).to_s]),
+      "priorState" => grounded_story_state(series, order, adopted),
       "recentFacts" => recent.flat_map { |node| node["candidate"]["newFacts"] },
       "availableFactIndex" => all_facts.map { |fact| fact.slice("id", "sceneID").merge("topic" => fact["text"][0, 60]) },
       "previousScript" => order > 1 ? drama["episodes"][order - 2].slice("order", "script") : nil,
@@ -299,18 +324,20 @@ class ProductionText
     sources.values
   end
 
-  def write(drama, input)
+  def write(drama, input, task_id: nil)
     order = input.fetch("episodeOrder")
     series = state(drama)
     node = series["episodes"][order.to_s] ||= { "history" => [], "reviews" => {} }
     issues = revision_issues(drama, order)
+    reuse = reusable_episode(drama, input, task_id, issues)
+    return reuse_episode(drama, input, reuse) if reuse && !reuse["validationError"]
     material = episode_material(drama, order).merge("current" => node["candidate"],
       "revisionNotes" => Array(input["previousAttempts"]).last(1), "priorAttemptCount" => Array(input["previousAttempts"]).length,
       "activeMandatoryIssues" => issues, "referencedPriorScenes" => referenced_prior_scenes(drama, issues, order))
+    material["retainedCandidateValidationError"] = reuse["validationError"] if reuse
     instruction = "写完整第#{order}集，时长#{spec(drama)['episode_seconds']}秒，不能以梗概代替正文。输出 {title,summary,scenes:[{id:e#{order}s1,heading,beats:[{action},{speaker,text}]}],events:[{summary,sceneID,excerpt}],newFacts:[{id:e#{order}f1,text,knownBy:[角色名],sceneID,excerpt}],reveals:[{id,to:[角色名],sceneID,excerpt}],threadEvents:[{id,event:plant|reinforce|payoff,sceneID,excerpt}]}。每场有可见动作，静默场次可以只写有表演意义的动作；整集至少六个有因果推进的动作或对白节拍；确有叙事需要时可以整集无对白，由可见动作与证据完整表达。交流场次的动作和台词按表演顺序交错。events是本集实际发生的因果事件，newFacts最多4条，没有则空数组；reveals的id/to必须与contract.reveals逐一一致。所有证据必须逐字来自指明场次。伏笔到约定集号必须提供plant或payoff证据，不能提前回收。若需更早事实的原文，可先只输出 {needFacts:[事实ID]}，每次最多8个ID。修订只修必须问题，保留已通过人物与设定。"
     instruction += "plan.sourceBible是源定稿的锁定事实和结局，必须保留；只修revisionNotes所列问题，不得改人物、反转真相或改写其他分集。" if series["sourceFrozen"]
     instruction += "严格遵守expectedOutputSchema；requiredThreadEvents列出本集必须在正文中实际完成的伏笔动作，每一项都提供对应场次的逐字证据。结构说明不是剧情正文，不要照抄占位符。"
-    instruction += "threadEvents必须逐项遵守allowedThreadEvents。plant和payoff分别仅表示总策划指定集号的正式埋设和回收；其他集的提前铺垫或后续呼应记reinforce，不得把任何首次出现的迹象自动标为plant。已有正文合理时只修正错误元数据标签，不改变约定集号或删去必需证据。"
     instruction += "修订以activeMandatoryIssues为当前待闭合问题，先核对referencedPriorScenes的真实历史原文；不能盲从审核意见中错误的过去事实，不把未明示相同的物品合并。已关闭的旧问题不重新改写；用本集可拍动作、台词和证据完整交代必要关系，不靠含糊的新增一句敷衍。"
     facts = series["episodes"].select { |key, _| key.to_i < order }.values
       .map { |entry| entry["adoptedBasis"] && entry["candidate"] }.select { |entry| entry }.flat_map { |entry| entry["newFacts"] }
@@ -382,13 +409,14 @@ class ProductionText
       chunks.last << episode
     end
     source_basis = ScreenplayRules.digest(scripts)
-    record = state(drama)["scriptReviews"][scope(input)]
-    record = { "basis" => source_basis, "parts" => [] } unless record && record["basis"] == source_basis
+    record = script_review_record(state(drama), input, source_basis, parts.map { |part| part.map { |entry| entry["order"] } })
     if record["parts"].length < parts.length
       part = parts[record["parts"].length]
       part_orders = part.map { |entry| entry["order"] }
       source = part.map { |episode| "第#{episode['order']}集\n#{episode['script']}" }.join("\n\n")
-      verdict = review(drama, input, source, { "plan" => state(drama)["plan"] }, coverage: part_orders,
+      verdict = review(drama, input, source, { "plan" => state(drama)["plan"],
+        "contracts" => part_orders.map { |order| state(drama)["outlines"].fetch(order.to_s) },
+        "priorState" => grounded_story_state(state(drama), part_orders.first) }, coverage: part_orders,
         role: "series_editor", target: scope(input))
       record["parts"] << verdict
       state(drama)["scriptReviews"][scope(input)] = record
@@ -420,12 +448,17 @@ class ProductionText
     boundaries = ProductionTextRules.range(spec(drama)).each_cons(2).map { |left, right| [left["last"], right["first"]] }
     boundary_sources = boundaries.map { |pair| pair.map { |order| drama["episodes"][order - 1].slice("order", "script") } }
     boundary_basis = ScreenplayRules.digest(boundary_sources)
+    boundary_contract = script_review_contract(series, boundaries)
     boundary = series["boundaryReviews"]
-    boundary = { "basis" => boundary_basis, "parts" => [] } unless boundary && boundary["basis"] == boundary_basis
+    unless boundary && boundary["basis"] == boundary_basis && boundary["contractBasis"] == boundary_contract && boundary["attempt"] == input["attempt"]
+      (series["scriptReviewHistory"] ||= []) << { "scope" => "boundaryReviews", "record" => JSON.parse(JSON.generate(boundary)) } if boundary
+      boundary = { "basis" => boundary_basis, "contractBasis" => boundary_contract, "attempt" => input["attempt"], "parts" => [] }
+    end
     if boundary["parts"].length < boundaries.length
       pair = boundaries[boundary["parts"].length]
       source = pair.map { |order| "第#{order}集\n#{drama['episodes'][order - 1]['script']}" }.join("\n\n")
-      verdict = review(drama, input, source, { "plan" => series["plan"], "priorState" => prompt_story_state(series["storyStates"][(pair.first - 1).to_s]) },
+      verdict = review(drama, input, source, { "plan" => series["plan"],
+        "contracts" => pair.map { |order| series["outlines"].fetch(order.to_s) }, "priorState" => grounded_story_state(series, pair.first) },
         coverage: pair, role: "boundary_editor")
       boundary["parts"] << verdict
       series["boundaryReviews"] = boundary
@@ -436,9 +469,7 @@ class ProductionText
     source = JSON.generate("plan" => series["plan"], "threadEvidence" => thread_state["threadEvents"].map { |event| event.merge("excerpt" => event["excerpt"][0, 240]) },
       "threadHistoryIndex" => thread_state["threadHistoryIndex"],
       "batchReviews" => brief_reviews, "boundaryReviews" => boundary["parts"].map { |part| part.slice("status", "coverage").merge("summary" => part["summary"][0, 600]) })
-    verdict = review(drama, input, source, {}, coverage: coverage, role: "final_editor")
-    series["scriptsAccepted"] = { "basis" => scripts_basis(drama), "verdict" => verdict } if open_issues(drama, scope(input)).empty?
-    reviewed(drama, input, [verdict])
+    final_script_review(drama, input, source, coverage)
   end
 
   def scripts_basis(drama)

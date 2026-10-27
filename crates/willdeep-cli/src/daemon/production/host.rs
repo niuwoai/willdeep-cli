@@ -197,12 +197,21 @@ impl Host {
                 "production_task_grant_invalid"
             );
             if envelope.operation == "reserve" {
-                let request: budget::Reservation = serde_json::from_value(envelope.arguments)?;
+                let mut arguments = envelope.arguments;
+                let subject = arguments
+                    .as_object_mut()
+                    .and_then(|value| value.remove("imageSubject"));
+                let request: budget::Reservation = serde_json::from_value(arguments)?;
                 anyhow::ensure!(
                     request.node_id == envelope.task_id,
                     "production_reservation_node_mismatch"
                 );
                 permission(context, request.kind)?;
+                image_retries::bind_reservation(
+                    workflow,
+                    &request,
+                    subject.as_ref().and_then(Value::as_str),
+                )?;
                 let result = budget::reserve(workflow, &request)?;
                 return Ok(match result {
                     budget::Reserved::Fresh => json!({"ok":true,"fresh":true}),
@@ -221,6 +230,15 @@ impl Host {
                         value
                     }
                 });
+            }
+            if envelope.operation == "image_status" {
+                permission(context, GenerationKind::Image)?;
+                return image_retries::status(
+                    workflow,
+                    envelope.arguments["subject"]
+                        .as_str()
+                        .context("production_image_subject_required")?,
+                );
             }
             let id: Uuid = serde_json::from_value(envelope.arguments["requestID"].clone())?;
             let receipt = workflow
@@ -328,8 +346,10 @@ impl Host {
             quantities,
             provider: params["provider"].as_str().unwrap_or("host-default").into(),
         };
+        let subject = params["productionImageSubject"].as_str().map(str::to_owned);
         let decision = Store::new(&self.home)
             .update(self.workflow_id, |workflow| {
+                image_retries::bind_reservation(workflow, &request, subject.as_deref())?;
                 budget::reserve(workflow, &request)
             })
             .map_err(rpc)?;
@@ -340,6 +360,12 @@ impl Host {
                 .ok_or_else(|| rpc("production_uncertain_generation: no saved response"))?;
             restore(&self.home, self.workflow_id, id, &response).map_err(rpc)?;
             return Ok(response["response"].clone());
+        }
+        if kind == GenerationKind::Image {
+            params
+                .as_object_mut()
+                .unwrap()
+                .remove("productionImageSubject");
         }
         match self.inner.handle(context, method, params).await {
             Ok(response) => {

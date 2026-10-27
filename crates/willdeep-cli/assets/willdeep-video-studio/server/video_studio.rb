@@ -59,7 +59,7 @@ require_relative "lib/clip_trim"
 require_relative "lib/image_qa"
 
 # 与插件清单、ui/package.json 一致；scripts/version_test.rb 断言三处相同。
-SERVER_VERSION = "0.53.0-rc9"
+SERVER_VERSION = "0.53.0-rc27"
 
 # 宿主按 pluginID 给每个插件分一个目录，本插件的 pluginID 是
 # willdeep-video-studio，生成的图片也由宿主写进这个目录。任务存档早先落在

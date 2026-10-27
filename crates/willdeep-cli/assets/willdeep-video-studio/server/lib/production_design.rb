@@ -77,11 +77,18 @@ class ProductionDesign
     expected = slots.drop(board["candidate"].length).first(ProductionDesignRules::BATCH)
     unless expected.empty?
       instruction = '把已定稿剧本拍成连续分镜。输出 {shots:[{order,sceneID,duration,dialogueIDs,title,summary,actionStart,actionEnd,cameraIntent,soundscape,music,startPrompt,endPrompt,sceneKey,cast:[{name,appearanceKey}],propKeys:[]}]}。每项严格复制expectedSlots的order/sceneID/duration/dialogueIDs，不增删、换序或改写任何台词；动作只来自对应场次。所有文字字段完整非空；无需音乐写music="N/A"。首尾帧提示词描述静止构图、人物年龄外形衣着、动作起止、空间光照，不含字幕。场景、服装、道具key为小写英文语义标识，优先复用catalog相同设定；不同角色服装不能共用key。重要道具不得遗漏。'
+      instruction += 'cast只使用allowedCharacters中的完整姓名，禁止为匿名顾客等背景人物新建角色。每镜cast必须包含requiredSpeakers中该镜的所有说话人，以绑定既有身份和声音；门外、画外或电话声音保留原文的画外关系，不因cast绑定把角色移进画面。'
       wanted = expected.flat_map { |slot| slot["dialogueIDs"] }
+      dialogue = ProductionDesignRules.lines(candidate).select { |line| wanted.include?(line["sourceID"]) }
+      names = drama["characters"].map { |entry| entry["name"] }
+      speakers = expected.map do |slot|
+        { "order" => slot["order"], "names" => dialogue.select { |line| slot["dialogueIDs"].include?(line["sourceID"]) }.map { |line| line["speaker"] }.uniq }
+      end
       output = @text.checked("分镜导演", instruction, { "script" => candidate, "style" => drama["visualStyle"],
-        "expectedSlots" => expected, "dialogueSource" => ProductionDesignRules.lines(candidate).select { |line| wanted.include?(line["sourceID"]) }, "previousShots" => shot_briefs(board["candidate"].last(2)),
+        "expectedSlots" => expected, "dialogueSource" => dialogue, "allowedCharacters" => names, "requiredSpeakers" => speakers,
+        "previousShots" => shot_briefs(board["candidate"].last(2)),
         "catalog" => catalog_index(series), "revisionNotes" => input["previousAttempts"] }, writing: true) do |value|
-        ProductionDesignRules.shots!(value, expected, candidate, drama["characters"].map { |entry| entry["name"] })
+        ProductionDesignRules.shots!(value, expected, candidate, names)
       end
       board["candidate"].concat(output["shots"])
     end
@@ -124,6 +131,7 @@ class ProductionDesign
     voice_catalog = @voices ? @voices.selection_catalog : []
     voice_selections = series["voiceSelections"] ||= {}
     instruction = '把分镜中缺少的资产定义成可跨集复用的视觉规范。只输出 {assets:[{key,kind,character(仅appearance),name,prompt,notes}],characters:[{name,visualPrompt}],musicPrompt}。assets严格按expectedAssets逐项复制key/kind/character，不能添加或改变既有catalog；prompt含完整可出图的静态外观和光照，notes写连续性约束。characters严格按expectedCharacters顺序补全视觉身份，不改变已有身份。musicPrompt为本集纯器乐配乐的情绪、乐器和节奏，不含人声或歌词，不模仿在世艺人。'
+    instruction += '严格遵守expectedOutputSchema；每项assets必须另外生成非空name（简短展示名称）、prompt、notes，不得因复制身份字段而省略名称。'
     instruction += '若voiceCatalog非空，每个characters还必须含voicePresetID，只能从目录选取；结合角色年龄、性别、音色选择，不能按角色顺序轮换。lockedVoiceSelections中的已有选择必须严格复用。' unless voice_catalog.empty?
     design = board["design"] ||= { "assets" => [] }
     expected = missing.reject { |entry| design["assets"].any? { |asset| asset["key"] == entry["key"] } }.first(8)
@@ -131,7 +139,8 @@ class ProductionDesign
       "expectedCharacters" => names, "characters" => drama["characters"].select { |entry| names.include?(entry["name"]) }.map { |entry| entry.slice("name", "visualPrompt") },
       "catalog" => catalog_index(series), "style" => drama["visualStyle"], "voiceCatalog" => voice_catalog,
       "characterRoles" => series.fetch("plan").fetch("characters").select { |entry| names.include?(entry["name"]) },
-      "lockedVoiceSelections" => voice_selections }, writing: true) do |value|
+      "lockedVoiceSelections" => voice_selections }, writing: true,
+      schema: ProductionDesignRules.asset_schema(expected, names, voice_catalog, voice_selections)) do |value|
       ProductionDesignRules.assets!(value, expected, names)
       validate_voices!(value["characters"], voice_catalog, voice_selections)
     end

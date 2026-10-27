@@ -15,24 +15,34 @@ class ProductionMeter
   }.freeze
   UUID = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
   NIL_UUID = "00000000-0000-0000-0000-000000000000"
+  IMAGE_BATCH_LIMIT = 1_536
   Error = Class.new(StandardError)
 
-  def initialize(host:, task_id:, grant:, input_digest:, attempt:)
+  def initialize(host:, task_id:, grant:, input_digest:, attempt:, image_policy: false)
     require!(task_id.is_a?(String) && UUID.match?(task_id), "production_task_id_invalid")
     require!(grant.is_a?(String) && UUID.match?(grant) && grant != NIL_UUID, "production_grant_invalid")
     require!(input_digest.is_a?(String) && input_digest.match?(/\A[0-9a-f]{64}\z/), "production_input_digest_invalid")
-    require!(attempt.is_a?(Integer) && attempt.between?(1, 4), "production_attempt_invalid")
+    require!(attempt.is_a?(Integer) && attempt.between?(1, image_policy ? IMAGE_BATCH_LIMIT : 4), "production_attempt_invalid")
     @host, @task_id, @grant, @input_digest, @attempt = host, task_id, grant, input_digest, attempt
   end
 
-  def reserve(kind:, provider:, identity:, quantities:, request:)
+  def reserve(kind:, provider:, identity:, quantities:, request:, image_subject: nil)
     reference = reference(kind: kind, provider: provider, identity: identity, request: request)
     quantities!(kind, quantities, positive: true)
     input = { "request_id" => reference["requestID"], "node_id" => @task_id, "kind" => kind,
               "request_digest" => reference["requestDigest"], "provider" => provider, "quantities" => quantities }
+    input["imageSubject"] = image_subject if image_subject
     answer = call("reserve", input)
     require!([true, false].include?(answer["fresh"]), "production_reservation_response_invalid")
     answer.merge("requestID" => reference["requestID"])
+  end
+
+  def image_status(subject)
+    answer = call("image_status", "subject" => subject)
+    require!(answer["limit"] == 4 && answer["attempts"].is_a?(Integer) && answer["attempts"] >= 0 &&
+      [true, false].include?(answer["unresolved"]), "production_image_counter_invalid")
+    require!(!answer["unresolved"], "production_uncertain_generation")
+    answer
   end
 
   # Reconstruct an existing receipt's identity without asking for a reservation.

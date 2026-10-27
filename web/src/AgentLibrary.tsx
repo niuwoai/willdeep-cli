@@ -14,14 +14,22 @@ type Definition = { schema: string; definition_id: string; version: string; name
 type Package = { definition: Definition; sha256: string; signature: {key_id: string; value: string} | null };
 type Item = { package: Package; scope: string; compatible: boolean; incompatible_reason: string | null; optional_skills_missing: string[]; installation: {origin: string; enabled: boolean; pinned: boolean; dirty: boolean; binding: LocalAgentBinding} };
 type Library = { items: Item[]; account: {origin: string; user_id: string; tenant_id: string} | null };
-type Index = Pick<Definition, "definition_id" | "version" | "name" | "purpose" | "base_role"> & {sha256: string};
+type Index = Pick<Definition, "definition_id" | "version" | "name" | "purpose" | "base_role"> & {sha256: string; discovery?: {category: string; rank: number; summary: Record<string, string>; example: Record<string, string>} | null};
 
 export function AgentLibrary({language, onTrial, mode = "library", onNavigate, onDirty}: {language: Language; onTrial: (prompt: string) => void; mode?: "library" | "experiments"; onNavigate?: (mode: "library" | "experiments") => void; onDirty?: (dirty: boolean) => void}) {
   const t = (key: AgentTextKey) => agentText(key, language);
   const client = useQueryClient();
   const displayedAccount = useRef("");
   const library = useQuery({queryKey: ["agent-library"], queryFn: () => agentLibraryCall<Library>("list")});
-  const catalog = useQuery({queryKey: ["agent-catalog"], queryFn: () => agentLibraryCall<{items: Index[]}>("catalog"), enabled: false});
+  const catalog = useQuery({queryKey: ["agent-catalog"], queryFn: async () => {
+    const value = await agentLibraryCall<{items: Index[]}>("catalog");
+    // A response that is not a catalog (for example a library listing from an
+    // older endpoint) must surface as unavailable rather than crash rendering.
+    if (!Array.isArray(value?.items) || value.items.some(item => typeof item?.name !== "object" || item.name === null)) {
+      throw new Error(t("catalogUnavailable"));
+    }
+    return value;
+  }, enabled: mode === "library", staleTime: 60_000, retry: 1});
   const [editor, setEditor] = useState<string | null>(null);
   const [preview, setPreview] = useState<Package | null>(null);
   const [history, setHistory] = useState<Package[]>([]);
@@ -30,7 +38,9 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   const [conflicts, setConflicts] = useState<{account: string; items: SyncConflict[]} | null>(null);
   const [syncSummary,setSyncSummary] = useState<{account: string; text: string} | null>(null);
   const [rsi, setRsi] = useState<{baseline: RsiPackage | null; account: string} | null>(null);
+  const [tab, setTab] = useState<"installed" | "curated" | null>(null);
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
   const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState(mode);
@@ -59,6 +69,7 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   });
   const act = (operation: string, params?: unknown) => mutation.mutate({operation, params});
   const items = library.data?.items ?? [];
+  const activeTab = tab ?? (items.length ? "installed" : "curated");
   const accountKey = JSON.stringify(library.data?.account ?? null);
   const resetMutation = mutation.reset;
   useEffect(() => {resetMutation();}, [accountKey, resetMutation]);
@@ -70,6 +81,10 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   if (conflicts && conflicts.account !== accountKey) setConflicts(null);
   if (syncSummary && syncSummary.account !== accountKey) setSyncSummary(null);
   const displayName = (definition: Pick<Definition, "name" | "definition_id">) => definition.name[language === "zh-CN" ? "zh-Hans" : language] ?? definition.name.en ?? definition.definition_id;
+  const localized = (values: Record<string, string>) => values[language === "zh-CN" ? "zh-Hans" : language] ?? values.en ?? Object.values(values)[0] ?? "";
+  const catalogItems = catalog.isError ? [] : catalog.data?.items ?? [];
+  const categories = Array.from(new Set(catalogItems.flatMap(item => item.discovery ? [item.discovery.category] : [])));
+  const recommendations = catalogItems.filter(item => (!category || item.discovery?.category === category) && `${displayName(item)} ${item.purpose} ${item.discovery ? localized(item.discovery.summary) : ""} ${item.definition_id}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).sort((a, b) => (a.discovery?.rank ?? Number.MAX_SAFE_INTEGER) - (b.discovery?.rank ?? Number.MAX_SAFE_INTEGER));
   const scopedMutation = async (operation: string, params: unknown, done: (value: unknown) => void) => {
     const scope = displayedAccount.current;
     try {const value = await mutation.mutateAsync({operation, params}); if (scope === displayedAccount.current) done(value);}
@@ -82,9 +97,10 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   const openExperiment = (baseline: RsiPackage | null) => {if (!allowDiscard()) return; setEditor(null); setRsi({baseline, account: accountKey}); onNavigate?.("experiments");};
   const create = () => {if (allowDiscard()) setEditor(JSON.stringify({schema: "willdeep.agent-definition.v1", definition_id: "user/my-agent", version: "1.0.0", name: {en: t("name"), [language === "zh-CN" ? "zh-Hans" : language]: t("name")}, purpose: t("purpose"), base_role: "reviewer", instructions: t("instructions"), input_modalities: ["text"], tools: ["workspace.read", "repository.inspect"], skills: [], forked_from: null}, null, 2));};
   const edit = (definition: Definition) => {if (allowDiscard()) setEditor(JSON.stringify({...definition, version: nextAgentVersion(definition.version)}, null, 2));};
-  const fork = (item: Item) => {
+  const fork = (item: Item, experiment = false) => {
+    if (experiment && !allowDiscard()) return;
     const newId = window.prompt(t("id"), `user/${item.package.definition.definition_id.split("/").at(-1)}-copy`);
-    if (newId) act("fork", {id: item.package.definition.definition_id, new_id: newId});
+    if (newId) void scopedMutation("fork", {id: item.package.definition.definition_id, new_id: newId}, value => { if (experiment) openExperiment(value as Package); });
   };
   const exported = async (item: Item) => {
     const scope = displayedAccount.current;
@@ -107,7 +123,7 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     <AgentRsiPanel key={`${accountKey}/${experimentBaseline?.sha256 ?? "list"}`} accountScope={accountKey} language={language} baseline={experimentBaseline} definitionNames={Object.fromEntries(items.map(item => [item.package.definition.definition_id,displayName(item.package.definition)]))} onDirty={draftChanged} onClose={() => {if (allowDiscard()) onNavigate?.("library");}} />
   </main>;
   return <main className="agent-library">
-    <header className="agent-page-header"><div><h1>{t("title")}</h1><p>{t("intro")}</p></div><div className="agent-header-controls agent-library-header-actions"><button className="agent-primary" type="button" disabled={mutation.isPending} onClick={create}>{t("create")}</button><details className="agent-overflow"><summary aria-label={t("libraryActions")}><MoreHorizontal size={20}/></summary><div>{button("import", () => file.current?.click())}{button("catalog", () => {void catalog.refetch();})}{button("sync", () => act("sync"), !library.data?.account)}{library.data?.account && button("logout", () => act("logout"))}</div></details></div></header>
+    <header className="agent-page-header"><div><h1>{t("title")}</h1><p>{t("intro")}</p></div><div className="agent-header-controls agent-library-header-actions"><button className="agent-primary" type="button" disabled={mutation.isPending} onClick={create}>{t("create")}</button><details className="agent-overflow"><summary aria-label={t("libraryActions")}><MoreHorizontal size={20}/></summary><div>{button("import", () => file.current?.click())}{button("sync", () => act("sync"), !library.data?.account)}{library.data?.account && button("logout", () => act("logout"))}</div></details></div></header>
     <input ref={file} type="file" accept="application/json,.json" hidden onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void importFile(selected); event.target.value = ""; }} />
     <details className="agent-library-account"><summary>{t(library.data?.account ? "connected" : "localOnly")} · {t("accountDetails")}</summary><p>{library.data?.account ? `${library.data.account.origin} · ${library.data.account.user_id} / ${library.data.account.tenant_id}` : t("loginHelp")}</p></details>
     {(mutation.error || library.error || catalog.error) && <div role="alert">{t("failed")}: {(mutation.error || library.error || catalog.error)?.message}</div>}
@@ -121,10 +137,12 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     </section>}
     {!onNavigate && rsi?.account === accountKey && <AgentRsiPanel key={`${accountKey}/${rsi.baseline?.sha256 ?? "list"}`} accountScope={accountKey} language={language} baseline={rsi.baseline} onClose={() => setRsi(null)} />}
     {bindingItem && <AgentModelBinding key={`${accountKey}/${bindingItem.scope}/${bindingItem.package.definition.definition_id}`} language={language} binding={bindingItem.installation.binding ?? {provider_profile:null,model:null}} pending={mutation.isPending} onCancel={()=>setBindingItem(null)} onSave={binding=>{void scopedMutation("bind",{id:bindingItem.package.definition.definition_id,binding},()=>setBindingItem(null));}} />}
+    <div className="agent-library-actions" aria-label={t("title")}><button type="button" aria-pressed={activeTab === "installed"} onClick={() => setTab("installed")}>{t("installed")} · {items.length}</button><button type="button" aria-pressed={activeTab === "curated"} onClick={() => setTab("curated")}>{t("curated")}</button></div>
+    {activeTab === "installed" && <>
     {!items.length && !library.isLoading && <p>{t("empty")}</p>}
     <div className="agent-library-filters"><label><Search size={18} /><input aria-label={t("search")} placeholder={t("search")} value={search} onChange={event => setSearch(event.target.value)} /></label><select aria-label={t("sourceFilter")} value={source} onChange={event => setSource(event.target.value)}><option value="all">{t("allSources")}</option>{(["local", "official", "private"] as const).map(origin => <option key={origin} value={origin}>{t(origin)}</option>)}</select></div>
     {!filtered.length && !!items.length && <p>{t("noMatches")}</p>}
-    <section className="agent-library-split">
+    {!!items.length && <section className="agent-library-split">
       <div className="agent-library-list">{filtered.map(item => <button type="button" className={current === item ? "selected" : ""} aria-pressed={current === item} key={`${item.scope}/${item.package.definition.definition_id}`} onClick={() => setSelected(`${item.scope}/${item.package.definition.definition_id}`)}><FileText size={21} /><span><strong>{displayName(item.package.definition)}</strong><small>{t(item.installation.origin as AgentTextKey)} · {item.package.definition.version}</small></span></button>)}</div>
       <div className="agent-library-grid">{current ? [current].map(item => {
         const definition = item.package.definition;
@@ -138,10 +156,10 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
           {!item.compatible && <p role="status">{t("incompatible")}: {item.incompatible_reason}</p>}
           {!!item.optional_skills_missing.length && <p>{t("optionalMissing")}: {item.optional_skills_missing.join(", ")}</p>}
           <div className="agent-library-actions agent-detail-actions">
-            {official ? <button className="agent-primary" type="button" disabled={mutation.isPending} onClick={() => fork(item)}>{t("fork")}</button> : <button className="agent-primary" type="button" disabled={mutation.isPending || !item.compatible} onClick={() => openExperiment(item.package)}><FlaskConical size={18} />{t("rsiTitle")}</button>}
+            {official ? <button className="agent-primary" type="button" disabled={mutation.isPending} onClick={() => fork(item, true)}>{t("forkExperiment")}</button> : <button className="agent-primary" type="button" disabled={mutation.isPending || !item.compatible} onClick={() => openExperiment(item.package)}><FlaskConical size={18} />{t("rsiTitle")}</button>}
           <details className="agent-overflow agent-library-more"><summary><MoreHorizontal size={19} />{t("moreActions")}</summary><div className="agent-library-actions">
             {!official && button("edit", () => edit(definition), item.installation.pinned)}
-            {!official && button("fork", () => fork(item))}{button("export", () => { void exported(item); })}
+            {button("fork", () => fork(item))}{button("export", () => { void exported(item); })}
             {button("modelBinding",()=>setBindingItem(item))}
             {button(item.installation.pinned ? "unpin" : "pin", () => act("pin", {id: definition.definition_id, value: !item.installation.pinned}))}
             {button(item.installation.enabled ? "disable" : "enable", () => act("enable", {id: definition.definition_id, value: !item.installation.enabled}))}
@@ -154,9 +172,21 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
           {official && <p>{t("rsiForkRequired")}</p>}
         </article>;
       }) : <div className="agent-empty-inline">{t("selectAgent")}</div>}</div>
-    </section>
-    {catalog.data && <section><h2>{t("catalog")}</h2>{catalog.data.items.map(item => <article className="agent-library-card" key={item.definition_id}><h3>{displayName(item)}</h3><p>{item.purpose}</p><p>{item.version}</p><details><summary>{t("agentDetails")}</summary><code>{item.definition_id} · {item.sha256}</code></details>{button("preview", () => { void scopedMutation("preview", {id: item.definition_id, revision: item.sha256}, value => setPreview(value as Package)); })}</article>)}</section>}
-    {preview && <section className="agent-library-editor"><h2>{t("newRevision")}</h2><p>{displayName(preview.definition)} · {preview.definition.version}</p><details><summary>{t("preview")}</summary><pre>{JSON.stringify(preview.definition, null, 2)}</pre>{items.find(item => item.package.definition.definition_id === preview.definition.definition_id) && <><h3>{t("currentRevision")}</h3><pre>{JSON.stringify(items.find(item => item.package.definition.definition_id === preview.definition.definition_id)?.package.definition, null, 2)}</pre></>}</details>{button("install", () => act("install", {id: preview.definition.definition_id, revision: preview.sha256}))}{button("cancel", () => setPreview(null))}</section>}
+    </section>}</>}
+{activeTab === "curated" && <section>
+  <h2>{t("curated")}</h2><p>{t("catalogHelp")}</p>
+  {button("retryCatalog", () => {void catalog.refetch();}, catalog.isFetching)}
+  <div className="agent-library-filters"><label><Search size={18}/><input aria-label={t("search")} placeholder={t("search")} value={search} onChange={event => setSearch(event.target.value)}/></label><select aria-label={t("category")} value={category} onChange={event => setCategory(event.target.value)}><option value="">{t("allCategories")}</option>{categories.map(value => <option key={value} value={value}>{t(value as AgentTextKey) || value}</option>)}</select></div>
+  {catalog.data && !catalog.data.items.length && <p>{t("catalogEmpty")}</p>}
+  {catalog.data && !!catalogItems.length && !recommendations.length && <p>{t("noMatches")}</p>}
+  <div className="agent-curated-grid">{recommendations.map(item => <article className="agent-library-card" key={item.definition_id}>
+    <h3>{displayName(item)}</h3><p>{item.discovery ? localized(item.discovery.summary) : item.purpose}</p><p>{t(item.base_role as AgentTextKey)} · {item.version}</p>
+    {item.discovery && <p>{t("exampleTask")}: {localized(item.discovery.example)}</p>}
+    <details><summary>{t("agentDetails")}</summary><code>{item.definition_id} · {item.sha256}</code></details>
+    {items.some(installed => installed.package.sha256 === item.sha256) ? <p>{t("installed")}</p> : button("preview", () => {void scopedMutation("preview", {id: item.definition_id, revision: item.sha256}, value => setPreview(value as Package));})}
+  </article>)}</div>
+</section>}
+    {preview && <section className="agent-library-editor"><h2>{t("newRevision")}</h2><p>{displayName(preview.definition)} · {preview.definition.version}</p><p>{t("agentDetails")}: {preview.definition.tools.join(", ")}</p><details><summary>{t("preview")}</summary><pre>{JSON.stringify(preview.definition, null, 2)}</pre>{items.find(item => item.package.definition.definition_id === preview.definition.definition_id) && <><h3>{t("currentRevision")}</h3><pre>{JSON.stringify(items.find(item => item.package.definition.definition_id === preview.definition.definition_id)?.package.definition, null, 2)}</pre></>}</details>{button("install", () => {void scopedMutation("install", {id: preview.definition.definition_id, revision: preview.sha256}, () => {setPreview(null); setTab("installed"); setSelected(`local/${preview.definition.definition_id}`); setSearch(""); setSource("all");});})}{button("cancel", () => setPreview(null))}</section>}
     {!!history.length && <section><h2>{t("history")}</h2>{history.map(item => <article className="agent-history-row" key={item.sha256}><span>{displayName(item.definition)} · {item.definition.version}</span>{button("rollback", () => act("rollback", {id: item.definition.definition_id, revision: item.sha256}))}<details><summary>{t("agentDetails")}</summary><code>{item.definition.definition_id} · {item.sha256}</code></details></article>)}</section>}
     {result && <details><summary>{t("done")}</summary><pre>{result}</pre></details>}
   </main>;

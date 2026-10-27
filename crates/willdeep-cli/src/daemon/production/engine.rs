@@ -209,17 +209,7 @@ pub(super) fn prepare(home: &Path, id: Uuid) -> Result<ProductionNode> {
             .filter(|node| node.state == NodeState::Completed)
             .map(|node| node.id)
             .collect();
-        let index = workflow
-            .nodes
-            .iter()
-            .position(|node| {
-                node.state == NodeState::Pending
-                    && !scheduling::deferred(workflow, node.stage)
-                    && node
-                        .dependencies
-                        .iter()
-                        .all(|dependency| completed.contains(dependency))
-            })
+        let index = scheduling::next_index(workflow, &completed)
             .with_context(|| if workflow.music_deferred && workflow.nodes.iter().any(|node|
                 node.state != NodeState::Completed && scheduling::deferred(workflow, node.stage)) {
                 "production_music_deferred"
@@ -239,18 +229,21 @@ pub(super) fn prepare(home: &Path, id: Uuid) -> Result<ProductionNode> {
                 .is_none_or(|episode|expected_coverage.contains(&episode))
                 && target.range.is_none_or(|range|expected_coverage.contains(&range.first) && expected_coverage.contains(&range.last)))
             .map(|target|json!({"id":target.id,"stage":target.stage,"episodeOrder":target.episode,"range":target.range})).collect();
+        let attempt_limit = image_retries::node_limit(workflow, workflow.nodes[index].stage);
+        let image_policy = image_retries::enabled(workflow) && image_retries::image_stage(workflow.nodes[index].stage);
         let node = &mut workflow.nodes[index];
         anyhow::ensure!(
-            node.attempt < node_attempt_limit(node.stage),
+            node.attempt < attempt_limit,
             "production_repair_limit: {}",
             node.id
         );
         node.attempt += 1;
         node.grant = Uuid::new_v4();
-        let material = json!({"spec":workflow.input.spec,"brief":workflow.input.brief,
+        let mut material = json!({"spec":workflow.input.spec,"brief":workflow.input.brief,
             "sourceScreenplayID":workflow.input.source_screenplay_id,"dependencies":dependencies,
             "stage":node.stage,"episodeOrder":node.episode,"range":node.range,
             "attempt":node.attempt,"previousAttempts":node.history,"repairTargets":repair_targets});
+        if image_policy { material["imageRetryPolicy"] = json!(image_retries::POLICY); }
         node.input_digest = digest(&material)?;
         node.arguments = json!({"workflowID":id,"taskID":node.id,"grant":node.grant,
             "inputDigest":node.input_digest,"input":material});
@@ -338,6 +331,10 @@ pub(super) fn finish(
             .as_u64()
             .context("production_review_must_fix_required")?;
         if mandatory > 0 {
+            anyhow::ensure!(
+                result["repairExhausted"] != true,
+                "production_image_material_limit"
+            );
             rework(workflow, index, result)?;
             return Ok(false);
         }
@@ -400,7 +397,7 @@ fn rework(workflow: &mut ProductionWorkflow, review_index: usize, result: Value)
         "production_repair_target_denied"
     );
     anyhow::ensure!(
-        target.attempt < node_attempt_limit(target.stage),
+        target.attempt < image_retries::node_limit(workflow, target.stage),
         "production_repair_limit"
     );
     let mut affected = HashSet::from([target_id]);

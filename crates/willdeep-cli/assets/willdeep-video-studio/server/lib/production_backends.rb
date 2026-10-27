@@ -11,8 +11,8 @@ module ProductionBackends
   end
 
   class Image
-    def initialize(backend:, meter:, identity:)
-      @backend, @meter, @identity = backend, meter, identity
+    def initialize(backend:, meter:, identity:, image_subject: nil)
+      @backend, @meter, @identity, @image_subject = backend, meter, identity, image_subject
     end
 
     def name
@@ -20,9 +20,12 @@ module ProductionBackends
     end
 
     def generate(**arguments)
-      return @backend.generate(**arguments) if @backend.is_a?(ImageBackend::HostImageBackend)
+      if @backend.is_a?(ImageBackend::HostImageBackend)
+        arguments = arguments.merge(production_subject: @image_subject) if @image_subject
+        return @backend.generate(**arguments)
+      end
       @meter.execute(kind: "image", provider: ProductionBackends.provider(@backend), identity: @identity,
-        quantities: { "images" => 1 }, request: arguments.transform_keys(&:to_s)) do |_id|
+        quantities: { "images" => 1 }, request: arguments.transform_keys(&:to_s), image_subject: @image_subject) do |_id|
         response = @backend.generate(**arguments)
         path = response.is_a?(Hash) && response["filePath"]
         raise ProductionMeter::Error, "production_image_file_missing" unless path && File.file?(path) && File.size(path).positive?

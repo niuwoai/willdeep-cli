@@ -5,6 +5,8 @@ mod engine;
 mod graph;
 mod historical;
 mod host;
+mod image_recovery;
+mod image_retries;
 mod recovery;
 mod scheduling;
 mod store;
@@ -39,7 +41,19 @@ pub(super) async fn operation(
     }
     if operation == "production.start" {
         let input: ProductionStart = serde_json::from_value(params)?;
-        let workflow = store.create(request_id, input)?;
+        let mut workflow = store.create(request_id, input)?;
+        if workflow.generations.is_empty() && !image_retries::enabled(&workflow) {
+            store.update(workflow.id, |saved| {
+                image_retries::activate(
+                    saved,
+                    &store,
+                    &json!({"mode":image_retries::POLICY,"legacyBindings":[]}),
+                    request_id,
+                    super::now(),
+                )
+            })?;
+            workflow = store.get(workflow.id)?;
+        }
         if workflow.status == ProductionStatus::Running {
             engine::launch(home.to_path_buf(), workflow.id);
         }
@@ -107,6 +121,12 @@ pub(super) async fn operation(
                 if let Some(requests) = params.get("retryUnknownTextRequests") {
                     let requests: Vec<Uuid> = serde_json::from_value(requests.clone())?;
                     recovery::retry_unknown_text(workflow, &requests, request_id, super::now())?;
+                }
+                if let Some(requests) = params.get("retryUnknownImageRequests") {
+                    image_recovery::authorize(workflow, requests, request_id, super::now())?;
+                }
+                if let Some(policy) = params.get("imageRetryPolicy") {
+                    image_retries::activate(workflow, &store, policy, request_id, super::now())?;
                 }
                 anyhow::ensure!(
                     budget::can_reconcile(workflow)?,

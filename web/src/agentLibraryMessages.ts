@@ -1,5 +1,19 @@
 import type { Language } from "./i18n";
 const text = {
+  catalogUnavailable: ["目录响应不可用，请刷新重试。", "The catalog response is unavailable. Refresh to retry.", "カタログを取得できません。更新して再試行してください。"],
+  category: ["分类", "Category", "カテゴリ"],
+  allCategories: ["全部分类", "All categories", "すべてのカテゴリ"],
+  implementation: ["开发修复", "Implementation", "開発・修正"],
+  review: ["代码审查", "Code review", "コードレビュー"],
+  testing: ["测试验证", "Testing", "テスト"],
+  exploration: ["仓库导读", "Repository exploration", "リポジトリ調査"],
+  exampleTask: ["任务示例", "Example task", "タスク例"],
+  curated: ["精选目录", "Curated agents", "おすすめ"],
+  installed: ["已安装", "Installed", "導入済み"],
+  catalogHelp: ["从官方目录选择专业智能体，查看权限后安装。无需登录，模型与执行仍由本机管理。", "Choose an official agent and review permissions before installing. No login is needed; models and execution stay local.", "公式エージェントの権限を確認して導入できます。ログイン不要で、モデルと実行は端末で管理します。"],
+  catalogEmpty: ["暂时没有上架的智能体。", "No agents are currently published.", "公開中のエージェントはありません。"],
+  retryCatalog: ["刷新目录", "Refresh catalog", "カタログを更新"],
+  forkExperiment: ["创建副本并开始实验", "Fork and start an experiment", "複製して実験を開始"],
   brand: ["WillDeep", "WillDeep", "WillDeep"],
   navigationGroup: ["智能体", "Agents", "エージェント"],
   experimentTitle: ["RSI 实验", "RSI experiments", "RSI 実験"],
@@ -99,4 +113,4 @@ const text = {
   provider: ["模型 Provider", "Model provider", "モデルプロバイダー"], model: ["模型", "Model", "モデル"], inherit: ["沿用基础职责", "Inherit base role", "基本役割を継承"],
 } as const;
 export type AgentTextKey = keyof typeof text;
-export function agentText(key: AgentTextKey, language: Language): string { return text[key][language === "zh-CN" ? 0 : language === "ja" ? 2 : 1]; }
+export function agentText(key: AgentTextKey, language: Language): string { return text[key]?.[language === "zh-CN" ? 0 : language === "ja" ? 2 : 1] ?? key; }
