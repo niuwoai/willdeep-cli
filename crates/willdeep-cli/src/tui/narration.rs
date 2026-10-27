@@ -155,11 +155,7 @@ impl App {
         let elapsed = self
             .thought_started_at
             .map_or(Duration::ZERO, |started| started.elapsed());
-        if elapsed.as_secs_f32() < 1.0 {
-            format!("{}ms", elapsed.as_millis())
-        } else {
-            format!("{:.1}s", elapsed.as_secs_f32())
-        }
+        format!("{:.1}s", elapsed.as_secs_f32())
     }
 
     pub(super) fn finish_thought(&mut self) {
@@ -867,6 +863,7 @@ mod tests {
         app.stream_transient(StreamKind::Reasoning, &"think ".repeat(100));
         let row = app.transient_row().unwrap();
         assert!(row.starts_with("· + Thought: "), "{row}");
+        assert!(row.ends_with('s') && !row.ends_with("ms"), "{row}");
         assert!(!row.contains("think"));
 
         // 正文开始后，完整思维链折叠进可展开的记录，回复继续单独预览。

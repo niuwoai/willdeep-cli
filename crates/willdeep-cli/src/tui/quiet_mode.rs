@@ -62,10 +62,32 @@ pub(super) fn render(
     let max = app.max_scroll();
     app.scroll_from_bottom = app.scroll_from_bottom.min(max);
     let offset = max.saturating_sub(app.scroll_from_bottom);
+    let colored = app.transcript_viewport(&transient, offset);
     app.transcript_render_offset = offset;
+    app.thought_hit_rows = colored
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let text = line.to_string();
+            if !(text.contains("+ Thought:") || text.contains("− Thought:")) {
+                return None;
+            }
+            let thought_order = app
+                .transcript_rows
+                .iter()
+                .take(offset + line_index + 1)
+                .filter(|row| row.contains("+ Thought:") || row.contains("− Thought:"))
+                .count()
+                .saturating_sub(1);
+            Some((
+                app.transcript_rect.y.saturating_add(line_index as u16),
+                thought_order,
+            ))
+        })
+        .collect();
     frame.render_widget(
-        Paragraph::new(app.transcript_viewport(&transient, offset))
-            .block(Block::default().padding(Padding::horizontal(1))),
+        Paragraph::new(colored).block(Block::default().padding(Padding::horizontal(1))),
         app.transcript_rect,
     );
 
@@ -380,5 +402,46 @@ mod tests {
         assert!(app.notice.is_none());
         draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
         assert!(!screen(&terminal).contains("Important action result"));
+    }
+
+    #[test]
+    fn compact_ui_expands_and_collapses_thought_on_click() {
+        let mut app = compact_app();
+        app.stream_transient(StreamKind::Reasoning, "hidden chain of thought");
+        let row = app.transient_row().unwrap();
+        assert!(row.starts_with("· + Thought: "), "{row}");
+        assert!(
+            row.ends_with('s'),
+            "thought elapsed must be in seconds: {row}"
+        );
+        assert!(
+            !row.ends_with("ms"),
+            "thought elapsed must not be in ms: {row}"
+        );
+        app.finish_thought();
+
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        assert!(!screen(&terminal).contains("hidden chain of thought"));
+        assert_eq!(app.thought_hit_rows.len(), 1);
+        let (thought_row, _) = app.thought_hit_rows[0];
+
+        app.handle_mouse(
+            app.transcript_rect.x + 2,
+            thought_row,
+            &BackgroundTaskRegistry::default(),
+            &SkillCatalog::default(),
+        );
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        assert!(screen(&terminal).contains("hidden chain of thought"));
+
+        app.handle_mouse(
+            app.transcript_rect.x + 2,
+            thought_row,
+            &BackgroundTaskRegistry::default(),
+            &SkillCatalog::default(),
+        );
+        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        assert!(!screen(&terminal).contains("hidden chain of thought"));
     }
 }
