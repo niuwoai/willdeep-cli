@@ -1,5 +1,7 @@
 # Product Overview
 
+0.128.0-rc1 给长会话加了归档渲染窗口：TUI 和 Web 都只排版最近一段，更早的轮次折在聊天区顶部，滚到顶再放回，记录本身不截断。TUI 目标模式完成时显示状态行，`<goal-status>` 标签不再出现在聊天里；`ask_user` 问题被撤回时，问题和原选项会留在记录中。
+
 0.127.0-rc2 的 TUI 指令菜单里，不需要参数的指令回车直接生效，聊天记录也不再回显 `/goal` 拼在前面的目标包装。
 
 0.127.0-rc1 在 Web 服务上增加 MCP 端点（POST /mcp，Streamable HTTP）。在 Web 设置里创建 token 并复制安装指令，另一台机器上的 Claude Code 或 ChatGPT 就能读取这台 willdeep 的会话和任务；这一版只有只读工具。
