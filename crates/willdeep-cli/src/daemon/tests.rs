@@ -1938,6 +1938,7 @@ fn interrupted_goal_session(
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "keep going".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();

@@ -48,6 +48,7 @@ async fn queue_mutation_respects_drain_and_excludes_internal_wakes() {
                 prompt: "internal wake".into(),
                 attachments: vec![],
                 origin_client: Some("peer-wake:fixture".into()),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -107,6 +108,7 @@ async fn explicit_send_now_precedes_hidden_internal_wakeups() {
                 prompt: "internal".into(),
                 attachments: vec![],
                 origin_client: Some("peer-wake:fixture".into()),
+                defer_until_released: false,
             },
         )
         .unwrap();

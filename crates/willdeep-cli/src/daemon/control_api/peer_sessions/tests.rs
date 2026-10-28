@@ -123,6 +123,7 @@ fn operator_turn(fixture: &Fixture, cancelled: bool) {
                 prompt: "continue authorized work".into(),
                 attachments: Vec::new(),
                 origin_client: Some("test-operator".into()),
+                defer_until_released: false,
             },
         )
         .unwrap();

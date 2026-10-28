@@ -246,6 +246,7 @@ impl Gateway {
                 prompt: text.clone(),
                 attachments,
                 origin_client: Some(self.origin_client.clone()),
+                defer_until_released: false,
             })
             .map_err(|_| CommandError::new("internal Runtime error"))?,
             Some(request_id),

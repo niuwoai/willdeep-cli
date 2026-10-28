@@ -65,6 +65,7 @@ pub(super) fn recover(state: &ServerState) -> Result<usize> {
                 prompt: String::new(),
                 attachments: Vec::new(),
                 origin_client: Some("agent-recovery".into()),
+                defer_until_released: false,
             },
         )?;
         if created {

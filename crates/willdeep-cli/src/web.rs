@@ -81,6 +81,9 @@ struct ChatRequest {
     language: Option<String>,
     #[serde(default)]
     attachments: Vec<MessageAttachment>,
+    /// 先入队、以后再发。只有队列端点认它；聊天流忽略它，避免一条普通消息被暂缓。
+    #[serde(default)]
+    defer_until_released: bool,
 }
 
 #[derive(Serialize)]

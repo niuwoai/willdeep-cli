@@ -523,13 +523,14 @@ pub(crate) async fn submit_runtime_turn(
     attachments: Vec<willdeep_core::MessageAttachment>,
     surface: crate::Surface,
 ) -> Result<RemoteRuntimeTurn> {
-    submit_runtime_turn_with_id(
+    submit_runtime_turn_with_options(
         home,
         session_id,
         prompt,
         attachments,
         surface,
         uuid::Uuid::new_v4(),
+        false,
     )
     .await
 }
@@ -541,6 +542,29 @@ pub(crate) async fn submit_runtime_turn_with_id(
     attachments: Vec<willdeep_core::MessageAttachment>,
     surface: crate::Surface,
     request_id: uuid::Uuid,
+) -> Result<RemoteRuntimeTurn> {
+    submit_runtime_turn_with_options(
+        home,
+        session_id,
+        prompt,
+        attachments,
+        surface,
+        request_id,
+        false,
+    )
+    .await
+}
+
+/// `defer_until_released` 把这一轮暂缓在队列里：会话空闲时调度器也不会领走，
+/// 要等用户在队列里明确要求立即发送。普通提交传 `false`。
+pub(crate) async fn submit_runtime_turn_with_options(
+    home: &Path,
+    session_id: uuid::Uuid,
+    prompt: String,
+    attachments: Vec<willdeep_core::MessageAttachment>,
+    surface: crate::Surface,
+    request_id: uuid::Uuid,
+    defer_until_released: bool,
 ) -> Result<RemoteRuntimeTurn> {
     if prompt.trim().is_empty() && attachments.is_empty() {
         bail!("Runtime Turn prompt and attachments must not both be empty");
@@ -557,6 +581,7 @@ pub(crate) async fn submit_runtime_turn_with_id(
         prompt,
         attachments: public_attachments,
         origin_client: Some(crate::client_identity(surface).to_owned()),
+        defer_until_released,
     };
     let turn = api_data(client.submit_turn(&params, request_id).await?)?;
     // An idempotent submit can replay the original queued receipt. Read the

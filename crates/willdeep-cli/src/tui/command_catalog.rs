@@ -404,9 +404,9 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
         (
             "/queue",
             language.text(
-                "管理待发消息：编辑、删除或立即插话（Ctrl+Q）",
-                "Manage queued messages: edit, delete or steer now (Ctrl+Q)",
-                "送信待ちを編集・削除・即時送達（Ctrl+Q）",
+                "管理待发消息：编辑、删除或立即插话（Ctrl+Q）；/queue add 把 Ctrl+U 暂存的输入入队",
+                "Manage queued messages: edit, delete or steer now (Ctrl+Q); /queue add queues what Ctrl+U set aside",
+                "送信待ちを編集・削除・即時送達（Ctrl+Q）。/queue add は Ctrl+U で取っておいた入力を追加",
             ),
         ),
         (

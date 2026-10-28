@@ -23,6 +23,7 @@ const text = {
   pendingShort: ["待发送", "Queued", "送信待ち"], failedShort: ["送达待确认", "Unconfirmed", "送達未確認"],
   paused: ["管理期间暂停自动发送", "Automatic sending is paused while managing", "管理中は自動送信を停止"],
   enqueue: ["加入待发队列", "Add to queue", "送信待ちに追加"],
+  enqueueNeedsSession: ["先发送一条消息开始会话，才能把内容放进队列", "Send a message to start a session before queueing", "キューに追加する前に、メッセージを送ってセッションを開始してください"],
   prioritize: ["优先处理（仍需判断依赖）", "Prioritize (dependency checks still apply)", "優先処理（依存関係を確認）"],
   runIndependent: ["标记为独立任务并处理（权限不变）", "Run as independent work (permissions unchanged)", "独立タスクとして処理（権限は変更しない）"],
   dependencyPolicy: ["等待期间，仅明确独立的消息可以先处理；有依赖或尚不明确的消息继续排队。", "While waiting, only clearly independent messages can run first; dependent or uncertain messages remain queued.", "待機中は独立性が明確なメッセージのみ先に処理し、依存関係があるか不明なものは待機します。"],
@@ -30,3 +31,13 @@ const text = {
 } as const;
 const index: Record<Language, number> = { "zh-CN": 0, en: 1, ja: 2 };
 export function queueText(key: keyof typeof text, language: Language) { return text[key][index[language]]; }
+
+/// 入队按钮什么时候出现、能不能点。
+///
+/// 忙时和空闲时都出现——空闲时也能选择「先入队、以后再发」，不必等这一轮跑起来，
+/// 所以这一轮是否在跑不参与判断。
+/// 输入框什么都没有时不出现，否则它只是一个点了也没效果的按钮。
+/// 还没有会话时可以看见但点不了：入队需要一个已存在的会话，不为它隐式建一个空的。
+export function enqueueButtonState(input: { hasDraft: boolean; hasSession: boolean }) {
+  return { visible: input.hasDraft, enabled: input.hasSession };
+}

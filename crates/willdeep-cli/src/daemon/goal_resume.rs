@@ -90,6 +90,7 @@ pub(super) fn recover(
                 prompt: willdeep_core::goal::resume_after_restart_prompt(&goal),
                 attachments: Vec::new(),
                 origin_client: Some(format!("{ORIGIN_PREFIX}{}", candidate.interrupted_turn_id)),
+                defer_until_released: false,
             },
         )?;
         if !created {

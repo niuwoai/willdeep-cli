@@ -13,6 +13,10 @@ pub struct QueuedTurnMessage {
     pub text_preview: String,
     pub image_count: usize,
     pub text_attachment_count: usize,
+    /// 空闲时主动入队的消息：排着但不参与调度，要等用户明确要求立即发送。
+    /// 老客户端不认识这个字段，缺省按普通待发消息处理。
+    #[serde(default)]
+    pub held: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

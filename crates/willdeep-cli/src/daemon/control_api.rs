@@ -1630,6 +1630,7 @@ async fn turn_submit(state: &ServerState, request: &ApiRequest) -> ApiResult {
                 prompt: params.prompt,
                 attachments,
                 origin_client: params.origin_client,
+                defer_until_released: params.defer_until_released,
             },
         )
         .map_err(|error| ApiFailure::invalid(format!("cannot submit Turn: {error}")))?;
@@ -2341,6 +2342,7 @@ mod tests {
             turn_request_id: uuid::Uuid::new_v4(),
             prompt: "hello".to_owned(),
             attachments: Vec::new(),
+            defer_until_released: false,
         };
         assert!(validate_turn_submission(&params).is_ok());
         params.attachments = (0..=MAX_TURN_ATTACHMENTS)

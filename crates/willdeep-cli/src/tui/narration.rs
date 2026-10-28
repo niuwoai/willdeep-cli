@@ -306,7 +306,11 @@ impl App {
             )
         } else {
             (
-                self.language.text("轮到你", "Your turn", "あなたの番"),
+                self.language.text(
+                    "轮到你 · Enter 发送 · Cmd+Enter 入队",
+                    "Your turn · Enter sends · Cmd+Enter queues for later",
+                    "あなたの番 · Enter で送信 · Cmd+Enter でキューに追加",
+                ),
                 Color::Green,
             )
         }
@@ -1027,7 +1031,7 @@ mod tests {
     #[test]
     fn turn_end_leaves_a_divider_rings_the_bell_and_flips_the_composer_state() {
         let mut app = App::new(Vec::new(), Language::En);
-        assert_eq!(app.composer_state().0, "Your turn");
+        assert!(app.composer_state().0.starts_with("Your turn"));
         app.begin_turn(false, "working".to_owned());
         assert!(app.composer_state().0.contains("Enter sends text"));
         assert!(!app.bell_pending);
@@ -1044,7 +1048,7 @@ mod tests {
 
         app.finish_turn();
         assert!(std::mem::take(&mut app.bell_pending));
-        assert_eq!(app.composer_state().0, "Your turn");
+        assert!(app.composer_state().0.starts_with("Your turn"));
     }
 
     #[test]

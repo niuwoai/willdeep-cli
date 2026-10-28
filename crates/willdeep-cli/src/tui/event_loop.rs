@@ -1414,8 +1414,16 @@ pub(super) async fn event_loop(
                         KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT)=>app.scroll_up(1),KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT)=>app.scroll_down(1),
                         KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL)=>app.scroll_to_top(),KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL)=>app.scroll_to_bottom(),
                         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.tools_expanded = !app.tools_expanded,
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.stash_input_for_queue(),
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.delete_selected_attachment(),
                         KeyCode::Enter if key.modifiers.intersects(KeyModifiers::SHIFT|KeyModifiers::ALT)=>app.input.insert("\n"),
+                        KeyCode::Enter if is_queue_for_later_key(key)&&(!app.input.is_empty()||!app.attachments.is_empty())=>{
+                            // 先入队、以后再发：走服务端队列并暂缓。本地队列不行——
+                            // 空闲时 queued_prompt_ready 会立刻把它发出去。
+                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
+                                app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
+                            }
+                        },
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
                         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
                         KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
@@ -1460,6 +1468,24 @@ pub(super) async fn event_loop(
                                 app.open_prompt_queue();
                                 continue;
                             }
+                            // 拿不到 Cmd 的终端用这条命令把当前输入先放进队列。
+                            // 命令本身不占输入框，带的是上一次暂存的草稿。
+                            if app.input.text().trim()=="/queue add" {
+                                app.input.take();
+                                if app.queue_draft.text().trim().is_empty() && app.queue_draft_attachments.is_empty() {
+                                    app.notice = Some(language.text(
+                                        "没有可入队的内容；先输入，再按 Ctrl+U 暂存，然后 /queue add",
+                                        "Nothing to queue; type it, press Ctrl+U to set it aside, then /queue add",
+                                        "追加するものがありません。入力して Ctrl+U で取っておき、/queue add を実行してください",
+                                    ).to_owned());
+                                    continue;
+                                }
+                                app.restore_queue_draft();
+                                if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
+                                    app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
+                                }
+                                continue;
+                            }
                             if confirmation_example::try_submit(&mut app, &runtime.tx) {
                                 continue;
                             }
@@ -1470,7 +1496,7 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         if app.runtime_turn {
-                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime).await {
+                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false).await {
                                                 app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
                                             }
                                             continue;

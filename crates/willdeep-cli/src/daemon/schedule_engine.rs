@@ -550,6 +550,7 @@ fn enqueue(state: &ServerState, run: &ScheduleRun) -> Result<(uuid::Uuid, uuid::
                 prompt: task.run_prompt(),
                 attachments: Vec::new(),
                 origin_client: Some(format!("schedule:{}:{}", task.id, run.id)),
+                defer_until_released: false,
             },
         )?;
         return Ok((session_id, turn.id));
@@ -618,6 +619,7 @@ fn enqueue(state: &ServerState, run: &ScheduleRun) -> Result<(uuid::Uuid, uuid::
             prompt: task.run_prompt(),
             attachments: Vec::new(),
             origin_client: Some(format!("schedule:{}:{}", task.id, run.id)),
+            defer_until_released: false,
         },
     )?;
     Ok((session.id, turn.id))

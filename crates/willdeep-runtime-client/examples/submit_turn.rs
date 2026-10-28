@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     prompt,
                     attachments: Vec::new(),
                     origin_client: Some("sdk-example".to_owned()),
+                    defer_until_released: false,
                 },
                 uuid::Uuid::new_v4(),
             )

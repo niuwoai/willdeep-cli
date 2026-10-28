@@ -41,6 +41,7 @@ fn enqueue(state: &ServerState, session: uuid::Uuid, prompt: &str) -> session_st
                 prompt: prompt.to_owned(),
                 attachments: Vec::new(),
                 origin_client: Some("tui:test".to_owned()),
+                defer_until_released: false,
             },
         )
         .unwrap()

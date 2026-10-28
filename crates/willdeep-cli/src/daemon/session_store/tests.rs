@@ -72,6 +72,7 @@ fn team_control_turn_requeues_after_restart_even_when_parent_history_advanced() 
                 prompt: "inspect".into(),
                 attachments: Vec::new(),
                 origin_client: Some("agent-control".into()),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -134,6 +135,7 @@ fn completion_keeps_harness_boundary_when_another_writer_advances_history() {
                 prompt: "first request".into(),
                 attachments: Vec::new(),
                 origin_client: None,
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -209,6 +211,7 @@ fn execution_start_rebases_queued_boundary_and_rejects_changed_replay() {
                 prompt: "queued request".into(),
                 attachments: Vec::new(),
                 origin_client: None,
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -341,6 +344,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "  Analyze   the session migration architecture  ".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -364,6 +368,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "must not replace the title".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -379,6 +384,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "debug password = NeverCopyThisValue123".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -398,6 +404,7 @@ fn first_turn_titles_only_unnamed_sessions_without_exposing_secrets() {
                     name: "notes.txt".to_owned(),
                     content: "fixture".to_owned(),
                 }],
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -626,6 +633,7 @@ fn manages_session_snapshot_lifecycle_without_exporting_private_queue_data() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "private queued prompt".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -652,6 +660,7 @@ fn manages_session_snapshot_lifecycle_without_exporting_private_queue_data() {
                     request_id: uuid::Uuid::new_v4(),
                     prompt: "blocked while archived".to_owned(),
                     attachments: Vec::new(),
+                    defer_until_released: false,
                 },
             )
             .is_err()
@@ -834,6 +843,7 @@ fn rewinding_truncates_in_place_and_forgets_the_dropped_turns() {
                     request_id: uuid::Uuid::new_v4(),
                     prompt: prompt.to_owned(),
                     attachments: Vec::new(),
+                    defer_until_released: false,
                 },
             )
             .unwrap();
@@ -949,6 +959,7 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
                     request_id: uuid::Uuid::new_v4(),
                     prompt: prompt.to_owned(),
                     attachments: Vec::new(),
+                    defer_until_released: false,
                 },
             )
             .unwrap();
@@ -1074,6 +1085,7 @@ fn restores_provider_model_and_config_before_claiming_the_next_turn() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "continue with the restored settings".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1123,6 +1135,7 @@ fn safely_requeues_active_turn_without_deleting_a_persisted_user_message() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: prompt.to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1191,6 +1204,7 @@ fn ambiguous_partial_turn_history_is_preserved_and_not_requeued() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "do not discard partial history".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1254,6 +1268,7 @@ fn persisted_tool_activity_blocks_automatic_turn_replay() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "a tool may already have changed the workspace".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1315,6 +1330,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
                 request_id: first_request,
                 prompt: "first".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1328,6 +1344,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
                 request_id: first_request,
                 prompt: "must not replace first".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1342,6 +1359,7 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "second".to_owned(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1383,6 +1401,78 @@ fn turn_queue_is_idempotent_strictly_serial_and_persistent() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 空闲时主动入队的消息要真的等着：会话明明空闲，调度器也不能把它领走。
+/// 用户在队列里要求立即发送之后，它才按原来的先后参与调度。
+#[test]
+fn a_deferred_turn_waits_on_an_idle_session_until_released() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-runtime-turn-held-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let session = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace,
+            profile: None,
+            model: None,
+            config: None,
+            title: None,
+        })
+        .unwrap();
+    let enqueue = |prompt: &str, deferred: bool| CreateRuntimeTurn {
+        team_control: None,
+        request_id: uuid::Uuid::new_v4(),
+        prompt: prompt.to_owned(),
+        attachments: Vec::new(),
+        origin_client: None,
+        defer_until_released: deferred,
+    };
+    let (held_first, _) = store
+        .enqueue_turn(session.id, enqueue("later one", true))
+        .unwrap();
+    let (held_second, _) = store
+        .enqueue_turn(session.id, enqueue("later two", true))
+        .unwrap();
+    assert!(store.schedulable_sessions().unwrap().is_empty());
+    assert!(store.claim_next(session.id).unwrap().is_none());
+    assert_eq!(
+        store.get(session.id).unwrap().unwrap().status,
+        RuntimeSessionStatus::Idle
+    );
+    let listed = store.queued_messages(session.id).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|message| message.held));
+
+    // 重启不能把暂缓弄丢，也不能让它突然变得可调度。
+    drop(store);
+    let store = RuntimeSessionStore::open(path, &root).unwrap();
+    assert!(store.schedulable_sessions().unwrap().is_empty());
+
+    // 解除第二条：它排到所有待执行轮次之前，第一条继续暂缓。
+    store
+        .update_turn_queue(&willdeep_runtime_protocol::UpdateTurnQueueParams {
+            session_id: session.id,
+            action: willdeep_runtime_protocol::QueueAction::SendNow,
+            message_id: Some(held_second.id),
+            text: None,
+            expected_text: None,
+        })
+        .unwrap();
+    assert_eq!(store.schedulable_sessions().unwrap(), vec![session.id]);
+    assert_eq!(
+        store.claim_next(session.id).unwrap().unwrap().metadata.id,
+        held_second.id
+    );
+    assert!(!store.get_turn(held_second.id).unwrap().unwrap().held);
+    assert!(store.get_turn(held_first.id).unwrap().unwrap().held);
+    assert!(store.claim_next(session.id).unwrap().is_none());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn cancelling_a_claimed_turn_releases_the_session_and_next_turn() {
     let root = std::env::temp_dir().join(format!(
@@ -1408,6 +1498,7 @@ fn cancelling_a_claimed_turn_releases_the_session_and_next_turn() {
         prompt: prompt.to_owned(),
         attachments: Vec::new(),
         origin_client: None,
+        defer_until_released: false,
     };
     let (first, _) = store.enqueue_turn(session.id, enqueue("first")).unwrap();
     let (second, _) = store.enqueue_turn(session.id, enqueue("second")).unwrap();
@@ -1479,6 +1570,7 @@ fn partial_turn_preserves_boundary_without_marking_completed() {
                 request_id: uuid::Uuid::new_v4(),
                 prompt: "unfinished objective".into(),
                 attachments: Vec::new(),
+                defer_until_released: false,
             },
         )
         .unwrap();
@@ -1544,6 +1636,7 @@ fn followups_and_cancellations_reach_the_feedback_ledger() {
                     prompt: prompt.into(),
                     attachments: Vec::new(),
                     origin_client: Some(format!("web:{}", uuid::Uuid::new_v4())),
+                    defer_until_released: false,
                 },
             )
             .unwrap()

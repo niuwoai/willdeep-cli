@@ -25,7 +25,7 @@ import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
-import { queueText } from "./queueMessages";
+import { enqueueButtonState, queueText } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
 import "./chatWorkspace.css";
 import "./runCard.css";
@@ -284,10 +284,15 @@ export function App() {
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState("");
   async function enqueueDraft(content = prompt.trim() || t.attachmentPrompt) {
     const target = activeSessionRef.current || sessionId;
-    if (!target || queueSubmitting.current || (!content && !attachmentsRef.current.length)) return;
+    // 没有会话就无处可入。不为了入队隐式建一个空会话：那会在历史列表里
+    // 留下一条谁也没发过言的记录。
+    if (!target) { setError(queueText("enqueueNeedsSession", language)); return; }
+    if (queueSubmitting.current || (!content && !attachmentsRef.current.length)) return;
     const outgoingPrompt = prompt;
     const outgoingAttachments = attachmentsRef.current;
-    const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
+    // 空闲时入队要暂缓，否则服务端会在会话空闲的一瞬间把它领走，等于立即发送。
+    // 忙时不暂缓：这一轮本来就占着会话，消息按原顺序等它结束。
+    const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), defer_until_released: !busy };
     const fingerprint = JSON.stringify(payload);
     if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
     const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
@@ -491,6 +496,7 @@ export function App() {
   }, [sessions, workspace, sessionSearch]);
   const selectedSession = useMemo(() => sessions.find((item) => item.id === sessionId), [sessions, sessionId]);
   const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
+  const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
   const commandMatches = useMemo(() => prompt.startsWith("/") ? composer.commands.filter((item) => item.startsWith(prompt.split(/\s/)[0])).slice(0, 6) : [], [prompt, composer.commands]);
   const skillQuery = prompt.match(/(?:^|\s)\$([\w-]*)$/)?.[1]?.toLowerCase();
   const skillMatches = useMemo(() => {
@@ -1227,7 +1233,7 @@ export function App() {
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
         {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); setPrompt(command); }}>{command}</button>)}</Box>}
         {skillQuery !== undefined && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill) => <button key={skill.identifier} type="button" onMouseDown={(event) => { event.preventDefault(); setSkillSearch(""); setPrompt((current) => current.replace(/\$[\w-]*$/, `$${skill.identifier} `)); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
-        {busy && (prompt.trim() || attachments.length > 0) && <button type="button" className="queue-enqueue" title={queueText("enqueue", language)} disabled={!activeRuntimeSessionId} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
+        {enqueueButton.visible && <button type="button" className="queue-enqueue" title={enqueueButton.enabled ? queueText("enqueue", language) : queueText("enqueueNeedsSession", language)} disabled={!enqueueButton.enabled} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
         <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
         <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
@@ -1244,6 +1250,8 @@ export function App() {
           }
           if (event.key === "Tab" && !event.shiftKey && ghostSuggestion) { event.preventDefault(); setPrompt(ghostSuggestion); inputSuggestion.accept(); return; }
           if (event.key === "Escape" && ghostSuggestion) { event.preventDefault(); inputSuggestion.clear("dismissed"); return; }
+          // ⌘Enter（macOS）与 Ctrl+Enter 都是「先入队、以后再发」，普通 Enter 仍立即发送。
+          if (event.key === "Enter" && !event.shiftKey && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void enqueueDraft(); return; }
           if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
         }} aria-description={ghostSuggestion ? `${ghostSuggestion} · ${t.inputSuggestionAccept}` : undefined} placeholder={ghostSuggestion ? "" : busy ? t.steerPlaceholder : t.promptPlaceholder} minH="104px" maxH="240px" resize="vertical" border="0" outline="none" lineHeight="1.5" _focus={{ boxShadow: "none", outline: "none" }} _focusVisible={{ boxShadow: "none", outline: "none" }} px="4" pt={attachments.length ? "2" : "4"} pb="12" />
         {composerEntries.length > 0 && (

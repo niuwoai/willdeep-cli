@@ -88,9 +88,24 @@ impl App {
 
 pub(super) async fn submit_input(
     app: &mut App,
-    session: &Session,
+    session: &mut Session,
     runtime: &TuiRuntime,
+    store: &SessionStore,
+    defer_until_released: bool,
 ) -> Result<()> {
+    // 空白会话为了不污染历史列表，启动时故意不落盘。入队是第一次真正提交，
+    // 这里补写并登记，否则服务端不认这条会话。
+    runtime_ui::persist_missing_core_session(session, store)?;
+    crate::daemon::ensure_runtime_session(
+        &runtime.home,
+        session.id,
+        &session.workspace,
+        session.profile.clone(),
+        session.model.clone(),
+    )
+    .await?;
+    session.runtime_managed = true;
+    store.save(session)?;
     crate::daemon::turn_queue::list(&runtime.home, session.id).await?;
     let text = app.input.text().to_owned();
     let attachments = app
@@ -99,7 +114,10 @@ pub(super) async fn submit_input(
         .map(|item| item.message.clone())
         .collect::<Vec<_>>();
     let prompt = app.enrich_prompt(&text, &runtime.skills);
-    let fingerprint = serde_json::to_string(&(&prompt, &attachments, session.id))?;
+    // 暂缓与否是这条提交的一部分：同一段文字，一个要马上发、一个要等着，
+    // 不能共用一个幂等键，否则重试会把两种意图搅在一起。
+    let fingerprint =
+        serde_json::to_string(&(&prompt, &attachments, session.id, defer_until_released))?;
     if app
         .runtime_queue_submission
         .as_ref()
@@ -108,28 +126,37 @@ pub(super) async fn submit_input(
         app.runtime_queue_submission = Some((fingerprint, uuid::Uuid::new_v4()));
     }
     let request_id = app.runtime_queue_submission.as_ref().unwrap().1;
-    crate::daemon::submit_runtime_turn_with_id(
+    crate::daemon::submit_runtime_turn_with_options(
         &runtime.home,
         session.id,
         prompt,
         attachments,
         crate::Surface::Tui,
         request_id,
+        defer_until_released,
     )
     .await?;
     app.runtime_queue_submission = None;
     app.take_submitted_input();
     app.attachments.clear();
     app.selected_attachment = 0;
-    app.notice = Some(
+    app.notice = Some(if defer_until_released {
+        app.language
+            .text(
+                "已加入队列，暂不发送 · Ctrl+Q 里按 S 再发",
+                "Queued for later · press S in Ctrl+Q to send it",
+                "キューに追加しました（未送信）· Ctrl+Q で S を押すと送信",
+            )
+            .to_owned()
+    } else {
         app.language
             .text(
                 "已保存到 Runtime 队列，各端同步",
                 "Saved to Runtime queue; synced across clients",
                 "Runtime キューに保存・端末間で同期",
             )
-            .to_owned(),
-    );
+            .to_owned()
+    });
     if let Ok(items) = crate::daemon::turn_queue::list(&runtime.home, session.id).await {
         app.sync_runtime_queue(items);
     }
@@ -239,6 +266,7 @@ mod tests {
         willdeep_runtime_protocol::QueuedTurnMessage {
             independence_confirmed: false,
             priority_requested: false,
+            held: false,
             id: uuid::Uuid::new_v4(),
             session_id: uuid::Uuid::new_v4(),
             text: text.to_owned(),

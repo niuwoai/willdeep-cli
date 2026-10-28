@@ -20,6 +20,7 @@ impl RuntimeSessionStore {
             .map(|turn| QueuedTurnMessage {
                 priority_requested: turn.metadata.independent_requested,
                 independence_confirmed: turn.metadata.independent_override,
+                held: turn.metadata.held,
                 id: turn.metadata.id,
                 session_id,
                 text: editable_text(&turn.prompt).unwrap_or_default().to_owned(),
@@ -116,6 +117,8 @@ impl RuntimeSessionStore {
             }
             QueueAction::SendNow | QueueAction::RunIndependently => {
                 let id = id.unwrap();
+                // 空闲时主动入队的消息到这里才参与调度；普通待发消息本来就没暂缓。
+                updated.get_mut(&id).unwrap().metadata.held = false;
                 updated.get_mut(&id).unwrap().metadata.independent_requested = true;
                 updated.get_mut(&id).unwrap().metadata.independent_override =
                     params.action == QueueAction::RunIndependently;

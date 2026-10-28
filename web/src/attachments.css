@@ -82,6 +82,7 @@
 .queue-delivery-note p { color: var(--text-muted); margin: 0 0 8px; font-size: 11px; line-height: 1.5; }
 .queue-enqueue { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 5px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .queue-enqueue:hover:not(:disabled) { background: var(--bg-panel-strong); }
+.queue-enqueue:disabled { cursor: not-allowed; opacity: 0.45; }
 .sent-attachment-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 5px 0; border: 0; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .sent-attachment-toggle:hover { color: var(--text); }
 .sent-attachments .attachment-manager { padding: 4px 0; }

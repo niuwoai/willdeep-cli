@@ -89,13 +89,14 @@ pub(super) async fn enqueue(
     let request_id = input
         .request_id
         .ok_or_else(|| WebError::bad_request("Queue needs request_id"))?;
-    crate::daemon::submit_runtime_turn_with_id(
+    crate::daemon::submit_runtime_turn_with_options(
         &state.home,
         id,
         input.prompt,
         input.attachments,
         crate::Surface::Web,
         request_id,
+        input.defer_until_released,
     )
     .await
     .map(Json)

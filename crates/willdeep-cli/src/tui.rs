@@ -326,6 +326,10 @@ struct App {
     /// 队列立刻续上。手机发来的消息不进这里，直接进 Runtime 的轮次队列。
     queued_prompts: VecDeque<QueuedPrompt>,
     runtime_queue_submission: Option<(String, uuid::Uuid)>,
+    /// `/queue add` 的草稿。拿不到 Cmd 的终端没法一键入队，所以先用 Ctrl+U
+    /// 把输入框里的内容挪到这里，腾出位置敲命令。只在本进程内，不落盘。
+    queue_draft: PromptEditor,
+    queue_draft_attachments: Vec<DraftAttachment>,
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
@@ -793,6 +797,12 @@ fn is_selection_copy_key(key: KeyEvent) -> bool {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER))
         || (key.code == KeyCode::Char('y') && key.modifiers == KeyModifiers::NONE)
+}
+
+/// 空闲时把当前输入先放进队列、以后再发。Cmd+Enter 是主入口；部分终端
+/// 报不出 SUPER 修饰键，所以还有 `/queue add` 这条命令兜底。
+fn is_queue_for_later_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SUPER)
 }
 
 fn is_clipboard_image_paste_key(key: KeyEvent) -> bool {
@@ -2580,3 +2590,59 @@ pub fn channel() -> (
 mod human_gate_ui_tests;
 #[cfg(test)]
 mod test_suite;
+
+#[cfg(test)]
+mod queue_later_tests {
+    use super::*;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn only_super_enter_queues_for_later() {
+        assert!(is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::SUPER
+        )));
+        // 换行的两个键不能被误认成入队。
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL
+        )));
+        // 普通回车仍是立即发送。
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::NONE
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL
+        )));
+    }
+
+    #[test]
+    fn stashing_sets_input_aside_and_toggles_it_back() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.input.insert("稍后发");
+        app.stash_input_for_queue();
+        assert!(app.input.is_empty());
+        assert_eq!(app.queue_draft.text(), "稍后发");
+
+        // 输入框空着再按一次，是取回而不是再存一份。
+        app.stash_input_for_queue();
+        assert_eq!(app.input.text(), "稍后发");
+        assert!(app.queue_draft.is_empty());
+
+        // 已经暂存了一份时，新输入不会把它覆盖掉。
+        app.stash_input_for_queue();
+        app.input.insert("另一句");
+        app.stash_input_for_queue();
+        assert_eq!(app.input.text(), "另一句");
+        assert_eq!(app.queue_draft.text(), "稍后发");
+    }
+}

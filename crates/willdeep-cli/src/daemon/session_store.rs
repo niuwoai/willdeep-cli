@@ -111,6 +111,10 @@ pub(super) fn turn_status_is_terminal(status: RuntimeTurnStatus) -> bool {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeTurn {
+    /// 空闲时主动入队的消息：状态仍是 `Queued`，但调度器不认领，要等用户
+    /// 在队列里明确要求立即发送。缺省为 `false`，老记录照常调度。
+    #[serde(default)]
+    pub held: bool,
     #[serde(default)]
     pub independent_requested: bool,
     #[serde(default)]
@@ -204,6 +208,9 @@ pub(crate) struct CreateRuntimeTurn {
     /// 谁提交的这一轮，见 `RuntimeTask::origin_client`。
     #[serde(default)]
     pub origin_client: Option<String>,
+    /// 先入队、以后再发：暂缓的轮次不参与调度，直到用户明确要求立即发送。
+    #[serde(default)]
+    pub defer_until_released: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1220,6 +1227,7 @@ impl RuntimeSessionStore {
             .unwrap_or_default()
             .saturating_add(1);
         let metadata = RuntimeTurn {
+            held: request.defer_until_released,
             independent_requested: false,
             independent_override: false,
             execution_session_id: None,
@@ -1403,6 +1411,7 @@ impl RuntimeSessionStore {
                     && turns.values().any(|turn| {
                         turn.metadata.session_id == session.id
                             && turn.metadata.status == RuntimeTurnStatus::Queued
+                            && !turn.metadata.held
                     })
             })
             .map(|session| session.id)
@@ -1432,6 +1441,7 @@ impl RuntimeSessionStore {
             .filter(|turn| {
                 turn.metadata.session_id == session_id
                     && turn.metadata.status == RuntimeTurnStatus::Queued
+                    && !turn.metadata.held
             })
             .min_by_key(|turn| turn.metadata.queue_sequence)
         else {
@@ -2518,6 +2528,7 @@ pub(super) async fn submit_turn_cli(
                     prompt,
                     attachments: Vec::new(),
                     origin_client: Some(crate::client_identity(crate::Surface::Cli).to_owned()),
+                    defer_until_released: false,
                 },
                 turn_request_id,
             )

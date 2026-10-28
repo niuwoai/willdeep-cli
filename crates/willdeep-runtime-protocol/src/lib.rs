@@ -494,6 +494,10 @@ pub struct SubmitTurnParams {
     /// 那时回落到按会话判定——那正是这个字段出现之前唯一存在的口径。
     #[serde(default)]
     pub origin_client: Option<String>,
+    /// 先入队、以后再发。暂缓的轮次不参与调度，直到用户明确要求立即发送。
+    /// 缺省为立即调度，老客户端的提交行为不变。
+    #[serde(default)]
+    pub defer_until_released: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -2172,6 +2176,7 @@ mod tests {
             session_id: uuid::Uuid::new_v4(),
             turn_request_id: uuid::Uuid::new_v4(),
             prompt: "inspect the image".to_owned(),
+            defer_until_released: false,
             attachments: vec![MessageAttachment::Image {
                 name: "screen.png".to_owned(),
                 media_type: "image/png".to_owned(),

@@ -113,6 +113,7 @@ pub(super) async fn continue_agent(state: &ServerState, request: &ApiRequest) ->
                 prompt: message.into(),
                 attachments: Vec::new(),
                 origin_client: Some("agent-control".into()),
+                defer_until_released: false,
             },
         )
         .map_err(|error| {

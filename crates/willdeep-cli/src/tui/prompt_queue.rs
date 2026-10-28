@@ -84,6 +84,58 @@ impl App {
             && self.attachment_panel.is_none()
     }
 
+    /// 把输入框里的内容挪到一边，腾出位置敲 `/queue add`。再按一次换回来。
+    /// 只在本进程内，关掉 TUI 就没了。
+    pub(super) fn stash_input_for_queue(&mut self) {
+        if self.input.is_empty() && self.attachments.is_empty() {
+            if self.queue_draft.is_empty() && self.queue_draft_attachments.is_empty() {
+                return;
+            }
+            self.restore_queue_draft();
+            self.notice = Some(
+                self.language
+                    .text(
+                        "已取回暂存的输入",
+                        "Restored the input set aside for the queue",
+                        "キュー用に取っておいた入力を戻しました",
+                    )
+                    .to_owned(),
+            );
+            return;
+        }
+        if !self.queue_draft.is_empty() || !self.queue_draft_attachments.is_empty() {
+            self.notice = Some(
+                self.language
+                    .text(
+                        "已经有一份暂存；先 /queue add 把它入队，或在空输入框里按 Ctrl+U 取回",
+                        "Input is already set aside; /queue add it, or press Ctrl+U in an empty box to restore it",
+                        "取っておいた入力があります。/queue add で追加するか、空の入力欄で Ctrl+U を押して戻してください",
+                    )
+                    .to_owned(),
+            );
+            return;
+        }
+        self.queue_draft = std::mem::take(&mut self.input);
+        self.queue_draft_attachments = std::mem::take(&mut self.attachments);
+        self.selected_attachment = 0;
+        self.notice = Some(
+            self.language
+                .text(
+                    "已暂存当前输入 · /queue add 入队 · Ctrl+U 取回",
+                    "Input set aside · /queue add to queue it · Ctrl+U to restore",
+                    "入力を取っておきました · /queue add で追加 · Ctrl+U で戻す",
+                )
+                .to_owned(),
+        );
+    }
+
+    /// 把暂存的草稿放回输入框。调用方要先确认输入框是空的。
+    pub(super) fn restore_queue_draft(&mut self) {
+        self.input = std::mem::take(&mut self.queue_draft);
+        self.attachments = std::mem::take(&mut self.queue_draft_attachments);
+        self.selected_attachment = 0;
+    }
+
     pub(super) fn queue_submitted_prompt(&mut self) {
         let text = self.take_submitted_input();
         self.append_transcript(self.queued_prompt_row(&text));
@@ -1069,7 +1121,8 @@ mod tests {
         );
         app.attachment_panel = None;
         app.queued_prompts.clear();
-        assert_eq!(app.composer_state(), ("Your turn", Color::Green));
+        assert_eq!(app.composer_state().1, Color::Green);
+        assert!(app.composer_state().0.starts_with("Your turn"));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

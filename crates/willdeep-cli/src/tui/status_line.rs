@@ -85,8 +85,11 @@ impl App {
                     focus_label(self.focus, self.language),
                     self.language.text("上下文", "context", "コンテキスト"),
                     self.language.text("最近", "latest", "直近"),
-                    self.language
-                        .text("Enter 发送", "Enter send", "Enter で送信"),
+                    self.language.text(
+                        "Enter 发送 · Cmd+Enter 入队",
+                        "Enter sends · Cmd+Enter queues",
+                        "Enter で送信 · Cmd+Enter で追加",
+                    ),
                     self.language.text("选择", "select", "選択")
                 )
             }

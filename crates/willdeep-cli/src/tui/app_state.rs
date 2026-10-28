@@ -50,6 +50,8 @@ impl App {
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
             runtime_queue_submission: None,
+            queue_draft: PromptEditor::default(),
+            queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
             pending_provider: None,
