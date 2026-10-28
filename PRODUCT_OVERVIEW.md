@@ -1,5 +1,7 @@
 # Product Overview
 
+0.126.0-rc3 把 `web.rs` 的测试模块拆到 `web/tests.rs`，让源码行数回到 3000 行上限以内。
+
 0.126.0-rc2 修正发版门禁：`cargo fmt --check` 不再因 `/short` 的三处换行报错。
 
 0.126.0-rc1 让空闲时也能选择先入队、以后再发：TUI 的 Cmd+Enter 与 Web 的 ⌘Enter 把当前输入写入 Runtime 队列并暂缓，会话空闲时不会被立刻发出，在队列里选择立即发送后才参与调度。
