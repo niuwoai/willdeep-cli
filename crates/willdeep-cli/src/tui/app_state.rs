@@ -45,6 +45,7 @@ impl App {
             feedback_session: None,
             runtime_turn_settled: false,
             goal: None,
+            response_style: None,
             mobile_status: None,
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
@@ -257,6 +258,7 @@ impl App {
         self.composer_expanded = false;
         self.notice = None;
         self.goal = session.goal.clone();
+        self.response_style = session.response_style;
         self.transient_thought = None;
         self.thought_started_at = None;
         self.thought_hit_rows.clear();
@@ -2302,6 +2304,30 @@ impl App {
                 "System: Goal · {}",
                 self.goal.as_deref().unwrap_or("not set")
             )),
+            "/short" if args.trim().is_empty() => {
+                // 切换只记偏好。系统提示词在下一轮构建 harness 时才读它，
+                // 所以正在跑的这一轮不受影响。
+                self.response_style = match self.response_style {
+                    Some(willdeep_core::ResponseStyle::Short) => None,
+                    None => Some(willdeep_core::ResponseStyle::Short),
+                };
+                self.append_transcript(format!(
+                    "System: {}",
+                    if self.response_style.is_some() {
+                        self.language.text(
+                            "简洁回复已开启：长任务的进度只更新计划卡片，从下一轮起生效",
+                            "Short replies on: long tasks update the plan card only, starting next turn",
+                            "簡潔な応答をオン：長いタスクの進捗は計画カードのみ。次のターンから有効",
+                        )
+                    } else {
+                        self.language.text(
+                            "已恢复默认回复：每个阶段一句正文进度，从下一轮起生效",
+                            "Default replies restored: one line of progress per phase, starting next turn",
+                            "既定の応答に戻しました：段階ごとに本文一行。次のターンから有効",
+                        )
+                    }
+                ));
+            }
             "/sidebar" => {
                 let argument = args.trim().to_ascii_lowercase();
                 let visible = match argument.as_str() {

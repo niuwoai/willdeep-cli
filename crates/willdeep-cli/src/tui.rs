@@ -315,6 +315,9 @@ struct App {
     /// 失败与中断的收尾不置位。
     runtime_turn_settled: bool,
     goal: Option<String>,
+    /// `/short` 的会话级开关。`None` 是默认风格，下一轮才生效（系统提示词在
+    /// 构建 harness 时定下来），所以切它不打断正在跑的这一轮。
+    response_style: Option<willdeep_core::ResponseStyle>,
     /// 手机中继的状态，Runtime 快照里带回来。中继归 Runtime 所有，TUI 只是遥控器；
     /// `None` 表示 Runtime 没在跑或版本太旧。
     mobile_status: Option<willdeep_runtime_protocol::MobileRelayStatus>,
@@ -601,7 +604,7 @@ fn busy_input(prompt: &str) -> BusyInput {
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
         "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/skills" | "/history"
-        | "/permissions" | "/permission-mode" | "/queue" => BusyInput::RunNow,
+        | "/permissions" | "/permission-mode" | "/queue" | "/short" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" => BusyInput::RunNow,

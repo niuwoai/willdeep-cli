@@ -1623,8 +1623,11 @@ pub(super) async fn event_loop(
                             let runtime_alias=prompt.trim()=="/runtime"||prompt.trim().starts_with("/runtime ");
                             if !runtime_alias {
                                 let previous_goal=app.goal.clone();
+                                let previous_style=app.response_style;
                                 if app.handle_slash_command(&prompt,&runtime.skills){
-                                    if app.goal!=previous_goal{session.goal=app.goal.clone();store.save(session)?;}
+                                    if app.goal!=previous_goal{session.goal=app.goal.clone();}
+                                    if app.response_style!=previous_style{session.response_style=app.response_style;}
+                                    if app.goal!=previous_goal||app.response_style!=previous_style{store.save(session)?;}
                                     if app.quit_requested{break;}
                                     // /goal <目标> 同时是执行请求。此前只保存开关就返回，
                                     // 界面立刻显示「轮到你」，必须再发一句「继续」才会开工。

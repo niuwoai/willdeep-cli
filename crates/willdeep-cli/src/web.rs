@@ -138,6 +138,9 @@ struct SessionDetail {
     id: String,
     workspace: String,
     messages: Vec<willdeep_core::conversation::ConversationItem>,
+    /// `/short` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_style: Option<willdeep_core::ResponseStyle>,
 }
 
 #[derive(Serialize)]
@@ -409,6 +412,10 @@ async fn serve_internal(
         )
         .route("/api/sessions/{id}/stream", get(resume_session_stream))
         .route("/api/sessions/{id}/rename", post(rename_session))
+        .route(
+            "/api/sessions/{id}/response-style",
+            post(set_response_style),
+        )
         .route("/api/sessions/{id}/steer", post(steer_session))
         .route("/api/sessions/{id}/fork", post(fork_session))
         .route("/api/sessions/{id}/rewind-points", get(rewind_points))
@@ -1269,7 +1276,31 @@ async fn session_detail(
         id: session.id.to_string(),
         workspace: session.workspace.display().to_string(),
         messages,
+        response_style: session.response_style,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResponseStyleRequest {
+    /// `"short"` 打开简洁回复，`null` 恢复默认。别的值直接拒绝。
+    response_style: Option<willdeep_core::ResponseStyle>,
+}
+
+/// `/short` 的落点。风格只是这条会话的偏好，下一轮构建 harness 时才读，
+/// 所以直接写核心会话文件就够了，不必走 Runtime 协议。
+async fn set_response_style(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Json(request): Json<ResponseStyleRequest>,
+) -> Result<StatusCode, WebError> {
+    ensure_web_runtime_session(&state, id).await?;
+    SessionStore::new(&state.home)
+        .update(id, |session| {
+            session.response_style = request.response_style;
+        })
+        .map_err(|_| WebError::bad_request("session was not found"))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn rename_session(

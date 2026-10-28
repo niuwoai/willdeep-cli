@@ -49,6 +49,31 @@ Delegation contract:
 - A command-capable worker first uses deterministic safety rules. Only ambiguous, non-destructive and non-credential-sensitive commands reach the AI safety judge. If the judge denies or is unavailable, the worker reports the exact command; only then may you respawn profile=ops_runner with the identical target_command so the parent can request one-time human approval.
 - A writing worker's files are exactly task.write_files (or target_file for editor), resolved as one set under the active workspace policy. task.read_files adds context without adding write authority. Legacy task.relevant_files remains a combined set only for backwards compatibility."#;
 
+/// `/short` 打开后追加到系统提示词末尾的一段。
+///
+/// 放在末尾是刻意的：上面的稳定契约要求「阶段切换写一句正文」，这一段要盖过它。
+/// 它必须自己声明优先级，因为契约文本是缓存前缀，一个字都不能改。
+///
+/// 围栏格式对齐 `conversation::parse_plan_reply`：`plan` 正文每行 `N. 文本`，
+/// 编号从 1 连续；`progress` 每行 `N: 状态`，状态只能是那五个词；一条消息里
+/// 只要出现别的围栏，整条就不被认成计划。
+pub const SHORT_RESPONSE_INSTRUCTION: &str = r#"Response style override (this session only):
+This session asked for the short style. These rules take priority over the Tone section above, including its one-line phase updates. Do not alternate between the two.
+- Chat stays short: one line before the first tool call saying what you are about to do, then silence until the final result. No per-phase narration, no recap of each tool call.
+- On a task of more than a few steps, report progress through a plan card instead of chat. A plan message contains exactly one fenced block and nothing else:
+  ```plan
+  1. first step
+  2. second step
+  ```
+  Lines inside are `N. text`, numbered from 1 with no gaps. Sending a new plan replaces the card.
+- Update that card in place with a message that again contains exactly one fenced block:
+  ```progress
+  1: done
+  2: in_progress
+  ```
+  Lines are `N: status` where status is one of `pending`, `in_progress`, `done`, `skipped`, `failed`. Any other fence in the same message, or any status outside that list, makes the update invisible.
+- Never put progress only in your reasoning. The user never sees it; an update that is not a plan or progress fence does not reach them."#;
+
 pub fn build_system_prompt(workspace: &Path) -> std::io::Result<String> {
     let mut sections = vec![
         crate::prompt_sections::main_contract(crate::prompt_sections::active_variant())
@@ -244,5 +269,24 @@ mod tests {
             !STABLE_CONTRACT.contains("do not narrate routine mechanics"),
             "the old wording taught thinking models to stay silent"
         );
+    }
+
+    /// 简洁风格是追加的覆盖，不是改契约。它必须点名自己优先于阶段更新，
+    /// 而且围栏格式要和解析器认的一模一样，否则模型写出的进度卡片显示不出来。
+    #[test]
+    fn the_short_style_overrides_phase_updates_without_touching_the_contract() {
+        assert!(!STABLE_CONTRACT.contains("Response style override"));
+        for fragment in [
+            "take priority over the Tone section",
+            "```plan",
+            "```progress",
+            "`pending`, `in_progress`, `done`, `skipped`, `failed`",
+            "Never put progress only in your reasoning",
+        ] {
+            assert!(
+                SHORT_RESPONSE_INSTRUCTION.contains(fragment),
+                "missing {fragment}"
+            );
+        }
     }
 }

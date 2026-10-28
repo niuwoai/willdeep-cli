@@ -1861,6 +1861,8 @@ fn a_running_turn_no_longer_swallows_every_enter() {
         // 换模型只作用于下一轮：当场收下，本轮结束再切。
         "/model",
         "/model qwen3-coder",
+        // 简洁风格同样只作用于下一轮，没有理由让用户等到本轮结束再敲。
+        "/short",
     ] {
         assert_eq!(busy_input(command), BusyInput::RunNow, "{command}");
     }

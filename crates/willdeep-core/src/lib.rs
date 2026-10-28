@@ -80,7 +80,7 @@ pub use routing::{
     ClassifierFailure, EscalationTicket, RouteDecision, RoutingGuard, RoutingPolicy, RoutingTier,
 };
 pub use safety::{CommandSafety, classify_with_workspace_write};
-pub use session::{Session, SessionDigest, SessionStore, format_iso8601};
+pub use session::{ResponseStyle, Session, SessionDigest, SessionStore, format_iso8601};
 pub use session_title::TitleSource;
 pub use skills::SkillCatalog;
 pub use subagent::{

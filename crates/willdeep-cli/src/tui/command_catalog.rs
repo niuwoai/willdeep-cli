@@ -73,6 +73,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/schedule [list|history <id>|action <id> <revision> <action>]",
             "/attachments",
             "/queue",
+            "/short",
         ],
         Language::En => [
             "/help",
@@ -106,6 +107,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/schedule [list|history <id>|action <id> <revision> <action>]",
             "/attachments",
             "/queue",
+            "/short",
         ],
         Language::Ja => [
             "/help",
@@ -139,6 +141,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/schedule [list|history <id>|action <id> <revision> <action>]",
             "/attachments",
             "/queue",
+            "/short",
         ],
     };
     // 用法与说明按同一顺序声明，配错了就是把说明贴到别的命令上。
@@ -404,6 +407,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "管理待发消息：编辑、删除或立即插话（Ctrl+Q）",
                 "Manage queued messages: edit, delete or steer now (Ctrl+Q)",
                 "送信待ちを編集・削除・即時送達（Ctrl+Q）",
+            ),
+        ),
+        (
+            "/short",
+            language.text(
+                "切换简洁回复：进度只更新计划卡片，聊天留开工一句和最后结果",
+                "Toggle the short style: progress updates the plan card; chat keeps one line and the result",
+                "簡潔な応答に切替：進捗は計画カードのみ、チャットは開始一行と最終結果",
             ),
         ),
         (

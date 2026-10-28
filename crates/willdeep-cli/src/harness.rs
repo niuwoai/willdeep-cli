@@ -1111,6 +1111,13 @@ pub(crate) async fn build(
     ));
     let tools = tools.with_board(board.clone(), "parent");
     let mut system_prompt = willdeep_core::prompt::build_system_prompt(&workspace)?;
+    // 简洁风格盖在契约后面：`/short` 是这条会话自己的选择，默认契约一个字不动。
+    if resumed.is_some_and(|session| {
+        session.response_style == Some(willdeep_core::ResponseStyle::Short)
+    }) {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(willdeep_core::prompt::SHORT_RESPONSE_INSTRUCTION);
+    }
     if let Some(guidance) =
         crate::plugin_production::routing_guidance(home, screenplay_plugins_allowed).await
     {

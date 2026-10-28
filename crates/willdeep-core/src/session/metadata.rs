@@ -10,6 +10,7 @@ pub(super) struct Metadata {
     profile: Option<String>,
     config: Option<PathBuf>,
     goal: Option<String>,
+    response_style: Option<super::ResponseStyle>,
     execution: [u8; 32],
 }
 
@@ -27,6 +28,7 @@ impl Metadata {
             profile: session.profile.clone(),
             config: session.config.clone(),
             goal: session.goal.clone(),
+            response_style: session.response_style,
             execution: super::execution_state::fingerprint(session)?,
         })
     }
@@ -65,6 +67,7 @@ impl Metadata {
         reconcile!(profile);
         reconcile!(config);
         reconcile!(goal);
+        reconcile!(response_style);
         if retain_latest_execution {
             super::execution_state::copy(latest, proposed);
         }
@@ -74,6 +77,7 @@ impl Metadata {
         proposed.profile = merged.profile;
         proposed.config = merged.config;
         proposed.goal = merged.goal;
+        proposed.response_style = merged.response_style;
 
         // 视图状态与路由归属不进执行指纹（见 `execution_state::fingerprint`），
         // 所以它们不会把两个写者判成冲突；但也不能让后写的那一方用自己的旧值

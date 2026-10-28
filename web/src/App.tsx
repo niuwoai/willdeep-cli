@@ -57,7 +57,7 @@ function accessLabel(access: WorkspaceAccess, t: { accessReadOnly: string; acces
   }
 }
 type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
-type SessionDetail = { id: string; workspace: string; messages: ConversationItem[] };
+type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -110,7 +110,7 @@ type RuntimeStreamEvent = {
   is_error?: boolean;
   message?: string;
 };
-const defaultCommands = ["/help", "/goal", "/compress", "/skills", "/clear"];
+const defaultCommands = ["/help", "/goal", "/compress", "/skills", "/clear", "/short"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
 
@@ -251,6 +251,9 @@ export function App() {
     setAttachments([...attachmentsRef.current, { ...payload, id: crypto.randomUUID() }]);
   };
   const [goal, setGoal] = useState("");
+  // `/short` 的会话级开关。真值在服务端，这里只是显示用的镜像：加载会话时从
+  // 详情里恢复，切换时先写服务端再改它。刷新页面不会把它弄丢。
+  const [shortReplies, setShortReplies] = useState(false);
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
   const [error, setError] = useState("");
   const references = useComposerReferences(workspace, prompt, t.loadFailed, setError);
@@ -517,6 +520,7 @@ export function App() {
     setSessionId(detail.id);
     localStorage.setItem(`${lastSessionPrefix}${workspace}`, detail.id);
     setChat(sessionChat(detail, t));
+    setShortReplies(detail.response_style === "short");
     followBottomRef.current = true;
   }
 
@@ -958,6 +962,18 @@ export function App() {
     if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); setPrompt(""); return; }
     if (typed === "/skills") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: composer.skills.length ? composer.skills.map((skill) => `$${skill.identifier} · ${skill.name}\n${skill.description}`).join("\n\n") : t.noSkills }]); setPrompt(""); return; }
     if (typed === "/goal off") { setGoal(""); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); setPrompt(""); return; }
+    if (typed === "/short") {
+      setPrompt("");
+      // 风格记在会话上。还没有会话时无处可记，先说清楚，不假装已经切过去了。
+      if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.shortNeedsSession }]); return; }
+      const next = !shortReplies;
+      try {
+        await mutate(`/api/sessions/${encodeURIComponent(sessionId)}/response-style`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_style: next ? "short" : null }) });
+        setShortReplies(next);
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: next ? t.shortOn : t.shortOff }]);
+      } catch (reason) { setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      return;
+    }
     const goalToStart = typed.startsWith("/goal ") ? typed.slice(6).trim() : "";
     if (goalToStart) {
       setGoal(goalToStart);

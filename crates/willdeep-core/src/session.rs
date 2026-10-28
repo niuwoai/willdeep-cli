@@ -36,6 +36,16 @@ impl Drop for ExecutionGuard {
 
 pub const SESSION_VERSION: u32 = 1;
 
+/// 一条会话的回复风格。缺省（`None`）即默认风格，所以这里只有一个变体。
+///
+/// `Short` 是 `/short` 打开的简洁风格：长任务用计划卡片汇报进度，聊天里只留
+/// 开工一句和最后结果。它是这条会话自己的选择，不改变默认风格的契约文本。
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseStyle {
+    Short,
+}
+
 /// 默认家目录名，`~/<DEFAULT_HOME_DIRECTORY>` 即未设置 `WILLDEEP_HOME` 时 CLI 用的家目录。
 /// 只有 macOS 才有桌面 App 会话桥接，其他平台仅测试引用它。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -89,6 +99,12 @@ pub struct Session {
     /// 所以归在执行快照里。旧会话文件没有它，按 `goal` 重新开始计。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_state: Option<crate::goal::GoalState>,
+    /// 这条会话要哪种回复风格。`None` 是默认：每阶段一句正文进度。
+    /// 这是界面偏好，不是对话内容，所以跟 `goal` 一样走元数据合并，不进执行
+    /// 指纹——否则 TUI 记一次偏好就会和守护进程写这一轮的输出互相判成冲突。
+    /// 旧会话文件没有它，缺省即默认风格。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_style: Option<ResponseStyle>,
     #[serde(default)]
     pub compression_generation: u64,
     #[serde(default)]
@@ -147,6 +163,7 @@ impl Session {
             runtime_managed: false,
             goal: None,
             goal_state: None,
+            response_style: None,
             compression_generation: 0,
             compression_checkpoint: None,
             manual_compression_usage: CompressionUsage::default(),
@@ -843,6 +860,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         runtime_managed: false,
         goal: None,
         goal_state: None,
+        response_style: None,
         compression_generation: 0,
         compression_checkpoint: None,
         manual_compression_usage: CompressionUsage::default(),
