@@ -27,10 +27,10 @@ function HumanGate({ gate, messages: t, language, onApproval, onAnswer }: Props 
     <p>{gate.kind === "approval" ? gate.description : gate.question}</p>
     <p>{queueText("originalRetained", language)}</p>
     <details open={!gate.parked}><summary>{t.details}</summary>
-      {gate.kind === "approval" ? <div>
-        <button disabled={busy} onClick={() => void act(() => onApproval(gate.id, "allow_once"))}>{t.allowOnce}</button>
-        <button disabled={busy} onClick={() => void act(() => onApproval(gate.id, "deny"))}>{t.deny}</button>
-        {gate.always_allow_available && <button disabled={busy} onClick={() => void act(() => onApproval(gate.id, "always_allow"))}>{t.alwaysAllow}</button>}
+      {gate.kind === "approval" ? <div className="gate-actions">
+        <button type="button" className="gate-action primary" disabled={busy} onClick={() => void act(() => onApproval(gate.id, "allow_once"))}>{t.allowOnce}</button>
+        <button type="button" className="gate-action secondary" disabled={busy} onClick={() => void act(() => onApproval(gate.id, "deny"))}>{t.deny}</button>
+        {gate.always_allow_available && <button type="button" className="gate-action tertiary" disabled={busy} onClick={() => void act(() => onApproval(gate.id, "always_allow"))}>{t.alwaysAllow}</button>}
       </div> : <div>
         {gate.options.map((option) => gate.multi_select
           ? <label key={option}><input type="checkbox" checked={selected.includes(option)} onChange={(event) => setSelected((values) => event.target.checked ? [...values, option] : values.filter((value) => value !== option))} />{option}</label>

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Language } from "./i18n";
 import { queueText } from "./queueMessages";
 import { Markdown } from "./Markdown";
+import { queueCopyLabels } from "./markdownCopy";
 import type { ConversationItem } from "./ConversationCard";
 import { queueRequest } from "./runtimeQueueApi";
 
@@ -17,7 +18,7 @@ export function IndependentTasks({ sessionId, language }: { sessionId: string | 
     <p>{t("originalRetained")}</p>
     {tasks.data.map((task) => <article key={task.id}>
       <small>{task.status === "completed" ? t("completedShort") : task.status === "running" || task.status === "queued" ? t("runningShort") : task.status.startsWith("waiting_") ? t("waitingShort") : t("failedTask")}</small>
-      <Markdown content={task.messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) => `**${message.role === "user" ? t("you") : t("assistant")}**\n\n${message.content}`).join("\n\n---\n\n")} />
+      <Markdown copy={queueCopyLabels(t("copyCode"), t("copiedCode"), t("copyFailed"))} content={task.messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) => `**${message.role === "user" ? t("you") : t("assistant")}**\n\n${message.content}`).join("\n\n---\n\n")} />
     </article>)}
   </section>;
 }

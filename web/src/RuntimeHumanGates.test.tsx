@@ -24,6 +24,10 @@ it("parking never submits an approval and each card keeps its own target", () =>
   const t = messages["zh-CN"];
   render(<RuntimeHumanGates gates={gates} messages={t} language="zh-CN" onAnswer={vi.fn(async () => {})} onApproval={approval} />);
   expect(approval).not.toHaveBeenCalled();
-  fireEvent.click(screen.getAllByText(t.allowOnce)[1]);
+  fireEvent.click(screen.getAllByRole("button", { name: t.allowOnce })[1]);
   expect(approval).toHaveBeenCalledWith("independent", "allow_once");
+  const actions = screen.getAllByRole("button", { name: t.deny })[0].parentElement!;
+  expect(actions.className).toBe("gate-actions");
+  expect(actions.querySelector(".gate-action.primary")?.textContent).toBe(t.allowOnce);
+  expect(actions.querySelector(".gate-action.secondary")?.textContent).toBe(t.deny);
 });
