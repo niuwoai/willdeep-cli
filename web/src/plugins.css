@@ -534,6 +534,7 @@
   cursor: pointer;
 }
 
+.mcp-snippet { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--bg-raised); border: 1px solid var(--border); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 .sidebar-settings-item:hover { background: var(--bg-panel-hover); }
 .sidebar-settings-item span { color: var(--text-faint); }
 

@@ -780,3 +780,103 @@ async fn an_unknown_session_is_null_not_an_error_and_writes_nothing() {
     assert_eq!(tree_snapshot(&root), before, "预测不落盘");
     let _ = std::fs::remove_dir_all(root);
 }
+
+fn mcp_headers(token: Option<&str>) -> axum::http::HeaderMap {
+    let mut headers = axum::http::HeaderMap::new();
+    if let Some(token) = token {
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+    }
+    headers
+}
+
+async fn mcp_post(
+    home: &std::path::Path,
+    token: Option<&str>,
+    body: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = crate::daemon::mcp_server::handle(
+        State(suggestion_state_at(home)),
+        mcp_headers(token),
+        axum::body::Bytes::from(body.to_owned()),
+    )
+    .await;
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, body)
+}
+
+fn suggestion_state_at(home: &std::path::Path) -> Arc<WebState> {
+    Arc::new(WebState {
+        config_path: home.join("config.toml"),
+        profile: None,
+        workspaces: Arc::new(std::sync::RwLock::new(Vec::new())),
+        home: home.to_path_buf(),
+        language: Language::default(),
+        harness_slots: Arc::new(Semaphore::new(1)),
+        settings_writable: false,
+        settings_write_lock: Mutex::new(()),
+        config_tools: tokio::sync::OnceCell::new(),
+    })
+}
+
+#[tokio::test]
+async fn the_mcp_endpoint_rejects_missing_and_unknown_tokens() {
+    let home = std::env::temp_dir().join(format!("willdeep-mcp-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    let (status, _) = mcp_post(&home, None, r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = mcp_post(
+        &home,
+        Some("wdm_nope"),
+        r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[tokio::test]
+async fn the_mcp_endpoint_initializes_and_lists_read_only_tools() {
+    let home = std::env::temp_dir().join(format!("willdeep-mcp-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    let (_, secret) = crate::daemon::mcp_tokens::issue(&home, "claude").unwrap();
+
+    let (status, body) = mcp_post(
+        &home,
+        Some(&secret),
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["serverInfo"]["name"], "willdeep");
+
+    let (_, listed) = mcp_post(
+        &home,
+        Some(&secret),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+    )
+    .await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["daemon_status", "list_sessions", "list_tasks"]);
+
+    // 未知工具是调用方的错误，不是传输层的错误。
+    let (_, called) = mcp_post(
+        &home,
+        Some(&secret),
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"rm -rf"}}"#,
+    )
+    .await;
+    assert_eq!(called["error"]["code"], -32602);
+    let _ = std::fs::remove_dir_all(&home);
+}

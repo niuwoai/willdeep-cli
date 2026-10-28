@@ -45,6 +45,8 @@ mod headless;
 mod herdr;
 mod internal_transport;
 mod local_transport;
+pub(crate) mod mcp_server;
+pub(crate) mod mcp_tokens;
 mod mobile_cli;
 mod mobile_gateway;
 mod peer_client;

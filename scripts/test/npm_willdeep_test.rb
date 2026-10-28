@@ -41,7 +41,7 @@ class NpmWilldeepTest < Minitest::Test
   def test_manifest_matches_package_and_release_names
     package = JSON.parse(File.read(File.join(PACKAGE, 'package.json')))
     manifest = JSON.parse(File.read(File.join(PACKAGE, 'install-manifest.json')))
-    assert_equal 'willdeep', package['name']
+    assert_equal '@niuwoai/willdeep', package['name']
     assert_equal package['version'], manifest['version']
     assert_equal "v#{package['version']}", manifest['tag']
     assert_equal 'niuwoai/willdeep-cli', manifest['repository']

@@ -24,6 +24,7 @@ use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 mod agent_library;
 mod composer;
 mod configuration;
+mod mcp_tokens;
 mod peer_sessions;
 mod runtime_chat;
 mod schedules;
@@ -52,7 +53,7 @@ pub struct WebConfig {
     pub setup_started: Option<tokio::sync::oneshot::Sender<SocketAddr>>,
 }
 
-struct WebState {
+pub(crate) struct WebState {
     config_path: PathBuf,
     profile: Option<String>,
     /// 浏览器端能看到的工作区白名单。Web 模式没有应用层鉴权，所以这份名单
@@ -69,6 +70,13 @@ struct WebState {
     settings_writable: bool,
     settings_write_lock: Mutex<()>,
     config_tools: tokio::sync::OnceCell<Arc<willdeep_core::McpRegistry>>,
+}
+
+impl WebState {
+    /// MCP 端点要在 daemon 模块里读家目录，字段本身仍是私有的。
+    pub(crate) fn home(&self) -> &std::path::Path {
+        &self.home
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -388,6 +396,15 @@ async fn serve_internal(
     let app = Router::new()
         .merge(schedules::routes())
         .route("/health", get(health))
+        .route("/mcp", post(crate::daemon::mcp_server::handle))
+        .route(
+            "/api/mcp/tokens",
+            get(mcp_tokens::list).post(mcp_tokens::create),
+        )
+        .route(
+            "/api/mcp/tokens/{id}",
+            axum::routing::delete(mcp_tokens::revoke),
+        )
         .route("/api/setup", get(setup::setup_status))
         .route(
             "/api/settings/providers",
