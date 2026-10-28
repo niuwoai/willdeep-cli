@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.126.0-rc4] - 2026-10-28
+
+### Fixed
+- npm 包改到组织作用域 `@niuwoai/willdeep`。安装命令变为 `npm install -g @niuwoai/willdeep@rc`，装好后的命令名仍是 `willdeep`。
+
 ## [0.126.0-rc3] - 2026-10-28
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 ## 分发
 
-npm 包 `willdeep` 不携带 Rust 二进制。`npm install` 读取 `npm/willdeep/install-manifest.json` 中与包版本绑定的 GitHub Release，下载当前平台的一个发行包，校验 SHA256 并确认包内只有预期的可执行文件，然后写入 npm 包的 `bin/`。命令入口 `bin/willdeep.js` 只转发参数和标准流。macOS Universal 同时覆盖 x64 与 arm64；Linux 区分 amd64/arm64；Windows 目前只覆盖 x64。Homebrew 继续直接安装 macOS Universal 发行包，两条路径都消费同一个 GitHub Release。
+npm 包 `@niuwoai/willdeep` 不携带 Rust 二进制。`npm install` 读取 `npm/willdeep/install-manifest.json` 中与包版本绑定的 GitHub Release，下载当前平台的一个发行包，校验 SHA256 并确认包内只有预期的可执行文件，然后写入 npm 包的 `bin/`。命令入口 `bin/willdeep.js` 只转发参数和标准流。macOS Universal 同时覆盖 x64 与 arm64；Linux 区分 amd64/arm64；Windows 目前只覆盖 x64。Homebrew 继续直接安装 macOS Universal 发行包，两条路径都消费同一个 GitHub Release。
 
 ## 边界
 

@@ -102,16 +102,16 @@ def publish(version, dry_run: false)
     return
   end
 
-  view_out, view_err, view_status = Open3.capture3('npm', 'view', "willdeep@#{version}", 'version')
+  view_out, view_err, view_status = Open3.capture3('npm', 'view', "@niuwoai/willdeep@#{version}", 'version')
   if view_status.success? && view_out.strip == version
-    warn "willdeep@#{version} 已存在，跳过发布。"
+    warn "@niuwoai/willdeep@#{version} 已存在，跳过发布。"
     return
   end
   abort "无法确认 npm 版本：#{view_err}" unless view_err.include?('E404')
 
   _out, err, status = Open3.capture3('npm', 'publish', '--access', 'public', '--tag', 'rc', chdir: PACKAGE)
   abort "npm publish 失败：#{err}" unless status.success?
-  warn "已发布 willdeep@#{version}（tag rc）"
+  warn "已发布 @niuwoai/willdeep@#{version}（tag rc）"
 end
 
 if $PROGRAM_NAME == __FILE__

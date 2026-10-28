@@ -25,7 +25,7 @@ willdeep --workspace . "检查当前仓库并修复测试"
 **1. 装二进制。** 有 Node.js 18 或更新版本时：
 
 ```bash
-npm install -g willdeep@rc
+npm install -g @niuwoai/willdeep@rc
 willdeep --version
 ```
 
