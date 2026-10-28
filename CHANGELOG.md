@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.127.0-rc1] - 2026-10-28
+
+### Added
+- Web 服务新增 MCP 端点（POST /mcp，Streamable HTTP 的 JSON 响应模式）。在 Web 设置里创建 token，就能复制出给 Claude Code 和 ChatGPT 用的安装指令，地址取自打开这个页面的协议和主机名。token 只在创建时显示一次，落盘的是 SHA-256。这一版只开放只读工具：daemon 状态、会话列表、任务列表。
+
+### Fixed
+- npm 包契约测试跟随包名改到 `@niuwoai/willdeep`，发版门禁不再因此失败。
+
 ## [0.126.0-rc4] - 2026-10-28
 
 ### Fixed

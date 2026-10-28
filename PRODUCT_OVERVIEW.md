@@ -1,5 +1,7 @@
 # Product Overview
 
+0.127.0-rc1 在 Web 服务上增加 MCP 端点（POST /mcp，Streamable HTTP）。在 Web 设置里创建 token 并复制安装指令，另一台机器上的 Claude Code 或 ChatGPT 就能读取这台 willdeep 的会话和任务；这一版只有只读工具。
+
 0.126.0-rc4 把 npm 包改到组织作用域 `@niuwoai/willdeep`，安装命令变为 `npm install -g @niuwoai/willdeep@rc`，装好后的命令名仍是 `willdeep`。
 
 0.126.0-rc3 把 `web.rs` 的测试模块拆到 `web/tests.rs`，让源码行数回到 3000 行上限以内。
