@@ -96,7 +96,14 @@ fn help_is_localized_and_laid_out_one_command_per_line() {
     assert!(help.contains("命令一览"));
     assert!(help.contains("/model [模型名]"));
     assert!(help.contains("列出、筛选或切换当前模型"));
-    for command in ["/help", "/compress", "/session", "/skills", "/clear", "/short"] {
+    for command in [
+        "/help",
+        "/compress",
+        "/session",
+        "/skills",
+        "/clear",
+        "/short",
+    ] {
         assert!(
             lines
                 .iter()

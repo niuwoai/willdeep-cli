@@ -220,7 +220,10 @@ mod command_tests {
         let skills = SkillCatalog::default();
 
         assert!(app.handle_slash_command("/short", &skills));
-        assert_eq!(app.response_style, Some(willdeep_core::ResponseStyle::Short));
+        assert_eq!(
+            app.response_style,
+            Some(willdeep_core::ResponseStyle::Short)
+        );
         assert!(app.transcript.last().unwrap().contains("简洁回复已开启"));
 
         assert!(app.handle_slash_command("/short", &skills));
