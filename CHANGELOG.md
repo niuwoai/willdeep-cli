@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.125.0-rc1] - 2026-10-28
+
+### Added
+- 配置页：常规里增加「默认模型」，选的是默认提供商实际使用的模型，保存时写回那个提供商的 `model`。上下文窗口、最大输出 Token 和 Token 预算下方可以一键填入 32K、64K、128K、256K、1M。提供商的 `context_window`、`vision_model`，以及子代理的 `max_turns`、`model`、`token_budget` 等配置项不再显示为未收录。
+
 ## [0.124.0-rc1] - 2026-10-28
 
 ### Added

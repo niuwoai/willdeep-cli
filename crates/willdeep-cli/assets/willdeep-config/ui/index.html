@@ -184,6 +184,8 @@ input:focus, select:focus, textarea:focus, .search:focus {
 }
 :disabled { cursor: not-allowed; }
 input:disabled, select:disabled, textarea:disabled { opacity: 0.55; }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.presets .btn-sm { padding: 1px 7px; font-variant-numeric: tabular-nums; }
 .secret-view { display: flex; align-items: center; gap: 6px; min-height: 30px; }
 .secret-view input { flex: 1 1 auto; width: auto; min-width: 0; }
 .secret-view .mono { color: var(--secondary); }
@@ -295,6 +297,8 @@ const I18N = {
     'protocol.adjusted': '已根据所选模型的能力调整接口协议，请在保存前确认。',
     'models.refresh': '刷新模型列表', 'models.loading': '正在加载模型…',
     'models.empty': '接口未返回可用模型', 'models.idle': '填写接口地址后刷新模型列表',
+    'models.pickProvider': '先选择默认提供商',
+    'models.savedAs': '保存到 [providers.{provider}] 的 model',
     'models.failed': '加载失败：{msg}', 'models.current': '{value}（当前配置）',
     'page.title': 'WillDeep 配置',
     'meta.missing': '配置文件还不存在，保存时会新建',
@@ -373,6 +377,7 @@ const I18N = {
     'err.name.dup': '已经有同名的了',
     'dlg.remove.title': '删除 {name}？',
     'dlg.remove.body': '会从配置文件里删掉整个 [{section}] 段，包括其中的密钥。保存前都可以撤销。',
+    'presets.fill': '填入 {value}',
     'unknown.title': '未收录的配置项',
     'unknown.desc': '文件里有、但本页不认识的键。本页不会修改或删除它们。',
     'unknown.root': '（顶层）',
@@ -388,6 +393,8 @@ const I18N = {
     'protocol.adjusted': 'The API protocol was adjusted for this model. Review it before saving.',
     'models.refresh': 'Refresh models', 'models.loading': 'Loading models…',
     'models.empty': 'The API returned no models', 'models.idle': 'Enter the API base, then refresh models',
+    'models.pickProvider': 'Choose the default provider first',
+    'models.savedAs': 'Saved as [providers.{provider}] model',
     'models.failed': 'Could not load models: {msg}', 'models.current': '{value} (current configuration)',
     'page.title': 'WillDeep Config',
     'meta.missing': 'The config file does not exist yet; saving will create it',
@@ -466,6 +473,7 @@ const I18N = {
     'err.name.dup': 'That name is already used',
     'dlg.remove.title': 'Delete {name}?',
     'dlg.remove.body': 'The whole [{section}] section, including its secrets, will be removed. You can undo until you save.',
+    'presets.fill': 'Fill in {value}',
     'unknown.title': 'Unrecognized settings',
     'unknown.desc': 'Keys in the file that this page does not know. They are never changed or removed here.',
     'unknown.root': '(top level)',
@@ -491,6 +499,7 @@ const I18N_SCHEMA_EN = {
   'section.subagents': ['Subagents', 'Each [subagents.<profile>] overrides that role’s defaults'],
   'root.version': ['Config version'],
   'root.default_provider': ['Default provider', 'The id of a [providers.<id>] section'],
+  'root.default_model': ['Default model', 'The model the default provider actually uses; saved as that provider’s model'],
   'agent.max_turns': ['Max turns'],
   'agent.approval': ['Approval policy', 'Whether to ask before writing files, running commands or going online'],
   'agent.small_model_routing': ['Small-model routing', 'Send light tasks to a small model'],
@@ -514,13 +523,26 @@ const I18N_SCHEMA_EN = {
   'providers.api': ['API protocol'],
   'providers.api_base': ['API base URL'],
   'providers.api_key': ['API key'],
-  'providers.model': ['Default model'],
-  'providers.max_output_tokens': ['Max output tokens'],
+  'providers.model': ['This provider’s model'],
+  'providers.context_window': ['Context window', 'How much context this provider’s model holds; the status bar uses it'],
+  'providers.max_output_tokens': ['Max output tokens', 'How many tokens one reply may generate'],
+  'providers.vision_model': ['Vision fallback model'],
   'mcp_servers.command': ['Command'],
   'mcp_servers.args': ['Arguments'],
   'mcp_servers.startup_timeout_seconds': ['Startup timeout (s)'],
   'mcp_servers.enabled': ['Enabled'],
+  'subagents.provider_profile': ['Provider'],
+  'subagents.model': ['Model'],
+  'subagents.max_turns': ['Max turns', '1 to 32; otherwise the role’s built-in default'],
   'subagents.context_window': ['Context window'],
+  'subagents.token_budget': ['Token budget', '1000 to 10000000; a spent budget returns partial work instead of failing'],
+  'subagents.timeout_seconds': ['Timeout (s)', '10 to 86400'],
+  'subagents.max_consecutive_failures': ['Failure limit', '1 to 20'],
+  'subagents.worktree': ['Workspace'],
+  'subagents.tool_output_limit': ['Tool output limit (bytes)', '1024 to 131072'],
+  'subagents.max_attempts': ['Verification retries', '1 to 6'],
+  'option.worktree.shared': 'Share the main session’s workspace',
+  'option.worktree.dedicated': 'Dedicated workspace',
   'option.approval.read-only': 'Read-only',
   'option.approval.strict': 'Strict: always ask',
   'option.approval.smart': 'Smart: ask for risky actions (recommended)',
@@ -1033,6 +1055,21 @@ function renderControl(sec, field, ek, id, disabled) {
   if (sec.groupID === 'providers' && field.key === 'api') {
     return renderModelProtocol(sec, field, id, disabled, cur, unsetLabel);
   }
+  if (field.key === 'default_model') {
+    const provider = currentDefaultProvider();
+    const state = provider ? S.models.get('providers.' + provider) : null;
+    const models = state && state.models || [];
+    const val = cur == null ? '' : String(cur);
+    const opts = [{ value: '', label: unsetLabel }].concat(models.map(value => ({ value, label: value })));
+    if (val && !models.includes(val)) opts.push({ value: val, label: t('models.current', { value: val }) });
+    const message = !provider ? t('models.pickProvider') : !state ? t('models.idle') : state.loading ? t('models.loading') :
+      state.error ? t('models.failed', { msg: state.error }) : models.length ? t('models.savedAs', { provider }) : t('models.empty');
+    return renderSelect(id, disabled || (!provider ? ' disabled' : ''), opts, val) +
+      '<button class="btn" data-act="refresh-models" data-section="providers.' + esc(provider || '') + '"' +
+      (disabled || !provider || (state && state.loading ? ' disabled' : '')) + '>' +
+      esc(t('models.refresh')) + '</button>' +
+      '<div role="status" class="muted">' + esc(message) + '</div>';
+  }
   if (sec.groupID === 'providers' && field.key === 'model') {
     const state = S.models.get(sec.name);
     const models = state && state.models || [];
@@ -1078,8 +1115,24 @@ function renderControl(sec, field, ek, id, disabled) {
   if (type === 'secret') return renderSecret(field, ek, id, disabled);
   const val = cur == null ? '' : String(cur);
   const mode = (type === 'int') ? ' inputmode="numeric"' : (type === 'float' ? ' inputmode="decimal"' : '');
-  return '<input type="text" id="' + id + '" data-input' + mode + ' spellcheck="false" autocomplete="off" value="' + esc(val) +
+  let html = '<input type="text" id="' + id + '" data-input' + mode + ' spellcheck="false" autocomplete="off" value="' + esc(val) +
     '" placeholder="' + esc(unsetLabel) + '"' + disabled + '>';
+  if (type === 'int' && Array.isArray(field.presets) && field.presets.length) {
+    html += '<div class="presets">';
+    for (const preset of field.presets) {
+      html += '<button type="button" class="btn btn-sm" data-act="preset" data-value="' + esc(String(preset.value)) + '"' +
+        disabled + ' title="' + esc(t('presets.fill', { value: String(preset.value) })) + '">' + esc(preset.label) + '</button>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+// 默认模型跟着默认提供商走；这一批未保存的改动优先于文件里的值
+function currentDefaultProvider() {
+  const field = (S.sections.get('') || { fields: [] }).fields.find(f => f.key === 'default_provider');
+  const value = field ? currentRaw(ekOf('', 'default_provider'), field) : null;
+  return value ? String(value) : '';
 }
 
 function renderSecret(field, ek, id, disabled) {
@@ -1308,6 +1361,12 @@ function afterRowChange(section, key) {
     rerenderRow(section, 'api');
   }
   rerenderRow(section, key);
+  // 默认提供商变了，默认模型的候选列表和保存位置都跟着变
+  if (section === '' && key === 'default_provider') {
+    const provider = currentDefaultProvider();
+    if (provider && !S.models.has('providers.' + provider)) loadModels('providers.' + provider);
+    rerenderRow('', 'default_model');
+  }
   rerenderDependents();
   const sec = S.sections.get(section);
   if (sec && sec.isNew) {
@@ -1490,6 +1549,15 @@ function handleFieldCommit(el) {
   if (!info) return;
   commitValue(section, key, info.field.type, readRaw(el), originalOf(ekOf(section, key)));
   afterRowChange(section, key);
+}
+
+// 常用值一键填入，走和手输同一条提交路径，所以撤销、校验、保存都不用另写
+function applyPreset(row, value) {
+  if (!row || value == null) return;
+  const input = row.querySelector('[data-input]');
+  if (!input || input.disabled) return;
+  input.value = value;
+  handleFieldCommit(input);
 }
 
 function revertField(section, key) {
@@ -2008,7 +2076,8 @@ function onClick(event) {
     case 'discard-all': discardAll(); break;
     case 'revert': revertField(section, key); break;
     case 'reveal': revealSecret(section, key); break;
-    case 'refresh-models': loadModels(section); break;
+    case 'refresh-models': loadModels(el.getAttribute('data-section') || section); break;
+    case 'preset': applyPreset(row, el.getAttribute('data-value')); break;
     case 'replace': replaceSecret(section, key); break;
     case 'collapse-secret': collapseSecret(section, key); break;
     case 'toggle-secret': toggleSecret(section, key); break;

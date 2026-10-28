@@ -28,7 +28,7 @@ require "provider_models"
 module WilldeepConfig
   PROTOCOL_VERSION = "2025-06-18"
   SERVER_NAME = "config"
-  SERVER_VERSION = "0.6.0-rc2"
+  SERVER_VERSION = "0.6.0-rc3"
   MASK = "••••"
   ABSENT = :__absent__
   OCTAL_FILE_MODE = 0o600
@@ -198,6 +198,7 @@ module WilldeepConfig
       end
 
       sections = ConfigSchema.static_groups.map { |g| static_section(g, values) }
+      project_default_model!(sections, values)
       ConfigSchema.collection_groups.each do |g|
         collection_instances(g, sections_in_file).each do |instance|
           sections << collection_section(g, instance, values)
@@ -237,7 +238,7 @@ module WilldeepConfig
       end
 
       doc = ConfigDoc.new(path, text)
-      normalized, bad = validate_edits(edits)
+      normalized, bad = validate_edits(rewrite_default_model(edits, text))
       return invalid_edits_result(bad) unless bad.empty?
 
       changes = []
@@ -274,7 +275,7 @@ module WilldeepConfig
         end
       end
 
-      normalized, bad = validate_edits(edits)
+      normalized, bad = validate_edits(rewrite_default_model(edits, text))
       return invalid_edits_result(bad) unless bad.empty?
 
       doc = ConfigDoc.new(path, text)
@@ -442,6 +443,38 @@ module WilldeepConfig
 
     # ==== 编辑校验与执行 ====
 
+    # 页面上的「默认模型」没有自己的键：它就是默认提供商的 model。
+    # 改哪个提供商，以这一批编辑里的 default_provider 为准，没有才看文件里现有的。
+    def rewrite_default_model(edits, text)
+      model = edits.find { |e| e.is_a?(Hash) && e["key"].to_s.strip == "default_model" && e["section"].to_s.strip.empty? }
+      return edits unless model
+      provider_edit = edits.find { |e| e.is_a?(Hash) && e["key"].to_s.strip == "default_provider" && e["section"].to_s.strip.empty? }
+      provider = provider_edit ? provider_edit["value"].to_s.strip : current_default_provider(text)
+      raise BadArgument, "先选默认提供商，才能设置默认模型" if provider.empty?
+      raise BadArgument, "没有名为 #{provider} 的提供商" unless provider_known?(provider, text, edits)
+      rewritten = edits.reject { |e| e.equal?(model) }
+      rewritten << { "op" => model["op"], "section" => "providers." + provider, "key" => "model", "value" => model["value"] }
+      rewritten
+    end
+
+    def current_default_provider(text)
+      return "" if text.nil? || text.empty?
+      parsed = TomlLite.parse_document(text)
+      entry = parsed[:entries].find { |e| e.section == "" && e.key == "default_provider" }
+      entry && entry.value.is_a?(String) ? entry.value.strip : ""
+    rescue TomlLite::ParseError
+      ""
+    end
+
+    def provider_known?(provider, text, edits)
+      return true if edits.any? { |e| e.is_a?(Hash) && e["section"].to_s.strip == "providers." + provider && e["op"].to_s != "removeSection" }
+      return false if text.nil? || text.empty?
+      parsed = TomlLite.parse_document(text)
+      parsed[:entries].any? { |e| e.section == "providers." + provider }
+    rescue TomlLite::ParseError
+      false
+    end
+
     def validate_edits(edits)
       normalized = []
       bad = []
@@ -479,6 +512,10 @@ module WilldeepConfig
         end
         if ConfigSchema.field_def(section, key).nil?
           bad << { "index" => index, "reason" => "schema 未收录键 #{key_label(section, key)}" }
+          next
+        end
+        if key == "default_model" && section == ""
+          bad << { "index" => index, "reason" => "default_model 是页面入口，请改对应提供商的 model" }
           next
         end
         if op == "set"
@@ -545,7 +582,7 @@ module WilldeepConfig
         end
         kv.each do |raw_key, value|
           key = raw_key.to_s.strip
-          if ConfigSchema.field_def(section, key).nil?
+          if ConfigSchema.field_def(section, key).nil? || key == "default_model"
             bad << { "index" => index, "reason" => "schema 未收录键 #{key_label(section, key)}" }
             next
           end
@@ -666,6 +703,23 @@ module WilldeepConfig
       }
     end
 
+    # 默认模型不在文件顶层，它是默认提供商自己的 model。页面要一个「全局默认」入口，
+    # 所以这里把那个值投影到一个虚拟字段上，保存时再写回原处。
+    def project_default_model!(sections, values)
+      root = sections.find { |s| s["name"] == "" }
+      return unless root
+      provider = (values[""] || {})["default_provider"].to_s
+      model = provider.empty? ? nil : ((values["providers." + provider] || {})["model"])
+      root["fields"].each do |field|
+        next unless field["key"] == "default_model"
+        field["virtual"] = true
+        field["provider"] = provider.empty? ? nil : provider
+        field["hasValue"] = !model.nil?
+        field["value"] = model
+        field["source"] = model.nil? ? "default" : "file"
+      end
+    end
+
     def collection_instances(group, sections_in_file)
       prefix = group[:prefix] + "."
       sections_in_file.select { |name| name.start_with?(prefix) && name.length > prefix.length }
@@ -733,7 +787,8 @@ module WilldeepConfig
         "secret" => !!field[:secret], "value" => nil, "hasValue" => false,
         "source" => present ? "file" : "default", "options" => field[:options],
         "optionLabels" => field[:optionLabels], "ref" => field[:ref],
-        "description" => field[:description]
+        "description" => field[:description], "presets" => field[:presets],
+        "virtual" => field[:virtual] ? true : nil
       }
       if field[:secret]
         has_value = present && !raw_value.to_s.strip.empty?
@@ -766,7 +821,8 @@ module WilldeepConfig
         "key" => field[:key], "label" => field[:label], "type" => field[:type],
         "secret" => !!field[:secret], "default" => field[:default],
         "description" => field[:description], "options" => field[:options],
-        "optionLabels" => field[:optionLabels], "ref" => field[:ref]
+        "optionLabels" => field[:optionLabels], "ref" => field[:ref],
+        "presets" => field[:presets], "virtual" => field[:virtual] ? true : nil
       }
     end
 

@@ -45,6 +45,16 @@ module ConfigSchema
     { id: id, label: id.tr("_", " ") }
   end.freeze
 
+  # 与 willdeep-core 的 SELECTABLE_CONTEXT_WINDOWS 同一口径：1M 是 2^20，不是 1_000_000。
+  # 配置页点一下填入的数，必须是解析器能存下的那个数。
+  TOKEN_PRESETS = [
+    { label: "32K", value: 32_768 },
+    { label: "64K", value: 65_536 },
+    { label: "128K", value: 131_072 },
+    { label: "256K", value: 262_144 },
+    { label: "1M", value: 1_048_576 }
+  ].freeze
+
   def self.labels_of(list)
     list.each_with_object({}) { |m, h| h[m[:id]] = m[:label] }
   end
@@ -56,7 +66,9 @@ module ConfigSchema
       fields: [
         { key: "version", label: "配置版本", type: "int", default: nil },
         { key: "default_provider", label: "默认提供商", type: "string", default: nil, ref: "providers",
-          description: "对应 [providers.<id>] 里的 id" }
+          description: "对应 [providers.<id>] 里的 id" },
+        { key: "default_model", label: "默认模型", type: "string", default: nil, virtual: true,
+          description: "默认提供商实际使用的模型，写回 [providers.<默认提供商>] 的 model" }
       ]
     },
     {
@@ -130,10 +142,14 @@ module ConfigSchema
           options: PROVIDER_KINDS.map { |m| m[:id] }, optionLabels: labels_of(PROVIDER_KINDS) },
         { key: "api_base", label: "接口地址", type: "string", default: nil },
         { key: "api_key", label: "API 密钥", type: "secret", default: nil, secret: true },
-        { key: "model", label: "默认模型", type: "string", default: nil },
+        { key: "model", label: "该提供商的模型", type: "string", default: nil },
         { key: "api", label: "接口协议", type: "enum", default: nil,
           options: API_DIALECTS.map { |m| m[:id] }, optionLabels: labels_of(API_DIALECTS) },
-        { key: "max_output_tokens", label: "最大输出 Token", type: "int", default: nil }
+        { key: "context_window", label: "上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS,
+          description: "这个提供商的模型能吃下多少上下文，状态栏占比按它算" },
+        { key: "max_output_tokens", label: "最大输出 Token", type: "int", default: nil, presets: TOKEN_PRESETS,
+          description: "一次回复最多生成多少 token" },
+        { key: "vision_model", label: "视觉回退模型", type: "string", default: nil }
       ]
     },
     {
@@ -151,7 +167,24 @@ module ConfigSchema
       description: "每个 [subagents.<profile>] 覆盖该角色的默认参数", instanceHint: "profile 用职责 id",
       suggestions: %w[generalist implementer tester reviewer ops_runner],
       fields: [
-        { key: "context_window", label: "上下文窗口", type: "int", default: nil }
+        { key: "provider_profile", label: "提供商", type: "string", default: nil, ref: "providers" },
+        { key: "model", label: "模型", type: "string", default: nil },
+        { key: "max_turns", label: "最大回合数", type: "int", default: nil,
+          description: "1 到 32；不写时用这个职责的内置默认" },
+        { key: "context_window", label: "上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS },
+        { key: "token_budget", label: "Token 预算", type: "int", default: nil, presets: TOKEN_PRESETS,
+          description: "1000 到 10000000；用尽时交出部分结果，不判失败" },
+        { key: "timeout_seconds", label: "超时（秒）", type: "int", default: nil,
+          description: "10 到 86400" },
+        { key: "max_consecutive_failures", label: "连续失败上限", type: "int", default: nil,
+          description: "1 到 20" },
+        { key: "worktree", label: "工作区", type: "enum", default: nil,
+          options: %w[shared dedicated],
+          optionLabels: { "shared" => "与主会话共用", "dedicated" => "独立工作区" } },
+        { key: "tool_output_limit", label: "工具输出上限（字节）", type: "int", default: nil,
+          description: "1024 到 131072" },
+        { key: "max_attempts", label: "验证重试次数", type: "int", default: nil,
+          description: "1 到 6" }
       ]
     }
   ].freeze
@@ -192,19 +225,37 @@ module ConfigSchema
       nil
     end
 
-    # 某个规范节名对应的字段定义数组；未知节返回 []
+    # 某个规范节名对应的字段定义数组；未知节返回 []。
+    # virtual 字段只是页面上的入口，文件里没有同名键，所以这里不返回它们，
+    # 否则文件里那个真实的键会被当成未知键再列一遍。
     def fields_for(section)
       name = section.to_s
       static = STATIC_GROUPS.find { |g| g[:section] == name }
-      return static[:fields] if static
+      return static[:fields].reject { |f| f[:virtual] } if static
       coll = split_collection(name)
       # 实例名非法时也给出模板字段：调用方按 editable 决定只读，页面不至于渲染成空卡片
       return coll[:group][:fields] if coll
       []
     end
 
+    # 页面渲染用的字段，包含 virtual 字段
+    def display_fields_for(section)
+      name = section.to_s
+      static = STATIC_GROUPS.find { |g| g[:section] == name }
+      return static[:fields] if static
+      fields_for(name)
+    end
+
     def field_def(section, key)
       fields_for(section).find { |f| f[:key] == key.to_s }
+    end
+
+    # virtual 字段的类型定义，只给校验用；保存时由服务端改写成真实的键
+    def virtual_field_def(section, key)
+      name = section.to_s
+      static = STATIC_GROUPS.find { |g| g[:section] == name }
+      return nil unless static
+      static[:fields].find { |f| f[:virtual] && f[:key] == key.to_s }
     end
 
     def secret?(section, key)
@@ -261,6 +312,7 @@ module ConfigSchema
         lines << "# #{g[:title]}：#{g[:description]}"
         lines << "[#{g[:section]}]"
         g[:fields].each do |f|
+          next if f[:virtual]
           if f[:secret]
             lines << "# #{f[:key]} = \"\"   # #{SECRET_NEVER_REVEAL}"
           elsif blank_default?(f)
@@ -302,6 +354,7 @@ module ConfigSchema
     # 校验一个 edits 元素里的值是否与 schema 类型相符。返回错误说明数组（空表示通过）
     def value_errors(section, key, value)
       field = field_def(section, key)
+      field = virtual_field_def(section, key) if field.nil?
       return [] if field.nil? # 未知键由调用方的 unknown-key 策略处理
       case field[:type]
       when "int"
