@@ -365,6 +365,41 @@ fn command_menu_discovers_model_switching() {
 }
 
 #[test]
+fn command_menu_enter_runs_argument_free_commands_immediately() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.input.insert("/uis");
+
+    assert!(app.handle_command_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    assert!(app.input.is_empty(), "当场生效的指令不留在输入框里");
+    assert_eq!(app.transcript.len(), 1);
+    assert!(app.transcript[0].starts_with("System:"));
+    assert!(
+        !app.transcript.iter().any(|row| row.starts_with("You:")),
+        "指令本身不作为用户消息回显"
+    );
+}
+
+#[test]
+fn command_menu_tab_still_only_completes() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.input.insert("/uis");
+
+    assert!(app.handle_command_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+    assert_eq!(app.input.text(), "/uistyle");
+    assert!(app.transcript.is_empty());
+}
+
+#[test]
+fn command_menu_enter_keeps_argument_commands_for_the_user() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.input.insert("/goa");
+
+    assert!(app.handle_command_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    assert_eq!(app.input.text(), "/goal ");
+    assert!(app.transcript.is_empty());
+}
+
+#[test]
 fn exact_slash_command_enter_falls_through_for_immediate_execution() {
     for command in ["/model", "/compress", "/diff", "/session"] {
         let mut app = App::new(Vec::new(), Language::En);

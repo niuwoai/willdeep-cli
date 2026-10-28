@@ -909,6 +909,16 @@ impl App {
                         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
             {
                 let command = matches[self.command_selected.min(matches.len() - 1)].0;
+                // 不需要参数的指令，回车当场生效，不用再按一次发送。
+                // Tab 仍只是补全，用户可能还想加参数（/uistyle compact）。
+                if key.code == KeyCode::Enter && command_catalog::command_runs_immediately(command)
+                {
+                    self.input.take();
+                    self.command_selected = 0;
+                    self.command_menu_dismissed = true;
+                    self.handle_slash_command(command, &willdeep_core::SkillCatalog::default());
+                    return true;
+                }
                 let suffix = if matches!(
                     command,
                     "/goal"

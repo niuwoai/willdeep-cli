@@ -166,6 +166,28 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// 这条指令在菜单里回车就能当场生效，不需要再补参数。
+///
+/// 范围收在两处的交集里：不带参数就有明确动作，而且 [`crate::tui::busy_input`]
+/// 认定它运行中也能执行。后者是硬条件——菜单回车在事件循环里拿不到会话和
+/// Runtime，只能走 `handle_slash_command` 这条本地路径。需要参数的
+/// （`/goal` 要目标、`/model` 要选模型）和要开面板或碰 Runtime 的
+/// （`/diff`、`/compress`、`/daemon`）不在这里，回车只是填进输入框。
+pub(super) fn command_runs_immediately(command: &str) -> bool {
+    matches!(
+        command,
+        "/help"
+            | "/version"
+            | "/plan"
+            | "/tools"
+            | "/thinking"
+            | "/sidebar"
+            | "/uistyle"
+            | "/clear"
+            | "/short"
+    )
+}
+
 pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'static str)> {
     vec![
         (

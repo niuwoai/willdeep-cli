@@ -252,6 +252,9 @@ pub fn user_authored_text(content: &str) -> Option<&str> {
 /// snippets, inline examples, incomplete blocks, or fenced user quotations.
 pub fn visible_user_text(content: &str) -> &str {
     let text = user_authored_text(content).unwrap_or(content);
+    // `/goal` 的持久目标包装是给模型看的，聊天区只留用户自己写的那句。
+    // 只认 TUI 拼出来的完整块，半截或代码围栏里引用的一律原样保留。
+    let text = strip_goal_envelope(text);
     let Some((authored, envelope)) = text.rsplit_once("\n\n<runtime-route ") else {
         return text;
     };
@@ -274,6 +277,23 @@ pub fn visible_user_text(content: &str) -> &str {
         && body.starts_with("The runtime dispatched this bounded read-only preflight before the standard model. Use the report as evidence, verify citations when needed, and answer without re-reading the same material unless it is incomplete.\n<worker-report>\n")
         && body.ends_with("\n</worker-report>\n</runtime-route>");
     if bounded || worker { authored } else { text }
+}
+
+/// 去掉 `/goal` 提交时拼在前面的目标块，返回用户写的那句。
+///
+/// 块必须从头开始、单独成段，正文也不能落在未闭合的代码围栏里，
+/// 否则用户自己贴的一段 `<goal>` 示例会被误删。
+fn strip_goal_envelope(text: &str) -> &str {
+    let rest = text
+        .strip_prefix("<goal>\n")
+        .and_then(|rest| {
+            rest.split_once("\n</goal>\nContinue until this goal is genuinely complete.\n\n")
+        })
+        .map(|(_, authored)| authored);
+    match rest {
+        Some(authored) if authored.matches("```").count() % 2 == 0 => authored,
+        _ => text,
+    }
 }
 
 fn item(role: &'static str, content: String, attachment_count: usize) -> ConversationItem {

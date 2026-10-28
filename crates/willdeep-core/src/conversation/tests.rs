@@ -246,3 +246,17 @@ fn user_projection_hides_complete_host_routing_without_mutating_history() {
         assert_eq!(visible_user_text(&quoted), quoted);
     }
 }
+
+#[test]
+fn goal_envelope_is_hidden_but_the_typed_text_stays() {
+    let content = "<goal>\n请继续，最终以完成训练为目标\n</goal>\nContinue until this goal is genuinely complete.\n\n请继续，最终以完成训练为目标";
+    assert_eq!(visible_user_text(content), "请继续，最终以完成训练为目标");
+    // 用户自己贴的半截或包在代码围栏里的，原样保留。
+    for quoted in [
+        "<goal>\n只有开头",
+        "<goal>\n目标\n</goal>\nContinue until this goal is genuinely complete.\n\n```\n未闭合",
+        "解释一下这个格式：\n\n<goal>\n目标\n</goal>",
+    ] {
+        assert_eq!(visible_user_text(quoted), quoted);
+    }
+}
