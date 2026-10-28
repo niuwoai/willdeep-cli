@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.127.0-rc2] - 2026-10-28
+
+### Fixed
+- TUI 的指令菜单里，不需要参数的指令回车直接生效，不再填进输入框等再按一次发送。包括 `/help`、`/version`、`/plan`、`/tools`、`/thinking`、`/sidebar`、`/uistyle`、`/clear`、`/short`。需要参数或要开面板的指令（`/goal`、`/model`、`/session`、`/diff`、`/compress`、`/daemon` 等）行为不变，Tab 补全也不变。
+- `/goal` 提交时拼在前面的目标包装不再出现在聊天记录里，只留用户自己写的那句。
+
 ## [0.127.0-rc1] - 2026-10-28
 
 ### Added
