@@ -66,6 +66,7 @@ pub(super) fn test_server_state_with_scheduler(
         kernel_store: willdeep_core::kernel_store::KernelStore::new(root),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(root)),
         web_app: Arc::new(web_app::WebAppService::new(root)),
+        intake: Arc::new(intake::IntakeService::new(root)),
     }
 }
 
@@ -461,6 +462,7 @@ async fn authorization_requires_exact_local_token() {
         kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(&root)),
         web_app: Arc::new(web_app::WebAppService::new(&root)),
+        intake: Arc::new(intake::IntakeService::new(&root)),
     });
     assert!(
         runtime_capabilities(&state)

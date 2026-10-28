@@ -83,6 +83,38 @@ prefer_for_worker_routing = true
 # timeout_seconds = 10
 # on_error = "deny"               # deny（默认）| ignore；坏掉就放行的门禁等于没门禁
 
+# 公网入口：站点、表单与接收 webhook，默认 127.0.0.1:9857，与 Web 的 9847 分开。
+# 前面用 sslcat 或 nginx-proxy 按域名转发到这个端口；willdeep 自己不做代理、不终止 TLS。
+# 表单提交和 webhook 作为一条消息进指定工作区的会话。密钥放环境变量，不写在这里。
+# 详见 docs/PUBLIC_INTAKE.md。
+#
+# [intake]
+# enabled = true
+# listen = "127.0.0.1:9857"
+#
+# [[intake.sites]]
+# slug = "docs"
+# root = "/srv/willdeep/sites/docs"
+#
+# [[intake.forms]]
+# slug = "contact"
+# title = "联系我们"
+# workspace = "/srv/willdeep/workspaces/support"
+# session = "continue"            # continue 续原会话；new 每条新开
+# prompt = "这是网站联系表单的一条新提交。请整理字段并草拟回复。"
+# fields = [
+#   { name = "name", label = "姓名", type = "text", required = true },
+#   { name = "email", label = "邮箱", type = "email", required = true },
+#   { name = "message", label = "内容", type = "textarea", required = true },
+# ]
+#
+# [[intake.webhooks]]
+# slug = "github"
+# workspace = "/srv/willdeep/workspaces/ops"
+# session = "new"
+# secret_env = "WILLDEEP_INTAKE_GITHUB_SECRET"
+# prompt = "这是 GitHub 发来的一条 webhook。请判断是否需要处理，需要的话说明下一步。"
+
 # Shared by WillDeep.app and willdeep-rs. Local HTTP endpoints are supported
 # for home automation, desktop notifications, and other personal workflows.
 # Both clients POST the same `willdeep.webhook.v1` envelope, so one endpoint

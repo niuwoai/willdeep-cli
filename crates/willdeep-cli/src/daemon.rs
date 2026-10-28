@@ -30,6 +30,7 @@ const CONTROL_SERVER_SHUTDOWN_GRACE_SECONDS: u64 = 5;
 mod agent_control;
 mod agent_store;
 mod agent_team;
+mod intake;
 pub(crate) mod web_app;
 // 审计导出直接读 `agents.json`，不走 `AgentStore::open`：open 会把运行中的 Agent
 // 标成中断并落盘，一个只读命令不能有这种副作用。
@@ -293,6 +294,7 @@ struct ServerState {
     /// 手机中继。一台机器一个 Runtime、一个 room；TUI 的 `/mobile` 只是遥控它。
     mobile: Arc<mobile_gateway::MobileRelay>,
     web_app: Arc<web_app::WebAppService>,
+    intake: Arc<intake::IntakeService>,
 }
 
 type RuntimeEvent = willdeep_runtime_protocol::RuntimeEvent;
@@ -1718,11 +1720,20 @@ async fn run(home: &Path) -> Result<()> {
         kernel_store: willdeep_core::kernel_store::KernelStore::new(home),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(home)),
         web_app: Arc::new(web_app::WebAppService::new(home)),
+        intake: Arc::new(intake::IntakeService::new(home)),
     });
     server_state.mobile.bind(&server_state);
     // 上次开着手机中继就接着连：关掉终端、升级 Runtime 都不该让手机掉线。
     server_state.mobile.resume();
     server_state.web_app.resume(shutdown_signal.subscribe());
+    // 公网入口与 Web 是两个监听：站点、表单和 webhook 走这里，不碰管理面。
+    server_state
+        .intake
+        .apply(
+            &crate::config::default_config_path().unwrap_or_else(|_| home.join("config.toml")),
+            shutdown_signal.subscribe(),
+        )
+        .await;
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
     scheduler::spawn(server_state.clone());
     screenplay::recover(home);
