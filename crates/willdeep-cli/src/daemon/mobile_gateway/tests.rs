@@ -65,6 +65,7 @@ impl Harness {
             kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
             mobile: Arc::new(MobileRelay::new(&root)),
             web_app: Arc::new(crate::daemon::web_app::WebAppService::new(&root)),
+            intake: Arc::new(crate::daemon::intake::IntakeService::new(&root)),
         });
         state.mobile.bind(&state);
         Self {

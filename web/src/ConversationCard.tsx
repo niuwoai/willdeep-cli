@@ -1,5 +1,6 @@
 import type { Messages } from "./i18n";
 import { Markdown } from "./Markdown";
+import { markdownCopy } from "./markdownCopy";
 import "./conversation.css";
 import { Workflow } from "lucide-react";
 
@@ -31,7 +32,7 @@ export function ConversationCard({ plan, details = [], messages: t }: { plan?: P
       <strong>{plan ? t.planTitle : t.hostActivity}</strong>
       {plan && <span>{t.planProgress.replace("{finished}", String(finished)).replace("{total}", String(plan.steps.length))}</span>}
     </div>
-    {plan?.summary && <Markdown content={plan.summary} />}
+    {plan?.summary && <Markdown content={plan.summary} copy={markdownCopy(t)} />}
     {plan && <ol className="conversation-plan-steps">
       {plan.steps.map((step) => <li key={step.id} data-status={step.status}>
         <span className="conversation-plan-status">{statuses[step.status]}</span>

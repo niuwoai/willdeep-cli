@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -208,6 +208,10 @@ pub struct ConfigFile {
     /// harmless metadata.
     #[serde(default)]
     pub notifications: NotificationSettings,
+    /// 公网入口：站点、表单与接收 webhook。与 `[notifications]` 那条向外发的
+    /// webhook 是反方向的两件事。
+    #[serde(default)]
+    pub intake: IntakeSettings,
     /// 生命周期挂钩：审计留痕与门禁拦截。
     ///
     /// 与 `[notifications]` 那条 webhook 分开是有意的：webhook 是事后的礼貌
@@ -245,6 +249,80 @@ impl Default for LocalModelSettings {
             prefer_for_worker_routing: true,
         }
     }
+}
+
+/// 公网入口。缺省关闭：不写这一段就什么都不监听。
+///
+/// 只新增一个监听，站点、表单和 webhook 用路径区分。前面是谁做反向代理
+/// （sslcat、nginx-proxy 或其他）不影响这里：willdeep 只认这个端口。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IntakeSettings {
+    pub enabled: bool,
+    pub listen: String,
+    pub sites: Vec<IntakeSite>,
+    pub forms: Vec<IntakeForm>,
+    pub webhooks: Vec<IntakeWebhook>,
+}
+
+impl Default for IntakeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "127.0.0.1:9857".to_owned(),
+            sites: Vec::new(),
+            forms: Vec::new(),
+            webhooks: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntakeSite {
+    pub slug: String,
+    /// 站点文件所在目录，必须是绝对路径。
+    pub root: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntakeForm {
+    pub slug: String,
+    pub title: String,
+    /// 提交落到哪个已授权的工作区，必须是绝对路径。
+    pub workspace: PathBuf,
+    /// `continue` 续在同一个会话，`new` 每条提交新开一个。
+    pub session: String,
+    /// 消息开头的固定说明。收到的字段跟在后面，当作数据而不是指令。
+    pub prompt: String,
+    pub fields: Vec<IntakeField>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntakeField {
+    pub name: String,
+    pub label: String,
+    /// `text`、`textarea`、`email`、`choice`。
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub required: bool,
+    /// 只对 `choice` 有意义。
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntakeWebhook {
+    pub slug: String,
+    pub workspace: PathBuf,
+    pub session: String,
+    pub prompt: String,
+    /// 密钥从哪个环境变量读。不把密钥写进配置文件。
+    pub secret_env: String,
 }
 
 /// 一条 hook 的配置。
@@ -620,6 +698,87 @@ pub fn deprecations(file: &ConfigFile) -> Vec<Deprecation> {
     notes
 }
 
+/// 公网入口的语义校验。`config check` 和入口启动都走这里，规则只写一份。
+pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
+    settings
+        .listen
+        .parse::<std::net::SocketAddr>()
+        .context("intake.listen must be IP:PORT")?;
+    let mut slugs = HashSet::new();
+    for site in &settings.sites {
+        check_intake_slug("site", &site.slug, &mut slugs)?;
+        if !site.root.is_absolute() {
+            bail!("intake site {} root must be an absolute path", site.slug);
+        }
+    }
+    for form in &settings.forms {
+        check_intake_slug("form", &form.slug, &mut slugs)?;
+        check_intake_target(&form.workspace, &form.session, &form.slug)?;
+        if form.prompt.trim().is_empty() {
+            bail!("intake form {} needs a prompt", form.slug);
+        }
+        let mut names = HashSet::new();
+        for field in &form.fields {
+            if field.name.trim().is_empty() || !names.insert(field.name.clone()) {
+                bail!(
+                    "intake form {} has an empty or repeated field name",
+                    form.slug
+                );
+            }
+            if !matches!(
+                field.kind.as_str(),
+                "text" | "textarea" | "email" | "choice"
+            ) {
+                bail!(
+                    "intake form {} field {} has an unknown type",
+                    form.slug,
+                    field.name
+                );
+            }
+            if field.kind == "choice" && field.options.is_empty() {
+                bail!(
+                    "intake form {} field {} needs options",
+                    form.slug,
+                    field.name
+                );
+            }
+        }
+    }
+    for hook in &settings.webhooks {
+        check_intake_slug("webhook", &hook.slug, &mut slugs)?;
+        check_intake_target(&hook.workspace, &hook.session, &hook.slug)?;
+        if hook.prompt.trim().is_empty() || hook.secret_env.trim().is_empty() {
+            bail!("intake webhook {} needs a prompt and secret_env", hook.slug);
+        }
+    }
+    Ok(())
+}
+
+fn check_intake_slug(kind: &str, slug: &str, seen: &mut HashSet<String>) -> Result<()> {
+    let ok = !slug.is_empty()
+        && slug.len() <= 64
+        && slug
+            .chars()
+            .all(|char| char.is_ascii_alphanumeric() || char == '-');
+    if !ok {
+        bail!("intake {kind} slug must be letters, digits and dashes: {slug}");
+    }
+    if !seen.insert(format!("{kind}:{slug}")) {
+        bail!("intake {kind} slug is duplicated: {slug}");
+    }
+    Ok(())
+}
+
+fn check_intake_target(workspace: &Path, session: &str, slug: &str) -> Result<()> {
+    if !workspace.is_absolute() {
+        bail!("intake {slug} workspace must be an absolute path");
+    }
+    if !matches!(session, "continue" | "new") {
+        bail!("intake {slug} session must be continue or new");
+    }
+    Ok(())
+}
+
 pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
     file.agent_team.validate().map_err(anyhow::Error::msg)?;
     if let Some(version) = file.version
@@ -826,6 +985,7 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
             .validate(name)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     }
+    validate_intake(&file.intake)?;
     for root in &file.agent.sandbox_writable_roots {
         // 相对路径相对谁？工作区、家目录、当前目录都说得通，所以谁都不算——
         // 一条被猜错基准的放行等于放行了别的目录。
