@@ -48,6 +48,14 @@ pub fn tool_detail(name: &str, arguments: &str) -> Option<String> {
                 _ => profile.to_owned(),
             }
         }
+        "ask_user" => {
+            // 问题本身就是给用户看的；记进工具行，对话框失效后还找得回来。
+            let question = parsed.get("question")?.as_str()?.trim();
+            if question.is_empty() {
+                return None;
+            }
+            question.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
         _ => return None,
     };
     let redacted = crate::judge::redact_credentials(&detail);
@@ -153,9 +161,16 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
             }
             _ => continue,
         };
+        // The goal engine's completion tag is protocol, not prose: history keeps
+        // it, the projection drops it before anything renders or parses.
+        let content = if role == "assistant" {
+            visible_assistant_text(&message.content)
+        } else {
+            message.content.as_str()
+        };
         if role == "assistant" {
             let existing = active.and_then(|index| items[index].plan.as_ref());
-            if let Some((plan, is_new)) = parse_plan_reply(&message.content, existing) {
+            if let Some((plan, is_new)) = parse_plan_reply(content, existing) {
                 let index = if !is_new && let Some(index) = active {
                     index
                 } else {
@@ -163,14 +178,14 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
                     items.len() - 1
                 };
                 items[index].plan = Some(plan);
-                if !items[index].details.contains(&message.content) {
-                    items[index].details.push(message.content.clone());
+                if !items[index].details.iter().any(|detail| detail == content) {
+                    items[index].details.push(content.to_owned());
                 }
                 active = Some(index);
                 continue;
             }
         }
-        let mut entry = item(role, message.content.clone(), message.attachments.len());
+        let mut entry = item(role, content.to_owned(), message.attachments.len());
         entry.attachment_reference = attachment_reference(&message.attachments);
         if role == "user" {
             entry.content = visible_user_text(&message.content).to_owned();
@@ -183,6 +198,11 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
             entry.details.push(std::mem::take(&mut entry.content));
         }
         if role == "assistant" {
+            // A reply that was nothing but the completion tag leaves no bubble;
+            // tool-only messages still project their calls.
+            if entry.content.trim().is_empty() && message.tool_calls.is_empty() {
+                continue;
+            }
             entry.tools = message
                 .tool_calls
                 .iter()
@@ -277,6 +297,23 @@ pub fn visible_user_text(content: &str) -> &str {
         && body.starts_with("The runtime dispatched this bounded read-only preflight before the standard model. Use the report as evidence, verify citations when needed, and answer without re-reading the same material unless it is incomplete.\n<worker-report>\n")
         && body.ends_with("\n</worker-report>\n</runtime-route>");
     if bounded || worker { authored } else { text }
+}
+
+/// Display-only projection for goal-mode replies. The model opens its final
+/// reply with a status tag (see `GOAL_COMPLETE_MARKER`) so the engine can tell
+/// the goal was met; the tag is protocol, the rest is prose for the user.
+/// Stored messages keep the tag for the engine, feedback signals and audits —
+/// only the projection drops it. Tags elsewhere in the text stay untouched: the
+/// engine only honours a leading one, so anything else is the model's own words.
+pub fn visible_assistant_text(content: &str) -> &str {
+    let trimmed = content.trim_start();
+    let Some(rest) = trimmed.strip_prefix("<goal-status>") else {
+        return content;
+    };
+    let Some((_, after)) = rest.split_once("</goal-status>") else {
+        return content;
+    };
+    after.trim_start()
 }
 
 /// 去掉 `/goal` 提交时拼在前面的目标块，返回用户写的那句。

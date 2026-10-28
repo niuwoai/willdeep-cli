@@ -262,6 +262,9 @@ struct App {
     peer_unread: usize,
     input: PromptEditor,
     transcript: Vec<String>,
+    /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
+    /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
+    archive_floor: usize,
     message_times: message_time::MessageTimes,
     running: bool,
     qterm_gate_generation: u64,

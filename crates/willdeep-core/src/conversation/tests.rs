@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn ask_user_tool_rows_keep_the_question() {
+    // 对话框会因为交接而失效；工具行里留着问题，回放时还找得回来。
+    assert_eq!(
+        tool_detail(
+            "ask_user",
+            r#"{"question":"  推哪个远端？\n","options":["a"]}"#
+        ),
+        Some("推哪个远端？".to_owned())
+    );
+    assert_eq!(tool_detail("ask_user", r#"{"options":["a"]}"#), None);
+    assert_eq!(tool_detail("ask_user", r#"{"question":"   "}"#), None);
+}
+
 /// 工具行回放：只带工具调用的 assistant 消息也进投影，每条调用带名字、脱敏摘要
 /// 与有无结果；原始参数不出投影。
 #[test]
@@ -245,6 +259,45 @@ fn user_projection_hides_complete_host_routing_without_mutating_history() {
     ] {
         assert_eq!(visible_user_text(&quoted), quoted);
     }
+}
+
+#[test]
+fn goal_completion_marker_is_hidden_but_the_summary_stays() {
+    let reply = "<goal-status>complete</goal-status> 训练闭环，权重已保存。";
+    assert_eq!(visible_assistant_text(reply), "训练闭环，权重已保存。");
+    assert_eq!(
+        visible_assistant_text("\n\n<goal-status>complete</goal-status>\n\n已交付。"),
+        "已交付。"
+    );
+    // 只有标签：没有正文可显示。
+    assert_eq!(
+        visible_assistant_text("<goal-status>complete</goal-status>"),
+        ""
+    );
+    // 只认开头：正文里引用的标签是模型自己的话，原样保留。
+    for inline in [
+        "标记 <goal-status>complete</goal-status> 只出现在正文里",
+        "普通回复",
+        "<goal-status>complete</goal-status 少了右括号",
+        "",
+    ] {
+        assert_eq!(visible_assistant_text(inline), inline);
+    }
+}
+
+#[test]
+fn projection_hides_the_goal_completion_marker_without_mutating_history() {
+    let message = Message::assistant("<goal-status>complete</goal-status> 训练闭环。", Vec::new());
+    let items = project(std::slice::from_ref(&message), None);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].content, "训练闭环。");
+    assert_eq!(
+        message.content,
+        "<goal-status>complete</goal-status> 训练闭环。"
+    );
+    // 纯标记的回复不产生空气泡。
+    let bare = Message::assistant("<goal-status>complete</goal-status>", Vec::new());
+    assert!(project(std::slice::from_ref(&bare), None).is_empty());
 }
 
 #[test]

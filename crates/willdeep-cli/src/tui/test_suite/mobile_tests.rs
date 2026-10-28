@@ -124,6 +124,18 @@ fn dialogs_nobody_waits_for_anymore_are_withdrawn() {
         "排在后面的审批顶上来"
     );
     assert!(app.question.is_none());
+    // 对话框没了，问题本身要留在记录里，否则用户再也不知道刚才问的是什么。
+    assert!(
+        app.transcript.iter().any(|row| row
+            == "System: Question no longer pending (runtime handoff or handled elsewhere) · Which branch?"),
+        "{:?}",
+        app.transcript
+    );
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row == "System: options · main")
+    );
     app.resolve_approval(|_| ApprovalDecision::AllowOnce);
     assert_eq!(live.try_recv(), Ok(ApprovalDecision::AllowOnce));
 }

@@ -463,6 +463,7 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             if let Some(text) = value
                 .get("text")
                 .and_then(|value| value.as_str())
+                .map(willdeep_core::conversation::visible_assistant_text)
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
             {
@@ -705,14 +706,22 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             }
         }
         Some("completed" | "partial") => {
+            let goal_complete =
+                value.get("stop_reason").and_then(|value| value.as_str()) == Some("goal_complete");
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
                 // 最后一段多半已经作中途文字显示过，只补没见过的部分（比如轮次
                 // 上限提示）；镜像持久化也只补这一部分。
                 let remainder = app.note_reply(text);
+                if goal_complete {
+                    app.note_goal_completed();
+                }
                 // Runtime 轮次没有 `AgentOutcome`，账目走本轮累计。
                 app.append_turn_stats(None);
                 app.finish_turn();
                 return remainder.map(|text| Message::assistant(&text, Vec::new()));
+            }
+            if goal_complete {
+                app.note_goal_completed();
             }
             app.finish_turn();
         }

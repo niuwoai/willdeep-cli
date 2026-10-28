@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
@@ -22,13 +22,15 @@ const components: Components = {
   },
 };
 
-export function Markdown({ content, copy }: { content: string; copy: MarkdownCopyLabels }) {
+// 长会话里一次轮询会让整个聊天区重渲染；正文没变就别重新解析 Markdown。
+// `copy` 由 markdownCopy 按语言缓存，引用稳定时这里才能真正跳过。
+export const Markdown = memo(function Markdown({ content, copy }: { content: string; copy: MarkdownCopyLabels }) {
   return <CopyLabelsContext.Provider value={copy}>
     <div className="markdown-body">
       <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>{content}</ReactMarkdown>
     </div>
   </CopyLabelsContext.Provider>;
-}
+});
 
 function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   const copy = useContext(CopyLabelsContext);

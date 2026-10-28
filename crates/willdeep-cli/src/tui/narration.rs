@@ -533,18 +533,43 @@ fn fold_summary(hidden: &[String], with_hint: bool, language: Language) -> Strin
 impl App {
     /// 聊天区实际画出来的记录：工具行按规则收起，其余原样。
     pub(super) fn display_transcript(&self) -> FoldedTranscript {
-        if self.ui.show_thinking {
-            return fold_tool_rows(&self.transcript, self.tool_rows_expanded, self.language);
+        // 归档区不进渲染循环：只折叠还可见的那一段，顶上补一行说明。
+        // 记录本身没动，`archive_floor` 只是渲染起点。
+        let floor = self.archive_floor.min(self.transcript.len());
+        let live = &self.transcript[floor..];
+        let mut entries = if self.ui.show_thinking {
+            live.to_vec()
+        } else {
+            live.iter()
+                .filter(|row| {
+                    !row.starts_with(THOUGHT_ENTRY_PREFIX)
+                        && !row.starts_with(THOUGHT_EXPANDED_PREFIX)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if floor > 0 {
+            entries.insert(0, self.archive_placeholder());
         }
-        let entries = self
+        fold_tool_rows(&entries, self.tool_rows_expanded, self.language)
+    }
+
+    /// 归档区的说明行：告诉用户上面还有东西、怎么放回来。
+    fn archive_placeholder(&self) -> String {
+        let rounds = self
             .transcript
             .iter()
-            .filter(|row| {
-                !row.starts_with(THOUGHT_ENTRY_PREFIX) && !row.starts_with(THOUGHT_EXPANDED_PREFIX)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        fold_tool_rows(&entries, self.tool_rows_expanded, self.language)
+            .take(self.archive_floor)
+            .filter(|row| row.starts_with(TURN_DIVIDER_PREFIX))
+            .count();
+        format!(
+            "System: {}",
+            self.language.pick(
+                format!("⋯ 更早的 {rounds} 轮已归档 · 翻到顶部继续载入"),
+                format!("⋯ {rounds} earlier turns archived · scroll to the top to load them"),
+                format!("⋯ 以前の {rounds} ターンをアーカイブ · 先頭までスクロールで読み込み"),
+            )
+        )
     }
 
     /// 记录变了之后按折叠视图重算总高度；滚动、跟随底部全靠它。
@@ -577,7 +602,8 @@ impl App {
 
     /// 模型这一轮定稿的一段话：落进记录，并记住它，收尾时据此去重。
     pub(super) fn note_narration(&mut self, text: &str) {
-        let text = text.trim();
+        // 目标完成标签是给引擎认的协议，不往聊天区送；存储层仍保留原文。
+        let text = willdeep_core::conversation::visible_assistant_text(text).trim();
         if text.is_empty() {
             return;
         }
@@ -623,6 +649,8 @@ impl App {
     pub(super) fn note_reply(&mut self, final_text: &str) -> Option<String> {
         self.finish_thought();
         self.transient_thought = None;
+        // 与中途文字同一条投影：先剥协议标签，再比「这段是不是已经显示过」。
+        let final_text = willdeep_core::conversation::visible_assistant_text(final_text);
         let remainder = unshown_reply(final_text, self.turn_narration.as_deref());
         if let Some(text) = &remainder {
             self.append_transcript(format!("WillDeep: {text}"));
@@ -1132,6 +1160,74 @@ mod tests {
         assert_eq!(
             app.transcript,
             vec!["WillDeep: Now update the log line", "WillDeep: ⚠ limit"]
+        );
+    }
+
+    #[test]
+    fn goal_status_marker_never_reaches_the_transcript() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.note_narration("<goal-status>complete</goal-status> 训练闭环。");
+        assert_eq!(app.transcript, vec!["WillDeep: 训练闭环。"]);
+        // 收尾文字与中途文字走同一条投影，不会因为标签而重复显示。
+        assert_eq!(
+            app.note_reply("<goal-status>complete</goal-status> 训练闭环。"),
+            None
+        );
+        assert_eq!(app.transcript.len(), 1);
+        // 纯标签不占一行。
+        app.note_narration("<goal-status>complete</goal-status>");
+        assert_eq!(app.transcript.len(), 1);
+    }
+
+    #[test]
+    fn long_transcripts_archive_older_rounds_and_reveal_them_on_scroll() {
+        fn push_rounds(app: &mut App, count: usize) {
+            for round in 0..count {
+                app.transcript.push(format!("You: round {round}"));
+                app.transcript.push(format!("WillDeep: done {round}"));
+                app.transcript
+                    .push(format!("{TURN_DIVIDER_PREFIX}turn {round} ──"));
+            }
+        }
+
+        let mut app = App::new(Vec::new(), Language::En);
+        push_rounds(&mut app, 60);
+        app.archive_old_rounds();
+        assert_eq!(app.archive_floor, 0, "没到上限不归档");
+
+        push_rounds(&mut app, 60);
+        app.archive_old_rounds();
+        assert!(app.archive_floor > 0, "120 轮要收拢渲染范围");
+        let folded = app.display_transcript();
+        assert!(
+            folded.rows[0].contains("earlier turns archived"),
+            "{:?}",
+            folded.rows[0]
+        );
+        assert!(folded.rows.len() < app.transcript.len());
+
+        app.transcript_height = 1_000;
+        app.viewport_height = 10;
+        let archived = app.archive_floor;
+        assert!(app.reveal_archived_rounds());
+        assert!(app.archive_floor < archived, "翻到顶要放回一批");
+        while app.reveal_archived_rounds() {}
+        assert_eq!(app.archive_floor, 0);
+        assert!(!app.display_transcript().rows[0].contains("archived"));
+    }
+
+    #[test]
+    fn goal_completion_gets_a_system_line() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.note_goal_completed();
+        assert_eq!(app.transcript, vec!["System: ✓ 目标完成"]);
+        app.transcript.clear();
+        app.turn_started = Some(std::time::Instant::now());
+        app.note_goal_completed();
+        assert!(
+            app.transcript[0].starts_with("System: ✓ 目标完成 · 用时 "),
+            "{}",
+            app.transcript[0]
         );
     }
 }

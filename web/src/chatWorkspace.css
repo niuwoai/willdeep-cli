@@ -23,6 +23,9 @@
 .chat-timeline > .message.user:not(:first-child) { margin-top: 16px; }
 /* 分隔线颜色已经够淡，紧贴上一轮输出；抵消时间线条目之间的间距。 */
 .chat-timeline > .turn-divider { margin-top: -8px; }
+/* 长会话的归档提示：滚到顶或点它才把更早的轮次放回来。 */
+.chat-timeline > .chat-archive { align-self: center; padding: 4px 12px; border: 1px dashed var(--border); border-radius: 999px; background: transparent; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.chat-timeline > .chat-archive:hover { color: var(--text); border-color: var(--text-faint); }
 .chat-timeline > .message.user + * { margin-top: 12px; }
 .chat-timeline .run-card { padding: 2px; }
 .chat-workspace .message { font-size: 15px; line-height: 1.85; }

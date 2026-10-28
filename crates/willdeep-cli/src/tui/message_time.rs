@@ -258,12 +258,15 @@ impl App {
         current: u64,
     ) -> Vec<Option<String>> {
         let mut labels = vec![None; folded.rows.len()];
-        for (index, row) in self.transcript.iter().enumerate() {
+        // 折叠视图只覆盖渲染区：跳过归档掉的前缀，归档区有说明行时整体右移一格。
+        let floor = self.archive_floor.min(self.transcript.len());
+        let shift = usize::from(floor > 0);
+        for (index, row) in self.transcript.iter().enumerate().skip(floor) {
             if is_message(row)
                 && let Some(Some(sent)) = self.message_times.rows.get(index)
                 && let Some(target) = folded
                     .index_of
-                    .get(index)
+                    .get(index - floor + shift)
                     .and_then(|index| labels.get_mut(*index))
             {
                 *target = Some(relative_time(*sent, current, self.language));

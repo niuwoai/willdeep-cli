@@ -91,6 +91,20 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   });
   return chat;
 }
+/// 长会话只渲染最近这么多轮；更早的留在 chat 里，用户滚到顶再放回来。
+const CHAT_WINDOW_ROUNDS = 50;
+const CHAT_WINDOW_STEP = 50;
+
+/** 按「轮」切出渲染窗口：分隔线就是轮次的终点。 */
+function windowChat(chat: ChatMessage[], rounds: number): { visible: ChatMessage[]; hiddenRounds: number } {
+  const dividers: number[] = [];
+  chat.forEach((message, index) => { if (message.role === "divider") dividers.push(index); });
+  if (dividers.length <= rounds) return { visible: chat, hiddenRounds: 0 };
+  const hiddenRounds = dividers.length - rounds;
+  // 分隔线是上一轮的收尾统计，属于被归档的那一轮；窗口从它后面开始。
+  return { visible: chat.slice(dividers[hiddenRounds - 1] + 1), hiddenRounds };
+}
+
 type Attachment = DraftAttachment;
 type ComposerSkill = { identifier: string; name: string; description: string };
 type ComposerData = { commands: string[]; skills: ComposerSkill[] };
@@ -312,6 +326,31 @@ export function App() {
   const pendingStopRef = useRef(false);
   const loadSessionRef = useRef<(id: string, activeTurnId?: string | null) => Promise<void>>(async () => undefined);
   const chatViewportRef = useRef<HTMLDivElement | null>(null); const followBottomRef = useRef(true);
+  // 只影响渲染的窗口大小；会话数据仍是完整的一份。
+  const [chatRounds, setChatRounds] = useState(CHAT_WINDOW_ROUNDS);
+  const chatSessionRef = useRef<string | null>(null);
+  const pendingChatScroll = useRef<number | null>(null);
+  const loadEarlierRef = useRef(false);
+  const dividerCountRef = useRef(0);
+  const chatWindow = useMemo(() => windowChat(chat, chatRounds), [chat, chatRounds]);
+  const visibleChat = chatWindow.visible;
+  const hiddenRounds = chatWindow.hiddenRounds;
+  const groupedChat = useMemo(() => groupActivityMessages(visibleChat), [visibleChat]);
+  function loadEarlierChat() {
+    if (loadEarlierRef.current) return;
+    loadEarlierRef.current = true;
+    const node = chatViewportRef.current;
+    if (node) pendingChatScroll.current = node.scrollHeight - node.scrollTop;
+    setChatRounds((rounds) => rounds + CHAT_WINDOW_STEP);
+  }
+  // 放回更早的轮次后把视野钉在原处，别把人甩到底部。
+  useLayoutEffect(() => {
+    if (pendingChatScroll.current === null) return;
+    const node = chatViewportRef.current;
+    if (node) node.scrollTop = node.scrollHeight - pendingChatScroll.current;
+    pendingChatScroll.current = null;
+    loadEarlierRef.current = false;
+  }, [visibleChat]);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [newWorkspacePath, setNewWorkspacePath] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
@@ -524,8 +563,22 @@ export function App() {
 
   function applySessionDetail(detail: SessionDetail) {
     setSessionId(detail.id);
+    // 换会话才重置窗口；同一个会话的轮询刷新不能把用户展开的历史收回去。
+    if (chatSessionRef.current !== detail.id) {
+      chatSessionRef.current = detail.id;
+      setChatRounds(CHAT_WINDOW_ROUNDS);
+      pendingChatScroll.current = null;
+      loadEarlierRef.current = false;
+      dividerCountRef.current = 0;
+    }
+    const next = sessionChat(detail, t);
+    // 正翻着旧轮次时又完成了一轮：把窗口同步撑大，别让顶上正在看的轮次被抽走。
+    const dividers = next.reduce((count, message) => count + (message.role === "divider" ? 1 : 0), 0);
+    const gained = Math.max(0, dividers - dividerCountRef.current);
+    dividerCountRef.current = dividers;
+    if (gained > 0 && hiddenRounds > 0) setChatRounds((rounds) => rounds + gained);
     localStorage.setItem(`${lastSessionPrefix}${workspace}`, detail.id);
-    setChat(sessionChat(detail, t));
+    setChat(next);
     setShortReplies(detail.response_style === "short");
     followBottomRef.current = true;
   }
@@ -1210,8 +1263,8 @@ export function App() {
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
-      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) followBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{groupActivityMessages(chat).map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
+        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : message.content}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={runtimeActivity.gates.filter((gate) => runtimeActivity.tasks.some((task) => task.id === gate.task_id && task.session_id === sessionId))} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />

@@ -8,6 +8,7 @@ impl App {
             peer_unread: 0,
             input: PromptEditor::default(),
             transcript,
+            archive_floor: 0,
             message_times: message_time::MessageTimes::default(),
             running: false,
             qterm_gate_generation: 0,
@@ -239,6 +240,9 @@ impl App {
             ));
         }
         self.reload_message_times(session.id);
+        self.archive_floor = 0;
+        self.archive_old_rounds();
+        self.refresh_transcript_height();
         self.input = PromptEditor::default();
         self.clear_input_suggestion();
         self.abandon_accepted_suggestion();
@@ -1017,6 +1021,24 @@ impl App {
         }
     }
 
+    /// 目标模式跑完的收束行。完成与否由 `AgentStopReason::GoalComplete` 判定，
+    /// 不靠模型正文里的标签：标签已经不在正文里显示了，状态得由宿主说出来。
+    pub(super) fn note_goal_completed(&mut self) {
+        let elapsed = self.turn_started.map(|started| started.elapsed());
+        let mut line = self
+            .language
+            .text("目标完成", "Goal complete", "目標達成")
+            .to_owned();
+        if let Some(elapsed) = elapsed {
+            line.push_str(&format!(
+                " · {} {}",
+                self.language.text("用时", "elapsed", "経過"),
+                format_elapsed_span(elapsed.as_secs_f32(), 1)
+            ));
+        }
+        self.append_transcript(format!("System: ✓ {line}"));
+    }
+
     /// 一行浅色的本轮账目，跟在回答后面。
     ///
     /// 四个数各回答一件事：**首答**是等了多久才有第一个可用结果，**总耗时**
@@ -1561,13 +1583,28 @@ impl App {
             self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
             self.approval_selected = 0;
         }
-        self.question_queue
-            .retain(|dialog| !dialog.sender.is_closed());
+        let mut withdrawn = Vec::new();
+        self.question_queue.retain(|dialog| {
+            let live = !dialog.sender.is_closed();
+            if !live {
+                withdrawn.push((
+                    dialog.request.question.clone(),
+                    dialog.request.options.clone(),
+                ));
+            }
+            live
+        });
+        for (question, options) in &withdrawn {
+            self.note_withdrawn_question(question, options);
+        }
         if self
             .question
             .as_ref()
             .is_some_and(|dialog| dialog.sender.is_closed())
         {
+            if let Some(dialog) = self.question.take() {
+                self.note_withdrawn_question(&dialog.request.question, &dialog.request.options);
+            }
             self.promote_next_question();
         }
         let after = usize::from(self.approval.is_some())
@@ -1575,6 +1612,32 @@ impl App {
             + usize::from(self.question.is_some())
             + self.question_queue.len();
         before - after
+    }
+
+    /// 问题被撤回时把它留在记录里：Runtime 交接、新 Runtime 启动清理、
+    /// 或者在别的终端先答掉，对话框都会消失；不记这一笔，用户就再也看不到
+    /// 刚才问的是什么了。
+    fn note_withdrawn_question(&mut self, question: &str, options: &[String]) {
+        // 记录行是一行文本：多行问题压成单行，别把换行带进记录。
+        let question = question.split_whitespace().collect::<Vec<_>>().join(" ");
+        if question.is_empty() {
+            return;
+        }
+        self.append_transcript(format!(
+            "System: {} · {question}",
+            self.language.text(
+                "问题已失效（Runtime 交接或已在其他端处理）",
+                "Question no longer pending (runtime handoff or handled elsewhere)",
+                "質問は無効になりました（Runtime 引き継ぎ、または別端末で処理済み）"
+            )
+        ));
+        if !options.is_empty() {
+            self.append_transcript(format!(
+                "System: {} · {}",
+                self.language.text("原选项", "options", "選択肢"),
+                options.join(" | ")
+            ));
+        }
     }
 
     /// Answer every parked question with "no answer", visibly.
@@ -1586,6 +1649,9 @@ impl App {
         pending.extend(self.question_queue.drain(..));
         if pending.is_empty() {
             return;
+        }
+        for dialog in &pending {
+            self.note_withdrawn_question(&dialog.request.question, &dialog.request.options);
         }
         for dialog in pending {
             let _ = dialog.sender.send(None);
@@ -1734,9 +1800,17 @@ impl App {
     pub(super) fn scroll_up(&mut self, n: usize) {
         let max = self.max_scroll();
         if max == 0 {
+            if self.reveal_archived_rounds() {
+                self.follow_bottom = false;
+                return;
+            }
             return self.scroll_to_bottom();
         }
         self.follow_bottom = false;
+        // 已经贴顶还继续往上：把归档的那批放回来。
+        if self.scroll_from_bottom >= max && self.reveal_archived_rounds() {
+            return;
+        }
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(n).min(max);
     }
     pub(super) fn scroll_down(&mut self, n: usize) {
@@ -1754,11 +1828,70 @@ impl App {
         self.follow_bottom = true;
         self.scroll_from_bottom = 0;
     }
+    /// 长会话只把最近这些轮次留在渲染循环里；更早的仍存在内存中，翻到顶再放回来。
+    const LIVE_ROUNDS: usize = 100;
+    const ARCHIVED_KEEP_ROUNDS: usize = 50;
+    const REVEAL_ROUNDS: usize = 50;
+
+    /// 按轮次收拢渲染范围：可见轮次超过 `LIVE_ROUNDS` 时，把更早的整段让出，
+    /// 只留最近 `ARCHIVED_KEEP_ROUNDS` 轮。记录本身一条不动。
+    pub(super) fn archive_old_rounds(&mut self) {
+        let dividers: Vec<usize> = self
+            .transcript
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.starts_with(TURN_DIVIDER_PREFIX))
+            .map(|(index, _)| index)
+            .collect();
+        let archived = dividers
+            .iter()
+            .filter(|index| **index < self.archive_floor)
+            .count();
+        if dividers.len().saturating_sub(archived) <= Self::LIVE_ROUNDS {
+            return;
+        }
+        // 分隔行是上一轮的收尾统计，跟着归档轮次一起藏：可见起点是
+        // 「倒数第 keep 个分隔行」的下一条，也就是下一轮的开头。
+        let keep = Self::ARCHIVED_KEEP_ROUNDS;
+        let Some(index) = dividers.len().checked_sub(keep + 1) else {
+            return;
+        };
+        self.archive_floor = self.archive_floor.max(dividers[index] + 1);
+    }
+
+    /// 翻到顶再往上：放回一批归档记录，并保持当前视野不跳。
+    pub(super) fn reveal_archived_rounds(&mut self) -> bool {
+        if self.archive_floor == 0 {
+            return false;
+        }
+        let floor = self.archive_floor.min(self.transcript.len());
+        let dividers: Vec<usize> = self.transcript[..floor]
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.starts_with(TURN_DIVIDER_PREFIX))
+            .map(|(index, _)| index)
+            .collect();
+        let new_floor = if dividers.len() <= Self::REVEAL_ROUNDS {
+            0
+        } else {
+            dividers[dividers.len() - Self::REVEAL_ROUNDS - 1] + 1
+        };
+        let before = self.transcript_height;
+        self.archive_floor = new_floor;
+        self.refresh_transcript_height();
+        self.scroll_from_bottom = self
+            .scroll_from_bottom
+            .saturating_add(self.transcript_height.saturating_sub(before));
+        true
+    }
+
     pub(super) fn append_transcript(&mut self, v: String) {
         // 所有进记录的文字先过终端安全处理，制表符和控制字符不许碰终端光标。
         let v = terminal_safe_text(&v);
         let previous_len = self.transcript.len();
-        let previous_height = self.timed_transcript_height();
+        // 上一帧已经算好的高度就是「追加之前」的高度——再整段重排一遍纯属浪费，
+        // 长会话里每落一行工具就重排两次，正是滚动和输出卡顿的来源。
+        let previous_height = self.transcript_height;
         if !v
             .strip_prefix("WillDeep: ")
             .is_some_and(|reply| append_plan_reply(&mut self.transcript, reply))
@@ -1768,6 +1901,12 @@ impl App {
         if self.transcript.len() > previous_len {
             self.message_times
                 .observe(&self.transcript, self.message_times.recording_time());
+        }
+        self.archive_old_rounds();
+        if self.follow_bottom {
+            // 跟着底部走时不需要立即知道新高度：下一帧排版会顺手更新它。
+            self.scroll_from_bottom = 0;
+            return;
         }
         self.refresh_transcript_height();
         if !self.follow_bottom {
@@ -2179,7 +2318,9 @@ impl App {
                 self.append_transcript(report);
             }
             "/plan" => {
-                toggle_plan_details(&mut self.transcript);
+                // 归档的计划卡不在屏幕上，展开它没有意义；只动可见那一段。
+                let floor = self.archive_floor.min(self.transcript.len());
+                toggle_plan_details(&mut self.transcript[floor..]);
                 self.refresh_transcript_height();
                 self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
             }
