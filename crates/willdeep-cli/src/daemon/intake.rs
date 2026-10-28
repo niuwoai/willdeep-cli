@@ -8,7 +8,7 @@
 //! 一条消息送进指定工作区的会话。
 
 use super::*;
-use crate::config::{IntakeForm, IntakeSettings, IntakeSite, IntakeWebhook};
+use crate::config::{IntakeForm, IntakeSettings, IntakeSite};
 use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
 use axum::http::header::{CONTENT_TYPE, HeaderName};
@@ -634,15 +634,16 @@ fn percent_decode(value: &str) -> String {
     let mut out = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(
                 std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or(""),
                 16,
-            ) {
-                out.push(byte);
-                index += 3;
-                continue;
-            }
+            )
+        {
+            out.push(byte);
+            index += 3;
+            continue;
         }
         out.push(bytes[index]);
         index += 1;
@@ -651,7 +652,7 @@ fn percent_decode(value: &str) -> String {
 }
 
 fn hex_decode(value: &str) -> Result<Vec<u8>, ()> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(());
     }
     (0..value.len())
@@ -673,7 +674,7 @@ fn constant_eq(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::IntakeField;
+    use crate::config::{IntakeField, IntakeWebhook};
 
     fn form() -> IntakeForm {
         IntakeForm {
