@@ -1,7 +1,12 @@
 /target/
+/.build/
+/logs/
+/node_modules/
 /web/dist/
 /web/node_modules
 /web/*.tsbuildinfo
+bench/swebench/runs/
+bench/swebench/analysis/**/trajectory-review.private.json
 /.willdeep/
 /config.toml
 .env

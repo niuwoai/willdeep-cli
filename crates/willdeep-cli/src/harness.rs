@@ -718,9 +718,9 @@ pub(crate) async fn execute_noninteractive(
         eprintln!(
             "{}: {error}",
             language.text(
-                "通知 Webhook 投递失败",
-                "Notification webhook delivery failed",
-                "通知 Webhook の送信に失敗しました"
+                "通知投递失败",
+                "Notification delivery failed",
+                "通知の送信に失敗しました"
             )
         );
     }
@@ -1322,7 +1322,7 @@ pub(crate) async fn build(
             agent = agent.with_input_suggesters(auxiliaries);
         }
     }
-    let notifier = crate::notify::Notifier::new(&loaded.file.notifications);
+    let notifier = crate::notify::Notifier::new(&loaded.file.notifications, language);
     Ok(BuiltHarness {
         peer_wake,
         event_sink: sink,

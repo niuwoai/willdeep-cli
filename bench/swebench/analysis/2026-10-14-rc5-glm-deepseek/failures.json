@@ -1,0 +1,660 @@
+{
+  "GLM-5": [
+    {
+      "id": "astropy__astropy-13398",
+      "status": "unresolved",
+      "category": "目标修复不完整，并引入回归",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 2720084,
+      "budget_stopped": false,
+      "target_failed": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_altaz_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_hadec_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_cirs_itrs_topo",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_straight_overhead"
+      ],
+      "regression": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe0]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe1]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe2]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe3]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe4]"
+      ],
+      "target_passed_count": 0,
+      "changed_files": [
+        "astropy/coordinates/builtin_frames/__init__.py",
+        "astropy/coordinates/builtin_frames/itrs_observed_transforms.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "astropy__astropy-13977",
+      "status": "unresolved",
+      "category": "目标修复不完整，并引入回归",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 950970,
+      "budget_stopped": false,
+      "target_failed": [
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity0-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity1-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity0-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity1-multiply]"
+      ],
+      "regression": [
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity0-less]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity1-less]"
+      ],
+      "target_passed_count": 12,
+      "changed_files": [
+        "astropy/units/quantity.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-10554",
+      "status": "unresolved",
+      "category": "SQL排序表达式与查询输出列不匹配（日志确认）",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 1784542,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "tests/queries/test_qs_combinators.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-11265",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 643952,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_with_exclude (filtered_relation.tests.FilteredRelationTests)"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "django/db/models/sql/query.py",
+        "tests/test_exclude_fix.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-11885",
+      "status": "unresolved",
+      "category": "目标修复成功，但引入原有测试回归",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 2628920,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [
+        "test_large_delete (delete.tests.DeletionTests)",
+        "test_large_delete_related (delete.tests.DeletionTests)"
+      ],
+      "target_passed_count": 1,
+      "changed_files": [
+        "django/db/models/deletion.py",
+        "tests/delete/tests.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-14034",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 730610,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_render_required_attributes (forms_tests.field_tests.test_multivaluefield.MultiValueFieldTest)"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "django/forms/fields.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-14725",
+      "status": "agent_error",
+      "category": "上游调用故障，不能判定模型能力",
+      "timeout": false,
+      "stop_reason": null,
+      "observed_tokens": 107456,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-16032",
+      "status": "unresolved",
+      "category": "裁判补丁执行阶段未通过，不能仅据该标记确定根因",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 1761886,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "django/db/models/sql/query.py",
+        "tests/annotations/tests.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-16145",
+      "status": "unresolved",
+      "category": "目标修复成功，但引入原有测试回归",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 321133,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [
+        "directory: django-admin builtin commands fail if settings file (from"
+      ],
+      "target_passed_count": 1,
+      "changed_files": [
+        "django/core/management/commands/runserver.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-16256",
+      "status": "unresolved",
+      "category": "只修复部分目标用例",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 1096349,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_generic_async_acreate (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aget_or_create (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aupdate_or_create (generic_relations.tests.GenericRelationsTests)"
+      ],
+      "regression": [],
+      "target_passed_count": 6,
+      "changed_files": [
+        "django/db/models/fields/related_descriptors.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "matplotlib__matplotlib-26208",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 4179664,
+      "budget_stopped": false,
+      "target_failed": [
+        "lib/matplotlib/tests/test_axes.py::test_twin_units[x]",
+        "lib/matplotlib/tests/test_axes.py::test_twin_units[y]"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "lib/matplotlib/axes/_base.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "pylint-dev__pylint-4551",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 1669888,
+      "budget_stopped": false,
+      "target_failed": [
+        "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a:",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "classes_Issue.dot",
+        "pylint/pyreverse/inspector.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "scikit-learn__scikit-learn-26194",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 571331,
+      "budget_stopped": false,
+      "target_failed": [
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_drop_intermediate",
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_with_probablity_estimates[42]"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sklearn/metrics/_ranking.py",
+        "sklearn/metrics/tests/test_ranking.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sphinx-doc__sphinx-7462",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 307841,
+      "budget_stopped": false,
+      "target_failed": [
+        "tests/test_domain_py.py::test_parse_annotation",
+        "tests/test_pycode_ast.py::test_unparse[()-()]"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sphinx/domains/python.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-12489",
+      "status": "unresolved",
+      "category": "目标修复不完整，并引入回归",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 1451113,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_Permutation_subclassing"
+      ],
+      "regression": [
+        "test_josephus",
+        "test_ranking",
+        "test_mul",
+        "test_from_sequence"
+      ],
+      "target_passed_count": 0,
+      "changed_files": [
+        "core",
+        "sympy/combinatorics/permutations.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-18199",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 421442,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_solve_modular"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sympy/ntheory/residue_ntheory.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-20438",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 1138923,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_Eq",
+        "test_issue_19378"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sympy/sets/sets.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    }
+  ],
+  "DeepSeek（故障补测组合）": [
+    {
+      "id": "matplotlib__matplotlib-14623",
+      "status": "empty_patch",
+      "category": "没有提交补丁",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 4301769,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-13297",
+      "status": "unresolved",
+      "category": "目标修复成功，但引入原有测试回归",
+      "timeout": false,
+      "stop_reason": "finished",
+      "observed_tokens": 2224059,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [
+        "test_template_params_warning (generic_views.test_base.DeprecationTests)"
+      ],
+      "target_passed_count": 1,
+      "changed_files": [
+        "django/views/generic/base.py",
+        "docs/internals/deprecation.txt",
+        "docs/ref/class-based-views/base.txt",
+        "docs/releases/3.1.txt",
+        "verify_issue_fix.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "pylint-dev__pylint-4551",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "finished",
+      "observed_tokens": 3925874,
+      "budget_stopped": false,
+      "target_failed": [
+        "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a:",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "pylint/pyreverse/diagrams.py",
+        "pylint/pyreverse/utils.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-20438",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 3861118,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_Eq",
+        "test_issue_19378"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sympy/core/relational.py",
+        "sympy/sets/handlers/comparison.py",
+        "sympy/sets/handlers/issubset.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-11618",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 2594013,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_issue_11617"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sympy/geometry/point.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "scikit-learn__scikit-learn-10908",
+      "status": "empty_patch",
+      "category": "没有提交补丁",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 639938,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-16256",
+      "status": "unresolved",
+      "category": "只修复部分目标用例",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 1635937,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_generic_async_acreate (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aget_or_create (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aupdate_or_create (generic_relations.tests.GenericRelationsTests)"
+      ],
+      "regression": [],
+      "target_passed_count": 6,
+      "changed_files": [
+        "django/db/models/fields/related_descriptors.py",
+        "tests/async/test_async_related_manager_repro.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-10554",
+      "status": "unresolved",
+      "category": "SQL排序表达式与查询输出列不匹配（日志确认）",
+      "timeout": false,
+      "stop_reason": "max_turns",
+      "observed_tokens": 3829236,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "tests/queries/test_scratch_repro.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-13112",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": null,
+      "observed_tokens": 0,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_reference_mixed_case_app_label (migrations.test_state.StateTests)"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "core"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "matplotlib__matplotlib-26208",
+      "status": "empty_patch",
+      "category": "没有提交补丁",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 1965220,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sphinx-doc__sphinx-7462",
+      "status": "unresolved",
+      "category": "只修复部分目标用例",
+      "timeout": false,
+      "stop_reason": "finished",
+      "observed_tokens": 400201,
+      "budget_stopped": false,
+      "target_failed": [
+        "tests/test_pycode_ast.py::test_unparse[()-()]"
+      ],
+      "regression": [],
+      "target_passed_count": 1,
+      "changed_files": [
+        "sphinx/domains/python.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "astropy__astropy-13398",
+      "status": "unresolved",
+      "category": "目标修复不完整，并引入回归",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 7396001,
+      "budget_stopped": false,
+      "target_failed": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_altaz_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_hadec_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_cirs_itrs_topo",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_straight_overhead"
+      ],
+      "regression": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe0]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe1]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe2]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe3]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe4]"
+      ],
+      "target_passed_count": 0,
+      "changed_files": [
+        "astropy/coordinates/builtin_frames/__init__.py",
+        "astropy/coordinates/builtin_frames/itrs_observed_transforms.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "scikit-learn__scikit-learn-26194",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "finished",
+      "observed_tokens": 4099998,
+      "budget_stopped": false,
+      "target_failed": [
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_drop_intermediate",
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_with_probablity_estimates[42]"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "doc/modules/model_evaluation.rst",
+        "sklearn/metrics/_ranking.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "sympy__sympy-18199",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "finished",
+      "observed_tokens": 1323114,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_solve_modular"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "sympy/ntheory/residue_ntheory.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-16950",
+      "status": "unresolved",
+      "category": "目标修复成功，但引入原有测试回归",
+      "timeout": true,
+      "stop_reason": null,
+      "observed_tokens": 1973895,
+      "budget_stopped": false,
+      "target_failed": [],
+      "regression": [
+        "#24377 - Inlines with a model field default should ignore that default"
+      ],
+      "target_passed_count": 1,
+      "changed_files": [
+        "django/forms/models.py",
+        "tests/model_formsets/test_uuid.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    },
+    {
+      "id": "django__django-14034",
+      "status": "unresolved",
+      "category": "目标行为未修复",
+      "timeout": false,
+      "stop_reason": "unverified",
+      "observed_tokens": 3044321,
+      "budget_stopped": false,
+      "target_failed": [
+        "test_render_required_attributes (forms_tests.field_tests.test_multivaluefield.MultiValueFieldTest)"
+      ],
+      "regression": [],
+      "target_passed_count": 0,
+      "changed_files": [
+        "django/forms/fields.py"
+      ],
+      "evidence_confidence": "官方测试现象已确认；代码语义根因需进一步最小复现，不将停止条件当唯一原因"
+    }
+  ]
+}

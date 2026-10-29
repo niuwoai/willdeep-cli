@@ -8,7 +8,7 @@
 //! - 每次工具调用先落一行 `· … 名字 · 摘要`，完成后原地改成 `✓` / `✗`；
 //! - 收尾文字只追加还没显示过的部分（比如轮次上限提示），不重复最后一段；
 //! - 显示层把每段连续工具行收起：早先的段一行汇总，最新的段一行汇总加最新一条，
-//!   `/tools` 展开。
+//!   `/tools` 展开。夹在中间、当前可见的思考行不切段，也不随工具行收起。
 //!
 //! 进程内轮次与 Runtime 轮次共用这一套，行为一致。
 use super::*;
@@ -46,6 +46,13 @@ pub(super) fn replayed_tool_row(trace: &willdeep_core::conversation::ToolTrace) 
         &trace.name,
         trace.detail.as_deref(),
     )
+}
+
+/// 这行是不是一段思考记录。思考行是显示层才看得到的活动记录，模型每调一次
+/// 工具前都会落一段，它不该把工具行切成两段——切了之后每段只剩一条，工具
+/// 行就永远折不起来。
+fn is_thought_row(line: &str) -> bool {
+    line.starts_with(THOUGHT_ENTRY_PREFIX) || line.starts_with(THOUGHT_EXPANDED_PREFIX)
 }
 
 /// 这行是不是工具行；是的话给出它的状态标记。
@@ -432,9 +439,10 @@ pub(super) struct FoldedTranscript {
     pub(super) index_of: Vec<usize>,
 }
 
-/// 每段连续的工具行（模型说一句话、轮次收尾都会切段）在显示层收起：不是最新那段
-/// 的一律只留一行汇总，只有一条时原样保留；最新那段最多 [`LAST_TOOL_RUN_ROWS`]
-/// 行，一行汇总加最新一条。`expanded` 为真时原样返回（`/tools`）。
+/// 每段连续的活动行在显示层收起。活动行指工具行，以及夹在它们中间、当前
+/// 可见的思考行——思考行不切段。收起时只收工具行：不是最新那段的一律收成
+/// 一行汇总；最新那段最多留 [`LAST_TOOL_RUN_ROWS`] 条工具行，正在跑的那条
+/// 永远看得见。思考行原样留在原处。`expanded` 为真时原样返回（`/tools`）。
 pub(super) fn fold_tool_rows(
     entries: &[String],
     expanded: bool,
@@ -443,15 +451,23 @@ pub(super) fn fold_tool_rows(
     let mut runs: Vec<(usize, usize)> = Vec::new();
     let mut cursor = 0;
     while cursor < entries.len() {
-        if tool_row_marker(&entries[cursor]).is_none() {
+        if tool_row_marker(&entries[cursor]).is_none() && !is_thought_row(&entries[cursor]) {
             cursor += 1;
             continue;
         }
         let start = cursor;
-        while cursor < entries.len() && tool_row_marker(&entries[cursor]).is_some() {
+        while cursor < entries.len()
+            && (tool_row_marker(&entries[cursor]).is_some() || is_thought_row(&entries[cursor]))
+        {
             cursor += 1;
         }
-        runs.push((start, cursor));
+        // 一整段都是思考时没有工具可收，原样留着。
+        if entries[start..cursor]
+            .iter()
+            .any(|row| tool_row_marker(row).is_some())
+        {
+            runs.push((start, cursor));
+        }
     }
     let last_run = runs.last().copied();
     let latest_turn = entries
@@ -472,22 +488,41 @@ pub(super) fn fold_tool_rows(
         next_run += 1;
         cursor = end;
         let run = &entries[start..end];
+        let tool_count = run
+            .iter()
+            .filter(|row| tool_row_marker(row).is_some())
+            .count();
         let is_last = start >= latest_turn && last_run == Some((start, end));
-        let hidden = if expanded || run.len() == 1 {
-            0
+        let keep_tools = if expanded || tool_count == 1 {
+            tool_count
         } else if !is_last {
-            run.len()
-        } else if run.len() <= LAST_TOOL_RUN_ROWS {
             0
+        } else if tool_count <= LAST_TOOL_RUN_ROWS {
+            tool_count
         } else {
-            run.len() - (LAST_TOOL_RUN_ROWS - 1)
+            1
         };
-        if hidden > 0 {
-            let summary_index = rows.len();
-            rows.push(fold_summary(&run[..hidden], is_last, language));
-            index_of.extend(std::iter::repeat_n(summary_index, hidden));
-        }
-        for line in &run[hidden..] {
+        let hidden_tools = tool_count - keep_tools;
+        // 收起的总是靠前的工具行：正在跑的那条（最新的）永远留着。
+        let hidden = run
+            .iter()
+            .filter(|row| tool_row_marker(row).is_some())
+            .take(hidden_tools)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut still_hidden = hidden_tools;
+        let mut summary_index = None;
+        for line in run {
+            if still_hidden > 0 && tool_row_marker(line).is_some() {
+                let index = *summary_index.get_or_insert_with(|| {
+                    let index = rows.len();
+                    rows.push(fold_summary(&hidden, is_last, language));
+                    index
+                });
+                index_of.push(index);
+                still_hidden -= 1;
+                continue;
+            }
             index_of.push(rows.len());
             rows.push(line.clone());
         }
@@ -555,9 +590,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(index, row)| {
-                let thought = row.starts_with(THOUGHT_ENTRY_PREFIX)
-                    || row.starts_with(THOUGHT_EXPANDED_PREFIX);
-                !thought || (self.ui.show_thinking && floor + index >= thought_start)
+                !is_thought_row(row) || (self.ui.show_thinking && floor + index >= thought_start)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
@@ -852,6 +885,69 @@ mod tests {
         );
 
         assert_eq!(fold_tool_rows(&entries, true, Language::ZhCn).rows, entries);
+    }
+
+    #[test]
+    fn visible_thoughts_do_not_split_the_latest_tool_run() {
+        let mut entries = vec!["You: go".to_owned()];
+        for index in 0..4 {
+            entries.push(format!("{THOUGHT_ENTRY_PREFIX}{index}.0s\nreason {index}"));
+            entries.push(tool_line(
+                TOOL_DONE,
+                if index % 2 == 0 {
+                    "run_command"
+                } else {
+                    "read_file"
+                },
+                None,
+            ));
+        }
+        let folded = fold_tool_rows(&entries, false, Language::En);
+        // 四段思考原样保留；四条工具行收成一条汇总加最新一条。
+        assert_eq!(folded.rows.len(), 1 + 4 + 1 + 1, "{:?}", folded.rows);
+        assert!(
+            folded.rows[2].starts_with("· ⋯ 3 earlier tool calls folded"),
+            "{}",
+            folded.rows[2]
+        );
+        assert!(
+            folded.rows[2].contains(" · read_file×1 · run_command×2"),
+            "{}",
+            folded.rows[2]
+        );
+        assert_eq!(
+            folded
+                .rows
+                .iter()
+                .filter(|row| row.contains("reason "))
+                .count(),
+            4
+        );
+        assert_eq!(
+            folded
+                .rows
+                .iter()
+                .filter(|row| tool_row_marker(row).is_some())
+                .count(),
+            1,
+            "only the newest tool row stays: {:?}",
+            folded.rows
+        );
+        // 被收起的工具行在 index_of 里都指向汇总行。
+        assert_eq!(folded.index_of, vec![0, 1, 2, 3, 2, 4, 2, 5, 6]);
+    }
+
+    #[test]
+    fn a_run_of_thoughts_alone_is_left_as_it_is() {
+        let entries = vec![
+            "You: go".to_owned(),
+            format!("{THOUGHT_ENTRY_PREFIX}1.0s\nfirst"),
+            format!("{THOUGHT_ENTRY_PREFIX}2.0s\nsecond"),
+            format!("{THOUGHT_ENTRY_PREFIX}3.0s\nthird"),
+        ];
+        let folded = fold_tool_rows(&entries, false, Language::En);
+        assert_eq!(folded.rows, entries);
+        assert!(!folded.rows.iter().any(|row| row.contains("0 tool calls")));
     }
 
     #[test]

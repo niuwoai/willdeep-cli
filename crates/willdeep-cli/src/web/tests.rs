@@ -81,6 +81,81 @@ fn workspace_selection_prefers_the_active_allowed_registration() {
         PathBuf::from("/workspace/b")
     );
 }
+
+#[test]
+fn loopback_web_servers_see_every_registered_workspace() {
+    // 回环实例里，`+` 已经能把任意目录加进来；注册表里的常用工作区不该再被
+    // 启动参数挡住。白名单同时扩到注册表全部，插件与会话边界和选择器一致。
+    let root =
+        std::env::temp_dir().join(format!("willdeep-web-workspaces-{}", uuid::Uuid::new_v4()));
+    let first = root.join("a");
+    let second = root.join("b");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let registered = vec![
+        workspace(first.to_str().unwrap(), true),
+        workspace(second.to_str().unwrap(), false),
+    ];
+    let mut allowed = vec![first.clone()];
+    let visible = web_workspace_allowlist(registered, &mut allowed, true);
+    assert_eq!(
+        visible
+            .iter()
+            .map(|workspace| workspace.root.clone())
+            .collect::<Vec<_>>(),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(
+        allowed,
+        vec![first.clone(), second.clone()],
+        "selection, sessions and plugins must share one allowlist"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn loopback_web_servers_hide_registered_workspaces_that_are_gone() {
+    let root = std::env::temp_dir().join(format!("willdeep-web-gone-{}", uuid::Uuid::new_v4()));
+    let existing = root.join("existing");
+    std::fs::create_dir_all(&existing).unwrap();
+    let registered = vec![
+        workspace(existing.to_str().unwrap(), false),
+        workspace(root.join("deleted").to_str().unwrap(), false),
+    ];
+    let mut allowed = Vec::new();
+    let visible = web_workspace_allowlist(registered, &mut allowed, true);
+    assert_eq!(
+        visible
+            .iter()
+            .map(|workspace| workspace.root.clone())
+            .collect::<Vec<_>>(),
+        vec![existing.clone()]
+    );
+    assert_eq!(allowed, vec![existing]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn exposed_web_servers_stay_inside_the_startup_allowlist() {
+    let registered = vec![
+        workspace("/workspace/a", true),
+        workspace("/workspace/b", false),
+    ];
+    let mut allowed = vec![PathBuf::from("/workspace/a")];
+    let visible = web_workspace_allowlist(registered, &mut allowed, false);
+    assert_eq!(
+        visible
+            .iter()
+            .map(|workspace| workspace.root.clone())
+            .collect::<Vec<_>>(),
+        vec![PathBuf::from("/workspace/a")]
+    );
+    assert_eq!(
+        allowed,
+        vec![PathBuf::from("/workspace/a")],
+        "a non-loopback server must not widen its allowlist"
+    );
+}
 // 「空会话不进 Web 历史」「只有附件也算用户输入」这两条语义，
 // 现在由 willdeep_core::session 的 digest 测试覆盖。
 #[test]

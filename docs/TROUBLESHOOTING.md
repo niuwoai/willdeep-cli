@@ -32,16 +32,17 @@ ruby --version
 ### 拒绝启动：配置文件权限不安全
 
 ```text
-... contains api_key but permissions are 644; run `chmod 600 ...` or use api_key_env
+... contains an inline secret but permissions are 644; run `chmod 600 ...` or use the *_env fields
 ```
 
-配置里有内联明文 `api_key` 时，Unix 要求文件对 group 和 other 完全不可访问：
+配置里有内联明文密钥（Provider 的 `api_key`，或通知渠道的 `secret` / `password` /
+`api_key`）时，Unix 要求文件对 group 和 other 完全不可访问：
 
 ```bash
 chmod 600 ~/.willdeep/config.toml
 ```
 
-或者改用 `api_key_env`，从根本上绕开这个检查。
+或者改用对应的 `*_env` 字段引用环境变量，从根本上绕开这个检查。
 
 ### API key is required
 

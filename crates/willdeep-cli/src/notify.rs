@@ -2,18 +2,24 @@
 //!
 //! `[notifications]` is shared with WillDeep.app so one config file drives
 //! both clients. The desktop app owns sound playback; this module owns the
-//! CLI half — posting the webhook when a turn finishes and when the agent
-//! parks on a human gate.
+//! CLI half — telling the configured channels when a turn finishes and when
+//! the agent parks on a human gate.
 //!
-//! The wire format is **not** ours to invent: WillDeep.app already ships
-//! `willdeep.webhook.v1` (see `Xedit/AgentAttentionSettings.swift`), and its
-//! own receiver sniffs the vendor out of the headers and body. A CLI event
-//! must therefore be indistinguishable from an app event apart from the
-//! fields that legitimately identify the executor, so one endpoint can serve
-//! both clients with one parser.
+//! Two shapes live here:
 //!
-//! Delivery is a courtesy ping, never part of the agent's critical path: it
-//! runs detached, it cannot fail a turn, and a dead endpoint costs at most
+//! * the legacy `[notifications] webhook_*` endpoint, whose wire format is
+//!   **not** ours to invent: WillDeep.app already ships `willdeep.webhook.v1`
+//!   (see `Xedit/AgentAttentionSettings.swift`), and its own receiver sniffs
+//!   the vendor out of the headers and body. A CLI event must therefore be
+//!   indistinguishable from an app event apart from the fields that
+//!   legitimately identify the executor, so one endpoint can serve both
+//!   clients with one parser.
+//! * `[[notifications.channels]]`: additional webhook / Lark / email targets.
+//!   The webhook kind reuses the same `willdeep.webhook.v1` envelope; Lark and
+//!   email get a rendered plain-text body (see [`render`]).
+//!
+//! Delivery is a courtesy ping, never part of the agent's critical path: each
+//! channel runs detached, cannot fail a turn, and a dead endpoint costs at most
 //! one timeout on a background task.
 
 use std::collections::HashSet;
@@ -28,6 +34,12 @@ use willdeep_core::{
 };
 
 use crate::config::NotificationSettings;
+use crate::i18n::Language;
+
+mod channels;
+mod email;
+mod lark;
+mod render;
 
 /// Matches `URLSessionConfiguration.timeoutIntervalForRequest` on the app side
 /// so a slow endpoint behaves the same whichever client is talking to it.
@@ -49,6 +61,61 @@ const FLUSH_TIMEOUT: Duration = Duration::from_secs(6);
 /// `summary` is a human hint, not a transcript. Truncating hard keeps a long
 /// command or diff from riding out to a remote endpoint.
 const MAX_SUMMARY_CHARS: usize = 400;
+/// Failures are drained by the caller, but a TUI that never drains (or a
+/// channel that fails every second) must not grow this without bound.
+const MAX_PENDING_ERRORS: usize = 8;
+
+/// A secret resolved from the environment at construction time.
+///
+/// The `Debug` impl is redacted on purpose: a webhook token or SMTP password
+/// must not leak through a `{:?}` in a panic message, a test assertion, or a
+/// future log line someone adds without thinking.
+pub struct Secret(String);
+
+impl Secret {
+    #[cfg(test)]
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    /// The error names the variable, never a value — a missing secret is a
+    /// configuration problem the user has to be able to locate.
+    pub(crate) fn from_env(name: &str) -> Result<Self, String> {
+        match std::env::var(name) {
+            Ok(value) if !value.trim().is_empty() => Ok(Self(value)),
+            _ => Err(format!("environment variable {name} is not set")),
+        }
+    }
+
+    /// Resolve a secret written inline in the config, or named by an environment
+    /// variable — never both. Errors describe the problem and never echo a value.
+    pub(crate) fn from_config(
+        inline: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<Option<Self>, String> {
+        match (inline, env) {
+            (None, None) => Ok(None),
+            (Some(value), None) if value.trim().is_empty() => {
+                Err("the inline secret is empty".to_owned())
+            }
+            (Some(value), None) => Ok(Some(Self(value.to_owned()))),
+            (None, Some(name)) => Self::from_env(name).map(Some),
+            (Some(_), Some(_)) => Err(
+                "define either the inline secret or its environment variable, not both".to_owned(),
+            ),
+        }
+    }
+
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<redacted>")
+    }
+}
 
 /// The app's `AgentWebhookFormatDetector` keys off these exact strings.
 const SCHEMA_VERSION: &str = "willdeep.webhook.v1";
@@ -166,9 +233,8 @@ pub struct Notifier {
 
 struct Inner {
     client: reqwest::Client,
-    url: String,
-    on_task_completed: bool,
-    on_attention_required: bool,
+    channels: Vec<Arc<channels::Channel>>,
+    language: Language,
     session: Mutex<Option<SessionIdentity>>,
     /// The gate keys present in the previous snapshot. Runtime attention is
     /// level-triggered — an open gate reappears in every snapshot — so this
@@ -179,8 +245,10 @@ struct Inner {
     /// process does not exit out from under an in-flight request.
     pending: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Delivery is detached, so failures land here instead of being swallowed;
-    /// callers drain this and surface it.
-    last_error: Mutex<Option<String>>,
+    /// callers drain this and surface it. One entry per failed channel: with
+    /// several channels running concurrently, "the last failure wins" would
+    /// make the report depend on scheduling order.
+    errors: Mutex<Vec<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -191,43 +259,83 @@ struct SessionIdentity {
 
 impl Notifier {
     /// Build a dispatcher from the shared config section. Returns a disabled
-    /// notifier when the webhook is off or the URL cannot be used — config
-    /// validation has already rejected a bad URL by this point, so a failure
-    /// here means "stay quiet", never "abort the run".
-    pub fn new(settings: &NotificationSettings) -> Self {
-        if !settings.webhook_enabled.unwrap_or(false) {
+    /// notifier when no channel is configured — config validation has already
+    /// rejected a bad URL by this point, so a failure here means "stay quiet",
+    /// never "abort the run".
+    ///
+    /// A channel that cannot be built (missing secret, malformed provider) is
+    /// skipped and its reason is kept in [`Notifier::take_error`]; the other
+    /// channels keep working.
+    pub fn new(settings: &NotificationSettings, language: Language) -> Self {
+        Self::build(settings, language, false)
+    }
+
+    /// Test-only: the fake servers listen on loopback, and a machine with
+    /// `HTTP_PROXY` set would send the request to the proxy instead.
+    #[cfg(test)]
+    fn new_for_tests(settings: &NotificationSettings, language: Language) -> Self {
+        Self::build(settings, language, true)
+    }
+
+    fn build(settings: &NotificationSettings, language: Language, no_proxy: bool) -> Self {
+        let (channels, config_errors) = channels::build(settings);
+        if channels.is_empty() && config_errors.is_empty() {
             return Self::disabled();
         }
-        let Some(url) = settings
-            .webhook_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Self::disabled();
-        };
         // One client name across every outgoing request. Vendor detection does
         // not rest on this string: the app's detector reads the headers first,
-        // and `X-Agent-Source` / `X-Agent-Executor` below still carry the
-        // lowercase `willdeep` the classifier matches on.
-        let Ok(client) = reqwest::Client::builder()
+        // and `X-Agent-Source` / `X-Agent-Executor` still carry the lowercase
+        // `willdeep` the classifier matches on.
+        let mut builder = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
-            .user_agent(willdeep_core::CLIENT_USER_AGENT)
-            .build()
-        else {
-            return Self::disabled();
+            .user_agent(willdeep_core::CLIENT_USER_AGENT);
+        if no_proxy {
+            builder = builder.no_proxy();
+        }
+        let client = match builder.build() {
+            Ok(client) => client,
+            Err(error) => {
+                let mut errors = config_errors;
+                errors.push(format!("cannot build the HTTP client: {error}"));
+                return Self::broken(errors);
+            }
         };
+        Self::from_parts(client, channels, language, config_errors)
+    }
+
+    fn from_parts(
+        client: reqwest::Client,
+        channels: Vec<Arc<channels::Channel>>,
+        language: Language,
+        config_errors: Vec<String>,
+    ) -> Self {
         Self {
             inner: Some(Arc::new(Inner {
                 client,
-                url: url.to_owned(),
-                on_task_completed: settings.webhook_on_task_completed.unwrap_or(true),
-                on_attention_required: settings.webhook_on_attention_required.unwrap_or(true),
+                channels,
+                language,
                 session: Mutex::new(None),
                 open_gates: Mutex::new(HashSet::new()),
                 pending: Mutex::new(Vec::new()),
-                last_error: Mutex::new(None),
+                errors: Mutex::new(config_errors),
+            })),
+        }
+    }
+
+    /// A notifier that has nothing to deliver but still has something to say.
+    /// Used when every configured channel failed to build: the errors must
+    /// reach the user instead of disappearing with the disabled path.
+    fn broken(errors: Vec<String>) -> Self {
+        Self {
+            inner: Some(Arc::new(Inner {
+                client: reqwest::Client::new(),
+                channels: Vec::new(),
+                language: Language::default(),
+                session: Mutex::new(None),
+                open_gates: Mutex::new(HashSet::new()),
+                pending: Mutex::new(Vec::new()),
+                errors: Mutex::new(errors),
             })),
         }
     }
@@ -236,8 +344,26 @@ impl Notifier {
         Self { inner: None }
     }
 
+    #[cfg(test)]
     pub fn is_enabled(&self) -> bool {
-        self.inner.is_some()
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| !inner.channels.is_empty())
+    }
+
+    /// Names of the channels that will actually deliver. Used by `doctor`;
+    /// never includes an endpoint or a secret.
+    pub(crate) fn channel_names(&self) -> Vec<String> {
+        self.inner
+            .as_ref()
+            .map(|inner| {
+                inner
+                    .channels
+                    .iter()
+                    .map(|channel| channel.describe())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The session is only known after it is resolved, which happens after the
@@ -271,16 +397,16 @@ impl Notifier {
     /// A completed turn. Partial runs must use task_stopped instead.
     pub fn task_completed(&self, summary: impl Into<String>) {
         let Some(inner) = &self.inner else { return };
-        if !inner.on_task_completed {
-            return;
-        }
-        self.post(inner.payload(
+        self.post(
             NotificationEvent::TaskCompleted,
-            status_label(RuntimeStatus::Done),
-            None,
-            None,
-            Some(summary.into()),
-        ));
+            inner.payload(
+                NotificationEvent::TaskCompleted,
+                status_label(RuntimeStatus::Done),
+                None,
+                None,
+                Some(summary.into()),
+            ),
+        );
     }
 
     /// The agent parked on a human gate. Edge-triggered by the caller — an
@@ -292,16 +418,16 @@ impl Notifier {
         summary: impl Into<String>,
     ) {
         let Some(inner) = &self.inner else { return };
-        if !inner.on_attention_required {
-            return;
-        }
-        self.post(inner.payload(
+        self.post(
             NotificationEvent::AttentionRequired,
-            status_label(status),
-            None,
-            Some(attention_kind.to_owned()),
-            Some(summary.into()),
-        ));
+            inner.payload(
+                NotificationEvent::AttentionRequired,
+                status_label(status),
+                None,
+                Some(attention_kind.to_owned()),
+                Some(summary.into()),
+            ),
+        );
     }
 
     /// Level-triggered counterpart for runtime snapshots: post the gates that
@@ -316,9 +442,6 @@ impl Notifier {
     /// snapshot: closing one approval is what re-arms the next.
     pub fn attention_snapshot(&self, items: &[AttentionItem]) {
         let Some(inner) = &self.inner else { return };
-        if !inner.on_attention_required {
-            return;
-        }
         let gates = items
             .iter()
             .filter(|item| item.status.section() == Some(AttentionSection::NeedsYou))
@@ -339,13 +462,16 @@ impl Notifier {
         *open = current;
         drop(open);
         for item in opened {
-            self.post(inner.payload(
+            self.post(
                 NotificationEvent::AttentionRequired,
-                status_label(item.status),
-                Some(item.id.clone()),
-                Some(source_label(item.source).to_owned()),
-                Some(format!("{} · {}", item.title, item.detail)),
-            ));
+                inner.payload(
+                    NotificationEvent::AttentionRequired,
+                    status_label(item.status),
+                    Some(item.id.clone()),
+                    Some(source_label(item.source).to_owned()),
+                    Some(format!("{} · {}", item.title, item.detail)),
+                ),
+            );
         }
     }
 
@@ -370,52 +496,58 @@ impl Notifier {
             }
         };
         if tokio::time::timeout(FLUSH_TIMEOUT, joined).await.is_err() {
-            inner.record_error("webhook delivery did not finish before exit".to_owned());
+            inner.record_error("notification delivery did not finish before exit".to_owned());
         }
     }
 
-    /// Take the most recent delivery failure, if any. Callers surface this so
-    /// a misconfigured webhook is visible instead of silently doing nothing.
+    /// Take every delivery failure recorded since the last call. Callers drain
+    /// this so a misconfigured channel is visible instead of silently doing
+    /// nothing.
     pub fn take_error(&self) -> Option<String> {
         let inner = self.inner.as_ref()?;
-        inner.last_error.lock().ok()?.take()
+        let mut errors = inner.errors.lock().ok()?;
+        if errors.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut *errors).join("; "))
     }
 
-    fn post(&self, payload: WebhookPayload) {
+    fn post(&self, event: NotificationEvent, payload: WebhookPayload) {
         let Some(inner) = self.inner.clone() else {
             return;
         };
+        let targets = inner
+            .channels
+            .iter()
+            .filter(|channel| channel.events().wants(event))
+            .cloned()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return;
+        }
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            inner.record_error("no async runtime available for webhook delivery".to_owned());
+            inner.record_error("no async runtime available for notification delivery".to_owned());
             return;
         };
-        let task = inner.clone();
-        let delivery = handle.spawn(async move {
-            let inner = task;
-            let request = inner
-                .client
-                .post(&inner.url)
-                // The app sets these so a receiver can route on headers alone,
-                // without parsing the body first.
-                .header("X-App-Version", APP_VERSION)
-                .header("X-Agent-Source", SOURCE)
-                .header("X-Agent-Executor", EXECUTOR_KIND)
-                .header("X-Webhook-Schema", SCHEMA_VERSION)
-                .header("X-Agent-Event", payload.event)
-                .json(&payload);
-            match request.send().await {
-                Ok(response) if response.status().is_success() => {}
-                Ok(response) => {
-                    inner.record_error(format!("webhook returned HTTP {}", response.status()));
+        for channel in targets {
+            let task = inner.clone();
+            let payload = payload.clone();
+            // One task per channel: a slow SMTP server must not hold up the
+            // Lark message, and one failure must not cancel the rest.
+            let delivery = handle.spawn(async move {
+                if let Err(error) = channel
+                    .deliver(&task.client, event, &payload, task.language)
+                    .await
+                {
+                    task.record_error(format!("{}: {error}", channel.name()));
                 }
-                Err(error) => inner.record_error(format!("webhook delivery failed: {error}")),
+            });
+            if let Ok(mut pending) = inner.pending.lock() {
+                // Drop handles that already finished so a long TUI session does
+                // not accumulate one per notification.
+                pending.retain(|handle| !handle.is_finished());
+                pending.push(delivery);
             }
-        });
-        if let Ok(mut pending) = inner.pending.lock() {
-            // Drop handles that already finished so a long TUI session does not
-            // accumulate one per notification.
-            pending.retain(|handle| !handle.is_finished());
-            pending.push(delivery);
         }
     }
 }
@@ -461,8 +593,11 @@ impl Inner {
     }
 
     fn record_error(&self, message: String) {
-        if let Ok(mut slot) = self.last_error.lock() {
-            *slot = Some(message);
+        if let Ok(mut errors) = self.errors.lock() {
+            if errors.len() >= MAX_PENDING_ERRORS {
+                errors.remove(0);
+            }
+            errors.push(message);
         }
     }
 }
@@ -525,6 +660,7 @@ fn clamp(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{NotificationChannel, NotificationEventKind};
 
     fn enabled_settings() -> NotificationSettings {
         NotificationSettings {
@@ -532,6 +668,25 @@ mod tests {
             webhook_url: Some("http://127.0.0.1:8787/willdeep".to_owned()),
             ..NotificationSettings::default()
         }
+    }
+
+    #[test]
+    fn secret_resolution_accepts_one_source_and_rejects_both() {
+        let inline = Secret::from_config(Some("inline-value"), None)
+            .expect("inline secret")
+            .expect("a secret");
+        assert_eq!(inline.expose(), "inline-value");
+        assert!(
+            Secret::from_config(None, None)
+                .expect("no secret")
+                .is_none()
+        );
+        let empty = Secret::from_config(Some("   "), None).expect_err("blank inline secret");
+        assert!(!empty.contains("   "), "{empty}");
+        let both = Secret::from_config(Some("inline-value"), Some("SOME_VARIABLE"))
+            .expect_err("both sources");
+        assert!(both.contains("not both"), "{both}");
+        assert!(!both.contains("inline-value"), "{both}");
     }
 
     /// A loopback endpoint that records every body it receives, in order.
@@ -574,7 +729,7 @@ mod tests {
 
     #[test]
     fn disabled_webhook_builds_a_silent_notifier() {
-        let notifier = Notifier::new(&NotificationSettings::default());
+        let notifier = Notifier::new_for_tests(&NotificationSettings::default(), Language::En);
         assert!(!notifier.is_enabled());
         // Every entry point must stay callable on the disabled path.
         notifier.task_completed("done");
@@ -587,8 +742,8 @@ mod tests {
     fn enabled_webhook_requires_a_usable_url() {
         let mut settings = enabled_settings();
         settings.webhook_url = Some("   ".to_owned());
-        assert!(!Notifier::new(&settings).is_enabled());
-        assert!(Notifier::new(&enabled_settings()).is_enabled());
+        assert!(!Notifier::new_for_tests(&settings, Language::En).is_enabled());
+        assert!(Notifier::new_for_tests(&enabled_settings(), Language::En).is_enabled());
     }
 
     #[test]
@@ -596,15 +751,16 @@ mod tests {
         let mut settings = enabled_settings();
         settings.webhook_on_task_completed = Some(false);
         settings.webhook_on_attention_required = Some(true);
-        let notifier = Notifier::new(&settings);
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
         let inner = notifier.inner.as_ref().expect("enabled");
-        assert!(!inner.on_task_completed);
-        assert!(inner.on_attention_required);
+        let channel = inner.channels.first().expect("legacy webhook");
+        assert!(!channel.events().wants(NotificationEvent::TaskCompleted));
+        assert!(channel.events().wants(NotificationEvent::AttentionRequired));
     }
 
     #[test]
     fn snapshot_tracks_open_gates_and_skips_non_gates() {
-        let notifier = Notifier::new(&enabled_settings());
+        let notifier = Notifier::new_for_tests(&enabled_settings(), Language::En);
         let inner = notifier.inner.clone().expect("enabled");
         let mut working = needs_you("background:1");
         working.status = RuntimeStatus::Working;
@@ -628,7 +784,7 @@ mod tests {
         let (port, received) = capture_listener().await;
         let mut settings = enabled_settings();
         settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
-        let notifier = Notifier::new(&settings);
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
 
         let mut first = willdeep_core::AttentionItem::approval("run command: ls");
         first.source = AttentionSource::Approval;
@@ -666,7 +822,7 @@ mod tests {
             let (port, received) = capture_listener().await;
             let mut settings = enabled_settings();
             settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
-            let notifier = Notifier::new(&settings);
+            let notifier = Notifier::new_for_tests(&settings, Language::En);
             notifier.set_session("runtime-42", None);
             notifier.task_completed("done");
             // Exactly what execute_noninteractive does before returning.
@@ -694,7 +850,7 @@ mod tests {
     /// a rename on either side is a wire break, not a refactor.
     #[test]
     fn payload_matches_the_willdeep_webhook_v1_envelope() {
-        let notifier = Notifier::new(&enabled_settings());
+        let notifier = Notifier::new_for_tests(&enabled_settings(), Language::En);
         notifier.set_session("runtime-42", Some("Ship the release"));
         let inner = notifier.inner.as_ref().expect("enabled");
         let payload = inner.payload(
@@ -735,7 +891,7 @@ mod tests {
     /// Mirrors `AgentAttentionSettingsTests.webhookCompatibilityEnvelope`.
     #[test]
     fn attention_events_carry_the_same_notification_buckets_as_the_app() {
-        let notifier = Notifier::new(&enabled_settings());
+        let notifier = Notifier::new_for_tests(&enabled_settings(), Language::En);
         let inner = notifier.inner.as_ref().expect("enabled");
 
         let approval = inner.payload(
@@ -774,7 +930,7 @@ mod tests {
 
     #[test]
     fn summary_is_truncated_and_never_carries_a_transcript() {
-        let notifier = Notifier::new(&enabled_settings());
+        let notifier = Notifier::new_for_tests(&enabled_settings(), Language::En);
         let inner = notifier.inner.as_ref().expect("enabled");
         let payload = inner.payload(
             NotificationEvent::AttentionRequired,
@@ -793,7 +949,7 @@ mod tests {
 
     #[test]
     fn delivery_without_a_runtime_records_an_error_instead_of_panicking() {
-        let notifier = Notifier::new(&enabled_settings());
+        let notifier = Notifier::new_for_tests(&enabled_settings(), Language::En);
         notifier.task_completed("Turn finished");
         let error = notifier.take_error().expect("error recorded");
         assert!(error.contains("no async runtime"));
@@ -831,7 +987,7 @@ mod tests {
 
         let mut settings = enabled_settings();
         settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
-        let notifier = Notifier::new(&settings);
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
         notifier.set_session("runtime-42", Some("Approval run"));
         notifier.attention_required(
             RuntimeStatus::WaitingApproval,
@@ -877,7 +1033,7 @@ mod tests {
         // timeout the assertion window was shorter than, and this test failed
         // for reasons that had nothing to do with the notifier.
         settings.webhook_url = Some("http://127.0.0.1:1/willdeep".to_owned());
-        let notifier = Notifier::new(&settings);
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
         notifier.task_completed("Turn finished");
 
         // Poll past the connect ceiling, so a slow refusal is still caught.
@@ -892,8 +1048,265 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert!(
-            error.is_some_and(|value| value.contains("webhook delivery failed")),
+            error.is_some_and(|value| value.contains("webhook: delivery failed")),
             "expected a recorded delivery failure"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Multi-channel delivery
+    // ---------------------------------------------------------------------
+
+    #[derive(Default)]
+    struct Captured {
+        /// Raw body and headers, kept separately: the signature is over the
+        /// exact bytes, and re-serializing the parsed JSON would not prove it.
+        webhook: Vec<(axum::http::HeaderMap, String, serde_json::Value)>,
+        lark: Vec<serde_json::Value>,
+        email: Vec<serde_json::Value>,
+    }
+
+    /// One loopback server with the three shapes the channels talk to.
+    async fn capture_channels() -> (u16, Arc<Mutex<Captured>>) {
+        use axum::response::IntoResponse;
+
+        let captured = Arc::new(Mutex::new(Captured::default()));
+        let webhook_sink = captured.clone();
+        let lark_sink = captured.clone();
+        let email_sink = captured.clone();
+        let app = axum::Router::new()
+            .route(
+                "/willdeep",
+                axum::routing::post(
+                    move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                        let sink = webhook_sink.clone();
+                        async move {
+                            let raw = String::from_utf8_lossy(&body).into_owned();
+                            let parsed =
+                                serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+                            if let Ok(mut captured) = sink.lock() {
+                                captured.webhook.push((headers, raw, parsed));
+                            }
+                            axum::http::StatusCode::NO_CONTENT.into_response()
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/hook",
+                axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                    let sink = lark_sink.clone();
+                    async move {
+                        if let Ok(mut captured) = sink.lock() {
+                            captured.lark.push(body);
+                        }
+                        axum::Json(serde_json::json!({"code":0,"msg":"success"})).into_response()
+                    }
+                }),
+            )
+            .route(
+                "/emails",
+                axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                    let sink = email_sink.clone();
+                    async move {
+                        if let Ok(mut captured) = sink.lock() {
+                            captured.email.push(body);
+                        }
+                        axum::Json(serde_json::json!({"id":"test-message-id"})).into_response()
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (port, captured)
+    }
+
+    fn lark_channel(url: String, events: Vec<NotificationEventKind>) -> NotificationChannel {
+        NotificationChannel::Lark {
+            name: Some("lark-test".to_owned()),
+            webhook_url: url,
+            secret: None,
+            secret_env: None,
+            events,
+        }
+    }
+
+    fn resend_channel(url: &str, events: Vec<NotificationEventKind>) -> NotificationChannel {
+        NotificationChannel::Email {
+            name: Some("mail-test".to_owned()),
+            from: "WillDeep <bot@example.com>".to_owned(),
+            to: vec!["ops@example.com".to_owned()],
+            events,
+            smtp: None,
+            resend: Some(crate::config::ResendChannelSettings {
+                api_key: None,
+                api_key_env: Some("WILLDEEP_TEST_NOTIFY_RESEND_KEY".to_owned()),
+                api_base: Some(format!("http://127.0.0.1:{url}")),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_lark_and_email_all_receive_one_event() {
+        // SAFETY: this variable name is used only by this test.
+        unsafe { std::env::set_var("WILLDEEP_TEST_NOTIFY_RESEND_KEY", "re_test_key") };
+        let (port, captured) = capture_channels().await;
+        let mut settings = enabled_settings();
+        settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
+        settings.channels = vec![
+            lark_channel(
+                format!("http://127.0.0.1:{port}/hook"),
+                vec![
+                    NotificationEventKind::TaskCompleted,
+                    NotificationEventKind::AttentionRequired,
+                ],
+            ),
+            resend_channel(
+                &port.to_string(),
+                vec![NotificationEventKind::TaskCompleted],
+            ),
+        ];
+        let notifier = Notifier::new_for_tests(&settings, Language::ZhCn);
+        notifier.set_session("runtime-42", Some("整理发布说明"));
+        notifier.task_completed("全部完成");
+        notifier.flush().await;
+
+        assert!(notifier.take_error().is_none());
+        let captured = captured.lock().expect("lock");
+        assert_eq!(captured.webhook.len(), 1);
+        assert_eq!(captured.lark.len(), 1);
+        assert_eq!(captured.email.len(), 1);
+        assert_eq!(captured.webhook[0].2["event"], "task_completed");
+
+        let text = captured.lark[0]["content"]["text"].as_str().expect("text");
+        assert!(text.contains("任务完成"), "{text}");
+        assert!(text.contains("全部完成"), "{text}");
+
+        assert_eq!(captured.email[0]["to"][0], "ops@example.com");
+        assert!(
+            captured.email[0]["subject"]
+                .as_str()
+                .expect("subject")
+                .contains("任务完成")
+        );
+        unsafe { std::env::remove_var("WILLDEEP_TEST_NOTIFY_RESEND_KEY") };
+    }
+
+    #[tokio::test]
+    async fn a_failing_channel_does_not_starve_the_others() {
+        let (port, captured) = capture_channels().await;
+        let mut settings = enabled_settings();
+        // A closed loopback port refuses immediately.
+        settings.webhook_url = Some("http://127.0.0.1:1/willdeep".to_owned());
+        settings.channels = vec![lark_channel(
+            format!("http://127.0.0.1:{port}/hook"),
+            vec![NotificationEventKind::TaskCompleted],
+        )];
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
+        notifier.task_completed("done");
+        notifier.flush().await;
+
+        let error = notifier
+            .take_error()
+            .expect("the failed channel is reported");
+        assert!(error.contains("webhook:"), "{error}");
+        // The endpoint itself is a credential in disguise; it must not ride
+        // along in an error that reaches the TUI notice or stderr.
+        assert!(!error.contains("127.0.0.1:1"), "{error}");
+        assert_eq!(captured.lock().expect("lock").lark.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_channel_with_a_missing_secret_is_reported_and_skipped() {
+        let (port, captured) = capture_channels().await;
+        let mut settings = enabled_settings();
+        settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
+        settings.channels = vec![NotificationChannel::Lark {
+            name: Some("ops".to_owned()),
+            webhook_url: format!("http://127.0.0.1:{port}/hook"),
+            secret: None,
+            secret_env: Some("WILLDEEP_TEST_UNSET_LARK_SECRET".to_owned()),
+            events: vec![NotificationEventKind::TaskCompleted],
+        }];
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
+        let error = notifier.take_error().expect("missing secret is reported");
+        assert!(error.contains("WILLDEEP_TEST_UNSET_LARK_SECRET"), "{error}");
+        assert!(error.starts_with("ops:"), "{error}");
+
+        notifier.task_completed("done");
+        notifier.flush().await;
+        let captured = captured.lock().expect("lock");
+        assert_eq!(
+            captured.webhook.len(),
+            1,
+            "the healthy channel still delivers"
+        );
+        assert!(captured.lark.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_signed_webhook_gets_the_hmac_of_the_exact_body() {
+        // SAFETY: this variable name is used only by this test.
+        unsafe { std::env::set_var("WILLDEEP_TEST_WEBHOOK_SECRET", "topsecret") };
+        let (port, captured) = capture_channels().await;
+        let settings = NotificationSettings {
+            channels: vec![NotificationChannel::Webhook {
+                name: Some("signed".to_owned()),
+                url: format!("http://127.0.0.1:{port}/willdeep"),
+                secret: None,
+                secret_env: Some("WILLDEEP_TEST_WEBHOOK_SECRET".to_owned()),
+                events: vec![NotificationEventKind::TaskCompleted],
+            }],
+            ..NotificationSettings::default()
+        };
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
+        notifier.task_completed("done");
+        notifier.flush().await;
+        assert!(notifier.take_error().is_none());
+
+        let captured = captured.lock().expect("lock");
+        let (headers, raw, _) = &captured.webhook[0];
+        let expected = format!(
+            "sha256={}",
+            channels::hex_hmac(b"topsecret", raw.as_bytes())
+        );
+        assert_eq!(
+            headers
+                .get("x-willdeep-signature")
+                .and_then(|value| value.to_str().ok()),
+            Some(expected.as_str())
+        );
+        unsafe { std::env::remove_var("WILLDEEP_TEST_WEBHOOK_SECRET") };
+    }
+
+    #[tokio::test]
+    async fn each_channel_honours_its_own_event_filter() {
+        let (port, captured) = capture_channels().await;
+        let mut settings = enabled_settings();
+        settings.webhook_url = Some(format!("http://127.0.0.1:{port}/willdeep"));
+        settings.channels = vec![lark_channel(
+            format!("http://127.0.0.1:{port}/hook"),
+            vec![NotificationEventKind::AttentionRequired],
+        )];
+        let notifier = Notifier::new_for_tests(&settings, Language::En);
+        notifier.task_completed("done");
+        notifier.attention_required(
+            RuntimeStatus::WaitingApproval,
+            "tool_approval",
+            "approve me",
+        );
+        notifier.flush().await;
+
+        let captured = captured.lock().expect("lock");
+        assert_eq!(captured.webhook.len(), 2);
+        assert_eq!(captured.lark.len(), 1);
+        let text = captured.lark[0]["content"]["text"].as_str().expect("text");
+        assert!(text.contains("Needs your attention"), "{text}");
+        assert!(!text.contains("Task completed"), "{text}");
     }
 }

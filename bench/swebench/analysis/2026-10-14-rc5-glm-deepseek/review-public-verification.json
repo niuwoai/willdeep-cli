@@ -1,0 +1,11 @@
+{
+  "version": "1.3.0-rc11",
+  "resolved": 44,
+  "effective": 59,
+  "startup_failure": 1,
+  "report_http": "200",
+  "archive_sha_verified": true,
+  "protected_files": 1197,
+  "hash_mismatches": 0,
+  "at": "2026-10-14T10:40:44+08:00"
+}

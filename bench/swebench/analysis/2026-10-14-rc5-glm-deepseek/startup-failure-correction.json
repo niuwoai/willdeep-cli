@@ -1,0 +1,19 @@
+{
+  "instance_id": "django__django-13112",
+  "source_status_sha256": "d05e044f45be30faeff1e2b2d64cd47a9370f3faef7a9ca4293f91a3abd3893a",
+  "raw_status": "unresolved",
+  "raw_resolved": false,
+  "interpretation": "startup_infrastructure_failure",
+  "evidence": {
+    "agent_exit": 139,
+    "agent_seconds": 1.1,
+    "reported_tokens": 0,
+    "main_messages": 0,
+    "only_patch_artifact": "binary core dump"
+  },
+  "original_records_unchanged": true,
+  "automatic_model_retest": false,
+  "confirmed_resolved_over_planned": 44,
+  "effective_records": 59,
+  "unmeasured": 1
+}

@@ -389,29 +389,45 @@ fn check_config(options: &DoctorOptions, checks: &mut Vec<DoctorCheck>) {
     }
 }
 
-/// Reports whether attention webhooks will actually fire. The URL itself is
-/// never included — a webhook endpoint can carry a token in its path or query,
-/// and this report gets written into shareable diagnostic bundles.
+/// Reports whether outbound notification channels will actually fire. Endpoints
+/// and secrets are never included — a webhook URL can carry a token in its path
+/// or query, and this report gets written into shareable diagnostic bundles.
 fn check_notifications(loaded: &LoadedConfig, checks: &mut Vec<DoctorCheck>) {
     let settings = &loaded.file.notifications;
-    let notifier = crate::notify::Notifier::new(settings);
-    if !notifier.is_enabled() {
-        checks.push(check(
-            "notifications",
-            CheckStatus::Pass,
-            "webhook disabled; attention stays local",
-        ));
+    let language =
+        crate::i18n::Language::parse(loaded.file.agent.language.as_deref()).unwrap_or_default();
+    let notifier = crate::notify::Notifier::new(settings, language);
+    let channels = notifier.channel_names();
+    if channels.is_empty() {
+        if let Some(error) = notifier.take_error() {
+            checks.push(check(
+                "notifications",
+                CheckStatus::Fail,
+                format!("no notification channel could be configured: {error}"),
+            ));
+        } else {
+            checks.push(check(
+                "notifications",
+                CheckStatus::Pass,
+                "no notification channels; attention stays local",
+            ));
+        }
         return;
     }
     checks.push(check(
         "notifications",
         CheckStatus::Pass,
-        format!(
-            "webhook enabled; task_completed={}; attention_required={}",
-            availability(settings.webhook_on_task_completed.unwrap_or(true)),
-            availability(settings.webhook_on_attention_required.unwrap_or(true)),
-        ),
+        format!("channels: {}", channels.join(", ")),
     ));
+    // A channel that failed to build (missing secret, bad provider) still has
+    // to be visible in a diagnostic report.
+    if let Some(error) = notifier.take_error() {
+        checks.push(check(
+            "notifications",
+            CheckStatus::Warning,
+            format!("skipped channel: {error}"),
+        ));
+    }
 }
 
 fn check_cli_provider(options: &DoctorOptions, checks: &mut Vec<DoctorCheck>) {

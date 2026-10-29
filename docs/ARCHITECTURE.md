@@ -33,7 +33,7 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 
 默认读取 `~/.willdeep/config.toml`，`WILLDEEP_HOME` 可替换配置目录，`--config` 可指定任意 TOML 文件。命令行与 `WILLDEEP_*` 环境变量覆盖 Profile；Profile 覆盖 Provider 专属环境变量和内置默认值。
 
-配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。明文 `api_key` 在 Unix 上要求配置文件权限为 `0600`；推荐使用 `api_key_env`。
+配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。内联密钥（Provider 的 `api_key`、通知渠道的 `secret` / `password` / `api_key`）在 Unix 上要求配置文件权限为 `0600`；也可以改用对应的 `*_env` 字段引用环境变量。`willdeep config show` 对内联密钥统一脱敏。
 
 ### Provider 身份与 API Dialect 分离
 
@@ -140,6 +140,10 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 `spawn_agent` 的可选 `task` 参数是 Task Packet：目标、已知事实、约束、相关文件与 verifier 命令。Runtime 按窗口档位把相关文件内联进 Worker 首条消息，并在每次尝试后**由 Runtime 自己执行** verifier 命令来判定成败——退出码是唯一裁决，模型的自述不是。失败输出经纯 Rust 的确定性消化（失败聚焦段 + 尾部，断言原文逐字保留）后回灌下一次尝试；尝试打满即判运行失败并要求升档。命令型 Worker 共用三层门禁：静态安全命令直接放行；非破坏、非凭据敏感的模糊命令交 AI 判官；拒绝或不可用时精确返回父 Agent。父 Agent 仅能通过 `ops_runner + target_command` 请求人类对同一命令一次性确认，子 Agent 本身没有审批 UI，危险与凭据命令也绝不进入 AI。
 
 写通道是一条通路的两种规模：写入型工种的目标文件先由父 ToolRegistry canonicalize 并作为**一个集合**整体审批，子 ToolRegistry 再以 canonical 绝对路径做集合成员匹配，符号链接或路径别名不能扩大授权范围；editor 是集合大小为 1 的特例。同一 Catalog 内运行中 Worker 的文件集互斥，冲突时后来者被拒绝并点名冲突文件，锁在运行结束、超时、取消或 panic 时随 `Drop` 释放。详见 [小上下文 Skill Worker](SKILL_WORKERS.md)。
+
+### 出站通知
+
+`[notifications]` 是事后旁路：任务完成、或 Agent 停下来等人处理时，把一句话发到外部。它与 `[[hooks]]` 是两件事——hook 在关键路径上、能拦动作；通知可以丢，失败只记一条错误，不影响轮次结果。一次事件先算一份 `willdeep.webhook.v1` payload，再按每条渠道自己的 `events` 过滤，给每条渠道起一个 detached 任务；HTTP 与邮件共用同一个请求超时，退出前 `flush` 最多等 6 秒。渠道有三种：Webhook（可选 HMAC 签名）、飞书自定义机器人（可选签名校验）、邮件（SMTP / Resend 两种可插拔后端）；密钥只写环境变量名，配置校验不检查变量是否存在——缺失只跳过该渠道。详见 [出站通知渠道](NOTIFICATIONS.md)。
 
 ### 用户交互与持久授权
 
