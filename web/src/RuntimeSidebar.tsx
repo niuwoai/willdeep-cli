@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Box, Button, Flex, Input, NativeSelect, Text, Textarea, VStack } from "@chakra-ui/react";
+import { Box, Button, Flex, NativeSelect, Text, Textarea, VStack } from "@chakra-ui/react";
 import type { Messages } from "./i18n";
 const AGENT_PREVIEW_LIMIT = 4;
 import { RuntimeDetailPanel, type RuntimeDetailTarget } from "./RuntimeDetailPanel";
@@ -118,8 +118,7 @@ type Props = {
   events: RuntimeEvent[];
   onIgnoreEvent: (id: string) => Promise<void>;
   messages: Messages;
-  onResolveApproval: (id: string, decision: "allow_once" | "deny" | "always_allow") => Promise<void>;
-  onAnswerQuestion: (id: string, answer: string | null) => Promise<void>;
+  onOpenGate: (id: string) => void;
   onAgentAction: (id: string, action: "stop" | "retry" | "retry_model" | "prompt" | "continue", currentModel?: string | null) => Promise<void>;
   canSpawnAgent: boolean;
   onSpawnAgent: (profile: AgentSpawnProfile, prompt: string) => Promise<boolean>;
@@ -150,9 +149,7 @@ function failureDomain(domain: string | null, t: Messages) {
   return t.unknownValue;
 }
 
-export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onResolveApproval, onAnswerQuestion, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [multiAnswers, setMultiAnswers] = useState<Record<string, string[]>>({});
+export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
   const [controlBusy, setControlBusy] = useState(false);
   const [spawnProfile, setSpawnProfile] = useState<AgentSpawnProfile>("generalist");
   const [spawnPrompt, setSpawnPrompt] = useState("");
@@ -222,23 +219,9 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
     </Box>
     {activity.gates.length > 0 && <VStack align="stretch" gap="2" mt="3">
       {activity.gates.map((gate) => <Box key={gate.id} p="2" borderRadius="sm" bg="var(--bg-panel)">
-        <Flex justify="space-between" gap="2"><Text fontSize="xs" color="var(--warning)">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</Text><Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "task", id: gate.task_id })}>{t.details}</Button></Flex>
+        <Flex justify="space-between" gap="2"><Text fontSize="xs" color="var(--warning)">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</Text><Button size="2xs" variant="ghost" flexShrink="0" onClick={() => onOpenGate(gate.id)}>{t.openHumanGate}</Button></Flex>
         <Text fontSize="xs" lineClamp="2">{gate.kind === "approval" ? gate.description : gate.question}</Text>
-        <details open={!gate.parked}><summary>{t.details}</summary>
-        {gate.kind === "approval" ? <Flex gap="1" mt="2" wrap="wrap">
-          <Button size="2xs" disabled={controlBusy} onClick={() => void runControl(() => onResolveApproval(gate.id, "allow_once"))}>{t.allowOnce}</Button>
-          <Button size="2xs" disabled={controlBusy} variant="outline" onClick={() => void runControl(() => onResolveApproval(gate.id, "deny"))}>{t.deny}</Button>
-          {gate.always_allow_available && <Button size="2xs" disabled={controlBusy} variant="ghost" onClick={() => void runControl(() => onResolveApproval(gate.id, "always_allow"))}>{t.alwaysAllow}</Button>}
-        </Flex> : <Box mt="2">
-          <Flex gap="1" wrap="wrap">
-            {gate.options.map((option) => gate.multi_select
-              ? <label key={option}><input type="checkbox" checked={(multiAnswers[gate.id] ?? []).includes(option)} onChange={(event) => setMultiAnswers((current) => ({ ...current, [gate.id]: event.target.checked ? [...(current[gate.id] ?? []), option] : (current[gate.id] ?? []).filter((value) => value !== option) }))} /> <Text as="span" fontSize="xs">{option}</Text></label>
-              : <Button key={option} size="2xs" disabled={controlBusy} onClick={() => void runControl(() => onAnswerQuestion(gate.id, option))}>{option}</Button>)}
-          </Flex>
-          {gate.multi_select && <Button mt="1" size="2xs" disabled={controlBusy || !(multiAnswers[gate.id]?.length)} onClick={() => void runControl(() => onAnswerQuestion(gate.id, (multiAnswers[gate.id] ?? []).join(", ")))}>{t.submitAnswer}</Button>}
-          <Flex mt="1" gap="1"><Input size="xs" value={answers[gate.id] ?? ""} placeholder={t.otherAnswer} onChange={(event) => setAnswers((current) => ({ ...current, [gate.id]: event.target.value }))} /><Button size="2xs" disabled={controlBusy || !(answers[gate.id]?.trim())} onClick={() => void runControl(() => onAnswerQuestion(gate.id, answers[gate.id].trim()))}>{t.submitAnswer}</Button></Flex>
-        </Box>}
-        </details>
+
       </Box>)}
     </VStack>}
     {activity.tasks.length > 0 && <VStack align="stretch" gap="1" mt="3">

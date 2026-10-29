@@ -109,6 +109,9 @@ impl App {
             transient_thought: None,
             thought_started_at: None,
             thought_hit_rows: Vec::new(),
+            expanded_user_messages: BTreeMap::new(),
+            user_message_controls: Vec::new(),
+            user_message_hit_rows: Vec::new(),
             deferred_steering: Vec::new(),
             turn_narration: None,
             tool_rows_expanded: false,
@@ -269,6 +272,9 @@ impl App {
         self.transient_thought = None;
         self.thought_started_at = None;
         self.thought_hit_rows.clear();
+        self.expanded_user_messages.clear();
+        self.user_message_controls.clear();
+        self.user_message_hit_rows.clear();
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
@@ -818,31 +824,34 @@ impl App {
         let Some(entry) = search.matches.get(search.selected).copied() else {
             return;
         };
+        if let Some(row) = self
+            .transcript
+            .get(entry)
+            .filter(|row| row.starts_with("You: "))
+        {
+            self.expanded_user_messages.insert(entry, row.clone());
+            self.transcript_render_cache = None;
+        }
+        if entry < self.archive_floor {
+            self.archive_floor = entry;
+            self.transcript_render_cache = None;
+        }
         // 高度按折叠视图算；命中被收起的工具行时，落在替它说话的汇总行上。
         let folded = self.display_transcript();
         let labels = self.message_time_labels(&folded, message_time::now());
-        let total = message_time::render_with_times(
-            &folded.rows,
-            &labels,
-            None,
-            self.transcript_width,
-            self.language,
-        )
-        .lines
-        .len();
+        let total = self
+            .render_user_transcript(&folded, &labels, None, folded.rows.len())
+            .0
+            .lines
+            .len();
         let through_match = folded
             .index_of
-            .get(entry)
+            .get(entry - self.archive_floor + usize::from(self.archive_floor > 0))
             .map(|&row| {
-                message_time::render_with_times(
-                    &folded.rows[..=row],
-                    &labels[..=row],
-                    None,
-                    self.transcript_width,
-                    self.language,
-                )
-                .lines
-                .len()
+                self.render_user_transcript(&folded, &labels, None, row + 1)
+                    .0
+                    .lines
+                    .len()
             })
             .unwrap_or(total);
         self.follow_bottom = false;
@@ -2273,7 +2282,9 @@ impl App {
             }
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
-            self.toggle_thought_at(y);
+            if !self.toggle_user_message_at(y) {
+                self.toggle_thought_at(y);
+            }
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains((x, y).into()) {
@@ -2524,6 +2535,7 @@ impl App {
             "/clear" => {
                 self.message_times.clear_rows(&self.transcript);
                 self.transcript.clear();
+                self.expanded_user_messages.clear();
                 self.scroll_to_bottom();
             }
             _ => self.append_transcript(format!("Error: unknown command {command}; use /help")),

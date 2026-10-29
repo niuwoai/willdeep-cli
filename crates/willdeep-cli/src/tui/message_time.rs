@@ -230,15 +230,10 @@ impl App {
     pub(super) fn timed_transcript_height(&self) -> usize {
         let folded = self.display_transcript();
         let labels = self.message_time_labels(&folded, now());
-        render_with_times(
-            &folded.rows,
-            &labels,
-            None,
-            self.transcript_width,
-            self.language,
-        )
-        .lines
-        .len()
+        self.render_user_transcript(&folded, &labels, None, folded.rows.len())
+            .0
+            .lines
+            .len()
     }
 
     fn message_time_error(&mut self, error: anyhow::Error) {
@@ -276,6 +271,7 @@ impl App {
     }
 }
 
+#[cfg(test)]
 pub(super) fn render_with_times(
     rows: &[String],
     labels: &[Option<String>],
@@ -283,8 +279,20 @@ pub(super) fn render_with_times(
     width: usize,
     language: Language,
 ) -> Text<'static> {
+    render_with_user_folds(rows, labels, search, width, language, &BTreeMap::new()).0
+}
+
+pub(super) fn render_with_user_folds(
+    rows: &[String],
+    labels: &[Option<String>],
+    search: Option<&str>,
+    width: usize,
+    language: Language,
+    users: &BTreeMap<usize, (usize, bool)>,
+) -> (Text<'static>, Vec<(usize, usize)>) {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
+    let mut controls = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
         // 真正画整段聊天区的最后一行时才补上。
@@ -295,6 +303,32 @@ pub(super) fn render_with_times(
             colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
             width,
         );
+        if let Some(&(source, expanded)) = users.get(&index)
+            && entry.lines.len() > user_message::PREVIEW_LINES
+        {
+            if !expanded {
+                entry.lines.truncate(user_message::PREVIEW_LINES);
+            }
+            let label = if expanded {
+                language.text("− 收起", "− Show less", "− 折りたたむ")
+            } else {
+                language.text("… 显示更多", "… Show more", "… もっと見る")
+            };
+            let control = wrap_styled_text(
+                Text::from(Line::styled(
+                    label.to_owned(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                width,
+            );
+            controls.extend(
+                (0..control.lines.len())
+                    .map(|line| (text.lines.len() + entry.lines.len() + line, source)),
+            );
+            entry.lines.extend(control.lines);
+        }
         if let Some(Some(label)) = labels.get(index) {
             let suffix = format!(" · {label}");
             let suffix_width = UnicodeWidthStr::width(suffix.as_str());
@@ -322,7 +356,7 @@ pub(super) fn render_with_times(
         }
         text.lines.extend(entry.lines);
     }
-    text
+    (text, controls)
 }
 
 #[cfg(test)]

@@ -7,6 +7,19 @@ import { messages } from "./i18n";
 
 afterEach(cleanup);
 
+it("shows one navigation reminder without duplicating question controls", () => {
+  const open = vi.fn();
+  const activity: RuntimeActivity = { tools: [], artifacts: [], agents: [], tasks: [], attention_count: 1,
+    gates: [{ kind: "question", id: "request", task_id: "task", question: "选择方案", options: ["A", "B", "C", "D"], multi_select: false }] };
+  render(<ChakraProvider value={defaultSystem}><RuntimeSidebar activity={activity} events={[]} messages={messages["zh-CN"]}
+    onIgnoreEvent={async () => {}} onOpenGate={open} onAgentAction={async () => {}} canSpawnAgent={false} onSpawnAgent={async () => false} /></ChakraProvider>);
+  fireEvent.click(screen.getByRole("button", { name: messages["zh-CN"].expand }));
+  expect(screen.queryByRole("button", { name: "A" })).toBeNull();
+  expect(screen.queryByPlaceholderText(messages["zh-CN"].otherAnswer)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: messages["zh-CN"].openHumanGate }));
+  expect(open).toHaveBeenCalledExactlyOnceWith("request");
+});
+
 function fixture(status: string) {
   const action = vi.fn(async () => {});
   const activity: RuntimeActivity = { tools: [], artifacts: [], tasks: [], gates: [], attention_count: 0,
@@ -14,7 +27,7 @@ function fixture(status: string) {
       model: null, status, current_turn: 1, current_tool: null, total_tokens: null, elapsed_seconds: 1,
       finished_seconds_ago: 0, worktree_branch: null, dedicated_worktree: false }] };
   render(<ChakraProvider value={defaultSystem}><RuntimeSidebar activity={activity} events={[]} messages={messages["zh-CN"]}
-    onIgnoreEvent={async () => {}} onResolveApproval={async () => {}} onAnswerQuestion={async () => {}}
+    onIgnoreEvent={async () => {}} onOpenGate={() => {}}
     onAgentAction={action} canSpawnAgent={false} onSpawnAgent={async () => false} /></ChakraProvider>);
   fireEvent.click(screen.getByRole("button", { name: messages["zh-CN"].expand }));
   return action;

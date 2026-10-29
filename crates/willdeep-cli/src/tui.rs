@@ -80,6 +80,7 @@ mod session_picker_ui;
 mod sidebar;
 mod status_line;
 mod update_notice;
+mod user_message;
 mod webapp_commands;
 mod workspace_attention;
 mod workspace_commands;
@@ -413,6 +414,9 @@ struct App {
     transient_thought: Option<String>,
     thought_started_at: Option<Instant>,
     thought_hit_rows: Vec<(u16, usize)>,
+    expanded_user_messages: BTreeMap<usize, String>,
+    user_message_controls: Vec<(usize, usize)>,
+    user_message_hit_rows: Vec<(u16, usize)>,
     /// Runtime 已接收、等待下一次模型读取的插话；保留原始提交时间。
     deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
@@ -1462,6 +1466,7 @@ fn draw<B: ratatui::backend::Backend>(
         }
         let mut colored = app.transcript_viewport(&transient, offset);
         app.transcript_render_offset = offset;
+        app.update_user_message_hits(offset, areas[0].y.saturating_add(1));
         app.thought_hit_rows = colored
             .lines
             .iter()
