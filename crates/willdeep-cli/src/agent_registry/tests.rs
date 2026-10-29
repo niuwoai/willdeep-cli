@@ -69,6 +69,7 @@ async fn signed_incompatible_official_update_preserves_active_installation() {
             willdeep_core::agent_definition::store::ModelBinding {
                 provider_profile: Some("fixture".into()),
                 model: Some("fixed-model".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -234,7 +235,7 @@ async fn independent_local_models_preserve_definition_hash_and_permissions() {
         operate(
             &home,
             "bind",
-            json!({"id":id,"binding":{"provider_profile":"fixture","model":model}}),
+            json!({"id":id,"binding":{"provider_profile":"fixture","model":model,"context_window":32768,"max_turns":12}}),
         )
         .await
         .unwrap();
@@ -265,6 +266,11 @@ async fn independent_local_models_preserve_definition_hash_and_permissions() {
     assert!(profiles.iter().all(|p| p.definition_model_bound
         && !p.hosted_job_prompt
         && p.write_scope == willdeep_core::SubagentWriteScope::None));
+    assert!(
+        profiles
+            .iter()
+            .all(|p| p.context_window == 32768 && p.max_turns == 12)
+    );
     let after = operate(&home, "export", json!({"id":id})).await.unwrap();
     assert_eq!(before, after);
     assert!(after.get("binding").is_none());

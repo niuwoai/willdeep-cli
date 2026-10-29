@@ -8,7 +8,8 @@ describe("foreign agent conversion", () => {
     expect(draft.provider).toBe("example");
     expect(draft.definition.instructions).toBe("Review images carefully.");
     expect(JSON.stringify(draft)).not.toContain("secret-value");
-    expect(draft.omitted).toContain("agent");
+    expect(draft.max_turns).toBe(8);
+    expect(draft.omitted).not.toContain("agent");
     expect(draft.omitted).toContain("model.api_key");
   });
   it("converts Multica API agent JSON without inheriting authority", () => {
@@ -20,5 +21,15 @@ describe("foreign agent conversion", () => {
   });
   it.each(["model: first\nmodel: second", "model: &model {default: a}\nother: *model", "[]"])("rejects ambiguous or unsupported YAML", source => {
     expect(() => convertForeignAgent("hermes", source, "Instructions", "user/example", "Example")).toThrow();
+  });
+  it("maps Hermes execution limits while retaining unmapped field names", () => {
+    const draft = convertForeignAgent("hermes", "model:\n  context_length: 32768\nagent:\n  max_turns: 12\n  other: secret", "Instructions", "user/test", "Test");
+    expect(draft.context_window).toBe(32768);
+    expect(draft.max_turns).toBe(12);
+    expect(draft.omitted).toEqual(["agent.other"]);
+    expect(JSON.stringify(draft)).not.toContain("secret");
+  });
+  it.each(["agent:\n  max_turns: 0", "agent:\n  max_turns: 1.5", "model:\n  context_length: 100", "model:\n  context_length: '32768'"])("rejects invalid execution limits", source => {
+    expect(()=>convertForeignAgent("hermes", source, "Instructions", "user/test", "Test")).toThrow();
   });
 });

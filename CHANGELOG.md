@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.131.0-rc1] - 2026-10-29
+
+### Added
+- Web 与 CLI 支持为每个 Agent 设置本机上下文窗口和最大轮次，执行配置优先于 Worker 档位，兼容已有安装记录。
+- Hermes 导入映射 `model.context_length` 和 `agent.max_turns`，导入前可调整并校验；执行配置不进入可分享的定义包。
+
 ## [0.130.0-rc1] - 2026-10-29
 
 ### Added

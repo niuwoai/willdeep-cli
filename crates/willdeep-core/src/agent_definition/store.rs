@@ -35,6 +35,22 @@ pub struct Installation {
 pub struct ModelBinding {
     pub provider_profile: Option<String>,
     pub model: Option<String>,
+    pub context_window: Option<u64>,
+    pub max_turns: Option<usize>,
+}
+
+impl ModelBinding {
+    pub const MAX_CONTEXT_WINDOW: u64 = 2_000_000;
+    pub const MAX_TURNS: usize = 1000;
+
+    pub fn apply_limits(&self, profile: &mut crate::SubagentProfile) {
+        if let Some(window) = self.context_window {
+            profile.context_window = window;
+        }
+        if let Some(turns) = self.max_turns {
+            profile.max_turns = turns;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -212,6 +228,18 @@ impl AgentLibrary {
     }
 
     fn validate_binding(binding: &ModelBinding) -> Result<()> {
+        ensure!(
+            binding
+                .context_window
+                .is_none_or(|value| (1024..=ModelBinding::MAX_CONTEXT_WINDOW).contains(&value)),
+            "agent context_window must be between 1024 and 2000000 tokens"
+        );
+        ensure!(
+            binding
+                .max_turns
+                .is_none_or(|value| (1..=ModelBinding::MAX_TURNS).contains(&value)),
+            "agent max_turns must be between 1 and 1000"
+        );
         ensure!(
             binding
                 .provider_profile

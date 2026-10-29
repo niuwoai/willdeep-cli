@@ -924,6 +924,9 @@ fn dispatch_model_names_the_bound_model_and_flags_an_unbound_tier() {
     let mut profiles = builtin_profiles(Arc::new(ReportProvider));
     for profile in &mut profiles {
         profile.model = Some("trade-model".to_owned());
+        if profile.id == "reviewer" {
+            profile.definition_model_bound = true;
+        }
     }
     let catalog = SubagentCatalog::new(
         std::env::temp_dir(),
@@ -947,6 +950,9 @@ fn dispatch_model_names_the_bound_model_and_flags_an_unbound_tier() {
     let expert = catalog.dispatch_model("deep", Some("expert"));
     assert_eq!(expert.model.as_deref(), Some("gpt-5.6-sol"));
     assert_eq!(expert.fallback, None);
+    let bound = catalog.dispatch_model("reviewer", Some("expert"));
+    assert_eq!(bound.model.as_deref(), Some("trade-model"));
+    assert_eq!(bound.fallback, None);
 
     // 进阶档在这个 provider 上没绑：模型没换，这件事必须说出来。
     let advanced = catalog.dispatch_model("tester", Some("advanced"));

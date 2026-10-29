@@ -1,7 +1,11 @@
 import type { Language } from "./i18n";
 const text = {
+  contextWindow: ["上下文窗口（Token）", "Context window (tokens)", "コンテキスト長（トークン）"],
+  maxTurns: ["最大轮次", "Maximum turns", "最大ターン数"],
+  executionLimitsHelp: ["留空继承默认值；填写后优先于 Worker 档位。窗口不会扩展模型本身的能力，请按模型实际限制设置。", "Leave blank to inherit defaults. Explicit values override Worker tiers. The window does not extend model capabilities; use the model's actual limit.", "空欄は既定値を継承します。指定値は Worker 設定より優先されます。モデルの実際の上限に合わせてください。"],
+  invalidExecutionLimits: ["上下文窗口须为 1024–2000000 的整数；轮次须为 1–1000 的整数。", "Context must be an integer from 1024 to 2000000; turns from 1 to 1000.", "コンテキストは 1024–2000000、ターン数は 1–1000 の整数で指定してください。"],
   foreignImport: ["导入 Hermes / Multica", "Import Hermes / Multica", "Hermes / Multica をインポート"],
-  foreignImportHelp: ["转换名称、指令与模型引用。默认只读；工具、技能、预算和执行设置需在本机重新配置。", "Convert identity, instructions and model references. Read-only by default; configure tools, skills, budgets and execution settings locally.", "名前・指示・モデルを変換します。既定は読み取り専用。ツール・スキル・予算・実行設定はローカルで設定してください。"],
+  foreignImportHelp: ["转换名称、指令与模型引用；Hermes 同时转换上下文窗口和轮次。默认只读，工具、技能和外部执行设置需在本机重新配置。", "Convert identity, instructions and model references, plus Hermes context and turn limits. Read-only by default; configure tools, skills and external execution settings locally.", "名前・指示・モデル、および Hermes のコンテキスト長とターン数を変換します。既定は読み取り専用。ツール・スキル・外部実行設定はローカルで設定してください。"],
   importFormat: ["来源格式", "Source format", "入力形式"],
   hermesFormat: ["Hermes profile", "Hermes profile", "Hermes profile"],
   multicaFormat: ["Multica Agent JSON", "Multica Agent JSON", "Multica Agent JSON"],
