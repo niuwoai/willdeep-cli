@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod reasoning_tests;
+
 pub(super) async fn complete(
     provider: &ResponsesProvider,
     messages: &[Message],
@@ -70,6 +73,7 @@ pub(super) async fn complete(
 #[derive(Default)]
 struct State {
     text: BTreeMap<(u64, u64), String>,
+    reasoning: BTreeMap<(u64, u64), String>,
     arguments: BTreeMap<String, String>,
     call_identity: BTreeMap<String, (String, String)>,
     sequence: Option<u64>,
@@ -99,6 +103,19 @@ impl State {
             self.response_id = Some(id.to_owned());
         }
         match kind {
+            "response.reasoning_text.delta" => {
+                let key = (
+                    value["output_index"]
+                        .as_u64()
+                        .ok_or_else(|| invalid("reasoning lacks output_index"))?,
+                    value["content_index"]
+                        .as_u64()
+                        .ok_or_else(|| invalid("reasoning lacks content_index"))?,
+                );
+                let delta = string(&value, "delta")?;
+                self.reasoning.entry(key).or_default().push_str(delta);
+                Ok((false, vec![ProviderEvent::ReasoningDelta(delta.to_owned())]))
+            }
             "response.output_item.added" if value["item"]["type"] == "function_call" => {
                 let item = &value["item"];
                 let id = string(item, "id")?.to_owned();
@@ -170,6 +187,7 @@ impl State {
             .as_array()
             .ok_or_else(|| invalid("terminal response lacks output"))?;
         let mut final_text = BTreeMap::new();
+        let mut final_reasoning = BTreeMap::new();
         let mut calls = Vec::new();
         let mut seen_arguments = BTreeSet::new();
         let mut identities = BTreeSet::new();
@@ -182,6 +200,20 @@ impl State {
                 return Err(invalid("completed response contains an unfinished item"));
             }
             match item["type"].as_str() {
+                Some("reasoning") => {
+                    // Summary-only OpenAI items do not contain the raw text required
+                    // by DeepSeek. Never replay a summary as original reasoning.
+                    if let Some(content) = item["content"].as_array() {
+                        for (content_index, part) in content.iter().enumerate() {
+                            if part["type"] == "reasoning_text" {
+                                final_reasoning.insert(
+                                    (output_index as u64, content_index as u64),
+                                    string(part, "text")?.to_owned(),
+                                );
+                            }
+                        }
+                    }
+                }
                 Some("message") => {
                     let content = item["content"]
                         .as_array()
@@ -272,6 +304,7 @@ impl State {
                 final_text.entry(*key).or_insert_with(|| text.clone());
             }
         }
+        updates.extend(self.finish_reasoning(final_reasoning, status == "completed")?);
         self.text = final_text;
         let content = self.text.values().cloned().collect::<String>();
         if content.is_empty() && calls.is_empty() && status == "completed" {
@@ -279,7 +312,7 @@ impl State {
         }
         self.completed = Some(Completion {
             content,
-            reasoning: None,
+            reasoning: self.reasoning_text(),
             tool_calls: calls,
             finish_reason: Some(status.to_owned()),
             usage: self.usage.clone(),
@@ -289,12 +322,45 @@ impl State {
 
     fn partial(&self) -> Completion {
         Completion {
-            reasoning: None,
+            reasoning: self.reasoning_text(),
             content: self.text.values().cloned().collect(),
             tool_calls: Vec::new(),
             finish_reason: Some("incomplete".to_owned()),
             usage: self.usage.clone(),
         }
+    }
+
+    fn reasoning_text(&self) -> Option<String> {
+        let text = self.reasoning.values().cloned().collect::<String>();
+        (!text.is_empty()).then_some(text)
+    }
+
+    fn finish_reasoning(
+        &mut self,
+        mut final_parts: BTreeMap<(u64, u64), String>,
+        complete: bool,
+    ) -> Result<Vec<ProviderEvent>, ProviderError> {
+        for (key, observed) in &self.reasoning {
+            match final_parts.get(key) {
+                Some(text) if text != observed => {
+                    return Err(invalid("final reasoning differs from streamed reasoning"));
+                }
+                None if complete => {
+                    return Err(invalid("streamed reasoning missing from final response"));
+                }
+                None => {
+                    final_parts.insert(*key, observed.clone());
+                }
+                _ => {}
+            }
+        }
+        let updates = final_parts
+            .iter()
+            .filter(|(key, _)| !self.reasoning.contains_key(key))
+            .map(|(_, text)| ProviderEvent::ReasoningDelta(text.clone()))
+            .collect();
+        self.reasoning = final_parts;
+        Ok(updates)
     }
 }
 
