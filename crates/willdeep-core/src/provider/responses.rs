@@ -7,6 +7,9 @@ use super::{Provider, ProviderConfig, ProviderError};
 use crate::types::{Completion, Message, MessageAttachment, Role, ToolCall, ToolDefinition, Usage};
 mod streaming;
 
+#[cfg(test)]
+mod reasoning_tests;
+
 pub struct ResponsesProvider {
     config: ProviderConfig,
     client: Client,
@@ -79,6 +82,11 @@ fn encode_input(messages: &[Message]) -> (String, Vec<ResponseInputItem>) {
             Role::System => instructions.push(message.content.clone()),
             Role::User => input.push(ResponseInputItem::user_message(message)),
             Role::Assistant => {
+                if let Some(reasoning) =
+                    message.reasoning.as_deref().filter(|text| !text.is_empty())
+                {
+                    input.push(ResponseInputItem::reasoning(reasoning));
+                }
                 if !message.content.is_empty() {
                     input.push(ResponseInputItem::message("assistant", &message.content));
                 }
@@ -145,6 +153,14 @@ struct ResponseInputItem {
 }
 
 impl ResponseInputItem {
+    fn reasoning(text: &str) -> Self {
+        let mut item = Self::message("assistant", text);
+        item.kind = "reasoning";
+        item.role = None;
+        item.content = vec![ResponseContent::text("reasoning_text", text.to_owned())];
+        item
+    }
+
     fn message(role: &'static str, text: &str) -> Self {
         Self {
             kind: "message",
@@ -271,9 +287,19 @@ fn decode_completion(bytes: &[u8]) -> Result<Completion, ProviderError> {
         .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
 
     let mut text = Vec::new();
+    let mut reasoning = String::new();
     let mut tool_calls = Vec::new();
     for item in response.output {
         match item.kind.as_str() {
+            "reasoning" => {
+                for content in item.content {
+                    if content.kind == "reasoning_text"
+                        && let Some(value) = content.text
+                    {
+                        reasoning.push_str(&value);
+                    }
+                }
+            }
             "message" => {
                 for content in item.content {
                     if matches!(content.kind.as_str(), "output_text" | "text")
@@ -300,7 +326,7 @@ fn decode_completion(bytes: &[u8]) -> Result<Completion, ProviderError> {
         return Err(ProviderError::EmptyResponse);
     }
     Ok(Completion {
-        reasoning: None,
+        reasoning: (!reasoning.is_empty()).then_some(reasoning),
         content: text.join(""),
         tool_calls,
         finish_reason: response.status,
