@@ -103,6 +103,7 @@ fn help_is_localized_and_laid_out_one_command_per_line() {
         "/skills",
         "/clear",
         "/short",
+        "/verbose",
     ] {
         assert!(
             lines

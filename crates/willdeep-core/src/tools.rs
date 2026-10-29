@@ -934,6 +934,12 @@ impl ToolRegistry {
         tools
     }
 
+    pub(crate) fn allows_agent_tool(&self, name: &str) -> bool {
+        self.allowed_tools
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(name))
+    }
+
     pub async fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
         if self.approval_mode() == ApprovalMode::ReadOnly
             && (matches!(

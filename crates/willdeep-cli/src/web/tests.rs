@@ -138,6 +138,47 @@ fn tool_events_are_redacted_for_sse() {
     let event=client_event(serde_json::json!({"type":"tool_completed","name":"read_file","output":"secret","is_error":false}),Language::En).unwrap();
     assert!(event.get("output").is_none());
 }
+
+#[test]
+fn successful_plan_receipts_reach_sse_without_raw_tool_payloads() {
+    let plan: willdeep_core::conversation::Plan = serde_json::from_value(serde_json::json!({
+        "summary":"", "steps":[
+            {"id":"a", "text":"Build", "status":"in_progress"},
+            {"id":"b", "text":"Install", "status":"in_progress"},
+            {"id":"c", "text":"Verify", "status":"pending", "depends_on":["a","b"]}
+        ]
+    }))
+    .unwrap();
+    let output =
+        serde_json::to_string(&willdeep_core::planning::Receipt::new(plan, false)).unwrap();
+    let call = willdeep_core::ToolCall {
+        id: "update-1".into(),
+        name: "update_plan".into(),
+        arguments: "private arguments".into(),
+    };
+    let event = crate::agent_event_json(willdeep_core::AgentEvent::ToolCompleted {
+        call: call.clone(),
+        output: output.clone(),
+        is_error: false,
+    });
+    let public = client_event(event, Language::En).unwrap();
+    assert_eq!(
+        public["plan_update"]["running"],
+        serde_json::json!(["a", "b"])
+    );
+    assert_eq!(
+        public["plan_update"]["waiting"]["c"],
+        serde_json::json!(["a", "b"])
+    );
+    assert!(public.get("arguments").is_none());
+    assert!(public.get("output").is_none());
+    let failed = crate::agent_event_json(willdeep_core::AgentEvent::ToolCompleted {
+        call,
+        output,
+        is_error: true,
+    });
+    assert!(failed.get("plan_update").is_none());
+}
 #[test]
 fn thought_events_are_compact_and_tool_arguments_stay_private() {
     let event = client_event(

@@ -4,8 +4,8 @@ import { markdownCopy } from "./markdownCopy";
 import "./conversation.css";
 import { Workflow } from "lucide-react";
 
-type StepStatus = "pending" | "in_progress" | "done" | "skipped" | "failed";
-export type Plan = { summary: string; steps: Array<{ id: string; text: string; status: StepStatus; detail?: string | null }> };
+type StepStatus = "pending" | "in_progress" | "done" | "skipped" | "failed" | "blocked";
+export type Plan = { summary: string; steps: Array<{ id: string; text: string; status: StepStatus; detail?: string | null; depends_on?: string[] }> };
 export type ConversationItem = {
   role: "user" | "assistant" | "system" | "plan";
   content: string;
@@ -20,9 +20,10 @@ export type ConversationItem = {
 export function ConversationCard({ plan, details = [], messages: t }: { plan?: Plan; details?: string[]; messages: Messages }) {
   const statuses: Record<StepStatus, string> = {
     pending: t.planPending, in_progress: t.toolRunning, done: t.toolDone,
-    skipped: t.planSkipped, failed: t.toolFailed,
+    skipped: t.planSkipped, failed: t.toolFailed, blocked: t.blocked,
   };
   const finished = plan?.steps.filter((step) => step.status === "done" || step.status === "skipped").length ?? 0;
+  const running = plan?.steps.filter((step) => step.status === "in_progress").length ?? 0;
   if (!plan) return <details className="host-event" aria-label={t.hostActivity}>
     <summary><Workflow size={14} /><span>{t.hostActivity}</span><small>{t.conversationOriginal}</small></summary>
     {details.map((content) => <pre key={content}>{content}</pre>)}
@@ -31,13 +32,21 @@ export function ConversationCard({ plan, details = [], messages: t }: { plan?: P
     <div className="conversation-card-heading">
       <strong>{plan ? t.planTitle : t.hostActivity}</strong>
       {plan && <span>{t.planProgress.replace("{finished}", String(finished)).replace("{total}", String(plan.steps.length))}</span>}
+      {running > 0 && <span role="status">{t.planRunning.replace("{count}", String(running))}</span>}
     </div>
     {plan?.summary && <Markdown content={plan.summary} copy={markdownCopy(t)} />}
     {plan && <ol className="conversation-plan-steps">
-      {plan.steps.map((step) => <li key={step.id} data-status={step.status}>
-        <span className="conversation-plan-status">{statuses[step.status]}</span>
-        <div><span>{step.text}</span>{step.detail && <p>{step.detail}</p>}</div>
-      </li>)}
+      {plan.steps.map((step) => {
+        const waiting = (step.depends_on ?? []).filter((id) => !plan.steps.some((other) => other.id === id && other.status === "done"));
+        const isWaiting = step.status === "pending" && waiting.length > 0;
+        const dependencies = waiting.map((id) => plan.steps.find((other) => other.id === id)?.text ?? id).join(t.planDependencySeparator);
+        return <li key={step.id} data-status={isWaiting ? "waiting" : step.status}>
+          <span className="conversation-plan-status">{isWaiting ? t.planWaiting : statuses[step.status]}</span>
+          <div><span>{step.text}</span>{step.detail && <p>{step.detail}</p>}
+            {isWaiting && <p>{t.planWaitingFor.replace("{steps}", dependencies)}</p>}
+          </div>
+        </li>;
+      })}
     </ol>}
     {details.length > 0 && <details className="conversation-card-details">
       <summary>{t.conversationOriginal}</summary>

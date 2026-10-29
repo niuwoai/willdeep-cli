@@ -1989,6 +1989,19 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
                 "is_error": is_error
             });
             if !is_error
+                && call.name == "update_plan"
+                && let Some(mut receipt) = willdeep_core::planning::receipt(&output)
+            {
+                for step in &mut receipt.plan.steps {
+                    step.text = willdeep_core::judge::redact_credentials(&step.text);
+                    step.detail = step
+                        .detail
+                        .as_deref()
+                        .map(willdeep_core::judge::redact_credentials);
+                }
+                value["plan_update"] = serde_json::to_value(receipt).expect("plan serializes");
+            }
+            if !is_error
                 && call.name == "run_command"
                 && let Some(seconds) =
                     willdeep_core::tools::command_wait::notice_wait_seconds(&output)

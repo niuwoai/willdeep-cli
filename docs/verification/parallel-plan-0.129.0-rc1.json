@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-29",
+  "version": "0.129.0-rc1",
+  "branch": "feature/parallel-plan-dependencies",
+  "feature_checks_passed": true,
+  "core_plan_tests": { "passed": 15, "failed": 0 },
+  "goal_evidence_gate_tests": { "passed": 1, "failed": 0 },
+  "cli_plan_and_sse_tests": { "passed": 7, "failed": 0 },
+  "web_plan_component_tests": { "passed": 3, "failed": 0 },
+  "web_suite": {
+    "passed": 182,
+    "failed": 1,
+    "workers": 1,
+    "baseline_failure": "ProviderSetup.test.tsx: obsolete plugin-permission wording assertion",
+    "baseline_evidence": "Component, test and related setup translations are identical to HEAD."
+  },
+  "web_build_passed": true,
+  "changed_rust_files_format_passed": true,
+  "git_diff_check_passed": true,
+  "version_consistency_passed": true,
+  "full_rust_suite": "Interrupted during an unrelated large recovery-inventory test; not claimed as passed.",
+  "live_paid_provider_validation": false,
+  "deployed": false,
+  "committed": false
+}

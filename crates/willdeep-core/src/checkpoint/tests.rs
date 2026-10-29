@@ -763,6 +763,7 @@ fn goal_state_is_persisted_with_the_checkpoint_and_never_rewound() {
     });
     let save = |goal: crate::goal::GoalState| {
         sink.save(&RunCheckpoint {
+            plan: None,
             metadata: CheckpointMetadata::default(),
             messages: Vec::new(),
             goal: Some(goal),

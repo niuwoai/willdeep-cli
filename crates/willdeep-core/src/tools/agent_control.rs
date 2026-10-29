@@ -22,12 +22,15 @@ pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &[
 pub const DEFAULT_AWAIT_SECONDS: u64 = 600;
 pub const MAX_AWAIT_SECONDS: u64 = 1_800;
 
-/// `update_plan`：只在有激活目标（`/goal`）时出现在主 Agent 的工具面里。
-/// 执行在 Agent 层（它改的是 [`crate::GoalContinuation`]，不碰工作区）。
+/// Session plans are available to the parent; goal criteria still require /goal.
 pub(crate) fn update_plan_definition() -> ToolDefinition {
     definition(
         "update_plan",
-        "Record the goal's acceptance criteria, mark criteria done with evidence, update the step plan, or record what blocks you. \
+        "Create or update a dependency-aware session plan. Returns ready, running and waiting step ids. \
+Use merge=true for partial updates by stable id; omitted fields keep their values. New steps require a title. \
+Start independent ready steps concurrently using available background workers/read tools, subject to permissions, budgets and resource conflicts. \
+Mark work in_progress when starting it, and done only after verifying its result. Dependencies must all be done before a step starts or finishes. \
+Only with an active /goal: record acceptance criteria, mark criteria done with evidence, or record what blocks the goal. \
 The goal can only be declared complete when every acceptance criterion is marked done with evidence and no delegated worker is still running. \
 Define concrete, checkable criteria early; mark one done only with proof (command output, test name, file path, commit). \
 All fields are optional; only the fields you pass change. No approval is needed.",
@@ -42,9 +45,10 @@ All fields are optional; only the fields you pass change. No approval is needed.
             "steps":{"type":"array","maxItems":24,"items":{"type":"object","properties":{
                 "id":{"type":"string","description":"Stable step id such as s1; required when merge is true."},
                 "title":{"type":"string"},
-                "status":{"type":"string","enum":["pending","in_progress","done","skipped","failed"]},
-                "note":{"type":"string"}
-            },"required":["title"],"additionalProperties":false}},
+                "status":{"type":"string","enum":["pending","in_progress","done","skipped","failed","blocked"]},
+                "note":{"type":"string"},
+                "depends_on":{"type":"array","items":{"type":"string"},"description":"Stable ids of prerequisite steps. All must be done; no cycles. Omitted on merge preserves dependencies."}
+            },"additionalProperties":false}},
             "blocked_reason":{"type":"string","description":"What currently blocks progress; an empty string clears it."}
         },"additionalProperties":false}),
     )

@@ -55,6 +55,7 @@ pub struct CompletionPatchEvidence {
 
 #[derive(Clone, Debug)]
 pub struct RunCheckpoint {
+    pub plan: Option<crate::conversation::Plan>,
     pub metadata: CheckpointMetadata,
     pub messages: Vec<Message>,
     /// 当前目标的快照（没有目标时为 `None`）。与消息同一次写入：重启后预算与
@@ -63,6 +64,9 @@ pub struct RunCheckpoint {
 }
 
 pub trait CheckpointSink: Send + Sync {
+    fn current_plan(&self) -> Result<Option<crate::conversation::Plan>, String> {
+        Ok(None)
+    }
     fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
         Ok(None)
     }
@@ -85,6 +89,7 @@ pub trait CheckpointSink: Send + Sync {
 }
 
 pub(crate) struct CheckpointRecorder<'a> {
+    pub plan: Option<crate::conversation::Plan>,
     completion_patch: Option<CompletionPatchEvidence>,
     background: Option<&'a crate::BackgroundTaskRegistry>,
     sink: Option<&'a dyn CheckpointSink>,
@@ -107,6 +112,7 @@ const STREAM_CHECKPOINT_BYTES: usize = 16 * 1024;
 impl<'a> CheckpointRecorder<'a> {
     pub fn new(sink: Option<&'a dyn CheckpointSink>) -> Self {
         Self {
+            plan: None,
             completion_patch: None,
             background: None,
             sink,
@@ -125,6 +131,14 @@ impl<'a> CheckpointRecorder<'a> {
 
     pub fn retain_for_deadline(&mut self) {
         self.retain_memory = true;
+    }
+
+    pub fn restore_plan(&self) -> Result<Option<crate::conversation::Plan>, AgentError> {
+        self.sink
+            .map(|sink| sink.current_plan())
+            .transpose()
+            .map(Option::flatten)
+            .map_err(AgentError::Checkpoint)
     }
 
     pub fn deadline_outcome(&self) -> AgentOutcome {
@@ -265,6 +279,7 @@ impl<'a> CheckpointRecorder<'a> {
             .map(|call| call.id.clone())
             .collect();
         let checkpoint = RunCheckpoint {
+            plan: self.plan.clone(),
             metadata: CheckpointMetadata {
                 agent_reports_received: self
                     .background
@@ -461,6 +476,9 @@ impl Drop for ActiveRun {
 }
 
 impl CheckpointSink for ClaimedSessionCheckpointSink {
+    fn current_plan(&self) -> Result<Option<crate::conversation::Plan>, String> {
+        self.inner.current_plan()
+    }
     fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
         self.inner.completion_patch()
     }
@@ -492,6 +510,12 @@ impl CheckpointSink for ClaimedSessionCheckpointSink {
 }
 
 impl CheckpointSink for SessionCheckpointSink {
+    fn current_plan(&self) -> Result<Option<crate::conversation::Plan>, String> {
+        self.store
+            .load(self.session_id)
+            .map(|session| session.current_plan)
+            .map_err(|error| error.to_string())
+    }
     fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
         self.store
             .load(self.session_id)
@@ -548,6 +572,9 @@ impl CheckpointSink for SessionCheckpointSink {
         self.store
             .update(self.session_id, |session| {
                 session.messages = checkpoint.messages.clone();
+                if let Some(plan) = &checkpoint.plan {
+                    session.current_plan = Some(plan.clone());
+                }
                 session
                     .agent_reports_received
                     .extend(&checkpoint.metadata.agent_reports_received);

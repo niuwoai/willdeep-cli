@@ -1786,9 +1786,9 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 没有目标时不给 `update_plan`，也不钉目标块。
+/// 普通会话同样有计划工具，但不钉目标块。
 #[tokio::test]
-async fn update_plan_is_hidden_without_a_goal() {
+async fn update_plan_is_available_without_a_goal() {
     let provider = Arc::new(ScriptedGoalProvider {
         script: Mutex::new([("done".to_owned(), None)].into_iter().collect()),
         systems: Mutex::new(Vec::new()),
@@ -1807,9 +1807,117 @@ async fn update_plan_is_hidden_without_a_goal() {
     .with_goal_continuation(Arc::new(GoalContinuation::new()));
     agent.run("hello").await.expect("run");
     assert!(
-        !provider.tool_names.lock().expect("tools")[0]
+        provider.tool_names.lock().expect("tools")[0]
             .iter()
             .any(|name| name == "update_plan")
     );
     assert!(!provider.systems.lock().expect("systems")[0].contains("<goal-state>"));
+}
+
+#[tokio::test]
+async fn dependency_plan_survives_checkpoint_and_rejects_premature_start() {
+    let call = |arguments: serde_json::Value| {
+        (
+            String::new(),
+            Some(("update_plan".into(), arguments.to_string())),
+        )
+    };
+    let provider = Arc::new(ScriptedGoalProvider {
+        script: Mutex::new([
+            call(serde_json::json!({"steps":[
+                {"id":"ci","title":"Release build"},
+                {"id":"local","title":"Local install"},
+                {"id":"brew","title":"Update formula","depends_on":["ci"]}
+            ]})),
+            call(serde_json::json!({"merge":true,"steps":[{"id":"brew","status":"in_progress"}]})),
+            call(serde_json::json!({"merge":true,"steps":[{"id":"ci","status":"in_progress"},{"id":"local","status":"in_progress"}]})),
+            ("Working".into(), None),
+            call(serde_json::json!({"merge":true,"steps":[{"id":"ci","status":"done"}]})),
+            ("Release ready".into(), None),
+        ].into_iter().collect()),
+        systems: Mutex::new(Vec::new()), tool_names: Mutex::new(Vec::new()),
+    });
+    let root = std::env::temp_dir().join(format!("dependency-plan-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let store = crate::SessionStore::new(root.join("sessions"));
+    let mut session = crate::Session::new(root.clone(), None, "release");
+    store.save(&mut session).unwrap();
+    let sink = crate::checkpoint::SessionCheckpointSink {
+        store,
+        session_id: session.id,
+    };
+    let agent = Agent::new(
+        provider.clone(),
+        ToolRegistry::new(&root, ApprovalMode::Strict).unwrap(),
+        AgentConfig {
+            max_turns: 8,
+            system_prompt: "system".into(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    );
+    let outcome = agent
+        .run_checkpointed(Vec::new(), Message::user("release"), Some(&sink))
+        .await
+        .unwrap();
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.starts_with("tool error:")
+                && message.content.contains("dependencies are done"))
+    );
+    let stored = sink.store.load(session.id).unwrap();
+    let plan = stored.current_plan.unwrap();
+    assert_eq!(
+        crate::planning::Receipt::new(plan, false).running,
+        ["ci", "local"]
+    );
+    // Simulate compressed history: the durable plan must remain in the system pin.
+    let resumed = agent
+        .run_checkpointed(
+            vec![Message::user("Compressed history")],
+            Message::user("continue"),
+            Some(&sink),
+        )
+        .await
+        .unwrap();
+    let stored = sink.store.load(session.id).unwrap().current_plan.unwrap();
+    let state = crate::planning::Receipt::new(stored, false);
+    assert_eq!(state.ready, ["brew"]);
+    assert_eq!(state.running, ["local"]);
+    assert!(provider.systems.lock().unwrap()[4].contains("\"running\":[\"ci\",\"local\"]"));
+    assert!(resumed.messages[0].content.contains("<session-plan>"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn restricted_workers_do_not_gain_session_planning_tools() {
+    let provider = Arc::new(ScriptedGoalProvider {
+        script: Mutex::new([("done".into(), None)].into_iter().collect()),
+        systems: Mutex::new(Vec::new()),
+        tool_names: Mutex::new(Vec::new()),
+    });
+    let agent = Agent::new(
+        provider.clone(),
+        registry("restricted-plan").with_allowed_tools(["read_file".to_owned()]),
+        AgentConfig {
+            max_turns: 2,
+            system_prompt: "worker".into(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    );
+    agent.run("read").await.unwrap();
+    assert!(
+        !provider.tool_names.lock().unwrap()[0]
+            .iter()
+            .any(|name| name == "update_plan")
+    );
+    let call = ToolCall {
+        id: "denied".into(),
+        name: "update_plan".into(),
+        arguments: "{}".into(),
+    };
+    assert!(agent.execute_planned_tool(&call, &mut None).await.is_err());
 }
