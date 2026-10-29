@@ -1,0 +1,113 @@
+{
+  "source": "/Users/rocky/.codex/sessions/2026/10/08/rollout-2026-10-08T16-49-46-01a11ab4-4c7b-7f60-80a2-50315549b0a5.jsonl",
+  "audit": [
+    {
+      "timestamp": "2026-10-09T05:16:12.951Z",
+      "name": "willdeep_swebench_glm_run.rb",
+      "state": "recovered_from_exact_script_read"
+    },
+    {
+      "timestamp": "2026-10-09T05:17:36.342Z",
+      "name": "prepare_willdeep_60.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-09T05:20:42.623Z",
+      "name": "willdeep_swebench_60_publish.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-09T05:22:23.451Z",
+      "name": "willdeep_swebench_60_recover.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-09T05:22:23.451Z",
+      "name": "willdeep_swebench_60_batch.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-09T05:31:55.495Z",
+      "name": "willdeep_swebench_60_batch.rb",
+      "state": "update"
+    },
+    {
+      "timestamp": "2026-10-09T05:31:55.495Z",
+      "name": "willdeep_swebench_60_publish.rb",
+      "state": "update"
+    },
+    {
+      "timestamp": "2026-10-09T05:34:08.297Z",
+      "name": "willdeep_swebench_60_site_publish.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-09T05:36:06.035Z",
+      "name": "willdeep_swebench_60_publish.rb",
+      "state": "update"
+    },
+    {
+      "timestamp": "2026-10-09T05:38:33.265Z",
+      "name": "willdeep_swebench_60_run.rb",
+      "state": "update"
+    },
+    {
+      "timestamp": "2026-10-10T05:08:11.302Z",
+      "name": "willdeep_qwen38_60_prepare.rb",
+      "state": "add"
+    },
+    {
+      "timestamp": "2026-10-10T05:08:11.302Z",
+      "name": "willdeep_qwen38_60_batch.rb",
+      "state": "add"
+    }
+  ],
+  "files": [
+    {
+      "name": "willdeep_swebench_glm_run.rb",
+      "sha256": "a4c73e55cb3c5a79ad9ec26c22f3e625e2c88b9abf9e616eb331672fbbbd1dc7",
+      "bytes": 15658
+    },
+    {
+      "name": "prepare_willdeep_60.rb",
+      "sha256": "02cbc0eb1c382fcaf44e102debf158c254994bc151749195ebdf21e8684b11ff",
+      "bytes": 7346
+    },
+    {
+      "name": "willdeep_swebench_60_run.rb",
+      "sha256": "1c92f79c3b0a08c91647bd63ac50e37f3e52011c8ff00d3ce02872c948f905a0",
+      "bytes": 17510
+    },
+    {
+      "name": "willdeep_swebench_60_publish.rb",
+      "sha256": "04435f9446180013740acdefe54b1ebc5c7a67d935df7b93550986c3086a8f43",
+      "bytes": 14004
+    },
+    {
+      "name": "willdeep_swebench_60_recover.rb",
+      "sha256": "b2bd7d764809b507b22aea905d858181c3811e3fcf37331491836e7d3c183806",
+      "bytes": 3701
+    },
+    {
+      "name": "willdeep_swebench_60_batch.rb",
+      "sha256": "cf1cd13a6b6eace2c6a0a2095254f310f28effc30c86d6c1c3d81868566ab091",
+      "bytes": 2458
+    },
+    {
+      "name": "willdeep_swebench_60_site_publish.rb",
+      "sha256": "9f76b2bfa9198767a62a3cdb099cb8ccd694fed6b21d1851397cf8c8891e2c81",
+      "bytes": 4883
+    },
+    {
+      "name": "willdeep_qwen38_60_prepare.rb",
+      "sha256": "4eeb76cdf2d80cd8018e9c65b2a4a3cb76ed1b4da830d73e0106807a3bda09ea",
+      "bytes": 1672
+    },
+    {
+      "name": "willdeep_qwen38_60_batch.rb",
+      "sha256": "3e618401c56ac905ab954631aeac015dc3baf46c57069821fa956de047f07c17",
+      "bytes": 1774
+    }
+  ],
+  "executed": false
+}

@@ -1,0 +1,1149 @@
+{
+  "note": "Diagnostic classification only; immutable official scores unchanged. Test failure does not establish patch causality or flakiness.",
+  "rows": [
+    {
+      "model": "deepseek-flash",
+      "id": "astropy__astropy-13398",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1044433,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 3,
+        "search_files": 5,
+        "read_file": 21,
+        "git_log": 1,
+        "git_status": 1,
+        "grep_files": 5,
+        "run_command": 2,
+        "spawn_agent": 1,
+        "get_job_output": 2
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-10554",
+      "status": "unresolved",
+      "category": "no_test_verdict_details",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 995336,
+      "patch_bytes": 2138,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 15,
+        "grep_files": 10,
+        "read_file": 21,
+        "create_file": 2,
+        "edit_file": 4,
+        "git_status": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-11265",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 962946,
+      "patch_bytes": 2786,
+      "failed_target_tests": [
+        "test_with_exclude (filtered_relation.tests.FilteredRelationTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "read_file": 23,
+        "search_files": 1,
+        "grep_files": 4,
+        "create_file": 2,
+        "edit_file": 4,
+        "run_command": 6,
+        "git_log": 1,
+        "git_status": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-11885",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1024580,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 12,
+        "search_files": 1,
+        "read_file": 17,
+        "git_log": 1,
+        "run_command": 4,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13089",
+      "status": "unresolved",
+      "category": "regression_tests_failed",
+      "paired_regression": true,
+      "budget_stopped": true,
+      "observed_tokens": 1007404,
+      "patch_bytes": 912,
+      "failed_target_tests": [],
+      "failed_regression_tests": [
+        "test_expiration (cache.tests.DBCacheWithTimeZoneTests)"
+      ],
+      "tool_calls": {
+        "read_file": 5,
+        "list_directory": 3,
+        "grep_files": 4,
+        "spawn_agent": 2,
+        "git_status": 1,
+        "run_command": 13,
+        "edit_file": 1,
+        "git_diff": 1,
+        "search_files": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13112",
+      "status": "empty_patch",
+      "category": "other_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 970839,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 1,
+        "run_command": 8,
+        "grep_files": 10,
+        "read_file": 21
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13121",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13315",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13590",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-13821",
+      "status": "empty_patch",
+      "category": "other_empty_patch",
+      "paired_regression": true,
+      "budget_stopped": false,
+      "observed_tokens": 963198,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 9,
+        "grep_files": 13,
+        "read_file": 14,
+        "list_directory": 2,
+        "git_log": 1,
+        "git_blame": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-14017",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": true,
+      "budget_stopped": true,
+      "observed_tokens": 1003833,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "read_file": 10,
+        "git_status": 1,
+        "grep_files": 6,
+        "search_files": 1,
+        "run_command": 3,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-14034",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 988119,
+      "patch_bytes": 735,
+      "failed_target_tests": [
+        "test_render_required_attributes (forms_tests.field_tests.test_multivaluefield.MultiValueFieldTest)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "search_files": 3,
+        "read_file": 11,
+        "run_command": 14,
+        "edit_file": 2,
+        "grep_files": 3,
+        "git_diff": 2
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-15930",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 981270,
+      "patch_bytes": 2330,
+      "failed_target_tests": [
+        "test_annotate_with_full_when (expressions_case.tests.CaseExpressionTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 1,
+        "grep_files": 15,
+        "read_file": 22,
+        "run_command": 6,
+        "create_file": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-16145",
+      "status": "unresolved",
+      "category": "regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1039085,
+      "patch_bytes": 144803,
+      "failed_target_tests": [],
+      "failed_regression_tests": [
+        "default: django-admin can't execute user commands if it isn't provided"
+      ],
+      "tool_calls": {
+        "search_files": 1,
+        "grep_files": 5,
+        "read_file": 5,
+        "run_command": 15,
+        "spawn_agent": 1,
+        "edit_file": 1,
+        "git_status": 1,
+        "git_diff": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-16256",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 877063,
+      "patch_bytes": 3315,
+      "failed_target_tests": [
+        "test_generic_async_acreate (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aget_or_create (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aupdate_or_create (generic_relations.tests.GenericRelationsTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 6,
+        "list_directory": 2,
+        "read_file": 7,
+        "git_log": 1,
+        "spawn_agent": 1,
+        "git_status": 3,
+        "run_command": 11,
+        "git_diff": 2,
+        "create_file": 2
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-16315",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1034317,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 10,
+        "read_file": 15,
+        "run_command": 7,
+        "list_directory": 1,
+        "spawn_agent": 2
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "django__django-16950",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1010900,
+      "patch_bytes": 1685,
+      "failed_target_tests": [
+        "If form data is provided, a parent's auto-generated alternate key is"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 17,
+        "grep_files": 8,
+        "read_file": 15,
+        "git_blame": 1,
+        "search_files": 1,
+        "create_file": 2,
+        "edit_file": 2,
+        "list_directory": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "matplotlib__matplotlib-14623",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": true,
+      "budget_stopped": true,
+      "observed_tokens": 1044185,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "search_files": 2,
+        "grep_files": 7,
+        "read_file": 17,
+        "run_command": 2,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "matplotlib__matplotlib-25332",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1005190,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 6,
+        "list_directory": 1,
+        "read_file": 5,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "matplotlib__matplotlib-26208",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1007368,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 9,
+        "grep_files": 15,
+        "read_file": 30
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "mwaskom__seaborn-3187",
+      "status": "unresolved",
+      "category": "target_and_regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1029163,
+      "patch_bytes": 1720,
+      "failed_target_tests": [
+        "tests/_core/test_plot.py::TestLegend::test_legend_has_no_offset"
+      ],
+      "failed_regression_tests": [
+        "tests/_core/test_plot.py::TestLayerAddition::test_without_data",
+        "tests/_core/test_plot.py::TestLayerAddition::test_with_new_variable_by_name",
+        "tests/_core/test_plot.py::TestLayerAddition::test_with_new_variable_by_vector",
+        "tests/_core/test_plot.py::TestLayerAddition::test_with_late_data_definition",
+        "tests/_core/test_plot.py::TestLayerAddition::test_with_new_data_definition",
+        "tests/_core/test_plot.py::TestLayerAddition::test_drop_variable",
+        "tests/_core/test_plot.py::TestLayerAddition::test_orient[x-x]",
+        "tests/_core/test_plot.py::TestLayerAddition::test_orient[y-y]",
+        "tests/_core/test_plot.py::TestLayerAddition::test_orient[v-x]",
+        "tests/_core/test_plot.py::TestLayerAddition::test_orient[h-y]",
+        "tests/_core/test_plot.py::TestScaling::test_inference",
+        "tests/_core/test_plot.py::TestScaling::test_inference_from_layer_data",
+        "tests/_core/test_plot.py::TestScaling::test_inference_joins",
+        "tests/_core/test_plot.py::TestScaling::test_inferred_categorical_converter",
+        "tests/_core/test_plot.py::TestScaling::test_explicit_categorical_converter",
+        "tests/_core/test_plot.py::TestScaling::test_mark_data_log_transform_is_inverted",
+        "tests/_core/test_plot.py::TestScaling::test_mark_data_log_transfrom_with_stat",
+        "tests/_core/test_plot.py::TestScaling::test_mark_data_from_categorical",
+        "tests/_core/test_plot.py::TestScaling::test_mark_data_from_datetime",
+        "tests/_core/test_plot.py::TestScaling::test_computed_var_ticks",
+        "tests/_core/test_plot.py::TestScaling::test_computed_var_transform",
+        "tests/_core/test_plot.py::TestScaling::test_explicit_range_with_axis_scaling",
+        "tests/_core/test_plot.py::TestScaling::test_derived_range_with_axis_scaling",
+        "tests/_core/test_plot.py::TestScaling::test_facet_categories",
+        "tests/_core/test_plot.py::TestScaling::test_facet_categories_unshared",
+        "tests/_core/test_plot.py::TestScaling::test_facet_categories_single_dim_shared",
+        "tests/_core/test_plot.py::TestScaling::test_pair_categories",
+        "tests/_core/test_plot.py::TestScaling::test_pair_categories_shared",
+        "tests/_core/test_plot.py::TestScaling::test_identity_mapping_linewidth",
+        "tests/_core/test_plot.py::TestScaling::test_pair_single_coordinate_stat_orient",
+        "tests/_core/test_plot.py::TestScaling::test_inferred_nominal_passed_to_stat",
+        "tests/_core/test_plot.py::TestScaling::test_identity_mapping_color_tuples",
+        "tests/_core/test_plot.py::TestPlotting::test_no_orient_variance",
+        "tests/_core/test_plot.py::TestPlotting::test_single_split_single_layer",
+        "tests/_core/test_plot.py::TestPlotting::test_single_split_multi_layer",
+        "tests/_core/test_plot.py::TestPlotting::test_one_grouping_variable[color]",
+        "tests/_core/test_plot.py::TestPlotting::test_one_grouping_variable[group]",
+        "tests/_core/test_plot.py::TestPlotting::test_two_grouping_variables",
+        "tests/_core/test_plot.py::TestPlotting::test_specified_width",
+        "tests/_core/test_plot.py::TestPlotting::test_facets_no_subgroups",
+        "tests/_core/test_plot.py::TestPlotting::test_facets_one_subgroup",
+        "tests/_core/test_plot.py::TestPlotting::test_layer_specific_facet_disabling",
+        "tests/_core/test_plot.py::TestPlotting::test_paired_variables",
+        "tests/_core/test_plot.py::TestPlotting::test_paired_one_dimension",
+        "tests/_core/test_plot.py::TestPlotting::test_paired_variables_one_subset",
+        "tests/_core/test_plot.py::TestPlotting::test_paired_and_faceted",
+        "tests/_core/test_plot.py::TestPlotting::test_stat",
+        "tests/_core/test_plot.py::TestPlotting::test_move",
+        "tests/_core/test_plot.py::TestPlotting::test_stat_and_move",
+        "tests/_core/test_plot.py::TestPlotting::test_stat_log_scale",
+        "tests/_core/test_plot.py::TestPlotting::test_move_log_scale",
+        "tests/_core/test_plot.py::TestPlotting::test_multi_move",
+        "tests/_core/test_plot.py::TestPlotting::test_multi_move_with_pairing",
+        "tests/_core/test_plot.py::TestPlotting::test_move_with_range",
+        "tests/_core/test_plot.py::TestPlotting::test_on_axes",
+        "tests/_core/test_plot.py::TestPlotting::test_on_figure[True]",
+        "tests/_core/test_plot.py::TestPlotting::test_on_figure[False]",
+        "tests/_core/test_plot.py::TestPlotting::test_on_subfigure[True]",
+        "tests/_core/test_plot.py::TestPlotting::test_on_subfigure[False]",
+        "tests/_core/test_plot.py::TestPlotting::test_axis_labels_from_layer",
+        "tests/_core/test_plot.py::TestPlotting::test_axis_labels_are_first_name",
+        "tests/_core/test_plot.py::TestPlotting::test_labels_legend",
+        "tests/_core/test_plot.py::TestFacetInterface::test_unshared_spacing",
+        "tests/_core/test_plot.py::TestPairInterface::test_orient_inference",
+        "tests/_core/test_plot.py::TestPairInterface::test_computed_coordinate_orient_inference",
+        "tests/_core/test_plot.py::TestLegend::test_single_layer_single_variable",
+        "tests/_core/test_plot.py::TestLegend::test_single_layer_common_variable",
+        "tests/_core/test_plot.py::TestLegend::test_single_layer_common_unnamed_variable",
+        "tests/_core/test_plot.py::TestLegend::test_single_layer_multi_variable",
+        "tests/_core/test_plot.py::TestLegend::test_multi_layer_single_variable",
+        "tests/_core/test_plot.py::TestLegend::test_multi_layer_multi_variable",
+        "tests/_core/test_plot.py::TestLegend::test_multi_layer_different_artists",
+        "tests/_core/test_plot.py::TestLegend::test_three_layers",
+        "tests/_core/test_plot.py::TestLegend::test_identity_scale_ignored",
+        "tests/_core/test_plot.py::TestLegend::test_suppression_in_add_method",
+        "tests/_core/test_plot.py::TestLegend::test_anonymous_title",
+        "tests/_core/test_plot.py::TestLegend::test_legendless_mark",
+        "tests/test_relational.py::TestRelationalPlotter::test_wide_df_variables",
+        "tests/test_relational.py::TestRelationalPlotter::test_wide_df_with_nonnumeric_variables",
+        "tests/test_relational.py::TestRelationalPlotter::test_wide_array_variables",
+        "tests/test_relational.py::TestRelationalPlotter::test_flat_array_variables",
+        "tests/test_relational.py::TestRelationalPlotter::test_relplot_simple",
+        "tests/test_relational.py::TestRelationalPlotter::test_relplot_legend",
+        "tests/test_relational.py::TestLinePlotter::test_color",
+        "tests/test_relational.py::TestLinePlotter::test_plot",
+        "tests/test_relational.py::TestLinePlotter::test_non_aggregated_data",
+        "tests/test_relational.py::TestLinePlotter::test_orient",
+        "tests/test_relational.py::TestLinePlotter::test_log_scale",
+        "tests/test_relational.py::TestLinePlotter::test_matplotlib_kwargs",
+        "tests/test_relational.py::TestLinePlotter::test_nonmapped_dashes",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_axes",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics0]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics1]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics2]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics3]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics4]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics5]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics6]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics7]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics8]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics9]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics10]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics11]",
+        "tests/test_relational.py::TestLinePlotter::test_lineplot_smoke",
+        "tests/test_relational.py::TestLinePlotter::test_ci_deprecation",
+        "tests/test_relational.py::TestScatterPlotter::test_size_norm_extrapolation"
+      ],
+      "tool_calls": {
+        "read_file": 11,
+        "search_files": 3,
+        "grep_files": 4,
+        "run_command": 5,
+        "spawn_agent": 1,
+        "git_diff": 1,
+        "git_status": 1,
+        "git_log": 1,
+        "edit_file": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "pylint-dev__pylint-4551",
+      "status": "empty_patch",
+      "category": "other_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 985690,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 2,
+        "grep_files": 1,
+        "read_file": 9,
+        "search_files": 4,
+        "run_command": 19
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "pytest-dev__pytest-7490",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "scikit-learn__scikit-learn-25973",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1021945,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 8,
+        "read_file": 8,
+        "run_command": 2,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "scikit-learn__scikit-learn-26194",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "sphinx-doc__sphinx-8035",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1015079,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 12,
+        "grep_files": 7,
+        "read_file": 13,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "sympy__sympy-12489",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1005131,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 7,
+        "read_file": 17,
+        "run_command": 2,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "sympy__sympy-18199",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 0,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {}
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "sympy__sympy-19346",
+      "status": "agent_error",
+      "category": "provider_502",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 701698,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "search_files": 1,
+        "grep_files": 3,
+        "read_file": 1,
+        "run_command": 1,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "deepseek-flash",
+      "id": "sympy__sympy-20438",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1001500,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "run_command": 9,
+        "grep_files": 7,
+        "read_file": 16,
+        "list_directory": 1,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "astropy__astropy-13398",
+      "status": "unresolved",
+      "category": "target_and_regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1039151,
+      "patch_bytes": 5388,
+      "failed_target_tests": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_altaz_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_topo_to_hadec_with_refraction",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_cirs_itrs_topo",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_itrs_straight_overhead"
+      ],
+      "failed_regression_tests": [
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe0]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe1]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe2]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe3]",
+        "astropy/coordinates/tests/test_intermediate_transformations.py::test_gcrs_altaz_bothroutes[testframe4]"
+      ],
+      "tool_calls": {
+        "list_directory": 5,
+        "read_file": 12,
+        "grep_files": 2,
+        "create_file": 1,
+        "edit_file": 1,
+        "run_command": 16
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "astropy__astropy-13977",
+      "status": "unresolved",
+      "category": "target_and_regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 544760,
+      "patch_bytes": 956,
+      "failed_target_tests": [
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity0-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity0-quantity1-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity0-multiply]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_full[empty-duck_quantity1-quantity1-multiply]"
+      ],
+      "failed_regression_tests": [
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity0-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity0-less]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity1-add]",
+        "astropy/units/tests/test_quantity_ufuncs.py::TestUfuncReturnsNotImplemented::TestBinaryUfuncs::test_basic[duck_quantity1-quantity1-less]"
+      ],
+      "tool_calls": {
+        "grep_files": 4,
+        "list_directory": 1,
+        "read_file": 6,
+        "edit_file": 1,
+        "run_command": 12,
+        "git_diff": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-10554",
+      "status": "unresolved",
+      "category": "no_test_verdict_details",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 978481,
+      "patch_bytes": 3658,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 4,
+        "read_file": 13,
+        "grep_files": 7,
+        "search_files": 1,
+        "edit_file": 1,
+        "run_command": 11,
+        "git_diff": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-11265",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 431737,
+      "patch_bytes": 598,
+      "failed_target_tests": [
+        "test_with_exclude (filtered_relation.tests.FilteredRelationTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 1,
+        "read_file": 10,
+        "grep_files": 5,
+        "edit_file": 1,
+        "run_command": 11,
+        "git_diff": 1,
+        "git_status": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-11885",
+      "status": "unresolved",
+      "category": "regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 951957,
+      "patch_bytes": 2490,
+      "failed_target_tests": [],
+      "failed_regression_tests": [
+        "test_large_delete (delete.tests.DeletionTests)",
+        "test_large_delete_related (delete.tests.DeletionTests)"
+      ],
+      "tool_calls": {
+        "grep_files": 9,
+        "read_file": 18,
+        "edit_file": 5,
+        "run_command": 6
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-13112",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 964645,
+      "patch_bytes": 690,
+      "failed_target_tests": [
+        "test_reference_mixed_case_app_label (migrations.test_state.StateTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 1,
+        "grep_files": 12,
+        "read_file": 18,
+        "edit_file": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-13837",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": true,
+      "budget_stopped": true,
+      "observed_tokens": 1015440,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "search_files": 1,
+        "grep_files": 1,
+        "read_file": 3,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-14034",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 790297,
+      "patch_bytes": 1324,
+      "failed_target_tests": [
+        "test_render_required_attributes (forms_tests.field_tests.test_multivaluefield.MultiValueFieldTest)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 2,
+        "read_file": 3,
+        "run_command": 25,
+        "edit_file": 1,
+        "list_directory": 1,
+        "git_diff": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-14500",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 973614,
+      "patch_bytes": 6942,
+      "failed_target_tests": [
+        "test_migrate_marks_replacement_unapplied (migrations.test_executor.ExecutorTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 4,
+        "grep_files": 4,
+        "read_file": 12,
+        "run_command": 9,
+        "create_file": 2
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-14725",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1041819,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 2,
+        "grep_files": 2,
+        "read_file": 7,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "django__django-16256",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 990084,
+      "patch_bytes": 6614,
+      "failed_target_tests": [
+        "test_acreate (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_acreate_reverse (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_aget_or_create (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_aget_or_create_reverse (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_aupdate_or_create (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_aupdate_or_create_reverse (async.test_async_related_managers.AsyncRelatedManagersOperationTest)",
+        "test_generic_async_acreate (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aget_or_create (generic_relations.tests.GenericRelationsTests)",
+        "test_generic_async_aupdate_or_create (generic_relations.tests.GenericRelationsTests)"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "read_file": 10,
+        "grep_files": 5,
+        "edit_file": 11,
+        "run_command": 16,
+        "list_directory": 1,
+        "create_file": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "matplotlib__matplotlib-26208",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1006705,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 3,
+        "grep_files": 12,
+        "read_file": 17,
+        "run_command": 10
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "mwaskom__seaborn-3187",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1006517,
+      "patch_bytes": 725,
+      "failed_target_tests": [
+        "tests/test_relational.py::TestRelationalPlotter::test_legend_has_no_offset"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "read_file": 7,
+        "grep_files": 6,
+        "run_command": 34,
+        "edit_file": 1,
+        "list_directory": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "pylint-dev__pylint-4551",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1018509,
+      "patch_bytes": 148123,
+      "failed_target_tests": [
+        "tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public]",
+        "tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected]",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a:",
+        "tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_1",
+        "tests/unittest_pyreverse_writer.py::test_infer_node_2"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 4,
+        "read_file": 9,
+        "grep_files": 6,
+        "run_command": 17,
+        "edit_file": 6
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "scikit-learn__scikit-learn-26194",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 466889,
+      "patch_bytes": 2167,
+      "failed_target_tests": [
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_drop_intermediate",
+        "sklearn/metrics/tests/test_ranking.py::test_roc_curve_with_probablity_estimates[42]"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "read_file": 7,
+        "search_files": 1,
+        "grep_files": 4,
+        "edit_file": 3,
+        "run_command": 12,
+        "git_diff": 2
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "sphinx-doc__sphinx-7462",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 398713,
+      "patch_bytes": 1019,
+      "failed_target_tests": [
+        "tests/test_domain_py.py::test_parse_annotation",
+        "tests/test_pycode_ast.py::test_unparse[()-()]"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 1,
+        "search_files": 1,
+        "read_file": 5,
+        "grep_files": 2,
+        "edit_file": 2,
+        "run_command": 10,
+        "git_diff": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "sphinx-doc__sphinx-8035",
+      "status": "budget_exhausted_empty_patch",
+      "category": "budget_empty_patch",
+      "paired_regression": true,
+      "budget_stopped": true,
+      "observed_tokens": 1023695,
+      "patch_bytes": 0,
+      "failed_target_tests": [],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 4,
+        "grep_files": 1,
+        "read_file": 5,
+        "spawn_agent": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "sympy__sympy-12489",
+      "status": "unresolved",
+      "category": "target_and_regression_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": false,
+      "observed_tokens": 994028,
+      "patch_bytes": 4799,
+      "failed_target_tests": [
+        "test_Permutation_subclassing"
+      ],
+      "failed_regression_tests": [
+        "test_josephus",
+        "test_ranking",
+        "test_mul",
+        "test_from_sequence"
+      ],
+      "tool_calls": {
+        "search_files": 1,
+        "list_directory": 1,
+        "read_file": 20,
+        "grep_files": 5,
+        "edit_file": 18
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "sympy__sympy-18199",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1026079,
+      "patch_bytes": 563,
+      "failed_target_tests": [
+        "test_solve_modular"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "list_directory": 2,
+        "grep_files": 5,
+        "read_file": 12,
+        "run_command": 29,
+        "git_log": 1,
+        "edit_file": 1
+      }
+    },
+    {
+      "model": "glm5",
+      "id": "sympy__sympy-20438",
+      "status": "unresolved",
+      "category": "target_tests_failed",
+      "paired_regression": false,
+      "budget_stopped": true,
+      "observed_tokens": 1001451,
+      "patch_bytes": 513,
+      "failed_target_tests": [
+        "test_Eq",
+        "test_issue_19378"
+      ],
+      "failed_regression_tests": [],
+      "tool_calls": {
+        "grep_files": 7,
+        "read_file": 12,
+        "run_command": 28,
+        "edit_file": 2
+      }
+    }
+  ]
+}
