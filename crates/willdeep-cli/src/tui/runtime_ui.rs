@@ -514,6 +514,11 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                 app.note_tool_requested(name, value.get("detail").and_then(|value| value.as_str()));
             }
         }
+        Some("plan_updated") => {
+            if let Some(receipt) = value.get("plan_update") {
+                append_plan_result(&mut app.transcript, &receipt.to_string());
+            }
+        }
         Some("tool_completed") => {
             if let Some(name) = value.get("name").and_then(|value| value.as_str()) {
                 let is_error = value

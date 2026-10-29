@@ -13,6 +13,7 @@ pub const SCHEDULING_CONTRACT: &str = r#"Session planning:
 - The tool returns ready, running and waiting. Advance ALL independent ready steps when resources and permissions allow: dispatch bounded workers with spawn_agent(run_in_background=true), or batch eligible read-only tools. Keep doing ready work while external jobs run; join workers only when their results are needed or no independent work remains.
 - Dependencies must be done before starting or completing a dependent step. Failed, blocked and skipped prerequisites do not satisfy dependencies: repair/retry them or explicitly revise the plan. Serialize writes to shared files, Git/index/version metadata, deployment targets and other shared resources; add dependencies for these conflicts. Parallelism never changes approval, tool allowlists or budgets.
 - Mark a step in_progress only when actually starting its work, and update all concurrently running steps using merge=true. Keep unrelated running steps unchanged. After each result record done/failed/blocked and a concise note, then start newly ready work. A dispatched worker or running CI job is not done; verify its result first.
+- When a background command implements an entire plan step, pass its stable plan_step_id to run_command (with run_in_background=true and an explicit timeout sufficient for the work). The runtime binds the actual job attempt and updates that step immediately on exit, independently of model replies or other jobs. For an already started shell job, bind its exact job_id using update_plan. Do not use a note as a job binding. Bind only the final command that proves the step complete; intermediate commands do not complete a larger step. Never overwrite a terminal job result with stale in_progress state. After a failure retry with a new job attempt; old completion notices must not complete the retry.
 - On resume, reconcile running steps with existing jobs/reports; never blindly relaunch side effects. Keep the plan current before the final reply. Plan state is progress reporting, not proof of success. Do not emit a second prose/fenced plan when update_plan is available."#;
 
 #[derive(Debug, Default, Deserialize)]
@@ -35,6 +36,7 @@ pub(crate) struct StepUpdate {
     pub status: Option<StepStatus>,
     pub note: Option<String>,
     pub depends_on: Option<Vec<String>>,
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,6 +131,7 @@ pub(crate) fn apply(current: Option<&Plan>, update: &Update) -> Result<Plan, Str
                 status: StepStatus::Pending,
                 detail: None,
                 depends_on: Vec::new(),
+                job_id: None,
             };
             patch_step(&mut step, change);
             next.steps.push(step);
@@ -164,6 +167,9 @@ fn patch_step(step: &mut PlanStep, update: &StepUpdate) {
     if let Some(dependencies) = &update.depends_on {
         step.depends_on = dependencies.clone();
     }
+    if let Some(job_id) = &update.job_id {
+        step.job_id = (!job_id.is_empty()).then(|| job_id.clone());
+    }
 }
 
 pub fn validate(plan: &Plan) -> Result<(), String> {
@@ -171,10 +177,21 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
         return Err(format!("at most {MAX_STEPS} steps are allowed"));
     }
     let ids: HashSet<_> = plan.steps.iter().map(|step| step.id.as_str()).collect();
+    let mut jobs = HashSet::new();
     if ids.len() != plan.steps.len() {
         return Err("step ids must be unique".into());
     }
     for step in &plan.steps {
+        if let Some(job) = &step.job_id
+            && (job.is_empty()
+                || job.len() > 128
+                || !job
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                || !jobs.insert(job))
+        {
+            return Err("each job must bind at most one step using a valid job id".into());
+        }
         if step.text.trim().is_empty()
             || step.text.chars().count() > MAX_TEXT
             || step

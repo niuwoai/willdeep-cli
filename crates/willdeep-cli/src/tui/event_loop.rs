@@ -1712,6 +1712,9 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在思考 · 准备轮次","Thinking · preparing turn","思考中 · ターンを準備")));},
                 UiMessage::Agent(AgentEvent::TurnPreempted{turn})=>app.record_progress(format!("{} {turn}",language.text("已被运行时事件打断 · 轮次","Preempted by a runtime event · turn","ランタイムイベントで中断 · ターン"))),
                 UiMessage::Agent(AgentEvent::ToolRequested(v))=>{app.record_progress(format!("{} {}",language.text("正在使用","Using","使用中"),v.name));app.tools.requested(&v.name);app.note_tool_requested(&v.name,crate::tool_detail(&v.name,&v.arguments).as_deref());},
+                UiMessage::Agent(AgentEvent::PlanUpdated(plan))=>{
+                    append_plan_result(&mut app.transcript,&serde_json::to_string(&willdeep_core::planning::Receipt::new(plan,false))?);
+                },
                 UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
                     if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
                 UiMessage::Agent(AgentEvent::Usage(v))=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},

@@ -118,6 +118,9 @@ pub struct PlanStep {
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// Exact attempt whose terminal result completes this step, never a prose match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,6 +444,7 @@ pub fn parse_plan_reply(content: &str, existing: Option<&Plan>) -> Option<(Plan,
                         status: StepStatus::Pending,
                         detail: None,
                         depends_on: Vec::new(),
+                        job_id: None,
                     })
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -473,6 +477,7 @@ pub fn parse_plan_reply(content: &str, existing: Option<&Plan>) -> Option<(Plan,
                             status,
                             detail: None,
                             depends_on: Vec::new(),
+                            job_id: None,
                         })
                         .collect(),
                 });

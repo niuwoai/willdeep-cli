@@ -663,6 +663,15 @@ export function App() {
       const stepId = event.id || `tool-${event.cursor ?? nextId("tool")}`;
       updateRun(runId, (steps) => steps.some((step) => step.id === stepId) ? steps : [...steps, { id: stepId, label: event.label || t.toolRunning, detail: event.detail, status: "active", startedAt: Date.now() }]);
     }
+    else if (event.type === "plan_updated" && event.plan_update) {
+      const receipt = event.plan_update;
+      setChat((current) => {
+        const index = current.map((message) => message.role).lastIndexOf("plan");
+        if (!receipt.replaced && index >= 0) return current.map((message, position) =>
+          position === index ? { ...message, plan: receipt.plan } : message);
+        return [...current, { id: `plan-${event.id ?? nextId("plan")}`, role: "plan", content: "", plan: receipt.plan }];
+      });
+    }
     else if (event.type === "tool_completed") {
       if (!event.is_error && event.name === "update_plan" && event.plan_update) {
         const receipt = event.plan_update;

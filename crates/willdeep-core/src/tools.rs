@@ -24,6 +24,7 @@ use crate::sandbox::{SandboxPolicy, SandboxSpec};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
 mod peer_sessions;
+mod plan_jobs;
 pub use peer_sessions::SessionCollaboration;
 
 const DEFAULT_MAX_RESULTS: usize = 60;
@@ -874,6 +875,7 @@ impl ToolRegistry {
                         "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
                         "label": {"type": "string", "description": "Optional concise action label; never include secrets."},
                         "run_in_background": {"type": "boolean", "description": "Return a job handle immediately and keep working. A completion notice is delivered automatically; do not poll or sleep."},
+                        "plan_step_id": {"type":"string", "description":"Stable plan step id when this background command implements the entire step. Runtime binds the actual attempt and updates its terminal status immediately. Requires run_in_background=true."},
                         "network": {"type": "boolean", "description": "Set true only when the command must reach the network and the fence denied it (the previous result carried <sandbox-denied> about the network). The user is asked to allow this exact command with network access."}
                     },
                     "required": ["command"], "additionalProperties": false

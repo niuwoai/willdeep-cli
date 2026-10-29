@@ -627,6 +627,15 @@ pub(crate) async fn execute_noninteractive(
             &built.detached_jobs,
             session.id,
         );
+        if built.agent.reconcile_plan_jobs(&mut session.current_plan) {
+            store.save(session)?;
+            if let Some(plan) = &session.current_plan {
+                built
+                    .event_sink
+                    .emit(willdeep_core::AgentEvent::PlanUpdated(plan.clone()))
+                    .await;
+            }
+        }
         // 监视器的事件已经在内核里了。被节流的那些只入队，不算唤醒理由；它们
         // 随下一次唤醒（最迟是结束事件）一起交给模型。
         let monitor_wake = built.background_tasks.take_monitor_signals() > 0

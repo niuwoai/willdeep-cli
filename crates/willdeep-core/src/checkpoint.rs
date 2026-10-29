@@ -141,6 +141,22 @@ impl<'a> CheckpointRecorder<'a> {
             .map_err(AgentError::Checkpoint)
     }
 
+    pub(crate) fn reconcile_plan_jobs(
+        &mut self,
+        tools: &crate::tools::ToolRegistry,
+    ) -> Result<Option<crate::conversation::Plan>, AgentError> {
+        if !tools.reconcile_plan_jobs(&mut self.plan) {
+            return Ok(None);
+        }
+        if let Some(checkpoint) = &mut self.latest {
+            checkpoint.plan = self.plan.clone();
+            if let Some(sink) = self.sink {
+                sink.save(checkpoint).map_err(AgentError::Checkpoint)?;
+            }
+        }
+        Ok(self.plan.clone())
+    }
+
     pub fn deadline_outcome(&self) -> AgentOutcome {
         let latest = self.latest.as_ref();
         AgentOutcome {
