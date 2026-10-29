@@ -32,6 +32,8 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: web
         run: yarn lint
+      - name: Configuration Web bridge regression
+        run: node --test scripts/test/config_web_bridge_test.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.1

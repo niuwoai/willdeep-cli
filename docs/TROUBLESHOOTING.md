@@ -14,6 +14,21 @@ willdeep doctor --bundle ./willdeep-diagnostic.zip
 
 ## 配置与启动
 
+### Web 配置页空白或提示「读取配置失败：?」
+
+先核对域名反向代理实际连接的 Runtime 主机。在该主机检查 `/api/settings/config-command` 的错误；旧版页面可能把仅含 `error` 的 HTTP 错误显示为问号。
+
+如果错误为 `Ruby is required by the bundled configuration service`，说明运行 Web 的主机缺少 Ruby。完整配置工作台通过随 CLI 内嵌的 Ruby 服务读取配置；不需要额外安装插件或 gems。
+
+Debian/Ubuntu 可通过系统包管理器补齐依赖：
+
+```bash
+sudo apt-get install --no-install-recommends ruby
+ruby --version
+```
+
+安装后点击配置页「重新读取」。若 Ruby 安装到已有搜索路径（例如 `/usr/bin/ruby`），失败的服务初始化会在下次请求重试，无需重启 Runtime。若接口返回 HTML 登录页，则先恢复代理登录状态；不要把它当作配置文件损坏。
+
 ### 拒绝启动：配置文件权限不安全
 
 ```text
