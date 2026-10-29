@@ -2105,12 +2105,50 @@ fn allowed_workspaces(state: &WebState) -> Vec<PathBuf> {
 async fn registered_web_workspaces(
     state: &WebState,
 ) -> Result<Vec<crate::daemon::RuntimeWorkspace>, WebError> {
-    Ok(crate::daemon::remote_workspaces(&state.home)
+    let registered = crate::daemon::remote_workspaces(&state.home)
         .await
-        .map_err(WebError::from_anyhow)?
+        .map_err(WebError::from_anyhow)?;
+    let mut allowed = state
+        .workspaces
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    Ok(web_workspace_allowlist(
+        registered,
+        &mut allowed,
+        state.settings_writable,
+    ))
+}
+
+/// 浏览器端能看到哪些已注册工作区。
+///
+/// 回环监听时，浏览器就是这台机器的用户：`+` 本来就能把任意目录加进来（见
+/// [`add_workspace`]），再拿启动参数里的白名单挡住自己用过的常用工作区没有
+/// 意义。此时把注册表并进白名单，选择器、会话列表和插件边界看到同一份名单；
+/// 已经不存在的目录不进选择器，也不进白名单——选它只会在发送时失败。
+/// 对外暴露的实例没有应用层鉴权，仍只认启动参数给出的白名单。
+fn web_workspace_allowlist(
+    registered: Vec<crate::daemon::RuntimeWorkspace>,
+    allowed: &mut Vec<PathBuf>,
+    loopback: bool,
+) -> Vec<crate::daemon::RuntimeWorkspace> {
+    if !loopback {
+        return registered
+            .into_iter()
+            .filter(|workspace| allowed.contains(&workspace.root))
+            .collect();
+    }
+    registered
         .into_iter()
-        .filter(|workspace| allowed_workspaces(state).contains(&workspace.root))
-        .collect())
+        .filter(|workspace| {
+            if !workspace.root.is_dir() {
+                return false;
+            }
+            if !allowed.contains(&workspace.root) {
+                allowed.push(workspace.root.clone());
+            }
+            true
+        })
+        .collect()
 }
 
 async fn workspace_allowed(

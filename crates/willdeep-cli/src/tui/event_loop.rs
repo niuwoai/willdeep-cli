@@ -611,7 +611,7 @@ pub(super) async fn event_loop(
                 }
                 // Webhook delivery is detached; drain its failures here so a
                 // dead endpoint shows up as a notice instead of silence.
-                if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知 Webhook","Notification webhook","通知 Webhook")));}
+                if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));}
                 app.background_tasks=runtime.background_tasks.snapshots();
                 // 事件内核的用户侧投影跟着秒级刷新走：它是观察面，不需要自己
                 // 的通知通道。落盘也在这里收口——状态每变一次就写一次盘，

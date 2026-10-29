@@ -512,6 +512,109 @@ pub struct NotificationSettings {
     pub webhook_url: Option<String>,
     pub webhook_on_task_completed: Option<bool>,
     pub webhook_on_attention_required: Option<bool>,
+    /// 除老 webhook 之外的出站渠道。老的 `webhook_*` 字段一个都不动：那份配置
+    /// 与桌面端共用，删掉字段会让还没升级的另一端读不懂。
+    #[serde(default)]
+    pub channels: Vec<NotificationChannel>,
+}
+
+/// 一条出站渠道。用内部标记（`kind = "..."`）而不是一堆可选字段拼成的大结构：
+/// `kind` 拼错、某个渠道不该有的字段写进来，都在解析阶段报错，不会静默忽略。
+///
+/// 这里刻意没有 `deny_unknown_fields`：`[notifications]` 整段是与桌面端共用的，
+/// 桌面端将来往里加字段时，老 CLI 不能因为不认识就拒绝启动。单个渠道的
+/// `smtp` / `resend` 子表是 CLI 自己的，那两层收紧。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationChannel {
+    /// 一次 HTTP POST，报文仍是 `willdeep.webhook.v1`，与老 webhook 同一份。
+    Webhook {
+        #[serde(default)]
+        name: Option<String>,
+        url: String,
+        /// 签名密钥所在的环境变量。设了就对原始请求体做 HMAC-SHA256，带
+        /// `X-Willdeep-Signature: sha256=<hex>`——与 `[intake]` 收的方向同一套。
+        #[serde(default)]
+        secret_env: Option<String>,
+        #[serde(default = "all_notification_events")]
+        events: Vec<NotificationEventKind>,
+    },
+    /// 飞书自定义机器人。国际版 Lark 把 `webhook_url` 换成 open.larksuite.com 即可。
+    Lark {
+        #[serde(default)]
+        name: Option<String>,
+        webhook_url: String,
+        /// 机器人开了「签名校验」时的密钥环境变量；没开就留空。
+        #[serde(default)]
+        secret_env: Option<String>,
+        #[serde(default = "all_notification_events")]
+        events: Vec<NotificationEventKind>,
+    },
+    /// 邮件。`smtp` 与 `resend` 二选一，运行时落到同一个 `EmailTransport`。
+    Email {
+        #[serde(default)]
+        name: Option<String>,
+        from: String,
+        to: Vec<String>,
+        #[serde(default = "all_notification_events")]
+        events: Vec<NotificationEventKind>,
+        #[serde(default)]
+        smtp: Option<SmtpChannelSettings>,
+        #[serde(default)]
+        resend: Option<ResendChannelSettings>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationEventKind {
+    TaskCompleted,
+    AttentionRequired,
+}
+
+fn all_notification_events() -> Vec<NotificationEventKind> {
+    vec![
+        NotificationEventKind::TaskCompleted,
+        NotificationEventKind::AttentionRequired,
+    ]
+}
+
+/// 直连 SMTP。支持隐式 TLS（465）、STARTTLS（587）和明文（25，只该用于本机中继）。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmtpChannelSettings {
+    pub host: String,
+    /// 不写就按 `tls` 取默认端口：implicit 465、starttls 587、none 25。
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub tls: SmtpTls,
+    /// 不写用户名就是匿名中继，不做 AUTH。
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 密码所在的环境变量，不写配置。
+    #[serde(default)]
+    pub password_env: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SmtpTls {
+    #[default]
+    Implicit,
+    Starttls,
+    None,
+}
+
+/// Resend 的 HTTP 发信接口。Resend 自己的 SMTP 用 `smtp` 配就行（host
+/// `smtp.resend.com`、用户名 `resend`、密码填 API key）。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResendChannelSettings {
+    pub api_key_env: String,
+    /// 覆盖 API 基址，默认 `https://api.resend.com`；测试用它指到本机。
+    #[serde(default)]
+    pub api_base: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -779,6 +882,210 @@ fn check_intake_target(workspace: &Path, session: &str, slug: &str) -> Result<()
     Ok(())
 }
 
+/// 出站渠道的配置检查。这里只判「一定错」的事：字段空着、URL 解析不了、
+/// 邮件 provider 二选一没选。环境变量在不在**不在这里查**——`config check`
+/// 可能跑在没装密钥的机器上；缺密钥是投递时的事，记一条错误、跳过这条渠道，
+/// 不能让整份配置拒绝启动。
+fn validate_notification_channels(channels: &[NotificationChannel]) -> Result<()> {
+    let mut names = HashSet::new();
+    for (index, channel) in channels.iter().enumerate() {
+        let label = notification_channel_label(channel, index);
+        if let Some(name) = notification_channel_name(channel) {
+            if name.trim().is_empty() {
+                bail!("notifications.channels[{index}].name cannot be empty");
+            }
+            if !names.insert(name.trim().to_owned()) {
+                bail!("notifications.channels[{index}] duplicates the name '{name}'");
+            }
+        }
+        match channel {
+            NotificationChannel::Webhook {
+                url,
+                secret_env,
+                events,
+                ..
+            } => {
+                check_notification_events(&label, events)?;
+                check_http_url(&label, "url", url)?;
+                check_env_reference(&label, "secret_env", secret_env.as_deref())?;
+            }
+            NotificationChannel::Lark {
+                webhook_url,
+                secret_env,
+                events,
+                ..
+            } => {
+                check_notification_events(&label, events)?;
+                check_http_url(&label, "webhook_url", webhook_url)?;
+                check_env_reference(&label, "secret_env", secret_env.as_deref())?;
+            }
+            NotificationChannel::Email {
+                from,
+                to,
+                events,
+                smtp,
+                resend,
+                ..
+            } => {
+                check_notification_events(&label, events)?;
+                check_mailbox(&label, "from", from)?;
+                if to.is_empty() {
+                    bail!("{label}.to must list at least one recipient");
+                }
+                for (slot, address) in to.iter().enumerate() {
+                    check_mailbox(&label, &format!("to[{slot}]"), address)?;
+                }
+                match (smtp, resend) {
+                    (Some(smtp), None) => {
+                        if smtp.host.trim().is_empty() {
+                            bail!("{label}.smtp.host cannot be empty");
+                        }
+                        if smtp
+                            .host
+                            .chars()
+                            .any(|value| value.is_control() || value.is_whitespace())
+                        {
+                            bail!(
+                                "{label}.smtp.host must not contain whitespace or control characters"
+                            );
+                        }
+                        if smtp.port == Some(0) {
+                            bail!("{label}.smtp.port must be greater than zero");
+                        }
+                        match (smtp.username.as_deref(), smtp.password_env.as_deref()) {
+                            (Some(user), Some(env)) => {
+                                if user.trim().is_empty() {
+                                    bail!("{label}.smtp.username cannot be empty");
+                                }
+                                check_env_reference(&label, "smtp.password_env", Some(env))?;
+                            }
+                            (None, None) => {}
+                            _ => bail!(
+                                "{label}.smtp needs both username and password_env, or neither"
+                            ),
+                        }
+                        // 明文连接上传密码，等于把密码交给整条链路。本机中继
+                        // 例外——那是同一个进程边界内的回环连接。
+                        if smtp.tls == SmtpTls::None
+                            && smtp
+                                .username
+                                .as_deref()
+                                .is_some_and(|user| !user.trim().is_empty())
+                            && !is_loopback_host(&smtp.host)
+                        {
+                            bail!(
+                                "{label}.smtp must not send credentials over a plaintext connection; use implicit or starttls"
+                            );
+                        }
+                    }
+                    (None, Some(resend)) => {
+                        check_env_reference(
+                            &label,
+                            "resend.api_key_env",
+                            Some(resend.api_key_env.as_str()),
+                        )?;
+                        if let Some(base) = resend.api_base.as_deref() {
+                            check_http_url(&label, "resend.api_base", base)?;
+                        }
+                    }
+                    (Some(_), Some(_)) => bail!("{label} cannot configure both smtp and resend"),
+                    (None, None) => bail!("{label} needs either smtp or resend"),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn notification_channel_label(channel: &NotificationChannel, index: usize) -> String {
+    match notification_channel_name(channel) {
+        Some(name) if !name.trim().is_empty() => {
+            format!("notifications.channels[{index}] ({})", name.trim())
+        }
+        _ => format!("notifications.channels[{index}]"),
+    }
+}
+
+fn notification_channel_name(channel: &NotificationChannel) -> Option<&str> {
+    match channel {
+        NotificationChannel::Webhook { name, .. }
+        | NotificationChannel::Lark { name, .. }
+        | NotificationChannel::Email { name, .. } => name.as_deref(),
+    }
+}
+
+fn check_notification_events(label: &str, events: &[NotificationEventKind]) -> Result<()> {
+    if events.is_empty() {
+        bail!("{label}.events is empty; remove the channel instead");
+    }
+    let mut seen = HashSet::new();
+    for event in events {
+        if !seen.insert(*event) {
+            bail!("{label}.events lists the same event twice");
+        }
+    }
+    Ok(())
+}
+
+fn check_http_url(label: &str, field: &str, value: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(value.trim())
+        .with_context(|| format!("{label}.{field} must be a valid URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        bail!("{label}.{field} must use http or https");
+    }
+    Ok(())
+}
+
+/// 只挡一定错的东西：空值、控制字符、没有 `@`。真正的地址语法交给发信服务器，
+/// 在这里发明一套更严的正则只会把合法的地址也挡在外面。
+fn check_mailbox(label: &str, field: &str, value: &str) -> Result<()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        bail!("{label}.{field} cannot be empty");
+    }
+    if trimmed.chars().any(char::is_control) {
+        bail!("{label}.{field} must not contain control characters");
+    }
+    let address = match trimmed.rsplit_once('<') {
+        Some((_, rest)) if rest.trim_end().ends_with('>') => {
+            rest.trim().trim_end_matches('>').trim()
+        }
+        _ => trimmed,
+    };
+    let Some((local, domain)) = address.rsplit_once('@') else {
+        bail!("{label}.{field} must be an email address");
+    };
+    if local.trim().is_empty()
+        || domain.trim().is_empty()
+        || address.chars().any(char::is_whitespace)
+    {
+        bail!("{label}.{field} must be an email address");
+    }
+    Ok(())
+}
+
+fn check_env_reference(label: &str, field: &str, value: Option<&str>) -> Result<()> {
+    let Some(value) = value else { return Ok(()) };
+    if value.trim().is_empty() {
+        bail!("{label}.{field} cannot be empty");
+    }
+    if value
+        .chars()
+        .any(|value| !(value.is_ascii_alphanumeric() || value == '_'))
+    {
+        bail!("{label}.{field} must be an environment variable name");
+    }
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
     file.agent_team.validate().map_err(anyhow::Error::msg)?;
     if let Some(version) = file.version
@@ -840,6 +1147,7 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
             bail!("notifications.webhook_url must use http or https");
         }
     }
+    validate_notification_channels(&file.notifications.channels)?;
     for (name, provider) in &file.providers {
         if provider.api_base.is_some() && provider.api_base_env.is_some() {
             bail!("providers.{name} cannot define both api_base and api_base_env");
@@ -1516,6 +1824,198 @@ webhook_on_attention_required = false
 
         let error = validate(&parsed, Path::new("config.toml")).expect_err("reject file URL");
         assert!(error.to_string().contains("must use http or https"));
+    }
+
+    fn channels_config(section: &str) -> String {
+        format!("version = 1\n[notifications]\n{section}")
+    }
+
+    fn channel_error(section: &str) -> String {
+        let parsed: ConfigFile = toml::from_str(&channels_config(section)).expect("parse channels");
+        validate(&parsed, Path::new("config.toml"))
+            .expect_err("must be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn every_channel_kind_parses_and_validates() {
+        let parsed: ConfigFile = toml::from_str(&channels_config(
+            r#"
+[[notifications.channels]]
+kind = "webhook"
+name = "dashboard"
+url = "https://example.com/willdeep"
+secret_env = "DASHBOARD_SECRET"
+
+[[notifications.channels]]
+kind = "lark"
+name = "team-bot"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+events = ["task_completed"]
+
+[[notifications.channels]]
+kind = "email"
+name = "ops-mail"
+from = "WillDeep <bot@example.com>"
+to = ["ops@example.com", "oncall@example.com"]
+smtp = { host = "smtp.example.com", port = 587, tls = "starttls", username = "bot@example.com", password_env = "SMTP_PASSWORD" }
+
+[[notifications.channels]]
+kind = "email"
+name = "ops-resend"
+from = "bot@example.com"
+to = ["ops@example.com"]
+resend = { api_key_env = "RESEND_API_KEY" }
+"#,
+        ))
+        .expect("parse every channel kind");
+
+        validate(&parsed, Path::new("config.toml")).expect("validate every channel kind");
+        assert_eq!(parsed.notifications.channels.len(), 4);
+        let NotificationChannel::Lark { events, .. } = &parsed.notifications.channels[1] else {
+            panic!("the second channel is the lark one");
+        };
+        assert_eq!(
+            events,
+            &[NotificationEventKind::TaskCompleted],
+            "an explicit events list is kept as written"
+        );
+    }
+
+    #[test]
+    fn an_email_channel_must_choose_exactly_one_backend() {
+        let both = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com" }
+resend = { api_key_env = "RESEND_API_KEY" }
+"#,
+        );
+        assert!(
+            both.contains("cannot configure both smtp and resend"),
+            "{both}"
+        );
+
+        let neither = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+"#,
+        );
+        assert!(neither.contains("needs either smtp or resend"), "{neither}");
+    }
+
+    #[test]
+    fn smtp_credentials_need_both_username_and_a_password_env() {
+        let error = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com", username = "bot@example.com" }
+"#,
+        );
+        assert!(error.contains("both username and"), "{error}");
+    }
+
+    #[test]
+    fn plaintext_smtp_credentials_are_only_allowed_on_loopback() {
+        let remote = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com", tls = "none", username = "bot@example.com", password_env = "SMTP_PASSWORD" }
+"#,
+        );
+        assert!(remote.contains("plaintext"), "{remote}");
+
+        // 本机中继（MailHog、Postfix on localhost）走明文可以，密码不出这台机器。
+        let parsed: ConfigFile = toml::from_str(&channels_config(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "127.0.0.1", port = 1025, tls = "none", username = "bot", password_env = "SMTP_PASSWORD" }
+"#,
+        ))
+        .expect("parse loopback smtp");
+        validate(&parsed, Path::new("config.toml")).expect("loopback plaintext is allowed");
+    }
+
+    #[test]
+    fn channel_events_must_not_be_empty_or_repeat() {
+        let empty = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "webhook"
+url = "https://example.com/willdeep"
+events = []
+"#,
+        );
+        assert!(empty.contains("events is empty"), "{empty}");
+
+        let repeated = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "lark"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+events = ["task_completed", "task_completed"]
+"#,
+        );
+        assert!(repeated.contains("same event twice"), "{repeated}");
+    }
+
+    #[test]
+    fn channel_names_must_be_unique_and_mailboxes_must_be_addresses() {
+        let duplicate = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "webhook"
+name = "ops"
+url = "https://example.com/one"
+
+[[notifications.channels]]
+kind = "lark"
+name = "ops"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+"#,
+        );
+        assert!(duplicate.contains("duplicates the name"), "{duplicate}");
+
+        let bad_mailbox = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "not an address"
+to = ["ops@example.com"]
+resend = { api_key_env = "RESEND_API_KEY" }
+"#,
+        );
+        assert!(
+            bad_mailbox.contains("must be an email address"),
+            "{bad_mailbox}"
+        );
+    }
+
+    #[test]
+    fn a_non_http_lark_endpoint_is_rejected() {
+        let error = channel_error(
+            r#"
+[[notifications.channels]]
+kind = "lark"
+webhook_url = "file:///tmp/hook"
+"#,
+        );
+        assert!(error.contains("must use http or https"), "{error}");
     }
 
     #[test]

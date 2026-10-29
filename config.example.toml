@@ -131,6 +131,41 @@ webhook_url = "http://127.0.0.1:8787/willdeep"
 webhook_on_task_completed = true
 webhook_on_attention_required = true
 
+# 除上面那条老 webhook 之外的出站渠道。每条渠道在自己的后台任务里投递：
+# 一条失败不影响别的，也不会把轮次拖失败。`events` 不写就是两种事件都发。
+# 详见 docs/NOTIFICATIONS.md。
+#
+# [[notifications.channels]]
+# kind = "webhook"
+# name = "dashboard"
+# url = "https://example.com/willdeep"
+# secret_env = "WILLDEEP_WEBHOOK_SECRET"   # 可选：带 X-Willdeep-Signature: sha256=<hex>
+# events = ["task_completed", "attention_required"]
+#
+# [[notifications.channels]]
+# kind = "lark"                            # 飞书自定义机器人
+# name = "team-bot"
+# webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+# secret_env = "WILLDEEP_LARK_SECRET"      # 机器人开了「签名校验」才需要
+# events = ["task_completed"]
+#
+# [[notifications.channels]]
+# kind = "email"
+# name = "ops-mail"
+# from = "WillDeep <bot@example.com>"
+# to = ["ops@example.com"]
+# events = ["task_completed", "attention_required"]
+# smtp = { host = "smtp.example.com", port = 465, tls = "implicit", username = "bot@example.com", password_env = "WILLDEEP_SMTP_PASSWORD" }
+#
+# [[notifications.channels]]
+# kind = "email"
+# name = "ops-resend"
+# from = "WillDeep <bot@example.com>"
+# to = ["ops@example.com"]
+# resend = { api_key_env = "RESEND_API_KEY" }
+# Resend 自己的 SMTP 不用单列 provider：host = "smtp.resend.com"、
+# username = "resend"、password_env 指向 API key 即可。
+
 # 本机反馈账本 $WILLDEEP_HOME/feedback/YYYY-MM.jsonl（docs/FEEDBACK_LEDGER.md）：
 # 下一句建议的采用 / 放弃 / 改写、工具失败、Worker 轮次耗尽等信号，只写本机、不上传。
 # 默认只记 hash 与长度；store_text = true 才写建议与发送原文（含凭据特征的文本始终不写）。

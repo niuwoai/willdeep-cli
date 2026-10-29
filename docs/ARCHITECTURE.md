@@ -141,6 +141,10 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 
 写通道是一条通路的两种规模：写入型工种的目标文件先由父 ToolRegistry canonicalize 并作为**一个集合**整体审批，子 ToolRegistry 再以 canonical 绝对路径做集合成员匹配，符号链接或路径别名不能扩大授权范围；editor 是集合大小为 1 的特例。同一 Catalog 内运行中 Worker 的文件集互斥，冲突时后来者被拒绝并点名冲突文件，锁在运行结束、超时、取消或 panic 时随 `Drop` 释放。详见 [小上下文 Skill Worker](SKILL_WORKERS.md)。
 
+### 出站通知
+
+`[notifications]` 是事后旁路：任务完成、或 Agent 停下来等人处理时，把一句话发到外部。它与 `[[hooks]]` 是两件事——hook 在关键路径上、能拦动作；通知可以丢，失败只记一条错误，不影响轮次结果。一次事件先算一份 `willdeep.webhook.v1` payload，再按每条渠道自己的 `events` 过滤，给每条渠道起一个 detached 任务；HTTP 与邮件共用同一个请求超时，退出前 `flush` 最多等 6 秒。渠道有三种：Webhook（可选 HMAC 签名）、飞书自定义机器人（可选签名校验）、邮件（SMTP / Resend 两种可插拔后端）；密钥只写环境变量名，配置校验不检查变量是否存在——缺失只跳过该渠道。详见 [出站通知渠道](NOTIFICATIONS.md)。
+
 ### 用户交互与持久授权
 
 Core 的 `Approver` 同时承载结构化 `ApprovalDecision`（AllowOnce / Deny / AlwaysAllow）和 `UserQuestion`。因此 `ask_user`、审批状态机及其工具结果属于 Harness，不依赖 SwiftUI 或 Ratatui；不同宿主只实现交互适配器。`ask_user` 支持 options、multi_select 和自由答案，答案使用 `<user_answer>` 边界并转义标记字符。
