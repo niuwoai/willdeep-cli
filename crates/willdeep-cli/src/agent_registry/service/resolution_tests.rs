@@ -196,6 +196,7 @@ async fn explicit_cloud_choice_replaces_a_pin_but_retains_local_binding_and_hist
             willdeep_core::agent_definition::store::ModelBinding {
                 provider_profile: Some("local-only".into()),
                 model: None,
+                ..Default::default()
             },
         )
         .unwrap();

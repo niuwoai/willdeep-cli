@@ -46,7 +46,7 @@ export function ForeignAgentImport({ language, onDone }: { language: Language; o
     </fieldset>
     {error && <p role="alert">{error}</p>}
     {draft && <><pre>{JSON.stringify(draft.definition, null, 2)}</pre><p>{t("importOmitted")}: {draft.omitted.join(", ")}</p><p>{t("importProviderHint")}: {draft.provider}</p>
-      <AgentModelBinding key={`${id}/${draft.model}`} language={language} binding={{provider_profile: null, model: draft.model || null}} pending={pending} onSave={binding => void save(binding)} onCancel={() => {setDraft(null);onDone();}} />
+      <AgentModelBinding key={`${id}/${draft.model}`} language={language} binding={{provider_profile: null, model: draft.model || null, context_window: draft.context_window, max_turns: draft.max_turns}} pending={pending} onSave={binding => void save(binding)} onCancel={() => {setDraft(null);onDone();}} />
     </>}
   </details>;
 }

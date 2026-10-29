@@ -261,6 +261,12 @@ impl SubagentCatalog {
             .model
             .clone()
             .or_else(|| crate::provider::provider_model(resolved.provider.as_ref()));
+        if resolved.definition_model_bound {
+            return DispatchModel {
+                model: own,
+                fallback: None,
+            };
+        }
         let Some(tier) = worker_tier.and_then(crate::WorkerTier::parse) else {
             return DispatchModel {
                 model: own,
@@ -277,14 +283,18 @@ impl SubagentCatalog {
             },
             None if tier != crate::WorkerTier::Standard => DispatchModel {
                 fallback: Some(format!(
-                    "worker_tier={} has no model bound on this provider (configure [worker_tiers.{}]); `{}` keeps its own model{} and only gets the wider {}-token budget",
+                    "worker_tier={} has no model bound on this provider (configure [worker_tiers.{}]); `{}` keeps its own model{} with a {}-token context budget",
                     tier.as_str(),
                     tier.as_str(),
                     resolved.id,
                     own.as_deref()
                         .map(|model| format!(" {model}"))
                         .unwrap_or_default(),
-                    resolved.context_window.max(tier.context_budget()),
+                    resolved
+                        .definition_binding
+                        .as_ref()
+                        .and_then(|binding| binding.context_window)
+                        .unwrap_or_else(|| resolved.context_window.max(tier.context_budget())),
                 )),
                 model: own,
             },
@@ -697,9 +707,11 @@ impl SubagentCatalog {
             let local_binding = profile
                 .definition_model_bound
                 .then(|| (profile.provider.clone(), profile.model.clone()));
+            let execution_binding = profile.definition_binding.clone();
             profile = definition
                 .project(base)
                 .map_err(|error| AgentError::Subagent(error.to_string()))?;
+            profile.definition_binding = execution_binding;
             if let Some((provider, model)) = local_binding {
                 profile.provider = provider;
                 profile.model = model;
@@ -761,6 +773,10 @@ impl SubagentCatalog {
             profile.max_turns = turns as usize;
             profile.token_budget = saved.token_budget;
             profile.timeout_seconds = saved.timeout_seconds;
+        }
+        // Explicit local limits win over tier defaults, including resumed runs.
+        if let Some(binding) = profile.definition_binding.clone() {
+            binding.apply_limits(&mut profile);
         }
         let requested_command = args
             .target_command

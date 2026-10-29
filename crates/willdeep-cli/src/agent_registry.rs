@@ -68,6 +68,10 @@ pub enum AgentAction {
         provider_profile: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        #[arg(long)]
+        context_window: Option<u64>,
+        #[arg(long)]
+        max_turns: Option<usize>,
     },
     Unbind {
         id: String,
@@ -128,7 +132,7 @@ pub async fn run(action: AgentAction, home: &Path) -> Result<()> {
         AgentAction::Rollback { id, revision } => operate(home,"rollback",json!({"id":id,"revision":revision})).await?,
         AgentAction::Enable { id } => operate(home,"enable",json!({"id":id,"value":true})).await?,
         AgentAction::Disable { id } => operate(home,"enable",json!({"id":id,"value":false})).await?,
-        AgentAction::Bind { id, provider_profile, model } => operate(home,"bind",json!({"id":id,"binding":{"provider_profile":provider_profile,"model":model}})).await?,
+        AgentAction::Bind { id, provider_profile, model, context_window, max_turns } => operate(home,"bind",json!({"id":id,"binding":{"provider_profile":provider_profile,"model":model,"context_window":context_window,"max_turns":max_turns}})).await?,
         AgentAction::Unbind { id } => operate(home,"bind",json!({"id":id,"binding":{"provider_profile":null,"model":null}})).await?,
         AgentAction::History { id } => operate(home,"history",json!({"id":id})).await?,
         AgentAction::Catalog { origin } => operate(home,"catalog",json!({"origin":origin})).await?,
@@ -528,6 +532,8 @@ pub fn runtime_profiles(
             // Incompatible agents stay visible in the library but never enter a runnable catalog.
             match package.definition.project(base) {
                 Ok(mut profile) => {
+                    item.binding.apply_limits(&mut profile);
+                    profile.definition_binding = Some(item.binding.clone());
                     if item.binding.provider_profile.is_some() || item.binding.model.is_some() {
                         match apply_binding(&mut profile, &item.binding, file, parent) {
                             Ok(()) => {}

@@ -8,6 +8,50 @@ fn fixture() -> AgentDefinition {
 }
 
 #[test]
+fn execution_binding_round_trips_and_rejects_invalid_limits_atomically() {
+    let home = std::env::temp_dir().join(format!("agent-limits-{}", uuid::Uuid::new_v4()));
+    let library = store::AgentLibrary::new(&home);
+    let package = AgentPackage::local(fixture()).unwrap();
+    let id = &package.definition.definition_id;
+    let legacy: store::ModelBinding =
+        serde_json::from_value(serde_json::json!({"model":null,"provider_profile":null})).unwrap();
+    assert_eq!(legacy, store::ModelBinding::default());
+    let binding = store::ModelBinding {
+        context_window: Some(32768),
+        max_turns: Some(12),
+        ..Default::default()
+    };
+    library.create_bound(&package, binding.clone()).unwrap();
+    assert_eq!(library.installations().unwrap()[id].binding, binding);
+    for invalid in [
+        store::ModelBinding {
+            context_window: Some(0),
+            ..binding.clone()
+        },
+        store::ModelBinding {
+            context_window: Some(2_000_001),
+            ..binding.clone()
+        },
+        store::ModelBinding {
+            max_turns: Some(0),
+            ..binding.clone()
+        },
+        store::ModelBinding {
+            max_turns: Some(1001),
+            ..binding.clone()
+        },
+    ] {
+        assert!(library.set_binding(id, invalid).is_err());
+        assert_eq!(library.installations().unwrap()[id].binding, binding);
+    }
+    assert_eq!(
+        library.package(&package.sha256).unwrap().sha256,
+        package.sha256
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn canonical_identity_is_independent_of_json_layout() {
     let definition = fixture();
     let reordered = serde_json::to_vec_pretty(&definition).unwrap();
@@ -125,6 +169,16 @@ async fn dispatch_injects_locked_definition_without_expanding_role_permissions()
     use crate::provider::{Provider, ProviderError};
     use crate::types::{Completion, Message, ToolDefinition};
     use std::sync::{Arc, Mutex};
+    #[derive(Default)]
+    struct LimitSink(Mutex<Vec<usize>>);
+    #[async_trait::async_trait]
+    impl crate::EventSink for LimitSink {
+        async fn emit(&self, event: crate::AgentEvent) {
+            if let crate::AgentEvent::SubagentStarted { max_turns, .. } = event {
+                self.0.lock().unwrap().push(max_turns);
+            }
+        }
+    }
     struct InspectProvider(Arc<Mutex<String>>);
     #[async_trait::async_trait]
     impl Provider for InspectProvider {
@@ -154,7 +208,13 @@ async fn dispatch_injects_locked_definition_without_expanding_role_permissions()
         .tools
         .extend(["workspace.edit".into(), "process.verify".into()]);
     let base = bases.iter().find(|p| p.id == "reviewer").unwrap();
-    let profile = definition.project(base).unwrap();
+    let mut profile = definition.project(base).unwrap();
+    profile.definition_binding = Some(store::ModelBinding {
+        context_window: Some(32768),
+        max_turns: Some(7),
+        ..Default::default()
+    });
+    let limits = Arc::new(LimitSink::default());
     assert_eq!(profile.write_scope, crate::SubagentWriteScope::None);
     let home = std::env::temp_dir().join(format!("agent-dispatch-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&home).unwrap();
@@ -167,7 +227,15 @@ async fn dispatch_injects_locked_definition_without_expanding_role_permissions()
         Arc::new(crate::BackgroundTaskRegistry::default()),
     )
     .with_state_home(&home)
-    .with_parent_session(parent);
+    .with_parent_session(parent)
+    .with_event_sink(limits.clone());
+    assert!(
+        catalog
+            .dispatch_model(&definition.definition_id, Some("expert"))
+            .fallback
+            .unwrap()
+            .contains("32768-token")
+    );
     assert!(
         catalog
             .public_profile_ids()
@@ -183,6 +251,7 @@ async fn dispatch_injects_locked_definition_without_expanding_role_permissions()
             crate::subagent::SpawnAgentArgs {
                 prompt: "Inspect evidence".into(),
                 profile: Some(definition.definition_id.clone()),
+                worker_tier: Some("expert".into()),
                 ..Default::default()
             },
             None,
@@ -190,6 +259,7 @@ async fn dispatch_injects_locked_definition_without_expanding_role_permissions()
         .await
         .unwrap();
     assert!(report.contains("independent report"));
+    assert_eq!(*limits.0.lock().unwrap(), vec![7]);
     let actual = captured.lock().unwrap();
     assert!(actual.contains(&definition.instructions));
     assert!(actual.contains(&definition.revision().unwrap()));
