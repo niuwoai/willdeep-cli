@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "test_suite/history_folding_tests.rs"]
+mod history_folding_tests;
 #[path = "test_suite/prompt_history_tests.rs"]
 mod prompt_history_tests;
 

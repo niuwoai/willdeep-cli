@@ -81,6 +81,28 @@ impl AgentLibrary {
         keys: &BTreeMap<String, String>,
         etag: Option<String>,
     ) -> Result<()> {
+        self.install_with_options(package, origin, keys, etag, None)
+    }
+
+    pub fn create_bound(&self, package: &AgentPackage, binding: ModelBinding) -> Result<()> {
+        Self::validate_binding(&binding)?;
+        self.install_with_options(
+            package,
+            Origin::Local,
+            &BTreeMap::new(),
+            None,
+            Some(binding),
+        )
+    }
+
+    fn install_with_options(
+        &self,
+        package: &AgentPackage,
+        origin: Origin,
+        keys: &BTreeMap<String, String>,
+        etag: Option<String>,
+        new_binding: Option<ModelBinding>,
+    ) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(package)?;
         AgentPackage::parse(&bytes)?;
         if origin == Origin::Official {
@@ -99,6 +121,10 @@ impl AgentLibrary {
         let _lock = self.lock()?;
         let mut items = self.installations()?;
         let id = &package.definition.definition_id;
+        ensure!(
+            new_binding.is_none() || !items.contains_key(id),
+            "agent id already installed"
+        );
         for previous in self.history(id)? {
             ensure!(
                 previous.definition.version != package.definition.version
@@ -140,10 +166,12 @@ impl AgentLibrary {
         }
         let pinned = items.get(id).is_some_and(|item| item.pinned);
         let enabled = items.get(id).is_none_or(|item| item.enabled);
-        let binding = items
-            .get(id)
-            .map(|item| item.binding.clone())
-            .unwrap_or_default();
+        let binding = new_binding.unwrap_or_else(|| {
+            items
+                .get(id)
+                .map(|item| item.binding.clone())
+                .unwrap_or_default()
+        });
         let dirty = origin != Origin::Official && etag.is_none();
         items.insert(
             id.clone(),
@@ -179,6 +207,11 @@ impl AgentLibrary {
         self.update(id, |item| item.pinned = value)
     }
     pub fn set_binding(&self, id: &str, binding: ModelBinding) -> Result<()> {
+        Self::validate_binding(&binding)?;
+        self.update(id, |item| item.binding = binding)
+    }
+
+    fn validate_binding(binding: &ModelBinding) -> Result<()> {
         ensure!(
             binding
                 .provider_profile
@@ -197,7 +230,7 @@ impl AgentLibrary {
                     && !value.chars().any(char::is_control)),
             "invalid local model name"
         );
-        self.update(id, |item| item.binding = binding)
+        Ok(())
     }
     pub fn remove(&self, id: &str, revision: &str) -> Result<()> {
         let _lock = self.lock()?;
