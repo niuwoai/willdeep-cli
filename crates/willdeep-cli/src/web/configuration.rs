@@ -60,7 +60,24 @@ window.willdeep = {{
       method: 'POST', headers: {{ 'content-type': 'application/json' }},
       body: JSON.stringify({{ command_id: commandID, arguments: args || {{}} }})
     }});
-    return response.json();
+    const messages = {{
+      'zh-CN': {{ http: '配置服务请求失败', invalid: '配置服务返回了无效响应，请检查登录状态和代理服务' }},
+      en: {{ http: 'Configuration service request failed', invalid: 'Invalid configuration response; check your sign-in and proxy service' }},
+      ja: {{ http: '設定サービスへのリクエストが失敗しました', invalid: '設定サービスの応答が無効です。ログイン状態とプロキシを確認してください' }}
+    }}[{locale}];
+    let result;
+    try {{ result = await response.json(); }} catch {{
+      return {{ ok: false, error: 'invalid_response', message: `${{messages.invalid}} (HTTP ${{response.status}})` }};
+    }}
+    if (!response.ok || (result && typeof result.error === 'string' && result.ok !== true)) {{
+      const detail = result && (typeof result.message === 'string' ? result.message :
+        typeof result.error === 'string' ? result.error : null);
+      return {{ ok: false, error: 'request_failed', message: `${{detail || messages.http}} (HTTP ${{response.status}})` }};
+    }}
+    if (!result || typeof result !== 'object' || (!Array.isArray(result.content) && typeof result.ok !== 'boolean')) {{
+      return {{ ok: false, error: 'invalid_response', message: `${{messages.invalid}} (HTTP ${{response.status}})` }};
+    }}
+    return result;
   }}
 }};
 </script>"#,
