@@ -5,11 +5,14 @@
 .run-toggle { margin-left: auto; flex: none; padding: 2px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
 .run-toggle:hover { background: var(--bg-panel-strong); color: var(--text); }
 .run-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.run-details { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding: 4px 0; }
-.run-card .run-step-expanded { flex-wrap: wrap; }
-.run-step-expanded .run-step-label { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.run-card .run-step-expanded .run-step-detail { flex-basis: 100%; padding-left: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.run-card .run-step-expanded .run-step-elapsed { margin-left: 15px; }
+.run-details { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
+/* 每步展开后是两行：标签与耗时一行，命令详情另起一行。列表超过 320px 时自己滚动，
+   子项不能收缩，否则多行内容会被压进相邻步骤，文字叠在一起。 */
+.run-details > * { flex-shrink: 0; }
+.run-card .run-step-expanded { flex-wrap: wrap; row-gap: 4px; }
+.run-step-expanded .run-step-label { flex: 1 1 auto; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.run-card .run-step-expanded .run-step-detail { order: 3; flex-basis: 100%; padding-left: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-card .run-step-expanded .run-step-elapsed { order: 2; margin-left: auto; }
 .thought-card { color: var(--text-ghost); font-size: 12px; padding: 2px 2px 4px; }
 .thought-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 2px 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .thought-toggle:hover { color: var(--text-dim); }
