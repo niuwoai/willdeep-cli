@@ -53,3 +53,19 @@ it("updates one finished step while the other keeps running and the dependent wa
   expect(container.querySelectorAll('[data-status="in_progress"]').length).toBe(1);
   expect(screen.getByText("等待：B")).toBeTruthy();
 });
+
+it("marks every plan status with an icon and spins only the running step", () => {
+  const plan = { summary: "", steps: [
+    { id: "done", text: "Done step", status: "done" as const },
+    { id: "run", text: "Running step", status: "in_progress" as const },
+    { id: "wait", text: "Waiting step", status: "pending" as const, depends_on: ["run"] },
+    { id: "pending", text: "Pending step", status: "pending" as const },
+    { id: "failed", text: "Failed step", status: "failed" as const },
+  ] };
+  const { container } = render(<ConversationCard messages={messages["zh-CN"]} plan={plan} />);
+  const statuses = [...container.querySelectorAll(".conversation-plan-status")];
+  expect(statuses).toHaveLength(5);
+  expect(statuses.every((status) => status.querySelector("svg"))).toBe(true);
+  expect(statuses[1].querySelector(".plan-spin")).toBeTruthy();
+  expect(statuses[2].querySelector(".plan-spin")).toBeNull();
+});

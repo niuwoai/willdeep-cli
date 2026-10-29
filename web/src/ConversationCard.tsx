@@ -2,10 +2,15 @@ import type { Messages } from "./i18n";
 import { Markdown } from "./Markdown";
 import { markdownCopy } from "./markdownCopy";
 import "./conversation.css";
-import { Workflow } from "lucide-react";
+import { Ban, CheckCircle2, Circle, Clock3, LoaderCircle, MinusCircle, Workflow, XCircle, type LucideIcon } from "lucide-react";
 
 type StepStatus = "pending" | "in_progress" | "done" | "skipped" | "failed" | "blocked";
 export type Plan = { summary: string; steps: Array<{ id: string; text: string; status: StepStatus; detail?: string | null; depends_on?: string[] }> };
+
+const STATUS_ICONS: Record<StepStatus, LucideIcon> = {
+  pending: Circle, in_progress: LoaderCircle, done: CheckCircle2,
+  skipped: MinusCircle, failed: XCircle, blocked: Ban,
+};
 export type ConversationItem = {
   role: "user" | "assistant" | "system" | "plan";
   content: string;
@@ -40,8 +45,12 @@ export function ConversationCard({ plan, details = [], messages: t }: { plan?: P
         const waiting = (step.depends_on ?? []).filter((id) => !plan.steps.some((other) => other.id === id && other.status === "done"));
         const isWaiting = step.status === "pending" && waiting.length > 0;
         const dependencies = waiting.map((id) => plan.steps.find((other) => other.id === id)?.text ?? id).join(t.planDependencySeparator);
+        const StatusIcon = isWaiting ? Clock3 : STATUS_ICONS[step.status];
         return <li key={step.id} data-status={isWaiting ? "waiting" : step.status}>
-          <span className="conversation-plan-status">{isWaiting ? t.planWaiting : statuses[step.status]}</span>
+          <span className="conversation-plan-status">
+            <StatusIcon size={13} aria-hidden="true" className={!isWaiting && step.status === "in_progress" ? "plan-spin" : undefined} />
+            {isWaiting ? t.planWaiting : statuses[step.status]}
+          </span>
           <div><span>{step.text}</span>{step.detail && <p>{step.detail}</p>}
             {isWaiting && <p>{t.planWaitingFor.replace("{steps}", dependencies)}</p>}
           </div>

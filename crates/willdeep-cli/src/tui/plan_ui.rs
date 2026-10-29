@@ -213,7 +213,7 @@ pub(super) fn toggle_plan_details(entries: &mut [String]) {
     }
 }
 
-pub(super) fn sync_persisted_plan(entries: &mut [String], plan: &Plan) {
+pub(super) fn sync_persisted_plan(entries: &mut Vec<String>, plan: &Plan) {
     for entry in entries.iter_mut().rev() {
         let Some(mut card) = decode_plan_entry(entry) else {
             continue;
@@ -231,6 +231,15 @@ pub(super) fn sync_persisted_plan(entries: &mut [String], plan: &Plan) {
             return;
         }
     }
+    // The TUI can attach mid-turn, after the plan event was emitted, or the
+    // event can arrive while the session is not yet marked runtime-managed.
+    // The persisted plan must still be visible in the output stream, so append
+    // a card when no matching one exists; later syncs update it in place.
+    entries.push(plan_entry(&PlanTranscript {
+        plan: plan.clone(),
+        details: Vec::new(),
+        expanded: false,
+    }));
 }
 
 #[cfg(test)]
@@ -272,6 +281,23 @@ mod tests {
 
     const PLAN: &str = "```plan\n1. 验证接口\n2. 发布\n```";
     const PROGRESS: &str = "没有新增状态变化。\n```progress\n1: done\n2: skipped\n```";
+
+    #[test]
+    fn persisted_plan_without_a_card_is_appended_once() {
+        let plan: Plan = serde_json::from_value(serde_json::json!({"summary":"", "steps":[
+            {"id":"a", "text":"检查", "status":"in_progress"},
+            {"id":"b", "text":"发布", "status":"pending", "depends_on":["a"]}
+        ]}))
+        .unwrap();
+        let mut entries = Vec::new();
+        sync_persisted_plan(&mut entries, &plan);
+        assert_eq!(entries.len(), 1);
+        sync_persisted_plan(&mut entries, &plan);
+        assert_eq!(entries.len(), 1);
+        let card = decode_plan_entry(&entries[0]).unwrap();
+        assert_eq!(card.plan.steps[0].status, StepStatus::InProgress);
+        assert_eq!(card.plan.steps[0].text, "检查");
+    }
 
     #[test]
     fn live_plan_updates_in_place_and_details_can_be_toggled() {

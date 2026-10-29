@@ -3,7 +3,11 @@
 .conversation-card-heading span, .conversation-card-details, .conversation-plan-steps p { color: var(--text-dim); font-size: 13px; }
 .conversation-plan-steps { list-style: none; padding: 0; margin: 12px 0 0; }
 .conversation-plan-steps li { display: flex; align-items: baseline; gap: 12px; padding: 6px 0; overflow-wrap: anywhere; }
-.conversation-plan-status { flex: 0 0 5em; font-size: 12px; }
+.conversation-plan-status { display: inline-flex; align-items: center; gap: 5px; flex: none; min-width: 6.5em; font-size: 12px; white-space: nowrap; }
+.conversation-plan-status svg { flex: none; }
+@keyframes plan-spin { to { transform: rotate(360deg); } }
+.conversation-plan-status .plan-spin { animation: plan-spin 1.1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .conversation-plan-status .plan-spin { animation: none; } }
 .conversation-plan-steps li[data-status="done"] .conversation-plan-status { color: var(--success, #70bd98); }
 .conversation-plan-steps li[data-status="failed"] .conversation-plan-status { color: var(--danger, #e89393); }
 .conversation-plan-steps li[data-status="in_progress"] .conversation-plan-status { color: var(--accent); font-weight: 600; }
