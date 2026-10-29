@@ -149,7 +149,7 @@ struct SessionDetail {
     id: String,
     workspace: String,
     messages: Vec<willdeep_core::conversation::ConversationItem>,
-    /// `/short` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
+    /// `/short` 与 `/verbose` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
     #[serde(skip_serializing_if = "Option::is_none")]
     response_style: Option<willdeep_core::ResponseStyle>,
 }
@@ -1303,11 +1303,11 @@ async fn session_detail(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResponseStyleRequest {
-    /// `"short"` 打开简洁回复，`null` 恢复默认。别的值直接拒绝。
+    /// `"short"` / `"detailed"`；`null` 清掉偏好、回到默认（简洁）。别的值直接拒绝。
     response_style: Option<willdeep_core::ResponseStyle>,
 }
 
-/// `/short` 的落点。风格只是这条会话的偏好，下一轮构建 harness 时才读，
+/// `/short` 与 `/verbose` 的落点。风格只是这条会话的偏好，下一轮构建 harness 时才读，
 /// 所以直接写核心会话文件就够了，不必走 Runtime 协议。
 async fn set_response_style(
     State(state): State<Arc<WebState>>,
@@ -2069,6 +2069,7 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
         "id":value.get("id").and_then(|item| item.as_str()),
         "name":value.get("name").and_then(|item| item.as_str()),
         "is_error":value.get("is_error").and_then(|item| item.as_bool()),
+        "plan_update":value.get("plan_update"),
     }))
 }
 

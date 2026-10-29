@@ -521,6 +521,12 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
                 app.tools.completed(name, is_error);
+                if !is_error
+                    && name == "update_plan"
+                    && let Some(receipt) = value.get("plan_update")
+                {
+                    append_plan_result(&mut app.transcript, &receipt.to_string());
+                }
                 app.record_progress(format!(
                     "Runtime · {} {name}",
                     if is_error {

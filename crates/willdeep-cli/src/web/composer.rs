@@ -70,7 +70,15 @@ pub(super) async fn get(
         })
         .collect();
     Ok(Json(ComposerData {
-        commands: vec!["/help", "/goal", "/compress", "/skills", "/clear", "/short"],
+        commands: vec![
+            "/help",
+            "/goal",
+            "/compress",
+            "/skills",
+            "/clear",
+            "/short",
+            "/verbose",
+        ],
         skills,
         references,
     }))

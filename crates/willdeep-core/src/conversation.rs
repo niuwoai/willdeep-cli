@@ -93,6 +93,7 @@ pub enum StepStatus {
     Done,
     Skipped,
     Failed,
+    Blocked,
 }
 
 impl StepStatus {
@@ -103,6 +104,7 @@ impl StepStatus {
             Self::Done => "done",
             Self::Skipped => "skipped",
             Self::Failed => "failed",
+            Self::Blocked => "blocked",
         }
     }
 }
@@ -114,6 +116,8 @@ pub struct PlanStep {
     pub status: StepStatus,
     #[serde(default)]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +147,13 @@ pub struct ConversationItem {
 pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<ConversationItem> {
     let mut items: Vec<ConversationItem> = Vec::new();
     let mut active: Option<usize> = None;
+    let plan_calls: HashSet<&str> = messages
+        .iter()
+        .filter(|message| message.role == Role::Assistant)
+        .flat_map(|message| &message.tool_calls)
+        .filter(|call| call.name == "update_plan")
+        .map(|call| call.id.as_str())
+        .collect();
     // 哪些工具调用在历史里有结果：没有的那些，轮次就是在那里被打断的。
     let answered: HashSet<&str> = messages
         .iter()
@@ -150,6 +161,25 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         .filter_map(|message| message.tool_call_id.as_deref())
         .collect();
     for message in messages {
+        if message.role == Role::Tool
+            && message
+                .tool_call_id
+                .as_deref()
+                .is_some_and(|id| plan_calls.contains(id))
+            && let Some(receipt) = crate::planning::receipt(&message.content)
+        {
+            let index = if !receipt.replaced
+                && let Some(index) = active
+            {
+                index
+            } else {
+                items.push(item("plan", String::new(), 0));
+                items.len() - 1
+            };
+            items[index].plan = Some(receipt.plan);
+            active = Some(index);
+            continue;
+        }
         let role = match message.role {
             Role::User if message.source == Some(MessageSource::HostInstruction) => "system",
             Role::User => "user",
@@ -410,6 +440,7 @@ pub fn parse_plan_reply(content: &str, existing: Option<&Plan>) -> Option<(Plan,
                         text: text.to_owned(),
                         status: StepStatus::Pending,
                         detail: None,
+                        depends_on: Vec::new(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -441,6 +472,7 @@ pub fn parse_plan_reply(content: &str, existing: Option<&Plan>) -> Option<(Plan,
                             id,
                             status,
                             detail: None,
+                            depends_on: Vec::new(),
                         })
                         .collect(),
                 });

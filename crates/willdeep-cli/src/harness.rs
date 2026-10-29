@@ -1111,9 +1111,10 @@ pub(crate) async fn build(
     ));
     let tools = tools.with_board(board.clone(), "parent");
     let mut system_prompt = willdeep_core::prompt::build_system_prompt(&workspace)?;
-    // 简洁风格盖在契约后面：`/short` 是这条会话自己的选择，默认契约一个字不动。
+    // 简洁是默认风格：只有这条会话显式选了详细（`/verbose`）才不加这一段。
+    // 契约文本一个字不动，覆盖段永远接在末尾。
     if resumed
-        .is_some_and(|session| session.response_style == Some(willdeep_core::ResponseStyle::Short))
+        .is_none_or(|session| willdeep_core::ResponseStyle::uses_short(session.response_style))
     {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(willdeep_core::prompt::SHORT_RESPONSE_INSTRUCTION);

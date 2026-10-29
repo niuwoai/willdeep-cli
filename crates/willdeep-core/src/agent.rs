@@ -17,6 +17,7 @@ mod context;
 mod guidance;
 mod messaging;
 mod parallel;
+mod planning;
 mod progress;
 mod recovery;
 mod streaming;
@@ -765,31 +766,6 @@ impl Agent {
         self
     }
 
-    fn execute_update_plan(&self, call: &ToolCall) -> Result<String, ToolError> {
-        let continuation = self
-            .goal_continuation
-            .as_ref()
-            .ok_or_else(|| ToolError::UnknownTool(call.name.clone()))?;
-        let update: crate::goal::PlanUpdate =
-            serde_json::from_value(call.parsed_arguments().map_err(|source| {
-                ToolError::InvalidArguments {
-                    tool: call.name.clone(),
-                    source,
-                }
-            })?)
-            .map_err(|source| ToolError::InvalidArguments {
-                tool: call.name.clone(),
-                source,
-            })?;
-        // 校验不过是模型的输入问题，按参数错误回给它，不消耗续推预算。
-        continuation
-            .update_plan(update)
-            .map_err(|message| ToolError::InvalidArguments {
-                tool: call.name.clone(),
-                source: <serde_json::Error as serde::de::Error>::custom(message),
-            })
-    }
-
     fn record_goal_feedback(
         &self,
         continuation: &GoalContinuation,
@@ -1024,14 +1000,16 @@ impl Agent {
                 catalog.description()
             ));
         }
-        // 有目标时才给 `update_plan`：清单是目标的一部分，没有目标就无从谈起。
-        if self
-            .goal_continuation
-            .as_ref()
-            .is_some_and(|goal| goal.is_active())
-        {
+        if self.tools.allows_agent_tool("update_plan") {
             definitions.push(crate::tools::update_plan_definition());
         }
+        let mut plan = checkpoint.restore_plan()?.or_else(|| {
+            crate::conversation::project(&messages, None)
+                .into_iter()
+                .rev()
+                .find_map(|item| item.plan)
+        });
+        checkpoint.plan = plan.clone();
         let mut compressed: Option<context::SummaryCache> = None;
         let mut used_tokens = 0_u64;
         // 分别累计输入/输出，供 AgentOutcome 上报——`used_tokens` 是预算判定用的
@@ -1058,6 +1036,19 @@ impl Agent {
                 self.tools.required_verification_prompt(),
                 self.tools.completion_contract_prompt()
             );
+            if self.tools.allows_agent_tool("update_plan") {
+                messages[0].content.push_str("\n\n");
+                messages[0]
+                    .content
+                    .push_str(crate::planning::SCHEDULING_CONTRACT);
+                if let Some(plan) = &plan {
+                    let state = crate::planning::Receipt::new(plan.clone(), false);
+                    messages[0].content.push_str(&format!(
+                        "\n<session-plan>{}</session-plan>",
+                        serde_json::to_string(&state).expect("plan serializes")
+                    ));
+                }
+            }
             // 目标状态钉在 system 消息里：每轮重建、不进压缩摘要，所以目标、
             // 验收清单与在飞 Worker 永远不会被摘要掉。
             if let Some(pin) = self
@@ -1472,11 +1463,11 @@ impl Agent {
                             } else {
                                 if uncertain_calls.needs_approval(&call) {
                                     match self.tools.approve_uncertain_replay(&call).await {
-                                        Ok(()) => self.execute_tool(&call).await,
+                                        Ok(()) => self.execute_planned_tool(&call, &mut plan).await,
                                         Err(error) => Err(error),
                                     }
                                 } else {
-                                    self.execute_tool(&call).await
+                                    self.execute_planned_tool(&call, &mut plan).await
                                 }
                             }
                         }
@@ -1510,6 +1501,7 @@ impl Agent {
                         is_error,
                     })
                     .await;
+                checkpoint.plan = plan.clone();
                 messages.push(Message::tool(&call, output));
                 checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             }
@@ -1675,9 +1667,6 @@ impl Agent {
             }
             if let Some(result) = self.execute_agent_control_tool(call) {
                 return result;
-            }
-            if call.name == "update_plan" {
-                return self.execute_update_plan(call);
             }
             if call.name == "await_agents" {
                 return self.execute_await_agents(call).await;

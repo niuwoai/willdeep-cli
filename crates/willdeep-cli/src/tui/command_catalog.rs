@@ -74,6 +74,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/attachments",
             "/queue",
             "/short",
+            "/verbose",
         ],
         Language::En => [
             "/help",
@@ -108,6 +109,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/attachments",
             "/queue",
             "/short",
+            "/verbose",
         ],
         Language::Ja => [
             "/help",
@@ -142,6 +144,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/attachments",
             "/queue",
             "/short",
+            "/verbose",
         ],
     };
     // 用法与说明按同一顺序声明，配错了就是把说明贴到别的命令上。
@@ -185,6 +188,7 @@ pub(super) fn command_runs_immediately(command: &str) -> bool {
             | "/uistyle"
             | "/clear"
             | "/short"
+            | "/verbose"
     )
 }
 
@@ -434,9 +438,17 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
         (
             "/short",
             language.text(
-                "切换简洁回复：进度只更新计划卡片，聊天留开工一句和最后结果",
-                "Toggle the short style: progress updates the plan card; chat keeps one line and the result",
-                "簡潔な応答に切替：進捗は計画カードのみ、チャットは開始一行と最終結果",
+                "切回简洁回复（默认）：进度只更新计划卡片，聊天留开工一句和最后结果",
+                "Switch back to the short style (the default): progress updates the plan card; chat keeps one line and the result",
+                "簡潔な応答に戻す（既定）：進捗は計画カードのみ、チャットは開始一行と最終結果",
+            ),
+        ),
+        (
+            "/verbose",
+            language.text(
+                "切换详细回复：每个阶段一句正文进度；默认是简洁回复，用 /short 切回",
+                "Switch to detailed replies: one line of progress per phase; the default is short, /short switches back",
+                "詳細な応答に切替：段階ごとに本文一行。既定は簡潔で、/short で戻せます",
             ),
         ),
         (

@@ -140,7 +140,7 @@ pub(super) fn colored_transcript(
             continue;
         }
         if let Some(card) = decode_plan_entry(value) {
-            lines.extend(render_plan(&card.plan, width));
+            lines.extend(render_plan(&card.plan, width, language));
             if card.expanded {
                 for detail in card.details {
                     lines.extend(detail.lines().map(|line| {

@@ -130,7 +130,7 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 33);
+        assert_eq!(commands.len(), 34);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
             "/daemon",
@@ -148,6 +148,7 @@ mod command_tests {
             "/queue",
             "/peers",
             "/short",
+            "/verbose",
         ] {
             assert!(commands.contains(&command), "{command} 不在命令目录里");
         }
@@ -212,27 +213,36 @@ mod command_tests {
         assert_eq!(app.enrich_prompt("continue", &skills), "continue");
     }
 
-    /// `/short` 是会话级开关：再敲一次关掉，带参数不算这条命令。
-    /// 它不进提示词——风格写在系统提示词里，下一轮构建 harness 时才读。
+    /// 默认是简洁；`/short` 与 `/verbose` 各管一个方向，提示里互相点名。
+    /// 它们不进提示词——风格写在系统提示词里，下一轮构建 harness 时才读。
     #[test]
-    fn short_command_toggles_and_ignores_arguments() {
+    fn short_and_verbose_select_a_style_and_ignore_arguments() {
         let mut app = App::new(Vec::new(), Language::ZhCn);
         let skills = SkillCatalog::default();
+        assert_eq!(app.response_style, None);
+
+        assert!(app.handle_slash_command("/verbose", &skills));
+        assert_eq!(
+            app.response_style,
+            Some(willdeep_core::ResponseStyle::Detailed)
+        );
+        assert!(app.transcript.last().unwrap().contains("详细回复"));
+        assert!(app.transcript.last().unwrap().contains("/short"));
 
         assert!(app.handle_slash_command("/short", &skills));
         assert_eq!(
             app.response_style,
             Some(willdeep_core::ResponseStyle::Short)
         );
-        assert!(app.transcript.last().unwrap().contains("简洁回复已开启"));
+        assert!(app.transcript.last().unwrap().contains("简洁回复"));
+        assert!(app.transcript.last().unwrap().contains("/verbose"));
 
-        assert!(app.handle_slash_command("/short", &skills));
-        assert_eq!(app.response_style, None);
-        assert!(app.transcript.last().unwrap().contains("已恢复默认回复"));
-
-        // 带参数的不是这条命令：不能静默地把开关拨过去。
-        assert!(app.handle_slash_command("/short off", &skills));
-        assert_eq!(app.response_style, None);
+        // 带参数的不是这条命令：不能静默地把风格拨过去。
+        assert!(app.handle_slash_command("/verbose on", &skills));
+        assert_eq!(
+            app.response_style,
+            Some(willdeep_core::ResponseStyle::Short)
+        );
         assert!(app.transcript.last().unwrap().contains("unknown command"));
     }
 

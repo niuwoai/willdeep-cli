@@ -57,7 +57,7 @@ function accessLabel(access: WorkspaceAccess, t: { accessReadOnly: string; acces
   }
 }
 type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
-type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | null };
+type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | "detailed" | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -122,9 +122,10 @@ type RuntimeStreamEvent = {
   id?: string;
   name?: string;
   is_error?: boolean;
+  plan_update?: { plan: Plan; replaced: boolean } | null;
   message?: string;
 };
-const defaultCommands = ["/help", "/goal", "/compress", "/skills", "/clear", "/short"];
+const defaultCommands = ["/help", "/goal", "/compress", "/skills", "/clear", "/short", "/verbose"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
 
@@ -265,9 +266,6 @@ export function App() {
     setAttachments([...attachmentsRef.current, { ...payload, id: crypto.randomUUID() }]);
   };
   const [goal, setGoal] = useState("");
-  // `/short` 的会话级开关。真值在服务端，这里只是显示用的镜像：加载会话时从
-  // 详情里恢复，切换时先写服务端再改它。刷新页面不会把它弄丢。
-  const [shortReplies, setShortReplies] = useState(false);
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
   const [error, setError] = useState("");
   const references = useComposerReferences(workspace, prompt, t.loadFailed, setError);
@@ -579,7 +577,6 @@ export function App() {
     if (gained > 0 && hiddenRounds > 0) setChatRounds((rounds) => rounds + gained);
     localStorage.setItem(`${lastSessionPrefix}${workspace}`, detail.id);
     setChat(next);
-    setShortReplies(detail.response_style === "short");
     followBottomRef.current = true;
   }
 
@@ -667,6 +664,15 @@ export function App() {
       updateRun(runId, (steps) => steps.some((step) => step.id === stepId) ? steps : [...steps, { id: stepId, label: event.label || t.toolRunning, detail: event.detail, status: "active", startedAt: Date.now() }]);
     }
     else if (event.type === "tool_completed") {
+      if (!event.is_error && event.name === "update_plan" && event.plan_update) {
+        const receipt = event.plan_update;
+        setChat((current) => {
+          const index = current.map((message) => message.role).lastIndexOf("plan");
+          if (!receipt.replaced && index >= 0) return current.map((message, position) =>
+            position === index ? { ...message, plan: receipt.plan } : message);
+          return [...current, { id: `plan-${event.id ?? nextId("plan")}`, role: "plan", content: "", plan: receipt.plan }];
+        });
+      }
       setActivity(event.label || (event.is_error ? t.toolFailed : t.toolDone));
       const stepId = event.id || `tool-${event.cursor ?? nextId("tool")}`;
       updateRun(runId, (steps) => {
@@ -1021,15 +1027,14 @@ export function App() {
     if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); setPrompt(""); return; }
     if (typed === "/skills") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: composer.skills.length ? composer.skills.map((skill) => `$${skill.identifier} · ${skill.name}\n${skill.description}`).join("\n\n") : t.noSkills }]); setPrompt(""); return; }
     if (typed === "/goal off") { setGoal(""); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); setPrompt(""); return; }
-    if (typed === "/short") {
+    if (typed === "/short" || typed === "/verbose") {
       setPrompt("");
       // 风格记在会话上。还没有会话时无处可记，先说清楚，不假装已经切过去了。
       if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.shortNeedsSession }]); return; }
-      const next = !shortReplies;
+      const detailed = typed === "/verbose";
       try {
-        await mutate(`/api/sessions/${encodeURIComponent(sessionId)}/response-style`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_style: next ? "short" : null }) });
-        setShortReplies(next);
-        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: next ? t.shortOn : t.shortOff }]);
+        await mutate(`/api/sessions/${encodeURIComponent(sessionId)}/response-style`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_style: detailed ? "detailed" : "short" }) });
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: detailed ? t.verboseOn : t.shortOn }]);
       } catch (reason) { setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
       return;
     }

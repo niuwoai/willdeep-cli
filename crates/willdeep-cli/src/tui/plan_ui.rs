@@ -21,14 +21,23 @@ pub(super) fn decode_plan_entry(entry: &str) -> Option<PlanTranscript> {
     serde_json::from_str(entry.strip_prefix(PLAN_PREFIX)?).ok()
 }
 
-pub(super) fn render_plan(plan: &Plan, width: usize) -> Vec<Line<'static>> {
+pub(super) fn render_plan(plan: &Plan, width: usize, language: Language) -> Vec<Line<'static>> {
     let ended = plan
         .steps
         .iter()
         .filter(|step| matches!(step.status, StepStatus::Done | StepStatus::Skipped))
         .count();
+    let running = plan
+        .steps
+        .iter()
+        .filter(|step| step.status == StepStatus::InProgress)
+        .count();
+    let running_label = language.text("进行中", "running", "実行中");
     let mut lines = vec![Line::styled(
-        format!("┌ ▣ {ended}/{} · /plan", plan.steps.len()),
+        format!(
+            "┌ ▣ {ended}/{} · {running} {running_label} · /plan",
+            plan.steps.len()
+        ),
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
@@ -46,6 +55,7 @@ pub(super) fn render_plan(plan: &Plan, width: usize) -> Vec<Line<'static>> {
             StepStatus::Done => ("✓", Color::Green),
             StepStatus::Skipped => ("–", Color::DarkGray),
             StepStatus::Failed => ("!", Color::Red),
+            StepStatus::Blocked => ("⊘", Color::Yellow),
         };
         lines.push(Line::from(vec![
             Span::styled(format!("│ {symbol} "), Style::default().fg(color)),
@@ -57,9 +67,54 @@ pub(super) fn render_plan(plan: &Plan, width: usize) -> Vec<Line<'static>> {
                 Style::default().fg(Color::DarkGray),
             ));
         }
+        if step.status == StepStatus::Pending {
+            let waiting = willdeep_core::planning::waiting_for(plan, step);
+            if !waiting.is_empty() {
+                let titles = waiting
+                    .iter()
+                    .map(|id| {
+                        plan.steps
+                            .iter()
+                            .find(|other| &other.id == id)
+                            .map_or(id.as_str(), |other| other.text.as_str())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(Line::styled(
+                    format!(
+                        "│   {}: {titles}",
+                        language.text("等待", "Waiting for", "待機中")
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+        }
     }
     lines.push(Line::styled("└", Style::default().fg(Color::Cyan)));
     lines
+}
+
+pub(super) fn append_plan_result(entries: &mut Vec<String>, output: &str) -> bool {
+    let Some(receipt) = willdeep_core::planning::receipt(output) else {
+        return false;
+    };
+    let previous = entries
+        .iter()
+        .rposition(|entry| decode_plan_entry(entry).is_some());
+    if !receipt.replaced
+        && let Some(index) = previous
+    {
+        let mut card = decode_plan_entry(&entries[index]).expect("plan entry");
+        card.plan = receipt.plan;
+        entries[index] = plan_entry(&card);
+    } else {
+        entries.push(plan_entry(&PlanTranscript {
+            plan: receipt.plan,
+            details: Vec::new(),
+            expanded: false,
+        }));
+    }
+    true
 }
 
 /// Replace a plan in place for live replies, using the same parser as history.
@@ -181,6 +236,39 @@ pub(super) fn sync_persisted_plan(entries: &mut [String], plan: &Plan) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_updates_show_multiple_running_steps_and_dependency_waits() {
+        let plan: Plan = serde_json::from_value(serde_json::json!({"summary":"", "steps":[
+            {"id":"ci", "text":"Release build", "status":"in_progress"},
+            {"id":"install", "text":"Local install", "status":"in_progress"},
+            {"id":"brew", "text":"Update formula", "status":"pending", "depends_on":["ci"]}
+        ]}))
+        .unwrap();
+        let mut entries = Vec::new();
+        let receipt = willdeep_core::planning::Receipt::new(plan.clone(), true);
+        assert!(append_plan_result(
+            &mut entries,
+            &serde_json::to_string(&receipt).unwrap()
+        ));
+        let text = Text::from(render_plan(&plan, 80, Language::ZhCn)).to_string();
+        assert!(text.contains("2 进行中"));
+        assert!(text.contains("› Release build"));
+        assert!(text.contains("› Local install"));
+        assert!(text.contains("等待: Release build"));
+        let mut next = plan;
+        next.steps[0].status = StepStatus::Done;
+        let receipt = willdeep_core::planning::Receipt::new(next, false);
+        assert!(append_plan_result(
+            &mut entries,
+            &serde_json::to_string(&receipt).unwrap()
+        ));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            decode_plan_entry(&entries[0]).unwrap().plan.steps[1].status,
+            StepStatus::InProgress
+        );
+    }
 
     const PLAN: &str = "```plan\n1. 验证接口\n2. 发布\n```";
     const PROGRESS: &str = "没有新增状态变化。\n```progress\n1: done\n2: skipped\n```";

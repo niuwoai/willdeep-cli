@@ -6,6 +6,9 @@
 .conversation-plan-status { flex: 0 0 5em; font-size: 12px; }
 .conversation-plan-steps li[data-status="done"] .conversation-plan-status { color: var(--success, #70bd98); }
 .conversation-plan-steps li[data-status="failed"] .conversation-plan-status { color: var(--danger, #e89393); }
+.conversation-plan-steps li[data-status="in_progress"] .conversation-plan-status { color: var(--accent); font-weight: 600; }
+.conversation-plan-steps li[data-status="waiting"] .conversation-plan-status,
+.conversation-plan-steps li[data-status="blocked"] .conversation-plan-status { color: var(--text-dim); }
 .conversation-plan-steps p { margin: 4px 0 0; }
 .conversation-card-details { margin-top: 12px; }
 .conversation-card-details summary { cursor: pointer; }

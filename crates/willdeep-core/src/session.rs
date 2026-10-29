@@ -36,14 +36,23 @@ impl Drop for ExecutionGuard {
 
 pub const SESSION_VERSION: u32 = 1;
 
-/// 一条会话的回复风格。缺省（`None`）即默认风格，所以这里只有一个变体。
+/// 一条会话的回复风格。缺省（`None`）即简洁：新会话和旧会话文件都按简洁走。
 ///
-/// `Short` 是 `/short` 打开的简洁风格：长任务用计划卡片汇报进度，聊天里只留
-/// 开工一句和最后结果。它是这条会话自己的选择，不改变默认风格的契约文本。
+/// `Detailed` 是 `/verbose` 选定的详细风格：每个阶段一句正文进度。`Short` 表示
+/// 用户显式选过简洁（`/short`），保留它是为了让已经存成 `"short"` 的会话文件
+/// 还能原样读回来。风格是这条会话自己的偏好，不改变稳定契约文本。
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseStyle {
     Short,
+    Detailed,
+}
+
+impl ResponseStyle {
+    /// 这条会话要不要简洁风格。没显式选过时按默认（简洁）走。
+    pub fn uses_short(style: Option<Self>) -> bool {
+        style != Some(Self::Detailed)
+    }
 }
 
 /// 默认家目录名，`~/<DEFAULT_HOME_DIRECTORY>` 即未设置 `WILLDEEP_HOME` 时 CLI 用的家目录。
@@ -99,10 +108,10 @@ pub struct Session {
     /// 所以归在执行快照里。旧会话文件没有它，按 `goal` 重新开始计。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_state: Option<crate::goal::GoalState>,
-    /// 这条会话要哪种回复风格。`None` 是默认：每阶段一句正文进度。
+    /// 这条会话要哪种回复风格。`None` 是默认：简洁。
     /// 这是界面偏好，不是对话内容，所以跟 `goal` 一样走元数据合并，不进执行
     /// 指纹——否则 TUI 记一次偏好就会和守护进程写这一轮的输出互相判成冲突。
-    /// 旧会话文件没有它，缺省即默认风格。
+    /// 旧会话文件没有它，缺省即简洁风格。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_style: Option<ResponseStyle>,
     #[serde(default)]
@@ -1191,6 +1200,7 @@ mod tests {
         session.config = Some(root.join("config.toml"));
         session.model = Some("test-model".to_owned());
         session.goal = Some("finish the migration".to_owned());
+        session.response_style = Some(ResponseStyle::Detailed);
         session.messages.push(Message::user_with_attachments(
             "hello",
             vec![crate::MessageAttachment::Image {
@@ -1206,6 +1216,7 @@ mod tests {
         assert_eq!(loaded.config, session.config);
         assert_eq!(loaded.model, session.model);
         assert_eq!(loaded.goal, session.goal);
+        assert_eq!(loaded.response_style, session.response_style);
         assert_eq!(loaded.compression_generation, 0);
         assert_eq!(loaded.messages.len(), 1);
         assert_eq!(loaded.messages[0].attachments.len(), 1);
@@ -1223,6 +1234,23 @@ mod tests {
         assert!(!store.delete(session.id).unwrap());
         assert!(store.load(session.id).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 默认简洁：只有显式选过 `Detailed` 的会话才退回每阶段一句正文。
+    /// 存盘格式也要钉住，`/verbose` 写的就是这个字符串。
+    #[test]
+    fn short_is_the_default_reply_style() {
+        assert!(ResponseStyle::uses_short(None));
+        assert!(ResponseStyle::uses_short(Some(ResponseStyle::Short)));
+        assert!(!ResponseStyle::uses_short(Some(ResponseStyle::Detailed)));
+        assert_eq!(
+            serde_json::to_string(&ResponseStyle::Detailed).unwrap(),
+            "\"detailed\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ResponseStyle>("\"short\"").unwrap(),
+            ResponseStyle::Short
+        );
     }
 
     #[test]

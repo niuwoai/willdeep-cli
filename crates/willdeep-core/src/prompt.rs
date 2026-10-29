@@ -49,7 +49,8 @@ Delegation contract:
 - A command-capable worker first uses deterministic safety rules. Only ambiguous, non-destructive and non-credential-sensitive commands reach the AI safety judge. If the judge denies or is unavailable, the worker reports the exact command; only then may you respawn profile=ops_runner with the identical target_command so the parent can request one-time human approval.
 - A writing worker's files are exactly task.write_files (or target_file for editor), resolved as one set under the active workspace policy. task.read_files adds context without adding write authority. Legacy task.relevant_files remains a combined set only for backwards compatibility."#;
 
-/// `/short` 打开后追加到系统提示词末尾的一段。
+/// 默认的简洁风格追加到系统提示词末尾的一段。只有会话显式选了详细（`/verbose`）
+/// 才不加它。
 ///
 /// 放在末尾是刻意的：上面的稳定契约要求「阶段切换写一句正文」，这一段要盖过它。
 /// 它必须自己声明优先级，因为契约文本是缓存前缀，一个字都不能改。
@@ -58,9 +59,9 @@ Delegation contract:
 /// 编号从 1 连续；`progress` 每行 `N: 状态`，状态只能是那五个词；一条消息里
 /// 只要出现别的围栏，整条就不被认成计划。
 pub const SHORT_RESPONSE_INSTRUCTION: &str = r#"Response style override (this session only):
-This session asked for the short style. These rules take priority over the Tone section above, including its one-line phase updates. Do not alternate between the two.
+This session uses the short reply style, which is the default. These rules take priority over the Tone section above, including its one-line phase updates. Do not alternate between the two.
 - Chat stays short: one line before the first tool call saying what you are about to do, then silence until the final result. No per-phase narration, no recap of each tool call.
-- On a task of more than a few steps, report progress through a plan card instead of chat. A plan message contains exactly one fenced block and nothing else:
+- On a task of more than a few steps, report progress through a plan card instead of chat. Prefer update_plan when available: record dependencies and use merge=true to update every running step independently. Do not also emit fenced plans. Only when update_plan is unavailable, a plan message contains exactly one fenced block and nothing else:
   ```plan
   1. first step
   2. second step
@@ -271,12 +272,13 @@ mod tests {
         );
     }
 
-    /// 简洁风格是追加的覆盖，不是改契约。它必须点名自己优先于阶段更新，
-    /// 而且围栏格式要和解析器认的一模一样，否则模型写出的进度卡片显示不出来。
+    /// 简洁风格是默认，也是追加的覆盖，不是改契约。它必须点名自己优先于阶段
+    /// 更新，而且围栏格式要和解析器认的一模一样，否则模型写出的进度卡片显示不出来。
     #[test]
     fn the_short_style_overrides_phase_updates_without_touching_the_contract() {
         assert!(!STABLE_CONTRACT.contains("Response style override"));
         for fragment in [
+            "This session uses the short reply style, which is the default",
             "take priority over the Tone section",
             "```plan",
             "```progress",

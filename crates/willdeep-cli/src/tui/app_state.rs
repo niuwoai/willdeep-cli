@@ -2460,25 +2460,25 @@ impl App {
             "/short" if args.trim().is_empty() => {
                 // 切换只记偏好。系统提示词在下一轮构建 harness 时才读它，
                 // 所以正在跑的这一轮不受影响。
-                self.response_style = match self.response_style {
-                    Some(willdeep_core::ResponseStyle::Short) => None,
-                    None => Some(willdeep_core::ResponseStyle::Short),
-                };
+                self.response_style = Some(willdeep_core::ResponseStyle::Short);
                 self.append_transcript(format!(
                     "System: {}",
-                    if self.response_style.is_some() {
-                        self.language.text(
-                            "简洁回复已开启：长任务的进度只更新计划卡片，从下一轮起生效",
-                            "Short replies on: long tasks update the plan card only, starting next turn",
-                            "簡潔な応答をオン：長いタスクの進捗は計画カードのみ。次のターンから有効",
-                        )
-                    } else {
-                        self.language.text(
-                            "已恢复默认回复：每个阶段一句正文进度，从下一轮起生效",
-                            "Default replies restored: one line of progress per phase, starting next turn",
-                            "既定の応答に戻しました：段階ごとに本文一行。次のターンから有効",
-                        )
-                    }
+                    self.language.text(
+                        "简洁回复（默认）：长任务的进度只更新计划卡片，从下一轮起生效；要每阶段一句正文用 /verbose",
+                        "Short replies (the default): long tasks update the plan card only, starting next turn; use /verbose for one line per phase",
+                        "簡潔な応答（既定）：長いタスクの進捗は計画カードのみ。次のターンから有効。段階ごとに本文一行にするには /verbose",
+                    )
+                ));
+            }
+            "/verbose" if args.trim().is_empty() => {
+                self.response_style = Some(willdeep_core::ResponseStyle::Detailed);
+                self.append_transcript(format!(
+                    "System: {}",
+                    self.language.text(
+                        "详细回复：每个阶段一句正文进度，从下一轮起生效；要简洁回复用 /short",
+                        "Detailed replies: one line of progress per phase, starting next turn; use /short for short replies",
+                        "詳細な応答：段階ごとに本文一行。次のターンから有効。簡潔な応答にするには /short",
+                    )
                 ));
             }
             "/sidebar" => {
