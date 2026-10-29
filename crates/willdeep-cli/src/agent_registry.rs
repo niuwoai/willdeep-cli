@@ -251,6 +251,15 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
                     params.get("package").context("agent package required")?,
                 )?)?,
             };
+            if let Some(binding) = params.get("new_binding") {
+                compatibility(&package.definition)?;
+                ensure!(
+                    installed(home, &package.definition.definition_id).is_err(),
+                    "agent id already installed"
+                );
+                local.create_bound(&package, serde_json::from_value(binding.clone())?)?;
+                return Ok(json!(package));
+            }
             if package.definition.definition_id.starts_with("official/") {
                 let trust: Value = serde_json::from_slice(&std::fs::read(local.root().join("trusted-keys.json"))?).context("official imports require trusted service signing keys; install from catalog first")?;
                 let keys = serde_json::from_value(
