@@ -17,8 +17,9 @@ pub(super) async fn run_runtime_turn_inner(
     let mut session = if let Some(raw_id) = input.session_id.as_deref() {
         let id = uuid::Uuid::parse_str(raw_id)
             .map_err(|_| WebError::bad_request("session_id must be a UUID"))?;
+        // 带基线加载：领养会改写这份快照再保存，基线必须记着改动前的执行状态。
         store
-            .load(id)
+            .load_baselined(id)
             .map_err(|_| WebError::bad_request("session_id was not found"))?
     } else {
         let id = input.request_id.map(|request| {

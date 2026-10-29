@@ -1945,7 +1945,7 @@ fn interrupted_goal_session(
     store.claim_next(session.id).unwrap().unwrap();
     assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
     let core_store = willdeep_core::SessionStore::new(root);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     core.messages
         .push(willdeep_core::Message::user("keep going"));
     core.messages.push(willdeep_core::Message::assistant(

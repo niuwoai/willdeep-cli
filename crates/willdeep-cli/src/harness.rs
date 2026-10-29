@@ -431,7 +431,10 @@ pub(crate) async fn execute_runtime(
             .claim()
         })
         .transpose()?;
-    let resumed = execution_session_id.map(|id| store.load(id)).transpose()?;
+    // 带基线加载：这份会话接下来会被改消息再写回，基线必须记着改动前的执行状态。
+    let resumed = execution_session_id
+        .map(|id| store.load_baselined(id))
+        .transpose()?;
     if let Some(session) = &resumed {
         prepare_execution(session)?;
     }
@@ -600,7 +603,7 @@ pub(crate) async fn execute_noninteractive(
         .run_checkpointed(history, user_message, Some(&checkpointer))
         .await;
     // Synchronize even on error: files may already have changed during this run.
-    *session = store.load(session.id)?;
+    *session = store.load_baselined(session.id)?;
     match &run_result {
         Ok(outcome) => turn_telemetry.finish(
             crate::telemetry::global(),
@@ -693,7 +696,7 @@ pub(crate) async fn execute_noninteractive(
                 Some(&checkpointer),
             )
             .await?;
-        *session = store.load(session.id)?;
+        *session = store.load_baselined(session.id)?;
         session.messages = outcome.messages.clone();
         store.save(session)?;
         willdeep_core::kernel_store::flush(&built.kernel, &built.kernel_store);

@@ -1235,7 +1235,7 @@ pub(super) async fn event_loop(
                                 match crate::daemon::rewind_remote_session(&runtime.home,session.id,through_turn_id,restore_workspace).await {
                                     Ok(result)=>{
                                         // Runtime 已经把会话截断落盘；本地这份是旧的，整份重读再重画。
-                                        match store.load(session.id) {
+                                        match store.load_baselined(session.id) {
                                             Ok(loaded)=>{*session=loaded;app.load_session(session);},
                                             Err(error)=>app.notice=Some(format!("{}: {error}",language.text("重新读取会话失败","Reload Session failed","セッションの再読込に失敗"))),
                                         }

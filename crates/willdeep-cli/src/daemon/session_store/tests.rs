@@ -79,7 +79,7 @@ fn team_control_turn_requeues_after_restart_even_when_parent_history_advanced() 
     store.claim_next(session.id).unwrap().unwrap();
     let task = uuid::Uuid::new_v4();
     store.bind_task(turn.id, task).unwrap();
-    let mut core = store.core.load(session.id).unwrap();
+    let mut core = store.core.load_baselined(session.id).unwrap();
     store.prepare_execution(task, &core).unwrap();
     core.agent_control_requests.insert(request_id);
     core.messages.extend([
@@ -548,7 +548,7 @@ fn manages_session_snapshot_lifecycle_without_exporting_private_queue_data() {
         })
         .unwrap();
     let core_store = willdeep_core::SessionStore::new(&root);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     core.messages
         .push(willdeep_core::Message::user("needle in durable history"));
     core.attention_read.insert("job-private".to_owned());
@@ -848,7 +848,7 @@ fn rewinding_truncates_in_place_and_forgets_the_dropped_turns() {
             )
             .unwrap();
         store.claim_next(session.id).unwrap().unwrap();
-        let mut core = core_store.load(session.id).unwrap();
+        let mut core = core_store.load_baselined(session.id).unwrap();
         core.messages.push(willdeep_core::Message::user(prompt));
         core.messages
             .push(willdeep_core::Message::assistant("answer", Vec::new()));
@@ -915,7 +915,7 @@ fn rewinding_truncates_in_place_and_forgets_the_dropped_turns() {
 
     // 压缩过的会话回不到开头。
     let fourth = complete_turn("fourth", None);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     assert!(core.replace_with_compressed_messages(vec![willdeep_core::Message::user("summary")]));
     core_store.save(&mut core).unwrap();
     let error = store.rewind_plan(session.id, None).unwrap_err();
@@ -965,7 +965,7 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
             .unwrap();
         let claimed = store.claim_next(session.id).unwrap().unwrap();
         assert_eq!(claimed.request.model.as_deref(), Some("source-model"));
-        let mut core = core_store.load(session.id).unwrap();
+        let mut core = core_store.load_baselined(session.id).unwrap();
         core.messages.push(willdeep_core::Message::user(prompt));
         core.messages
             .push(willdeep_core::Message::assistant(answer, Vec::new()));
@@ -1012,7 +1012,7 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
     assert_eq!(fork_core.messages[1].content, "first answer");
     assert!(store.list_turns(fork.id).unwrap().is_empty());
 
-    let mut compressed_core = core_store.load(session.id).unwrap();
+    let mut compressed_core = core_store.load_baselined(session.id).unwrap();
     assert!(
         compressed_core.replace_with_compressed_messages(vec![willdeep_core::Message::user(
             "<context-summary>summary</context-summary>"
@@ -1143,7 +1143,7 @@ fn safely_requeues_active_turn_without_deleting_a_persisted_user_message() {
     assert!(!claimed.request.replay_existing_user_message);
     assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
     let core_store = willdeep_core::SessionStore::new(&root);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     core.messages.push(willdeep_core::Message::user(prompt));
     core_store.save(&mut core).unwrap();
     drop(store);
@@ -1211,7 +1211,7 @@ fn ambiguous_partial_turn_history_is_preserved_and_not_requeued() {
     store.claim_next(session.id).unwrap().unwrap();
     assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
     let core_store = willdeep_core::SessionStore::new(&root);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     core.messages.push(willdeep_core::Message::user(
         "do not discard partial history",
     ));
@@ -1576,7 +1576,7 @@ fn partial_turn_preserves_boundary_without_marking_completed() {
         .unwrap();
     store.claim_next(session.id).unwrap().unwrap();
     let core_store = willdeep_core::SessionStore::new(&root);
-    let mut core = core_store.load(session.id).unwrap();
+    let mut core = core_store.load_baselined(session.id).unwrap();
     core.messages
         .push(willdeep_core::Message::user("unfinished objective"));
     core.messages.push(willdeep_core::Message::assistant(

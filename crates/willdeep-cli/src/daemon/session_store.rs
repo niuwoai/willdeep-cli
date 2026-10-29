@@ -778,9 +778,10 @@ impl RuntimeSessionStore {
     /// 按计划截断对话并摘掉被丢掉的轮次。文件恢复（若要）在调用前完成。
     pub fn commit_rewind(&self, plan: &RewindPlan) -> Result<RuntimeSession> {
         self.ensure_manageable(plan.session_id)?;
+        // 截断是执行状态的改动，基线必须是截断前的指纹，否则保存会把截断当没发生、留下磁盘上的原文。
         let mut core = self
             .core
-            .load(plan.session_id)
+            .load_baselined(plan.session_id)
             .with_context(|| format!("load Core Session {}", plan.session_id))?;
         if core.compression_generation != plan.compression_generation {
             bail!("the Session was compressed while the rewind was being prepared");

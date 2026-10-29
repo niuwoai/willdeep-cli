@@ -515,6 +515,63 @@ fn runtime_actions_require_the_target_in_the_selected_workspace_snapshot() {
     assert!(!snapshot_has_agent(&snapshot, uuid::Uuid::new_v4()));
 }
 
+/// 轮询每两秒校验一次会话归属。归属只看工作区，会话文件没变就不该重读
+/// ——长会话一次整读要几 MB。文件一变（比如会话被挪到别的工作区）必须重读，
+/// 否则白名单挡不住。
+#[test]
+fn session_authorization_is_cached_until_the_session_file_changes() {
+    let root = std::env::temp_dir().join(format!("web-session-cache-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let store = willdeep_core::SessionStore::new(&root);
+    let mut session = willdeep_core::Session::new(workspace.clone(), None, "initial");
+    store.save(&mut session).unwrap();
+    let cache = std::sync::Mutex::new(HashMap::new());
+
+    let stamp = session_file_stamp(&store, session.id);
+    assert!(cached_session_workspace(&cache, session.id, stamp).is_none());
+    let mut reads = 0;
+    let found = remember_session_workspace(&cache, session.id, stamp, || {
+        reads += 1;
+        Some(workspace.clone())
+    });
+    assert_eq!(found, Some(workspace.clone()));
+    assert_eq!(reads, 1);
+
+    // 文件没变：直接命中缓存，不再读会话。
+    assert_eq!(
+        cached_session_workspace(&cache, session.id, stamp),
+        Some(workspace.clone())
+    );
+
+    // 指纹变了必须失效。沿用旧缓存会把已经挪出白名单的会话继续放行。
+    let moved = FileStamp {
+        modified_nanos: stamp.modified_nanos.saturating_add(1),
+        len: stamp.len,
+    };
+    assert!(cached_session_workspace(&cache, session.id, moved).is_none());
+    let elsewhere = root.join("elsewhere");
+    let reread = remember_session_workspace(&cache, session.id, moved, || {
+        reads += 1;
+        Some(elsewhere.clone())
+    });
+    assert_eq!(reread, Some(elsewhere.clone()));
+    assert_eq!(reads, 2, "指纹变化必须触发一次新的读取");
+    assert_eq!(
+        cached_session_workspace(&cache, session.id, moved),
+        Some(elsewhere)
+    );
+
+    // 读失败不写缓存：一次瞬时的文件错误不能变成永久的拒绝。
+    let missing = uuid::Uuid::new_v4();
+    assert!(remember_session_workspace(&cache, missing, stamp, || None).is_none());
+    assert!(!cache.lock().unwrap().contains_key(&missing));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn session_file_stamp(store: &willdeep_core::SessionStore, id: uuid::Uuid) -> FileStamp {
+    FileStamp::of(&std::fs::metadata(store.path(id)).unwrap())
+}
+
 #[test]
 fn turn_actions_require_the_owning_session_workspace_in_the_allowlist() {
     let registered = |root: &str| crate::daemon::RuntimeWorkspace {
@@ -803,6 +860,7 @@ fn suggestion_state(tag: &str, config: &str) -> (Arc<WebState>, PathBuf) {
         settings_writable: false,
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
+        session_workspaces: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     });
     (state, root)
 }
@@ -959,6 +1017,7 @@ fn suggestion_state_at(home: &std::path::Path) -> Arc<WebState> {
         settings_writable: false,
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
+        session_workspaces: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     })
 }
 

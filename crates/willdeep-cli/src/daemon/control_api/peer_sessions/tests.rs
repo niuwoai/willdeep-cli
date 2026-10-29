@@ -108,7 +108,7 @@ async fn refuses_self_foreign_and_archived_targets() {
 
 fn operator_turn(fixture: &Fixture, cancelled: bool) {
     let core_store = willdeep_core::SessionStore::new(&fixture.root);
-    let mut core = core_store.load(fixture.target).unwrap();
+    let mut core = core_store.load_baselined(fixture.target).unwrap();
     core.messages
         .push(willdeep_core::Message::user("continue authorized work"));
     core_store.save(&mut core).unwrap();
