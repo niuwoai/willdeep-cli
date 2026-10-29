@@ -33,13 +33,9 @@ impl App {
         if !valid {
             let folded = self.display_transcript();
             let labels = self.message_time_labels(&folded, message_time::now());
-            let text = message_time::render_with_times(
-                &folded.rows,
-                &labels,
-                search.as_deref(),
-                self.transcript_width,
-                self.language,
-            );
+            let (text, controls) =
+                self.render_user_transcript(&folded, &labels, search.as_deref(), folded.rows.len());
+            self.user_message_controls = controls;
             self.transcript_rows = text_rows(&text);
             self.transcript_render_cache = Some(TranscriptRenderCache {
                 source: self.transcript.clone(),

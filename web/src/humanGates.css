@@ -1,0 +1,21 @@
+.queued-messages.human-gate { margin: 16px 0 0; padding: 18px; max-height: none; overflow: visible; font-size: 14px; line-height: 1.6; }
+.human-gate:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.human-gate > strong { display: block; color: var(--text); }
+.human-gate > p { margin: 6px 0 14px; overflow-wrap: anywhere; }
+.human-gate-note { color: var(--text-dim); font-size: 12px; }
+.human-gate-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.human-gate-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.human-gate .human-gate-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 46px; height: auto; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--bg-raised); color: var(--text); text-align: left; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; cursor: pointer; }
+.human-gate-option > span { min-width: 0; }
+.human-gate-option > svg, .human-gate-option > input { flex-shrink: 0; }
+.human-gate .human-gate-option.multiple { justify-content: flex-start; }
+.human-gate-option:hover:not(:disabled) { background: var(--bg-panel-hover); border-color: var(--accent); }
+.human-gate-option:focus-visible, .human-gate-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.human-gate-fields:disabled .human-gate-option { opacity: .55; cursor: default; }
+.human-gate-fields > .gate-action { margin-top: 10px; }
+.human-gate-answer { margin-top: 16px; }
+.human-gate-answer > label { display: block; margin-bottom: 6px; color: var(--text-dim); font-size: 12px; }
+.human-gate-answer > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.human-gate-answer input { width: 100%; min-width: 0; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-raised); color: var(--text); font: inherit; }
+.human-gate-answer input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (min-width: 600px) { .human-gate-answer > div { grid-template-columns: minmax(0, 1fr) auto; } }

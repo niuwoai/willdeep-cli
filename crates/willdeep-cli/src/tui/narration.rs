@@ -551,7 +551,7 @@ impl App {
         let floor = self.archive_floor.min(self.transcript.len());
         let live = &self.transcript[floor..];
         let thought_start = self.visible_thought_start();
-        let mut entries = live
+        let visible_indices = live
             .iter()
             .enumerate()
             .filter(|(index, row)| {
@@ -559,12 +559,33 @@ impl App {
                     || row.starts_with(THOUGHT_EXPANDED_PREFIX);
                 !thought || (self.ui.show_thinking && floor + index >= thought_start)
             })
-            .map(|(_, row)| row.clone())
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let mut entries = visible_indices
+            .iter()
+            .map(|&index| live[index].clone())
             .collect::<Vec<_>>();
         if floor > 0 {
             entries.insert(0, self.archive_placeholder());
         }
-        fold_tool_rows(&entries, self.tool_rows_expanded, self.language)
+        let mut folded = fold_tool_rows(&entries, self.tool_rows_expanded, self.language);
+        let shift = usize::from(floor > 0);
+        let mut index_of = Vec::with_capacity(live.len() + shift);
+        if floor > 0 {
+            index_of.push(0);
+        }
+        for index in 0..live.len() {
+            let visible = visible_indices.partition_point(|&source| source < index);
+            index_of.push(
+                folded
+                    .index_of
+                    .get(visible + shift)
+                    .copied()
+                    .unwrap_or_else(|| folded.rows.len().saturating_sub(1)),
+            );
+        }
+        folded.index_of = index_of;
+        folded
     }
 
     /// 归档区的说明行：告诉用户上面还有东西、怎么放回来。

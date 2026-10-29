@@ -64,6 +64,7 @@ pub(super) fn render(
     let offset = max.saturating_sub(app.scroll_from_bottom);
     let colored = app.transcript_viewport(&transient, offset);
     app.transcript_render_offset = offset;
+    app.update_user_message_hits(offset, app.transcript_rect.y);
     app.thought_hit_rows = colored
         .lines
         .iter()

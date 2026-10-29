@@ -1,0 +1,6 @@
+.user-message-content { --user-preview-lines: 12; min-width: 0; }
+.user-message-body { overflow-wrap: anywhere; }
+.user-message-viewport[data-collapsed="true"] { max-height: 12lh; overflow: hidden; mask-image: linear-gradient(to bottom, #000 85%, transparent); }
+.user-message-toggle { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 0; border: 0; background: transparent; color: var(--text); font-weight: 600; cursor: pointer; }
+.user-message-toggle:hover { color: var(--accent); }
+.user-message-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }

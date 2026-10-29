@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { Box, Button, Flex, Input, NativeSelect, Text, Textarea, VStack } from "@chakra-ui/react";
+import { Box, Button, NativeSelect, Textarea } from "@chakra-ui/react";
+import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react";
 import type { Messages } from "./i18n";
+import "./runtimeSidebar.css";
 const AGENT_PREVIEW_LIMIT = 4;
 import { RuntimeDetailPanel, type RuntimeDetailTarget } from "./RuntimeDetailPanel";
 import { agentDuration, isSidebarAgent } from "./runtimeAgents";
@@ -118,8 +120,7 @@ type Props = {
   events: RuntimeEvent[];
   onIgnoreEvent: (id: string) => Promise<void>;
   messages: Messages;
-  onResolveApproval: (id: string, decision: "allow_once" | "deny" | "always_allow") => Promise<void>;
-  onAnswerQuestion: (id: string, answer: string | null) => Promise<void>;
+  onOpenGate: (id: string) => void;
   onAgentAction: (id: string, action: "stop" | "retry" | "retry_model" | "prompt" | "continue", currentModel?: string | null) => Promise<void>;
   canSpawnAgent: boolean;
   onSpawnAgent: (profile: AgentSpawnProfile, prompt: string) => Promise<boolean>;
@@ -150,9 +151,7 @@ function failureDomain(domain: string | null, t: Messages) {
   return t.unknownValue;
 }
 
-export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onResolveApproval, onAnswerQuestion, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [multiAnswers, setMultiAnswers] = useState<Record<string, string[]>>({});
+export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
   const [controlBusy, setControlBusy] = useState(false);
   const [spawnProfile, setSpawnProfile] = useState<AgentSpawnProfile>("generalist");
   const [spawnPrompt, setSpawnPrompt] = useState("");
@@ -160,6 +159,7 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
   // 只列还等着人的那些。已经由 Agent 读过但不需要人处理的事件不该占用户的注意力。
   const pendingEvents = events.filter((event) => event.requires_user_action && event.delivery_state !== "ignored" && event.delivery_state !== "resolved");
   const [expanded, setExpanded] = useState(false);
+  const [spawnOpen, setSpawnOpen] = useState(false);
   const [showAllAgents, setShowAllAgents] = useState(false);
   const [showAgentHistory, setShowAgentHistory] = useState(false);
   const runningTools = activity.tools.filter((tool) => tool.status === "running").length;
@@ -176,111 +176,103 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
     setControlBusy(true);
     try { if (await onSpawnAgent(spawnProfile, task)) setSpawnPrompt(""); } finally { setControlBusy(false); }
   }
-  return <Box mt="4" p="3" border="1px solid" borderColor="var(--bg-panel-hover)" borderRadius="md" bg="var(--bg-raised)">
-    <Flex justify="space-between" align="center">
-      <Text fontSize="xs" color="var(--text-muted)">{t.runtimeActivity}</Text>
-      <Button size="2xs" variant="ghost" color="var(--text-dim)" aria-expanded={expanded} aria-label={expanded ? t.collapse : t.expand} onClick={() => setExpanded((current) => !current)}>{expanded ? t.collapse : t.expand}</Button>
-    </Flex>
-    {expanded && <>
-    <Flex gap="3" wrap="wrap">
-      <Text fontSize="sm">{t.tools}: {activity.tools.length}</Text>
-      <Text fontSize="sm">{t.running}: {runningTools}</Text>
-      <Text fontSize="sm">{t.artifacts}: {activity.artifacts.length}</Text>
-    </Flex>
-    <Flex gap="3" mt="2" wrap="wrap">
-      <Text fontSize="sm">{t.agents}: {sidebarAgents.length}{hiddenAgents > 0 ? ` (+${hiddenAgents} ${t.finishedHidden})` : ""}</Text>
-      <Text fontSize="sm">{t.tasks}: {activity.tasks.length}</Text>
-      <Text fontSize="sm">{t.needsAttention}: {activity.attention_count}</Text>
-      <Text fontSize="sm">{t.runtimeEvents}: {pendingEvents.length}</Text>
-    </Flex>
-    {pendingEvents.length > 0 && <VStack align="stretch" gap="2" mt="3">
-      <Text fontSize="xs" color="var(--text-dim)">{t.runtimeEventsPending}</Text>
-      {pendingEvents.slice(0, 5).map((event) => <Box key={event.id} p="2" borderRadius="sm" bg="var(--bg-panel)">
-        <Flex justify="space-between" gap="2" align="center">
-          <Text fontSize="2xs" color="var(--text-dim)">{event.source} · {event.priority}{event.merge_count > 1 ? ` ×${event.merge_count}` : ""}</Text>
-          {/* 忽略只结算「还等着人」这一侧，不批准任何操作：审批仍在它自己的卡片上回答。 */}
-          <Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onIgnoreEvent(event.id))}>{t.ignoreEvent}</Button>
-        </Flex>
-        <Text fontSize="xs" lineClamp="2">{event.title_excerpt ?? event.kind}</Text>
-        <Text fontSize="2xs" color="var(--text-faint)">{event.delivery_state === "handled" ? t.eventSeenByAgent : t.eventNotDelivered}</Text>
-      </Box>)}
-    </VStack>}
-    <Box mt="3" p="2" borderRadius="sm" bg="var(--bg-panel)">
-      <Text fontSize="xs" color="var(--text-dim)" mb="1">{t.newReadOnlyAgent}</Text>
-      <NativeSelect.Root mb="1">
-        <NativeSelect.Field aria-label={t.agentProfile} value={spawnProfile} onChange={(event) => setSpawnProfile(event.target.value as AgentSpawnProfile)} fontSize="xs" h="8">
-          <option value="generalist">{t.agentProfileGeneralist}</option>
-          <option value="reviewer">{t.agentProfileReviewer}</option>
-        </NativeSelect.Field>
-        <NativeSelect.Indicator />
-      </NativeSelect.Root>
-      <Textarea size="xs" rows={2} resize="none" value={spawnPrompt} aria-label={t.agentTask} placeholder={t.agentTaskPlaceholder} onChange={(event) => setSpawnPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void spawnAgent(); } }} />
-      <Flex mt="1" justify="flex-end">
-        <Button size="2xs" disabled={!canSpawnAgent || !spawnPrompt.trim() || controlBusy} onClick={() => void spawnAgent()}>{t.spawnAgent}</Button>
-      </Flex>
-      {!canSpawnAgent && <Text mt="1" fontSize="2xs" color="var(--text-faint)">{t.activeSessionRequired}</Text>}
-    </Box>
-    {activity.gates.length > 0 && <VStack align="stretch" gap="2" mt="3">
-      {activity.gates.map((gate) => <Box key={gate.id} p="2" borderRadius="sm" bg="var(--bg-panel)">
-        <Flex justify="space-between" gap="2"><Text fontSize="xs" color="var(--warning)">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</Text><Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "task", id: gate.task_id })}>{t.details}</Button></Flex>
-        <Text fontSize="xs" lineClamp="2">{gate.kind === "approval" ? gate.description : gate.question}</Text>
-        <details open={!gate.parked}><summary>{t.details}</summary>
-        {gate.kind === "approval" ? <Flex gap="1" mt="2" wrap="wrap">
-          <Button size="2xs" disabled={controlBusy} onClick={() => void runControl(() => onResolveApproval(gate.id, "allow_once"))}>{t.allowOnce}</Button>
-          <Button size="2xs" disabled={controlBusy} variant="outline" onClick={() => void runControl(() => onResolveApproval(gate.id, "deny"))}>{t.deny}</Button>
-          {gate.always_allow_available && <Button size="2xs" disabled={controlBusy} variant="ghost" onClick={() => void runControl(() => onResolveApproval(gate.id, "always_allow"))}>{t.alwaysAllow}</Button>}
-        </Flex> : <Box mt="2">
-          <Flex gap="1" wrap="wrap">
-            {gate.options.map((option) => gate.multi_select
-              ? <label key={option}><input type="checkbox" checked={(multiAnswers[gate.id] ?? []).includes(option)} onChange={(event) => setMultiAnswers((current) => ({ ...current, [gate.id]: event.target.checked ? [...(current[gate.id] ?? []), option] : (current[gate.id] ?? []).filter((value) => value !== option) }))} /> <Text as="span" fontSize="xs">{option}</Text></label>
-              : <Button key={option} size="2xs" disabled={controlBusy} onClick={() => void runControl(() => onAnswerQuestion(gate.id, option))}>{option}</Button>)}
-          </Flex>
-          {gate.multi_select && <Button mt="1" size="2xs" disabled={controlBusy || !(multiAnswers[gate.id]?.length)} onClick={() => void runControl(() => onAnswerQuestion(gate.id, (multiAnswers[gate.id] ?? []).join(", ")))}>{t.submitAnswer}</Button>}
-          <Flex mt="1" gap="1"><Input size="xs" value={answers[gate.id] ?? ""} placeholder={t.otherAnswer} onChange={(event) => setAnswers((current) => ({ ...current, [gate.id]: event.target.value }))} /><Button size="2xs" disabled={controlBusy || !(answers[gate.id]?.trim())} onClick={() => void runControl(() => onAnswerQuestion(gate.id, answers[gate.id].trim()))}>{t.submitAnswer}</Button></Flex>
-        </Box>}
-        </details>
-      </Box>)}
-    </VStack>}
-    {activity.tasks.length > 0 && <VStack align="stretch" gap="1" mt="3">
-      <Text fontSize="2xs" color="var(--text-dim)">{t.tasks}</Text>
-      {activity.tasks.slice(0, 4).map((task) => <Box key={task.id} p="1" borderRadius="sm" bg="var(--bg-raised)">
-        <Flex justify="space-between" gap="2" align="center">
-          <Text fontSize="xs" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{task.profile || t.task}</Text>
-          <Flex align="center" gap="1" flexShrink="0">
-            <Text fontSize="2xs" color="var(--text-dim)">{runtimeStatus(task.status, t)} · {task.elapsed_seconds}{t.secondsUnit}</Text>
-            <Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "task", id: task.id })}>{t.details}</Button>
-          </Flex>
-        </Flex>
-        {(task.exit_code !== null || task.failure_domain) && <Text fontSize="2xs" color="var(--text-faint)">
-          {task.exit_code !== null ? `${t.exitCode}: ${task.exit_code}` : ""}{task.exit_code !== null && task.failure_domain ? " · " : ""}{task.failure_domain ? `${t.failureDomain}: ${failureDomain(task.failure_domain, t)}` : ""}
-        </Text>}
-      </Box>)}
-    </VStack>}
-    {activity.team_statistics_unavailable && <Text mt="2" fontSize="2xs">{t.teamStatisticsUnavailable}</Text>}
-    {activity.teams?.map((team) => <Box key={team.parent_session_id} mt="2" fontSize="2xs" color="var(--text-dim)">
-      <Text>{t.agentTeam} · {t.running} {team.running}/{team.policy?.max_concurrent ?? t.unknownValue} · {t.queued} {team.queued}/{team.policy?.max_queued ?? t.unknownValue}</Text>
-      <Text>{t.teamUsage}: {team.usage.accounted_tokens} {t.tokenUnit} · {t.modelCalls}: {team.usage.model_calls}</Text>
-      <Text>{t.parentUsage}: {team.parent_usage.accounted_tokens} · {t.childUsage}: {team.child_usage.accounted_tokens} · {t.auxiliaryUsage}: {team.auxiliary_usage.accounted_tokens} · {t.compressionUsage}: {team.compression_usage.accounted_tokens}</Text>
-      {team.usage.unknown_usage_calls > 0 && <Text>{t.unknownUsageCalls}: {team.usage.unknown_usage_calls}</Text>}
-      {team.ledger_incomplete && <Text>{t.ledgerIncomplete}</Text>}
-    </Box>)}
-    {sidebarAgents.length > 0 && <VStack align="stretch" gap="1" mt="3">
-      {sidebarAgents.slice(0, showAllAgents ? sidebarAgents.length : AGENT_PREVIEW_LIMIT).map((agent) => <Box key={agent.id} pl={agent.parent_id ? "3" : "0"}>
-        <Flex justify="space-between" gap="2" fontSize="xs"><Text overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{agent.label || agent.profile || t.agent}</Text><Flex align="center" gap="1" flexShrink="0"><Text color="var(--text-dim)">{agent.retry_wait ? t.retryWaiting : runtimeStatus(agent.status, t)} · {t.turn} {agent.current_turn}</Text><Button size="2xs" variant="ghost" onClick={() => setDetail({ kind: "agent", id: agent.id })}>{t.details}</Button></Flex></Flex>
-        <Text fontSize="2xs" color="var(--text-faint)" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{agent.model || t.unknownValue} · {agent.total_tokens ?? t.unknownValue} {t.tokenUnit} · {agentDuration(agent, t)}{agent.dedicated_worktree ? ` · ${agent.worktree_branch || t.worktree}` : ""}</Text>
-        {agent.background && <Flex gap="1" mt="1" flexWrap="wrap">
-          {agent.status === "working" && <Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "prompt"))}>{t.instruct}</Button>}
-          {["working", "queued"].includes(agent.status) && <Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "stop"))}>{t.stop}</Button>}
-          {["blocked", "failed", "done", "completed", "partial", "cancelled", "interrupted"].includes(agent.status) && <><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "continue"))}>{t.continueAgent}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry"))}>{t.retry}</Button><Button size="2xs" variant="ghost" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry_model", agent.model))}>{t.changeModel}</Button></>}
-        </Flex>}
-      </Box>)}
-    </VStack>}
-    {sidebarAgents.length > AGENT_PREVIEW_LIMIT && <Button size="2xs" variant="ghost" onClick={() => setShowAllAgents(!showAllAgents)}>{showAllAgents ? t.showFewerAgents : t.showAllAgents}</Button>}
-    {(hiddenAgents > 0 || showAgentHistory) && <Button size="2xs" variant="ghost" onClick={() => { setShowAgentHistory(!showAgentHistory); setShowAllAgents(true); }}>{showAgentHistory ? t.showActiveAgents : t.showAgentHistory}</Button>}
-    {detail && <RuntimeDetailPanel key={detail.id} activity={activity} messages={t} target={detail} onLoadRuns={onLoadRuns} onClose={() => setDetail(null)} />}
-    {activity.tools[0] && <Text mt="2" fontSize="xs" color="var(--text-faint)" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-      {activity.tools[0].name} · {activity.tools[0].status === "running" ? t.toolRunning : activity.tools[0].status === "completed" ? t.toolDone : activity.tools[0].status === "partial" ? t.partial : t.toolFailed}
-    </Text>}
-    </>}
+  return <Box mt="4" p="3" border="1px solid" borderColor="var(--border-subtle)" borderRadius="md" bg="var(--bg-raised)" flexShrink="0" className="runtime-panel">
+    <button type="button" className="runtime-toggle" aria-expanded={expanded} aria-label={activity.attention_count > 0 ? `${t.runtimeActivity} · ${t.needsAttention} ${activity.attention_count}` : t.runtimeActivity} onClick={() => setExpanded((current) => !current)}>
+      <span className="runtime-toggle-title">{t.runtimeActivity}</span>
+      {activity.attention_count > 0 && <span className="runtime-toggle-badge" title={`${t.needsAttention} ${activity.attention_count}`} aria-hidden="true">{activity.attention_count}</span>}
+      <span className="runtime-toggle-hint" aria-hidden="true">{expanded ? t.collapse : t.expand}{expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</span>
+    </button>
+    {expanded && <div className="runtime-body">
+      <div className="runtime-stats">
+        <div className="runtime-stat"><span className="runtime-stat-label">{t.tools}</span><span className="runtime-stat-value">{activity.tools.length}</span></div>
+        <div className="runtime-stat"><span className="runtime-stat-label">{t.running}</span><span className="runtime-stat-value">{runningTools}</span></div>
+        <div className="runtime-stat"><span className="runtime-stat-label">{t.artifacts}</span><span className="runtime-stat-value">{activity.artifacts.length}</span></div>
+        <div className="runtime-stat"><span className="runtime-stat-label">{t.tasks}</span><span className="runtime-stat-value">{activity.tasks.length}</span></div>
+        <div className="runtime-stat"><span className="runtime-stat-label">{t.agents}</span><span className="runtime-stat-value">{sidebarAgents.length}{hiddenAgents > 0 && <small title={`+${hiddenAgents} ${t.finishedHidden}`}>+{hiddenAgents}</small>}</span></div>
+        <div className={`runtime-stat${activity.attention_count > 0 ? " alert" : ""}`}><span className="runtime-stat-label">{t.needsAttention}</span><span className="runtime-stat-value">{activity.attention_count}</span></div>
+        <div className="runtime-stat wide"><span className="runtime-stat-label">{t.runtimeEvents}</span><span className="runtime-stat-value">{pendingEvents.length}</span></div>
+      </div>
+      {activity.gates.length > 0 && <div className="runtime-section">
+        <div className="runtime-section-head"><span>{t.needsAttention}</span><span className="runtime-section-count">{activity.gates.length}</span></div>
+        <div className="runtime-list">{activity.gates.map((gate) => <div key={gate.id} className="runtime-card">
+          <div className="runtime-card-head">
+            <span className="runtime-gate-state">{gate.kind === "approval" ? t.waitingApproval : t.waitingAnswer}</span>
+            <button type="button" className="runtime-link" onClick={() => onOpenGate(gate.id)}>{t.openHumanGate}<ChevronRight size={12} aria-hidden="true" /></button>
+          </div>
+          <p className="runtime-card-text">{gate.kind === "approval" ? gate.description : gate.question}</p>
+        </div>)}</div>
+      </div>}
+      {pendingEvents.length > 0 && <div className="runtime-section">
+        <div className="runtime-section-head"><span>{t.runtimeEventsPending}</span><span className="runtime-section-count">{pendingEvents.length}</span></div>
+        <div className="runtime-list">{pendingEvents.slice(0, 5).map((event) => <div key={event.id} className="runtime-card">
+          <div className="runtime-card-head">
+            <span className="runtime-row-meta">{event.source} · {event.priority}{event.merge_count > 1 ? ` ×${event.merge_count}` : ""}</span>
+            {/* 忽略只结算「还等着人」这一侧，不批准任何操作：审批仍在它自己的卡片上回答。 */}
+            <button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onIgnoreEvent(event.id))}>{t.ignoreEvent}</button>
+          </div>
+          <p className="runtime-card-text">{event.title_excerpt ?? event.kind}</p>
+          <span className="runtime-card-note">{event.delivery_state === "handled" ? t.eventSeenByAgent : t.eventNotDelivered}</span>
+        </div>)}</div>
+      </div>}
+      {activity.tasks.length > 0 && <div className="runtime-section">
+        <div className="runtime-section-head"><span>{t.tasks}</span><span className="runtime-section-count">{activity.tasks.length}</span></div>
+        <div className="runtime-list">{activity.tasks.slice(0, 4).map((task) => <div key={task.id} className="runtime-card">
+          <div className="runtime-row-main">
+            <span className="runtime-row-title">{task.profile || t.task}</span>
+            <span className="runtime-row-meta">{runtimeStatus(task.status, t)} · {task.elapsed_seconds}{t.secondsUnit}</span>
+            <button type="button" className="runtime-link" onClick={() => setDetail({ kind: "task", id: task.id })}>{t.details}</button>
+          </div>
+          {(task.exit_code !== null || task.failure_domain) && <span className="runtime-card-note">
+            {task.exit_code !== null ? `${t.exitCode}: ${task.exit_code}` : ""}{task.exit_code !== null && task.failure_domain ? " · " : ""}{task.failure_domain ? `${t.failureDomain}: ${failureDomain(task.failure_domain, t)}` : ""}
+          </span>}
+        </div>)}</div>
+      </div>}
+      {activity.team_statistics_unavailable && <span className="runtime-card-note">{t.teamStatisticsUnavailable}</span>}
+      {activity.teams?.map((team) => <div key={team.parent_session_id} className="runtime-team">
+        <p>{t.agentTeam} · {t.running} {team.running}/{team.policy?.max_concurrent ?? t.unknownValue} · {t.queued} {team.queued}/{team.policy?.max_queued ?? t.unknownValue}</p>
+        <p>{t.teamUsage}: {team.usage.accounted_tokens} {t.tokenUnit} · {t.modelCalls}: {team.usage.model_calls}</p>
+        <p>{t.parentUsage}: {team.parent_usage.accounted_tokens} · {t.childUsage}: {team.child_usage.accounted_tokens} · {t.auxiliaryUsage}: {team.auxiliary_usage.accounted_tokens} · {t.compressionUsage}: {team.compression_usage.accounted_tokens}</p>
+        {team.usage.unknown_usage_calls > 0 && <p>{t.unknownUsageCalls}: {team.usage.unknown_usage_calls}</p>}
+        {team.ledger_incomplete && <p>{t.ledgerIncomplete}</p>}
+      </div>)}
+      {sidebarAgents.length > 0 && <div className="runtime-section">
+        <div className="runtime-section-head"><span>{t.agents}</span><span className="runtime-section-count">{sidebarAgents.length}</span></div>
+        <div className="runtime-list">{sidebarAgents.slice(0, showAllAgents ? sidebarAgents.length : AGENT_PREVIEW_LIMIT).map((agent) => <Box key={agent.id} className="runtime-agent" pl={agent.parent_id ? "3" : "0"}>
+          <div className="runtime-row-main"><span className="runtime-row-title">{agent.label || agent.profile || t.agent}</span><span className="runtime-row-meta">{agent.retry_wait ? t.retryWaiting : runtimeStatus(agent.status, t)} · {t.turn} {agent.current_turn}</span><button type="button" className="runtime-link" onClick={() => setDetail({ kind: "agent", id: agent.id })}>{t.details}</button></div>
+          <span className="runtime-card-note">{agent.model || t.unknownValue} · {agent.total_tokens ?? t.unknownValue} {t.tokenUnit} · {agentDuration(agent, t)}{agent.dedicated_worktree ? ` · ${agent.worktree_branch || t.worktree}` : ""}</span>
+          {agent.background && <div className="runtime-agent-actions">
+            {agent.status === "working" && <button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "prompt"))}>{t.instruct}</button>}
+            {["working", "queued"].includes(agent.status) && <button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "stop"))}>{t.stop}</button>}
+            {["blocked", "failed", "done", "completed", "partial", "cancelled", "interrupted"].includes(agent.status) && <><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "continue"))}>{t.continueAgent}</button><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry"))}>{t.retry}</button><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry_model", agent.model))}>{t.changeModel}</button></>}
+          </div>}
+        </Box>)}</div>
+        {sidebarAgents.length > AGENT_PREVIEW_LIMIT && <button type="button" className="runtime-link" onClick={() => setShowAllAgents(!showAllAgents)}>{showAllAgents ? t.showFewerAgents : t.showAllAgents}</button>}
+        {(hiddenAgents > 0 || showAgentHistory) && <button type="button" className="runtime-link" onClick={() => { setShowAgentHistory(!showAgentHistory); setShowAllAgents(true); }}>{showAgentHistory ? t.showActiveAgents : t.showAgentHistory}</button>}
+      </div>}
+      <div className="runtime-section">
+        <button type="button" className="runtime-spawn-toggle" aria-expanded={spawnOpen} onClick={() => setSpawnOpen((current) => !current)}>
+          <span className="runtime-spawn-label"><Plus size={13} aria-hidden="true" />{t.newReadOnlyAgent}</span>
+          {spawnOpen ? <ChevronUp size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+        </button>
+        {spawnOpen && <div className="runtime-spawn-form">
+          <NativeSelect.Root>
+            <NativeSelect.Field aria-label={t.agentProfile} value={spawnProfile} onChange={(event) => setSpawnProfile(event.target.value as AgentSpawnProfile)} fontSize="xs" h="8" bg="var(--bg-raised)" borderColor="var(--border-strong)" color="var(--text)">
+              <option value="generalist">{t.agentProfileGeneralist}</option>
+              <option value="reviewer">{t.agentProfileReviewer}</option>
+            </NativeSelect.Field>
+            <NativeSelect.Indicator />
+          </NativeSelect.Root>
+          <Textarea size="xs" rows={2} resize="none" value={spawnPrompt} aria-label={t.agentTask} placeholder={t.agentTaskPlaceholder} bg="var(--bg-raised)" borderColor="var(--border-strong)" color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} onChange={(event) => setSpawnPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void spawnAgent(); } }} />
+          <div className="runtime-spawn-actions">
+            <Button size="2xs" disabled={!canSpawnAgent || !spawnPrompt.trim() || controlBusy} onClick={() => void spawnAgent()}>{t.spawnAgent}</Button>
+          </div>
+          {!canSpawnAgent && <span className="runtime-card-note">{t.activeSessionRequired}</span>}
+        </div>}
+      </div>
+      {detail && <RuntimeDetailPanel key={detail.id} activity={activity} messages={t} target={detail} onLoadRuns={onLoadRuns} onClose={() => setDetail(null)} />}
+      {activity.tools[0] && <div className="runtime-footer">
+        {activity.tools[0].name} · {activity.tools[0].status === "running" ? t.toolRunning : activity.tools[0].status === "completed" ? t.toolDone : activity.tools[0].status === "partial" ? t.partial : t.toolFailed}
+      </div>}
+    </div>}
   </Box>;
 }
