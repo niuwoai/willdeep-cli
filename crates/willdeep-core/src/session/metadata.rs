@@ -11,17 +11,24 @@ pub(super) struct Metadata {
     config: Option<PathBuf>,
     goal: Option<String>,
     response_style: Option<super::ResponseStyle>,
-    execution: [u8; 32],
+    /// `None` 是「这份快照没有执行基线」，不是某个执行状态的指纹。只读加载留空；
+    /// 要改执行状态再写回的调用方必须在改动前用 `SessionStore::load_baselined`
+    /// 算好。不能用全零占位——那是一个真实指纹可能取到的值，撞上会让合并
+    /// 把「没算过」当成「没改过」。
+    execution: Option<[u8; 32]>,
 }
 
 impl Metadata {
     pub(super) fn refresh_execution(&mut self, saved: &Session) -> Result<(), SessionError> {
-        self.execution = super::execution_state::fingerprint(saved)?;
+        self.execution = Some(super::execution_state::fingerprint(saved)?);
         Ok(())
     }
 
-    pub(super) fn capture(session: &Session) -> Result<Self, SessionError> {
-        Ok(Self {
+    /// 只取标量字段。执行指纹是把整段对话序列化进 sha256，长会话上一次就要
+    /// 几十毫秒，而读会话的大多数调用方（列表、归属校验、轮询）根本不写回，
+    /// 所以加载时不算它，留给真正要合并写回的路径按需补。
+    pub(super) fn capture_scalars(session: &Session) -> Self {
+        Self {
             title: (session.title.clone(), session.title_source),
             pinned_at: session.pinned_at,
             model: session.model.clone(),
@@ -29,8 +36,19 @@ impl Metadata {
             config: session.config.clone(),
             goal: session.goal.clone(),
             response_style: session.response_style,
-            execution: super::execution_state::fingerprint(session)?,
-        })
+            execution: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_execution_fingerprint(&self) -> bool {
+        self.execution.is_some()
+    }
+
+    pub(super) fn capture(session: &Session) -> Result<Self, SessionError> {
+        let mut metadata = Self::capture_scalars(session);
+        metadata.execution = Some(super::execution_state::fingerprint(session)?);
+        Ok(metadata)
     }
 
     pub(super) fn merge(
@@ -41,7 +59,10 @@ impl Metadata {
         // Validate all conflicts before changing the caller's snapshot.
         let mut merged = Self::capture(proposed)?;
         let current = Self::capture(latest)?;
-        let retain_latest_execution = merged.execution == self.execution;
+        // 基线没有指纹即「这份快照没动过执行状态」：保留磁盘上的那一份。
+        let retain_latest_execution = self
+            .execution
+            .is_none_or(|baseline| merged.execution == Some(baseline));
         if !retain_latest_execution
             && current.execution != self.execution
             && current.execution != merged.execution

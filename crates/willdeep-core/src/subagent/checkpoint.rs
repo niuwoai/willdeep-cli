@@ -39,7 +39,8 @@ pub(super) async fn run(
     }
     .claim()
     .map_err(persistence_error)?;
-    let mut session = store.load(id).map_err(persistence_error)?;
+    // 带基线加载：下面可能给消息追加恢复提示，再经由 checkpoint 写回。
+    let mut session = store.load_baselined(id).map_err(persistence_error)?;
     if session.workspace != workspace {
         return Err(AgentError::Checkpoint(
             "worker checkpoint workspace changed".into(),

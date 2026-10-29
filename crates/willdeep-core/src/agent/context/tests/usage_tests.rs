@@ -11,7 +11,7 @@ async fn manual_compression_bill_survives_reload_and_stale_metadata_save() {
     let mut session = crate::Session::new(home.clone(), None, "test");
     session.messages = history();
     store.save(&mut session).unwrap();
-    let mut metadata_writer = store.load(session.id).unwrap();
+    let mut metadata_writer = store.load_baselined(session.id).unwrap();
     let agent = agent.with_compressors(vec![(BilledProvider::new("summary", 10), false)]);
     let compressed = agent
         .compress_history_recorded(session.messages.clone(), &mut |usage| {

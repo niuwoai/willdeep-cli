@@ -1537,7 +1537,8 @@ fn load_session(
 ) -> Result<Option<willdeep_core::Session>> {
     match resume {
         Some("latest") => Ok(Some(store.latest()?.context("no saved sessions found")?)),
-        Some(value) => Ok(Some(store.load(
+        // 带基线加载：续上的会话会被追加消息再写回，基线必须记着改动前的执行状态。
+        Some(value) => Ok(Some(store.load_baselined(
             uuid::Uuid::parse_str(value).context("--resume must be a session UUID or `latest`")?,
         )?)),
         None => Ok(None),

@@ -140,7 +140,7 @@ pub(super) async fn switch(
                 .is_ok_and(|root| root == workspace.root)
         })
         .max_by_key(|candidate| candidate.updated_at)
-        .and_then(|candidate| store.load(candidate.id).ok());
+        .and_then(|candidate| store.load_baselined(candidate.id).ok());
     let mut target = target.unwrap_or_else(|| {
         Session::new(
             workspace.root.clone(),

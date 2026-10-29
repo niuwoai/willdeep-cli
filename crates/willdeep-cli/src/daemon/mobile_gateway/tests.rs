@@ -943,7 +943,7 @@ async fn persisted_messages_leave_the_live_tail() {
     gateway.push_user_echo(session_id, uuid::Uuid::new_v4(), "ship it", 0);
 
     let store = willdeep_core::SessionStore::new(&harness.state.home);
-    let mut session = store.load(session_id).unwrap();
+    let mut session = store.load_baselined(session_id).unwrap();
     session
         .messages
         .push(willdeep_core::Message::user("ship it"));

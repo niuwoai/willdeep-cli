@@ -143,7 +143,8 @@ async fn rename(
 ) -> Result<String> {
     crate::daemon::rename_remote_session(&runtime.home, session.id, title.trim().to_owned())
         .await?;
-    *session = store.load(session.id)?;
+    // 带基线加载：重命名之后这份快照还要继续被写回。
+    *session = store.load_baselined(session.id)?;
     Ok(format!(
         "{}: {}",
         app.language.text(
@@ -276,7 +277,8 @@ pub(super) async fn switch(
     session.attention_read = app.attention_read.clone();
     session.runtime_event_cursor = app.runtime_event_cursor;
     store.save(session)?;
-    let mut target = store.load(id).context("load target Session")?;
+    // 带基线加载：切过来之后这份快照会一直被写回，基线必须记着改动前的执行状态。
+    let mut target = store.load_baselined(id).context("load target Session")?;
     if target.workspace.canonicalize()? != session.workspace.canonicalize()? {
         bail!("TUI in-place switching currently requires the same Workspace");
     }

@@ -13,6 +13,8 @@ use crate::types::{Message, Role, ToolCall, sanitize_tool_history};
 mod concurrency_tests;
 mod execution_state;
 mod metadata;
+#[cfg(test)]
+mod read_baseline_tests;
 
 /// Only reported manual-compression usage; missing provider usage is not zero.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -247,6 +249,20 @@ impl SessionStore {
         }
     }
     pub fn load(&self, id: Uuid) -> Result<Session, SessionError> {
+        self.read(id, false)
+    }
+
+    /// 加载并算好执行指纹。
+    ///
+    /// 指纹要序列化整段对话，长会话上一次几十毫秒。只有拿着返回值去 `save`
+    /// 的调用方才需要它：基线记的必须是**改动前**的执行状态，而 `save` 看见的
+    /// 快照已经是改完的，那时候再算就晚了。轮询、列表、归属校验这些只读路径
+    /// 用 [`SessionStore::load`]，不付这个代价。
+    pub fn load_baselined(&self, id: Uuid) -> Result<Session, SessionError> {
+        self.read(id, true)
+    }
+
+    fn read(&self, id: Uuid, baseline: bool) -> Result<Session, SessionError> {
         let local = self.path(id);
         let mut session: Session = if local.exists() {
             serde_json::from_slice(&std::fs::read(local)?)?
@@ -265,12 +281,17 @@ impl SessionStore {
         if session.version != SESSION_VERSION {
             return Err(SessionError::Version(session.version));
         }
-        session.metadata_baseline = Some(metadata::Metadata::capture(&session)?);
+        session.metadata_baseline = Some(if baseline {
+            metadata::Metadata::capture(&session)?
+        } else {
+            metadata::Metadata::capture_scalars(&session)
+        });
         Ok(session)
     }
     pub fn latest(&self) -> Result<Option<Session>, SessionError> {
         match self.digests().into_iter().max_by_key(|s| s.updated_at) {
-            Some(digest) => Ok(Some(self.load(digest.id)?)),
+            // 带基线：`latest` 的调用方拿它去续写。
+            Some(digest) => Ok(Some(self.load_baselined(digest.id)?)),
             None => Ok(None),
         }
     }
@@ -337,7 +358,7 @@ impl SessionStore {
             }
         }
         for session in &mut values {
-            session.metadata_baseline = Some(metadata::Metadata::capture(session)?);
+            session.metadata_baseline = Some(metadata::Metadata::capture_scalars(session));
         }
         values.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
         Ok(values)
@@ -345,7 +366,12 @@ impl SessionStore {
     pub fn save(&self, session: &mut Session) -> Result<(), SessionError> {
         let _guard = self.lock_session(session.id)?;
         match (session.metadata_baseline.clone(), self.load(session.id)) {
-            (Some(baseline), Ok(latest)) => baseline.merge(session, &latest)?,
+            (Some(baseline), Ok(latest)) => {
+                // 基线的执行指纹必须在调用方改动快照之前就算好（`load_baselined`）。
+                // 这里看到的快照已经是改完的，再算就把改动记成了「改动前」。
+                // 没有指纹的基线按「没动过执行状态」合并：保留磁盘上的那一份。
+                baseline.merge(session, &latest)?;
+            }
             (None, Ok(_)) => return Err(SessionError::ConcurrentUpdate("missing baseline")),
             (None, Err(SessionError::Io(error)))
                 if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -366,7 +392,7 @@ impl SessionStore {
         change: impl FnOnce(&mut Session),
     ) -> Result<Session, SessionError> {
         let _guard = self.lock_session(id)?;
-        let mut session = self.load(id)?;
+        let mut session = self.load_baselined(id)?;
         change(&mut session);
         session.updated_at = now();
         self.write(&session)?;
@@ -476,6 +502,8 @@ impl SessionStore {
         } else {
             self.write(&session)?;
         }
+        // 置顶只动标量字段，但返回的快照可能被调用方再次保存，基线必须完整，
+        // 否则下一次保存会把置顶后的执行状态当成「改动前」的基线。
         session.metadata_baseline = Some(metadata::Metadata::capture(&session)?);
         Ok(session)
     }
@@ -511,7 +539,9 @@ impl SessionStore {
         std::fs::remove_file(path)?;
         Ok(true)
     }
-    fn path(&self, id: Uuid) -> PathBuf {
+    /// 会话文件的位置。只给需要按文件指纹判断「变没变」的调用方，
+    /// 比如轮询路径上的归属校验缓存。
+    pub fn path(&self, id: Uuid) -> PathBuf {
         self.directory.join(format!("{id}.json"))
     }
 }
@@ -1071,7 +1101,7 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut original = Session::new(root.clone(), None, "initial");
         store.save(&mut original).unwrap();
-        let mut stale = store.load(original.id).unwrap();
+        let mut stale = store.load_baselined(original.id).unwrap();
         store
             .update(original.id, |session| {
                 session.title = "user renamed".into();
@@ -1105,7 +1135,7 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = Session::new(root.clone(), None, "initial");
         store.save(&mut session).unwrap();
-        let mut automatic = store.load(session.id).unwrap();
+        let mut automatic = store.load_baselined(session.id).unwrap();
         store
             .update(session.id, |session| {
                 session.title = "my title".into();
@@ -1130,7 +1160,7 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = Session::new(root.clone(), None, "initial");
         store.save(&mut session).unwrap();
-        let mut stale = store.load(session.id).unwrap();
+        let mut stale = store.load_baselined(session.id).unwrap();
         store
             .update(session.id, |session| session.title = "newer title".into())
             .unwrap();
@@ -1526,7 +1556,7 @@ mod tests {
         let store = SessionStore::new(&root);
         let mut session = Session::new(root.clone(), None, "plan merge");
         store.save(&mut session).unwrap();
-        let mut stale = store.load(session.id).unwrap();
+        let mut stale = store.load_baselined(session.id).unwrap();
         let (plan, _) =
             crate::conversation::parse_plan_reply("```plan\n1. verify\n```", None).unwrap();
         store

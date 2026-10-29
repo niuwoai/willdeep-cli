@@ -286,7 +286,7 @@ async fn old_decision_is_buffered_during_independent_work_then_resumes_exact_wai
             .is_err()
     );
     let store = SessionStore::new(home.join("independent"));
-    let mut lane = store.load(execution).unwrap();
+    let mut lane = store.load_baselined(execution).unwrap();
     lane.messages.push(Message::user("independent question"));
     lane.messages
         .push(Message::assistant("independent answer", Vec::new()));

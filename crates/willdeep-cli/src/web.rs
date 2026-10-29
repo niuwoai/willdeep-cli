@@ -70,6 +70,33 @@ pub(crate) struct WebState {
     settings_writable: bool,
     settings_write_lock: Mutex<()>,
     config_tools: tokio::sync::OnceCell<Arc<willdeep_core::McpRegistry>>,
+    /// 会话归属校验的缓存：会话 id →（会话文件指纹, 工作区）。
+    ///
+    /// `/api/runtime/events` 这类轮询每两秒打一次，而校验本来要整读会话文件
+    /// （长会话有几 MB）。归属只看工作区，文件没变就不必重读。包在 `Arc` 里是
+    /// 因为未命中时的整读要挪到 blocking 线程上，缓存得跟着走。
+    session_workspaces: Arc<std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>>,
+}
+
+/// 会话文件的指纹：修改时间（纳秒）+ 字节数。任一变化都重新读。
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    modified_nanos: u64,
+    len: u64,
+}
+
+impl FileStamp {
+    fn of(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            modified_nanos: metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| value.as_nanos() as u64)
+                .unwrap_or_default(),
+            len: metadata.len(),
+        }
+    }
 }
 
 impl WebState {
@@ -200,6 +227,36 @@ struct WebKernelEvent {
     delivery_state: String,
 }
 
+/// 文件指纹没变时直接返回缓存的工作区。
+fn cached_session_workspace(
+    cache: &std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>,
+    session_id: uuid::Uuid,
+    stamp: FileStamp,
+) -> Option<PathBuf> {
+    cache
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&session_id)
+        .filter(|(cached, _)| *cached == stamp)
+        .map(|(_, workspace)| workspace.clone())
+}
+
+/// 指纹对不上（或还没有）时读会话、记下新的归属。`load` 失败返回 `None`，
+/// 不写缓存——下一次请求再试，而不是把一次瞬时的读失败记成永久拒绝。
+fn remember_session_workspace(
+    cache: &std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>,
+    session_id: uuid::Uuid,
+    stamp: FileStamp,
+    load: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let workspace = load()?;
+    cache
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(session_id, (stamp, workspace.clone()));
+    Some(workspace)
+}
+
 fn web_kernel_event(event: &willdeep_runtime_protocol::KernelEvent) -> WebKernelEvent {
     let public = event.to_public(willdeep_core::judge::redact_credentials);
     WebKernelEvent {
@@ -219,14 +276,38 @@ fn web_kernel_event(event: &willdeep_runtime_protocol::KernelEvent) -> WebKernel
 ///
 /// 与会话详情同一条门：浏览器端没有应用层鉴权，能看到什么完全由这份白名单
 /// 决定，事件不该是例外。
+///
+/// 这条路径被前端每两秒轮询一次。归属只取决于会话的工作区，而工作区写进
+/// 会话文件后基本不变，所以按文件指纹缓存：文件没变就不再整读会话。
 async fn authorized_event_session(
     state: &Arc<WebState>,
     session_id: uuid::Uuid,
 ) -> Result<(), WebError> {
-    let session = SessionStore::new(&state.home)
-        .load(session_id)
-        .map_err(|_| WebError::bad_request("session was not found"))?;
-    if !workspace_allowed(state, &session.workspace).await? {
+    let not_found = || WebError::bad_request("session was not found");
+    let path = SessionStore::new(&state.home).path(session_id);
+    let metadata = std::fs::metadata(&path).map_err(|_| not_found())?;
+    let stamp = FileStamp::of(&metadata);
+    let cached = cached_session_workspace(&state.session_workspaces, session_id, stamp);
+    let workspace = match cached {
+        Some(workspace) => workspace,
+        None => {
+            // 整读会话是贵的（长会话几 MB），别堵在 tokio worker 上。
+            let home = state.home.clone();
+            let cache = Arc::clone(&state.session_workspaces);
+            tokio::task::spawn_blocking(move || {
+                remember_session_workspace(&cache, session_id, stamp, || {
+                    SessionStore::new(&home)
+                        .load(session_id)
+                        .map(|session| session.workspace)
+                        .ok()
+                })
+            })
+            .await
+            .map_err(|error| WebError::internal(error.to_string()))?
+            .ok_or_else(not_found)?
+        }
+    };
+    if !workspace_allowed(state, &workspace).await? {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -392,6 +473,7 @@ async fn serve_internal(
         settings_writable: config.listen.ip().is_loopback(),
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
+        session_workspaces: Arc::new(std::sync::Mutex::new(HashMap::new())),
     });
     let app = Router::new()
         .merge(schedules::routes())
