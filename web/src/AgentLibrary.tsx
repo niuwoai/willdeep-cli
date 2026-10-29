@@ -9,6 +9,7 @@ import { AgentRsiPanel, type RsiPackage } from "./AgentRsiPanel";
 import { AgentSyncConflicts, type SyncConflict } from "./AgentSyncConflicts";
 import { FileText, MoreHorizontal, Search, FlaskConical } from "lucide-react";
 import { allowAgentNavigation } from "./agentNavigation";
+import { ForeignAgentImport } from "./ForeignAgentImport";
 
 type Definition = { schema: string; definition_id: string; version: string; name: Record<string, string>; purpose: string; base_role: string; instructions: string; input_modalities: string[]; tools: string[]; skills: {id: string; content: string; sha256: string; required: boolean}[]; forked_from: string | null };
 type Package = { definition: Definition; sha256: string; signature: {key_id: string; value: string} | null };
@@ -131,6 +132,7 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     {(mutation.isPending || library.isLoading || catalog.isFetching) && <p role="status">{t("busy")}</p>}
     {syncSummary?.account === accountKey && <p role="status">{syncSummary.text}</p>}
     {conflicts?.account === accountKey && !!conflicts.items.length && <AgentSyncConflicts conflicts={conflicts.items} language={language} pending={mutation.isPending} onResolve={params=>act("resolve",{...params,expected_account:library.data?.account})} />}
+    <ForeignAgentImport key={accountKey} language={language} onDone={() => {void client.invalidateQueries({queryKey: ["agent-library"]});}} />
     {editor !== null && <section className="agent-library-editor">
       <h2>{t("advanced")}</h2><p>{t("editorHelp")}</p>
       <textarea aria-label={t("advanced")} value={editor} disabled={mutation.isPending} onChange={event => setEditor(event.target.value)} spellCheck={false} />

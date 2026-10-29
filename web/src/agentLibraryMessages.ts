@@ -1,5 +1,18 @@
 import type { Language } from "./i18n";
 const text = {
+  foreignImport: ["导入 Hermes / Multica", "Import Hermes / Multica", "Hermes / Multica をインポート"],
+  foreignImportHelp: ["转换名称、指令与模型引用。默认只读；工具、技能、预算和执行设置需在本机重新配置。", "Convert identity, instructions and model references. Read-only by default; configure tools, skills, budgets and execution settings locally.", "名前・指示・モデルを変換します。既定は読み取り専用。ツール・スキル・予算・実行設定はローカルで設定してください。"],
+  importFormat: ["来源格式", "Source format", "入力形式"],
+  hermesFormat: ["Hermes profile", "Hermes profile", "Hermes profile"],
+  multicaFormat: ["Multica Agent JSON", "Multica Agent JSON", "Multica Agent JSON"],
+  hermesConfig: ["config.yaml 配置文件", "config.yaml configuration", "config.yaml 設定"],
+  hermesSoul: ["SOUL.md 指令文件", "SOUL.md instructions", "SOUL.md 指示"],
+  multicaConfig: ["Agent JSON 文件", "Agent JSON file", "Agent JSON ファイル"],
+  importOmitted: ["未转换的字段（只列名称）", "Unmapped fields (names only)", "未変換フィールド（名前のみ）"],
+  importProviderHint: ["来源 Provider；请在下方选择本机对应配置", "Source provider; select its local profile below", "元のプロバイダー。下でローカル設定を選択してください"],
+  invalidImport: ["文件格式、大小、名称或定义 ID 无效；Hermes 需要配置文件和 SOUL.md。", "Invalid format, size, name or definition ID. Hermes requires config and SOUL.md.", "形式・サイズ・名前・ID が無効です。Hermes は設定と SOUL.md が必要です。"],
+  importExists: ["此定义 ID 已存在，请换一个 ID。", "This definition ID exists; choose another.", "この ID は使用済みです。別の ID を選択してください。"],
+  importSaveFailed: ["导入或模型绑定失败；定义可能已保存，可重试或前往智能体库检查。", "Import or model binding failed. The definition may be saved; retry or inspect the library.", "インポートまたはモデル設定に失敗しました。定義が保存済みの可能性があります。再試行またはライブラリを確認してください。"],
   catalogUnavailable: ["目录响应不可用，请刷新重试。", "The catalog response is unavailable. Refresh to retry.", "カタログを取得できません。更新して再試行してください。"],
   catalogLoopback: ["当前站点不能安装智能体。精选目录仍可浏览；安装请在本机 WillDeep 中操作。", "This hosted site can browse the official catalog but cannot install agents. Install them in local WillDeep.", "このサイトでは公式カタログの閲覧のみ可能です。導入はローカルの WillDeep で行ってください。"],
   category: ["分类", "Category", "カテゴリ"],

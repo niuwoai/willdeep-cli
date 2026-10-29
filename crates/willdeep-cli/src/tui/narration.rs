@@ -182,6 +182,7 @@ impl App {
             .transcript
             .iter()
             .enumerate()
+            .filter(|(index, _)| *index >= self.visible_thought_start())
             .filter(|(_, row)| {
                 row.starts_with(THOUGHT_ENTRY_PREFIX) || row.starts_with(THOUGHT_EXPANDED_PREFIX)
             })
@@ -453,6 +454,10 @@ pub(super) fn fold_tool_rows(
         runs.push((start, cursor));
     }
     let last_run = runs.last().copied();
+    let latest_turn = entries
+        .iter()
+        .rposition(|row| row.starts_with("You: "))
+        .unwrap_or(0);
     let mut rows = Vec::with_capacity(entries.len());
     let mut index_of = Vec::with_capacity(entries.len());
     let mut next_run = 0;
@@ -467,7 +472,7 @@ pub(super) fn fold_tool_rows(
         next_run += 1;
         cursor = end;
         let run = &entries[start..end];
-        let is_last = last_run == Some((start, end));
+        let is_last = start >= latest_turn && last_run == Some((start, end));
         let hidden = if expanded || run.len() == 1 {
             0
         } else if !is_last {
@@ -531,23 +536,31 @@ fn fold_summary(hidden: &[String], with_hint: bool, language: Language) -> Strin
 }
 
 impl App {
+    fn visible_thought_start(&self) -> usize {
+        self.transcript
+            .iter()
+            .rposition(|row| row.starts_with("You: "))
+            .unwrap_or(0)
+            .max(self.archive_floor)
+    }
+
     /// 聊天区实际画出来的记录：工具行按规则收起，其余原样。
     pub(super) fn display_transcript(&self) -> FoldedTranscript {
         // 归档区不进渲染循环：只折叠还可见的那一段，顶上补一行说明。
         // 记录本身没动，`archive_floor` 只是渲染起点。
         let floor = self.archive_floor.min(self.transcript.len());
         let live = &self.transcript[floor..];
-        let mut entries = if self.ui.show_thinking {
-            live.to_vec()
-        } else {
-            live.iter()
-                .filter(|row| {
-                    !row.starts_with(THOUGHT_ENTRY_PREFIX)
-                        && !row.starts_with(THOUGHT_EXPANDED_PREFIX)
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let thought_start = self.visible_thought_start();
+        let mut entries = live
+            .iter()
+            .enumerate()
+            .filter(|(index, row)| {
+                let thought = row.starts_with(THOUGHT_ENTRY_PREFIX)
+                    || row.starts_with(THOUGHT_EXPANDED_PREFIX);
+                !thought || (self.ui.show_thinking && floor + index >= thought_start)
+            })
+            .map(|(_, row)| row.clone())
+            .collect::<Vec<_>>();
         if floor > 0 {
             entries.insert(0, self.archive_placeholder());
         }

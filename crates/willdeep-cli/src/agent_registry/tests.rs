@@ -11,6 +11,38 @@ fn home() -> PathBuf {
 }
 
 #[tokio::test]
+async fn foreign_import_binding_is_atomic_and_never_replaces_an_existing_id() {
+    let home = home();
+    let definition = fixture();
+    let id = definition.definition_id.clone();
+    let text = serde_json::to_string(&definition).unwrap();
+    assert!(
+        operate(
+            &home,
+            "import",
+            json!({"package_text": text, "new_binding": {"provider_profile":"", "model":"model"}})
+        )
+        .await
+        .is_err()
+    );
+    let library = AgentLibrary::new(&home);
+    assert!(library.installations().unwrap().is_empty());
+    let params = json!({"package_text": text, "new_binding": {"provider_profile":"local-profile", "model":"selected-model"}});
+    operate(&home, "import", params.clone()).await.unwrap();
+    let installed = library.installations().unwrap();
+    assert_eq!(
+        installed[&id].binding.model.as_deref(),
+        Some("selected-model")
+    );
+    assert!(operate(&home, "import", params).await.is_err());
+    assert_eq!(
+        library.installations().unwrap()[&id].sha256,
+        installed[&id].sha256
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
 async fn signed_incompatible_official_update_preserves_active_installation() {
     use willdeep_core::agent_definition::{PackageSignature, SIGNING_DOMAIN};
     let golden: Value = serde_json::from_slice(include_bytes!(

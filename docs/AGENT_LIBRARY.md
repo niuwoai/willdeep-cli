@@ -4,6 +4,10 @@
 
 ## 使用
 
+Web 的“导入 Hermes / Multica”支持 Hermes profile 的 `config.yaml` + `SOUL.md`，以及 Multica Agent API 返回的单个 JSON 对象。填写独立的 `user/` ID，预览名称、指令，再选择本机 Provider 与模型后保存。来源 Provider 名称不等于本机 profile ID，必须显式选择。
+
+此转换兼容身份、指令和模型引用，不是完整 Runtime 迁移。未转换字段在预览列出；工具、技能、上下文/轮次预算、MCP、环境变量、访问控制和外部 Runtime 需要在宿主另外配置，凭据值不会进入转换结果。默认以只读 reviewer 职责创建。导入只回填文本能力，不会根据模型名字断言图片或视频能力。原生 WillDeep JSON 包仍走原有导入入口。
+
 `willdeep agents create user/team-reviewer 审查员 代码审查 --role reviewer --instructions-file instructions.md` 创建本地定义。`willdeep agents import agent.json` 支持完整交换包或定义；`check` 验证而不安装；`export ID agent.json` 导出完整版本包。Web 一级入口“智能体库”提供 JSON 编辑、导入导出及全部安装选择操作，TUI `/agents` 提供列表、目录、同步、fork、固定及回滚。
 
 编辑使用新版本。官方定义须 fork 为 `user/`，不能在官方名称下改指令。内嵌技能正文的 SHA-256 必须匹配，不会被本地同名技能替换；必需正文缺失拒绝导入，可选缺失显示降级。用户图片定义可保留及交换，但当前 Rust 子 Worker 暂不支持图片输入，导入后停用并显示不兼容原因。官方候选在切换安装选择前验证执行兼容性；不兼容时拒绝安装并保留原 hash、启用状态、固定状态与本地模型绑定。
