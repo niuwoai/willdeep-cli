@@ -70,15 +70,24 @@ impl EmailTransport {
             .port(port)
             .tls(tls)
             .timeout(Some(SMTP_TIMEOUT));
-        if let (Some(user), Some(env)) = (
-            settings.username.as_deref(),
+        let password = Secret::from_config(
+            settings.password.as_deref(),
             settings.password_env.as_deref(),
-        ) {
-            let password = Secret::from_env(env).map_err(|error| format!("{channel}: {error}"))?;
-            builder = builder.credentials(Credentials::new(
-                user.to_owned(),
-                password.expose().to_owned(),
-            ));
+        )
+        .map_err(|error| format!("{channel}: {error}"))?;
+        match (settings.username.as_deref(), password) {
+            (Some(user), Some(password)) => {
+                builder = builder.credentials(Credentials::new(
+                    user.to_owned(),
+                    password.expose().to_owned(),
+                ));
+            }
+            (None, None) => {}
+            _ => {
+                return Err(format!(
+                    "{channel}: smtp needs username and a password, or neither"
+                ));
+            }
         }
         Ok(Self::Smtp(SmtpEmail {
             transport: builder.build(),
@@ -86,8 +95,10 @@ impl EmailTransport {
     }
 
     pub(super) fn resend(settings: &ResendChannelSettings, channel: &str) -> Result<Self, String> {
-        let api_key = Secret::from_env(&settings.api_key_env)
-            .map_err(|error| format!("{channel}: {error}"))?;
+        let api_key =
+            Secret::from_config(settings.api_key.as_deref(), settings.api_key_env.as_deref())
+                .map_err(|error| format!("{channel}: {error}"))?
+                .ok_or_else(|| format!("{channel}: resend needs api_key or api_key_env"))?;
         let base = settings
             .api_base
             .as_deref()
@@ -313,7 +324,8 @@ mod tests {
 
     fn resend_settings(api_base: &str, api_key_env: &str) -> ResendChannelSettings {
         ResendChannelSettings {
-            api_key_env: api_key_env.to_owned(),
+            api_key: None,
+            api_key_env: Some(api_key_env.to_owned()),
             api_base: Some(api_base.to_owned()),
         }
     }
@@ -391,9 +403,70 @@ mod tests {
     }
 
     #[test]
+    fn resend_accepts_an_inline_api_key_without_an_environment_variable() {
+        let settings = ResendChannelSettings {
+            api_key: Some("re_inline_key".to_owned()),
+            api_key_env: None,
+            api_base: None,
+        };
+        let EmailTransport::Resend(resend) =
+            EmailTransport::resend(&settings, "ops-mail").expect("build")
+        else {
+            panic!("expected the resend backend");
+        };
+        assert_eq!(resend.api_key.expose(), "re_inline_key");
+    }
+
+    #[test]
+    fn two_api_key_sources_are_rejected_without_echoing_them() {
+        let settings = ResendChannelSettings {
+            api_key: Some("re_inline_key".to_owned()),
+            api_key_env: Some("RESEND_API_KEY".to_owned()),
+            api_base: None,
+        };
+        let error = match EmailTransport::resend(&settings, "ops-mail") {
+            Ok(_) => panic!("must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("not both"), "{error}");
+        assert!(!error.contains("re_inline_key"), "{error}");
+    }
+
+    #[test]
+    fn smtp_accepts_an_inline_password_with_a_username() {
+        let settings = SmtpChannelSettings {
+            host: "smtp.example.com".to_owned(),
+            port: None,
+            tls: SmtpTls::Starttls,
+            username: Some("bot@example.com".to_owned()),
+            password: Some("inline-secret".to_owned()),
+            password_env: None,
+        };
+        assert!(EmailTransport::smtp(&settings, "ops-mail").is_ok());
+    }
+
+    #[test]
+    fn smtp_username_without_a_password_is_rejected() {
+        let settings = SmtpChannelSettings {
+            host: "smtp.example.com".to_owned(),
+            port: None,
+            tls: SmtpTls::Starttls,
+            username: Some("bot@example.com".to_owned()),
+            password: None,
+            password_env: None,
+        };
+        let error = match EmailTransport::smtp(&settings, "ops-mail") {
+            Ok(_) => panic!("must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("or neither"), "{error}");
+    }
+
+    #[test]
     fn a_missing_secret_names_the_variable_but_not_a_value() {
         let settings = ResendChannelSettings {
-            api_key_env: "WILLDEEP_DEFINITELY_UNSET_KEY".to_owned(),
+            api_key: None,
+            api_key_env: Some("WILLDEEP_DEFINITELY_UNSET_KEY".to_owned()),
             api_base: None,
         };
         let error = match EmailTransport::resend(&settings, "ops-mail") {

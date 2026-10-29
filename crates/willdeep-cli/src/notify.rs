@@ -87,6 +87,25 @@ impl Secret {
         }
     }
 
+    /// Resolve a secret written inline in the config, or named by an environment
+    /// variable — never both. Errors describe the problem and never echo a value.
+    pub(crate) fn from_config(
+        inline: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<Option<Self>, String> {
+        match (inline, env) {
+            (None, None) => Ok(None),
+            (Some(value), None) if value.trim().is_empty() => {
+                Err("the inline secret is empty".to_owned())
+            }
+            (Some(value), None) => Ok(Some(Self(value.to_owned()))),
+            (None, Some(name)) => Self::from_env(name).map(Some),
+            (Some(_), Some(_)) => Err(
+                "define either the inline secret or its environment variable, not both".to_owned(),
+            ),
+        }
+    }
+
     pub(crate) fn expose(&self) -> &str {
         &self.0
     }
@@ -651,6 +670,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn secret_resolution_accepts_one_source_and_rejects_both() {
+        let inline = Secret::from_config(Some("inline-value"), None)
+            .expect("inline secret")
+            .expect("a secret");
+        assert_eq!(inline.expose(), "inline-value");
+        assert!(
+            Secret::from_config(None, None)
+                .expect("no secret")
+                .is_none()
+        );
+        let empty = Secret::from_config(Some("   "), None).expect_err("blank inline secret");
+        assert!(!empty.contains("   "), "{empty}");
+        let both = Secret::from_config(Some("inline-value"), Some("SOME_VARIABLE"))
+            .expect_err("both sources");
+        assert!(both.contains("not both"), "{both}");
+        assert!(!both.contains("inline-value"), "{both}");
+    }
+
     /// A loopback endpoint that records every body it receives, in order.
     /// Returns the port and the shared log.
     async fn capture_listener() -> (u16, Arc<Mutex<Vec<serde_json::Value>>>) {
@@ -1092,6 +1130,7 @@ mod tests {
         NotificationChannel::Lark {
             name: Some("lark-test".to_owned()),
             webhook_url: url,
+            secret: None,
             secret_env: None,
             events,
         }
@@ -1105,7 +1144,8 @@ mod tests {
             events,
             smtp: None,
             resend: Some(crate::config::ResendChannelSettings {
-                api_key_env: "WILLDEEP_TEST_NOTIFY_RESEND_KEY".to_owned(),
+                api_key: None,
+                api_key_env: Some("WILLDEEP_TEST_NOTIFY_RESEND_KEY".to_owned()),
                 api_base: Some(format!("http://127.0.0.1:{url}")),
             }),
         }
@@ -1189,6 +1229,7 @@ mod tests {
         settings.channels = vec![NotificationChannel::Lark {
             name: Some("ops".to_owned()),
             webhook_url: format!("http://127.0.0.1:{port}/hook"),
+            secret: None,
             secret_env: Some("WILLDEEP_TEST_UNSET_LARK_SECRET".to_owned()),
             events: vec![NotificationEventKind::TaskCompleted],
         }];
@@ -1217,6 +1258,7 @@ mod tests {
             channels: vec![NotificationChannel::Webhook {
                 name: Some("signed".to_owned()),
                 url: format!("http://127.0.0.1:{port}/willdeep"),
+                secret: None,
                 secret_env: Some("WILLDEEP_TEST_WEBHOOK_SECRET".to_owned()),
                 events: vec![NotificationEventKind::TaskCompleted],
             }],

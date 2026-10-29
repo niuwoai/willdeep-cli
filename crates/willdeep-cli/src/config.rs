@@ -32,7 +32,7 @@ pub enum ConfigAction {
     Init,
     /// Parse and validate the effective config.
     Check,
-    /// Print the validated config with inline API keys redacted.
+    /// Print the validated config with inline secrets redacted.
     Show,
 }
 
@@ -133,7 +133,7 @@ fn show(path: &Path) -> Result<()> {
         .with_context(|| format!("read configuration file: {}", path.display()))?;
     let mut value: toml::Value = toml::from_str(&contents)
         .with_context(|| format!("parse TOML configuration: {}", path.display()))?;
-    redact_inline_api_keys(&mut value);
+    redact_inline_secrets(&mut value);
     println!("{}", toml::to_string_pretty(&value)?);
     Ok(())
 }
@@ -145,22 +145,47 @@ fn load_required(path: &Path) -> Result<LoadedConfig> {
     LoadedConfig::load(Some(path))
 }
 
-fn redact_inline_api_keys(value: &mut toml::Value) {
-    let Some(providers) = value
+fn redact_inline_secrets(value: &mut toml::Value) {
+    if let Some(providers) = value
         .get_mut("providers")
         .and_then(toml::Value::as_table_mut)
+    {
+        for (_, provider) in providers.iter_mut() {
+            redact_field(provider, "api_key");
+        }
+    }
+    let Some(channels) = value
+        .get_mut("notifications")
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|notifications| notifications.get_mut("channels"))
+        .and_then(toml::Value::as_array_mut)
     else {
         return;
     };
-    for (_, provider) in providers.iter_mut() {
-        if let Some(table) = provider.as_table_mut()
-            && table.contains_key("api_key")
-        {
-            table.insert(
-                "api_key".to_owned(),
-                toml::Value::String("[REDACTED]".to_owned()),
-            );
+    for channel in channels {
+        redact_field(channel, "secret");
+        let Some(table) = channel.as_table_mut() else {
+            continue;
+        };
+        if let Some(smtp) = table.get_mut("smtp") {
+            redact_field(smtp, "password");
         }
+        if let Some(resend) = table.get_mut("resend") {
+            redact_field(resend, "api_key");
+        }
+    }
+}
+
+/// `config show` 的输出经常被贴进 issue；内联密钥一律换成占位符，环境变量名
+/// 不是秘密，原样保留。
+fn redact_field(value: &mut toml::Value, field: &str) {
+    if let Some(table) = value.as_table_mut()
+        && table.contains_key(field)
+    {
+        table.insert(
+            field.to_owned(),
+            toml::Value::String("[REDACTED]".to_owned()),
+        );
     }
 }
 
@@ -532,6 +557,10 @@ pub enum NotificationChannel {
         #[serde(default)]
         name: Option<String>,
         url: String,
+        /// 直接写在配置里的签名密钥，与 `secret_env` 二选一。内联写法会让
+        /// 整份配置文件成为敏感文件（Unix 上要求权限 0600）。
+        #[serde(default)]
+        secret: Option<String>,
         /// 签名密钥所在的环境变量。设了就对原始请求体做 HMAC-SHA256，带
         /// `X-Willdeep-Signature: sha256=<hex>`——与 `[intake]` 收的方向同一套。
         #[serde(default)]
@@ -544,6 +573,9 @@ pub enum NotificationChannel {
         #[serde(default)]
         name: Option<String>,
         webhook_url: String,
+        /// 直接写在配置里的签名密钥，与 `secret_env` 二选一。
+        #[serde(default)]
+        secret: Option<String>,
         /// 机器人开了「签名校验」时的密钥环境变量；没开就留空。
         #[serde(default)]
         secret_env: Option<String>,
@@ -592,7 +624,10 @@ pub struct SmtpChannelSettings {
     /// 不写用户名就是匿名中继，不做 AUTH。
     #[serde(default)]
     pub username: Option<String>,
-    /// 密码所在的环境变量，不写配置。
+    /// 密码或授权码原文，与 `password_env` 二选一。
+    #[serde(default)]
+    pub password: Option<String>,
+    /// 密码所在的环境变量。
     #[serde(default)]
     pub password_env: Option<String>,
 }
@@ -611,7 +646,12 @@ pub enum SmtpTls {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResendChannelSettings {
-    pub api_key_env: String,
+    /// API Key 原文，与 `api_key_env` 二选一。
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// API Key 的环境变量名，与 `api_key` 二选一。
+    #[serde(default)]
+    pub api_key_env: Option<String>,
     /// 覆盖 API 基址，默认 `https://api.resend.com`；测试用它指到本机。
     #[serde(default)]
     pub api_base: Option<String>,
@@ -901,23 +941,37 @@ fn validate_notification_channels(channels: &[NotificationChannel]) -> Result<()
         match channel {
             NotificationChannel::Webhook {
                 url,
+                secret,
                 secret_env,
                 events,
                 ..
             } => {
                 check_notification_events(&label, events)?;
                 check_http_url(&label, "url", url)?;
-                check_env_reference(&label, "secret_env", secret_env.as_deref())?;
+                check_inline_or_env_secret(
+                    &label,
+                    "secret",
+                    secret.as_deref(),
+                    "secret_env",
+                    secret_env.as_deref(),
+                )?;
             }
             NotificationChannel::Lark {
                 webhook_url,
+                secret,
                 secret_env,
                 events,
                 ..
             } => {
                 check_notification_events(&label, events)?;
                 check_http_url(&label, "webhook_url", webhook_url)?;
-                check_env_reference(&label, "secret_env", secret_env.as_deref())?;
+                check_inline_or_env_secret(
+                    &label,
+                    "secret",
+                    secret.as_deref(),
+                    "secret_env",
+                    secret_env.as_deref(),
+                )?;
             }
             NotificationChannel::Email {
                 from,
@@ -952,16 +1006,23 @@ fn validate_notification_channels(channels: &[NotificationChannel]) -> Result<()
                         if smtp.port == Some(0) {
                             bail!("{label}.smtp.port must be greater than zero");
                         }
-                        match (smtp.username.as_deref(), smtp.password_env.as_deref()) {
-                            (Some(user), Some(env)) => {
+                        check_inline_or_env_secret(
+                            &label,
+                            "smtp.password",
+                            smtp.password.as_deref(),
+                            "smtp.password_env",
+                            smtp.password_env.as_deref(),
+                        )?;
+                        let has_secret = smtp.password.is_some() || smtp.password_env.is_some();
+                        match (smtp.username.as_deref(), has_secret) {
+                            (Some(user), true) => {
                                 if user.trim().is_empty() {
                                     bail!("{label}.smtp.username cannot be empty");
                                 }
-                                check_env_reference(&label, "smtp.password_env", Some(env))?;
                             }
-                            (None, None) => {}
+                            (None, false) => {}
                             _ => bail!(
-                                "{label}.smtp needs both username and password_env, or neither"
+                                "{label}.smtp needs both username and password/password_env, or neither"
                             ),
                         }
                         // 明文连接上传密码，等于把密码交给整条链路。本机中继
@@ -979,10 +1040,15 @@ fn validate_notification_channels(channels: &[NotificationChannel]) -> Result<()
                         }
                     }
                     (None, Some(resend)) => {
-                        check_env_reference(
+                        if resend.api_key.is_none() && resend.api_key_env.is_none() {
+                            bail!("{label}.resend needs api_key or api_key_env");
+                        }
+                        check_inline_or_env_secret(
                             &label,
+                            "resend.api_key",
+                            resend.api_key.as_deref(),
                             "resend.api_key_env",
-                            Some(resend.api_key_env.as_str()),
+                            resend.api_key_env.as_deref(),
                         )?;
                         if let Some(base) = resend.api_base.as_deref() {
                             check_http_url(&label, "resend.api_base", base)?;
@@ -1076,6 +1142,26 @@ fn check_env_reference(label: &str, field: &str, value: Option<&str>) -> Result<
         bail!("{label}.{field} must be an environment variable name");
     }
     Ok(())
+}
+
+/// 一条密钥要么内联，要么指向环境变量，不能两头都写。内联值只判空，不 trim：
+/// 首尾空格也可能属于密钥本身。
+fn check_inline_or_env_secret(
+    label: &str,
+    inline_field: &str,
+    inline: Option<&str>,
+    env_field: &str,
+    env: Option<&str>,
+) -> Result<()> {
+    match (inline, env) {
+        (Some(_), Some(_)) => bail!("{label} cannot define both {inline_field} and {env_field}"),
+        (Some(value), None) if value.trim().is_empty() => {
+            bail!("{label}.{inline_field} cannot be empty")
+        }
+        (Some(_), None) => Ok(()),
+        (None, Some(value)) => check_env_reference(label, env_field, Some(value)),
+        (None, None) => Ok(()),
+    }
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -1311,23 +1397,38 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
 fn enforce_secret_file_permissions(file: &ConfigFile, path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    if !file
+    let has_inline_provider_key = file
         .providers
         .values()
-        .any(|provider| provider.api_key.is_some())
-    {
+        .any(|provider| provider.api_key.is_some());
+    if !has_inline_provider_key && !has_inline_notification_secrets(&file.notifications) {
         return Ok(());
     }
     let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         bail!(
-            "{} contains api_key but permissions are {:o}; run `chmod 600 {}` or use api_key_env",
+            "{} contains an inline secret but permissions are {:o}; run `chmod 600 {}` or use the *_env fields",
             path.display(),
             mode,
             path.display()
         );
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn has_inline_notification_secrets(settings: &NotificationSettings) -> bool {
+    settings.channels.iter().any(|channel| match channel {
+        NotificationChannel::Webhook { secret, .. } | NotificationChannel::Lark { secret, .. } => {
+            secret.is_some()
+        }
+        NotificationChannel::Email { smtp, resend, .. } => {
+            smtp.as_ref().is_some_and(|smtp| smtp.password.is_some())
+                || resend
+                    .as_ref()
+                    .is_some_and(|resend| resend.api_key.is_some())
+        }
+    })
 }
 
 #[cfg(not(unix))]
@@ -2019,7 +2120,7 @@ webhook_url = "file:///tmp/hook"
     }
 
     #[test]
-    fn redacts_only_inline_provider_secrets() {
+    fn redacts_inline_secrets_and_keeps_environment_references() {
         let mut value: toml::Value = toml::from_str(
             r#"
 [providers.inline]
@@ -2028,10 +2129,28 @@ model = "model-a"
 
 [providers.environment]
 api_key_env = "PROVIDER_API_KEY"
+
+[[notifications.channels]]
+kind = "webhook"
+url = "https://example.com/willdeep"
+secret = "hook-secret"
+secret_env = "HOOK_SECRET_ENV"
+
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com", username = "bot", password = "smtp-secret", password_env = "SMTP_PASSWORD" }
+
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+resend = { api_key = "re-secret", api_key_env = "RESEND_API_KEY" }
 "#,
         )
         .unwrap();
-        redact_inline_api_keys(&mut value);
+        redact_inline_secrets(&mut value);
         assert_eq!(
             value["providers"]["inline"]["api_key"].as_str(),
             Some("[REDACTED]")
@@ -2040,6 +2159,173 @@ api_key_env = "PROVIDER_API_KEY"
             value["providers"]["environment"]["api_key_env"].as_str(),
             Some("PROVIDER_API_KEY")
         );
+        assert_eq!(
+            value["notifications"]["channels"][0]["secret"].as_str(),
+            Some("[REDACTED]")
+        );
+        assert_eq!(
+            value["notifications"]["channels"][0]["secret_env"].as_str(),
+            Some("HOOK_SECRET_ENV")
+        );
+        assert_eq!(
+            value["notifications"]["channels"][1]["smtp"]["password"].as_str(),
+            Some("[REDACTED]")
+        );
+        assert_eq!(
+            value["notifications"]["channels"][1]["smtp"]["password_env"].as_str(),
+            Some("SMTP_PASSWORD")
+        );
+        assert_eq!(
+            value["notifications"]["channels"][2]["resend"]["api_key"].as_str(),
+            Some("[REDACTED]")
+        );
+        assert_eq!(
+            value["notifications"]["channels"][2]["resend"]["api_key_env"].as_str(),
+            Some("RESEND_API_KEY")
+        );
+    }
+
+    #[test]
+    fn inline_secrets_are_accepted_for_every_secret_slot() {
+        let parsed: ConfigFile = toml::from_str(&channels_config(
+            r#"
+[[notifications.channels]]
+kind = "webhook"
+name = "dashboard"
+url = "https://example.com/willdeep"
+secret = "webhook-secret"
+
+[[notifications.channels]]
+kind = "lark"
+name = "team-bot"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+secret = "lark-secret"
+
+[[notifications.channels]]
+kind = "email"
+name = "ops-mail"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com", username = "bot@example.com", password = "smtp-secret" }
+
+[[notifications.channels]]
+kind = "email"
+name = "ops-resend"
+from = "bot@example.com"
+to = ["ops@example.com"]
+resend = { api_key = "re_secret" }
+"#,
+        ))
+        .expect("parse inline secrets");
+        validate_notification_channels(&parsed.notifications.channels)
+            .expect("inline secrets are valid");
+    }
+
+    #[test]
+    fn a_secret_cannot_be_both_inline_and_an_environment_variable() {
+        for section in [
+            r#"
+[[notifications.channels]]
+kind = "webhook"
+url = "https://example.com/willdeep"
+secret = "inline"
+secret_env = "DASHBOARD_SECRET"
+"#,
+            r#"
+[[notifications.channels]]
+kind = "lark"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+secret = "inline"
+secret_env = "LARK_SECRET"
+"#,
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+smtp = { host = "smtp.example.com", username = "bot", password = "inline", password_env = "SMTP_PASSWORD" }
+"#,
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+resend = { api_key = "inline", api_key_env = "RESEND_API_KEY" }
+"#,
+        ] {
+            let parsed: ConfigFile = toml::from_str(&channels_config(section)).expect("parse");
+            let error = validate_notification_channels(&parsed.notifications.channels)
+                .expect_err("both sources must be rejected")
+                .to_string();
+            assert!(error.contains("cannot define both"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_blank_inline_secret_is_rejected() {
+        let parsed: ConfigFile = toml::from_str(&channels_config(
+            r#"
+[[notifications.channels]]
+kind = "lark"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+secret = "   "
+"#,
+        ))
+        .expect("parse blank secret");
+        let error = validate_notification_channels(&parsed.notifications.channels)
+            .expect_err("blank secret must be rejected")
+            .to_string();
+        assert!(error.contains("secret cannot be empty"), "{error}");
+    }
+
+    #[test]
+    fn resend_needs_a_key_from_somewhere() {
+        let parsed: ConfigFile = toml::from_str(&channels_config(
+            r#"
+[[notifications.channels]]
+kind = "email"
+from = "bot@example.com"
+to = ["ops@example.com"]
+resend = { api_base = "https://api.resend.com" }
+"#,
+        ))
+        .expect("parse missing key");
+        let error = validate_notification_channels(&parsed.notifications.channels)
+            .expect_err("a key is required")
+            .to_string();
+        assert!(error.contains("needs api_key or api_key_env"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_inline_notification_secret_requires_a_private_config_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("willdeep-config-secret-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.toml");
+        let contents = channels_config(
+            r#"
+[[notifications.channels]]
+kind = "lark"
+webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+secret = "inline-secret"
+"#,
+        );
+        std::fs::write(&path, &contents).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let parsed: ConfigFile = toml::from_str(&contents).unwrap();
+
+        let error = validate(&parsed, &path)
+            .expect_err("world-readable config must be rejected")
+            .to_string();
+        assert!(error.contains("chmod 600"), "{error}");
+        assert!(!error.contains("inline-secret"));
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        validate(&parsed, &path).expect("0600 config is accepted");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

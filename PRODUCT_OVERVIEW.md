@@ -2,7 +2,7 @@
 
 > 最后更新：2026-10-29 | 当前版本：v0.133.0-rc1
 
-0.133.0-rc1 把出站通知从单条 webhook 扩展为多渠道：`[notifications]` 下可追加飞书自定义机器人与邮件（SMTP 或 Resend）渠道，每条渠道独立过滤事件、独立投递，一条失败不影响其余，也不影响轮次结果；旧的 `webhook_*` 配置继续有效，等价于一条名为 `webhook` 的渠道。邮件后端可插拔，密码与 API Key 只通过环境变量名引用。本版同时包含原计划随 0.132.0-rc2 发布的两处修复：TUI 最新轮次里夹着思考记录的工具调用重新按段折叠，Web 本机回环监听时默认列出 Runtime 注册表里全部仍存在的工作区。
+0.133.0-rc1 把出站通知从单条 webhook 扩展为多渠道：`[notifications]` 下可追加飞书自定义机器人与邮件（SMTP 或 Resend）渠道，每条渠道独立过滤事件、独立投递，一条失败不影响其余，也不影响轮次结果；旧的 `webhook_*` 配置继续有效，等价于一条名为 `webhook` 的渠道。邮件后端可插拔；密码与 API Key 可以内联写在配置里，也可以只引用环境变量名，内联时要求 Unix 配置文件权限 `0600`，`willdeep config show` 统一脱敏。本版同时包含原计划随 0.132.0-rc2 发布的两处修复：TUI 最新轮次里夹着思考记录的工具调用重新按段折叠，Web 本机回环监听时默认列出 Runtime 注册表里全部仍存在的工作区。
 
 0.132.0-rc1 为执行计划卡的状态增加独立图标：待开始、进行中、已完成、已跳过、失败、阻塞各有对应图形，等待依赖的步骤使用时钟图标；进行中的图标持续旋转，并遵循系统的减少动态效果设置。TUI 在输出流中补建缺失的计划状态卡：中途接入 Runtime 会话或漏掉计划事件时，同步到的持久化计划也会显示为一张卡片，后续同步原位更新，不再需要等新事件才出现。
 
@@ -250,7 +250,7 @@ WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户�
 
 - 主任务与子 Agent 的 Provider 重试等待保存在 Runtime Agent 记录并经公共协议传递；TUI/Web 列表显示等待，开始重试、任务终止或 Runtime 重启时清除，运行中停止入口保持可用；
 
-- 与 macOS WillDeep 共用 `~/.willdeep/config.toml` 的 `[notifications]` Schema：保留桌面通知声音设置，校验本地或远程 HTTP(S) Webhook 地址，并在「任务完成」「需要人处理」两类时机实际投递；除旧 webhook 外可追加任意条渠道（Webhook、飞书自定义机器人、邮件 SMTP / Resend），每条渠道独立过滤事件、独立投递；投递为旁路，失败不影响 agent；Webhook 地址按普通个人偏好落盘，不使用 Keychain，密钥只引用环境变量；
+- 与 macOS WillDeep 共用 `~/.willdeep/config.toml` 的 `[notifications]` Schema：保留桌面通知声音设置，校验本地或远程 HTTP(S) Webhook 地址，并在「任务完成」「需要人处理」两类时机实际投递；除旧 webhook 外可追加任意条渠道（Webhook、飞书自定义机器人、邮件 SMTP / Resend），每条渠道独立过滤事件、独立投递；投递为旁路，失败不影响 agent；Webhook 地址按普通个人偏好落盘，不使用 Keychain，密钥可内联（要求配置文件 0600，`config show` 脱敏）或引用环境变量；
 - Chat Completions、Responses、Anthropic Messages 三协议；
 - some.im 与 BYOK Provider；
 - 共享 `model-catalog.v1` 协议描述 Provider、模型事实、成本与路由候选池，并以 `credential_ref` 将非敏感目录和真实凭据分离；当前已提供严格 Rust 解析/校验与跨客户端接入设计，尚未替换既有 Provider 路由和凭据来源；

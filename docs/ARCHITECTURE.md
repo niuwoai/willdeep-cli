@@ -33,7 +33,7 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 
 默认读取 `~/.willdeep/config.toml`，`WILLDEEP_HOME` 可替换配置目录，`--config` 可指定任意 TOML 文件。命令行与 `WILLDEEP_*` 环境变量覆盖 Profile；Profile 覆盖 Provider 专属环境变量和内置默认值。
 
-配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。明文 `api_key` 在 Unix 上要求配置文件权限为 `0600`；推荐使用 `api_key_env`。
+配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。内联密钥（Provider 的 `api_key`、通知渠道的 `secret` / `password` / `api_key`）在 Unix 上要求配置文件权限为 `0600`；也可以改用对应的 `*_env` 字段引用环境变量。`willdeep config show` 对内联密钥统一脱敏。
 
 ### Provider 身份与 API Dialect 分离
 

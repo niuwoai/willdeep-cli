@@ -4,7 +4,8 @@
 
 ### Added
 - 出站通知从单条 webhook 扩展为多渠道：`[notifications]` 下可用 `[[notifications.channels]]` 追加任意条 webhook、飞书自定义机器人与邮件渠道，每条渠道独立过滤事件、独立 detach 投递，一条失败不影响其余，也不影响轮次结果。旧的 `webhook_*` 配置继续有效，等价于一条名为 `webhook` 的渠道。
-- 邮件外发抽象为可插拔后端：内置 SMTP（lettre，纯 rustls 栈）与 Resend HTTP API；密码与 API Key 只通过环境变量名引用，构造时解析，缺失只跳过该渠道。
+- 邮件外发抽象为可插拔后端：内置 SMTP（lettre，纯 rustls 栈）与 Resend HTTP API；密码与 API Key 可内联写在配置里，也可只引用环境变量名，两者二选一；内联时 Unix 要求配置文件权限 `0600`，`willdeep config show` 统一脱敏；缺失只跳过该渠道。
+- 通知渠道的每个密钥位置都支持内联或环境变量两种来源：`secret` / `secret_env`（webhook、飞书）、`password` / `password_env`（SMTP）、`api_key` / `api_key_env`（Resend）；同时写两边、或内联值为空白都会被配置校验拒绝。
 - 飞书自定义机器人支持签名校验（HMAC-SHA256）、按响应 `code` 判定业务成功；飞书正文与邮件主题跟随 `[agent] language` 输出中/英/日文案。
 - `willdeep doctor` 列出实际生效的渠道（不含端点与密钥），并报告被跳过的渠道及原因；文档见 `docs/NOTIFICATIONS.md`。
 

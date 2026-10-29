@@ -50,7 +50,7 @@ chmod 600 ~/.willdeep/config.toml
 
 全部使用 `api_key_env` 时不触发该检查。Windows 上此检查为空操作。
 
-同一校验在 `willdeep config check` 和 `willdeep config show` 中也会执行。`config show` 会把 `providers.*.api_key` 替换为 `[REDACTED]`，`api_key_env` 的名字保留（环境变量名不是秘密）。
+同一校验在 `willdeep config check` 和 `willdeep config show` 中也会执行。`config show` 会把 `providers.*.api_key` 以及通知渠道的内联密钥（`secret` / `password` / `api_key`）替换为 `[REDACTED]`，对应的 `*_env` 名字保留（环境变量名不是秘密）。
 
 `willdeep config init` 创建文件时直接用 `create_new` + `0600` 打开，不存在权限窗口。
 

@@ -36,7 +36,7 @@ webhook_on_attention_required = true
 kind = "webhook"
 name = "dashboard"
 url = "https://example.com/willdeep"
-secret_env = "WILLDEEP_WEBHOOK_SECRET"   # 可选
+secret_env = "WILLDEEP_WEBHOOK_SECRET"   # 可选；也可直接写 secret = "…"
 events = ["task_completed", "attention_required"]
 
 # 2. 飞书自定义机器人
@@ -44,7 +44,7 @@ events = ["task_completed", "attention_required"]
 kind = "lark"
 name = "team-bot"
 webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
-secret_env = "WILLDEEP_LARK_SECRET"      # 机器人开了「签名校验」才需要
+secret_env = "WILLDEEP_LARK_SECRET"      # 机器人开了「签名校验」才需要；也可直接写 secret
 
 # 3. 邮件：SMTP
 [[notifications.channels]]
@@ -79,7 +79,7 @@ resend = { api_key_env = "RESEND_API_KEY" }
 | 字段 | 说明 |
 |---|---|
 | `url` | 必须是 http/https |
-| `secret_env` | 可选。设置后每个请求带 `X-Willdeep-Signature: sha256=<hex>`，签名对象是**原始请求体**，与 [`[intake]` 验签](PUBLIC_INTAKE.md)同一套算法 |
+| `secret` / `secret_env` | 可选，二选一：签名密钥原文，或它的环境变量名。设置后每个请求带 `X-Willdeep-Signature: sha256=<hex>`，签名对象是**原始请求体**，与 [`[intake]` 验签](PUBLIC_INTAKE.md)同一套算法 |
 
 报文与桌面端一致，见 [共享 Schema](../PRODUCT_OVERVIEW.md)。请求头包括
 `X-App-Version`、`X-Agent-Source`、`X-Agent-Executor`、`X-Webhook-Schema`、
@@ -90,7 +90,7 @@ resend = { api_key_env = "RESEND_API_KEY" }
 | 字段 | 说明 |
 |---|---|
 | `webhook_url` | 群机器人地址，必须是 http/https |
-| `secret_env` | 可选。机器人开启「签名校验」后必须填，否则飞书会拒收 |
+| `secret` / `secret_env` | 可选，二选一：机器人开启「签名校验」后的密钥原文，或它的环境变量名 |
 
 报文是 `{"msg_type":"text","content":{"text":"…"}}`；配置了密钥时额外带
 `timestamp` 与 `sign`：
@@ -125,8 +125,8 @@ SMTP：
 | `host` | 必填 | 不能带空白或控制字符 |
 | `port` | 按 `tls` 推断 | 465 / 587 / 25 |
 | `tls` | `implicit` | `implicit`（连上即 TLS）、`starttls`（先明文再升级）、`none` |
-| `username` | 无 | 有它就必须有密码环境变量，反之亦然 |
-| `password_env` | 无 | 密码/授权码的**环境变量名** |
+| `username` | 无 | 有它就必须有密码，反之亦然 |
+| `password` / `password_env` | 无 | 密码或授权码原文，或它的环境变量名，二选一 |
 
 `tls = "none"` 且带凭据时，只允许回环主机（`localhost`、`127.0.0.1`、`::1`）：
 明文连接上传密码等于把密码交给整条链路，本机中继（MailHog、本机 Postfix）
@@ -136,7 +136,7 @@ Resend：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `api_key_env` | 必填 | API Key 的环境变量名 |
+| `api_key` / `api_key_env` | 必填其一 | API Key 原文，或它的环境变量名，二选一 |
 | `api_base` | `https://api.resend.com` | 自定义网关或测试服务器 |
 
 `POST {api_base}/emails`，Bearer 鉴权，请求体
@@ -153,11 +153,23 @@ Resend：
 
 ## 密钥
 
-所有密钥只写**环境变量名**：`secret_env`、`api_key_env`、`password_env`。
-渠道在构造时就读取环境变量：
+每个密钥位置都有两种写法，**二选一**：
 
-- 变量不存在或为空，只跳过这一条渠道，并记一条「哪个变量没设」的错误；
-- 其余渠道照常投递，配置本身仍然合法，`willdeep run` 不会因此拒绝启动；
+| 内联 | 环境变量 | 用于 |
+|---|---|---|
+| `secret` | `secret_env` | webhook、lark |
+| `password` | `password_env` | smtp |
+| `api_key` | `api_key_env` | resend |
+
+- 两个都写会被配置校验拒绝；内联值是空白也会被拒绝。
+- 内联密钥会让整份配置文件成为敏感文件：Unix 上要求权限 `0600`
+  （`chmod 600 ~/.willdeep/config.toml`），否则校验直接报错；Windows 不检查
+  文件权限，请自行保证文件不可被其他用户读取。
+- `willdeep config show` 会把内联密钥替换成 `[REDACTED]`；环境变量名不是秘密，
+  原样显示。
+- 渠道在构造时解析密钥：环境变量不存在或为空，只跳过这一条渠道，并记一条
+  「哪个变量没设」的错误；其余渠道照常投递，配置本身仍然合法，`willdeep run`
+  不会因此拒绝启动。
 - 密钥包装在 `Secret` 里，`Debug` 输出 `<redacted>`；reqwest 的错误串会剥掉
   完整 URL（webhook 地址本身可能就是凭据）；诊断输出从不打印端点。
 

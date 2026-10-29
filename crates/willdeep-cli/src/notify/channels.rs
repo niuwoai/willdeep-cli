@@ -130,12 +130,13 @@ fn channel_from_config(config: &NotificationChannel, index: usize) -> Result<Cha
         NotificationChannel::Webhook {
             name,
             url,
+            secret,
             secret_env,
             events,
         } => {
             let name = channel_name(name, "webhook", index);
             Ok(Channel::Webhook(WebhookChannel {
-                secret: secret_from_env(&name, secret_env.as_deref())?,
+                secret: secret_from_config(&name, secret.as_deref(), secret_env.as_deref())?,
                 url: url.trim().to_owned(),
                 events: EventMask::from_config(events),
                 name,
@@ -144,12 +145,13 @@ fn channel_from_config(config: &NotificationChannel, index: usize) -> Result<Cha
         NotificationChannel::Lark {
             name,
             webhook_url,
+            secret,
             secret_env,
             events,
         } => {
             let name = channel_name(name, "lark", index);
             Ok(Channel::Lark(LarkChannel {
-                secret: secret_from_env(&name, secret_env.as_deref())?,
+                secret: secret_from_config(&name, secret.as_deref(), secret_env.as_deref())?,
                 webhook_url: webhook_url.trim().to_owned(),
                 events: EventMask::from_config(events),
                 name,
@@ -188,11 +190,12 @@ fn channel_name(name: &Option<String>, fallback: &str, index: usize) -> String {
         .unwrap_or_else(|| format!("{fallback}-{index}"))
 }
 
-fn secret_from_env(channel: &str, env: Option<&str>) -> Result<Option<Secret>, String> {
-    let Some(env) = env else { return Ok(None) };
-    Secret::from_env(env)
-        .map(Some)
-        .map_err(|error| format!("{channel}: {error}"))
+fn secret_from_config(
+    channel: &str,
+    inline: Option<&str>,
+    env: Option<&str>,
+) -> Result<Option<Secret>, String> {
+    Secret::from_config(inline, env).map_err(|error| format!("{channel}: {error}"))
 }
 
 fn describe_kind(kind: &str, name: &str) -> String {
@@ -413,6 +416,7 @@ mod tests {
         settings.channels = vec![NotificationChannel::Lark {
             name: Some("ops".to_owned()),
             webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/token".to_owned(),
+            secret: None,
             secret_env: Some("WILLDEEP_SURELY_UNSET_SECRET".to_owned()),
             events: vec![NotificationEventKind::TaskCompleted],
         }];
@@ -421,6 +425,50 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(errors[0].starts_with("ops:"));
         assert!(errors[0].contains("WILLDEEP_SURELY_UNSET_SECRET"));
+    }
+
+    #[test]
+    fn an_inline_secret_is_used_without_reading_the_environment() {
+        let settings = NotificationSettings {
+            channels: vec![NotificationChannel::Lark {
+                name: Some("ops".to_owned()),
+                webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/token".to_owned(),
+                secret: Some("inline-secret".to_owned()),
+                secret_env: None,
+                events: vec![NotificationEventKind::TaskCompleted],
+            }],
+            ..NotificationSettings::default()
+        };
+        let (channels, errors) = build(&settings);
+        assert!(errors.is_empty(), "{errors:?}");
+        let Channel::Lark(lark) = channels[0].as_ref() else {
+            panic!("expected a lark channel");
+        };
+        assert_eq!(
+            lark.secret.as_ref().map(Secret::expose),
+            Some("inline-secret")
+        );
+    }
+
+    #[test]
+    fn two_secret_sources_skip_only_that_channel() {
+        let mut settings = webhook_settings();
+        settings.channels = vec![NotificationChannel::Lark {
+            name: Some("ops".to_owned()),
+            webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/token".to_owned(),
+            secret: Some("inline-secret-value-9381".to_owned()),
+            secret_env: Some("WILLDEEP_TEST_BOTH_SECRETS".to_owned()),
+            events: vec![NotificationEventKind::TaskCompleted],
+        }];
+        let (channels, errors) = build(&settings);
+        assert_eq!(channels.len(), 1, "the legacy webhook still works");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("not both"), "{}", errors[0]);
+        assert!(
+            !errors[0].contains("inline-secret-value-9381"),
+            "{}",
+            errors[0]
+        );
     }
 
     #[test]

@@ -249,7 +249,7 @@ on_error = "deny"
 
 ## 安全须知
 
-- API Key 优先用 `api_key_env`；配置里出现明文 `api_key` 时，Unix 下文件权限必须是 `0600`，否则拒绝启动。
+- API Key 优先用 `api_key_env`（通知渠道用对应的 `*_env` 字段）；配置里出现内联明文密钥时，Unix 下文件权限必须是 `0600`，否则拒绝启动，`willdeep config show` 会脱敏。
 - Runtime 控制面只监听回环，认证 Token 不会传给 Shell 或 MCP 子进程。
 - **Web 模式是单用户模式，没有应用层鉴权。** 跨机器访问必须由 Nginx、VPN 或 SSH Tunnel 提供认证与 HTTPS，不要把端口直接暴露公网。
 - 手机配对二维码明文携带中继 Token，只对自己的设备扫码。
