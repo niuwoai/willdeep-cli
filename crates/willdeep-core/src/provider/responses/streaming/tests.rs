@@ -2,16 +2,19 @@ use super::*;
 use crate::provider::stream_test_support::{Events, frame, server};
 use serde_json::json;
 
-fn push(state: &mut State, value: Value) -> Result<(bool, Vec<ProviderEvent>), ProviderError> {
+pub(super) fn push(
+    state: &mut State,
+    value: Value,
+) -> Result<(bool, Vec<ProviderEvent>), ProviderError> {
     state.push(SseEvent {
         kind: "message".into(),
         data: value.to_string(),
     })
 }
-fn message(text: &str) -> Value {
+pub(super) fn message(text: &str) -> Value {
     json!({"type":"message","content":[{"type":"output_text","text":text}]})
 }
-fn terminal(status: &str, output: Vec<Value>) -> Value {
+pub(super) fn terminal(status: &str, output: Vec<Value>) -> Value {
     json!({"type":format!("response.{status}"),"response":{"id":"r1","status":status,"output":output,
         "usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":3}}}})
 }
