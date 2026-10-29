@@ -179,6 +179,27 @@ fn successful_plan_receipts_reach_sse_without_raw_tool_payloads() {
     });
     assert!(failed.get("plan_update").is_none());
 }
+
+#[test]
+fn runtime_plan_updates_reach_sse_without_waiting_for_a_tool_result() {
+    let plan = serde_json::from_value(serde_json::json!({"steps":[
+        {"id":"a","text":"A","status":"done","job_id":"job_a"},
+        {"id":"b","text":"B","status":"in_progress","job_id":"job_b"},
+        {"id":"c","text":"C","status":"pending","depends_on":["a","b"]}
+    ]}))
+    .unwrap();
+    let event = crate::agent_event_json(willdeep_core::AgentEvent::PlanUpdated(plan));
+    let public = client_event(event, Language::En).unwrap();
+    assert_eq!(public["type"], "plan_updated");
+    assert_eq!(public["plan_update"]["running"], serde_json::json!(["b"]));
+    assert_eq!(
+        public["plan_update"]["waiting"]["c"],
+        serde_json::json!(["b"])
+    );
+    assert_eq!(public["plan_update"]["plan"]["steps"][0]["status"], "done");
+    assert!(public.get("output").is_none());
+    assert!(public.get("arguments").is_none());
+}
 #[test]
 fn thought_events_are_compact_and_tool_arguments_stay_private() {
     let event = client_event(

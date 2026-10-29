@@ -124,6 +124,8 @@ enum LeaseOutcome {
 
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
+    /// A durable runtime-derived plan update; no model/tool call is fabricated.
+    PlanUpdated(crate::conversation::Plan),
     /// Model loop returned while background work remains active.
     BackgroundWait {
         waiting: bool,
@@ -1028,6 +1030,8 @@ impl Agent {
         let mut first_response_millis: Option<u64> = None;
         let run_started = std::time::Instant::now();
         for turn in 1..=self.config.max_turns {
+            let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
+            checkpoint.plan = plan.clone();
             rules.refresh().map_err(ToolError::Io)?;
             messages[0].content = format!(
                 "{}\n\n{}\n\n{}\n\n{}",
@@ -1081,6 +1085,9 @@ impl Agent {
             // 事件在这里进对话，而不是在工具与工具之间：一次 assistant 的
             // tool_calls 必须紧跟它那批 tool 结果，中间插一条用户消息会把这个
             // 配对拆散。turn 顶部就是「当前模型或工具步骤已经结束」那个边界。
+            if plan_changed && let Some(plan) = &plan {
+                self.sink.emit(AgentEvent::PlanUpdated(plan.clone())).await;
+            }
             let leases = self.append_kernel_events(&mut messages);
             if !leases.is_empty()
                 && let Err(error) = checkpoint.record(&messages, turn, input_tokens, output_tokens)
@@ -1144,7 +1151,8 @@ impl Agent {
                 turn,
                 input_tokens,
                 output_tokens,
-            );
+            )
+            .with_plan_tools(&self.tools);
             let response = match stream
                 .wait(self.complete_or_preempt(&request_messages, &definitions, &stream))
                 .await
@@ -1170,6 +1178,7 @@ impl Agent {
                 }
             };
             drop(stream);
+            plan = checkpoint.plan.clone();
             let partial = match &response {
                 Err(ProviderError::StreamInterrupted { partial, .. }) => partial.as_ref(),
                 _ => &streamed_partial,
@@ -1445,35 +1454,54 @@ impl Agent {
                 .parallel_reads(&completion.tool_calls, &mut rules)
                 .await;
             for call in completion.tool_calls {
+                let previous_plan = plan.clone();
+                let mut tool_plan = plan.clone();
                 if parallel_results.is_none() {
                     self.sink
                         .emit(AgentEvent::ToolRequested(call.clone()))
                         .await;
                 }
-                let result = if blockers.refuses(&call) && parallel_results.is_none() {
-                    Err(ToolError::HookDenied("This unchanged action failed three times without new successful evidence. It was not executed again. Diagnose the cause with a different bounded check, address the cause, or report the blocker; do not bypass approval or weaken verification.".into()))
-                } else if let Some(results) = parallel_results.as_mut() {
-                    results.pop_front().expect("one result per parallel read")
-                } else {
-                    match rules.before_call(&call) {
-                        Ok(changed) => {
-                            rules_changed |= changed;
-                            if rules_changed {
-                                Err(ToolError::HookDenied("Applicable project instructions changed or a new directory scope was discovered. No action was executed. Read the refreshed system instructions and reissue the appropriate tool call on the next round.".to_owned()))
-                            } else {
-                                if uncertain_calls.needs_approval(&call) {
-                                    match self.tools.approve_uncertain_replay(&call).await {
-                                        Ok(()) => self.execute_planned_tool(&call, &mut plan).await,
-                                        Err(error) => Err(error),
-                                    }
+                let execution = async {
+                    if blockers.refuses(&call) && parallel_results.is_none() {
+                        Err(ToolError::HookDenied("This unchanged action failed three times without new successful evidence. It was not executed again. Diagnose the cause with a different bounded check, address the cause, or report the blocker; do not bypass approval or weaken verification.".into()))
+                    } else if let Some(results) = parallel_results.as_mut() {
+                        results.pop_front().expect("one result per parallel read")
+                    } else {
+                        match rules.before_call(&call) {
+                            Ok(changed) => {
+                                rules_changed |= changed;
+                                if rules_changed {
+                                    Err(ToolError::HookDenied("Applicable project instructions changed or a new directory scope was discovered. No action was executed. Read the refreshed system instructions and reissue the appropriate tool call on the next round.".to_owned()))
                                 } else {
-                                    self.execute_planned_tool(&call, &mut plan).await
+                                    if uncertain_calls.needs_approval(&call) {
+                                        match self.tools.approve_uncertain_replay(&call).await {
+                                            Ok(()) => {
+                                                self.execute_planned_tool(&call, &mut tool_plan)
+                                                    .await
+                                            }
+                                            Err(error) => Err(error),
+                                        }
+                                    } else {
+                                        self.execute_planned_tool(&call, &mut tool_plan).await
+                                    }
                                 }
                             }
+                            Err(error) => Err(ToolError::Io(error)),
                         }
-                        Err(error) => Err(ToolError::Io(error)),
                     }
                 };
+                let result = streaming::StreamEvents::new(
+                    checkpoint,
+                    self.sink.as_ref(),
+                    turn,
+                    input_tokens,
+                    output_tokens,
+                )
+                .with_plan_tools(&self.tools)
+                .wait(execution)
+                .await?;
+                self.tools.reconcile_plan_jobs(&mut tool_plan);
+                plan = tool_plan;
                 let (output, is_error) = match result {
                     Ok(output) => {
                         if let Some(feedback) = feedback {
@@ -1504,6 +1532,12 @@ impl Agent {
                 checkpoint.plan = plan.clone();
                 messages.push(Message::tool(&call, output));
                 checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
+                if call.name != "update_plan"
+                    && plan != previous_plan
+                    && let Some(plan) = &plan
+                {
+                    self.sink.emit(AgentEvent::PlanUpdated(plan.clone())).await;
+                }
             }
             if let Some(steering) = exploration.finish_round(all_reads, novel_read) {
                 messages.push(Message::host_instruction(steering));

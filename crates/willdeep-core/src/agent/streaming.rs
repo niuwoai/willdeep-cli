@@ -18,6 +18,7 @@ pub(super) struct StreamEvents<'a, 'b> {
     turn: usize,
     input: u64,
     output: u64,
+    plan_tools: Option<&'a crate::tools::ToolRegistry>,
 }
 
 impl<'a, 'b> StreamEvents<'a, 'b> {
@@ -35,7 +36,28 @@ impl<'a, 'b> StreamEvents<'a, 'b> {
             turn,
             input,
             output,
+            plan_tools: None,
         }
+    }
+
+    pub(super) fn with_plan_tools(mut self, tools: &'a crate::tools::ToolRegistry) -> Self {
+        self.plan_tools = Some(tools);
+        self
+    }
+
+    async fn refresh_plan(&self) -> Result<(), AgentError> {
+        let plan = if let Some(tools) = self.plan_tools {
+            self.checkpoint
+                .lock()
+                .map_err(|_| AgentError::Checkpoint("stream checkpoint lock poisoned".into()))?
+                .reconcile_plan_jobs(tools)?
+        } else {
+            None
+        };
+        if let Some(plan) = plan {
+            self.sink.emit(AgentEvent::PlanUpdated(plan)).await;
+        }
+        Ok(())
     }
 
     pub(super) fn partial(&self) -> Result<crate::types::Completion, AgentError> {
@@ -73,7 +95,10 @@ impl<'a, 'b> StreamEvents<'a, 'b> {
         loop {
             tokio::select! {
                 value = &mut response => return Ok(value),
-                _ = interval.tick() => self.flush_checkpoint()?,
+                _ = interval.tick() => {
+                    self.refresh_plan().await?;
+                    self.flush_checkpoint()?;
+                },
             }
         }
     }
@@ -148,6 +173,85 @@ impl ProviderEventSink for StreamEvents<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn plan_completion_is_saved_and_emitted_during_a_silent_wait() {
+        use crate::conversation::{Plan, StepStatus};
+        struct Saved(Mutex<Vec<Plan>>);
+        impl crate::checkpoint::CheckpointSink for Saved {
+            fn save(&self, checkpoint: &crate::checkpoint::RunCheckpoint) -> Result<(), String> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(checkpoint.plan.clone().unwrap());
+                Ok(())
+            }
+        }
+        struct Events(tokio::sync::Notify);
+        #[async_trait::async_trait]
+        impl EventSink for Events {
+            async fn emit(&self, event: AgentEvent) {
+                if let AgentEvent::PlanUpdated(plan) = event {
+                    assert_eq!(plan.steps[0].status, StepStatus::Done);
+                    assert_eq!(plan.steps[1].status, StepStatus::InProgress);
+                    assert_eq!(plan.steps[2].status, StepStatus::Pending);
+                    self.0.notify_one();
+                }
+            }
+        }
+        let root = std::env::temp_dir().join(format!("plan-stream-{}", uuid::Uuid::new_v4()));
+        let jobs = Arc::new(crate::DetachedJobStore::new(&root).with_owner("session"));
+        for id in ["job_a", "job_b"] {
+            let path = jobs.directory().join(id);
+            std::fs::create_dir_all(&path).unwrap();
+            let job = crate::DetachedJob {
+                id: id.into(),
+                command: "test".into(),
+                label: "test".into(),
+                workspace: root.clone(),
+                pid: std::process::id(),
+                started_marker: None,
+                created_at: 0,
+                owner: Some("session".into()),
+            };
+            std::fs::write(path.join("meta.json"), serde_json::to_vec(&job).unwrap()).unwrap();
+        }
+        let tools = ToolRegistry::new(&root, crate::tools::ApprovalMode::FullAccess)
+            .unwrap()
+            .with_detached_jobs(jobs.clone());
+        let saved = Saved(Mutex::new(Vec::new()));
+        let sink = Events(tokio::sync::Notify::new());
+        let mut checkpoint = CheckpointRecorder::new(Some(&saved));
+        checkpoint.plan = Some(
+            serde_json::from_value(serde_json::json!({"steps":[
+                {"id":"a","text":"A","status":"in_progress","job_id":"job_a"},
+                {"id":"b","text":"B","status":"in_progress","job_id":"job_b"},
+                {"id":"c","text":"C","status":"pending","depends_on":["a","b"]}
+            ]}))
+            .unwrap(),
+        );
+        checkpoint
+            .record(&[Message::user("work")], 1, 0, 0)
+            .unwrap();
+        let events = StreamEvents::new(&mut checkpoint, &sink, 1, 0, 0).with_plan_tools(&tools);
+        let response = async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            std::fs::write(jobs.directory().join("job_a/exit"), "0").unwrap();
+            // Neither a model delta nor another tool completion wakes this wait.
+            sink.0.notified().await;
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), events.wait(response))
+            .await
+            .unwrap()
+            .unwrap();
+        let plans = saved.0.lock().unwrap();
+        assert_eq!(plans.last().unwrap().steps[0].status, StepStatus::Done);
+        assert_eq!(
+            plans.last().unwrap().steps[1].status,
+            StepStatus::InProgress
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn an_event_save_failure_remains_terminal_even_if_a_retry_would_succeed() {

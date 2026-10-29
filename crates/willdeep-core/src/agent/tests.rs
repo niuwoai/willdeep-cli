@@ -1921,3 +1921,95 @@ async fn restricted_workers_do_not_gain_session_planning_tools() {
     };
     assert!(agent.execute_planned_tool(&call, &mut None).await.is_err());
 }
+
+#[tokio::test]
+async fn plan_command_binding_survives_snapshots_and_blocks_early_side_effects() {
+    let root = std::env::temp_dir().join(format!("plan-command-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Agent::new(
+        Arc::new(ScriptedGoalProvider {
+            script: Mutex::new(VecDeque::new()),
+            systems: Mutex::new(Vec::new()),
+            tool_names: Mutex::new(Vec::new()),
+        }),
+        ToolRegistry::new(&root, ApprovalMode::FullAccess).unwrap(),
+        AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 32000,
+            token_budget: None,
+        },
+    );
+    let call = |name: &str, arguments: serde_json::Value| ToolCall {
+        id: "test".into(),
+        name: name.into(),
+        arguments: arguments.to_string(),
+    };
+    let mut plan = None;
+    let snapshot = serde_json::json!({"steps":[
+        {"id":"a","title":"A"},
+        {"id":"c","title":"C","depends_on":["a"]}
+    ]});
+    agent
+        .execute_planned_tool(&call("update_plan", snapshot.clone()), &mut plan)
+        .await
+        .unwrap();
+    let early = call(
+        "run_command",
+        serde_json::json!({"command":"touch must-not-exist","run_in_background":true,"plan_step_id":"c","timeout_seconds":5}),
+    );
+    assert!(agent.execute_planned_tool(&early, &mut plan).await.is_err());
+    assert!(!root.join("must-not-exist").exists());
+    let start = call(
+        "run_command",
+        serde_json::json!({"command":"exit 0","run_in_background":true,"plan_step_id":"a","timeout_seconds":5}),
+    );
+    agent.execute_planned_tool(&start, &mut plan).await.unwrap();
+    let job = plan.as_ref().unwrap().steps[0].job_id.clone().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            agent.reconcile_plan_jobs(&mut plan);
+            if plan.as_ref().unwrap().steps[0].status == crate::conversation::StepStatus::Done {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // A full snapshot can omit status as well as the runtime job binding.
+    agent
+        .execute_planned_tool(&call("update_plan", snapshot.clone()), &mut plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        plan.as_ref().unwrap().steps[0].status,
+        crate::conversation::StepStatus::Done
+    );
+    let mut stale = snapshot;
+    stale["steps"][0]["status"] = "in_progress".into();
+    agent
+        .execute_planned_tool(&call("update_plan", stale), &mut plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        plan.as_ref().unwrap().steps[0].job_id.as_deref(),
+        Some(job.as_str())
+    );
+    assert_eq!(
+        plan.as_ref().unwrap().steps[0].status,
+        crate::conversation::StepStatus::Done
+    );
+    let unknown = call(
+        "update_plan",
+        serde_json::json!({"merge":true,"steps":[{"id":"a","job_id":"job_unknown"}]}),
+    );
+    assert!(
+        agent
+            .execute_planned_tool(&unknown, &mut plan)
+            .await
+            .is_err()
+    );
+    assert!(agent.execute_planned_tool(&start, &mut plan).await.is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}

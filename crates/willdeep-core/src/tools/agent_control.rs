@@ -47,6 +47,7 @@ All fields are optional; only the fields you pass change. No approval is needed.
                 "title":{"type":"string"},
                 "status":{"type":"string","enum":["pending","in_progress","done","skipped","failed","blocked"]},
                 "note":{"type":"string"},
+                "job_id":{"type":"string","description":"Exact owned background shell job implementing this entire step. Runtime derives completion/failure from the job. Empty string clears the binding. Prefer run_command(plan_step_id=...) to bind on launch."},
                 "depends_on":{"type":"array","items":{"type":"string"},"description":"Stable ids of prerequisite steps. All must be done; no cycles. Omitted on merge preserves dependencies."}
             },"additionalProperties":false}},
             "blocked_reason":{"type":"string","description":"What currently blocks progress; an empty string clears it."}

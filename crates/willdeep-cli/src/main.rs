@@ -1679,6 +1679,7 @@ impl EventSink for TerminalSink {
         }
         let event = event.into_unscoped();
         match event {
+            AgentEvent::PlanUpdated(_) => {}
             AgentEvent::RouteDecided {
                 tier,
                 profile,
@@ -1891,6 +1892,16 @@ pub(crate) use willdeep_core::conversation::tool_detail;
 
 pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
     match event {
+        AgentEvent::PlanUpdated(mut plan) => {
+            for step in &mut plan.steps {
+                step.text = willdeep_core::judge::redact_credentials(&step.text);
+                step.detail = step
+                    .detail
+                    .as_deref()
+                    .map(willdeep_core::judge::redact_credentials);
+            }
+            serde_json::json!({"type":"plan_updated", "plan_update":willdeep_core::planning::Receipt::new(plan, false)})
+        }
         AgentEvent::RunScoped {
             run_id,
             sequence,

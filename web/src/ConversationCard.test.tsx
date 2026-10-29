@@ -38,3 +38,18 @@ it("shows concurrent progress and only unblocks a dependent after success", () =
   expect(container.querySelectorAll('[data-status="waiting"]').length).toBe(0);
   expect(screen.getByText("Pending")).toBeTruthy();
 });
+
+it("updates one finished step while the other keeps running and the dependent waits", () => {
+  const plan = { summary: "", steps: [
+    { id: "a", text: "A", status: "in_progress" as const },
+    { id: "b", text: "B", status: "in_progress" as const },
+    { id: "c", text: "C", status: "pending" as const, depends_on: ["a", "b"] },
+  ] };
+  const { rerender, container } = render(<ConversationCard messages={messages["zh-CN"]} plan={plan} />);
+  expect(screen.getByText("2 项进行中")).toBeTruthy();
+  rerender(<ConversationCard messages={messages["zh-CN"]} plan={{ ...plan, steps: plan.steps.map((step) => step.id === "a" ? { ...step, status: "done" } : step) }} />);
+  expect(screen.getByText("1 项进行中")).toBeTruthy();
+  expect(container.querySelectorAll('[data-status="done"]').length).toBe(1);
+  expect(container.querySelectorAll('[data-status="in_progress"]').length).toBe(1);
+  expect(screen.getByText("等待：B")).toBeTruthy();
+});
