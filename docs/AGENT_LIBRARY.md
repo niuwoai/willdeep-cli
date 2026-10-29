@@ -1,12 +1,12 @@
 # 专业智能体库
 
-版本：0.101.0-rc1。交换格式见 [智能体契约](AGENT_DEFINITION_V1.md)。此阶段实现 P0—P3，RSI 自动候选、评测和晋升留待下一阶段。
+版本：0.131.0-rc1。交换格式见 [智能体契约](AGENT_DEFINITION_V1.md)。
 
 ## 使用
 
 Web 的“导入 Hermes / Multica”支持 Hermes profile 的 `config.yaml` + `SOUL.md`，以及 Multica Agent API 返回的单个 JSON 对象。填写独立的 `user/` ID，预览名称、指令，再选择本机 Provider 与模型后保存。来源 Provider 名称不等于本机 profile ID，必须显式选择。
 
-此转换兼容身份、指令和模型引用，不是完整 Runtime 迁移。未转换字段在预览列出；工具、技能、上下文/轮次预算、MCP、环境变量、访问控制和外部 Runtime 需要在宿主另外配置，凭据值不会进入转换结果。默认以只读 reviewer 职责创建。导入只回填文本能力，不会根据模型名字断言图片或视频能力。原生 WillDeep JSON 包仍走原有导入入口。
+此转换兼容身份、指令和模型引用；Hermes 还支持上下文窗口与轮次设置。未转换字段在预览列出；工具、技能、MCP、环境变量、访问控制和外部 Runtime 需要在宿主另外配置，凭据值不会进入转换结果。默认以只读 reviewer 职责创建。导入只回填文本能力，不会根据模型名字断言图片或视频能力。原生 WillDeep JSON 包仍走原有导入入口。
 
 `willdeep agents create user/team-reviewer 审查员 代码审查 --role reviewer --instructions-file instructions.md` 创建本地定义。`willdeep agents import agent.json` 支持完整交换包或定义；`check` 验证而不安装；`export ID agent.json` 导出完整版本包。Web 一级入口“智能体库”提供 JSON 编辑、导入导出及全部安装选择操作，TUI `/agents` 提供列表、目录、同步、fork、固定及回滚。
 
@@ -39,3 +39,11 @@ Web 与 TUI 共用鉴权 Runtime `agent_library.*` 操作；能力协商列出�
 首次官方下载只信任用户指定的 HTTPS origin（开发测试可使用 loopback HTTP）；所有 redirect 均拒绝。签名密钥来自该服务 origin 并缓存。JSON 不接受重复键、未知字段、数字与缺失的 nullable 必填字段；大小上限 256 KiB，官方包 hash、ID、签名都必须匹配。三端共用包含中文、emoji、引号、反斜杠的 golden 样本。
 
 服务轮换签名密钥时使用独立 key ID；同 origin 缓存合并新旧 ID，保留旧版包的离线验签能力。同一 key ID 对应不同公钥会拒绝并保留原缓存；切换 origin 后缓存独立替换，不混合其他服务的可信密钥。
+
+## 本机执行配置
+
+Web 智能体库的模型绑定面板可设置 `context_window`（1024–2000000 Token）与 `max_turns`（1–1000）。留空继承职责/Worker 默认值。数值保存在配置目录 `agents/installations.json` 的 `binding` 中，不进入签名定义包或云端分享内容。窗口应按所选模型真实能力填写，不代表增加模型容量。
+
+CLI 示例：`willdeep agents bind user/reviewer --provider-profile my-provider --model my-model --context-window 32768 --max-turns 12`。绑定操作替换整组配置，省略字段恢复默认。新派工及恢复派工会应用明确的本机预算，已有运行中的任务不被即时修改。
+
+Hermes 导入支持 `model.context_length` 和 `agent.max_turns`，在确认面板中可修改。非整数、零值和超界值会拒绝导入；未映射的其他配置仍只显示字段名称。

@@ -154,6 +154,7 @@ pub struct SubagentProfile {
     /// Immutable specialist definition used by this execution instance.
     pub definition: Option<crate::agent_definition::AgentDefinition>,
     pub definition_model_bound: bool,
+    pub definition_binding: Option<crate::agent_definition::store::ModelBinding>,
     pub id: String,
     pub purpose: String,
     pub model: Option<String>,
