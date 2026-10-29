@@ -7,6 +7,7 @@ impl App {
             peer_observed: None,
             peer_unread: 0,
             input: PromptEditor::default(),
+            prompt_history: None,
             transcript,
             archive_floor: 0,
             message_times: message_time::MessageTimes::default(),
@@ -850,6 +851,7 @@ impl App {
             .min(total.saturating_sub(self.viewport_height));
     }
     pub(super) fn edit_input(&mut self, edit: impl FnOnce(&mut PromptEditor)) {
+        self.prompt_history = None;
         let had_input = !self.input.is_empty();
         edit(&mut self.input);
         if had_input && self.input.is_empty() {
@@ -1917,6 +1919,7 @@ impl App {
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
     pub(super) fn handle_paste(&mut self, value: String) {
+        self.prompt_history = None;
         if value.contains('\n') || value.chars().count() > 200 {
             let n = self.attachments.len() + 1;
             self.append_draft_attachment(DraftAttachment {

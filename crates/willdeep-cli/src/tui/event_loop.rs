@@ -763,6 +763,7 @@ pub(super) async fn event_loop(
                     }
                 },
                 Event::Mouse(mouse)=>{
+                    app.prompt_history = None;
                     interrupt_esc_deadline = None;
                     if app.question.is_some()||app.approval.is_some() {
                         if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
@@ -927,11 +928,13 @@ pub(super) async fn event_loop(
                     }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('c'){break;}
                     if key.code==KeyCode::Esc&&app.mobile_qr.take().is_some(){continue;}
-                    if app.question.is_some(){app.handle_question_key(key);continue;}
+                    if app.question.is_some(){app.prompt_history=None;app.handle_question_key(key);continue;}
                     if app.approval.is_some(){
+                        app.prompt_history=None;
                         app.handle_approval_key(key);
                         continue;
                     }
+                    if app.prompt_history.is_some() && app.handle_prompt_history_key(key, &session.messages) { continue; }
                     if app.media.is_open() { let action=app.media.handle_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.attachment_panel.is_some() { let action=app.handle_attachment_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.prompt_queue.is_some() {
@@ -1393,6 +1396,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
+                    if app.handle_prompt_history_key(key, &session.messages) { continue; }
                     // 空输入框里的灰字预测：Tab 采用（只填入不发送），Esc 放弃。
                     // 命令 / 技能候选层的 Tab 与这里互不相干——那两层只在输入框非空时存在。
                     if key.code==KeyCode::Tab&&key.modifiers.is_empty()&&app.accept_input_suggestion() { continue; }

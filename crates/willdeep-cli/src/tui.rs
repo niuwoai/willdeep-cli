@@ -66,6 +66,7 @@ mod overlay_dismiss;
 mod peer_commands;
 mod permission_commands;
 mod plan_ui;
+mod prompt_history;
 mod prompt_queue;
 mod quiet_mode;
 mod reference_menu;
@@ -261,6 +262,7 @@ struct App {
     peer_observed: Option<(uuid::Uuid, Option<(std::time::SystemTime, u64)>)>,
     peer_unread: usize,
     input: PromptEditor,
+    prompt_history: Option<prompt_history::PromptHistory>,
     transcript: Vec<String>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
@@ -1721,6 +1723,7 @@ fn draw<B: ratatui::backend::Backend>(
             }
             render_sidebar(f, app, sidebar);
         }
+        prompt_history::draw(f, app, areas[3]);
         app.palette_rect = Rect::default();
         app.palette_hits.clear();
         if let Some(palette) = &app.palette {
@@ -2548,13 +2551,13 @@ fn attention_style(status: RuntimeStatus) -> Style {
 fn help_content(language: Language) -> String {
     let content = match language {
         Language::ZhCn => {
-            "全局\n  F1 / 空输入时 ?  打开帮助    Ctrl+C 退出\n  Ctrl+P 全局命令面板           Ctrl+R 或 /history 搜索历史会话并继续\n  Esc 中断当前轮次（运行中）      Ctrl+W 输入/聊天/活动/状态栏切换\n  Ctrl+B 或 /sidebar 显示/隐藏状态栏（默认隐藏）\n  Ctrl+S 文本选择/复制模式\n\n输入\n  Enter 发送                    Shift/Alt+Enter 或 Ctrl+J 换行\n  F3 管理附件（保留草稿）\n  F2 展开/恢复大输入空间         Ctrl+A/E 行首/行尾\n  / 命令候选                    $ 技能候选\n  ↑/↓ 选择候选                  Enter/Tab 插入，Esc 关闭\n  Ctrl/Command+Shift+V 粘贴图片 Ctrl+D 删除附件\n  Ctrl+G 用外部编辑器编辑（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\n聊天与活动\n  直接拖动选择聊天文字           Ctrl/Cmd+C 或 Y 复制，Q 引用\n  Ctrl+F 搜索，Enter/Shift+Enter 前后跳转\n  PageUp/PageDown 翻页           Alt+↑/↓ 逐行滚动\n  Ctrl+Home/End 顶部/底部        Ctrl+O 展开工具活动\n  点击活动区聚焦，Enter/Space 展开或收起\n\n状态栏\n  Tab/Shift+Tab 选择分组         ↑/↓ 选择 Inbox 条目\n  Enter 详情，K 停止，R 重试     M 已读，Space 折叠，Esc 返回\n  点击标题折叠，点击条目看详情，滚轮滚动内容"
+            "全局\n  F1 / 空输入时 ?  打开帮助    Ctrl+C 退出\n  Ctrl+P 全局命令面板           Ctrl+R 或 /history 搜索历史会话并继续\n  Esc 中断当前轮次（运行中）      Ctrl+W 输入/聊天/活动/状态栏切换\n  Ctrl+B 或 /sidebar 显示/隐藏状态栏（默认隐藏）\n  Ctrl+S 文本选择/复制模式\n\n输入\n  空输入时 ↑ 历史输入选择（回填不发送）\n  Enter 发送                    Shift/Alt+Enter 或 Ctrl+J 换行\n  F3 管理附件（保留草稿）\n  F2 展开/恢复大输入空间         Ctrl+A/E 行首/行尾\n  / 命令候选                    $ 技能候选\n  ↑/↓ 选择候选                  Enter/Tab 插入，Esc 关闭\n  Ctrl/Command+Shift+V 粘贴图片 Ctrl+D 删除附件\n  Ctrl+G 用外部编辑器编辑（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\n聊天与活动\n  直接拖动选择聊天文字           Ctrl/Cmd+C 或 Y 复制，Q 引用\n  Ctrl+F 搜索，Enter/Shift+Enter 前后跳转\n  PageUp/PageDown 翻页           Alt+↑/↓ 逐行滚动\n  Ctrl+Home/End 顶部/底部        Ctrl+O 展开工具活动\n  点击活动区聚焦，Enter/Space 展开或收起\n\n状态栏\n  Tab/Shift+Tab 选择分组         ↑/↓ 选择 Inbox 条目\n  Enter 详情，K 停止，R 重试     M 已读，Space 折叠，Esc 返回\n  点击标题折叠，点击条目看详情，滚轮滚动内容"
         }
         Language::En => {
-            "Global\n  F1 / ? on empty prompt  Open help    Ctrl+C Exit\n  Ctrl+P Command palette     Ctrl+R or /history Search and continue a Session\n  Esc Interrupt the running turn   Ctrl+W Switch Prompt/Chat/Activity/Status\n  Ctrl+B or /sidebar Show/hide Status (hidden by default)\n  Ctrl+S Text selection mode\n\nPrompt\n  Enter Send                 Shift/Alt+Enter or Ctrl+J Newline\n  F3 Manage attachments (keep draft)\n  F2 Expand/restore composer Ctrl+A/E Line start/end\n  / Command suggestions      $ Skill suggestions\n  ↑/↓ Select                 Enter/Tab Insert, Esc Close\n  Ctrl/Command+Shift+V Paste image      Ctrl+D Remove attachment\n  Ctrl+G Edit in external editor ($WILLDEEP_EDITOR / $VISUAL / $EDITOR)\n\nChat and activity\n  Drag to select chat text   Ctrl/Cmd+C or Y copy, Q quote\n  Ctrl+F Search, Enter/Shift+Enter Previous/next match\n  PageUp/PageDown Page        Alt+↑/↓ Scroll one line\n  Ctrl+Home/End Top/Bottom    Ctrl+O Expand tool activity\n  Click activity to focus, Enter/Space to expand or collapse\n\nStatus sidebar\n  Tab/Shift+Tab Select section     ↑/↓ Select Inbox item\n  Enter Details, K Stop, R Retry   M Read, Space Toggle, Esc Return\n  Click headers to toggle, items for details, wheel to scroll"
+            "Global\n  F1 / ? on empty prompt  Open help    Ctrl+C Exit\n  Ctrl+P Command palette     Ctrl+R or /history Search and continue a Session\n  Esc Interrupt the running turn   Ctrl+W Switch Prompt/Chat/Activity/Status\n  Ctrl+B or /sidebar Show/hide Status (hidden by default)\n  Ctrl+S Text selection mode\n\nPrompt\n  ↑ on empty prompt: history (insert without sending)\n  Enter Send                 Shift/Alt+Enter or Ctrl+J Newline\n  F3 Manage attachments (keep draft)\n  F2 Expand/restore composer Ctrl+A/E Line start/end\n  / Command suggestions      $ Skill suggestions\n  ↑/↓ Select                 Enter/Tab Insert, Esc Close\n  Ctrl/Command+Shift+V Paste image      Ctrl+D Remove attachment\n  Ctrl+G Edit in external editor ($WILLDEEP_EDITOR / $VISUAL / $EDITOR)\n\nChat and activity\n  Drag to select chat text   Ctrl/Cmd+C or Y copy, Q quote\n  Ctrl+F Search, Enter/Shift+Enter Previous/next match\n  PageUp/PageDown Page        Alt+↑/↓ Scroll one line\n  Ctrl+Home/End Top/Bottom    Ctrl+O Expand tool activity\n  Click activity to focus, Enter/Space to expand or collapse\n\nStatus sidebar\n  Tab/Shift+Tab Select section     ↑/↓ Select Inbox item\n  Enter Details, K Stop, R Retry   M Read, Space Toggle, Esc Return\n  Click headers to toggle, items for details, wheel to scroll"
         }
         Language::Ja => {
-            "グローバル\n  F1 / 空入力で ?  ヘルプ       Ctrl+C 終了\n  Ctrl+P コマンドパレット        Ctrl+R または /history 履歴セッションを検索して再開\n  Esc 実行中のターンを中断          Ctrl+W 入力/チャット/アクティビティ/状態を切替\n  Ctrl+B または /sidebar で状態欄を表示/非表示（既定は非表示）\n  Ctrl+S テキスト選択モード\n\n入力\n  Enter 送信                     Shift/Alt+Enter または Ctrl+J 改行\n  F3 添付を管理（下書き保持）\n  F2 入力欄を拡大/復元            Ctrl+A/E 行頭/行末\n  / コマンド候補                 $ スキル候補\n  ↑/↓ 選択                       Enter/Tab 挿入、Esc 閉じる\n  Ctrl/Command+Shift+V 画像貼付   Ctrl+D 添付削除\n  Ctrl+G 外部エディタで編集（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\nチャットとアクティビティ\n  ドラッグで文字選択              Ctrl/Cmd+C / Y コピー、Q 引用\n  Ctrl+F 検索、Enter/Shift+Enter 前後の一致へ\n  PageUp/PageDown ページ移動      Alt+↑/↓ 1 行スクロール\n  Ctrl+Home/End 先頭/末尾         Ctrl+O ツール詳細\n  アクティビティをクリックして、Enter/Space で開閉\n\n状態サイドバー\n  Tab/Shift+Tab セクション選択    ↑/↓ Inbox 項目選択\n  Enter 詳細、K 停止、R 再実行    M 既読、Space 開閉、Esc 入力へ\n  見出しで開閉、項目で詳細、ホイールでスクロール"
+            "グローバル\n  F1 / 空入力で ?  ヘルプ       Ctrl+C 終了\n  Ctrl+P コマンドパレット        Ctrl+R または /history 履歴セッションを検索して再開\n  Esc 実行中のターンを中断          Ctrl+W 入力/チャット/アクティビティ/状態を切替\n  Ctrl+B または /sidebar で状態欄を表示/非表示（既定は非表示）\n  Ctrl+S テキスト選択モード\n\n入力\n  空入力で ↑ 入力履歴（挿入のみ）\n  Enter 送信                     Shift/Alt+Enter または Ctrl+J 改行\n  F3 添付を管理（下書き保持）\n  F2 入力欄を拡大/復元            Ctrl+A/E 行頭/行末\n  / コマンド候補                 $ スキル候補\n  ↑/↓ 選択                       Enter/Tab 挿入、Esc 閉じる\n  Ctrl/Command+Shift+V 画像貼付   Ctrl+D 添付削除\n  Ctrl+G 外部エディタで編集（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\nチャットとアクティビティ\n  ドラッグで文字選択              Ctrl/Cmd+C / Y コピー、Q 引用\n  Ctrl+F 検索、Enter/Shift+Enter 前後の一致へ\n  PageUp/PageDown ページ移動      Alt+↑/↓ 1 行スクロール\n  Ctrl+Home/End 先頭/末尾         Ctrl+O ツール詳細\n  アクティビティをクリックして、Enter/Space で開閉\n\n状態サイドバー\n  Tab/Shift+Tab セクション選択    ↑/↓ Inbox 項目選択\n  Enter 詳細、K 停止、R 再実行    M 既読、Space 開閉、Esc 入力へ\n  見出しで開閉、項目で詳細、ホイールでスクロール"
         }
     };
     content
