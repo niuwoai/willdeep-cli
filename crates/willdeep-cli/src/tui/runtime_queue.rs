@@ -5,6 +5,14 @@ pub(super) enum ParkedRemoteDialog {
     Question(AskDialog),
 }
 
+/// 忙时提交后立刻回显的那一行。`queued_user_message` 要等下一轮任务启动才到，
+/// 这段时间记录还会继续长，所以回显行不能只靠「最后一行是不是它」来认。
+#[derive(Clone, Debug)]
+pub(super) struct PendingRuntimeEcho {
+    pub(super) text: String,
+    pub(super) row: String,
+}
+
 pub(super) fn reconcile_parked_dialogs(app: &mut App) {
     let live = app
         .runtime_gates
@@ -70,6 +78,15 @@ impl App {
                 remote: Some(item),
             });
         }
+        // 还在队列里的保持原样；被删掉或改掉的，回显行改成「未发送」。
+        // 正在编辑时上面提前返回了，不会把没保存的修改当成删除。
+        let remaining = self
+            .queued_prompts
+            .iter()
+            .filter_map(|item| item.remote.as_ref().map(|remote| remote.text.clone()))
+            .collect::<Vec<_>>();
+        let remaining = remaining.iter().map(String::as_str).collect::<Vec<_>>();
+        self.retract_runtime_echoes(&remaining);
         if let Some(panel) = self.prompt_queue.as_mut() {
             panel.selected = selected
                 .and_then(|id| {
@@ -137,9 +154,15 @@ pub(super) async fn submit_input(
     )
     .await?;
     app.runtime_queue_submission = None;
-    app.take_submitted_input();
+    let submitted = app.take_submitted_input();
     app.attachments.clear();
     app.selected_attachment = 0;
+    // 立即回显。那条 `queued_user_message` 要等正在跑的这一轮结束、下一轮任务
+    // 启动才发出来，长轮次里就是好几分钟；输入框已经清空，用户只能看到这句话消失。
+    // 暂缓提交（Cmd+Enter、/queue add）不在此列，它本来就还没发。
+    if !defer_until_released {
+        app.echo_runtime_submission(&submitted);
+    }
     app.notice = Some(if defer_until_released {
         app.language
             .text(
@@ -343,5 +366,84 @@ mod tests {
         };
         sender.send(ApprovalDecision::AllowOnce).unwrap();
         assert_eq!(receiver.try_recv().unwrap(), ApprovalDecision::AllowOnce);
+    }
+
+    #[test]
+    fn busy_submission_echoes_immediately_and_is_not_repeated() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("还在查");
+        app.echo_runtime_submission("我们限定一下，这个项目用postgres就行；");
+
+        // 简洁模式照样看得见：回显是记录里的一行，状态行另画。
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "You: 我们限定一下，这个项目用postgres就行；")
+        );
+        assert!(app.live_transcript_row().unwrap().contains("还在查"));
+
+        // 向上箭头在会话文件落盘前就能找回这句。
+        assert!(
+            app.handle_prompt_history_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &[],)
+        );
+        assert!(
+            app.handle_prompt_history_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &[],)
+        );
+        assert_eq!(app.input.text(), "我们限定一下，这个项目用postgres就行；");
+
+        // 下一轮任务启动时那条事件认领已有的回显，不再写一行。
+        let before = app.transcript.len();
+        let event = serde_json::json!({
+            "type": "queued_user_message",
+            "turn_id": "turn-1",
+            "text": "我们限定一下，这个项目用postgres就行；"
+        });
+        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
+        assert_eq!(app.transcript.len(), before);
+        assert!(app.pending_runtime_echoes.is_empty());
+
+        // 同一条事件重放也不重复。
+        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
+        assert_eq!(app.transcript.len(), before);
+    }
+
+    #[test]
+    fn removing_a_queued_message_marks_its_echo_unsent() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.echo_runtime_submission("keep this");
+        app.echo_runtime_submission("drop this");
+        app.sync_runtime_queue(vec![message("keep this")]);
+        assert!(app.transcript.iter().any(|row| row == "You: keep this"));
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "You: [not sent] drop this")
+        );
+
+        // 已经认领的（下一轮开始了）不再改口。
+        app.echo_runtime_submission("already running");
+        assert!(app.claim_runtime_echo("already running"));
+        app.sync_runtime_queue(Vec::new());
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "You: already running")
+        );
+    }
+
+    #[test]
+    fn an_echo_survives_rows_appended_after_it() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.echo_runtime_submission("sent while busy");
+        app.append_transcript("WillDeep: still working".to_owned());
+        let before = app.transcript.len();
+        let event = serde_json::json!({
+            "type": "queued_user_message",
+            "turn_id": "turn-2",
+            "text": "sent while busy"
+        });
+        runtime_ui::apply_runtime_output(&mut app, &format!("task-2 {event}"));
+        assert_eq!(app.transcript.len(), before);
     }
 }

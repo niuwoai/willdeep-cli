@@ -264,6 +264,8 @@ struct App {
     peer_unread: usize,
     input: PromptEditor,
     prompt_history: Option<prompt_history::PromptHistory>,
+    /// 已提交、会话文件还没记下的输入。向上箭头在落盘前也要能找回。
+    prompt_history_pending: VecDeque<String>,
     transcript: Vec<String>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
@@ -392,6 +394,9 @@ struct App {
     requested_gate_presentations: BTreeSet<uuid::Uuid>,
     display_home: Option<PathBuf>,
     seen_runtime_inputs: BTreeSet<String>,
+    /// 忙时已经回显、还没被下一轮 `queued_user_message` 认领的原文。
+    /// 那条事件要等下一轮任务启动才来，中间记录还会继续长，不能只看最后一行。
+    pending_runtime_echoes: VecDeque<runtime_queue::PendingRuntimeEcho>,
     parked_remote_dialogs: BTreeMap<uuid::Uuid, runtime_queue::ParkedRemoteDialog>,
     /// 每张已弹出的 Runtime 对话框背后那个等回答的任务的取消信号。gate 在别处
     /// （手机、另一个终端）被答掉时丢掉它：任务不再等，接收端随之丢弃，对话框的

@@ -1,8 +1,32 @@
 use super::*;
 use willdeep_core::types::{MessageSource, Role};
 
-const HISTORY_LIMIT: usize = 100;
+pub(super) const HISTORY_LIMIT: usize = 100;
 const VISIBLE_ROWS: usize = 6;
+
+/// 向上箭头的候选。`messages` 是已经落进会话文件的输入；本进程刚提交、
+/// 还没等到落盘的那些排在后面。同一句只留最近一次，空白和宿主指令不进菜单。
+pub(super) fn prompt_history_entries(
+    messages: &[Message],
+    pending: &VecDeque<String>,
+) -> Vec<String> {
+    let persisted = messages.iter().rev().filter_map(|message| {
+        (message.role == Role::User && message.source != Some(MessageSource::HostInstruction))
+            .then(|| willdeep_core::conversation::visible_user_text(&message.content))
+    });
+    let mut seen = BTreeSet::new();
+    let mut entries: Vec<String> = pending
+        .iter()
+        .rev()
+        .map(String::as_str)
+        .chain(persisted)
+        .filter(|text| !text.trim().is_empty() && seen.insert((*text).to_owned()))
+        .take(HISTORY_LIMIT)
+        .map(ToOwned::to_owned)
+        .collect();
+    entries.reverse();
+    entries
+}
 
 pub(super) struct PromptHistory {
     entries: Vec<String>,
@@ -24,20 +48,7 @@ impl App {
             {
                 return false;
             }
-            let mut seen = BTreeSet::new();
-            let mut entries: Vec<String> = messages
-                .iter()
-                .rev()
-                .filter(|message| {
-                    message.role == Role::User
-                        && message.source != Some(MessageSource::HostInstruction)
-                })
-                .map(|message| willdeep_core::conversation::visible_user_text(&message.content))
-                .filter(|text| !text.trim().is_empty() && seen.insert((*text).to_owned()))
-                .take(HISTORY_LIMIT)
-                .map(str::to_owned)
-                .collect();
-            entries.reverse();
+            let entries = prompt_history_entries(messages, &self.prompt_history_pending);
             let selected = entries.len().saturating_sub(1);
             self.prompt_history = Some(PromptHistory { entries, selected });
             return true;

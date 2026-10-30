@@ -1506,6 +1506,9 @@ pub(super) async fn event_loop(
                                             continue;
                                         }
                                         app.queue_submitted_prompt();
+                                        if let Some(text) = app.queued_prompts.back().map(|item| item.text.clone()) {
+                                            app.note_prompt_submitted(&text);
+                                        }
                                         continue;
                                     },
                                     BusyInput::Refuse=>{
@@ -1520,7 +1523,9 @@ pub(super) async fn event_loop(
                                     },
                                 }
                             }
-                            let prompt=app.take_submitted_input();app.append_transcript(format!("You: {prompt}"));
+                            let prompt=app.take_submitted_input();
+                            app.append_transcript(format!("You: {prompt}"));
+                            app.note_prompt_submitted(&prompt);
                             if let Some(command)=permission_commands::parse(&prompt) {
                                 match command {
                                     PermissionCommand::Open=>app.open_permission_picker(false),

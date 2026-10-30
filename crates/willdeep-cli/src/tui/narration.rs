@@ -118,8 +118,7 @@ impl App {
     /// 正文显示最近一段回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
     /// 摆在这里——干活过程中永远只有这一行在变，收尾才写进记录。
     pub(super) fn live_transcript_row(&self) -> Option<String> {
-        self.transient_row()
-            .or_else(|| self.concise_status_row())
+        self.transient_row().or_else(|| self.concise_status_row())
     }
 
     /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
@@ -147,7 +146,11 @@ impl App {
             .map_or(Duration::ZERO, |started| started.elapsed());
         let mut one_line = String::new();
         for character in held.chars() {
-            one_line.push(if character.is_whitespace() { ' ' } else { character });
+            one_line.push(if character.is_whitespace() {
+                ' '
+            } else {
+                character
+            });
             if one_line.chars().count() >= THOUGHT_PREVIEW_CHARS {
                 break;
             }
@@ -451,6 +454,88 @@ impl App {
         for message in std::mem::take(&mut self.deferred_steering) {
             self.append_transcript_at(format!("You: {}", message.text), message.sent_at);
         }
+    }
+
+    /// 忙时提交一成功就回显，不等下一轮任务启动才发的那条事件。
+    /// 行文与事件到来时拼的那行一致，事件认领时直接对上，不会再写一行。
+    pub(super) fn echo_runtime_submission(&mut self, text: &str) {
+        let visible = willdeep_core::conversation::visible_user_text(text);
+        let row = format!("You: {}", terminal_safe_text(visible));
+        self.append_transcript(row.clone());
+        self.pending_runtime_echoes
+            .push_back(runtime_queue::PendingRuntimeEcho {
+                text: visible.to_owned(),
+                row,
+            });
+        self.note_prompt_submitted(visible);
+    }
+
+    /// 向上箭头在会话文件落盘前也要能找回刚发出的这句。同一句只留最近一次。
+    pub(super) fn note_prompt_submitted(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        self.prompt_history_pending.retain(|entry| entry != text);
+        self.prompt_history_pending.push_back(text.to_owned());
+        let overflow = self
+            .prompt_history_pending
+            .len()
+            .saturating_sub(prompt_history::HISTORY_LIMIT);
+        self.prompt_history_pending.drain(..overflow);
+    }
+
+    /// 会话文件已经记下这些输入，向上箭头直接从消息里读，不再另记一份。
+    pub(super) fn note_prompt_history_persisted(&mut self, messages: &[Message]) {
+        self.prompt_history_pending.retain(|text| {
+            !messages.iter().any(|message| {
+                message.role == willdeep_core::types::Role::User
+                    && willdeep_core::conversation::visible_user_text(&message.content) == text
+            })
+        });
+    }
+
+    /// 下一轮任务启动时的 `queued_user_message` 认领已经回显的那一行。
+    /// 对上了就不再写；对不上（别的端发来的、或本端没来得及回显）照旧补一行。
+    pub(super) fn claim_runtime_echo(&mut self, text: &str) -> bool {
+        let visible = willdeep_core::conversation::visible_user_text(text);
+        let row = format!("You: {}", terminal_safe_text(visible));
+        let claimed = self
+            .pending_runtime_echoes
+            .iter()
+            .position(|echo| echo.row == row)
+            .or_else(|| {
+                self.pending_runtime_echoes
+                    .iter()
+                    .position(|echo| echo.text == visible)
+            });
+        if let Some(position) = claimed {
+            self.pending_runtime_echoes.remove(position);
+            return true;
+        }
+        false
+    }
+
+    /// 队列里这条消息被删掉或改掉了：还挂着的回显行改成「未发送」。
+    /// 已经认领过的（下一轮已经开始）不动，那句话确实发出去了。
+    /// 同文多行时改最早那条，与入队顺序一致。
+    pub(super) fn retract_runtime_echoes(&mut self, remaining: &[&str]) {
+        let mut kept = VecDeque::new();
+        for echo in std::mem::take(&mut self.pending_runtime_echoes) {
+            if remaining.contains(&echo.text.as_str()) {
+                kept.push_back(echo);
+                continue;
+            }
+            if let Some(row) = self.transcript.iter_mut().find(|row| **row == echo.row) {
+                *row = format!(
+                    "You: {}{}",
+                    self.language
+                        .text("［未发送］ ", "[not sent] ", "［未送信］ ",),
+                    terminal_safe_text(&echo.text)
+                );
+            }
+        }
+        self.pending_runtime_echoes = kept;
     }
 
     /// 真正发出后移除最早的同文待发占位，并在当前轮次边界回显原文。
@@ -806,7 +891,11 @@ impl App {
         // 相同就落这一段，正文在它前面拼了提示就两段都落。之后清掉，免得
         // 轮次复位再补写一遍。
         let held = self.held_narration.take();
-        if let Some(held) = held.as_deref().map(str::trim).filter(|held| !held.is_empty()) {
+        if let Some(held) = held
+            .as_deref()
+            .map(str::trim)
+            .filter(|held| !held.is_empty())
+        {
             let narrated = self.turn_narration.as_deref().map(str::trim);
             if narrated == Some(held)
                 && let Some(head) = &remainder
@@ -1435,8 +1524,14 @@ mod tests {
         );
         let row = app.live_transcript_row().unwrap();
         assert!(row.contains("再改这一行"), "{row}");
-        assert!(!row.contains("先看日志"), "only the latest line shows: {row}");
-        assert!(row.contains('s'), "the status row carries the elapsed time: {row}");
+        assert!(
+            !row.contains("先看日志"),
+            "only the latest line shows: {row}"
+        );
+        assert!(
+            row.contains('s'),
+            "the status row carries the elapsed time: {row}"
+        );
 
         // 流式增量压过状态行；定稿后又回到状态行。
         app.stream_transient(StreamKind::Reply, "正在写");
@@ -1456,6 +1551,22 @@ mod tests {
         assert!(app.transcript[1].contains("写完了"));
         app.finish_turn();
         assert!(app.live_transcript_row().is_none());
+
+        // 忙时发出的那句是记录里的一行，不进状态行，也不被状态行盖住。
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("还在查");
+        app.echo_runtime_submission("限定用 postgres");
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "You: 限定用 postgres")
+        );
+        let row = app.live_transcript_row().unwrap();
+        assert!(row.contains("还在查"), "{row}");
+        assert!(
+            !row.contains("postgres"),
+            "the echo is not the status row: {row}"
+        );
 
         // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
         app.begin_turn(true, "working".to_owned());
