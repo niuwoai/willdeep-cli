@@ -114,6 +114,7 @@ impl App {
             user_message_hit_rows: Vec::new(),
             deferred_steering: Vec::new(),
             turn_narration: None,
+            held_narration: None,
             tool_rows_expanded: false,
             transient_kind: StreamKind::Reply,
             bell_pending: false,
@@ -255,6 +256,8 @@ impl App {
         self.turn_started = None;
         self.last_progress_at = None;
         self.runtime_turn = false;
+        self.turn_narration = None;
+        self.held_narration = None;
         self.discard_pending_approvals();
         self.discard_pending_questions();
         self.scroll_from_bottom = 0;
@@ -1140,6 +1143,14 @@ impl App {
     pub(super) fn finish_turn(&mut self) {
         let was_running = self.running;
         self.finish_thought();
+        // 简洁模式把中途文字只摆在状态行上。正常收尾已经在 `note_reply` 里落过正文
+        // 并拿走它；走到这里还留着，是中断或状态复位，补写进去，别让最后一句话随状态行消失。
+        if let Some(held) = self.held_narration.take() {
+            let held = held.trim();
+            if !held.is_empty() {
+                self.append_transcript(format!("WillDeep: {held}"));
+            }
+        }
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
@@ -1315,6 +1326,7 @@ impl App {
         self.turn_output_tokens = 0;
         self.turn_first_reply = None;
         self.turn_narration = None;
+        self.held_narration = None;
         self.progress_log.clear();
         self.record_progress(initial_progress);
     }

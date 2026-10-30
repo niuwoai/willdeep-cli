@@ -4,11 +4,13 @@
 //! 工具调用只进活动区，折叠态只露最近两条。几十次工具调用的任务跑十分钟，聊天区
 //! 一片空白，用户分不清是在干活还是卡死了。现在：
 //!
-//! - 每段定稿的中途文字都作 `WillDeep:` 行落进记录，流式增量仍走临时行预览；
+//! - 详细模式里每段定稿的中途文字都作 `WillDeep:` 行落进记录；简洁模式只留最近
+//!   一段，画在聊天区底部那一行会替换的状态上，轮次收尾才落成正文；
+//! - 流式增量仍走临时行预览，压过那一行状态；
 //! - 每次工具调用先落一行 `· … 名字 · 摘要`，完成后原地改成 `✓` / `✗`；
 //! - 收尾文字只追加还没显示过的部分（比如轮次上限提示），不重复最后一段；
 //! - 显示层把每段连续工具行收起：早先的段一行汇总，最新的段一行汇总加最新一条，
-//!   `/tools` 展开。夹在中间、当前可见的思考行不切段，也不随工具行收起。
+//!   `/tools` 展开。夹在中间、当前可见的思考行不切段，一段连续的只留最后一条。
 //!
 //! 进程内轮次与 Runtime 轮次共用这一套，行为一致。
 use super::*;
@@ -112,6 +114,14 @@ pub(super) fn tail_within_rows(prefix: &str, text: &str, width: usize, rows: usi
 }
 
 impl App {
+    /// 聊天区底部多出来的那一行。正在流的内容优先：思维链只显示耗时摘要，
+    /// 正文显示最近一段回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
+    /// 摆在这里——干活过程中永远只有这一行在变，收尾才写进记录。
+    pub(super) fn live_transcript_row(&self) -> Option<String> {
+        self.transient_row()
+            .or_else(|| self.concise_status_row())
+    }
+
     /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
     pub(super) fn transient_row(&self) -> Option<String> {
         let thought = self.transient_thought.as_deref()?;
@@ -120,6 +130,33 @@ impl App {
             StreamKind::Reasoning => format!("· + Thought: {}", self.thought_elapsed_label()),
             StreamKind::Reply => format!("WillDeep · {label}: {thought}"),
         })
+    }
+
+    /// 简洁模式的那一行状态：旋转符、最近一段中途文字、已运行时长。
+    /// 计划卡片走记录，不从这里过。轮次没在跑（比如中断后补写之前的那一帧）不画。
+    fn concise_status_row(&self) -> Option<String> {
+        if !self.running || !willdeep_core::ResponseStyle::uses_short(self.response_style) {
+            return None;
+        }
+        let held = self.held_narration.as_deref()?.trim();
+        if held.is_empty() {
+            return None;
+        }
+        let elapsed = self
+            .turn_started
+            .map_or(Duration::ZERO, |started| started.elapsed());
+        let mut one_line = String::new();
+        for character in held.chars() {
+            one_line.push(if character.is_whitespace() { ' ' } else { character });
+            if one_line.chars().count() >= THOUGHT_PREVIEW_CHARS {
+                break;
+            }
+        }
+        Some(format!(
+            "{} {one_line} · {}",
+            progress_spinner(elapsed),
+            format_elapsed_span(elapsed.as_secs_f32(), 0)
+        ))
     }
 
     /// 流式增量进临时行：只留最后 [`THOUGHT_PREVIEW_CHARS`] 字，进程内轮次与
@@ -442,7 +479,8 @@ pub(super) struct FoldedTranscript {
 /// 每段连续的活动行在显示层收起。活动行指工具行，以及夹在它们中间、当前
 /// 可见的思考行——思考行不切段。收起时只收工具行：不是最新那段的一律收成
 /// 一行汇总；最新那段最多留 [`LAST_TOOL_RUN_ROWS`] 条工具行，正在跑的那条
-/// 永远看得见。思考行原样留在原处。`expanded` 为真时原样返回（`/tools`）。
+/// 永远看得见。一段连续的思考行只留最后一条，更早的指向它（搜索跳转仍落得上）；
+/// 用户展开过的那条原样留着。`expanded` 只展开工具行（`/tools`），不展开思考。
 pub(super) fn fold_tool_rows(
     entries: &[String],
     expanded: bool,
@@ -461,13 +499,8 @@ pub(super) fn fold_tool_rows(
         {
             cursor += 1;
         }
-        // 一整段都是思考时没有工具可收，原样留着。
-        if entries[start..cursor]
-            .iter()
-            .any(|row| tool_row_marker(row).is_some())
-        {
-            runs.push((start, cursor));
-        }
+        // 思考也要收：一段连续的只留最后一条。纯思考段与夹着工具的段同一条规则。
+        runs.push((start, cursor));
     }
     let last_run = runs.last().copied();
     let latest_turn = entries
@@ -510,21 +543,53 @@ pub(super) fn fold_tool_rows(
             .take(hidden_tools)
             .cloned()
             .collect::<Vec<_>>();
-        let mut still_hidden = hidden_tools;
-        let mut summary_index = None;
-        for line in run {
-            if still_hidden > 0 && tool_row_marker(line).is_some() {
-                let index = *summary_index.get_or_insert_with(|| {
-                    let index = rows.len();
-                    rows.push(fold_summary(&hidden, is_last, language));
-                    index
-                });
-                index_of.push(index);
-                still_hidden -= 1;
-                continue;
+        // 一段连续的思考只留最后一条。展开过的不算「被后来的盖住」：用户点开的
+        // 那条留在原处，它后面的折叠照旧。被收起的指向留下的那条，搜索跳转仍落得上。
+        let kept_thought = run.iter().rposition(|line| is_thought_row(line));
+        let folded_thought = |offset: usize| {
+            is_thought_row(&run[offset])
+                && !run[offset].starts_with(THOUGHT_EXPANDED_PREFIX)
+                && kept_thought.is_some_and(|kept| offset < kept)
+        };
+        // 先定每行的去向，再统一编号。被收起的工具行共用一行汇总，被收起的思考行
+        // 指向本段留下的最后一条思考。
+        let summary_at = rows.len();
+        let mut placed = Vec::with_capacity(run.len());
+        let mut emitted = usize::from(hidden_tools > 0);
+        for (offset, line) in run.iter().enumerate() {
+            let hidden_tool = tool_row_marker(line).is_some()
+                && run[..=offset]
+                    .iter()
+                    .filter(|row| tool_row_marker(row).is_some())
+                    .count()
+                    <= hidden_tools;
+            if hidden_tool {
+                placed.push(summary_at);
+            } else if folded_thought(offset) {
+                // 占位，等最后一条思考的位置定下来再回填。
+                placed.push(usize::MAX);
+            } else {
+                placed.push(summary_at + emitted);
+                emitted += 1;
             }
-            index_of.push(rows.len());
-            rows.push(line.clone());
+        }
+        if let Some(kept) = kept_thought {
+            for offset in 0..run.len() {
+                if folded_thought(offset) {
+                    placed[offset] = placed[kept];
+                }
+            }
+        }
+        if hidden_tools > 0 {
+            rows.push(fold_summary(&hidden, is_last, language));
+        }
+        for (offset, line) in run.iter().enumerate() {
+            let hidden_tool = hidden_tools > 0 && placed[offset] == summary_at;
+            if !hidden_tool && !folded_thought(offset) {
+                debug_assert_eq!(placed[offset], rows.len());
+                rows.push(line.clone());
+            }
+            index_of.push(placed[offset]);
         }
     }
     FoldedTranscript { rows, index_of }
@@ -667,7 +732,11 @@ impl App {
         )
     }
 
-    /// 模型这一轮定稿的一段话：落进记录，并记住它，收尾时据此去重。
+    /// 模型这一轮定稿的一段话。记住它，收尾时据此去重。
+    ///
+    /// 详细模式逐段落进记录。简洁模式只留最近一段：干活过程中聊天区只该有计划
+    /// 卡片和一行状态，每段话都落一行会把过程堆成详细模式。计划围栏例外，它要
+    /// 原位更新卡片，两种模式都直接进记录。
     pub(super) fn note_narration(&mut self, text: &str) {
         // 目标完成标签是给引擎认的协议，不往聊天区送；存储层仍保留原文。
         let text = willdeep_core::conversation::visible_assistant_text(text).trim();
@@ -680,8 +749,22 @@ impl App {
             .language
             .text("正在整理思路", "Working through it", "考えを整理中")
             .to_owned();
-        self.append_transcript(format!("WillDeep: {text}"));
+        if self.concise_turn() && !willdeep_core::conversation::is_plan_reply(text) {
+            // 时间按最终落进记录的那行记：进记录前还会过一遍终端安全处理。
+            let row = terminal_safe_text(&format!("WillDeep: {text}"));
+            self.message_times
+                .reserve(&row, self.message_times.recording_time());
+            self.held_narration = Some(text.to_owned());
+        } else {
+            self.append_transcript(format!("WillDeep: {text}"));
+            self.held_narration = None;
+        }
         self.turn_narration = Some(text.to_owned());
+    }
+
+    /// 这一轮按简洁风格显示。没显式选过风格即简洁，与提示词侧同一条判定。
+    fn concise_turn(&self) -> bool {
+        willdeep_core::ResponseStyle::uses_short(self.response_style)
     }
 
     /// 工具刚发起：先占一行，完成时原地改标记。
@@ -719,10 +802,32 @@ impl App {
         // 与中途文字同一条投影：先剥协议标签，再比「这段是不是已经显示过」。
         let final_text = willdeep_core::conversation::visible_assistant_text(final_text);
         let remainder = unshown_reply(final_text, self.turn_narration.as_deref());
+        // 简洁模式的中途文字只摆在状态行上。收尾是它进记录的时候：正文与它
+        // 相同就落这一段，正文在它前面拼了提示就两段都落。之后清掉，免得
+        // 轮次复位再补写一遍。
+        let held = self.held_narration.take();
+        if let Some(held) = held.as_deref().map(str::trim).filter(|held| !held.is_empty()) {
+            let narrated = self.turn_narration.as_deref().map(str::trim);
+            if narrated == Some(held)
+                && let Some(head) = &remainder
+                && final_text.trim() != head.trim()
+            {
+                self.append_transcript(format!("WillDeep: {head}"));
+                self.append_transcript(format!("WillDeep: {held}"));
+                return Some(final_text.trim().to_owned());
+            }
+            self.append_transcript(format!("WillDeep: {held}"));
+        }
         if let Some(text) = &remainder {
             self.append_transcript(format!("WillDeep: {text}"));
         }
-        remainder
+        match (&held, &remainder) {
+            (Some(held), Some(head)) if final_text.trim() != head.trim() => {
+                Some(format!("{head}\n\n{held}"))
+            }
+            (Some(held), _) => Some(held.clone()),
+            (None, remainder) => remainder.clone(),
+        }
     }
 }
 
@@ -903,17 +1008,17 @@ mod tests {
             ));
         }
         let folded = fold_tool_rows(&entries, false, Language::En);
-        // 四段思考原样保留；四条工具行收成一条汇总加最新一条。
-        assert_eq!(folded.rows.len(), 1 + 4 + 1 + 1, "{:?}", folded.rows);
+        // 四段思考只留最后一条；四条工具行收成一条汇总加最新一条。
+        assert_eq!(folded.rows.len(), 1 + 1 + 1 + 1, "{:?}", folded.rows);
         assert!(
-            folded.rows[2].starts_with("· ⋯ 3 earlier tool calls folded"),
+            folded.rows[1].starts_with("· ⋯ 3 earlier tool calls folded"),
             "{}",
-            folded.rows[2]
+            folded.rows[1]
         );
         assert!(
-            folded.rows[2].contains(" · read_file×1 · run_command×2"),
+            folded.rows[1].contains(" · read_file×1 · run_command×2"),
             "{}",
-            folded.rows[2]
+            folded.rows[1]
         );
         assert_eq!(
             folded
@@ -921,8 +1026,11 @@ mod tests {
                 .iter()
                 .filter(|row| row.contains("reason "))
                 .count(),
-            4
+            1,
+            "a consecutive run keeps only its last thought: {:?}",
+            folded.rows
         );
+        assert!(folded.rows[2].contains("reason 3"), "{:?}", folded.rows);
         assert_eq!(
             folded
                 .rows
@@ -933,12 +1041,12 @@ mod tests {
             "only the newest tool row stays: {:?}",
             folded.rows
         );
-        // 被收起的工具行在 index_of 里都指向汇总行。
-        assert_eq!(folded.index_of, vec![0, 1, 2, 3, 2, 4, 2, 5, 6]);
+        // 被收起的工具行指向汇总行，被收起的思考行指向留下的那条。
+        assert_eq!(folded.index_of, vec![0, 2, 1, 2, 1, 2, 1, 2, 3]);
     }
 
     #[test]
-    fn a_run_of_thoughts_alone_is_left_as_it_is() {
+    fn a_run_of_consecutive_thoughts_keeps_only_the_last() {
         let entries = vec![
             "You: go".to_owned(),
             format!("{THOUGHT_ENTRY_PREFIX}1.0s\nfirst"),
@@ -946,8 +1054,26 @@ mod tests {
             format!("{THOUGHT_ENTRY_PREFIX}3.0s\nthird"),
         ];
         let folded = fold_tool_rows(&entries, false, Language::En);
-        assert_eq!(folded.rows, entries);
-        assert!(!folded.rows.iter().any(|row| row.contains("0 tool calls")));
+        assert_eq!(
+            folded.rows,
+            vec!["You: go".to_owned(), entries[3].clone()],
+            "only the newest thought of a consecutive run stays"
+        );
+        assert_eq!(folded.index_of, vec![0, 1, 1, 1]);
+        assert!(!folded.rows.iter().any(|row| row.contains("tool calls")));
+
+        // 展开过的不参与折叠：它留在原处，后面的连续段照旧只留最后一条。
+        let mut expanded = entries.clone();
+        expanded[1] = expanded[1].replacen(THOUGHT_ENTRY_PREFIX, THOUGHT_EXPANDED_PREFIX, 1);
+        let folded = fold_tool_rows(&expanded, false, Language::En);
+        assert_eq!(folded.rows.len(), 3, "{:?}", folded.rows);
+        assert!(folded.rows[1].contains("first"));
+        assert!(folded.rows[2].contains("third"));
+        assert_eq!(folded.index_of, vec![0, 1, 2, 2]);
+
+        // `/tools` 只展开工具行，不把收起的思考放回来。
+        let folded = fold_tool_rows(&entries, true, Language::En);
+        assert_eq!(folded.rows.len(), 2);
     }
 
     #[test]
@@ -1076,6 +1202,7 @@ mod tests {
         app.note_steering_delivered("clean it up", message_time::now());
         assert!(app.transcript.iter().all(|row| !row.starts_with("You:")));
 
+        app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
         app.note_narration("listing done");
         app.note_model_step_started();
         let reply = app
@@ -1274,7 +1401,9 @@ mod tests {
 
     #[test]
     fn narration_then_reply_does_not_duplicate_the_last_paragraph() {
+        // 详细模式：中途文字逐条落进记录，收尾只补没见过的部分。
         let mut app = App::new(Vec::new(), Language::En);
+        app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
         app.transient_thought = Some("streaming…".to_owned());
         app.note_narration("  Now update the log line  ");
         assert!(app.transient_thought.is_none());
@@ -1294,8 +1423,74 @@ mod tests {
     }
 
     #[test]
+    fn concise_narration_stays_on_one_status_row_until_the_turn_ends() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("先看日志");
+        app.note_narration("再改这一行");
+        assert!(
+            app.transcript.is_empty(),
+            "concise mode keeps mid-turn prose out of the transcript: {:?}",
+            app.transcript
+        );
+        let row = app.live_transcript_row().unwrap();
+        assert!(row.contains("再改这一行"), "{row}");
+        assert!(!row.contains("先看日志"), "only the latest line shows: {row}");
+        assert!(row.contains('s'), "the status row carries the elapsed time: {row}");
+
+        // 流式增量压过状态行；定稿后又回到状态行。
+        app.stream_transient(StreamKind::Reply, "正在写");
+        assert!(app.live_transcript_row().unwrap().contains("正在写"));
+        app.note_narration("写完了");
+        assert!(app.live_transcript_row().unwrap().contains("写完了"));
+
+        // 计划围栏照旧进记录，原位更新卡片；它就是最新一段，状态行让位给卡片。
+        app.note_narration("```plan\n1. 验证接口\n2. 发布\n```");
+        assert_eq!(app.transcript.len(), 1);
+        assert!(decode_plan_entry(&app.transcript[0]).is_some());
+        assert!(app.live_transcript_row().is_none());
+
+        // 收尾与最后一段相同：落成一段正文，不再重复，状态行随之撤掉。
+        assert_eq!(app.note_reply("写完了"), Some("写完了".to_owned()));
+        assert_eq!(app.transcript.len(), 2);
+        assert!(app.transcript[1].contains("写完了"));
+        app.finish_turn();
+        assert!(app.live_transcript_row().is_none());
+
+        // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("写完了");
+        assert_eq!(
+            app.note_reply("⚠ 轮次上限\n\n写完了"),
+            Some("⚠ 轮次上限\n\n写完了".to_owned())
+        );
+        assert!(app.transcript.iter().any(|row| row.contains("轮次上限")));
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|row| row.contains("写完了"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn an_interrupted_concise_turn_keeps_its_last_line() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(false, "working".to_owned());
+        app.note_narration("halfway through");
+        assert!(app.transcript.is_empty());
+        app.finish_turn();
+        assert_eq!(app.transcript, vec!["WillDeep: halfway through"]);
+        // 补写只发生一次。
+        app.finish_turn();
+        assert_eq!(app.transcript.len(), 1);
+    }
+
+    #[test]
     fn goal_status_marker_never_reaches_the_transcript() {
         let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
         app.note_narration("<goal-status>complete</goal-status> 训练闭环。");
         assert_eq!(app.transcript, vec!["WillDeep: 训练闭环。"]);
         // 收尾文字与中途文字走同一条投影，不会因为标签而重复显示。

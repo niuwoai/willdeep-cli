@@ -47,6 +47,9 @@ pub(super) struct MessageTimes {
     path: Option<PathBuf>,
     dirty: bool,
     offsets: HashMap<String, usize>,
+    /// 记过时间、但还没进记录的消息条数。简洁模式的中途文字先挂在状态行上，
+    /// 收尾落进记录时从这里对上，沿用定稿那一刻的时间。
+    reserved: HashMap<String, usize>,
     pub(super) event_time: Option<u64>,
 }
 
@@ -124,10 +127,41 @@ impl MessageTimes {
         let digest = key(last);
         let ordinal = previous.iter().filter(|row| *row == last).count()
             + self.offsets.get(&digest).copied().unwrap_or_default();
+        // 这条是之前挂在状态行上、现在才进记录的：时间已经记过，对上就行。
+        if self.reserved.get(&digest).copied().unwrap_or_default() > 0 {
+            *self.reserved.get_mut(&digest).expect("reserved count") -= 1;
+            self.rows[previous.len()] = self
+                .known
+                .get(&digest)
+                .and_then(|times| times.get(ordinal))
+                .copied()
+                .flatten();
+            return;
+        }
         let times = self.known.entry(digest).or_default();
         times.resize(times.len().max(ordinal + 1), None);
         times[ordinal] = Some(current);
         self.rows[previous.len()] = Some(current);
+        self.dirty = true;
+    }
+
+    /// 记住一条还没进记录的消息的时间。简洁模式的中途文字先只摆在状态行上，
+    /// 收尾落进记录时按正文对上，沿用它定稿那一刻的时间，而不是收尾时刻。
+    /// 同一段文字再次定稿（模型把进度重发了一遍）刷新成最新的时刻。
+    pub(super) fn reserve(&mut self, row: &str, sent_at: u64) {
+        if !is_message(row) {
+            return;
+        }
+        let digest = key(row);
+        let held = self.reserved.entry(digest.clone()).or_default();
+        let times = self.known.entry(digest).or_default();
+        if *held > 0 {
+            let index = times.len() - *held;
+            times[index] = Some(sent_at);
+            return;
+        }
+        times.push(Some(sent_at));
+        *held += 1;
         self.dirty = true;
     }
 
@@ -480,6 +514,7 @@ mod tests {
         session.runtime_managed = true;
         let mut app = App::new(Vec::new(), Language::En);
         app.begin_turn(true, "replaying".into());
+        app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
         runtime_ui::apply_runtime_events(
             &mut app,
             vec![crate::daemon::RemoteRuntimeEvent {

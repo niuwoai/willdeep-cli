@@ -421,6 +421,9 @@ struct App {
     deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
     turn_narration: Option<String>,
+    /// 简洁模式里还没写进记录的最近一段中途文字。聊天区只用它替换那一行
+    /// 状态；轮次收尾再落成正文，干活过程中不把每段话都堆成一条 WillDeep。
+    held_narration: Option<String>,
     /// `/tools`：临时展开聊天区里收起的工具行。只影响显示，记录不动。
     tool_rows_expanded: bool,
     /// 临时行此刻流的是思维链还是正文，决定标签与何时清缓冲。
