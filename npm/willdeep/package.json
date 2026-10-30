@@ -1,6 +1,6 @@
 {
   "name": "@niuwoai/willdeep",
-  "version": "0.134.0-rc3",
+  "version": "0.134.0-rc4",
   "description": "Install the WillDeep CLI from its verified GitHub Release.",
   "license": "Apache-2.0",
   "repository": {
@@ -16,7 +16,8 @@
   "files": [
     "bin",
     "lib",
-    "install-manifest.json"
+    "install-manifest.json",
+    "README.md"
   ],
   "scripts": {
     "postinstall": "node lib/install.js"
