@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.134.0-rc5] - 2026-10-30
+
+### Fixed
+- `@niuwoai/willdeep` 的 npm 页面仍显示没有 README。0.134.0-rc4 把 README 放进了包，但 npm 10 先打包、再从磁盘重读 `package.json` 作为发给 registry 的元数据，打包时写进压缩包的 readme 不会出现在这份重读的清单里，registry 收到的就是空字符串。发布脚本现在把 README 写进 `package.json` 再发布。安装行为不变。
+
 ## [0.134.0-rc4] - 2026-10-30
 
 ### Fixed

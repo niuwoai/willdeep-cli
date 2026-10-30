@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-30 | 当前版本：v0.134.0-rc4
+> 最后更新：2026-10-30 | 当前版本：v0.134.0-rc5
+
+0.134.0-rc5 修复 `@niuwoai/willdeep` 的 npm 页面 README 为空。0.134.0-rc4 把 README 放进了包，但 npm 10 发给 registry 的元数据重读自磁盘上的 `package.json`，不带打包时写入的 readme，页面仍显示没有 README。发布脚本现在把 README 写进 `package.json` 再发布；安装方式不变。
 
 0.134.0-rc4 给 `@niuwoai/willdeep` 补上 npm 页面的 README。包里此前没有这个文件，npmjs 上每个版本都显示没有 README；安装方式不变，仍按包版本下载对应的 GitHub Release。
 

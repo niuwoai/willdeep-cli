@@ -1,4 +1,6 @@
-# @niuwoai/willdeep
+# WillDeep
+
+`@niuwoai/willdeep` installs the self-hosted WillDeep CLI. The installer downloads the GitHub Release that matches this package version, checks its SHA256, and places a single `willdeep` binary on your PATH.
 
 自托管的 AI Coding Agent。模型可以不出国，每一行改动能追溯到是哪个 Agent、哪次工具调用改的，小模型交上来的活由退出码裁决而不是自我声明，检查点回退把对话和文件一起退回去。一个二进制，终端 / 浏览器 / 手机三种界面，关掉窗口任务照跑。
 
