@@ -28,6 +28,7 @@ import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
 import { enqueueButtonState, queueText } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
+import { sessionTree } from "./sessionTree";
 import "./chatWorkspace.css";
 import "./runCard.css";
 import { RuntimeQueue, IndependentTasks } from "./RuntimeQueue";
@@ -57,7 +58,16 @@ function accessLabel(access: WorkspaceAccess, t: { accessReadOnly: string; acces
     case "full_access": return t.accessFull;
   }
 }
-type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
+type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; archived: boolean; active: boolean; active_turn_id: string | null };
+
+/** 谱系行的时间按子会话的创建时间算，不用最后更新时间。 */
+function lineageTime(createdAt: number, t: Messages): string {
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - createdAt);
+  if (elapsed < 60) return t.timeJustNow;
+  if (elapsed < 3600) return t.timeMinutesAgo.replace("{count}", String(Math.floor(elapsed / 60)));
+  if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
+  return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
+}
 type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | "detailed" | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
@@ -927,9 +937,9 @@ export function App() {
     }
   }
 
-  function sessionRow(item: Session) {
+  function sessionRow(item: Session, depth: number) {
     const selected = sessionId === item.id;
-    return <Flex key={item.id} className={`session-row${selected ? " selected" : ""}`} opacity={item.archived ? 0.68 : 1}
+    return <Flex key={item.id} className={`session-row${depth ? " nested" : ""}${selected ? " selected" : ""}`} opacity={item.archived ? 0.68 : 1}
       onContextMenu={(event) => {
         // 没有插件贡献这个位置时不劫持右键——浏览器自带的菜单仍然该能用。
         if (!sessionContextEntries.length) return;
@@ -937,7 +947,7 @@ export function App() {
         setPopup({ entries: sessionContextEntries, x: event.clientX, y: event.clientY, args: { session: item.id } });
       }}>
       <button type="button" className="session-title" disabled={busy} onClick={() => void loadSession(item.id, item.active_turn_id)}>
-        {item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
+        {item.active && <span className="session-active-dot" aria-hidden="true" />}{item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
         {/* 标题没生成时后端会带回首条用户消息。显示它而不是一排
             一模一样的 New session——那些会话是有内容的。 */}
         {item.preview ? <span className="session-untitled">{item.preview}</span> : item.title}
@@ -1216,12 +1226,12 @@ export function App() {
         <Flex mb="2" justify="space-between" align="baseline"><Text fontSize="xs" color="var(--text-dim)">{t.session}</Text><Button size="xs" variant="ghost" color="var(--text-dim)" _hover={{ bg: "var(--bg-panel)", color: "var(--text-strong)" }} disabled={busy} onClick={() => { localStorage.removeItem(`${lastSessionPrefix}${workspace}`); setSessionId(""); setChat([]); }}>{t.newSession}</Button></Flex>
         <div className="session-search"><Search size={15} /><Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" /></div>
         <Box className="session-list" flex="1" minH="0">
-          <VStack align="stretch" gap="1">{liveSessions.map(sessionRow)}{!liveSessions.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}</VStack>
+          <VStack align="stretch" gap="1">{sessionTree(liveSessions).map((entry) => sessionRow(entry.session, entry.depth))}{!liveSessions.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}</VStack>
           {archivedSessions.length > 0 && <Box mt="2">
             <button type="button" className="archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived((current) => !current)}>
               <span className={`archived-caret${showArchived ? " open" : ""}`}>▸</span>{t.archived} ({archivedSessions.length})
             </button>
-            {showArchived && <VStack align="stretch" gap="1" mt="1">{archivedSessions.map(sessionRow)}</VStack>}
+            {showArchived && <VStack align="stretch" gap="1" mt="1">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
           </Box>}
         </Box>
         {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
@@ -1284,7 +1294,7 @@ export function App() {
       </Dialog.Root>
     </Box>
     <Flex flex="1" minW="0" className="conversation-with-schedules">
-    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span><h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
+    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span>{selectedSession?.started_by && <span className="session-lineage">{t.sessionLineage.replace("{parent}", sessions.find((item) => item.id === selectedSession.started_by)?.title || selectedSession.started_by.slice(0, 8)).replace("{time}", lineageTime(selectedSession.created_at, t))}</span>}<h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>

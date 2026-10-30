@@ -1,6 +1,10 @@
 # Product Overview
 
-> 最后更新：2026-10-30 | 当前版本：v0.133.0-rc7
+> 最后更新：2026-10-30 | 当前版本：v0.134.0-rc2
+
+0.134.0-rc2 与 0.134.0-rc1 功能相同，只把会话选择器里放在测试模块后面的状态文案函数挪回前面，clippy 的 `items_after_test_module` 因此通过。
+
+0.134.0-rc1 给分凉出来的会话记下来源：Web 与 TUI 的会话列表把它缩进在来源正下方，对话标题下显示「分凉自「来源」· 多久前」。来源不在当前列表里时，它仍作为普通会话显示。
 
 0.133.0-rc7 修复上下文压缩丢掉思维链回传信号：压缩替换掉最后一段非空思维链后，摘要和归档引用带一个空标记，下一轮仍给每条 assistant 消息补空 `reasoning_text`，不再被 thinking 模式整条拒绝（HTTP 400）。标记不冒充思维链原文；从没出现过思维链的会话不发这个项。
 
@@ -283,7 +287,7 @@ WillDeep CLI 是跨平台 AI Coding Agent 客户端。当前阶段通过用户�
 - 人类输出与 NDJSON 自动化输出；
 - `willdeep run` 默认通过持久 Runtime 执行，支持 Prompt/stdin、文本与图片附件、Session 续接、断开后继续、text/JSON/NDJSON、静默模式和稳定退出码；`--local` 保留显式进程内兼容入口；
 - Bash、Zsh、Fish、PowerShell 补全和 roff man page 从同一 Clap 命令树生成；
-- 顶层 `willdeep session list/get/turns/stop` 查询持久会话并精确停止其 active Turn；
+- 顶层 `willdeep session list/get/turns/stop` 查询持久会话并精确停止其 active Turn，输出末尾附 `parent=<来源会话 ID 或 none>`；
 - `willdeep doctor [--json] [--bundle PATH]` 在不联系 Provider 的前提下生成本地就绪诊断或私有脱敏 ZIP；
 - TOML 多 Provider Profile 与安全凭据引用；
 - 可选自建辅助模型复用单一 OpenAI-compatible 端点完成会话标题、上下文压缩和低置信度 Worker 路由；支持域名、局域网 IP 与回环地址显式免 Key，各职能独立开关，失败自动回退远端候选，模型路由不得改变关键词规则决定的层级与安全闸门；

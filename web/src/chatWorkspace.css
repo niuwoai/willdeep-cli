@@ -7,6 +7,12 @@
 .chat-sidebar .session-row { border-radius: 9px; margin-bottom: 3px; }
 .chat-sidebar .session-title { padding: 11px 9px; font-size: 13px; }
 .chat-sidebar .session-row.selected { --row-bg: var(--bg-panel); box-shadow: inset 2px 0 var(--accent); }
+/* 分凉出来的会话缩进，左侧一条竖线把它和来源连起来。 */
+.chat-sidebar .session-row.nested { margin-left: 14px; }
+.chat-sidebar .session-row.nested .session-title { position: relative; padding-left: 16px; }
+.chat-sidebar .session-row.nested .session-title::before { content: ""; position: absolute; left: 4px; top: -4px; bottom: -4px; border-left: 1px solid var(--border); }
+.session-active-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.session-lineage { display: block; margin-top: 2px; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-search { position: relative; margin: 4px 0 12px; }
 .session-search > svg { position: absolute; top: 10px; left: 10px; z-index: 1; color: var(--text-faint); pointer-events: none; }
 .session-search input { padding-left: 32px; border-color: transparent; background: var(--bg-page); border-radius: 8px; font-size: 12px; }
@@ -63,6 +69,7 @@
   .conversation-project { font-size: 10px; }
   .conversation-location h1 { font-size: 13px; max-width: 32vw; }
   .conversation-project { max-width: 32vw; overflow: hidden; white-space: nowrap; }
+  .session-lineage { max-width: 32vw; }
   .conversation-tools { gap: 2px; }
   .conversation-tools > aside > details > summary > span:not(.peer-unread):not(.task-count), .conversation-tools > aside > details > summary > svg:last-child { display: none; }
   .conversation-tools > aside > details > summary { min-height: 38px; min-width: 38px; justify-content: center; }

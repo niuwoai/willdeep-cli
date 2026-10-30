@@ -81,6 +81,10 @@ pub struct Session {
     /// 之前的会话文件里没有它，而它们的标题只能靠占位符判定来接管。
     #[serde(default)]
     pub title_source: TitleSource,
+    /// 这条会话是从哪条分凉出来的，只记直接来源。缺省表示本来就没有，
+    /// 或是这个字段出现之前的会话。不进执行指纹：它是身份，不是对话内容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<Uuid>,
     pub workspace: PathBuf,
     pub profile: Option<String>,
     #[serde(default)]
@@ -140,6 +144,8 @@ impl Session {
         fork.created_at = now();
         fork.updated_at = fork.created_at;
         fork.swift_source = None;
+        // 克隆会把母会话自己的来源一带过来。分凉只该指向刚被复制的那一条，由调用方再写。
+        fork.started_by = None;
         fork
     }
 
@@ -158,6 +164,7 @@ impl Session {
             } else {
                 TitleSource::Derived
             },
+            started_by: None,
             workspace,
             profile,
             model: None,
@@ -221,6 +228,8 @@ impl Session {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionDigest {
     pub id: Uuid,
+    /// 直接分凉来源。旧文件与 Xedit 桥接会话没有它。
+    pub started_by: Option<Uuid>,
     pub title: String,
     pub workspace: PathBuf,
     pub created_at: u64,
@@ -610,6 +619,8 @@ fn cached_digest(
 #[derive(Deserialize)]
 struct LocalDigestProbe {
     id: Uuid,
+    #[serde(default)]
+    started_by: Option<Uuid>,
     title: String,
     workspace: PathBuf,
     created_at: u64,
@@ -721,6 +732,7 @@ fn local_digest(path: &Path, _metadata: &std::fs::Metadata) -> Option<SessionDig
     let probe: LocalDigestProbe = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     Some(SessionDigest {
         id: probe.id,
+        started_by: probe.started_by,
         title: probe.title,
         workspace: probe.workspace,
         created_at: probe.created_at,
@@ -766,6 +778,7 @@ fn swift_digest(path: &Path, metadata: &std::fs::Metadata) -> Option<SessionDige
     let updated = fingerprint(metadata).0 / 1_000_000_000;
     Some(SessionDigest {
         id: probe.id,
+        started_by: None,
         title: probe.title.unwrap_or_else(|| "Swift session".to_owned()),
         workspace: PathBuf::from(workspace),
         created_at: updated,
@@ -880,6 +893,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
             .to_owned(),
         // Xedit 有自己的两级标题流程，桥接过来的标题按既成事实读，不重算。
         title_source: TitleSource::Legacy,
+        started_by: None,
         workspace: PathBuf::from(workspace),
         profile: None,
         model: None,
@@ -1126,6 +1140,65 @@ mod tests {
         assert_eq!(stale.title, saved.title);
         let json = serde_json::to_value(saved).unwrap();
         assert!(json.get("metadata_baseline").is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 分凉来源是身份，不是对话内容：后写的快照没带它，不能把已经记下的来源抹掉；
+    /// 分凉快照本身也不继承母会话的来源。
+    #[test]
+    fn started_by_survives_a_later_save_and_forks_do_not_inherit_it() {
+        let root = std::env::temp_dir().join(format!("willdeep-lineage-{}", Uuid::new_v4()));
+        let store = SessionStore::new(&root);
+        let mut parent = Session::new(root.clone(), None, "parent");
+        let parent_id = parent.id;
+        store.save(&mut parent).unwrap();
+
+        let mut child = parent.fork_snapshot();
+        assert_eq!(child.started_by, None, "快照不带母会话的来源");
+        child.started_by = Some(parent_id);
+        store.save(&mut child).unwrap();
+
+        let mut stale = store.load_baselined(child.id).unwrap();
+        stale.started_by = None;
+        stale
+            .messages
+            .push(Message::assistant("later execution", Vec::new()));
+        store.save(&mut stale).unwrap();
+        let saved = store.load(child.id).unwrap();
+        assert_eq!(saved.started_by, Some(parent_id));
+        assert_eq!(saved.messages.last().unwrap().content, "later execution");
+
+        let grandchild = saved.fork_snapshot();
+        assert_eq!(grandchild.started_by, None, "再分凉一次不能继承祖父");
+
+        let digest = store
+            .digests()
+            .into_iter()
+            .find(|digest| digest.id == child.id)
+            .unwrap();
+        assert_eq!(digest.started_by, Some(parent_id));
+
+        // 这个字段出现之前的文件没有它，读出来是空，列表也不能因此少一条。
+        let legacy = serde_json::json!({
+            "version": saved.version,
+            "id": Uuid::new_v4(),
+            "title": "old",
+            "workspace": root,
+            "created_at": 1,
+            "updated_at": 2,
+            "messages": []
+        });
+        let decoded: Session = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(decoded.started_by, None);
+        std::fs::write(
+            root.join("sessions").join(format!("{}.json", decoded.id)),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            store.digests().iter().any(|digest| digest.id == decoded.id),
+            "缺字段的旧会话不能从列表里消失"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

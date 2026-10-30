@@ -882,6 +882,7 @@ fn public_session(
         profile: session.profile,
         model: session.model,
         approval_mode: session.approval_mode.map(workspace_store::public_access),
+        started_by: session.started_by,
         status: public_session_status(session.status),
         active_turn_id: session.active_turn_id,
         created_at: session.created_at,
@@ -943,6 +944,7 @@ fn public_session_search_result(
             session_store::SessionOrigin::Local => willdeep_runtime_protocol::SessionOrigin::Local,
             session_store::SessionOrigin::Xedit => willdeep_runtime_protocol::SessionOrigin::Xedit,
         },
+        started_by: result.started_by,
     }
 }
 

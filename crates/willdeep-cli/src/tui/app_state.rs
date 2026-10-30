@@ -161,6 +161,7 @@ impl App {
             attention_deny_rect: Rect::default(),
             search: None,
             workspace: None,
+            session_lineage: None,
             palette: None,
             palette_rect: Rect::default(),
             palette_hits: Vec::new(),
@@ -294,6 +295,7 @@ impl App {
         self.pending_session_switch = None;
         self.attention_read = session.attention_read.clone();
         self.workspace = Some(session.workspace.clone());
+        self.session_lineage = None;
         self.workspace_status = workspace_status(&session.workspace, self.language);
         self.workspace_attention = workspace_attention(&session.workspace);
         self.focus = FocusPane::Prompt;

@@ -312,6 +312,7 @@ pub(super) async fn event_loop(
     app.workspace_attention = workspace_attention(&session.workspace);
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
+    refresh_session_lineage(&mut app, session, store);
     if let Ok(display) = crate::daemon::turn_queue::display_session(&runtime.home, session) {
         app.transcript = session_transcript(&display, app.language);
     }
@@ -593,7 +594,7 @@ pub(super) async fn event_loop(
             );
         }
         load_attention_diagnostics(&mut app, runtime);
-        draw(term, &mut app, &runtime.skills)?;
+        draw(term, &mut app, &runtime.skills, session)?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
             _ = async {
@@ -1236,7 +1237,7 @@ pub(super) async fn event_loop(
                                     Ok(result)=>{
                                         // Runtime 已经把会话截断落盘；本地这份是旧的，整份重读再重画。
                                         match store.load_baselined(session.id) {
-                                            Ok(loaded)=>{*session=loaded;app.load_session(session);},
+                                            Ok(loaded)=>{*session=loaded;app.load_session(session);refresh_session_lineage(&mut app,session,store);},
                                             Err(error)=>app.notice=Some(format!("{}: {error}",language.text("重新读取会话失败","Reload Session failed","セッションの再読込に失敗"))),
                                         }
                                         app.append_transcript(rewind_summary(&result,step,language));

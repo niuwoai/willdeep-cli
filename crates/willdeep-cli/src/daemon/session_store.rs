@@ -35,6 +35,10 @@ pub(crate) struct RuntimeSession {
     pub schema: u32,
     pub id: uuid::Uuid,
     pub root_agent_id: uuid::Uuid,
+    /// 直接分凉来源。只有 `fork_through` 写它；旧记录没有这个字段，
+    /// 没有来源的会话写回时也不带它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<uuid::Uuid>,
     pub workspace: PathBuf,
     pub profile: Option<String>,
     #[serde(default)]
@@ -277,6 +281,8 @@ pub(crate) enum SessionOrigin {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct RuntimeSessionSearchResult {
     pub(super) id: uuid::Uuid,
+    /// 直接分凉来源。未登记的本地与 Xedit 会话没有它。
+    pub(super) started_by: Option<uuid::Uuid>,
     pub(super) title: String,
     pub(super) workspace: PathBuf,
     pub(super) status: RuntimeSessionStatus,
@@ -530,6 +536,7 @@ impl RuntimeSessionStore {
             schema: RUNTIME_SESSION_SCHEMA,
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
+            started_by: None,
             workspace,
             profile: core.profile.clone(),
             model: core.model.clone(),
@@ -663,12 +670,15 @@ impl RuntimeSessionStore {
         core.swift_source = None;
         core.profile = target_profile.clone();
         core.model = model.clone().or_else(|| source.model.clone());
+        // 来源由服务端按被分凉的那条绑定。请求里没有这个字段，客户端写不了。
+        core.started_by = Some(id);
         self.core.save(&mut core)?;
         let fork = RuntimeSession {
             human_wait_yield_suppressed: false,
             schema: RUNTIME_SESSION_SCHEMA,
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
+            started_by: Some(id),
             workspace: source.workspace,
             profile: target_profile,
             model: core.model.clone(),
@@ -955,6 +965,7 @@ impl RuntimeSessionStore {
             }
             results.push(RuntimeSessionSearchResult {
                 id: session.id,
+                started_by: session.started_by.or(core.started_by),
                 title: core.title,
                 workspace: session.workspace,
                 status: session.status,
@@ -1049,6 +1060,7 @@ impl RuntimeSessionStore {
             };
             results.push(RuntimeSessionSearchResult {
                 id: digest.id,
+                started_by: digest.started_by,
                 title: digest.title,
                 workspace: digest_workspace,
                 status: RuntimeSessionStatus::Idle,
@@ -2332,7 +2344,7 @@ pub(super) async fn search_sessions_cli(
     )?;
     for result in results {
         println!(
-            "{}\t{:?}\tprofile={}\tmodel={}\tmessages={}\t{}\t{}\t{}",
+            "{}\t{:?}\tprofile={}\tmodel={}\tmessages={}\t{}\t{}\t{}\tparent={}",
             result.id,
             result.status,
             result.profile.as_deref().unwrap_or("default"),
@@ -2340,7 +2352,10 @@ pub(super) async fn search_sessions_cli(
             result.message_count,
             result.title,
             result.workspace.as_deref().unwrap_or("private"),
-            result.snippet.as_deref().unwrap_or("")
+            result.snippet.as_deref().unwrap_or(""),
+            result
+                .started_by
+                .map_or_else(|| "none".to_owned(), |id| id.to_string())
         );
     }
     Ok(())
@@ -2596,7 +2611,7 @@ fn cli_api_data<T>(response: willdeep_runtime_protocol::ApiResponse<T>) -> Resul
 
 fn print_public_session(session: &willdeep_runtime_protocol::RuntimeSession) {
     println!(
-        "{}\t{:?}\tprofile={}\tmodel={}\tagent={}\tactive_turn={}\t{}",
+        "{}\t{:?}\tprofile={}\tmodel={}\tagent={}\tactive_turn={}\t{}\tparent={}",
         session.id,
         session.status,
         session.profile.as_deref().unwrap_or("default"),
@@ -2605,7 +2620,10 @@ fn print_public_session(session: &willdeep_runtime_protocol::RuntimeSession) {
         session
             .active_turn_id
             .map_or_else(|| "none".to_owned(), |id| id.to_string()),
-        session.workspace.as_deref().unwrap_or("private")
+        session.workspace.as_deref().unwrap_or("private"),
+        session
+            .started_by
+            .map_or_else(|| "none".to_owned(), |id| id.to_string())
     );
 }
 
@@ -2625,7 +2643,7 @@ fn print_public_turn(turn: &willdeep_runtime_protocol::RuntimeTurn) {
 
 fn print_session(session: &RuntimeSession) {
     println!(
-        "{}\t{:?}\tprofile={}\tmodel={}\tagent={}\tactive_turn={}\t{}",
+        "{}\t{:?}\tprofile={}\tmodel={}\tagent={}\tactive_turn={}\t{}\tparent={}",
         session.id,
         session.status,
         session.profile.as_deref().unwrap_or("default"),
@@ -2634,7 +2652,10 @@ fn print_session(session: &RuntimeSession) {
         session
             .active_turn_id
             .map_or_else(|| "none".to_owned(), |id| id.to_string()),
-        session.workspace.display()
+        session.workspace.display(),
+        session
+            .started_by
+            .map_or_else(|| "none".to_owned(), |id| id.to_string())
     );
 }
 

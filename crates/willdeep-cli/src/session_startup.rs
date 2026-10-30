@@ -369,6 +369,7 @@ mod tests {
     fn layout_has_single_line_actions_and_inert_gap_in_all_languages() {
         let digest = SessionDigest {
             id: uuid::Uuid::new_v4(),
+            started_by: None,
             title: "previous task".into(),
             workspace: "/project".into(),
             created_at: 1,
