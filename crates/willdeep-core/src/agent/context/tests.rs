@@ -311,6 +311,87 @@ async fn urgent_recent_batches_are_archived_as_groups() {
     );
 }
 
+/// 压缩会丢掉带思维链的工具批次，留下来的尾部又常常没吐过思维链。
+/// 摘要自己得留下回传标记，否则下一轮 Responses 请求不再补 `reasoning_text`。
+#[tokio::test]
+async fn compression_keeps_reasoning_replay_marker_after_real_reasoning_is_dropped() {
+    let (agent, _) = agent(WINDOW);
+    let mut messages = history();
+    let reasoned_until = messages.len().saturating_sub(8);
+    for message in &mut messages[..reasoned_until] {
+        if message.role == Role::Assistant {
+            message.reasoning = Some("先看这个文件".into());
+        }
+    }
+    let mut cache = None;
+    let result = agent.request_messages(&messages, &mut cache).await.unwrap();
+    assert_replay_marker_is_only_on_the_summary(&result);
+
+    push_batch(&mut messages, 100);
+    let again = agent.request_messages(&messages, &mut cache).await.unwrap();
+    assert_replay_marker_is_only_on_the_summary(&again);
+}
+
+/// 从没出现过思维链的会话不能凭空多出这个标记，否则严格校验的上游会看到未知字段。
+#[tokio::test]
+async fn compression_does_not_invent_a_reasoning_replay_marker() {
+    let (agent, _) = agent(WINDOW);
+    let result = agent.request_messages(&history(), &mut None).await.unwrap();
+    assert!(
+        result
+            .iter()
+            .any(|message| message.content.contains("<context-summary")),
+        "the fixture must actually compress"
+    );
+    assert!(result.iter().all(|message| message.reasoning.is_none()));
+}
+
+#[tokio::test]
+async fn archived_batch_keeps_reasoning_replay_marker_only_if_that_batch_had_reasoning() {
+    let (agent, _) = agent(4_096);
+    let reasoned = ToolCall {
+        id: "reasoned".into(),
+        name: "read_file".into(),
+        arguments: "{}".into(),
+    };
+    let plain = ToolCall {
+        id: "plain".into(),
+        name: "read_file".into(),
+        arguments: "{}".into(),
+    };
+    let mut messages = vec![
+        Message::user("go"),
+        Message::assistant("", vec![reasoned.clone()]).with_reasoning(Some("先看".into())),
+        Message::tool(&reasoned, "r".repeat(8_000)),
+        Message::assistant("", vec![plain.clone()]),
+        Message::tool(&plain, "p".repeat(8_000)),
+        Message::user("tail stays"),
+    ];
+    let removed = agent.archive_old_batches(&mut messages, 600).unwrap();
+    assert!(removed > 0);
+    assert_eq!(messages[1].reasoning.as_deref(), Some(""));
+    assert!(messages[1].content.contains("Earlier tool batch"));
+    assert!(messages[2].reasoning.is_none());
+    assert!(messages[2].content.contains("Earlier tool batch"));
+    assert_eq!(messages.last().unwrap().content, "tail stays");
+    assert_pairs(&messages);
+}
+
+fn assert_replay_marker_is_only_on_the_summary(messages: &[Message]) {
+    let summaries: Vec<_> = messages
+        .iter()
+        .filter(|message| message.content.contains("<context-summary"))
+        .collect();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].reasoning.as_deref(), Some(""));
+    assert!(
+        messages.iter().all(|message| {
+            message.content.contains("<context-summary") || message.reasoning.is_none()
+        }),
+        "kept messages must not grow a reasoning field of their own"
+    );
+}
+
 #[tokio::test]
 async fn hosted_compressor_receives_structured_transcript_without_duplicate_prompt() {
     let (mut agent, _) = agent(WINDOW);

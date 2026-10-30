@@ -71,6 +71,62 @@ fn thinking_history_backfills_empty_reasoning_before_every_assistant_message() {
     assert_eq!(wire[5]["type"], "function_call");
 }
 
+/// rc5 的补空只认非空原文。压缩把最后一段原文替换掉之后，摘要上只剩一个空标记，
+/// 后面的工具轮又没吐思维链。标记也得算「历史里出现过思维链」，否则下一轮整条 400。
+#[test]
+fn compression_replay_marker_backfills_reasoning_after_real_text_is_gone() {
+    let call = ToolCall {
+        id: "call-1".into(),
+        name: "run".into(),
+        arguments: "{}".into(),
+    };
+    let history = vec![
+        Message::user("继续"),
+        Message::assistant(
+            "<context-summary source=\"derived-untrusted-history\">\nOBJECTIVE: fix\n</context-summary>",
+            Vec::new(),
+        )
+        .with_reasoning_replay_marker(),
+        Message::assistant("", vec![call.clone()]),
+        Message::tool(&call, "ok"),
+    ];
+    let (_, input) = encode_input(&history);
+    let wire = serde_json::to_value(input).unwrap();
+    let reasoning: Vec<_> = wire
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .collect();
+    assert_eq!(reasoning.len(), 2, "{wire}");
+    for item in reasoning {
+        assert_eq!(
+            item["content"][0],
+            json!({"type":"reasoning_text","text":""})
+        );
+    }
+    assert!(
+        wire.as_array().unwrap().iter().any(|item| {
+            item["type"] == "message"
+                && item["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("OBJECTIVE"))
+        }),
+        "the summary stays a message, not reasoning text: {wire}"
+    );
+    let kinds: Vec<_> = wire
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["type"].as_str().unwrap())
+        .collect();
+    let call_at = kinds
+        .iter()
+        .position(|kind| *kind == "function_call")
+        .unwrap();
+    assert_eq!(kinds[call_at - 1], "reasoning");
+}
+
 /// 没见过思维链的端点不能凭空多出 reasoning 项：严格校验的上游会拒未知项。
 #[test]
 fn history_without_reasoning_sends_no_reasoning_item() {
