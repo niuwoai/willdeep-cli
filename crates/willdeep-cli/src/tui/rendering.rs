@@ -53,12 +53,14 @@ impl App {
             .expect("prepared history")
             .text;
         self.transcript_rows.truncate(history.lines.len());
-        let transient = self.live_transcript_row().map_or_else(Text::default, |row| {
-            wrap_styled_text(
-                colored_transcript_at_width(&[row], search.as_deref(), self.transcript_width),
-                self.transcript_width,
-            )
-        });
+        let transient = self
+            .live_transcript_row()
+            .map_or_else(Text::default, |row| {
+                wrap_styled_text(
+                    colored_transcript_at_width(&[row], search.as_deref(), self.transcript_width),
+                    self.transcript_width,
+                )
+            });
         self.transcript_rows.extend(text_rows(&transient));
         self.transcript_height = history.lines.len() + transient.lines.len();
         transient

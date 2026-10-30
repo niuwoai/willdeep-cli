@@ -118,8 +118,7 @@ impl App {
     /// 正文显示最近一段回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
     /// 摆在这里——干活过程中永远只有这一行在变，收尾才写进记录。
     pub(super) fn live_transcript_row(&self) -> Option<String> {
-        self.transient_row()
-            .or_else(|| self.concise_status_row())
+        self.transient_row().or_else(|| self.concise_status_row())
     }
 
     /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
@@ -147,7 +146,11 @@ impl App {
             .map_or(Duration::ZERO, |started| started.elapsed());
         let mut one_line = String::new();
         for character in held.chars() {
-            one_line.push(if character.is_whitespace() { ' ' } else { character });
+            one_line.push(if character.is_whitespace() {
+                ' '
+            } else {
+                character
+            });
             if one_line.chars().count() >= THOUGHT_PREVIEW_CHARS {
                 break;
             }
@@ -806,7 +809,11 @@ impl App {
         // 相同就落这一段，正文在它前面拼了提示就两段都落。之后清掉，免得
         // 轮次复位再补写一遍。
         let held = self.held_narration.take();
-        if let Some(held) = held.as_deref().map(str::trim).filter(|held| !held.is_empty()) {
+        if let Some(held) = held
+            .as_deref()
+            .map(str::trim)
+            .filter(|held| !held.is_empty())
+        {
             let narrated = self.turn_narration.as_deref().map(str::trim);
             if narrated == Some(held)
                 && let Some(head) = &remainder
@@ -1435,8 +1442,14 @@ mod tests {
         );
         let row = app.live_transcript_row().unwrap();
         assert!(row.contains("再改这一行"), "{row}");
-        assert!(!row.contains("先看日志"), "only the latest line shows: {row}");
-        assert!(row.contains('s'), "the status row carries the elapsed time: {row}");
+        assert!(
+            !row.contains("先看日志"),
+            "only the latest line shows: {row}"
+        );
+        assert!(
+            row.contains('s'),
+            "the status row carries the elapsed time: {row}"
+        );
 
         // 流式增量压过状态行；定稿后又回到状态行。
         app.stream_transient(StreamKind::Reply, "正在写");
