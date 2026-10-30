@@ -37,9 +37,7 @@ pub fn legacy_rules_file() -> Option<PathBuf> {
 fn willdeep_home() -> Option<PathBuf> {
     std::env::var_os("WILLDEEP_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".willdeep"))
-        })
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".willdeep")))
         .or_else(|| {
             std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".willdeep"))
         })
@@ -85,7 +83,12 @@ pub fn load(configured: Option<&[String]>) -> LoadedRules {
         Some(files) => files.to_vec(),
         None => match legacy_rules_file() {
             Some(path) if path.is_file() => vec![path.display().to_string()],
-            _ => return LoadedRules { text: String::new(), sources: Vec::new() },
+            _ => {
+                return LoadedRules {
+                    text: String::new(),
+                    sources: Vec::new(),
+                };
+            }
         },
     };
     render(&paths)
@@ -138,11 +141,18 @@ pub fn render(configured_paths: &[String]) -> LoadedRules {
             }),
         }
     }
-    LoadedRules { text: compose(&bodies, &sources), sources }
+    LoadedRules {
+        text: compose(&bodies, &sources),
+        sources,
+    }
 }
 
 fn compose(bodies: &[(String, String)], sources: &[RuleSource]) -> String {
-    if bodies.is_empty() && sources.iter().all(|source| source.status == RuleStatus::Missing) {
+    if bodies.is_empty()
+        && sources
+            .iter()
+            .all(|source| source.status == RuleStatus::Missing)
+    {
         return String::new();
     }
     let mut sections = Vec::new();
@@ -162,12 +172,14 @@ fn compose(bodies: &[(String, String)], sources: &[RuleSource]) -> String {
     let notes: Vec<String> = sources
         .iter()
         .filter_map(|source| match &source.status {
-            RuleStatus::Unreadable { reason } => {
-                Some(format!("Rule {} was not loaded: {reason}", source.resolved.display()))
-            }
-            RuleStatus::Skipped { reason } => {
-                Some(format!("Rule {} was skipped: {reason}", source.resolved.display()))
-            }
+            RuleStatus::Unreadable { reason } => Some(format!(
+                "Rule {} was not loaded: {reason}",
+                source.resolved.display()
+            )),
+            RuleStatus::Skipped { reason } => Some(format!(
+                "Rule {} was skipped: {reason}",
+                source.resolved.display()
+            )),
             RuleStatus::Loaded { .. } | RuleStatus::Missing => None,
         })
         .collect();
@@ -179,7 +191,11 @@ fn compose(bodies: &[(String, String)], sources: &[RuleSource]) -> String {
 
 enum Read {
     Missing,
-    Body { text: String, bytes: usize, files: usize },
+    Body {
+        text: String,
+        bytes: usize,
+        files: usize,
+    },
 }
 
 fn read_rule(path: &Path, remaining: usize) -> Result<Read, String> {
@@ -217,7 +233,9 @@ fn read_rule(path: &Path, remaining: usize) -> Result<Read, String> {
         } else {
             format!(
                 "# {}\n{trimmed}",
-                file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
+                file.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
             )
         };
         parts.push(body);
@@ -225,7 +243,11 @@ fn read_rule(path: &Path, remaining: usize) -> Result<Read, String> {
     if parts.is_empty() {
         return Ok(Read::Missing);
     }
-    Ok(Read::Body { text: parts.join("\n\n"), bytes, files: parts.len() })
+    Ok(Read::Body {
+        text: parts.join("\n\n"),
+        bytes,
+        files: parts.len(),
+    })
 }
 
 fn markdown_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
@@ -258,9 +280,7 @@ fn read_bounded(path: &Path) -> Result<String, String> {
             path.display()
         ));
     }
-    String::from_utf8(buffer).map_err(|_| {
-        format!("{} is not valid UTF-8", path.display())
-    })
+    String::from_utf8(buffer).map_err(|_| format!("{} is not valid UTF-8", path.display()))
 }
 
 fn resolve(configured: &str) -> PathBuf {
@@ -282,7 +302,10 @@ fn expand_tilde(value: &str) -> String {
         return value.to_owned();
     }
     match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        Some(home) => Path::new(&home).join(rest.trim_start_matches(['/', '\\'])).display().to_string(),
+        Some(home) => Path::new(&home)
+            .join(rest.trim_start_matches(['/', '\\']))
+            .display()
+            .to_string(),
         None => value.to_owned(),
     }
 }
@@ -319,7 +342,10 @@ pub fn editable_rule_path(configured: &str) -> Result<PathBuf, String> {
         return Err("规则路径不能包含 ..".to_owned());
     }
     let path = resolve(configured.trim());
-    if path.components().any(|part| matches!(part, Component::ParentDir)) {
+    if path
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
         return Err("规则路径不能包含 ..".to_owned());
     }
     Ok(path)
@@ -347,12 +373,18 @@ mod tests {
         let loaded = render(&[root.display().to_string()]);
 
         assert_eq!(loaded.sources.len(), 1);
-        assert!(matches!(loaded.sources[0].status, RuleStatus::Loaded { files: 2, .. }));
+        assert!(matches!(
+            loaded.sources[0].status,
+            RuleStatus::Loaded { files: 2, .. }
+        ));
         let first = loaded.text.find("first").unwrap();
         let second = loaded.text.find("second").unwrap();
         assert!(first < second, "files must come in name order");
         assert!(!loaded.text.contains("ignored"));
-        assert!(!loaded.text.contains("too deep"), "subdirectories are not scanned");
+        assert!(
+            !loaded.text.contains("too deep"),
+            "subdirectories are not scanned"
+        );
         assert!(loaded.text.contains("Later rules are more specific"));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -369,9 +401,15 @@ mod tests {
         ]);
 
         assert!(matches!(loaded.sources[0].status, RuleStatus::Missing));
-        assert!(matches!(loaded.sources[1].status, RuleStatus::Unreadable { .. }));
+        assert!(matches!(
+            loaded.sources[1].status,
+            RuleStatus::Unreadable { .. }
+        ));
         assert!(loaded.text.contains("not valid UTF-8"));
-        assert!(!loaded.text.contains("Global rules."), "no readable rule, no preamble");
+        assert!(
+            !loaded.text.contains("Global rules."),
+            "no readable rule, no preamble"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -383,9 +421,15 @@ mod tests {
 
         let loaded = render(&[path.display().to_string()]);
 
-        assert!(matches!(loaded.sources[0].status, RuleStatus::Unreadable { .. }));
+        assert!(matches!(
+            loaded.sources[0].status,
+            RuleStatus::Unreadable { .. }
+        ));
         assert!(loaded.text.contains("exceeds"));
-        assert!(!loaded.text.contains(&"x".repeat(100)), "nothing was injected");
+        assert!(
+            !loaded.text.contains(&"x".repeat(100)),
+            "nothing was injected"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -408,7 +452,10 @@ mod tests {
         assert!(written.is_file());
         std::fs::write(&written, "user edited").unwrap();
 
-        assert!(seed_bundled_rules().unwrap().is_none(), "an existing dir is left alone");
+        assert!(
+            seed_bundled_rules().unwrap().is_none(),
+            "an existing dir is left alone"
+        );
         assert_eq!(std::fs::read_to_string(&written).unwrap(), "user edited");
 
         unsafe { std::env::remove_var("WILLDEEP_HOME") };

@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.134.0-rc8] - 2026-10-31
+
+### Fixed
+- 补上 `rustfmt`。0.134.0-rc7 的 `rules.rs`、`prompt.rs` 和 `lib.rs` 格式不通过，Ubuntu 的 `cargo fmt --check` 因此失败。功能与 rc7 相同。rc7 的 tag 已指向 CI 不通过的提交，按发版规则不移动，递增 rc 重发。
+
 ## [0.134.0-rc7] - 2026-10-31
 
 ### Added
