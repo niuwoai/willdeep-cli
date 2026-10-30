@@ -49,6 +49,7 @@ impl App {
             runtime_turn_settled: false,
             goal: None,
             response_style: None,
+            compression: None,
             mobile_status: None,
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
@@ -263,6 +264,7 @@ impl App {
         self.runtime_turn = false;
         self.turn_narration = None;
         self.held_narration = None;
+        self.compression = None;
         self.discard_pending_approvals();
         self.discard_pending_questions();
         self.scroll_from_bottom = 0;
@@ -1166,6 +1168,8 @@ impl App {
         // 轮次结束，句柄就作废了；留着会让下一次 Esc 对着一个已完成的 Task 空掐。
         self.local_turn = None;
         self.transient_thought = None;
+        // 轮次结束时压缩要么早完成了，要么被中断了，这行都不该再留着。
+        self.compression = None;
         // 没被交回排队的插话已经送进了任务，收尾时补上，一句都不丢。
         self.flush_deferred_steering();
         self.turn_narration = None;
@@ -1332,6 +1336,8 @@ impl App {
         self.turn_first_reply = None;
         self.turn_narration = None;
         self.held_narration = None;
+        // 上一轮没收尾的压缩行不许跨轮残留：新一轮的压缩会重新开始计时。
+        self.compression = None;
         self.progress_log.clear();
         self.record_progress(initial_progress);
     }

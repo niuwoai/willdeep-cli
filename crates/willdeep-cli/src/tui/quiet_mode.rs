@@ -58,11 +58,11 @@ pub(super) fn render(
     };
     app.transcript_width = app.transcript_rect.width.saturating_sub(2).max(1) as usize;
     app.viewport_height = app.transcript_rect.height.max(1) as usize;
-    let transient = app.prepare_transcript_frame();
+    let (transient, notice) = app.prepare_transcript_frame();
     let max = app.max_scroll();
     app.scroll_from_bottom = app.scroll_from_bottom.min(max);
     let offset = max.saturating_sub(app.scroll_from_bottom);
-    let colored = app.transcript_viewport(&transient, offset);
+    let colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
     app.transcript_render_offset = offset;
     app.update_user_message_hits(offset, app.transcript_rect.y);
     app.thought_hit_rows = colored
