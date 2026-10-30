@@ -1304,14 +1304,15 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
         {
             bail!("subagents.{name}.tool_output_limit must be between 1024 and 131072");
         }
-        // 上限取内置里最能跑的那个工种（ops_runner 的 32）。卡在 24 的时候，
-        // 用户连内置默认值都抄不下来——config.example.toml 自己就因此校验
-        // 不过，而那份示例正是让人照抄的。
+        // 与 `[agent] max_turns` 同一个上限。早先卡在内置最大值 32，那是
+        // 为了让 ops_runner 的默认值能写进示例，不是运行时的能力边界：
+        // 跑超上限只是交出部分结果，不判失败。两边不一致的代价是配置页
+        // 能存下 128，下一次任务加载时才报错。
         if subagent
             .max_turns
-            .is_some_and(|value| !(1..=32).contains(&value))
+            .is_some_and(|value| !(1..=MAX_TURNS_CEILING).contains(&value))
         {
-            bail!("subagents.{name}.max_turns must be between 1 and 32");
+            bail!("subagents.{name}.max_turns must be between 1 and {MAX_TURNS_CEILING}");
         }
         if subagent
             .token_budget
@@ -1517,6 +1518,42 @@ mod tests {
         );
         let defaults: ConfigFile = toml::from_str("[agent]\nmax_turns = 4\n").unwrap();
         assert!(defaults.agent.verification_commands.is_empty());
+    }
+
+    /// 子代理的回合上限与主会话同一个天花板。曾经卡在 32：配置页不校验区间，
+    /// 存得下更大的值，任务加载时才拒绝。
+    #[test]
+    fn subagent_max_turns_shares_the_agent_ceiling() {
+        let parsed: ConfigFile =
+            toml::from_str("version = 1\n[subagents.implementer]\nmax_turns = 128\n").unwrap();
+        assert_eq!(
+            parsed.subagents["implementer"].max_turns,
+            Some(128),
+            "128 is a value the settings panel can store"
+        );
+        let complaint = validate(&parsed, Path::new("config.toml"))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(
+            !complaint.contains("max_turns"),
+            "a storable value must load: {complaint}"
+        );
+
+        let over: ConfigFile = toml::from_str(&format!(
+            "version = 1\n[subagents.implementer]\nmax_turns = {}\n",
+            MAX_TURNS_CEILING + 1
+        ))
+        .unwrap();
+        let error = validate(&over, Path::new("config.toml"))
+            .expect_err("above the ceiling is rejected")
+            .to_string();
+        assert!(
+            error.contains(&format!(
+                "subagents.implementer.max_turns must be between 1 and {MAX_TURNS_CEILING}"
+            )),
+            "{error}"
+        );
     }
 
     /// 轮次上限放到 200 之后，token 预算是唯一的自动闸门：区间必须校验，不写不限。

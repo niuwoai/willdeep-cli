@@ -788,6 +788,7 @@ module WilldeepConfig
         "source" => present ? "file" : "default", "options" => field[:options],
         "optionLabels" => field[:optionLabels], "ref" => field[:ref],
         "description" => field[:description], "presets" => field[:presets],
+        "min" => field[:min], "max" => field[:max],
         "virtual" => field[:virtual] ? true : nil
       }
       if field[:secret]
@@ -822,7 +823,8 @@ module WilldeepConfig
         "secret" => !!field[:secret], "default" => field[:default],
         "description" => field[:description], "options" => field[:options],
         "optionLabels" => field[:optionLabels], "ref" => field[:ref],
-        "presets" => field[:presets], "virtual" => field[:virtual] ? true : nil
+        "presets" => field[:presets], "min" => field[:min], "max" => field[:max],
+        "virtual" => field[:virtual] ? true : nil
       }
     end
 

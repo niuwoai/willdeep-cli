@@ -41,7 +41,7 @@ const I18N = {
     'tag.unknown': '未收录',
     'secret.none': '未设置', 'secret.note': '明文只在本页内存里，不会写进日志',
     'array.placeholder': '每行一项',
-    'err.int': '请输入整数', 'err.float': '请输入数字', 'err.range': '数值超出范围',
+    'err.int': '请输入整数', 'err.float': '请输入数字', 'err.range': '数值超出范围', 'err.bounds': '取值必须在 {min} 到 {max} 之间',
     'help.missingRef': '默认提供商指向的 [providers.{value}] 不存在，WillDeep 启动会找不到它',
     'help.refRemoving': '这个提供商将被删除，默认提供商会指向一个不存在的配置',
     'help.legacy': '这是旧写法，WillDeep 仍能识别；换成列表里的值更稳妥',
@@ -137,7 +137,7 @@ const I18N = {
     'tag.unknown': 'Unrecognized',
     'secret.none': 'Not set', 'secret.note': 'The plaintext stays in this page’s memory and is never logged',
     'array.placeholder': 'One item per line',
-    'err.int': 'Enter a whole number', 'err.float': 'Enter a number', 'err.range': 'Number out of range',
+    'err.int': 'Enter a whole number', 'err.float': 'Enter a number', 'err.range': 'Number out of range', 'err.bounds': 'Must be between {min} and {max}',
     'help.missingRef': '[providers.{value}] does not exist, so WillDeep will not find the default provider',
     'help.refRemoving': 'This provider is being deleted; the default provider would point to nothing',
     'help.legacy': 'This is a legacy spelling WillDeep still accepts; a listed value is safer',
@@ -217,11 +217,11 @@ const I18N_SCHEMA_EN = {
   'root.version': ['Config version'],
   'root.default_provider': ['Default provider', 'The id of a [providers.<id>] section'],
   'root.default_model': ['Default model', 'The model the default provider actually uses; saved as that provider’s model'],
-  'agent.max_turns': ['Max turns'],
+  'agent.max_turns': ['Max turns', '1 to 1000; otherwise the built-in default'],
   'agent.approval': ['Approval policy', 'Whether to ask before writing files, running commands or going online'],
   'agent.small_model_routing': ['Small-model routing', 'Send light tasks to a small model'],
   'agent.auto_dispatch_read_only': ['Auto-dispatch read-only work'],
-  'agent.max_deep_calls_per_harness': ['Max deep calls per session'],
+  'agent.max_deep_calls_per_harness': ['Max deep calls per session', '0 to 16'],
   'local_model.enabled': ['Enable local model'],
   'local_model.base_url': ['Server URL'],
   'local_model.summary_model': ['Summary model'],
@@ -241,17 +241,17 @@ const I18N_SCHEMA_EN = {
   'providers.api_base': ['API base URL'],
   'providers.api_key': ['API key'],
   'providers.model': ['This provider’s model'],
-  'providers.context_window': ['Context window', 'How much context this provider’s model holds; the status bar uses it'],
+  'providers.context_window': ['Context window', '4000 to 1048576; how much context this provider’s model holds; the status bar uses it'],
   'providers.max_output_tokens': ['Max output tokens', 'How many tokens one reply may generate'],
   'providers.vision_model': ['Vision fallback model'],
   'mcp_servers.command': ['Command'],
   'mcp_servers.args': ['Arguments'],
-  'mcp_servers.startup_timeout_seconds': ['Startup timeout (s)'],
+  'mcp_servers.startup_timeout_seconds': ['Startup timeout (s)', '1 to 300'],
   'mcp_servers.enabled': ['Enabled'],
   'subagents.provider_profile': ['Provider'],
   'subagents.model': ['Model'],
-  'subagents.max_turns': ['Max turns', '1 to 32; otherwise the role’s built-in default'],
-  'subagents.context_window': ['Context window'],
+  'subagents.max_turns': ['Max turns', '1 to 1000; otherwise the role’s built-in default'],
+  'subagents.context_window': ['Context window', '4000 to 1048576'],
   'subagents.token_budget': ['Token budget', '1000 to 10000000; a spent budget returns partial work instead of failing'],
   'subagents.timeout_seconds': ['Timeout (s)', '10 to 86400'],
   'subagents.max_consecutive_failures': ['Failure limit', '1 to 20'],
@@ -452,6 +452,11 @@ function parseInput(type, raw) {
     if (!/^[+-]?\d+$/.test(s)) return { error: t('err.int') };
     const n = Number(s);
     if (!Number.isSafeInteger(n)) return { error: t('err.range') };
+    // 区间写在 schema 上：不在这里拦，页面能存下运行时拒绝的值，下一次任务才报错
+    const field = parseInput.field;
+    if (field && ((field.min != null && n < field.min) || (field.max != null && n > field.max))) {
+      return { error: t('err.bounds', { min: field.min == null ? '' : field.min, max: field.max == null ? '' : field.max }) };
+    }
     return { value: n };
   }
   if (type === 'float') {
@@ -474,8 +479,9 @@ function parseInput(type, raw) {
 
 // 把一次输入落成编辑。original = { present, value, secret, plaintext }
 // 规则：改回原值就不算改动；清空时，键原本存在才记 unset，否则只是取消编辑。
-function commitValue(section, key, type, raw, original) {
+function commitValue(section, key, type, raw, original, field) {
   const ek = ekOf(section, key);
+  parseInput.field = field || null;
   const parsed = parseInput(type, raw);
   if (parsed.error) {
     drafts.set(ek, { raw: raw, error: parsed.error });
@@ -1264,7 +1270,7 @@ function handleFieldCommit(el) {
   const key = row.getAttribute('data-key');
   const info = S.fields.get(ekOf(section, key));
   if (!info) return;
-  commitValue(section, key, info.field.type, readRaw(el), originalOf(ekOf(section, key)));
+  commitValue(section, key, info.field.type, readRaw(el), originalOf(ekOf(section, key)), info.field);
   afterRowChange(section, key);
 }
 
@@ -1858,4 +1864,3 @@ function init() {
   applyContext(window.willdeep && typeof window.willdeep.getContext === 'function' ? window.willdeep.getContext() : {});
   loadSnapshot();
 }
-
