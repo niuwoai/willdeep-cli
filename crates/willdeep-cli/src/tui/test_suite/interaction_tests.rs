@@ -1233,6 +1233,7 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             message_count: 2,
             snippet: None,
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
+            started_by: None,
         },
         willdeep_runtime_protocol::SessionSearchResult {
             id: target_id,
@@ -1245,6 +1246,7 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             message_count: 8,
             snippet: Some("讨论 OAuth 登录".to_owned()),
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
+            started_by: None,
         },
     ]);
     assert!(matches!(
@@ -1342,6 +1344,7 @@ fn recent_session_results(count: u64) -> Vec<willdeep_runtime_protocol::SessionS
             message_count: 1,
             snippet: None,
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
+            started_by: None,
         })
         .collect()
 }
@@ -1452,9 +1455,10 @@ fn session_picker_line_leads_with_the_title_and_flags_bridged_sessions() {
         message_count: 22,
         snippet: None,
         origin: willdeep_runtime_protocol::SessionOrigin::Xedit,
+        started_by: None,
     };
     let line =
-        session_picker_ui::session_picker_result_line(&bridged, false, Language::ZhCn, false);
+        session_picker_ui::session_picker_result_line(&bridged, false, Language::ZhCn, false, 0);
     assert!(line.starts_with("  代码提交一下 [Xedit]"), "{line}");
     assert!(line.contains("22 条消息"), "{line}");
     assert!(
@@ -1468,7 +1472,7 @@ fn session_picker_line_leads_with_the_title_and_flags_bridged_sessions() {
         ..bridged.clone()
     };
     let line =
-        session_picker_ui::session_picker_result_line(&managed, false, Language::ZhCn, false);
+        session_picker_ui::session_picker_result_line(&managed, false, Language::ZhCn, false, 0);
     assert!(!line.contains('['), "{line}");
 }
 

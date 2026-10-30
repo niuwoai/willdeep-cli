@@ -120,6 +120,9 @@ impl Metadata {
         proposed
             .agent_control_requests
             .extend(&latest.agent_control_requests);
+        // 分凉来源写下之后不再改，也不进执行指纹。后写的快照如果没带它（手上还是
+        // 分凉之前加载的那份），不能把磁盘上已经记下的来源抹掉。
+        proposed.started_by = proposed.started_by.or(latest.started_by);
         Ok(())
     }
 }

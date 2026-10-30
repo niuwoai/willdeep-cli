@@ -130,8 +130,13 @@ struct SessionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<String>,
     workspace: String,
+    /// 创建时间。谱系行按它算「多久前分凉出来的」，不用 `updated_at`。
+    created_at: u64,
     updated_at: u64,
     pinned_at: Option<u64>,
+    /// 直接分凉来源的会话 id。没有来源时不下发，前端按普通会话画。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_by: Option<String>,
     archived: bool,
     active: bool,
     active_turn_id: Option<uuid::Uuid>,
@@ -1349,7 +1354,9 @@ async fn sessions(
                 title: session.title,
                 preview,
                 workspace: session.workspace.display().to_string(),
+                created_at: session.created_at,
                 updated_at: session.updated_at,
+                started_by: session.started_by.map(|id| id.to_string()),
                 pinned_at: session.pinned_at,
                 archived,
                 active,

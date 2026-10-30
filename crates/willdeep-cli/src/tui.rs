@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -473,6 +473,8 @@ struct App {
     attention_deny_rect: Rect,
     search: Option<SearchState>,
     workspace: Option<PathBuf>,
+    /// 打开的会话是从哪条分凉出来的，以及来源的标题。`None` 表示没有来源。
+    session_lineage: Option<(uuid::Uuid, String)>,
     palette: Option<PaletteState>,
     palette_rect: Rect,
     palette_hits: Vec<(u16, usize)>,
@@ -1360,6 +1362,7 @@ fn draw<B: ratatui::backend::Backend>(
     term: &mut Terminal<B>,
     app: &mut App,
     skills: &SkillCatalog,
+    session: &Session,
 ) -> Result<()> {
     term.draw(|f| {
         app.overlay_close_hits.clear();
@@ -1411,7 +1414,11 @@ fn draw<B: ratatui::backend::Backend>(
             .split(canvas);
         app.transcript_width = areas[0].width.saturating_sub(2).max(1) as usize;
         app.transcript_rect = areas[0];
-        app.viewport_height = areas[0].height.saturating_sub(2).max(1) as usize;
+        let lineage = session_lineage_line(app, session);
+        if lineage.is_some() {
+            app.transcript_rect.height = app.transcript_rect.height.saturating_sub(1);
+        }
+        app.viewport_height = app.transcript_rect.height.saturating_sub(2).max(1) as usize;
         let transient = app.prepare_transcript_frame();
         let max = app.max_scroll();
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
@@ -1508,8 +1515,26 @@ fn draw<B: ratatui::backend::Backend>(
                             Color::Blue
                         })),
                 ),
-            areas[0],
+            app.transcript_rect,
         );
+        // 分凉来源单独占标题正下方的一行，不进聊天记录，换会话时跟着换。
+        if let Some(lineage) = lineage
+            && app.transcript_rect.width > 2
+        {
+            let row = Rect {
+                x: app.transcript_rect.x + 1,
+                y: app.transcript_rect.y + app.transcript_rect.height,
+                width: app.transcript_rect.width.saturating_sub(2),
+                height: 1,
+            };
+            f.render_widget(
+                Paragraph::new(Line::styled(
+                    lineage,
+                    Style::default().fg(Color::DarkGray),
+                )),
+                row,
+            );
+        }
         if activity > 0 {
             app.activity_rect = areas[1];
             let text = if app.tools_expanded {
@@ -2345,6 +2370,68 @@ fn workspace_status(workspace: &std::path::Path, language: Language) -> String {
     )
 }
 
+/// 打开一条分凉出来的会话时，记下它的直接来源和来源标题。
+///
+/// 标题从会话摘要里取；摘要没有（来源被删了，或还没写过）就用 id 的前八位，
+/// 行里不能空着。没有来源的会话清掉上一行。
+fn refresh_session_lineage(app: &mut App, session: &Session, store: &SessionStore) {
+    let Some(parent) = session.started_by.filter(|parent| *parent != session.id) else {
+        app.session_lineage = None;
+        return;
+    };
+    let title = store
+        .digests()
+        .into_iter()
+        .find(|digest| digest.id == parent)
+        .map(|digest| digest.title)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| parent.simple().to_string()[..8].to_owned());
+    app.session_lineage = Some((parent, title));
+}
+
+/// 聊天区标题下的那一行：`分凉自「<来源>」 · <多久前>`。时间按子会话的创建时间算。
+fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
+    let (parent, title) = app.session_lineage.as_ref()?;
+    if session.started_by != Some(*parent) {
+        return None;
+    }
+    let title = if title.chars().count() > 32 {
+        format!("{}…", title.chars().take(31).collect::<String>())
+    } else {
+        title.clone()
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(session.created_at);
+    let elapsed = now.saturating_sub(session.created_at);
+    let when = if elapsed < 60 {
+        app.language.text("刚刚", "just now", "たった今").to_owned()
+    } else if elapsed < 3_600 {
+        format!(
+            "{} {}",
+            elapsed / 60,
+            app.language.text("分钟前", "minutes ago", "分前")
+        )
+    } else if elapsed < 86_400 {
+        format!(
+            "{} {}",
+            elapsed / 3_600,
+            app.language.text("小时前", "hours ago", "時間前")
+        )
+    } else {
+        format!(
+            "{} {}",
+            elapsed / 86_400,
+            app.language.text("天前", "days ago", "日前")
+        )
+    };
+    Some(format!(
+        "{}「{title}」· {when}",
+        app.language.text("分凉自", "Forked from ", "フォーク元 ")
+    ))
+}
+
 /// 聊天区标题里的品牌段：`WillDeep · <工作区目录名>`。取不到目录名（比如工作区是 `/`）
 /// 就用完整路径；过长的名字截断，免得把「工作中」计时挤出标题栏。
 fn chat_title_brand(workspace: Option<&std::path::Path>) -> String {
@@ -2606,6 +2693,12 @@ pub fn channel() -> (
 mod human_gate_ui_tests;
 #[cfg(test)]
 mod test_suite;
+
+/// 渲染测试用的空会话。谱系行只在 `started_by` 有值时出现，这些测试不设它。
+#[cfg(test)]
+fn quiet_test_session() -> Session {
+    Session::new(std::path::PathBuf::from("/workspace"), None, "")
+}
 
 #[cfg(test)]
 mod queue_later_tests {

@@ -7,7 +7,13 @@ fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom(
         let mut app = App::new(vec![original.clone()], Language::En);
         app.ui.mode = mode;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let row = app.user_message_hit_rows[0].0;
         app.handle_mouse(
             app.transcript_rect.x + 2,
@@ -15,7 +21,13 @@ fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom(
             &BackgroundTaskRegistry::default(),
             &SkillCatalog::default(),
         );
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(
             app.transcript_rows
                 .iter()
@@ -29,7 +41,13 @@ fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom(
             &BackgroundTaskRegistry::default(),
             &SkillCatalog::default(),
         );
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(
             !app.transcript_rows
                 .iter()

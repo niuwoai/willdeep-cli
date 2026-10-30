@@ -120,7 +120,13 @@ fn prompt_history_scrolls_inline_in_both_layouts() {
             .collect();
         press(&mut app, KeyCode::Up, &messages);
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let rendered: String = terminal
             .backend()
             .buffer()
@@ -133,7 +139,13 @@ fn prompt_history_scrolls_inline_in_both_layouts() {
         for _ in 0..120 {
             press(&mut app, KeyCode::Up, &messages);
         }
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let rendered: String = terminal
             .backend()
             .buffer()

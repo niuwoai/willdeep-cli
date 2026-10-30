@@ -67,7 +67,8 @@ impl App {
         results.retain(|result| result.message_count > 0 || result.id == picker.current_session);
         picker.truncated = results.len() > SESSION_PICKER_LIMIT;
         results.truncate(SESSION_PICKER_LIMIT);
-        picker.results = results;
+        // 截断之后再挂：分凉出来的会话紧跟它的来源，不再按更新时间漂到列表顶上。
+        picker.results = nest_forked_sessions(results);
         picker.selected = picker.selected.min(picker.results.len().saturating_sub(1));
     }
 
@@ -237,6 +238,7 @@ pub(super) fn render_session_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
             Style::default().fg(Color::DarkGray),
         ));
     } else {
+        let depths = session_picker_depths(&picker.results);
         for (position, result) in picker.results.iter().enumerate().skip(start).take(visible) {
             let selected = position == picker.selected;
             let style = if selected {
@@ -255,6 +257,7 @@ pub(super) fn render_session_picker(f: &mut ratatui::Frame<'_>, app: &mut App) {
                     result.id == picker.current_session,
                     app.language,
                     selected,
+                    depths[position],
                 ),
                 style,
             ));
@@ -313,8 +316,15 @@ pub(super) fn session_picker_result_line(
     current: bool,
     language: Language,
     selected: bool,
+    depth: usize,
 ) -> String {
-    let marker = if selected { "▶" } else { " " };
+    // 分凉出来的会话缩进一格，并换成树杈。只缩一层：再往下分凉的仍挂在直接来源下。
+    let marker = match (selected, depth) {
+        (true, 0) => "▶",
+        (false, 0) => " ",
+        (true, _) => "▶└",
+        (false, _) => " └",
+    };
     let current = if current {
         format!(" [{}]", language.text("当前", "current", "現在"))
     } else {
@@ -353,6 +363,126 @@ fn session_origin_label(
         SessionOrigin::Runtime => None,
         SessionOrigin::Local => Some(language.text("本地", "local", "ローカル")),
         SessionOrigin::Xedit => Some("Xedit"),
+    }
+}
+
+/// 把分凉出来的会话挪到来源正下方。
+///
+/// 来源不在这份结果里（被截掉、被过滤掉、或指向自己）就留在原位，当普通会话。
+/// 环在这里断开：一条会话只挪一次，挪到的位置是它直接来源的后面。
+fn nest_forked_sessions(
+    results: Vec<willdeep_runtime_protocol::SessionSearchResult>,
+) -> Vec<willdeep_runtime_protocol::SessionSearchResult> {
+    let present = results
+        .iter()
+        .map(|result| result.id)
+        .collect::<HashSet<_>>();
+    let mut pending = results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| {
+            let parent = result
+                .started_by
+                .filter(|parent| *parent != result.id && present.contains(parent))?;
+            Some((index, parent))
+        })
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return results;
+    }
+    pending.sort_by_key(|(index, _)| *index);
+    let mut order = (0..results.len()).collect::<Vec<_>>();
+    for (index, parent) in pending {
+        let Some(from) = order.iter().position(|value| *value == index) else {
+            continue;
+        };
+        let Some(after) = order.iter().position(|value| results[*value].id == parent) else {
+            continue;
+        };
+        if from == after + 1 {
+            continue;
+        }
+        order.remove(from);
+        let after = order
+            .iter()
+            .position(|value| results[*value].id == parent)
+            .unwrap_or(order.len().saturating_sub(1));
+        order.insert(after + 1, index);
+    }
+    order
+        .into_iter()
+        .map(|index| results[index].clone())
+        .collect()
+}
+
+/// 每行的缩进层数。来源就在它正上方（中间可以隔着同一来源的其他分凉）才算一层。
+fn session_picker_depths(results: &[willdeep_runtime_protocol::SessionSearchResult]) -> Vec<usize> {
+    results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            let Some(parent) = result.started_by else {
+                return 0;
+            };
+            let parent_at = results.iter().position(|candidate| candidate.id == parent);
+            let Some(parent_at) = parent_at.filter(|parent_at| *parent_at < index) else {
+                return 0;
+            };
+            let attached = results[parent_at + 1..=index]
+                .iter()
+                .all(|candidate| candidate.started_by == Some(parent) || candidate.id == parent);
+            usize::from(attached)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(
+        id: uuid::Uuid,
+        title: &str,
+        started_by: Option<uuid::Uuid>,
+    ) -> willdeep_runtime_protocol::SessionSearchResult {
+        willdeep_runtime_protocol::SessionSearchResult {
+            id,
+            title: title.to_owned(),
+            workspace: None,
+            status: willdeep_runtime_protocol::SessionStatus::Idle,
+            profile: None,
+            model: None,
+            updated_at: 1,
+            message_count: 1,
+            snippet: None,
+            origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
+            started_by,
+        }
+    }
+
+    /// 分凉会话紧跟来源，不管它在结果里排得更靠前；行以树权开头，仍然是一行。
+    #[test]
+    fn forked_sessions_nest_under_their_parent_on_one_line() {
+        let parent = uuid::Uuid::new_v4();
+        let child = uuid::Uuid::new_v4();
+        let nested = nest_forked_sessions(vec![
+            result(child, "分凉出来的", Some(parent)),
+            result(uuid::Uuid::new_v4(), "旁边的", None),
+            result(parent, "来源", None),
+        ]);
+        assert_eq!(nested[1].id, parent);
+        assert_eq!(nested[2].id, child);
+        let depths = session_picker_depths(&nested);
+        assert_eq!(depths, vec![0, 0, 1]);
+
+        let line = session_picker_result_line(&nested[2], false, Language::ZhCn, true, depths[2]);
+        assert!(line.starts_with("▶└ 分凉出来的"), "{line}");
+        assert!(!line.contains('\n'), "{line}");
+
+        // 来源不在这份结果里就留在原位，不隐藏。
+        let orphan = nest_forked_sessions(vec![result(child, "孤儿", Some(parent))]);
+        assert_eq!(orphan.len(), 1);
+        assert_eq!(session_picker_depths(&orphan), vec![0]);
     }
 }
 
