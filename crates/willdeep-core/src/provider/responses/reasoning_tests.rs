@@ -29,6 +29,72 @@ fn tool_continuation_replays_raw_reasoning_before_assistant_output() {
     assert_eq!(wire[3]["call_id"], wire[4]["call_id"]);
 }
 
+/// 压缩会把带推理的工具批次换成没有推理的摘要或归档引用，直给的步骤
+/// （`git commit` 这类）本身也不吐思维链。thinking 模式带 tools 时缺一条
+/// `reasoning_text` 就 400，所以历史里出现过思维链时，缺的 assistant 消息补空串。
+#[test]
+fn thinking_history_backfills_empty_reasoning_before_every_assistant_message() {
+    let first = ToolCall {
+        id: "call-1".into(),
+        name: "run".into(),
+        arguments: "{\"cmd\":\"git status\"}".into(),
+    };
+    let second = ToolCall {
+        id: "call-2".into(),
+        name: "run".into(),
+        arguments: "{\"cmd\":\"git commit\"}".into(),
+    };
+    let history = vec![
+        Message::system("sys"),
+        Message::user("提交一下"),
+        Message::assistant("", vec![first.clone()]).with_reasoning(Some("先看状态".into())),
+        Message::tool(&first, "clean"),
+        Message::assistant("", vec![second.clone()]),
+        Message::tool(&second, "done"),
+        Message::assistant("<context-summary>…</context-summary>", Vec::new()),
+    ];
+    let (_, input) = encode_input(&history);
+    let wire = serde_json::to_value(input).unwrap();
+    assert_eq!(wire[1]["type"], "reasoning", "{wire}");
+    assert_eq!(wire[1]["content"][0]["text"], "先看状态", "{wire}");
+    // 补空的 reasoning 项插在正文与工具调用之前，所以直给步骤的 function_call
+    // 比「只回传有原文的」那种排法多往后一位。
+    assert_eq!(
+        wire[4]["content"][0],
+        json!({"type":"reasoning_text","text":""})
+    );
+    assert_eq!(
+        wire[7]["content"][0],
+        json!({"type":"reasoning_text","text":""})
+    );
+    assert_eq!(wire[2]["type"], "function_call");
+    assert_eq!(wire[5]["type"], "function_call");
+}
+
+/// 没见过思维链的端点不能凭空多出 reasoning 项：严格校验的上游会拒未知项。
+#[test]
+fn history_without_reasoning_sends_no_reasoning_item() {
+    let call = ToolCall {
+        id: "call-1".into(),
+        name: "run".into(),
+        arguments: "{}".into(),
+    };
+    let history = vec![
+        Message::user("hi"),
+        Message::assistant("", vec![call.clone()]),
+        Message::tool(&call, "ok"),
+        Message::assistant("done", Vec::new()),
+    ];
+    let (_, input) = encode_input(&history);
+    let wire = serde_json::to_value(input).unwrap();
+    assert!(
+        wire.as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["type"] != "reasoning")
+    );
+}
+
 #[test]
 fn summary_is_not_replayed_as_raw_reasoning() {
     let response = json!({"status":"completed","output":[

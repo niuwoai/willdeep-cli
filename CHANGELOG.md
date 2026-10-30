@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.133.0-rc5] - 2026-10-30
+
+### Fixed
+- Responses 适配器在 thinking 模式的历史里给每条 assistant 消息回传 `reasoning_text`：模型某一步没吐思维链（`git commit` 这类直给的步骤），或是压缩器把带推理的工具批次替换成的摘要与归档引用，缺的那条补空串，不再整条请求 400（`The reasoning_text in the thinking mode must be passed back to the API`）。只有历史里真出现过思维链才补，没见过的端点不发这个项。与 chat-completions 的 `reasoning_content` 补空同一口径。
+
 ## [0.133.0-rc4] - 2026-10-30
 
 ### Fixed

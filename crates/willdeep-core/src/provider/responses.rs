@@ -77,15 +77,31 @@ impl Provider for ResponsesProvider {
 fn encode_input(messages: &[Message]) -> (String, Vec<ResponseInputItem>) {
     let mut instructions = Vec::new();
     let mut input = Vec::new();
+    let backfill_reasoning = messages.iter().any(|message| {
+        message.role == Role::Assistant
+            && message
+                .reasoning
+                .as_deref()
+                .is_some_and(|text| !text.is_empty())
+    });
     for message in messages {
         match message.role {
             Role::System => instructions.push(message.content.clone()),
             Role::User => input.push(ResponseInputItem::user_message(message)),
             Role::Assistant => {
-                if let Some(reasoning) =
-                    message.reasoning.as_deref().filter(|text| !text.is_empty())
-                {
-                    input.push(ResponseInputItem::reasoning(reasoning));
+                // thinking 模式带 tools 时，上游要求**每一条** assistant 消息都回传
+                // `reasoning_text`：模型某一步没吐思维链（`git commit` 这类直给的
+                // 步骤），或是压缩器把带推理的工具批次替换成的摘要与归档引用，缺了一条
+                // 整个请求就 400（`The reasoning_text in the thinking mode must be
+                // passed back`）。只有历史里真出现过思维链，才能确认对端认这个字段，
+                // 这时给缺的补空串；没有证据的端点不发，免得严格校验的上游拒绝未知项。
+                // 与 chat-completions 的 `reasoning_content` 补空同一口径。
+                match message.reasoning.as_deref().filter(|text| !text.is_empty()) {
+                    Some(reasoning) => input.push(ResponseInputItem::reasoning(reasoning)),
+                    None if backfill_reasoning => {
+                        input.push(ResponseInputItem::reasoning(""));
+                    }
+                    None => {}
                 }
                 if !message.content.is_empty() {
                     input.push(ResponseInputItem::message("assistant", &message.content));
@@ -140,6 +156,7 @@ struct ResponseInputItem {
     kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<&'static str>,
+    /// 补空的 `reasoning` 项只有一段空文本，也必须发出去：缺这一项整条请求 400。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     content: Vec<ResponseContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,6 +174,7 @@ impl ResponseInputItem {
         let mut item = Self::message("assistant", text);
         item.kind = "reasoning";
         item.role = None;
+        // 空串也要留着：补空补的就是 `""`，`message` 会把空文本丢掉。
         item.content = vec![ResponseContent::text("reasoning_text", text.to_owned())];
         item
     }
@@ -165,14 +183,19 @@ impl ResponseInputItem {
         Self {
             kind: "message",
             role: Some(role),
-            content: vec![ResponseContent::text(
-                if role == "assistant" {
-                    "output_text"
-                } else {
-                    "input_text"
-                },
-                text.to_owned(),
-            )],
+            // 空文本不发：正文为空的 assistant 消息只靠 tool_calls 表达。
+            content: (!text.is_empty())
+                .then(|| {
+                    vec![ResponseContent::text(
+                        if role == "assistant" {
+                            "output_text"
+                        } else {
+                            "input_text"
+                        },
+                        text.to_owned(),
+                    )]
+                })
+                .unwrap_or_default(),
             call_id: None,
             name: None,
             arguments: None,
@@ -207,6 +230,8 @@ impl ResponseInputItem {
 struct ResponseContent {
     #[serde(rename = "type")]
     kind: &'static str,
+    /// 空串也要发出去：thinking 模式缺的 `reasoning_text` 补的就是 `""`，
+    /// 省掉这个字段等于没补。
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
