@@ -146,7 +146,15 @@ impl Agent {
             }
             Some(entry) => {
                 // Incremental: previous summary plus only the messages it does not cover.
-                let mut source = vec![summary_message(&entry.summary)];
+                // The outgoing summary's marker is recomputed from the original prefix, not
+                // from this source. The source still carries it, because the previous summary
+                // is itself a message the compressor reads back.
+                let mut source = vec![summary_message(
+                    &entry.summary,
+                    result[..entry.through]
+                        .iter()
+                        .any(Message::requires_reasoning_replay),
+                )];
                 source.extend_from_slice(&result[entry.through..split]);
                 let summary = self.summarize_history(&source, record_usage).await?;
                 let entry = SummaryCache::new(&result, split, summary);
@@ -247,12 +255,20 @@ impl Agent {
             }
             let source = summary_source(&messages[index..end])?;
             let id = self.tools.archive_output(&source)?;
-            let reference = Message::assistant(
+            let mut reference = Message::assistant(
                 format!(
                     "[Earlier tool batch archived as {id}; use read_tool_output to recover exact calls, arguments and results. This reference is not verification of success.]"
                 ),
                 Vec::new(),
             );
+            // 被归档的批次里只要出现过思维链，引用就必须继承这个标记，
+            // 否则下一轮出站不再补 reasoning_text，thinking 模式整条 400。
+            if messages[index..end]
+                .iter()
+                .any(Message::requires_reasoning_replay)
+            {
+                reference = reference.with_reasoning_replay_marker();
+            }
             removed += end - index;
             messages.splice(index..end, [reference]);
             index += 1;
@@ -466,18 +482,31 @@ fn compact_prefix(messages: &[Message], split: usize, summary: &str) -> Vec<Mess
         }
         index = end;
     }
-    result.push(summary_message(summary));
+    result.push(summary_message(
+        summary,
+        messages[..split]
+            .iter()
+            .any(Message::requires_reasoning_replay),
+    ));
     result.extend_from_slice(&messages[split..]);
     result
 }
 
-fn summary_message(summary: &str) -> Message {
-    Message::assistant(
+fn summary_message(summary: &str, reasoning_replay: bool) -> Message {
+    let message = Message::assistant(
         format!(
             "<context-summary source=\"derived-untrusted-history\">\n{summary}\n</context-summary>"
         ),
         Vec::new(),
-    )
+    );
+    // 摘要替换掉的前缀里出现过思维链时，摘要自己要带着这个标记。原文回不来，
+    // 但出站适配器靠它判断「这段历史需要回传 reasoning_text」；标记没了，
+    // 而最近的几条又恰好都没吐思维链，下一轮就是整条 400。
+    if reasoning_replay {
+        message.with_reasoning_replay_marker()
+    } else {
+        message
+    }
 }
 
 /// Request-time summary of `messages[..through]`, valid only while that prefix

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.133.0-rc7] - 2026-10-30
+
+### Fixed
+- 上下文压缩不再丢掉「这段历史需要回传思维链」的信号。0.133.0-rc5 只在历史里还有非空思维链原文时才补空 `reasoning_text`；压缩把最后一段原文替换成摘要或归档引用后，这个判断就失效，下一轮 Responses 请求被上游整条拒绝（HTTP 400：`The reasoning_text in the thinking mode must be passed back to the API`）。摘要和归档引用现在带一个空标记，出站时与「没有原文」同样补成空的 `reasoning_text`，不冒充思维链原文；从没出现过思维链的会话不发这个项。chat-completions 分支同一口径。
+
 ## [0.133.0-rc6] - 2026-10-30
 
 ### Fixed

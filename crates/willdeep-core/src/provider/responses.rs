@@ -77,13 +77,10 @@ impl Provider for ResponsesProvider {
 fn encode_input(messages: &[Message]) -> (String, Vec<ResponseInputItem>) {
     let mut instructions = Vec::new();
     let mut input = Vec::new();
-    let backfill_reasoning = messages.iter().any(|message| {
-        message.role == Role::Assistant
-            && message
-                .reasoning
-                .as_deref()
-                .is_some_and(|text| !text.is_empty())
-    });
+    // 空串也算数：压缩把带思维链的批次换成摘要或归档引用时，原文回不来，
+    // 只留一个空标记证明这段历史来自要求回传思维链的上游。只认非空原文的话，
+    // 标记一被压缩掉，下一轮就整条 400。
+    let backfill_reasoning = messages.iter().any(Message::requires_reasoning_replay);
     for message in messages {
         match message.role {
             Role::System => instructions.push(message.content.clone()),

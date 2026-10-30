@@ -187,7 +187,7 @@ impl<'a> From<&'a Message> for WireMessage<'a> {
 /// 只有历史里真出现过思维链，才能确认对端认这个字段，这时给缺的补空串；
 /// 没有证据的端点保持不发，免得严格校验的上游拒绝未知字段。
 fn wire_messages(messages: &[Message]) -> Vec<WireMessage<'_>> {
-    let backfill = messages.iter().any(|message| message.reasoning.is_some());
+    let backfill = messages.iter().any(Message::requires_reasoning_replay);
     messages
         .iter()
         .map(|message| {
@@ -341,6 +341,35 @@ mod generation_limit_tests {
             .unwrap();
         assert_eq!(body["messages"][1]["reasoning_content"], "");
         assert!(body["messages"][0].get("reasoning_content").is_none());
+    }
+
+    /// 非 DeepSeek 模型没有按模型名强制补空。压缩只留下空标记时，后面没有
+    /// 思维链的 assistant 消息仍要补 `reasoning_content`。
+    #[test]
+    fn compression_replay_marker_backfills_reasoning_content() {
+        let config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "https://example.test/v1",
+            "test-key",
+            "other-model",
+        );
+        let call = ToolCall {
+            id: "call-1".into(),
+            name: "run".into(),
+            arguments: "{}".into(),
+        };
+        let history = [
+            Message::assistant("<context-summary>done</context-summary>", Vec::new())
+                .with_reasoning_replay_marker(),
+            Message::assistant("", vec![call]),
+        ];
+        let body = ChatCompletionsProvider::new(config)
+            .unwrap()
+            .request_body(&history, &[], false)
+            .unwrap();
+        assert_eq!(body["messages"][0]["reasoning_content"], "");
+        assert_eq!(body["messages"][1]["reasoning_content"], "");
     }
 
     #[test]

@@ -98,6 +98,22 @@ impl Message {
         self
     }
 
+    /// 标记「这段历史来自要求回传思维链的上游」，但不带任何原文。
+    ///
+    /// 压缩会把带思维链的工具批次替换成摘要或归档引用，原文回不来。可是 thinking
+    /// 模式认的是「历史里出现过思维链」这件事：标记一旦消失，出站适配器就不再给缺的
+    /// assistant 消息补 `reasoning_text`，下一轮整条请求 400。空串只作这个标记，
+    /// 出站时与「没有」同样补成空的 `reasoning_text`，不冒充思维链原文。
+    pub fn with_reasoning_replay_marker(mut self) -> Self {
+        self.reasoning = Some(String::new());
+        self
+    }
+
+    /// 这条消息是否证明上游在要求回传思维链。非空原文和压缩留下的空标记都算。
+    pub fn requires_reasoning_replay(&self) -> bool {
+        self.reasoning.is_some()
+    }
+
     pub fn tool(call: &ToolCall, content: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
