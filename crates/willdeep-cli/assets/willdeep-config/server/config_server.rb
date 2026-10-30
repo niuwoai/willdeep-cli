@@ -24,6 +24,8 @@ require "config_file"
 require "config_render"
 require "config_schema"
 require "provider_models"
+require "skill_library"
+require "rule_library"
 
 module WilldeepConfig
   PROTOCOL_VERSION = "2025-06-18"
@@ -81,6 +83,17 @@ module WilldeepConfig
       when "config.render" then tool_render(args)
       when "config.reveal_secret" then tool_reveal_secret(args)
       when "config.models" then tool_models(args)
+      when "skills.library" then tool_skills_library(args)
+      when "skills.install" then tool_skills_install(args)
+      when "skills.read" then tool_skills_read(args)
+      when "skills.write" then tool_skills_write(args)
+      when "skills.create" then tool_skills_create(args)
+      when "skills.remove" then tool_skills_remove(args)
+      when "rules.library" then tool_rules_library(args)
+      when "rules.read" then tool_rules_read(args)
+      when "rules.write" then tool_rules_write(args)
+      when "rules.install" then tool_rules_install(args)
+      when "rules.restore" then tool_rules_restore(args)
       else Json.error("invalid_edits", "未知工具：#{name}")
       end
     rescue BadArgument => e
@@ -97,6 +110,14 @@ module WilldeepConfig
       env = ENV["WD_CONFIG_FILE"].to_s
       return File.expand_path(env) unless env.strip.empty?
       File.join(Dir.home, ".willdeep", "config.toml")
+    end
+
+    # 技能与规则都放在 WillDeep 主目录下。宿主通过 WD_HOME 传入；没传时退回
+    # 配置文件所在目录，那正是默认的 ~/.willdeep。
+    def willdeep_home
+      env = ENV["WD_HOME"].to_s
+      return File.expand_path(env) unless env.strip.empty?
+      File.dirname(config_path)
     end
 
     def default_backup_dir
@@ -116,6 +137,88 @@ module WilldeepConfig
     end
 
     # ==== 工具 ====
+
+    # ==== 技能 ====
+
+    def tool_skills_library(_args)
+      SkillLibrary.list(willdeep_home, extra_skill_roots)
+    end
+
+    def tool_skills_install(args)
+      source = args["source"].to_s.strip
+      return Json.error("invalid_edits", "source 不能为空") if source.empty?
+      SkillLibrary.install(willdeep_home, source)
+    end
+
+    def tool_skills_read(args)
+      SkillLibrary.read(args["directory"].to_s)
+    end
+
+    def tool_skills_write(args)
+      SkillLibrary.write(willdeep_home, args["directory"].to_s, args["content"])
+    end
+
+    def tool_skills_create(args)
+      SkillLibrary.create(willdeep_home, args["name"].to_s, args["content"])
+    end
+
+    def tool_skills_remove(args)
+      return Json.error("invalid_edits", "remove requires confirm=true") unless args["confirm"] == true
+      SkillLibrary.remove(willdeep_home, args["directory"].to_s)
+    end
+
+    # 额外搜索根来自配置里的 [skills].roots，页面列出的技能要和会话里能发现的一致。
+    def extra_skill_roots
+      text, exists = read_config_text(config_path)
+      return [] unless exists
+      roots = []
+      TomlLite.parse_document(text)[:entries].each do |entry|
+        next unless entry.section == "skills" && entry.key == "roots" && entry.value.is_a?(Array)
+        roots = entry.value.select { |value| value.is_a?(String) }
+      end
+      roots
+    rescue TomlLite::ParseError
+      []
+    end
+
+    # ==== 规则 ====
+
+    def tool_rules_library(_args)
+      RuleLibrary.list(willdeep_home, configured_rule_files)
+    end
+
+    def tool_rules_read(args)
+      RuleLibrary.read(willdeep_home, args["path"].to_s)
+    end
+
+    def tool_rules_write(args)
+      RuleLibrary.write(willdeep_home, args["path"].to_s, args["content"])
+    end
+
+    def tool_rules_install(args)
+      source = args["source"].to_s.strip
+      return Json.error("invalid_edits", "source 不能为空") if source.empty?
+      RuleLibrary.install(willdeep_home, source, args["name"].to_s)
+    end
+
+    # 把随程序发布的精简规则写进规则目录。同名已存在则不覆盖。启用仍由页面写回 [rules].files。
+    def tool_rules_restore(_args)
+      RuleLibrary.restore_bundled(willdeep_home)
+    end
+
+    # [rules].files 的现状。nil 表示配置里从没写过这一节，页面按「未配置」显示。
+    def configured_rule_files
+      text, exists = read_config_text(config_path)
+      return nil unless exists
+      found = nil
+      TomlLite.parse_document(text)[:entries].each do |entry|
+        next unless entry.section == "rules" && entry.key == "files" && entry.value.is_a?(Array)
+        found = entry.value.select { |value| value.is_a?(String) }
+      end
+      found
+    rescue TomlLite::ParseError
+      nil
+    end
 
     def tool_models(args)
       section = args["section"]
@@ -983,7 +1086,20 @@ module WilldeepConfig
           tool("config.reveal_secret", "#{ConfigSchema::SECRET_NEVER_REVEAL}。返回已保存的密钥明文，须 confirm=true。",
                { "section" => { "type" => "string" }, "key" => { "type" => "string" } }.merge(
                  "confirm" => { "type" => "boolean", "description" => "必须为 true，否则拒绝执行" }
-               ))
+               )),
+          tool("skills.library", "列出已发现的技能：名称、说明、档位、目录，以及能否在页面里修改。", {}),
+          tool("skills.install", "从 GitHub 地址安装技能到用户技能目录。同名已存在时不覆盖。",
+               { "source" => { "type" => "string", "description" => "owner/repo，或 https://github.com/owner/repo/tree/<分支>/<路径>" } }),
+          tool("skills.read", "读取一个技能的 SKILL.md 全文。", { "directory" => { "type" => "string" } }),
+          tool("skills.write", "覆盖用户技能目录里一个技能的 SKILL.md。", { "directory" => { "type" => "string" }, "content" => { "type" => "string" } }),
+          tool("skills.create", "在用户技能目录里新建一个技能。", { "name" => { "type" => "string" }, "content" => { "type" => "string" } }),
+          tool("skills.remove", "删除用户技能目录里的一个技能。必须 confirm=true。", { "directory" => { "type" => "string" }, "confirm" => { "type" => "boolean" } }),
+          tool("rules.library", "列出规则目录里的规则文件，并标明哪些已在 [rules].files 里启用。", {}),
+          tool("rules.read", "读取一条规则的全文。", { "path" => { "type" => "string" } }),
+          tool("rules.write", "覆盖规则目录里一条规则的全文。", { "path" => { "type" => "string" }, "content" => { "type" => "string" } }),
+          tool("rules.install", "从 GitHub 地址安装一份规则到规则目录，存成一个文件。同名已存在时不覆盖。",
+               { "source" => { "type" => "string" }, "name" => { "type" => "string", "description" => "保存的文件名，可省略" } }),
+          tool("rules.restore", "把随程序发布的精简规则写进规则目录。同名已存在时不覆盖。不修改配置。", {})
         ]
       end
 

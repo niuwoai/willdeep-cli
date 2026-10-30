@@ -115,9 +115,17 @@ module ConfigSchema
       ]
     },
     {
-      id: "skills", section: "skills", title: "技能", description: "技能搜索路径",
+      id: "skills", section: "skills", title: "技能", description: "额外的技能搜索目录。已安装的技能在下方列出，不写在这里。",
       fields: [
-        { key: "roots", label: "技能根目录", type: "stringArray", default: [] }
+        { key: "roots", label: "额外搜索目录", type: "stringArray", default: [],
+          description: "一行一个目录，用来补充用户技能目录之外的共享技能库" }
+      ]
+    },
+    {
+      id: "rules", section: "rules", title: "规则", description: "每轮都生效的全局规则，按顺序拼接进提示词。",
+      fields: [
+        { key: "files", label: "规则文件", type: "stringArray", default: [],
+          description: "一行一个文件或目录；目录里的 Markdown 按文件名排序拼接，排在后面的更具体" }
       ]
     },
     {
@@ -151,7 +159,8 @@ module ConfigSchema
           presets: TOKEN_PRESETS,
           description: "4000 到 1048576；这个提供商的模型能吃下多少上下文，状态栏占比按它算" },
         { key: "max_output_tokens", label: "最大输出 Token", type: "int", default: nil, min: 1,
-          presets: TOKEN_PRESETS, description: "一次回复最多生成多少 token" },
+          presets: TOKEN_PRESETS,
+          description: "一次回复最多生成多少 token。上下文压缩也用这个上限，思考 token 占同一额度；写小了，长会话压缩会因为摘要被截断而失败" },
         { key: "vision_model", label: "视觉回退模型", type: "string", default: nil }
       ]
     },

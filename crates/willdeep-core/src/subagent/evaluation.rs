@@ -275,6 +275,7 @@ pub(super) async fn run_isolated_configured(
         max_attempts: 1,
         claimed_files: Arc::new(Mutex::new(BTreeSet::new())),
         skills: None,
+        global_rules: None,
         safety_judge: None,
         approved_command: None,
         mcp: None,

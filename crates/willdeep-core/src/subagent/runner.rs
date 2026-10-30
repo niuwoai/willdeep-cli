@@ -328,6 +328,8 @@ pub(super) struct SubagentRun {
     pub(super) max_attempts: usize,
     pub(super) claimed_files: Arc<Mutex<BTreeSet<PathBuf>>>,
     pub(super) skills: Option<Arc<crate::skills::SkillCatalog>>,
+    /// See [`super::catalog::SubagentCatalog::with_global_rules`].
+    pub(super) global_rules: Option<Vec<String>>,
     pub(super) safety_judge: Option<Arc<dyn SafetyJudge>>,
     pub(super) approved_command: Option<String>,
     /// 已连接的 MCP 服务。只有兜底工种拿得到（在 catalog 那边决定），因为窄
@@ -397,6 +399,7 @@ async fn run_subagent_inner(
         max_attempts,
         claimed_files,
         skills,
+        global_rules,
         safety_judge,
         approved_command,
         mcp,
@@ -518,6 +521,7 @@ async fn run_subagent_inner(
             attempt,
             isolated_evaluation,
             offline_review_json,
+            global_rules.as_deref(),
         )
         .await?;
         let Some(verifier) = verifier.as_ref() else {
@@ -648,6 +652,7 @@ async fn run_once(
     attempt: usize,
     isolated_evaluation: bool,
     offline_review_json: bool,
+    global_rules: Option<&[String]>,
 ) -> Result<(String, WorkerFacts, Option<crate::rsi::ExecutionContext>), AgentError> {
     let approval = if profile.shell.uses_intelligent_review() {
         ApprovalMode::Smart
@@ -747,12 +752,9 @@ async fn run_once(
         worker_prompt_parts(profile, has_board).join("\n\n")
     }
     .replace("{workspace}", &workspace.display().to_string());
-    if let Some(rules) = if isolated_evaluation {
-        Ok(None)
-    } else {
-        crate::prompt::global_user_instructions()
-    }
-    .map_err(|error| AgentError::Subagent(error.to_string()))?
+    if let Some(rules) = (!isolated_evaluation)
+        .then(|| crate::prompt::global_user_instructions(global_rules))
+        .flatten()
     {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(&rules);
@@ -1022,6 +1024,7 @@ mod tests {
             max_attempts: 1,
             claimed_files: Arc::new(Mutex::new(BTreeSet::new())),
             skills: None,
+            global_rules: None,
             safety_judge: None,
             approved_command: None,
             mcp: None,

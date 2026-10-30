@@ -23,6 +23,17 @@ const CONFIG_TOOLS: &[&str] = &[
     "config.render",
     "config.reveal_secret",
     "config.models",
+    "skills.library",
+    "skills.install",
+    "skills.read",
+    "skills.write",
+    "skills.create",
+    "skills.remove",
+    "rules.library",
+    "rules.read",
+    "rules.write",
+    "rules.install",
+    "rules.restore",
 ];
 
 pub(super) async fn page(
@@ -177,6 +188,9 @@ async fn connect_config_tools(state: &WebState) -> anyhow::Result<willdeep_core:
                 "WD_CONFIG_BACKUP_DIR".to_owned(),
                 backup_dir.display().to_string(),
             ),
+            // Skills and rules live under the WillDeep home, which is not
+            // always the parent of the config file (a `--config` elsewhere).
+            ("WD_HOME".to_owned(), state.home.display().to_string()),
         ]
         .into_iter()
         .collect(),

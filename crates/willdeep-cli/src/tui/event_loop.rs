@@ -49,6 +49,160 @@ async fn handle_queue_action(
     }
 }
 
+/// 滚轮事件不带位移量，一格按这么多行算。侧栏、弹层和聊天记录原来都是这个数。
+const SCROLL_LINES_PER_TICK: usize = 3;
+
+/// 一次滚轮手势里已经到达的全部滚动事件，合成一份偏移。
+///
+/// `first` 是循环刚取到的那一格，`pending` 里是此刻已经在输入缓冲里排队的事件。
+/// 只吞滚轮：方向相反的互相抵消，碰到鼠标移动、按键等任何别的事件就停下来，
+/// 原样交还给调用方——那一格还得按它自己的语义处理。滚轮没有像素位移，
+/// 一格固定算 `SCROLL_LINES_PER_TICK` 行，所以这里数的是格数。
+fn coalesce_scroll(
+    first: MouseEvent,
+    pending: impl IntoIterator<Item = io::Result<Event>>,
+) -> (ScrollBurst, Vec<Event>) {
+    let mut scrolled = ScrollBurst::from_tick(first);
+    let mut pending = pending.into_iter();
+    let mut held_back = Vec::new();
+    for event in pending.by_ref() {
+        let Ok(event) = event else {
+            break;
+        };
+        let Event::Mouse(mouse) = event else {
+            held_back.push(event);
+            break;
+        };
+        if !scrolled.push(mouse) {
+            held_back.push(Event::Mouse(mouse));
+            break;
+        }
+    }
+    held_back.extend(pending.filter_map(Result::ok));
+    (scrolled, held_back)
+}
+
+/// 一次滚轮手势合成出来的偏移：落点、方向和格数。
+struct ScrollBurst {
+    column: u16,
+    row: u16,
+    /// 向上为正。方向相反的格互相抵消，所以一份手势只剩一个方向。
+    ticks_up: i32,
+}
+
+impl ScrollBurst {
+    fn from_tick(mouse: MouseEvent) -> Self {
+        Self {
+            column: mouse.column,
+            row: mouse.row,
+            ticks_up: scroll_tick_direction(mouse.kind).unwrap_or(0),
+        }
+    }
+
+    /// 同一轮滚动里的下一格。不是滚轮就拒绝，调用方要把它交还给正常的事件处理。
+    fn push(&mut self, mouse: MouseEvent) -> bool {
+        let Some(direction) = scroll_tick_direction(mouse.kind) else {
+            return false;
+        };
+        self.column = mouse.column;
+        self.row = mouse.row;
+        self.ticks_up += direction;
+        true
+    }
+
+    fn lines(&self) -> usize {
+        self.ticks_up.unsigned_abs() as usize * SCROLL_LINES_PER_TICK
+    }
+}
+
+fn scroll_tick_direction(kind: MouseEventKind) -> Option<i32> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(1),
+        MouseEventKind::ScrollDown => Some(-1),
+        _ => None,
+    }
+}
+
+/// 把合成好的一次滚动应用到界面上。落点决定滚动的是哪一块：
+/// 弹层和侧栏优先于聊天记录，跟原来逐格处理时的判断顺序一致。
+fn apply_scroll(app: &mut App, scrolled: ScrollBurst) {
+    let lines = scrolled.lines();
+    if lines == 0 {
+        return;
+    }
+    let up = scrolled.ticks_up > 0;
+    if app.agent_detail.is_some() {
+        app.agent_detail_scroll = if up {
+            app.agent_detail_scroll.saturating_sub(lines)
+        } else {
+            app.agent_detail_scroll.saturating_add(lines)
+        };
+    } else if app.task_detail.is_some() {
+        app.task_detail_scroll = if up {
+            app.task_detail_scroll.saturating_sub(lines)
+        } else {
+            app.task_detail_scroll.saturating_add(lines)
+        };
+    } else if app.attention_detail.is_some() {
+        let lines = lines.min(u16::MAX as usize) as u16;
+        app.attention_detail_scroll = if up {
+            app.attention_detail_scroll.saturating_sub(lines)
+        } else {
+            app.attention_detail_scroll.saturating_add(lines)
+        };
+    } else if app
+        .sidebar_rect
+        .contains((scrolled.column, scrolled.row).into())
+    {
+        let lines = lines.min(isize::MAX as usize) as isize;
+        app.sidebar_scroll_by(if up { -lines } else { lines });
+    } else {
+        if app
+            .transcript_rect
+            .contains((scrolled.column, scrolled.row).into())
+        {
+            app.focus = FocusPane::Chat;
+        }
+        if up {
+            app.scroll_up(lines);
+        } else {
+            app.scroll_down(lines);
+        }
+    }
+}
+
+/// 下一格要处理的终端事件：先消化滚轮合并时被打断出来的，再读新输入。
+///
+/// 被打断的事件发生得更早，排在后面会让按键看起来像丢了。
+async fn next_terminal_event(
+    events: &mut EventStream,
+    deferred: &mut VecDeque<Event>,
+) -> Option<Event> {
+    if let Some(event) = deferred.pop_front() {
+        return Some(event);
+    }
+    events.next().await?.ok()
+}
+
+/// 读出这一格之后已经到达、还没被取走的事件。
+///
+/// 事件流的内部读取是非阻塞的：没有事件就立刻返回，不会把循环卡住。
+/// 上限只是防止一次手势把循环留在这里太久，剩下的下一圈再合。
+async fn drain_pending_events(events: &mut EventStream) -> Vec<io::Result<Event>> {
+    const PENDING_EVENT_LIMIT: usize = 256;
+    let mut pending = Vec::new();
+    while pending.len() < PENDING_EVENT_LIMIT {
+        let Some(event) = futures_util::FutureExt::now_or_never(events.next()) else {
+            break;
+        };
+        let Some(event) = event else {
+            break;
+        };
+        pending.push(event);
+    }
+    pending
+}
+
 /// 落一轮已经跑完的结果；撞上并发执行冲突时，重载最新快照再写一次。
 ///
 /// 为什么这里可以「重载后照写」，而 `SessionStore::save` 的冲突判定又必须留着：
@@ -324,6 +478,8 @@ pub(super) async fn event_loop(
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
+    // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
+    let mut deferred_events: VecDeque<Event> = VecDeque::new();
     let (runtime_snapshot_tx, mut runtime_snapshot_rx) =
         mpsc::unbounded_channel::<Result<crate::daemon::RuntimeSnapshot, String>>();
     let snapshot_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -594,7 +750,19 @@ pub(super) async fn event_loop(
             );
         }
         load_attention_diagnostics(&mut app, runtime);
-        draw(term, &mut app, &runtime.skills, session)?;
+        // 同步更新把这一帧包成一次原子绘制：支持的终端会攒到结束再一次性翻页，
+        // 不支持的把这两条序列当未知模式忽略。没有它，滚动时整片聊天区的改写会
+        // 被终端逐段画出来，看起来就是屏闪。
+        queue!(
+            term.backend_mut(),
+            crossterm::terminal::BeginSynchronizedUpdate
+        )?;
+        let drawn = draw(term, &mut app, &runtime.skills, session);
+        execute!(
+            term.backend_mut(),
+            crossterm::terminal::EndSynchronizedUpdate
+        )?;
+        drawn?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
             _ = async {
@@ -740,7 +908,9 @@ pub(super) async fn event_loop(
                     let _=tx.send(UiMessage::MediaResized(result));
                 });
             },
-            event=events.next()=>if let Some(Ok(event))=event { match event {
+            // 滚轮合并时被打断出来的事件排在真正的输入前面：它们发生得更早，
+            // 晚一圈处理会让按键看起来像丢了。
+            event=next_terminal_event(&mut events, &mut deferred_events)=>if let Some(event)=event { match event {
                 Event::Paste(value)=>{
                     if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
@@ -876,18 +1046,15 @@ pub(super) async fn event_loop(
                             open_remote_gate(&mut app,gate,runtime.home.clone(),runtime.tx.clone());
                         }
                     },
-                    MouseEventKind::ScrollUp if app.agent_detail.is_some()=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.agent_detail.is_some()=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(-3),
-                    MouseEventKind::ScrollDown if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(3),
-                    MouseEventKind::ScrollUp if app.transcript_rect.contains((mouse.column,mouse.row).into())=>{app.focus=FocusPane::Chat;app.scroll_up(3);},
-                    MouseEventKind::ScrollDown if app.transcript_rect.contains((mouse.column,mouse.row).into())=>{app.focus=FocusPane::Chat;app.scroll_down(3);},
-                    MouseEventKind::ScrollUp=>app.scroll_up(3),
-                    MouseEventKind::ScrollDown=>app.scroll_down(3),
+                    // 滚轮事件没有位移量，一格就是固定 3 行，而触控板一划会连续送出几十格。
+                    // 每格都让循环画一整帧，聊天区就会一格一格地整片重写进终端——那就是滚动时的屏闪。
+                    // 先把已经到达的同一轮滚动排空，合成一次偏移，再画一帧。
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        let (scrolled, rest) =
+                            coalesce_scroll(mouse, drain_pending_events(&mut events).await);
+                        apply_scroll(&mut app, scrolled);
+                        deferred_events.extend(rest);
+                    }
                     _=>{}
                 }},
                 Event::Key(key) if key.kind==KeyEventKind::Press=>{
@@ -1802,4 +1969,165 @@ pub(super) async fn event_loop(
     app.save_message_times();
     qterm.reporter.finish(false).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod scroll_coalesce_tests {
+    use super::*;
+
+    fn wheel(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn wheel_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        match wheel(kind, column, row) {
+            Event::Mouse(mouse) => mouse,
+            _ => unreachable!(),
+        }
+    }
+
+    /// 一次手势里连续到达的滚轮格合成一份偏移，一格 3 行。
+    #[test]
+    fn a_burst_of_wheel_ticks_becomes_one_offset() {
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 5, 5),
+            [
+                Ok(wheel(MouseEventKind::ScrollUp, 5, 6)),
+                Ok(wheel(MouseEventKind::ScrollUp, 5, 7)),
+                Ok(wheel(MouseEventKind::ScrollUp, 6, 8)),
+            ],
+        );
+        assert!(rest.is_empty());
+        assert_eq!(scrolled.ticks_up, 4);
+        assert_eq!(scrolled.lines(), 12);
+        // 落点跟着最后一格走，滚动命中哪一块由它决定。
+        assert_eq!((scrolled.column, scrolled.row), (6, 8));
+    }
+
+    /// 方向相反的格互相抵消，而不是各滚各的。
+    #[test]
+    fn opposite_ticks_cancel_out() {
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 1, 1),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 1, 1)),
+                Ok(wheel(MouseEventKind::ScrollDown, 1, 1)),
+                Ok(wheel(MouseEventKind::ScrollUp, 1, 1)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, 0);
+        assert_eq!(scrolled.lines(), 0);
+    }
+
+    /// 滚到一半来了按键或鼠标移动：停下来，剩下的事件原样交还，一格不丢。
+    #[test]
+    fn a_non_wheel_event_ends_the_burst_and_is_kept() {
+        let key = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollDown, 3, 3),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 3, 4)),
+                Ok(key),
+                Ok(wheel(MouseEventKind::ScrollDown, 3, 5)),
+                Ok(wheel(MouseEventKind::Moved, 3, 6)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, -2);
+        assert_eq!(scrolled.lines(), 6);
+        assert_eq!(rest.len(), 3);
+        assert!(matches!(rest[0], Event::Key(_)));
+        assert!(matches!(
+            rest[1],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..
+            })
+        ));
+        assert!(matches!(
+            rest[2],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                ..
+            })
+        ));
+    }
+
+    /// 读事件出错就停，不能把错误后面的事件错当成这一轮滚动。
+    #[test]
+    fn a_read_error_stops_the_burst() {
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 2, 2),
+            [
+                Err(io::Error::other("terminal gone")),
+                Ok(wheel(MouseEventKind::ScrollUp, 2, 3)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, 1);
+        // 出错的那一格丢掉，但它后面的事件不能跟着丢。
+        assert_eq!(rest.len(), 1);
+    }
+
+    /// 合成出来的偏移一次滚完，而不是一格一格滚。
+    #[test]
+    fn the_coalesced_offset_scrolls_the_transcript_once() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.transcript_height = 100;
+        app.viewport_height = 10;
+        app.transcript_rect = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 4, 4),
+            std::iter::repeat_with(|| Ok(wheel(MouseEventKind::ScrollUp, 4, 4))).take(5),
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.scroll_from_bottom, 18);
+        assert_eq!(app.focus, FocusPane::Chat);
+        assert!(!app.follow_bottom);
+    }
+
+    /// 落在侧栏上的滚轮滚的是侧栏，不能把聊天记录带走。
+    #[test]
+    fn a_burst_over_the_sidebar_scrolls_the_sidebar() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.sidebar_rect = Rect {
+            x: 60,
+            y: 0,
+            width: 20,
+            height: 40,
+        };
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollDown, 65, 10),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 66, 11)),
+                Ok(wheel(MouseEventKind::ScrollDown, 67, 12)),
+            ],
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.sidebar_scroll, 9);
+        assert_eq!(app.focus, FocusPane::Sidebar);
+        assert_eq!(app.scroll_from_bottom, 0);
+    }
+
+    /// 完全抵消的一轮什么都不动，连焦点都不改。
+    #[test]
+    fn a_cancelled_burst_changes_nothing() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let focus = app.focus;
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 4, 4),
+            [Ok(wheel(MouseEventKind::ScrollDown, 4, 4))],
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.focus, focus);
+        assert!(app.follow_bottom);
+    }
 }

@@ -100,7 +100,37 @@ const I18N = {
     'unknown.root': '（顶层）',
     'group.addHint': '还没有配置。',
     'card.emptyNew': '新增的配置至少要填一项才会写入。',
-    'card.readonlyName': '名称里含有本页无法安全写回的字符，只能在文件里直接修改。'
+    'card.readonlyName': '名称里含有本页无法安全写回的字符，只能在文件里直接修改。',
+    'btn.save': '保存',
+    'skills.title': '已安装的技能',
+    'skills.desc': '这里只列用户目录里的技能。工作区里的技能跟着项目走，不在这里改。',
+    'skills.loading': '正在读取技能…',
+    'skills.empty': '还没有安装技能。',
+    'skills.capped': '只显示前 300 个技能。',
+    'skills.editable': '可编辑', 'skills.readonly': '只读', 'skills.view': '查看', 'skills.edit': '编辑',
+    'skills.create': '新建技能', 'skills.install': '从 GitHub 安装', 'skills.reload': '刷新',
+    'skills.name': '技能名', 'skills.body': '正文', 'skills.nameHelp': '名字只能用字母、数字、下划线和连字符，最长 64 个字符。正文留空会填一份空模板。',
+    'skills.sourceHelp': 'owner/repo，或 https://github.com/owner/repo/tree/分支/路径。同名已经存在的不会被覆盖。',
+    'skills.readonlyNote': '这份技能不在用户目录里，只能看，不能改。',
+    'skills.removeTitle': '删除技能 {name}？',
+    'skills.removeBody': '会删掉 {dir} 整个目录。这不走配置备份，删了找不回来。',
+    'rules.libTitle': '规则文件',
+    'rules.libDesc': '文件放在 {dir}。启用和排序写进上面的「规则文件」，点「预览并保存」后才生效。排在后面的更具体。',
+    'rules.loading': '正在读取规则…', 'rules.empty': '规则目录还是空的。可以恢复内置规则，或从 GitHub 安装。',
+    'rules.enabled': '已启用', 'rules.enable': '启用', 'rules.disable': '停用',
+    'rules.up': '上移', 'rules.down': '下移', 'rules.edit': '编辑',
+    'rules.directory': '目录', 'rules.dirNote': '里面的 Markdown 按文件名拼接，打开单个文件才能改。',
+    'rules.external': '不在规则目录里', 'rules.install': '从 GitHub 安装', 'rules.restore': '恢复内置规则',
+    'rules.fileName': '保存为', 'rules.fileNameHelp': '可以留空，默认用仓库名。已有同名文件不会覆盖。',
+    'rules.sourceHelp': '仓库里的 Markdown 会合成一个文件。要用随程序带来的精简版，点「恢复内置规则」，不要把整个规则库装进每一轮。',
+    'rules.legacy': '配置里还没有 [rules]。现在每轮用的是旧的全局 CLAUDE.md。启用任意一条并保存之后，改为只用这里列出的规则。',
+    'rules.pending': '这一栏还没保存。保存后，下一轮才按这个顺序生效。',
+    'toast.libraryFailed': '{msg}',
+    'toast.skillSaved': '技能已保存', 'toast.skillCreated': '已新建技能 {name}',
+    'toast.skillInstalled': '已安装 {names}', 'toast.skillRemoved': '已删除技能 {name}',
+    'toast.ruleSaved': '规则已保存', 'toast.ruleInstalled': '已安装规则 {path}',
+    'toast.ruleRestored': '已写入内置规则，并列入待保存的启用列表',
+    'err.source.empty': '地址不能为空', 'err.skillName': '技能名只能用字母、数字、下划线和连字符，最长 64 个字符'
   },
   en: {
     'protocol.chooseModel': 'Choose a model before selecting its API protocol.',
@@ -196,7 +226,36 @@ const I18N = {
     'unknown.root': '(top level)',
     'group.addHint': 'Nothing configured yet.',
     'card.emptyNew': 'Fill in at least one field for this to be written.',
-    'card.readonlyName': 'The name contains characters this page cannot write back safely; edit the file directly.'
+    'card.readonlyName': 'The name contains characters this page cannot write back safely; edit the file directly.',
+    'btn.save': 'Save',
+    'skills.title': 'Installed skills',
+    'skills.desc': 'Only skills in the user directory are listed. Skills inside a workspace belong to that project and are not edited here.',
+    'skills.loading': 'Loading skills…', 'skills.empty': 'No skills installed yet.', 'skills.capped': 'Only the first 300 skills are shown.',
+    'skills.editable': 'Editable', 'skills.readonly': 'Read-only', 'skills.view': 'View', 'skills.edit': 'Edit',
+    'skills.create': 'New skill', 'skills.install': 'Install from GitHub', 'skills.reload': 'Refresh',
+    'skills.name': 'Skill name', 'skills.body': 'Body',
+    'skills.nameHelp': 'Letters, digits, underscores and hyphens only, at most 64 characters. An empty body starts from a blank template.',
+    'skills.sourceHelp': 'owner/repo, or https://github.com/owner/repo/tree/<branch>/<path>. An existing skill of the same name is left untouched.',
+    'skills.readonlyNote': 'This skill is outside the user directory, so it can be read but not changed here.',
+    'skills.removeTitle': 'Delete skill {name}?',
+    'skills.removeBody': 'This deletes the directory {dir}. It is not part of the config backup and cannot be undone.',
+    'rules.libTitle': 'Rule files',
+    'rules.libDesc': 'Files live in {dir}. Enabling and ordering write the rule-file list above, and take effect after Review & save. Later rules are more specific.',
+    'rules.loading': 'Loading rules…', 'rules.empty': 'The rules directory is empty. Restore the built-in rules, or install some from GitHub.',
+    'rules.enabled': 'Enabled', 'rules.enable': 'Enable', 'rules.disable': 'Disable',
+    'rules.up': 'Up', 'rules.down': 'Down', 'rules.edit': 'Edit',
+    'rules.directory': 'Directory', 'rules.dirNote': 'Markdown files inside are concatenated by filename. Edit the individual files.',
+    'rules.external': 'Outside the rules directory', 'rules.install': 'Install from GitHub', 'rules.restore': 'Restore built-in rules',
+    'rules.fileName': 'Save as', 'rules.fileNameHelp': 'Optional. Defaults to the repository name. An existing file of the same name is not overwritten.',
+    'rules.sourceHelp': 'Markdown files in the repository are combined into one file. For the compact rules shipped with WillDeep, use Restore built-in rules instead of installing the whole library.',
+    'rules.legacy': 'There is no [rules] section yet, so each turn still uses the legacy global CLAUDE.md. Enable any rule and save, and only the rules listed here are used.',
+    'rules.pending': 'This list is not saved yet. The new order applies on the next turn after you save.',
+    'toast.libraryFailed': '{msg}',
+    'toast.skillSaved': 'Skill saved', 'toast.skillCreated': 'Created skill {name}',
+    'toast.skillInstalled': 'Installed {names}', 'toast.skillRemoved': 'Deleted skill {name}',
+    'toast.ruleSaved': 'Rule saved', 'toast.ruleInstalled': 'Installed rule {path}',
+    'toast.ruleRestored': 'Built-in rules were written and added to the unsaved enabled list',
+    'err.source.empty': 'An address is required', 'err.skillName': 'Use letters, digits, underscores and hyphens only, at most 64 characters'
   }
 };
 
@@ -228,7 +287,6 @@ const I18N_SCHEMA_EN = {
   'local_model.prefer_for_titles': ['Prefer for titles'],
   'local_model.prefer_for_context_summaries': ['Prefer for context summaries'],
   'local_model.prefer_for_worker_routing': ['Prefer for worker routing'],
-  'skills.roots': ['Skill roots'],
   'notifications.sound': ['Sound'],
   'notifications.custom_sound_file': ['Custom sound file'],
   'notifications.custom_sound_display_name': ['Custom sound name'],
@@ -269,7 +327,11 @@ const I18N_SCHEMA_EN = {
   'option.mode.compact': 'Compact UI',
   'option.provider.auto': 'Auto-detect',
   'option.provider.openai-compatible': 'OpenAI-compatible',
-  'option.api.auto': 'Auto'
+  'option.api.auto': 'Auto',
+  'section.skills': ['Skills', 'Extra directories to search. Installed skills are listed below and are not stored here.'],
+  'section.rules': ['Rules', 'Global rules applied on every turn, concatenated into the prompt in order.'],
+  'skills.roots': ['Extra search directories', 'One directory per line, in addition to the user skill directory'],
+  'rules.files': ['Rule files', 'One file or directory per line. Markdown in a directory is concatenated by filename; later rules are more specific']
 };
 
 // approval 的旧写法：WillDeep 仍接受，但不在推荐列表里（willdeep-rs ApprovalMode::parse）
@@ -1035,6 +1097,7 @@ function renderMain() {
       html += '</ul></section>';
     }
   }
+  html += '<div id="libraries">' + renderLibraries() + '</div>';
   main.innerHTML = html;
   applyFilter();
 }
@@ -1222,6 +1285,7 @@ async function loadSnapshot() {
   S.snapshot = result;
   resetEdits();
   renderAll();
+  loadLibraries();
   for (const sec of S.sections.values()) {
     const base = sec.fields.find(f => f.key === 'api_base');
     if (sec.groupID === 'providers' && sec.editable && base && base.hasValue && !parseLocked()) loadModels(sec.name);
@@ -1812,6 +1876,18 @@ function onClick(event) {
       if (target) target.scrollIntoView({ block: 'start' });
       break;
     }
+    case 'skill-view': openSkill(el.getAttribute('data-dir'), false); break;
+    case 'skill-edit': openSkill(el.getAttribute('data-dir'), true); break;
+    case 'skill-create': openSkillCreate(); break;
+    case 'skill-install': openSkillInstall(); break;
+    case 'skill-remove': askRemoveSkill(el.getAttribute('data-dir')); break;
+    case 'skills-reload': loadLibraries(); break;
+    case 'rule-enable': setRuleEnabled(el.getAttribute('data-path'), true); break;
+    case 'rule-disable': setRuleEnabled(el.getAttribute('data-path'), false); break;
+    case 'rule-move': moveRule(el.getAttribute('data-path'), Number(el.getAttribute('data-delta'))); break;
+    case 'rule-edit': openRule(el.getAttribute('data-path')); break;
+    case 'rule-install': openRuleInstall(); break;
+    case 'rule-restore': restoreBundledRules(); break;
     default: break;
   }
 }
@@ -1863,4 +1939,353 @@ function init() {
   lang = '';
   applyContext(window.willdeep && typeof window.willdeep.getContext === 'function' ? window.willdeep.getContext() : {});
   loadSnapshot();
+}
+
+// ======================================================================
+// 技能与规则库
+//
+// 文件本身（安装、改正文、删除）立刻落盘，不经过配置备份；启用哪些规则、
+// 按什么顺序，走上面「规则文件」那一栏，跟其他配置一起预览再保存。
+// ======================================================================
+
+const SKILL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SKILL_TEMPLATE = '---\nname: {name}\ndescription: \n---\n\n';
+
+const Lib = {
+  skills: null,        // null = 还没读到；{ ok:false } = 读失败
+  rules: null,
+  skillsLoading: false,
+  rulesLoading: false
+};
+
+function libraryFailed(result) {
+  toast('error', t('toast.libraryFailed', { msg: (result && result.message) || '?' }));
+}
+
+function loadLibraries() {
+  loadSkills();
+  loadRules();
+}
+
+async function loadSkills() {
+  const seq = (Lib.skillsSeq = (Lib.skillsSeq || 0) + 1);
+  Lib.skillsLoading = true;
+  renderLibrariesNow();
+  const result = await callCommand('skills.library', {});
+  if (seq !== Lib.skillsSeq) return;
+  Lib.skillsLoading = false;
+  Lib.skills = result && result.ok ? result : { ok: false, message: (result && result.message) || '?' };
+  renderLibrariesNow();
+}
+
+async function loadRules() {
+  const seq = (Lib.rulesSeq = (Lib.rulesSeq || 0) + 1);
+  Lib.rulesLoading = true;
+  renderLibrariesNow();
+  const result = await callCommand('rules.library', {});
+  if (seq !== Lib.rulesSeq) return;
+  Lib.rulesLoading = false;
+  Lib.rules = result && result.ok ? result : { ok: false, message: (result && result.message) || '?' };
+  renderLibrariesNow();
+}
+
+// 整页重画时内联进去；库自己刷新时只替换这两块，不动表单焦点
+function renderLibraries() {
+  return renderSkillLibrary() + renderRuleLibrary();
+}
+
+function renderLibrariesNow() {
+  const box = document.getElementById('libraries');
+  if (box) box.innerHTML = renderLibraries();
+}
+
+function libraryButtons(items) {
+  const dis = (S.busy || parseLocked()) ? ' disabled' : '';
+  return items.map(item =>
+    '<button class="btn btn-sm' + (item.primary ? ' btn-primary' : '') + '" data-act="' + esc(item.act) + '"' + dis + '>' +
+    esc(item.label) + '</button>').join('');
+}
+
+function renderSkillLibrary() {
+  let body;
+  if (Lib.skillsLoading && !Lib.skills) {
+    body = '<div class="card-desc">' + esc(t('skills.loading')) + '</div>';
+  } else if (!Lib.skills || !Lib.skills.ok) {
+    body = '<div class="card-note">' + esc((Lib.skills && Lib.skills.message) || t('skills.loading')) + '</div>';
+  } else if (!Lib.skills.skills.length) {
+    body = '<div class="card-desc">' + esc(t('skills.empty')) + '</div>';
+  } else {
+    body = '<ul class="list library">' + Lib.skills.skills.map(skill => {
+      const meta = [skill.tier, skill.editable ? t('skills.editable') : t('skills.readonly')].filter(Boolean).join(' · ');
+      const actions = skill.editable
+        ? '<button class="btn btn-sm" data-act="skill-edit" data-dir="' + esc(skill.directory) + '">' + esc(t('skills.edit')) + '</button>' +
+          '<button class="btn btn-sm btn-ghost" data-act="skill-remove" data-dir="' + esc(skill.directory) + '">' + esc(t('btn.remove')) + '</button>'
+        : '<button class="btn btn-sm" data-act="skill-view" data-dir="' + esc(skill.directory) + '">' + esc(t('skills.view')) + '</button>';
+      return '<li><div class="grow"><div>' + esc(skill.name) + '</div>' +
+        '<div class="sub">' + esc(skill.description) + '</div>' +
+        '<div class="sub path">' + esc(meta + ' · ' + skill.directory) + '</div></div>' +
+        '<div class="actions">' + actions + '</div></li>';
+    }).join('') + '</ul>' +
+      (Lib.skills.skills.length >= 300 ? '<div class="card-desc">' + esc(t('skills.capped')) + '</div>' : '');
+  }
+  return '<section class="card" id="card-skills-library" data-library="skills">' +
+    '<div class="card-head"><span class="card-title">' + esc(t('skills.title')) + '</span><span class="spacer"></span>' +
+    libraryButtons([
+      { act: 'skills-reload', label: t('skills.reload') },
+      { act: 'skill-create', label: t('skills.create') },
+      { act: 'skill-install', label: t('skills.install'), primary: true }
+    ]) + '</div>' +
+    '<div class="card-desc">' + esc(t('skills.desc')) + '</div>' + body + '</section>';
+}
+
+// 启用列表以页面上未保存的「规则文件」为准，这样勾选立刻反映在列表里
+function currentRuleFiles() {
+  const section = S.sections.get('rules');
+  const field = section && (section.fields || []).find(f => f.key === 'files');
+  if (!field) return [];
+  const value = currentRaw(ekOf('rules', 'files'), field);
+  return Array.isArray(value) ? value.slice() : [];
+}
+
+function sameRulePath(a, b) {
+  const clean = value => String(value).replace(/\\/g, '/').replace(/\/+$/, '');
+  return clean(a) === clean(b);
+}
+
+function writeRuleFiles(files) {
+  const section = S.sections.get('rules');
+  const field = section && (section.fields || []).find(f => f.key === 'files');
+  if (!field) return;
+  commitValue('rules', 'files', 'stringArray', files.join('\n'), originalOf(ekOf('rules', 'files')));
+  afterRowChange('rules', 'files');
+  renderLibrariesNow();
+}
+
+function setRuleEnabled(path, enabled) {
+  let files = currentRuleFiles();
+  if (enabled) {
+    if (!files.some(item => sameRulePath(item, path))) files.push(path);
+  } else {
+    files = files.filter(item => !sameRulePath(item, path));
+  }
+  writeRuleFiles(files);
+}
+
+function moveRule(path, delta) {
+  const files = currentRuleFiles();
+  const index = files.findIndex(item => sameRulePath(item, path));
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= files.length) return;
+  const swapped = files[index];
+  files[index] = files[target];
+  files[target] = swapped;
+  writeRuleFiles(files);
+}
+
+function renderRuleLibrary() {
+  const files = currentRuleFiles();
+  const pending = edits.has(ekOf('rules', 'files'));
+  let body;
+  if (Lib.rulesLoading && !Lib.rules) {
+    body = '<div class="card-desc">' + esc(t('rules.loading')) + '</div>';
+  } else if (!Lib.rules || !Lib.rules.ok) {
+    body = '<div class="card-note">' + esc((Lib.rules && Lib.rules.message) || t('rules.loading')) + '</div>';
+  } else {
+    const known = new Set();
+    const rows = [];
+    const push = (entry, path, enabled) => {
+      const order = enabled ? files.findIndex(item => sameRulePath(item, path)) : -1;
+      rows.push({ entry, path, enabled, order });
+    };
+    for (const entry of Lib.rules.entries || []) {
+      known.add(entry.path);
+      push(entry, entry.path, files.some(item => sameRulePath(item, entry.path)));
+    }
+    for (const path of files) {
+      if ([...known].some(item => sameRulePath(item, path))) continue;
+      push({ name: path, kind: 'external', bytes: null }, path, true);
+    }
+    rows.sort((a, b) => (a.enabled === b.enabled ? a.order - b.order : (a.enabled ? -1 : 1)));
+    body = rows.length ? '<ul class="list library">' + rows.map(row => {
+      const entry = row.entry;
+      const detail = entry.kind === 'directory' ? t('rules.directory')
+        : entry.kind === 'external' ? t('rules.external')
+        : fmtBytes(entry.bytes);
+      let actions = '';
+      if (row.enabled) {
+        actions += '<button class="btn btn-sm" data-act="rule-move" data-path="' + esc(row.path) + '" data-delta="-1">' + esc(t('rules.up')) + '</button>';
+        actions += '<button class="btn btn-sm" data-act="rule-move" data-path="' + esc(row.path) + '" data-delta="1">' + esc(t('rules.down')) + '</button>';
+        actions += '<button class="btn btn-sm" data-act="rule-disable" data-path="' + esc(row.path) + '">' + esc(t('rules.disable')) + '</button>';
+      } else {
+        actions += '<button class="btn btn-sm" data-act="rule-enable" data-path="' + esc(row.path) + '">' + esc(t('rules.enable')) + '</button>';
+      }
+      if (entry.kind === 'file') {
+        actions += '<button class="btn btn-sm" data-act="rule-edit" data-path="' + esc(row.path) + '">' + esc(t('rules.edit')) + '</button>';
+      }
+      return '<li><div class="grow"><div>' + esc(entry.name) +
+        (row.enabled ? ' <span class="tag tag-strong">' + esc(t('rules.enabled')) + '</span>' : '') + '</div>' +
+        '<div class="sub path">' + esc(detail + ' · ' + row.path) + '</div>' +
+        (entry.kind === 'directory' ? '<div class="sub">' + esc(t('rules.dirNote')) + '</div>' : '') + '</div>' +
+        '<div class="actions">' + actions + '</div></li>';
+    }).join('') + '</ul>' : '<div class="card-desc">' + esc(t('rules.empty')) + '</div>';
+    if (Lib.rules.configured == null) body += '<div class="card-note">' + esc(t('rules.legacy')) + '</div>';
+    if (pending) body += '<div class="card-note">' + esc(t('rules.pending')) + '</div>';
+  }
+  const dir = (Lib.rules && Lib.rules.rulesDir) || '';
+  return '<section class="card" id="card-rules-library" data-library="rules">' +
+    '<div class="card-head"><span class="card-title">' + esc(t('rules.libTitle')) + '</span><span class="spacer"></span>' +
+    libraryButtons([
+      { act: 'rule-restore', label: t('rules.restore') },
+      { act: 'rule-install', label: t('rules.install'), primary: true }
+    ]) + '</div>' +
+    '<div class="card-desc">' + esc(t('rules.libDesc', { dir: dir || '…' })) + '</div>' + body + '</section>';
+}
+
+function dialogField(label, control) {
+  return '<div class="row"><div class="row-label">' + esc(label) + '</div><div class="row-control">' + control + '</div></div>';
+}
+
+function openSkill(directory, editable) {
+  const skill = ((Lib.skills && Lib.skills.skills) || []).find(item => item.directory === directory);
+  openDialog({
+    title: (skill && skill.name) || directory, wide: true, body: '<p class="sub">' + esc(t('skills.loading')) + '</p>',
+    actions: editable
+      ? [{ id: 'cancel', label: t('btn.cancel') }, { id: 'save', label: t('btn.save'), kind: 'primary' }]
+      : [{ id: 'close', label: t('btn.close') }],
+    onAction: id => { if (id === 'save') saveSkill(directory); else closeDialog(); }
+  });
+  callCommand('skills.read', { directory }).then(result => {
+    if (!S.dialog) return;
+    if (!result || !result.ok) { setDialogBody('<p>' + esc((result && result.message) || '?') + '</p>'); return; }
+    const note = editable ? '' : '<p class="sub">' + esc(t('skills.readonlyNote')) + '</p>';
+    setDialogBody(note + (editable
+      ? '<textarea class="editor" id="lib-body" spellcheck="false">' + esc(result.content) + '</textarea>'
+      : '<pre class="code"><span class="ln">' + esc(result.content) + '</span></pre>'));
+  });
+}
+
+async function saveSkill(directory) {
+  const body = document.getElementById('lib-body');
+  if (!body) return;
+  const result = await callCommand('skills.write', { directory, content: body.value });
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  closeDialog();
+  toast('ok', t('toast.skillSaved'));
+  loadSkills();
+}
+
+function openSkillCreate() {
+  openDialog({
+    title: t('skills.create'), wide: true, submitOnEnter: 'create',
+    body: '<p class="sub">' + esc(t('skills.nameHelp')) + '</p>' +
+      dialogField(t('skills.name'), '<input type="text" id="lib-name" data-autofocus spellcheck="false" autocomplete="off">') +
+      dialogField(t('skills.body'), '<textarea class="editor" id="lib-body" spellcheck="false"></textarea>'),
+    actions: [{ id: 'cancel', label: t('btn.cancel') }, { id: 'create', label: t('btn.create'), kind: 'primary' }],
+    onAction: id => { if (id === 'create') createSkill(); else closeDialog(); }
+  });
+}
+
+async function createSkill() {
+  const name = (document.getElementById('lib-name').value || '').trim();
+  if (!SKILL_NAME_RE.test(name)) { libraryFailed({ message: t('err.skillName') }); return; }
+  let content = document.getElementById('lib-body').value;
+  if (content.trim() === '') content = SKILL_TEMPLATE.split('{name}').join(name);
+  const result = await callCommand('skills.create', { name, content });
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  closeDialog();
+  toast('ok', t('toast.skillCreated', { name }));
+  loadSkills();
+}
+
+function openSkillInstall() {
+  openDialog({
+    title: t('skills.install'), submitOnEnter: 'install',
+    body: '<p class="sub">' + esc(t('skills.sourceHelp')) + '</p>' +
+      dialogField('GitHub', '<input type="text" id="lib-source" data-autofocus spellcheck="false" autocomplete="off" placeholder="owner/repo">'),
+    actions: [{ id: 'cancel', label: t('btn.cancel') }, { id: 'install', label: t('skills.install'), kind: 'primary' }],
+    onAction: id => { if (id === 'install') installSkill(); else closeDialog(); }
+  });
+}
+
+async function installSkill() {
+  const source = (document.getElementById('lib-source').value || '').trim();
+  if (!source) { libraryFailed({ message: t('err.source.empty') }); return; }
+  const result = await callCommand('skills.install', { source });
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  closeDialog();
+  const names = (result.installed || []).map(item => item.name || item.identifier || item.directory).filter(Boolean);
+  toast('ok', t('toast.skillInstalled', { names: names.join(', ') || source }));
+  loadSkills();
+}
+
+function askRemoveSkill(directory) {
+  const skill = ((Lib.skills && Lib.skills.skills) || []).find(item => item.directory === directory);
+  openDialog({
+    title: t('skills.removeTitle', { name: (skill && skill.name) || directory }),
+    body: '<p>' + esc(t('skills.removeBody', { dir: directory })) + '</p>',
+    actions: [{ id: 'cancel', label: t('btn.cancel') }, { id: 'remove', label: t('btn.remove'), kind: 'danger' }],
+    onAction: async id => {
+      if (id !== 'remove') { closeDialog(); return; }
+      const result = await callCommand('skills.remove', { directory, confirm: true });
+      closeDialog();
+      if (!result || !result.ok) { libraryFailed(result); return; }
+      toast('ok', t('toast.skillRemoved', { name: (skill && skill.name) || directory }));
+      loadSkills();
+    }
+  });
+}
+
+function openRule(path) {
+  const name = path.split(/[\\/]/).pop();
+  openDialog({
+    title: name, wide: true, body: '<p class="sub">' + esc(t('rules.loading')) + '</p>',
+    actions: [{ id: 'cancel', label: t('btn.cancel') }, { id: 'save', label: t('btn.save'), kind: 'primary' }],
+    onAction: id => { if (id === 'save') saveRule(path); else closeDialog(); }
+  });
+  callCommand('rules.read', { path }).then(result => {
+    if (!S.dialog) return;
+    if (!result || !result.ok) { setDialogBody('<p>' + esc((result && result.message) || '?') + '</p>'); return; }
+    setDialogBody('<textarea class="editor" id="lib-body" spellcheck="false">' + esc(result.content) + '</textarea>');
+  });
+}
+
+async function saveRule(path) {
+  const body = document.getElementById('lib-body');
+  if (!body) return;
+  const result = await callCommand('rules.write', { path, content: body.value });
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  closeDialog();
+  toast('ok', t('toast.ruleSaved'));
+}
+
+function openRuleInstall() {
+  openDialog({
+    title: t('rules.install'), submitOnEnter: 'install',
+    body: '<p class="sub">' + esc(t('rules.sourceHelp')) + '</p>' +
+      dialogField('GitHub', '<input type="text" id="lib-source" data-autofocus spellcheck="false" autocomplete="off" placeholder="owner/repo">') +
+      dialogField(t('rules.fileName'), '<input type="text" id="lib-name" spellcheck="false" autocomplete="off" placeholder="rules.md">') +
+      '<p class="sub">' + esc(t('rules.fileNameHelp')) + '</p>',
+    actions: [{ id: 'cancel', label: t('btn.cancel') }, { id: 'install', label: t('rules.install'), kind: 'primary' }],
+    onAction: id => { if (id === 'install') installRule(); else closeDialog(); }
+  });
+}
+
+async function installRule() {
+  const source = (document.getElementById('lib-source').value || '').trim();
+  if (!source) { libraryFailed({ message: t('err.source.empty') }); return; }
+  const name = (document.getElementById('lib-name').value || '').trim();
+  const result = await callCommand('rules.install', { source, name });
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  closeDialog();
+  toast('ok', t('toast.ruleInstalled', { path: result.path }));
+  if (result.path) setRuleEnabled(result.path, true);
+  loadRules();
+}
+
+async function restoreBundledRules() {
+  const result = await callCommand('rules.restore', {});
+  if (!result || !result.ok) { libraryFailed(result); return; }
+  toast('ok', t('toast.ruleRestored'));
+  if (result.path) setRuleEnabled(result.path, true);
+  loadRules();
 }

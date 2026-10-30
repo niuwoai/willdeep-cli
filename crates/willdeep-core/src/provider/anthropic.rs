@@ -54,7 +54,7 @@ impl Provider for AnthropicMessagesProvider {
         let body = AnthropicRequest {
             model: &self.config.model,
             max_tokens: max_output_tokens(&self.config.model, self.config.max_output_tokens),
-            system,
+            system: cached_system(&system),
             messages: wire_messages,
             tools: wire_tools,
             stream: false,
@@ -166,11 +166,54 @@ fn flush_tool_results(messages: &mut Vec<AnthropicMessage>, pending: &mut Vec<An
 struct AnthropicRequest<'a> {
     model: &'a str,
     max_tokens: u32,
-    system: String,
+    system: Vec<AnthropicSystemBlock>,
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicTool<'a>>,
     stream: bool,
+}
+
+/// One piece of the system prompt. Anthropic caches a prefix only up to an
+/// explicit breakpoint, so the stable part carries one and the per-turn tail
+/// does not: a changing tail then misses only itself.
+#[derive(Serialize)]
+struct AnthropicSystemBlock {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<AnthropicCacheControl>,
+}
+
+#[derive(Serialize)]
+struct AnthropicCacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+fn cached_system(system: &str) -> Vec<AnthropicSystemBlock> {
+    let cache_control = Some(AnthropicCacheControl { kind: "ephemeral" });
+    match system.split_once(crate::prompt::CACHE_BOUNDARY) {
+        Some((stable, dynamic)) => vec![
+            AnthropicSystemBlock {
+                kind: "text",
+                text: stable.to_owned(),
+                cache_control,
+            },
+            AnthropicSystemBlock {
+                kind: "text",
+                text: format!("{}{dynamic}", crate::prompt::CACHE_BOUNDARY.trim_start()),
+                cache_control: None,
+            },
+        ],
+        // A prompt without the boundary is stable in its entirety, which is the
+        // case for the safety judge and for workers.
+        None => vec![AnthropicSystemBlock {
+            kind: "text",
+            text: system.to_owned(),
+            cache_control,
+        }],
+    }
 }
 
 #[derive(Serialize)]
@@ -310,6 +353,32 @@ mod tests {
         assert_eq!(system, "system");
         assert_eq!(encoded.len(), 2);
         assert_eq!(encoded[1].role, "user");
+    }
+
+    /// The breakpoint lands on the stable prefix only. A per-turn change behind
+    /// the boundary must not move the cached bytes, and a prompt with no
+    /// boundary is cached whole.
+    #[test]
+    fn the_cache_breakpoint_covers_only_the_stable_prefix() {
+        let system = format!(
+            "stable rules{}workspace /tmp",
+            crate::prompt::CACHE_BOUNDARY
+        );
+        let blocks = cached_system(&system);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "stable rules");
+        assert!(blocks[0].cache_control.is_some());
+        assert!(blocks[1].text.contains("workspace /tmp"));
+        assert!(blocks[1].cache_control.is_none());
+
+        let whole = cached_system("judge prompt");
+        assert_eq!(whole.len(), 1);
+        assert!(whole[0].cache_control.is_some());
+
+        let wire = serde_json::to_value(&whole[0]).unwrap();
+        assert_eq!(wire["cache_control"]["type"], "ephemeral");
+        let tail = serde_json::to_value(&blocks[1]).unwrap();
+        assert!(tail.get("cache_control").is_none());
     }
 
     #[test]

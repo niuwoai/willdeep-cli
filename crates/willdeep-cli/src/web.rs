@@ -54,7 +54,7 @@ pub struct WebConfig {
 }
 
 pub(crate) struct WebState {
-    config_path: PathBuf,
+    pub(crate) config_path: PathBuf,
     profile: Option<String>,
     /// 浏览器端能看到的工作区白名单。Web 模式没有应用层鉴权，所以这份名单
     /// 就是边界本身——不在名单里的目录，前端连列都列不出来。回环监听时允许
@@ -63,8 +63,8 @@ pub(crate) struct WebState {
     /// `process.run` 的边界必须与聊天看到的边界**是同一个对象**，不能是
     /// 启动那一刻的副本——否则从界面新加的工作区，插件侧永远看不见，
     /// 而删掉的那个插件侧永远还在。
-    workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
-    home: PathBuf,
+    pub(crate) workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+    pub(crate) home: PathBuf,
     language: Language,
     harness_slots: Arc<Semaphore>,
     settings_writable: bool,

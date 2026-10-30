@@ -13,9 +13,9 @@ globalThis.window = window;
 globalThis.document = window.document;
 
 const source = readFileSync(new URL('./fixtures/config_page.js', import.meta.url), 'utf8');
-window.eval(source + '\nwindow.__wd = { parseInput, commitValue, renderControl, applyPreset, currentDefaultProvider, edits, S };');
+window.eval(source + '\nwindow.__wd = { parseInput, commitValue, renderControl, applyPreset, currentDefaultProvider, renderLibraries, setRuleEnabled, edits, S, Lib };');
 
-const { parseInput, commitValue, renderControl, applyPreset, currentDefaultProvider, edits, S } = window.__wd;
+const { parseInput, commitValue, renderControl, applyPreset, currentDefaultProvider, renderLibraries, setRuleEnabled, edits, S, Lib } = window.__wd;
 
 let failed = 0;
 function check(label, condition) {
@@ -70,6 +70,39 @@ S.sections.set('', {
   name: '', fields: [{ key: 'default_provider', type: 'string', hasValue: true, value: 'magpie' }],
 });
 check('default model follows the saved provider', currentDefaultProvider() === 'magpie');
+
+S.snapshot = { sections: [], collections: [], unknownKeys: [] };
+S.sections.set('rules', {
+  name: 'rules', groupID: 'rules', kind: 'static', editable: true,
+  fields: [{ key: 'files', type: 'stringArray', hasValue: false, value: [] }],
+});
+Lib.skillsLoading = false;
+Lib.skills = {
+  ok: true,
+  skills: [
+    { identifier: 'demo', name: 'Demo', description: '示例技能', tier: 'standard', directory: '/home/skills/demo', editable: true },
+    { identifier: 'shared', name: 'Shared <b>', description: '只读', tier: null, directory: '/home/.agents/skills/shared', editable: false },
+  ],
+};
+Lib.rulesLoading = false;
+Lib.rules = {
+  ok: true, configured: [], rulesDir: '/home/rules',
+  entries: [
+    { name: 'agentrules.md', path: '/home/rules/agentrules.md', kind: 'file', bytes: 1024, enabled: false },
+    { name: 'team', path: '/home/rules/team', kind: 'directory', bytes: null, enabled: false },
+  ],
+};
+document.getElementById('main').innerHTML = '<div id="libraries"></div>';
+setRuleEnabled('/home/rules/agentrules.md', true);
+const libraries = renderLibraries();
+check('editable skill offers edit and delete', libraries.includes('data-act="skill-edit"') && libraries.includes('data-act="skill-remove"'));
+check('a read-only skill offers view only', libraries.includes('data-act="skill-view"'));
+check('skill text is escaped', libraries.includes('Shared &lt;b&gt;') && !libraries.includes('Shared <b>'));
+check('enabling a rule writes the rule-file list', edits.get('rules\u0000files').value.join() === '/home/rules/agentrules.md');
+check('an enabled rule is marked and can move', libraries.includes('data-act="rule-move"') && libraries.includes('data-act="rule-disable"'));
+const directoryRow = libraries.slice(libraries.indexOf('/home/rules/team'));
+check('a directory rule explains itself and cannot be edited as a file',
+  directoryRow.includes('data-act="rule-enable"') && !directoryRow.includes('rule-edit'));
 
 if (failed) {
   console.error(failed + ' page check(s) failed');

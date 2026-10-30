@@ -61,8 +61,7 @@ impl App {
         let notice = self.compression_notice_row().map(|row| {
             let notice = self.compression_notice_lines(&row, search.as_deref());
             let at = self.compression_notice_insert_at();
-            self.transcript_rows
-                .splice(at..at, text_rows(&notice).into_iter());
+            self.transcript_rows.splice(at..at, text_rows(&notice));
             (at, notice)
         });
         let transient = self

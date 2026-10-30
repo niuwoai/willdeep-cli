@@ -221,6 +221,10 @@ pub struct ConfigFile {
     pub mcp_servers: BTreeMap<String, McpServerConfig>,
     #[serde(default)]
     pub skills: SkillSettings,
+    /// 全局规则。`None` 表示配置里从没写过 `[rules]`，按旧行为读
+    /// `~/.willdeep/CLAUDE.md`；`Some` 则严格用这份列表，哪怕它是空的。
+    #[serde(default)]
+    pub rules: Option<RuleSettings>,
     /// 匿名产品遥测；缺省即开启。
     #[serde(default)]
     pub telemetry: TelemetrySettings,
@@ -462,6 +466,14 @@ pub enum SandboxNetwork {
 pub struct SkillSettings {
     #[serde(default)]
     pub roots: Vec<PathBuf>,
+}
+
+/// 全局规则列表。每一项是一个文件或一个目录；目录里的 Markdown 按文件名拼接。
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSettings {
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 /// 匿名产品遥测。默认开启，`enabled = false` 关掉；
@@ -760,6 +772,10 @@ impl LoadedConfig {
             if required {
                 bail!("configuration file does not exist: {}", path.display());
             }
+            // 第一次启动：规则目录还不存在时，把内置规则落进去。配置里没有
+            // [rules] 时它不会自动生效，由配置页提示用户启用。目录已存在说明
+            // 用户有自己的规则，什么都不做。失败不挡住启动。
+            let _ = willdeep_core::rules::seed_bundled_rules();
             return Ok(Self {
                 file: ConfigFile::default(),
             });

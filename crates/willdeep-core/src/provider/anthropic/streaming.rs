@@ -17,7 +17,7 @@ pub(super) async fn complete(
     let body = AnthropicRequest {
         model: &provider.config.model,
         max_tokens: max_output_tokens(&provider.config.model, provider.config.max_output_tokens),
-        system,
+        system: cached_system(&system),
         messages,
         tools: tools.iter().map(AnthropicTool::from).collect(),
         stream: true,

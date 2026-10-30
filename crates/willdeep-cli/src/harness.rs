@@ -1122,31 +1122,41 @@ pub(crate) async fn build(
         willdeep_core::board::Board::path_for(&home.join("workers"), session_id),
     ));
     let tools = tools.with_board(board.clone(), "parent");
-    let mut system_prompt = willdeep_core::prompt::build_system_prompt(&workspace)?;
+    // 稳定前缀在前：契约、全局规则、技能目录、简洁风格与插件路由。这些只在配置或
+    // 技能库变化时才变，是提供商提示词缓存命中的那一段。工作区路径放在分界之后，
+    // 换工作区不会把前面的缓存打掉。
+    let configured_rules = loaded.file.rules.as_ref().map(|rules| rules.files.clone());
+    let global_rules = willdeep_core::prompt::global_user_instructions(configured_rules.as_deref());
+    let mut stable = willdeep_core::prompt::stable_prefix(global_rules.as_deref());
+    if !skills.list().is_empty() {
+        stable.push_str(
+            "\n\n# Available skills\nUse list_skills to search and read_skill before applying a relevant skill. Entries may carry a tier: `tier=worker` marks a skill whose steps fit a small-context worker — prefer dispatching it via spawn_agent with a task packet instead of running it inline; `tier=deep` marks work that needs the largest window available. Untagged skills run at the session's default tier.\n",
+        );
+        stable.push_str(&skills.routing_summary(4_096));
+    }
     // 简洁是默认风格：只有这条会话显式选了详细（`/verbose`）才不加这一段。
-    // 契约文本一个字不动，覆盖段永远接在末尾。
+    // 契约文本一个字不动，覆盖段接在稳定内容之后、动态内容之前。
     if resumed
         .is_none_or(|session| willdeep_core::ResponseStyle::uses_short(session.response_style))
     {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(willdeep_core::prompt::SHORT_RESPONSE_INSTRUCTION);
+        stable.push_str("\n\n");
+        stable.push_str(willdeep_core::prompt::SHORT_RESPONSE_INSTRUCTION);
     }
     if let Some(guidance) =
         crate::plugin_production::routing_guidance(home, screenplay_plugins_allowed).await
     {
-        system_prompt.push_str(&guidance);
+        stable.push_str(&guidance);
     }
     if let Some(guidance) =
         crate::plugin_screenplay::routing_guidance(home, screenplay_plugins_allowed).await
     {
-        system_prompt.push_str(&guidance);
+        stable.push_str(&guidance);
     }
-    if !skills.list().is_empty() {
-        system_prompt.push_str(
-            "\n\n# Available skills\nUse list_skills to search and read_skill before applying a relevant skill. Entries may carry a tier: `tier=worker` marks a skill whose steps fit a small-context worker — prefer dispatching it via spawn_agent with a task packet instead of running it inline; `tier=deep` marks work that needs the largest window available. Untagged skills run at the session's default tier.\n",
-        );
-        system_prompt.push_str(&skills.routing_summary(4_096));
-    }
+    let system_prompt = format!(
+        "{stable}{}{}",
+        willdeep_core::prompt::CACHE_BOUNDARY,
+        willdeep_core::prompt::dynamic_workspace_context(&workspace)
+    );
     let context_window = session_context_window(
         profile.and_then(|value| value.context_window),
         gateway.context_window,
@@ -1188,6 +1198,8 @@ pub(crate) async fn build(
         // Task packets may name a skill; the runtime inlines its body so the
         // worker never spends turns fetching its own instructions.
         .with_skills(skills.clone())
+        // Worker 没有自己的项目规则，继承用户配置的全局规则。
+        .with_global_rules(configured_rules.unwrap_or_default())
         // 兜底工种能查已连接的 MCP 服务。窄工种拿不到：它们的价值就是范围窄。
         .with_mcp(mcp)
         // Worker 与父会话共享已批准的精确动作。没有这条，后台 Worker 会在人

@@ -157,6 +157,64 @@ Dir.mktmpdir("willdeep-config-test") do |dir|
     raise "a model with no provider was accepted" if result["ok"]
     raise "the empty file was modified" unless File.read(bare) == "version = 1\n"
   end
+
+  check(failures, "skill library") do
+    home = File.join(dir, "home")
+    ENV["WD_HOME"] = home
+    created = box.call("skills.create", { "name" => "demo", "content" => "---\nname: Demo\ndescription: 示例\n---\n\nhello\n" })
+    raise "create failed: #{created['message']}" unless created["ok"]
+    listed = box.call("skills.library", {})
+    skill = listed["skills"].find { |item| item["identifier"] == "demo" }
+    raise "created skill not listed: #{listed.inspect}" unless skill
+    assert_equal(true, skill["editable"], "user skill editable")
+    read = box.call("skills.read", { "directory" => skill["directory"] })
+    raise "read failed: #{read['message']}" unless read["content"].include?("hello")
+    wrote = box.call("skills.write", { "directory" => skill["directory"], "content" => "rewritten\n" })
+    raise "write failed: #{wrote['message']}" unless wrote["ok"]
+    bad_name = box.call("skills.create", { "name" => "../escape", "content" => "x" })
+    raise "a name with .. was accepted" if bad_name["ok"]
+    shared = File.join(home, ".agents", "skills", "shared")
+    FileUtils.mkdir_p(shared)
+    File.write(File.join(shared, "SKILL.md"), "---\nname: Shared\n---\n\n")
+    again = box.call("skills.library", {})
+    foreign = again["skills"].find { |item| item["identifier"] == "shared" }
+    assert_equal(false, foreign["editable"], "shared skill stays read-only")
+    blocked = box.call("skills.write", { "directory" => foreign["directory"], "content" => "nope" })
+    raise "a shared skill was modified" if blocked["ok"]
+    unconfirmed = box.call("skills.remove", { "directory" => skill["directory"] })
+    raise "remove without confirm was accepted" if unconfirmed["ok"]
+    removed = box.call("skills.remove", { "directory" => skill["directory"], "confirm" => true })
+    raise "remove failed: #{removed['message']}" unless removed["ok"]
+    raise "skill directory survived" if File.exist?(skill["directory"])
+  ensure
+    ENV.delete("WD_HOME")
+  end
+
+  check(failures, "rule library") do
+    home = File.join(dir, "rule-home")
+    ENV["WD_HOME"] = home
+    restored = box.call("rules.restore", {})
+    raise "restore failed: #{restored['message']}" unless restored["ok"]
+    raise "bundled rules not written" unless File.file?(restored["path"])
+    again = box.call("rules.restore", {})
+    raise "restore overwrote an existing file" if again["ok"]
+    enabled = box.call("config.apply", args.merge(
+      "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "rules", "key" => "files", "value" => [restored["path"]] }]
+    ))
+    raise "enabling the rule failed: #{enabled['message']}" unless enabled["ok"]
+    listed = box.call("rules.library", {})
+    entry = listed["entries"].find { |item| item["name"] == "agentrules.md" }
+    assert_equal(true, entry["enabled"], "enabled flag follows [rules].files")
+    read = box.call("rules.read", { "path" => restored["path"] })
+    raise "read failed" unless read["content"].include?("MUST")
+    outside = box.call("rules.read", { "path" => "/etc/hosts" })
+    raise "a rule outside the rules directory was read" if outside["ok"]
+    traversal = box.call("rules.read", { "path" => File.join(home, "rules", "..", "config.toml") })
+    raise ".. in a rule path was accepted" if traversal["ok"]
+  ensure
+    ENV.delete("WD_HOME")
+  end
 end
 
 if failures.empty?

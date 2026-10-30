@@ -1,6 +1,6 @@
 {
   "name": "@niuwoai/willdeep",
-  "version": "0.134.0-rc6",
+  "version": "0.134.0-rc7",
   "description": "Install the WillDeep CLI from its verified GitHub Release.",
   "license": "Apache-2.0",
   "repository": {
