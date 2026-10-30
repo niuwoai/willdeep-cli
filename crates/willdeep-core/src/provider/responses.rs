@@ -184,18 +184,19 @@ impl ResponseInputItem {
             kind: "message",
             role: Some(role),
             // 空文本不发：正文为空的 assistant 消息只靠 tool_calls 表达。
-            content: (!text.is_empty())
-                .then(|| {
-                    vec![ResponseContent::text(
-                        if role == "assistant" {
-                            "output_text"
-                        } else {
-                            "input_text"
-                        },
-                        text.to_owned(),
-                    )]
-                })
-                .unwrap_or_default(),
+            // reasoning 的空串不走这里，它在 `reasoning` 里单独保留。
+            content: if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![ResponseContent::text(
+                    if role == "assistant" {
+                        "output_text"
+                    } else {
+                        "input_text"
+                    },
+                    text.to_owned(),
+                )]
+            },
             call_id: None,
             name: None,
             arguments: None,

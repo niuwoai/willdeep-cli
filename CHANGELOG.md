@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.133.0-rc6] - 2026-10-30
+
+### Fixed
+- 修正 0.133.0-rc5 的 clippy：Responses 出站构造空正文时改用普通 `if`，`-D warnings` 下不再报 `obfuscated_if_else`。功能与 rc5 相同，rc5 的 tag 已指向 CI 不通过的提交，按发版规则不移动，递增 rc 重发。
+
 ## [0.133.0-rc5] - 2026-10-30
 
 ### Fixed
