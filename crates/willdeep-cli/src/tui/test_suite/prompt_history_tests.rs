@@ -111,6 +111,32 @@ fn prompt_history_refill_preserves_existing_attachments() {
 }
 
 #[test]
+fn prompt_history_includes_a_submission_before_it_is_persisted() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.note_prompt_submitted("刚发出去，还没落盘");
+    let messages = vec![Message::user("更早的一条")];
+    press(&mut app, KeyCode::Up, &messages);
+    press(&mut app, KeyCode::Enter, &messages);
+    assert_eq!(app.input.text(), "刚发出去，还没落盘");
+
+    // 落进会话文件之后不再另记一份，菜单里只出现一次，仍是最新的。
+    app.input.take();
+    let messages = vec![
+        Message::user("更早的一条"),
+        Message::user("刚发出去，还没落盘"),
+    ];
+    app.note_prompt_history_persisted(&messages);
+    press(&mut app, KeyCode::Up, &messages);
+    press(&mut app, KeyCode::Enter, &messages);
+    assert_eq!(app.input.text(), "刚发出去，还没落盘");
+    app.input.take();
+    press(&mut app, KeyCode::Up, &messages);
+    press(&mut app, KeyCode::Up, &messages);
+    press(&mut app, KeyCode::Enter, &messages);
+    assert_eq!(app.input.text(), "更早的一条");
+}
+
+#[test]
 fn prompt_history_scrolls_inline_in_both_layouts() {
     for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
         let mut app = App::new(Vec::new(), Language::En);

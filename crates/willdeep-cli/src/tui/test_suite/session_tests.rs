@@ -2327,6 +2327,13 @@ fn runtime_compression_events_reach_the_status_bar_and_the_progress_line() {
         "compression must leave a progress line naming the dropped messages: {:?}",
         app.progress_log
     );
+    // 活动区那行在底部。压缩要持续一会儿，聊天区在用户刚发的那句正下方另挂一行，
+    // 压完就整行换成一句；没有用户消息时这行不画。
+    assert!(app.compression_notice_row().is_none());
+    app.append_transcript("You: what now?".to_owned());
+    app.note_compression_completed();
+    let row = app.compression_notice_row().unwrap();
+    assert!(row.contains("Context compressed"), "{row}");
     std::fs::remove_dir_all(root).unwrap();
 }
 

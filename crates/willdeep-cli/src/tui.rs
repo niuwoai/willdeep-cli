@@ -249,6 +249,13 @@ impl ChatSelection {
     }
 }
 
+/// 挂在用户消息下面的压缩状态。`done` 为真时整行已经换成「上下文已压缩」，
+/// 不再读秒；正文或工具一出现就整行撤掉。
+struct CompressionNotice {
+    started: Instant,
+    done: bool,
+}
+
 /// 一条下一句建议在反馈账本里的身份。
 #[derive(Clone, Debug)]
 struct TrackedSuggestion {
@@ -264,6 +271,8 @@ struct App {
     peer_unread: usize,
     input: PromptEditor,
     prompt_history: Option<prompt_history::PromptHistory>,
+    /// 已提交、会话文件还没记下的输入。向上箭头在落盘前也要能找回。
+    prompt_history_pending: VecDeque<String>,
     transcript: Vec<String>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
@@ -324,6 +333,12 @@ struct App {
     /// `/short` 与 `/verbose` 的会话级开关。`None` 是默认：简洁。下一轮才生效
     /// （系统提示词在构建 harness 时定下来），所以切它不打断正在跑的这一轮。
     response_style: Option<willdeep_core::ResponseStyle>,
+    /// 压缩进行中的状态行：起始时刻，以及是否已经压完。
+    ///
+    /// 压缩发生在「轮次开始」之后、正文之前，长则数十秒，期间聊天区没有任何新行，
+    /// 用户看着自己刚发的那句会以为卡住了。这行就挂在那句下面：压缩中读秒，压完整行
+    /// 换成「上下文已压缩」，正文或工具一来就撤掉。不进记录，重开会话也不留下。
+    compression: Option<CompressionNotice>,
     /// 手机中继的状态，Runtime 快照里带回来。中继归 Runtime 所有，TUI 只是遥控器；
     /// `None` 表示 Runtime 没在跑或版本太旧。
     mobile_status: Option<willdeep_runtime_protocol::MobileRelayStatus>,
@@ -392,6 +407,9 @@ struct App {
     requested_gate_presentations: BTreeSet<uuid::Uuid>,
     display_home: Option<PathBuf>,
     seen_runtime_inputs: BTreeSet<String>,
+    /// 忙时已经回显、还没被下一轮 `queued_user_message` 认领的原文。
+    /// 那条事件要等下一轮任务启动才来，中间记录还会继续长，不能只看最后一行。
+    pending_runtime_echoes: VecDeque<runtime_queue::PendingRuntimeEcho>,
     parked_remote_dialogs: BTreeMap<uuid::Uuid, runtime_queue::ParkedRemoteDialog>,
     /// 每张已弹出的 Runtime 对话框背后那个等回答的任务的取消信号。gate 在别处
     /// （手机、另一个终端）被答掉时丢掉它：任务不再等，接收端随之丢弃，对话框的
@@ -1419,7 +1437,7 @@ fn draw<B: ratatui::backend::Backend>(
             app.transcript_rect.height = app.transcript_rect.height.saturating_sub(1);
         }
         app.viewport_height = app.transcript_rect.height.saturating_sub(2).max(1) as usize;
-        let transient = app.prepare_transcript_frame();
+        let (transient, notice) = app.prepare_transcript_frame();
         let max = app.max_scroll();
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
         let offset = max.saturating_sub(app.scroll_from_bottom);
@@ -1474,7 +1492,7 @@ fn draw<B: ratatui::backend::Backend>(
                 format_elapsed_span(elapsed.as_secs_f32(), 0)
             ));
         }
-        let mut colored = app.transcript_viewport(&transient, offset);
+        let mut colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
         app.transcript_render_offset = offset;
         app.update_user_message_hits(offset, areas[0].y.saturating_add(1));
         app.thought_hit_rows = colored

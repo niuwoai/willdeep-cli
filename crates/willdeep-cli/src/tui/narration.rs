@@ -121,6 +121,62 @@ impl App {
         self.transient_row().or_else(|| self.concise_status_row())
     }
 
+    /// 压缩开始：状态行挂到用户刚发的那句下面，读秒从这一刻起。
+    ///
+    /// 压缩发生在「轮次开始」之后、正文之前，期间聊天区一行都不长，用户会以为
+    /// 卡住了。活动区那行照旧记（`record_progress`），这里只管聊天区这一行。
+    pub(super) fn note_compression_started(&mut self) {
+        self.compression = Some(CompressionNotice {
+            started: Instant::now(),
+            done: false,
+        });
+    }
+
+    /// 压缩完成：同一行整行换成「上下文已压缩」，不再读秒。正文或工具一来就撤掉。
+    pub(super) fn note_compression_completed(&mut self) {
+        if let Some(notice) = self.compression.as_mut() {
+            notice.done = true;
+        }
+    }
+
+    /// 真正的输出开始了（正文、思维链、工具、计划），压缩那一行的使命结束。
+    pub(super) fn dismiss_compression_notice(&mut self) {
+        self.compression = None;
+    }
+
+    /// 挂在最后一条用户消息正下方的压缩行。压缩中带已耗时，压完只留一句。
+    /// 聊天区最后一条不是用户消息时不画：这行只回答「我刚发的那句怎么没反应」。
+    pub(super) fn compression_notice_row(&self) -> Option<String> {
+        let notice = self.compression.as_ref()?;
+        if !self
+            .transcript
+            .last()
+            .is_some_and(|row| row.starts_with("You: "))
+        {
+            return None;
+        }
+        Some(if notice.done {
+            format!(
+                "· {}",
+                self.language.text(
+                    "上下文已压缩",
+                    "Context compressed",
+                    "コンテキストを圧縮しました"
+                )
+            )
+        } else {
+            format!(
+                "· {} · {}",
+                self.language.text(
+                    "正在压缩上下文",
+                    "Compressing context",
+                    "コンテキストを圧縮中"
+                ),
+                format_elapsed_span(notice.started.elapsed().as_secs_f32(), 0)
+            )
+        })
+    }
+
     /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
     pub(super) fn transient_row(&self) -> Option<String> {
         let thought = self.transient_thought.as_deref()?;
@@ -186,6 +242,8 @@ impl App {
             }
         }
         .to_owned();
+        // 流式输出一开始，压缩状态行就让位：用户已经看到 AI 在动了。
+        self.dismiss_compression_notice();
         let mut content = self.transient_thought.take().unwrap_or_default();
         content.push_str(&text);
         if kind == StreamKind::Reply {
@@ -454,6 +512,88 @@ impl App {
         for message in std::mem::take(&mut self.deferred_steering) {
             self.append_transcript_at(format!("You: {}", message.text), message.sent_at);
         }
+    }
+
+    /// 忙时提交一成功就回显，不等下一轮任务启动才发的那条事件。
+    /// 行文与事件到来时拼的那行一致，事件认领时直接对上，不会再写一行。
+    pub(super) fn echo_runtime_submission(&mut self, text: &str) {
+        let visible = willdeep_core::conversation::visible_user_text(text);
+        let row = format!("You: {}", terminal_safe_text(visible));
+        self.append_transcript(row.clone());
+        self.pending_runtime_echoes
+            .push_back(runtime_queue::PendingRuntimeEcho {
+                text: visible.to_owned(),
+                row,
+            });
+        self.note_prompt_submitted(visible);
+    }
+
+    /// 向上箭头在会话文件落盘前也要能找回刚发出的这句。同一句只留最近一次。
+    pub(super) fn note_prompt_submitted(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        self.prompt_history_pending.retain(|entry| entry != text);
+        self.prompt_history_pending.push_back(text.to_owned());
+        let overflow = self
+            .prompt_history_pending
+            .len()
+            .saturating_sub(prompt_history::HISTORY_LIMIT);
+        self.prompt_history_pending.drain(..overflow);
+    }
+
+    /// 会话文件已经记下这些输入，向上箭头直接从消息里读，不再另记一份。
+    pub(super) fn note_prompt_history_persisted(&mut self, messages: &[Message]) {
+        self.prompt_history_pending.retain(|text| {
+            !messages.iter().any(|message| {
+                message.role == willdeep_core::types::Role::User
+                    && willdeep_core::conversation::visible_user_text(&message.content) == text
+            })
+        });
+    }
+
+    /// 下一轮任务启动时的 `queued_user_message` 认领已经回显的那一行。
+    /// 对上了就不再写；对不上（别的端发来的、或本端没来得及回显）照旧补一行。
+    pub(super) fn claim_runtime_echo(&mut self, text: &str) -> bool {
+        let visible = willdeep_core::conversation::visible_user_text(text);
+        let row = format!("You: {}", terminal_safe_text(visible));
+        let claimed = self
+            .pending_runtime_echoes
+            .iter()
+            .position(|echo| echo.row == row)
+            .or_else(|| {
+                self.pending_runtime_echoes
+                    .iter()
+                    .position(|echo| echo.text == visible)
+            });
+        if let Some(position) = claimed {
+            self.pending_runtime_echoes.remove(position);
+            return true;
+        }
+        false
+    }
+
+    /// 队列里这条消息被删掉或改掉了：还挂着的回显行改成「未发送」。
+    /// 已经认领过的（下一轮已经开始）不动，那句话确实发出去了。
+    /// 同文多行时改最早那条，与入队顺序一致。
+    pub(super) fn retract_runtime_echoes(&mut self, remaining: &[&str]) {
+        let mut kept = VecDeque::new();
+        for echo in std::mem::take(&mut self.pending_runtime_echoes) {
+            if remaining.contains(&echo.text.as_str()) {
+                kept.push_back(echo);
+                continue;
+            }
+            if let Some(row) = self.transcript.iter_mut().find(|row| **row == echo.row) {
+                *row = format!(
+                    "You: {}{}",
+                    self.language
+                        .text("［未发送］ ", "[not sent] ", "［未送信］ ",),
+                    terminal_safe_text(&echo.text)
+                );
+            }
+        }
+        self.pending_runtime_echoes = kept;
     }
 
     /// 真正发出后移除最早的同文待发占位，并在当前轮次边界回显原文。
@@ -748,6 +888,8 @@ impl App {
         }
         self.finish_thought();
         self.transient_thought = None;
+        // 正文到了，压缩那一行就不用再解释「为什么还没动静」。
+        self.dismiss_compression_notice();
         self.activity_line = self
             .language
             .text("正在整理思路", "Working through it", "考えを整理中")
@@ -774,6 +916,8 @@ impl App {
     pub(super) fn note_tool_requested(&mut self, name: &str, detail: Option<&str>) {
         self.finish_thought();
         self.transient_thought = None;
+        // 工具调用是这一轮的第一份可见输出，压缩状态行到此为止。
+        self.dismiss_compression_notice();
         self.append_transcript(tool_line(TOOL_PENDING, name, detail));
     }
 
@@ -1470,6 +1614,22 @@ mod tests {
         app.finish_turn();
         assert!(app.live_transcript_row().is_none());
 
+        // 忙时发出的那句是记录里的一行，不进状态行，也不被状态行盖住。
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("还在查");
+        app.echo_runtime_submission("限定用 postgres");
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "You: 限定用 postgres")
+        );
+        let row = app.live_transcript_row().unwrap();
+        assert!(row.contains("还在查"), "{row}");
+        assert!(
+            !row.contains("postgres"),
+            "the echo is not the status row: {row}"
+        );
+
         // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
         app.begin_turn(true, "working".to_owned());
         app.note_narration("写完了");
@@ -1484,6 +1644,114 @@ mod tests {
                 .filter(|row| row.contains("写完了"))
                 .count(),
             2
+        );
+    }
+
+    /// 压缩期间聊天区一行都不长，用户盯着自己刚发的那句会以为卡住了。状态行就挂在
+    /// 那句正下方：压缩中读秒，压完整行换成一句，正文或工具一来就整行撤掉。
+    #[test]
+    fn compression_notice_sits_under_the_message_that_triggered_it() {
+        let mut app = App::new(vec!["You: 现在结果怎么样了？".to_owned()], Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+
+        app.note_compression_started();
+        let row = app.compression_notice_row().unwrap();
+        assert!(row.contains("正在压缩上下文"), "{row}");
+        assert!(row.contains('s'), "the row counts up: {row}");
+        // 不进记录：重开会话不该留下一行「正在压缩」。
+        assert_eq!(app.transcript, vec!["You: 现在结果怎么样了？".to_owned()]);
+
+        // 压完是同一行换词，不是再追加一行。
+        app.note_compression_completed();
+        let row = app.compression_notice_row().unwrap();
+        assert!(row.contains("上下文已压缩"), "{row}");
+        assert!(!row.contains("正在压缩"), "{row}");
+        assert!(
+            !row.contains('s'),
+            "a finished row does not keep counting: {row}"
+        );
+
+        // 真正的输出一开始，这行就不用再解释了。
+        app.stream_transient(StreamKind::Reply, "结果是");
+        assert!(app.compression_notice_row().is_none());
+
+        // 工具调用同样是第一份可见输出。
+        app.note_compression_started();
+        app.note_compression_completed();
+        app.note_tool_requested("read_file", None);
+        assert!(app.compression_notice_row().is_none());
+
+        // 中断或换会话时这行不能残留。
+        app.note_compression_started();
+        app.finish_turn();
+        assert!(app.compression_notice_row().is_none());
+
+        // 最后一条不是用户消息时不画：这行只回答「我刚发的那句怎么没反应」。
+        app.begin_turn(true, "working".to_owned());
+        app.note_narration("先说一句");
+        app.note_compression_started();
+        assert!(app.compression_notice_row().is_none());
+    }
+
+    /// 压缩行画在用户消息正下方，读秒换词都落在同一行，输出一开始整行消失。
+    #[test]
+    fn compression_notice_renders_on_the_line_below_the_user_message() {
+        let mut app = App::new(
+            vec![
+                "WillDeep: 上一轮的结论".to_owned(),
+                "You: 现在结果怎么样了？".to_owned(),
+            ],
+            Language::ZhCn,
+        );
+        app.transcript_width = 80;
+        app.viewport_height = 12;
+        app.note_compression_started();
+
+        let (_transient, _notice) = app.prepare_transcript_frame();
+        let rows = app.transcript_rows.clone();
+        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        let blank = rows[user..].iter().position(|row| row.is_empty()).unwrap();
+        let notice_row = &rows[user + blank + 1];
+        assert!(
+            notice_row.contains("正在压缩上下文"),
+            "the notice follows the blank line under the message: {rows:?}"
+        );
+        assert!(notice_row.contains('s'), "{notice_row}");
+
+        // 压完还是这一行，只是整行换了词。
+        app.note_compression_completed();
+        let (transient, notice) = app.prepare_transcript_frame();
+        let rows = &app.transcript_rows;
+        let shown = rows.iter().filter(|row| row.contains("压缩")).count();
+        assert_eq!(shown, 1, "completion replaces the row: {rows:?}");
+        assert!(rows.iter().any(|row| row.contains("上下文已压缩")));
+
+        // 贴底时这行在视口里，不会被算在屏幕外面。视口用的是压完之后那一帧。
+        let offset = app.max_scroll();
+        let viewport = app.transcript_viewport(&transient, notice.as_ref(), offset);
+        assert!(
+            viewport
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("上下文已压缩")),
+            "following the bottom still shows the notice"
+        );
+
+        // 往上翻时，压缩行后面的历史不能错位或丢行。
+        let earlier = app.transcript_viewport(&transient, notice.as_ref(), 0);
+        assert_eq!(
+            earlier.lines[0].to_string(),
+            "WillDeep: 上一轮的结论",
+            "history before the notice keeps its place"
+        );
+
+        // 正文一到，这一行就没了，记录里也不留。
+        app.note_narration("查到了");
+        app.prepare_transcript_frame();
+        assert!(
+            app.transcript_rows.iter().all(|row| !row.contains("压缩")),
+            "{:?}",
+            app.transcript_rows
         );
     }
 

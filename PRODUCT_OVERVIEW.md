@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-10-30 | 当前版本：v0.134.0-rc5
+> 最后更新：2026-10-30 | 当前版本：v0.134.0-rc6
+
+0.134.0-rc6 补上三处显示。Web 聊天区跟上 TUI 的简洁显示：默认风格下中途文字不再逐段堆成气泡，干活时只留最近一段在一行会替换的状态上，后面跟着已运行时长，轮次收尾才落成正文。TUI 在一轮还在跑时发出的消息立即回显，向上箭头在会话文件落盘前也能找回。压缩期间，触发压缩的那条用户消息正下方显示「正在压缩上下文」并读秒，压完同一行换成「上下文已压缩」，正文一出现就整行撤掉，这行不进记录。
 
 0.134.0-rc5 修复 `@niuwoai/willdeep` 的 npm 页面 README 为空。0.134.0-rc4 把 README 放进了包，但 npm 10 发给 registry 的元数据重读自磁盘上的 `package.json`，不带打包时写入的 readme，页面仍显示没有 README。发布脚本现在把 README 写进 `package.json` 再发布；安装方式不变。
 
@@ -487,6 +489,7 @@ SOMEIM_API_KEY='<your-key>' cargo run -p willdeep -- \
 
 ## 已知问题与后续
 
+- [ ] 上下文压缩沿用提供商的 `max_output_tokens`，没有自己的输出上限。这个上限每次请求都强制带上，思考 token 占同一额度；写得比模型的真实上限小很多时（例如 8192，而 DeepSeek V4 的上限是 384K），长会话的合并摘要会被截断，客户端把 `finish_reason=length` 的结果当成没有正文，报「provider response did not include a completion」。代码缺省 16384 从建仓起就写死，没有依据，且改缺省救不了已经写明上限的档案。配置页的「最大输出 Token」已注明这个关系。
 - [ ] Provider 原生 token streaming；当前 SSE 已实时传输 Harness 阶段、工具进度和最终回答。
 - [ ] ACP/Codex App Server/Goose 接入；
 - [x] MCP Streamable HTTP 与 OAuth（v0.78.0-rc24；服务端主动请求与 GET 事件流未接）；

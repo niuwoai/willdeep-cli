@@ -13,7 +13,9 @@ pub(super) struct TranscriptRenderCache {
 }
 
 impl App {
-    pub(super) fn prepare_transcript_frame(&mut self) -> Text<'static> {
+    pub(super) fn prepare_transcript_frame(
+        &mut self,
+    ) -> (Text<'static>, Option<(usize, Text<'static>)>) {
         let time_labels =
             self.message_times
                 .labels(self.transcript.len(), self.language, message_time::now());
@@ -53,6 +55,16 @@ impl App {
             .expect("prepared history")
             .text;
         self.transcript_rows.truncate(history.lines.len());
+        // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
+        // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
+        // 插入点按缓存里的样式行算，点名和点击命中都走 `transcript_rows`，插完才对得上。
+        let notice = self.compression_notice_row().map(|row| {
+            let notice = self.compression_notice_lines(&row, search.as_deref());
+            let at = self.compression_notice_insert_at();
+            self.transcript_rows
+                .splice(at..at, text_rows(&notice).into_iter());
+            (at, notice)
+        });
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
@@ -62,13 +74,44 @@ impl App {
                 )
             });
         self.transcript_rows.extend(text_rows(&transient));
-        self.transcript_height = history.lines.len() + transient.lines.len();
-        transient
+        self.transcript_height = self.transcript_rows.len();
+        (transient, notice)
+    }
+
+    /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行和后面那行空白。
+    /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
+    fn compression_notice_insert_at(&self) -> usize {
+        self.transcript_rows
+            .iter()
+            .rposition(|row| row.starts_with("You:"))
+            .map_or(self.transcript_rows.len(), |user| {
+                let body = self.transcript_rows[user..]
+                    .iter()
+                    .position(|row| row.is_empty())
+                    .unwrap_or(self.transcript_rows.len() - user);
+                (user + body + 1).min(self.transcript_rows.len())
+            })
+    }
+
+    /// 压缩行用账目行的灰色，搜索命中时同样高亮。
+    fn compression_notice_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
+        let mut text = wrap_styled_text(
+            Text::from(Line::styled(
+                row.to_owned(),
+                Style::default().fg(Color::DarkGray),
+            )),
+            self.transcript_width,
+        );
+        if let Some(query) = search {
+            highlight_matches(&mut text, query);
+        }
+        text
     }
 
     pub(super) fn transcript_viewport(
         &self,
         transient: &Text<'static>,
+        notice: Option<&(usize, Text<'static>)>,
         offset: usize,
     ) -> Text<'static> {
         let history = &self
@@ -76,16 +119,30 @@ impl App {
             .as_ref()
             .expect("prepared history")
             .text;
-        // Skip history by index. Iterating from row zero would still make
-        // every frame proportional to the complete conversation length.
-        let history_start = offset.min(history.lines.len());
-        let transient_start = offset.saturating_sub(history.lines.len());
+        // 压缩行插在历史中间，底部状态行又接在最后。`transcript_rows` 是这一帧
+        // 拼好的全部行，样式按段取：历史走缓存，压缩行用准备帧时画好的那一份，
+        // 状态行走调用方传入的那一份。
+        let rows = offset..self.transcript_rows.len();
         Text::from(
-            history.lines[history_start..]
-                .iter()
-                .chain(transient.lines.iter().skip(transient_start))
-                .take(self.viewport_height)
-                .cloned()
+            rows.take(self.viewport_height)
+                .map(|index| match notice {
+                    Some((at, drawn)) if (*at..*at + drawn.lines.len()).contains(&index) => {
+                        drawn.lines[index - at].clone()
+                    }
+                    _ if index
+                        < history.lines.len()
+                            + notice.as_ref().map_or(0, |(_, drawn)| drawn.lines.len()) =>
+                    {
+                        let history_index =
+                            index - usize::from(notice.is_some_and(|(at, _)| index > *at));
+                        history.lines[history_index].clone()
+                    }
+                    _ => {
+                        let tail = history.lines.len()
+                            + notice.as_ref().map_or(0, |(_, drawn)| drawn.lines.len());
+                        transient.lines[index - tail].clone()
+                    }
+                })
                 .collect::<Vec<_>>(),
         )
     }

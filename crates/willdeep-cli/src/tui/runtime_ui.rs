@@ -240,6 +240,8 @@ pub(super) fn sync_runtime_session(
             app.refresh_transcript_height();
             app.scroll_from_bottom = app.scroll_from_bottom.min(app.max_scroll());
         }
+        // 会话文件已经记下的输入，向上箭头直接从消息里读。
+        app.note_prompt_history_persisted(&session.messages);
     } else {
         session.runtime_event_cursor = app.runtime_event_cursor;
         // 同上：空会话不为游标落盘。托管分支不走这里——那边已经在锁内
@@ -439,7 +441,7 @@ fn event_details(message: &str) -> String {
     }
 }
 
-fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
+pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
     let (_task, payload) = message.split_once(' ')?;
     let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
         return None;
@@ -476,6 +478,9 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                 value.get("turn_id").and_then(|v| v.as_str()),
                 value.get("text").and_then(|v| v.as_str()),
             ) && app.seen_runtime_inputs.insert(id.to_owned())
+                // 忙时提交已经回显过这句。事件要等下一轮任务启动才来，中间记录
+                // 还在长，所以认领看的是挂起的回显，不只是最后一行。
+                && !app.claim_runtime_echo(text)
             {
                 let row = format!("You: {}", terminal_safe_text(text));
                 if app.transcript.last() != Some(&row) {
@@ -516,6 +521,8 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
         }
         Some("plan_updated") => {
             if let Some(receipt) = value.get("plan_update") {
+                // 计划卡片是这一轮的第一份可见输出，压缩状态行到此为止。
+                app.dismiss_compression_notice();
                 append_plan_result(&mut app.transcript, &receipt.to_string());
             }
         }
@@ -589,6 +596,9 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
                     )
                     .to_owned(),
             );
+            // 活动区那行在底部，压缩要持续一会儿，用户盯着自己刚发的消息看不到任何
+            // 变化。聊天区在那句正下方另挂一行，读秒直到压完。
+            app.note_compression_started();
         }
         Some("compression_completed") => {
             if let Some(tokens) = value
@@ -617,6 +627,8 @@ fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
             } else {
                 compressed.to_owned()
             });
+            // 同一行整行换成「上下文已压缩」；正文或工具一开始就撤掉。
+            app.note_compression_completed();
         }
         Some("subagent_started") => {
             let id = short_event_agent(&value);
