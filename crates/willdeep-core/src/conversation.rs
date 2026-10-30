@@ -399,6 +399,12 @@ pub fn attachment_reference(attachments: &[crate::types::MessageAttachment]) -> 
     Some(format!("{:x}", writer.0.finalize()))
 }
 
+/// 这段回复是不是只由计划围栏组成。TUI 的简洁模式据此决定它进计划卡片
+/// 还是进那一行状态：围栏要原位更新卡片，普通中途文字只替换状态行。
+pub fn is_plan_reply(content: &str) -> bool {
+    parse_plan_reply(content, None).is_some()
+}
+
 /// Parse only complete, explicitly typed fences. Ordinary prose, user-pasted
 /// examples, unclosed streams and unknown statuses are never consumed.
 pub fn parse_plan_reply(content: &str, existing: Option<&Plan>) -> Option<(Plan, bool)> {

@@ -396,6 +396,7 @@ fn runtime_partial_turn_shows_final_text_and_finishes() {
     let store = SessionStore::new(&root);
     let mut session = Session::new(root.clone(), None, "runtime partial");
     let mut app = App::new(Vec::new(), Language::En);
+    app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
@@ -549,6 +550,7 @@ fn runtime_reply_only_adds_what_narration_has_not_shown() {
     let store = SessionStore::new(&root);
     let mut session = Session::new(root.clone(), None, "runtime reply dedupe");
     let mut app = App::new(Vec::new(), Language::En);
+    app.response_style = Some(willdeep_core::ResponseStyle::Detailed);
     let task_id = uuid::Uuid::new_v4();
     let session_id = session.id;
     let output = |sequence: u64, value: serde_json::Value| crate::daemon::RemoteRuntimeEvent {
