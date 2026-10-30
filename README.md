@@ -67,6 +67,36 @@ willdeep run --output json "总结当前风险"        # 无头自动化：稳�
 
 ---
 
+## SWE-bench 公开评测
+
+截至 2026-10-30，[官网公开评测](https://willdeep.com/benchmarks/)中，每个模型最新已结算、解决率超过 70% 的结果如下。两项均使用 **WillDeep CLI 0.94.0-rc5**，在同一份覆盖 12 个项目的冻结题集 `verified-60-v1` 上运行，并使用 SWE-bench 官方评测器判定补丁。
+
+| 根模型 | 解决率 | 解决题数 | 完成日期（北京时间） | 批次与证据 |
+| --- | ---: | ---: | --- | --- |
+| DeepSeek V4 Flash | **75.0%** | **45/60** | 2026-10-14 | [故障补测组合 v2](https://willdeep.com/benchmarks/runs/cli-094rc5-deepseek-flash-60-20261013-8m-fault-adjusted-v2/summary.md) |
+| GLM-5 | **71.7%** | **43/60** | 2026-10-13 | [独立批次](https://willdeep.com/benchmarks/runs/cli-094rc5-glm-5-60-20261012-8m-v1/summary.md) |
+
+每题最多 60 轮、1200 秒，主 Agent、子 Agent 与辅助调用的已报告 Token 累计阈值为 800 万（末次及在途调用可超额）。DeepSeek 的原始结果为 41/60，故障题独立补测后组合为 45/60，**不是单次完整重跑或单次通过率**；GLM-5 的 60 题分母中保留了 1 道上游 502 故障题。
+
+### 与公开 coding agent 成绩对照
+
+以下摘录 [SWE-bench 官方 Verified 榜单](https://www.swebench.com/)的公开提交，核对日期为 2026-10-30；列出具体 Agent、模型与提交日期，作为公开成绩参考，不代表各产品当前版本的能力上限。
+
+**口径不同：WillDeep 是 Verified 的固定 60 题探索性子集，下表是完整 Verified 500 题。题目范围、模型、预算及重试方式不同，不能据此计算领先幅度或宣称排名、胜过某个 Agent。**
+
+| Coding agent | 模型 / 配置 | Verified 500 题解决率 | 提交日期 | 来源 |
+| --- | --- | ---: | --- | --- |
+| live-SWE-agent | Claude Opus 4.5，medium | 79.2% | 2025-12-15 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20251215_livesweagent_claude-opus-4-5) |
+| mini-SWE-agent 2.0.0 | Claude Opus 4.5，high | 76.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
+| mini-SWE-agent 2.0.0 | GLM-5，high | 72.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
+| OpenHands | GPT-5，high | 71.8% | 2025-08-07 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20250807_openhands_gpt5) |
+
+以上公开提交均标注单次尝试；官方榜单的收录不等于全部经榜单团队独立复核。WillDeep 成绩代表对应模型与 Agent 执行框架的组合，不是模型裸测，也不能直接沿用为 Mac 或 Android 版成绩。
+
+[官网评测页](https://willdeep.com/benchmarks/)提供逐题脱敏对话、工具调用、提交补丁、判定和证据包；[冻结题集](https://willdeep.com/benchmarks/taskset.json)可用于核对样本范围。历史批次保留，已被 v2 替代的 DeepSeek 补测 v1 不重复列入上述精选结果。
+
+---
+
 ## 适合谁
 
 | 你的处境 | WillDeep 给你的 |
@@ -161,34 +191,6 @@ on_error = "deny"
 ---
 
 ## 数据说话
-
-### SWE-bench 公开评测
-
-截至 2026-10-30，[官网公开评测](https://willdeep.com/benchmarks/)中，每个模型最新已结算、解决率超过 70% 的结果如下。两项均使用 **WillDeep CLI 0.94.0-rc5**，在同一份覆盖 12 个项目的冻结题集 `verified-60-v1` 上运行，并使用 SWE-bench 官方评测器判定补丁。
-
-| 根模型 | 解决率 | 解决题数 | 完成日期（北京时间） | 批次与证据 |
-| --- | ---: | ---: | --- | --- |
-| DeepSeek V4 Flash | **75.0%** | **45/60** | 2026-10-14 | [故障补测组合 v2](https://willdeep.com/benchmarks/runs/cli-094rc5-deepseek-flash-60-20261013-8m-fault-adjusted-v2/summary.md) |
-| GLM-5 | **71.7%** | **43/60** | 2026-10-13 | [独立批次](https://willdeep.com/benchmarks/runs/cli-094rc5-glm-5-60-20261012-8m-v1/summary.md) |
-
-每题最多 60 轮、1200 秒，主 Agent、子 Agent 与辅助调用的已报告 Token 累计阈值为 800 万（末次及在途调用可超额）。DeepSeek 的原始结果为 41/60，故障题独立补测后组合为 45/60，**不是单次完整重跑或单次通过率**；GLM-5 的 60 题分母中保留了 1 道上游 502 故障题。
-
-#### 与公开 coding agent 成绩对照
-
-以下摘录 [SWE-bench 官方 Verified 榜单](https://www.swebench.com/)的公开提交，核对日期为 2026-10-30；列出具体 Agent、模型与提交日期，作为公开成绩参考，不代表各产品当前版本的能力上限。
-
-**口径不同：WillDeep 是 Verified 的固定 60 题探索性子集，下表是完整 Verified 500 题。题目范围、模型、预算及重试方式不同，不能据此计算领先幅度或宣称排名、胜过某个 Agent。**
-
-| Coding agent | 模型 / 配置 | Verified 500 题解决率 | 提交日期 | 来源 |
-| --- | --- | ---: | --- | --- |
-| live-SWE-agent | Claude Opus 4.5，medium | 79.2% | 2025-12-15 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20251215_livesweagent_claude-opus-4-5) |
-| mini-SWE-agent 2.0.0 | Claude Opus 4.5，high | 76.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
-| mini-SWE-agent 2.0.0 | GLM-5，high | 72.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
-| OpenHands | GPT-5，high | 71.8% | 2025-08-07 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20250807_openhands_gpt5) |
-
-以上公开提交均标注单次尝试；官方榜单的收录不等于全部经榜单团队独立复核。WillDeep 成绩代表对应模型与 Agent 执行框架的组合，不是模型裸测，也不能直接沿用为 Mac 或 Android 版成绩。
-
-[官网评测页](https://willdeep.com/benchmarks/)提供逐题脱敏对话、工具调用、提交补丁、判定和证据包；[冻结题集](https://willdeep.com/benchmarks/taskset.json)可用于核对样本范围。历史批次保留，已被 v2 替代的 DeepSeek 补测 v1 不重复列入上述精选结果。
 
 ### 小上下文 Worker 靶场
 
