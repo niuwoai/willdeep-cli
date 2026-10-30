@@ -436,6 +436,23 @@ fn session_picker_depths(results: &[willdeep_runtime_protocol::SessionSearchResu
         .collect()
 }
 
+fn session_status_label(
+    status: willdeep_runtime_protocol::SessionStatus,
+    language: Language,
+) -> &'static str {
+    use willdeep_runtime_protocol::SessionStatus;
+    match status {
+        SessionStatus::Idle => language.text("空闲", "idle", "待機中"),
+        SessionStatus::Queued => language.text("排队中", "queued", "待機列"),
+        SessionStatus::Running => language.text("运行中", "running", "実行中"),
+        SessionStatus::WaitingApproval => language.text("等待审批", "waiting approval", "承認待ち"),
+        SessionStatus::WaitingAnswer => language.text("等待回答", "waiting answer", "回答待ち"),
+        SessionStatus::Failed => language.text("失败", "failed", "失敗"),
+        SessionStatus::Interrupted => language.text("已中断", "interrupted", "中断"),
+        SessionStatus::Archived => language.text("已归档", "archived", "アーカイブ済み"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,22 +500,5 @@ mod tests {
         let orphan = nest_forked_sessions(vec![result(child, "孤儿", Some(parent))]);
         assert_eq!(orphan.len(), 1);
         assert_eq!(session_picker_depths(&orphan), vec![0]);
-    }
-}
-
-fn session_status_label(
-    status: willdeep_runtime_protocol::SessionStatus,
-    language: Language,
-) -> &'static str {
-    use willdeep_runtime_protocol::SessionStatus;
-    match status {
-        SessionStatus::Idle => language.text("空闲", "idle", "待機中"),
-        SessionStatus::Queued => language.text("排队中", "queued", "待機列"),
-        SessionStatus::Running => language.text("运行中", "running", "実行中"),
-        SessionStatus::WaitingApproval => language.text("等待审批", "waiting approval", "承認待ち"),
-        SessionStatus::WaitingAnswer => language.text("等待回答", "waiting answer", "回答待ち"),
-        SessionStatus::Failed => language.text("失败", "failed", "失敗"),
-        SessionStatus::Interrupted => language.text("已中断", "interrupted", "中断"),
-        SessionStatus::Archived => language.text("已归档", "archived", "アーカイブ済み"),
     }
 }
