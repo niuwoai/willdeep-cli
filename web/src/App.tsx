@@ -38,6 +38,7 @@ import { AttachmentManager } from "./AttachmentManager";
 import { attachmentText } from "./attachmentMessages";
 import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
+import { conciseHistory, interruptedReply, narrationDecision, unshownReply, usesShortStyle, type ConciseLine, type ReplyStyle } from "./conciseTurn";
 import { formatStepElapsed, groupActivityMessages, needsActivityStrip, turnDividerText, type RunStep, type ThoughtRecord } from "./runActivity";
 import { RunCard, ThoughtCard } from "./RunCard";
 import { AgentLibrary } from "./AgentLibrary";
@@ -68,10 +69,10 @@ function settleActiveSteps(steps: RunStep[], now: number): RunStep[] {
     ? { ...step, status: "done" as const, elapsedMs: step.elapsedMs ?? now - step.startedAt }
     : step);
 }
-type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[] };
+type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider" | "status"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[]; concise?: ConciseLine };
 function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   const chat: ChatMessage[] = [];
-  detail.messages.forEach((message, index) => {
+  conciseHistory(detail.messages, detail.response_style).forEach((message, index) => {
     const id = `${detail.id}-${index}`;
     // Missing output may be a suspended live request, not an interrupted tool.
     if (message.tools?.length) {
@@ -254,6 +255,11 @@ export function App() {
   // 轮次收尾时要从运行卡片里数工具步，而会话重载会把卡片整个换掉，先照一份镜像。
   const chatRef = useRef<ChatMessage[]>([]);
   useEffect(() => { chatRef.current = chat; }, [chat]);
+  // 这条会话的回复风格。缺省即简洁，与提示词侧同一条判定；切它只从下一轮起生效。
+  const replyStyleRef = useRef<ReplyStyle>(null);
+  // 简洁模式还没落进聊天区的最近一段中途文字。轮次收尾时据此去重，中断时补写。
+  const conciseLineRef = useRef<ConciseLine | null>(null);
+  const [conciseNow, setConciseNow] = useState(() => Date.now());
   const [attachments, updateAttachments] = useState<Attachment[]>([]);
   const attachmentsRef = useRef<Attachment[]>([]);
   const setAttachments = (value: Attachment[] | ((current: Attachment[]) => Attachment[])) => {
@@ -522,6 +528,12 @@ export function App() {
     return () => { active = false; window.clearInterval(timer); };
   }, [workspace, t]);
   useEffect(() => { if (followBottomRef.current) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [chat, activity]);
+  // 状态行的已运行时长每秒跳一格。没有状态行时不转定时器。
+  useEffect(() => {
+    if (!chat.some((message) => message.role === "status")) return undefined;
+    const timer = window.setInterval(() => setConciseNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [chat]);
 
   const [showArchived, setShowArchived] = useState(false);
   const { liveSessions, archivedSessions } = useMemo(() => {
@@ -563,6 +575,8 @@ export function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
+    replyStyleRef.current = detail.response_style ?? null;
+    conciseLineRef.current = null;
     setSessionId(detail.id);
     // 换会话才重置窗口；同一个会话的轮询刷新不能把用户展开的历史收回去。
     if (chatSessionRef.current !== detail.id) {
@@ -635,7 +649,21 @@ export function App() {
       }));
     }
     else if (["provider_retry_wait", "subagent_retry_wait", "provider_retry_started", "subagent_retry_started", "runtime_handoff_wait"].includes(event.type)) setActivity(event.label || t.thinking);
-    else if (event.type === "thought") setActivity(event.text || t.thinking);
+    else if (event.type === "thought") {
+      const text = (event.text || "").trim();
+      // 计划围栏两种模式都原位更新卡片，不进状态行，也不落成一段正文。
+      if (narrationDecision(replyStyleRef.current, text) === "hold") {
+        const startedAt = conciseLineRef.current?.startedAt ?? Date.now();
+        conciseLineRef.current = { text, startedAt };
+        setChat((current) => {
+          const without = current.filter((message) => message.role !== "status");
+          return [...without, { id: "concise-status", role: "status", content: "", concise: { text, startedAt } }];
+        });
+      } else if (narrationDecision(replyStyleRef.current, text) === "append") {
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: text }]);
+      }
+      setActivity(event.text || t.thinking);
+    }
     else if (event.type === "turn_started") {
       setChat((current) => current.map((message) => {
         if (message.id !== runId) return message;
@@ -699,9 +727,18 @@ export function App() {
     return { terminal: false as const };
   }
 
+  /** 轮次没正常收尾：还挂在状态行上的最后一段补写进聊天区，不随状态行一起消失。 */
+  function keepInterruptedLine() {
+    const text = interruptedReply(conciseLineRef.current);
+    conciseLineRef.current = null;
+    if (!text) return;
+    setChat((current) => [...current.filter((message) => message.role !== "status"), { id: nextId("assistant"), role: "assistant", content: text }]);
+  }
+
   async function stopRemoteTurn(turnId: string) {
     const response = await fetch(`/api/turns/${encodeURIComponent(turnId)}/stop`, { method: "POST" });
     if (!response.ok) throw new Error(await response.text());
+    keepInterruptedLine();
     abortRef.current?.abort(); setActivity(t.stopped); setBusy(false); abortRef.current = null; activeTurnRef.current = null; activeSessionRef.current = null;
     setActiveRuntimeSessionId("");
     if (activeRunRef.current) updateRun(activeRunRef.current, (steps) => steps.map((step) => step.status === "active" ? { ...step, label: t.stopped, status: "failed" as const, elapsedMs: Date.now() - step.startedAt } : step));
@@ -1055,6 +1092,7 @@ export function App() {
       const detailed = typed === "/verbose";
       try {
         await mutate(`/api/sessions/${encodeURIComponent(sessionId)}/response-style`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_style: detailed ? "detailed" : "short" }) });
+        replyStyleRef.current = detailed ? "detailed" : "short";
         setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: detailed ? t.verboseOn : t.shortOn }]);
       } catch (reason) { setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
       return;
@@ -1113,7 +1151,19 @@ export function App() {
       });
       if (!terminal) throw new Error(t.streamDisconnected);
       updateRun(runId, (steps) => settleActiveSteps(steps, Date.now()));
-      setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: answer || t.emptyReply }]);
+      // 简洁模式的中途文字只摆在状态行上。收尾是它进聊天区的时候：正文与它相同就落这一段，
+      // 正文在它前面拼了提示就两段都落。状态行随之撤掉。
+      const held = conciseLineRef.current?.text ?? null;
+      conciseLineRef.current = null;
+      const head = unshownReply(answer, held);
+      setChat((current) => {
+        const settled = current.filter((message) => message.role !== "status");
+        const bubbles: ChatMessage[] = [];
+        if (head) bubbles.push({ id: nextId("assistant"), role: "assistant", content: head });
+        if (held && usesShortStyle(replyStyleRef.current)) bubbles.push({ id: nextId("assistant"), role: "assistant", content: held });
+        if (!bubbles.length) bubbles.push({ id: nextId("assistant"), role: "assistant", content: answer || t.emptyReply });
+        return [...settled, ...bubbles];
+      });
       const divider = turnDivider(runId, startedAt);
       if (completedSessionId) {
         const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(completedSessionId)}`);
@@ -1132,6 +1182,7 @@ export function App() {
         setActivity(t.reconnecting);
         await resumeTurn(recoverSessionId, recoverTurnId);
       } else if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+        keepInterruptedLine();
         setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
       }
     } finally { if (abortRef.current === controller) abortRef.current = null; if (activeRunRef.current === runId) activeRunRef.current = null; activeTurnRef.current = null; activeSessionRef.current = null; setActiveRuntimeSessionId(""); pendingStopRef.current = false; setBusy(false); setActivity(""); }
@@ -1290,7 +1341,7 @@ export function App() {
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />
