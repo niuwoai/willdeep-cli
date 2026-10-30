@@ -91,14 +91,16 @@ module ConfigSchema
     {
       id: "agent", section: "agent", title: "Agent 行为", description: "回合上限、审批与派发策略",
       fields: [
-        { key: "max_turns", label: "最大回合数", type: "int", default: nil },
+        { key: "max_turns", label: "最大回合数", type: "int", default: nil, min: 1, max: 1000,
+          description: "1 到 1000；不写时用内置默认" },
         { key: "approval", label: "审批策略", type: "enum", default: nil,
           options: APPROVAL_MODES.map { |m| m[:id] }, optionLabels: labels_of(APPROVAL_MODES),
           description: "写文件、跑命令、联网前要不要先问你" },
         { key: "small_model_routing", label: "小模型路由", type: "bool", default: nil,
           description: "把轻量任务交给小模型" },
         { key: "auto_dispatch_read_only", label: "只读操作自动派发", type: "bool", default: nil },
-        { key: "max_deep_calls_per_harness", label: "单次会话最大深度调用", type: "int", default: nil }
+        { key: "max_deep_calls_per_harness", label: "单次会话最大深度调用", type: "int", default: nil,
+          min: 0, max: 16, description: "0 到 16" }
       ]
     },
     {
@@ -145,10 +147,11 @@ module ConfigSchema
         { key: "model", label: "该提供商的模型", type: "string", default: nil },
         { key: "api", label: "接口协议", type: "enum", default: nil,
           options: API_DIALECTS.map { |m| m[:id] }, optionLabels: labels_of(API_DIALECTS) },
-        { key: "context_window", label: "上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS,
-          description: "这个提供商的模型能吃下多少上下文，状态栏占比按它算" },
-        { key: "max_output_tokens", label: "最大输出 Token", type: "int", default: nil, presets: TOKEN_PRESETS,
-          description: "一次回复最多生成多少 token" },
+        { key: "context_window", label: "上下文窗口", type: "int", default: nil, min: 4000, max: 1_048_576,
+          presets: TOKEN_PRESETS,
+          description: "4000 到 1048576；这个提供商的模型能吃下多少上下文，状态栏占比按它算" },
+        { key: "max_output_tokens", label: "最大输出 Token", type: "int", default: nil, min: 1,
+          presets: TOKEN_PRESETS, description: "一次回复最多生成多少 token" },
         { key: "vision_model", label: "视觉回退模型", type: "string", default: nil }
       ]
     },
@@ -158,7 +161,8 @@ module ConfigSchema
       fields: [
         { key: "command", label: "启动命令", type: "string", default: nil },
         { key: "args", label: "启动参数", type: "stringArray", default: [] },
-        { key: "startup_timeout_seconds", label: "启动超时（秒）", type: "int", default: 10 },
+        { key: "startup_timeout_seconds", label: "启动超时（秒）", type: "int", default: 10, min: 1, max: 300,
+          description: "1 到 300" },
         { key: "enabled", label: "启用", type: "bool", default: true }
       ]
     },
@@ -169,22 +173,23 @@ module ConfigSchema
       fields: [
         { key: "provider_profile", label: "提供商", type: "string", default: nil, ref: "providers" },
         { key: "model", label: "模型", type: "string", default: nil },
-        { key: "max_turns", label: "最大回合数", type: "int", default: nil,
-          description: "1 到 32；不写时用这个职责的内置默认" },
-        { key: "context_window", label: "上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS },
-        { key: "token_budget", label: "Token 预算", type: "int", default: nil, presets: TOKEN_PRESETS,
-          description: "1000 到 10000000；用尽时交出部分结果，不判失败" },
-        { key: "timeout_seconds", label: "超时（秒）", type: "int", default: nil,
+        { key: "max_turns", label: "最大回合数", type: "int", default: nil, min: 1, max: 1000,
+          description: "1 到 1000；不写时用这个职责的内置默认" },
+        { key: "context_window", label: "上下文窗口", type: "int", default: nil, min: 4000, max: 1_048_576,
+          presets: TOKEN_PRESETS, description: "4000 到 1048576" },
+        { key: "token_budget", label: "Token 预算", type: "int", default: nil, min: 1000, max: 10_000_000,
+          presets: TOKEN_PRESETS, description: "1000 到 10000000；用尽时交出部分结果，不判失败" },
+        { key: "timeout_seconds", label: "超时（秒）", type: "int", default: nil, min: 10, max: 86_400,
           description: "10 到 86400" },
         { key: "max_consecutive_failures", label: "连续失败上限", type: "int", default: nil,
-          description: "1 到 20" },
+          min: 1, max: 20, description: "1 到 20" },
         { key: "worktree", label: "工作区", type: "enum", default: nil,
           options: %w[shared dedicated],
           optionLabels: { "shared" => "与主会话共用", "dedicated" => "独立工作区" } },
         { key: "tool_output_limit", label: "工具输出上限（字节）", type: "int", default: nil,
-          description: "1024 到 131072" },
+          min: 1024, max: 131_072, description: "1024 到 131072" },
         { key: "max_attempts", label: "验证重试次数", type: "int", default: nil,
-          description: "1 到 6" }
+          min: 1, max: 6, description: "1 到 6" }
       ]
     }
   ].freeze
@@ -358,7 +363,16 @@ module ConfigSchema
       return [] if field.nil? # 未知键由调用方的 unknown-key 策略处理
       case field[:type]
       when "int"
-        value.is_a?(Integer) ? [] : ["期望整数，得到 #{value.class}"]
+        return ["期望整数，得到 #{value.class}"] unless value.is_a?(Integer)
+        # min/max 是 schema 对运行时校验区间的声明：缺了它，页面能存下任意整数，
+        # 下一次任务加载才报错。
+        low = field[:min]
+        high = field[:max]
+        if (low && value < low) || (high && value > high)
+          ["取值必须在 #{low || '-∞'} 到 #{high || '+∞'} 之间，得到 #{value}"]
+        else
+          []
+        end
       when "float"
         value.is_a?(Float) || value.is_a?(Integer) ? [] : ["期望数字，得到 #{value.class}"]
       when "bool"
