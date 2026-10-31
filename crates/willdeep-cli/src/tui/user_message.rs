@@ -10,7 +10,7 @@ impl App {
         labels: &[Option<String>],
         search: Option<&str>,
         end: usize,
-    ) -> (Text<'static>, Vec<(usize, usize)>) {
+    ) -> message_time::FoldedFrame {
         let floor = self.archive_floor.min(self.transcript.len());
         let shift = usize::from(floor > 0);
         let users = self
@@ -25,6 +25,30 @@ impl App {
                 Some((target, (source, expanded)))
             })
             .collect();
+        // 点开的工具行按记录位置认。折叠视图里同一行可能对应好几条记录，
+        // 只有用户点开的那条才展开，其余的照旧收着。
+        let tools = self
+            .transcript
+            .iter()
+            .enumerate()
+            .skip(floor)
+            .filter(|(_, row)| narration::is_tool_display_row(row))
+            .filter_map(|(source, row)| {
+                let target = *folded.index_of.get(source - floor + shift)?;
+                let visible = folded.rows.get(target)?;
+                if visible != row {
+                    return None;
+                }
+                // 行本身一直可点，但完整命令只在点开之后才画出来。
+                // 记下的展开内容不管展开状态，收起时照样留着，下次点开还在。
+                let expansion = self
+                    .expanded_tool_rows
+                    .contains(&source)
+                    .then(|| self.tool_expansions.get(&source).cloned())
+                    .flatten();
+                Some((target, (source, expansion)))
+            })
+            .collect();
         message_time::render_with_user_folds(
             &folded.rows[..end],
             &labels[..end],
@@ -32,6 +56,7 @@ impl App {
             self.transcript_width,
             self.language,
             &users,
+            &tools,
         )
     }
 
@@ -41,6 +66,18 @@ impl App {
             .iter()
             .filter(|(line, _)| *line >= offset && *line < offset + self.viewport_height)
             .map(|(line, source)| (top.saturating_add((line - offset) as u16), *source))
+            .collect();
+        self.tool_row_hits = self
+            .tool_row_controls
+            .iter()
+            .filter(|(line, _, _)| *line >= offset && *line < offset + self.viewport_height)
+            .map(|(line, source, collapse)| {
+                (
+                    top.saturating_add((line - offset) as u16),
+                    *source,
+                    *collapse,
+                )
+            })
             .collect();
     }
 

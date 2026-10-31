@@ -6,6 +6,10 @@ pub(super) struct TranscriptRenderCache {
     source: Vec<String>,
     width: usize,
     expanded: bool,
+    /// 点开的工具行和它的完整内容。内容不在记录里，缓存键必须带上，否则点开没有变化。
+    expanded_tools: BTreeMap<usize, String>,
+    /// 哪些行处于展开状态。和内容分开记：收起不删内容，只改这一项。
+    open_tools: BTreeSet<usize>,
     language: Language,
     search: Option<String>,
     time_labels: Vec<Option<String>>,
@@ -27,6 +31,8 @@ impl App {
         let valid = self.transcript_render_cache.as_ref().is_some_and(|cache| {
             cache.width == self.transcript_width
                 && cache.expanded == self.tool_rows_expanded
+                && cache.expanded_tools == self.tool_expansions
+                && cache.open_tools == self.expanded_tool_rows
                 && cache.language == self.language
                 && cache.search == search
                 && cache.source == self.transcript
@@ -35,14 +41,22 @@ impl App {
         if !valid {
             let folded = self.display_transcript();
             let labels = self.message_time_labels(&folded, message_time::now());
-            let (text, controls) =
+            let frame =
                 self.render_user_transcript(&folded, &labels, search.as_deref(), folded.rows.len());
-            self.user_message_controls = controls;
+            let message_time::FoldedFrame {
+                text,
+                user_controls,
+                tool_controls,
+            } = frame;
+            self.user_message_controls = user_controls;
+            self.tool_row_controls = tool_controls;
             self.transcript_rows = text_rows(&text);
             self.transcript_render_cache = Some(TranscriptRenderCache {
                 source: self.transcript.clone(),
                 width: self.transcript_width,
                 expanded: self.tool_rows_expanded,
+                expanded_tools: self.tool_expansions.clone(),
+                open_tools: self.expanded_tool_rows.clone(),
                 language: self.language,
                 search: search.clone(),
                 time_labels,

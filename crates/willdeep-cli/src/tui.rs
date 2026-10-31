@@ -435,6 +435,14 @@ struct App {
     transient_thought: Option<String>,
     thought_started_at: Option<Instant>,
     thought_hit_rows: Vec<(u16, usize)>,
+    /// 点开的工具行，按记录里的原始位置记。点「收起」删掉，记录本身不动。
+    expanded_tool_rows: BTreeSet<usize>,
+    /// 工具行点开后要显示的完整内容，按记录位置记。命令在这里，不在那一行摘要里。
+    tool_expansions: BTreeMap<usize, String>,
+    /// 这一帧里可点击的工具行与「收起」行：屏幕行号、记录位置、是不是「收起」。
+    tool_row_hits: Vec<(u16, usize, bool)>,
+    /// 折叠视图里的点击位置：样式行号、记录位置、是不是「收起」。
+    tool_row_controls: Vec<(usize, usize, bool)>,
     expanded_user_messages: BTreeMap<usize, String>,
     user_message_controls: Vec<(usize, usize)>,
     user_message_hit_rows: Vec<(u16, usize)>,

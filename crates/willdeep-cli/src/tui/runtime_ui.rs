@@ -516,7 +516,14 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     "Runtime · {} {name}",
                     app.language.text("正在使用", "using", "使用中")
                 ));
-                app.note_tool_requested(name, value.get("detail").and_then(|value| value.as_str()));
+                app.note_tool_requested(
+                    name,
+                    value.get("detail").and_then(|value| value.as_str()),
+                    value
+                        .get("expansion")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_owned),
+                );
             }
         }
         Some("plan_updated") => {
@@ -550,6 +557,10 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 app.note_tool_completed(
                     name,
                     value.get("detail").and_then(|value| value.as_str()),
+                    value
+                        .get("expansion")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_owned),
                     is_error,
                 );
                 if !is_error

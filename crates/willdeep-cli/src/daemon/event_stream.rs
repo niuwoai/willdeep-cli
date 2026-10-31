@@ -190,6 +190,9 @@ fn redact_task_output(message: &str) -> String {
             "report",
             "workspace",
             "root_workspace",
+            // 点开工具行才显示的完整命令。公共事件流同时喂给 Web 和手机中继，
+            // 完整命令里的路径不该跟着走；本机 TUI 读未脱敏的 task.diagnostics。
+            "expansion",
         ] {
             object.remove(field);
         }

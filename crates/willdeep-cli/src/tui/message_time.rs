@@ -274,7 +274,7 @@ impl App {
         let folded = self.display_transcript();
         let labels = self.message_time_labels(&folded, now());
         self.render_user_transcript(&folded, &labels, None, folded.rows.len())
-            .0
+            .text
             .lines
             .len()
     }
@@ -325,7 +325,24 @@ pub(super) fn render_with_times(
     width: usize,
     language: Language,
 ) -> Text<'static> {
-    render_with_user_folds(rows, labels, search, width, language, &BTreeMap::new()).0
+    render_with_user_folds(
+        rows,
+        labels,
+        search,
+        width,
+        language,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
+    .text
+}
+
+/// 一帧聊天区：画好的文字、用户消息的「显示更多」位置、工具行的点击位置。
+/// 工具点击位置是（样式行号，记录位置，是不是「收起」那一行）。
+pub(super) struct FoldedFrame {
+    pub(super) text: Text<'static>,
+    pub(super) user_controls: Vec<(usize, usize)>,
+    pub(super) tool_controls: Vec<(usize, usize, bool)>,
 }
 
 pub(super) fn render_with_user_folds(
@@ -335,10 +352,12 @@ pub(super) fn render_with_user_folds(
     width: usize,
     language: Language,
     users: &BTreeMap<usize, (usize, bool)>,
-) -> (Text<'static>, Vec<(usize, usize)>) {
+    tools: &BTreeMap<usize, (usize, Option<String>)>,
+) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
     let mut controls = Vec::new();
+    let mut tool_controls = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
         // 真正画整段聊天区的最后一行时才补上。
@@ -375,6 +394,39 @@ pub(super) fn render_with_user_folds(
             );
             entry.lines.extend(control.lines);
         }
+        // 工具行整行可点。点开后完整命令接在它下面，再跟一行「收起」，那一行单独可点。
+        if let Some((source, expansion)) = tools.get(&index) {
+            let source = *source;
+            tool_controls.extend(
+                (0..entry.lines.len()).map(|line| (text.lines.len() + line, source, false)),
+            );
+            if let Some(detail) = expansion {
+                entry.lines.extend(
+                    wrap_styled_text(
+                        Text::from(Line::styled(
+                            detail.clone(),
+                            Style::default().fg(Color::DarkGray),
+                        )),
+                        width,
+                    )
+                    .lines,
+                );
+                let collapse = wrap_styled_text(
+                    Text::from(Line::styled(
+                        narration::tool_collapse_label(language).to_owned(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    width,
+                );
+                tool_controls.extend(
+                    (0..collapse.lines.len())
+                        .map(|line| (text.lines.len() + entry.lines.len() + line, source, true)),
+                );
+                entry.lines.extend(collapse.lines);
+            }
+        }
         if let Some(Some(label)) = labels.get(index) {
             let suffix = format!(" · {label}");
             let suffix_width = UnicodeWidthStr::width(suffix.as_str());
@@ -402,7 +454,11 @@ pub(super) fn render_with_user_folds(
         }
         text.lines.extend(entry.lines);
     }
-    (text, controls)
+    FoldedFrame {
+        text,
+        user_controls: controls,
+        tool_controls,
+    }
 }
 
 #[cfg(test)]

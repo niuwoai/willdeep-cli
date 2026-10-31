@@ -113,6 +113,10 @@ impl App {
             transient_thought: None,
             thought_started_at: None,
             thought_hit_rows: Vec::new(),
+            expanded_tool_rows: BTreeSet::new(),
+            tool_expansions: BTreeMap::new(),
+            tool_row_hits: Vec::new(),
+            tool_row_controls: Vec::new(),
             expanded_user_messages: BTreeMap::new(),
             user_message_controls: Vec::new(),
             user_message_hit_rows: Vec::new(),
@@ -285,6 +289,10 @@ impl App {
         self.transient_thought = None;
         self.thought_started_at = None;
         self.thought_hit_rows.clear();
+        self.expanded_tool_rows.clear();
+        self.tool_expansions.clear();
+        self.tool_row_hits.clear();
+        self.tool_row_controls.clear();
         self.expanded_user_messages.clear();
         self.user_message_controls.clear();
         self.user_message_hit_rows.clear();
@@ -855,7 +863,7 @@ impl App {
         let labels = self.message_time_labels(&folded, message_time::now());
         let total = self
             .render_user_transcript(&folded, &labels, None, folded.rows.len())
-            .0
+            .text
             .lines
             .len();
         let through_match = folded
@@ -863,7 +871,7 @@ impl App {
             .get(entry - self.archive_floor + usize::from(self.archive_floor > 0))
             .map(|&row| {
                 self.render_user_transcript(&folded, &labels, None, row + 1)
-                    .0
+                    .text
                     .lines
                     .len()
             })
@@ -2309,8 +2317,8 @@ impl App {
             }
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
-            if !self.toggle_user_message_at(y) {
-                self.toggle_thought_at(y);
+            if !self.toggle_user_message_at(y) && !self.toggle_thought_at(y) {
+                self.toggle_tool_row_at(y);
             }
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;
