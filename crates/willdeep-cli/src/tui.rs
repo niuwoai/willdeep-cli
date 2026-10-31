@@ -354,6 +354,9 @@ struct App {
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
+    /// 当前会话用的模型名，只给聊天区每条消息的时间后缀用。会话不记逐条模型，
+    /// 历史消息一律标会话当前的这个；切模型或换会话时更新。
+    display_model: Option<String>,
     pending_provider: Option<String>,
     /// 进程内 Harness 当前轮次的句柄。Runtime 轮次由 Daemon 停，本地轮次只能靠
     /// 掐这个 Task——没有它，`/local` 跑飞了就只剩退出 TUI 一条路。

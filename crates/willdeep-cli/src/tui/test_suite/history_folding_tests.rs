@@ -176,12 +176,14 @@ fn older_thoughts_do_not_split_tools_or_steal_latest_thought_clicks() {
     app.ui.show_thinking = true;
     let display = app.display_transcript();
     assert!(!display.rows.iter().any(|row| row.contains("old reasoning")));
+    // 更早那段工具调用连汇总都不显示：最近一段只有一条思考，没有工具行。
     assert!(
-        display
+        !display
             .rows
             .iter()
-            .any(|row| row.contains("2 earlier tool calls folded") && row.contains("1 failed"))
+            .any(|row| row.contains("tool calls folded"))
     );
+    assert!(!display.rows.iter().any(|row| row.contains('×')));
     assert!(
         display
             .rows

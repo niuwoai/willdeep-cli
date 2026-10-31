@@ -31,6 +31,15 @@ pub(super) fn relative_time(sent: u64, current: u64, language: Language) -> Stri
     format!("{count}{unit}")
 }
 
+/// 消息行尾的标注：相对时间后面跟产出这句的模型名。会话不记逐条模型，
+/// 所以历史消息一律用会话当前的模型；没有模型名时只留时间。
+fn message_label(time: String, model: Option<&str>) -> String {
+    match model.map(str::trim).filter(|model| !model.is_empty()) {
+        Some(model) => format!("{time} · {model}"),
+        None => time,
+    }
+}
+
 fn is_message(row: &str) -> bool {
     row.starts_with("You: ") || row.starts_with("WillDeep: ")
 }
@@ -298,7 +307,10 @@ impl App {
                     .get(index - floor + shift)
                     .and_then(|index| labels.get_mut(*index))
             {
-                *target = Some(relative_time(*sent, current, self.language));
+                *target = Some(message_label(
+                    relative_time(*sent, current, self.language),
+                    self.display_model.as_deref(),
+                ));
             }
         }
         labels
@@ -487,6 +499,17 @@ mod tests {
         assert_eq!(app.transcript, ["You: status?"]);
         assert_eq!(app.message_times.time_at(0), Some(100));
         let folded = app.display_transcript();
+        assert_eq!(
+            app.message_time_labels(&folded, 160),
+            [Some("1分前".into())]
+        );
+        // 会话有模型时，时间后面跟上模型名；没有就只留时间。
+        app.display_model = Some("claude-opus".into());
+        assert_eq!(
+            app.message_time_labels(&folded, 160),
+            [Some("1分前 · claude-opus".into())]
+        );
+        app.display_model = Some("  ".into());
         assert_eq!(
             app.message_time_labels(&folded, 160),
             [Some("1分前".into())]

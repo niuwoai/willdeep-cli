@@ -460,6 +460,7 @@ pub(super) async fn event_loop(
         mpsc::unbounded_channel::<ratatui_image::thread::ResizeRequest>();
     app.media = MediaState::detect(media_resize_tx);
     app.goal = session.goal.clone();
+    app.display_model = session.model.clone().filter(|model| !model.is_empty());
     app.runtime_event_cursor = session.runtime_event_cursor;
     app.workspace = Some(session.workspace.clone());
     app.workspace_status = workspace_status(&session.workspace, language);
@@ -1692,8 +1693,12 @@ pub(super) async fn event_loop(
                                 }
                             }
                             let prompt=app.take_submitted_input();
-                            app.append_transcript(format!("You: {prompt}"));
-                            app.note_prompt_submitted(&prompt);
+                            // 斜杠命令是操作不是对话：不回显成 `You:` 行，结果仍由各命令自己写。
+                            // 送去模型的提示词（含 /goal、/local 这类会开工的）照常回显。
+                            if !narration::is_display_only_command(&prompt){
+                                app.append_transcript(format!("You: {prompt}"));
+                                app.note_prompt_submitted(&prompt);
+                            }
                             if let Some(command)=permission_commands::parse(&prompt) {
                                 match command {
                                     PermissionCommand::Open=>app.open_permission_picker(false),
@@ -1922,7 +1927,7 @@ pub(super) async fn event_loop(
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
-                UiMessage::RuntimeResult(message)=>{app.append_transcript(message.clone());app.notice=Some(message);},
+                UiMessage::RuntimeResult(message)=>{task_diagnostics::record_runtime_result(&mut app,message.clone());app.notice=Some(message);},
                 UiMessage::AttentionDiagnosticsLoaded { item_id, text } => {
                     if app.attention_diagnostics_loading.as_deref() == Some(item_id.as_str()) {
                         app.attention_diagnostics_loading = None;

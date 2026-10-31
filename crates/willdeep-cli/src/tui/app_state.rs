@@ -58,6 +58,7 @@ impl App {
             queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
+            display_model: None,
             pending_provider: None,
             local_turn: None,
             latest_usage: Usage::default(),
@@ -239,6 +240,7 @@ impl App {
         self.runtime_follow_after = None;
         self.pending_model = None;
         self.pending_provider = None;
+        self.display_model = session.model.clone().filter(|model| !model.is_empty());
         let display = self
             .display_home
             .as_ref()

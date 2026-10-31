@@ -1,5 +1,32 @@
 use super::*;
 
+/// 失败详情到来时，聊天区只留这一行。`task.failed` 事件先写过一行 `Error:`，
+/// 两行说的是同一件事：`Error:` 只有失败分类，这一行带着具体原因。具体原因
+/// 在场时分类那行就多余了，去掉它，只留「失败原因: …」。
+pub(super) fn record_runtime_result(app: &mut App, message: String) {
+    let prefix = format!("{}: ", app.language.text("失败原因", "Failure", "失敗理由"));
+    if message.starts_with(&prefix) {
+        let error_prefix = format!(
+            "Error: {}",
+            app.language.text(
+                "Runtime 任务失败",
+                "Runtime task failed",
+                "Runtime タスクが失敗しました"
+            )
+        );
+        if let Some(index) = app
+            .transcript
+            .iter()
+            .rposition(|row| row.starts_with(&error_prefix))
+        {
+            app.transcript.remove(index);
+            app.message_times.remove(index);
+            app.refresh_transcript_height();
+        }
+    }
+    app.append_transcript(message);
+}
+
 /// Inbox 里打开的如果是 Runtime 任务，就顺带把失败详情取回来。
 /// 诊断加载失败也显示具体状态，避免详情只剩一串 UUID。
 pub(super) fn load_attention_diagnostics(app: &mut App, runtime: &TuiRuntime) {
@@ -220,6 +247,34 @@ fn tool_arguments(arguments: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Error:` 分类行和「失败原因」行都在时，只留带具体原因的那一行。
+    #[test]
+    fn a_failure_reason_replaces_the_earlier_error_line() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.append_transcript(
+            "Error: Runtime 任务失败 · 失败原因尚未分类，打开 Inbox 查看诊断".into(),
+        );
+        app.append_transcript("WillDeep: 继续".into());
+        record_runtime_result(&mut app, "失败原因: provider stream interrupted".into());
+        assert_eq!(
+            app.transcript,
+            [
+                "WillDeep: 继续".to_owned(),
+                "失败原因: provider stream interrupted".to_owned(),
+            ]
+        );
+
+        // 没有具体原因时（比如普通的 Runtime 操作回执）什么都不删。
+        record_runtime_result(&mut app, "System: Runtime 已升级".into());
+        assert!(app.transcript.iter().any(|row| row.starts_with("System: ")));
+
+        // 英文同样认得出自己的两行。
+        let mut english = App::new(Vec::new(), Language::En);
+        english.append_transcript("Error: Runtime task failed · Unclassified failure".into());
+        record_runtime_result(&mut english, "Failure: connection reset".into());
+        assert_eq!(english.transcript, ["Failure: connection reset".to_owned()]);
+    }
 
     #[test]
     fn failure_text_preserves_plain_errors_and_strips_event_metadata_and_credentials() {
