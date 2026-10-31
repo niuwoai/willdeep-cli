@@ -91,8 +91,10 @@ pub fn tool_expansion(name: &str, arguments: &str) -> Option<String> {
 /// 看起来像路径的词换成省略号。
 ///
 /// 判定放宽到 `--flag=/abs` 这种形式：把路径藏在等号后面是最常见的漏法。
+/// 单引号和双引号也先剥掉再看，否则 `'/abs/x'` 会原样漏出去。
 fn elide_path_like(token: &str) -> String {
     let candidate = token.split_once('=').map_or(token, |(_, value)| value);
+    let candidate = candidate.trim_matches(|c| c == '\'' || c == '"');
     if candidate.starts_with('/') || candidate.starts_with('~') || candidate.starts_with("./") {
         return match token.split_once('=') {
             Some((flag, _)) => format!("{flag}=…"),

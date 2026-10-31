@@ -30,10 +30,17 @@ fn tool_expansion_keeps_the_whole_command_and_still_redacts_secrets() {
     );
     assert!(!expanded.contains("secret"), "{expanded}");
 
-    // 摘要行相反：路径换成省略号，超长截断。
+    // 摘要行相反：路径换成省略号，超长截断。路径包在引号里也要认出来。
     let summary = tool_detail("run_command", &arguments).unwrap();
     assert!(!summary.contains("/home/ml-data"), "{summary}");
     assert!(summary.ends_with('\u{2026}'), "{summary}");
+    let quoted = tool_detail(
+        "run_command",
+        r#"{"command":"cat \"/etc/hosts\" '~/notes'"}"#,
+    )
+    .unwrap();
+    assert!(!quoted.contains("/etc/hosts"), "{quoted}");
+    assert!(!quoted.contains("~/notes"), "{quoted}");
 
     assert_eq!(tool_expansion("read_file", r#"{"path":"/tmp/a"}"#), None);
 }

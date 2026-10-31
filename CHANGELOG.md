@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.135.0-rc2] - 2026-11-01
+
+### Fixed
+- 工具行摘要认不出包在引号里的路径。`'/home/ml-data/run.py'` 和 `"~/notes"` 不以 `/` 或 `~` 开头，`elide_path_like` 原样放行，路径漏进摘要行。判断前先剥掉一层单引号或双引号。0.135.0-rc1 的验证测试因此在五个平台上失败，GitHub Release 与 npm 发布被跳过。rc1 的 tag 已指向该提交，按发版规则不移动，递增 rc 重发。
+
 ## [0.135.0-rc1] - 2026-11-01
 
 ### Changed
