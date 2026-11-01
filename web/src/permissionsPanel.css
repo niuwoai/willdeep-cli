@@ -29,3 +29,21 @@
 .permissions-footer { display: flex; justify-content: flex-end; margin-top: 18px; }
 .permissions-footer .permissions-apply { background: var(--accent-strong); color: var(--on-accent); padding: 8px 14px; font-weight: 600; }
 .permissions-footer .permissions-apply:hover { background: var(--accent-strong); filter: brightness(1.1); color: var(--on-accent); }
+
+/* `/model` 选择器：复用授权面板的外壳，只多一条分组标题。 */
+.model-inspector { width: 420px; }
+.model-group { margin-bottom: 14px; }
+.model-group-title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--text-dim); }
+.model-group-title small { font-weight: 400; font-size: 10px; color: var(--text-faint); }
+.model-inspector .permissions-option { align-items: center; width: 100%; text-align: start; background: transparent; }
+.model-inspector .permissions-option strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.model-option-mark { display: inline-flex; width: 14px; justify-content: center; color: var(--accent); }
+
+/* 会话分享：链接一行放不下就折行，停止分享与复制并排。 */
+.share-inspector { width: 440px; }
+.share-inspector .permissions-current dd { overflow-wrap: anywhere; }
+.share-inspector .share-link { color: var(--accent); word-break: break-all; }
+.share-inspector .permissions-footer { gap: 8px; }
+.share-inspector .share-stop { padding: 8px 12px; font-size: 12px; color: var(--danger-text); border: 0; background: transparent; }
+.share-inspector .share-stop:hover { background: var(--bg-panel); }
+.share-inspector .permissions-warning { display: block; margin-top: 16px; padding: 11px 13px; border-color: var(--border-subtle); color: var(--text-dim); font-size: 11px; line-height: 1.7; }

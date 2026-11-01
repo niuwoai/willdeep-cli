@@ -47,6 +47,9 @@ pub(crate) struct IntakeService {
     home: PathBuf,
     serving: AsyncMutex<Option<Serving>>,
     bindings: AsyncMutex<HashMap<String, uuid::Uuid>>,
+    /// 分享页发消息的限流窗：token →（窗口起点，窗口内已发条数）。放在进程里，
+    /// 重启清零——访客手里的链接本来也是临时的。
+    share_sends: std::sync::Mutex<HashMap<String, (u64, u32)>>,
 }
 
 impl IntakeService {
@@ -55,6 +58,7 @@ impl IntakeService {
             home: home.into(),
             serving: AsyncMutex::new(None),
             bindings: AsyncMutex::new(load_bindings(&home.join("intake-sessions.json"))),
+            share_sends: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -132,6 +136,25 @@ impl IntakeService {
             eprintln!("Intake: cannot persist session binding: {error:#}");
         }
     }
+
+    /// 分享页的发言频率。一个 token 一分钟最多 20 条；超了直接 429，
+    /// 不给公开链接一个免费刷满 Runtime 的入口。
+    fn allow_share_send(&self, token: &str) -> bool {
+        let now = now_seconds();
+        let mut windows = self.share_sends.lock().expect("share send windows");
+        if windows.len() > 1024 {
+            windows.retain(|_, (start, _)| now.saturating_sub(*start) < 60);
+        }
+        let entry = windows.entry(token.to_owned()).or_insert((now, 0));
+        if now.saturating_sub(entry.0) >= 60 {
+            *entry = (now, 0);
+        }
+        if entry.1 >= 20 {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
 }
 
 impl Drop for IntakeService {
@@ -166,6 +189,9 @@ async fn serve(
         .route("/s/{slug}/{*path}", get(site_file))
         .route("/f/{slug}", get(form_page).post(form_submit))
         .route("/w/{slug}", post(webhook))
+        .route("/share/{token}", get(share_page))
+        .route("/api/share/{token}", get(share_view))
+        .route("/api/share/{token}/send", post(share_send))
         .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BYTES))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(listen)
@@ -549,6 +575,22 @@ async fn submit(
     Ok(session_id)
 }
 
+/// 往一条已经存在的会话里再发一轮。分享链接走这条：会话、工作区都定了，
+/// 这里只负责把消息交给 Runtime。
+async fn submit_existing(home: &Path, session_id: uuid::Uuid, text: String) -> Result<()> {
+    crate::daemon::ensure_running(home).await?;
+    crate::daemon::submit_runtime_turn_with_id(
+        home,
+        session_id,
+        text,
+        Vec::new(),
+        crate::Surface::Web,
+        uuid::Uuid::new_v4(),
+    )
+    .await?;
+    Ok(())
+}
+
 async fn record_pending(home: &Path, slug: &str, kind: &str, reason: &str) {
     let path = home.join("intake-pending.json");
     let mut pending = load_pending(&path);
@@ -639,6 +681,222 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+
+// ---------------------------------------------------------------------------
+// 会话分享。链接里的 token 就是全部凭据：拿不到 token 的人连标题都看不到。
+// 页面本身不含任何动态内容——它自己去 `/api/share/{token}` 取，所以这份 HTML
+// 可以直接内联，不需要模板或转义。
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct ShareMessage {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ShareSnapshot {
+    title: String,
+    mode: &'static str,
+    writable: bool,
+    updated_at: u64,
+    running: bool,
+    messages: Vec<ShareMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShareSendRequest {
+    message: String,
+}
+
+const SHARE_PAGE: &str = r#"<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WillDeep 会话分享</title>
+<style>
+:root{color-scheme:light dark;--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b66;--line:#e3e2de;--panel:#f2f1ee;--accent:#2f6f4f;--danger:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#e8e7e3;--dim:#9a9a94;--line:#333;--panel:#232322;--accent:#7fc9a3;--danger:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{position:sticky;top:0;z-index:1;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--bg)}
+h1{margin:0;font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#status{margin-top:2px;font-size:12px;color:var(--dim)}
+main{max-width:820px;margin:0 auto;padding:20px;padding-bottom:140px}
+.msg{margin:0 0 18px;display:flex;flex-direction:column;gap:4px}
+.msg .who{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim)}
+.msg .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.user .text{padding:10px 12px;border-radius:10px;background:var(--panel)}
+.empty{color:var(--dim);text-align:center;margin-top:60px}
+footer{position:fixed;left:0;right:0;bottom:0;padding:12px 20px 20px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
+.composer{max-width:820px;margin:0 auto;display:flex;gap:8px;align-items:flex-end}
+textarea{flex:1;min-height:46px;max-height:160px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);font:inherit;resize:vertical}
+button{border:1px solid var(--line);border-radius:10px;padding:10px 16px;background:var(--panel);color:var(--fg);font:inherit;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+#error{max-width:820px;margin:0 auto 8px;font-size:12px;color:var(--danger)}
+.hidden{display:none}
+</style></head><body>
+<header><h1 id="title">会话</h1><div id="status">正在读取…</div></header>
+<main id="messages"></main>
+<footer>
+  <div id="error"></div>
+  <form class="composer hidden" id="composer">
+    <textarea id="input" rows="1" placeholder="继续说点什么…" maxlength="8000"></textarea>
+    <button class="primary" id="send" type="submit">发送</button>
+  </form>
+</footer>
+<script>
+(function(){
+  var token = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  var messages = document.getElementById("messages");
+  var title = document.getElementById("title");
+  var statusLine = document.getElementById("status");
+  var errorLine = document.getElementById("error");
+  var composer = document.getElementById("composer");
+  var input = document.getElementById("input");
+  var send = document.getElementById("send");
+  var last = "";
+  var timer = null;
+  function el(tag, cls, text){ var node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
+  function render(data){
+    title.textContent = data.title || "会话";
+    var parts = [];
+    if (data.running) parts.push("对方正在回复…");
+    parts.push(data.writable ? "你可以继续对话" : "只能查看");
+    statusLine.textContent = parts.join(" · ");
+    var key = JSON.stringify(data.messages);
+    if (key !== last) {
+      last = key;
+      messages.textContent = "";
+      if (!data.messages.length) messages.appendChild(el("p", "empty", "这里还没有消息。"));
+      data.messages.forEach(function(message){
+        var row = el("div", "msg " + message.role);
+        row.appendChild(el("span", "who", message.role === "user" ? "对方" : "WillDeep"));
+        row.appendChild(el("div", "text", message.content));
+        messages.appendChild(row);
+      });
+    }
+    composer.classList.toggle("hidden", !data.writable);
+  }
+  function fail(error){ errorLine.textContent = error; }
+  function load(){
+    return fetch("/api/share/" + encodeURIComponent(token), {cache:"no-store"})
+      .then(function(response){ if (!response.ok) throw new Error(response.status === 404 ? "这个分享链接已经失效" : "读取失败（" + response.status + "）"); return response.json(); })
+      .then(function(data){ fail(""); render(data); })
+      .catch(function(error){ statusLine.textContent = "无法读取"; fail(error.message); });
+  }
+  function schedule(){ clearTimeout(timer); timer = setTimeout(function(){ load().finally(schedule); }, 2500); }
+  composer.addEventListener("submit", function(event){
+    event.preventDefault();
+    var text = input.value.trim();
+    if (!text) return;
+    send.disabled = true;
+    fetch("/api/share/" + encodeURIComponent(token) + "/send", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({message: text})})
+      .then(function(response){ return response.json().catch(function(){ return {}; }).then(function(body){ if (!response.ok) throw new Error(body.error || ("发送失败（" + response.status + "）")); }); })
+      .then(function(){ input.value = ""; fail(""); return load(); })
+      .catch(function(error){ fail(error.message); })
+      .finally(function(){ send.disabled = false; });
+  });
+  load().finally(schedule);
+})();
+</script></body></html>
+"#;
+
+async fn share_page() -> Response {
+    ([(CONTENT_TYPE, "text/html; charset=utf-8")], SHARE_PAGE).into_response()
+}
+
+/// token 无效、分享被撤、会话被删，一律 404：不必告诉拿到旧链接的人
+/// 「这条会话曾经存在」。
+fn share_target(state: &IntakeState, token: &str) -> Option<(String, crate::shares::Share)> {
+    if !crate::shares::plausible_token(token) {
+        return None;
+    }
+    crate::shares::by_token(&state.service.home, token)
+}
+
+async fn share_view(
+    State(state): State<Arc<IntakeState>>,
+    AxumPath(token): AxumPath<String>,
+) -> Response {
+    let Some((_token, share)) = share_target(&state, &token) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let home = state.service.home.clone();
+    let session_id = share.session_id;
+    // 会话文件可能很大，读它不能占着异步线程。
+    let loaded = tokio::task::spawn_blocking(move || crate::shares::ensure_session(&home, session_id)).await;
+    let Ok(Ok(session)) = loaded else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let running = session.runtime_managed && session_is_active(&state.service.home, session.id).await;
+    let items = willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
+    let messages = items
+        .into_iter()
+        .filter(|item| matches!(item.role, "user" | "assistant"))
+        .filter(|item| !item.content.trim().is_empty())
+        .map(|item| ShareMessage {
+            role: if item.role == "user" { "user" } else { "assistant" },
+            content: item.content,
+        })
+        .collect();
+    Json(ShareSnapshot {
+        title: session.title,
+        mode: share.mode.wire_name(),
+        writable: share.mode == crate::shares::ShareMode::Chat,
+        updated_at: session.updated_at,
+        running,
+        messages,
+    })
+    .into_response()
+}
+
+async fn session_is_active(home: &Path, id: uuid::Uuid) -> bool {
+    crate::daemon::remote_session_states(home)
+        .await
+        .ok()
+        .and_then(|states| {
+            states
+                .into_iter()
+                .find(|session| session.id == id)
+                .map(|session| session.active)
+        })
+        .unwrap_or(false)
+}
+
+async fn share_send(
+    State(state): State<Arc<IntakeState>>,
+    AxumPath(token): AxumPath<String>,
+    Json(request): Json<ShareSendRequest>,
+) -> Response {
+    let Some((token, share)) = share_target(&state, &token) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if share.mode != crate::shares::ShareMode::Chat {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"这个分享只能查看"}))).into_response();
+    }
+    let text = request.message.trim();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"消息为空"}))).into_response();
+    }
+    if text.chars().count() > crate::shares::MAX_SHARE_MESSAGE_CHARS {
+        return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error":"消息太长"}))).into_response();
+    }
+    if !state.service.allow_share_send(&token) {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({"error":"发得太快了，稍等一下"}))).into_response();
+    }
+    // 访客不是数据源，是对话的一方：原文发出去，只在前面标一下来源，让模型知道
+    // 这句话不是本机主人说的。
+    let home = state.service.home.clone();
+    match submit_existing(&home, share.session_id, format!("[分享访客] {text}\n")).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err(error) => {
+            eprintln!("Intake share: {error:#}");
+            (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error":"暂时发不出去，稍后再试"}))).into_response()
+        }
+    }
+}
+
 
 fn percent_decode(value: &str) -> String {
     let bytes = value.replace('+', " ").into_bytes();

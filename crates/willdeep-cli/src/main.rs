@@ -57,6 +57,7 @@ mod qterm;
 mod schedule_cmd;
 mod screenplay_cmd;
 mod session_startup;
+mod shares;
 mod telemetry;
 mod titling;
 mod tui;

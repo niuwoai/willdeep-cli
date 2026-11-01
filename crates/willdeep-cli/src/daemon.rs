@@ -96,6 +96,7 @@ pub(crate) use tui_bridge::{
     start_runtime_event_follower, steer_remote_turn, stop_remote_agent, stop_remote_turn,
     submit_runtime_turn, submit_runtime_turn_with_id, submit_runtime_turn_with_options,
     update_remote_session_approval_mode, update_remote_session_model,
+    update_remote_session_provider,
 };
 pub(crate) use workspace_store::WorkspaceAccess;
 pub(crate) use workspace_store::{

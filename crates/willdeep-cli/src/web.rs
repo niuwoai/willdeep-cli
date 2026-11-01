@@ -30,6 +30,7 @@ mod peer_sessions;
 mod runtime_chat;
 mod schedules;
 mod setup;
+mod shares;
 mod turn_queue;
 
 const MAX_PROMPT_CHARS: usize = 100_000;
@@ -197,6 +198,9 @@ struct SessionDetail {
     /// 工作区策略，是会话档位的硬上限（`read_only` 时压过任何会话值）。
     /// 与它一起下发，前端不必再指望工作区列表是新鲜的。
     workspace_access: &'static str,
+    /// 这条会话当前用的模型；`None` 表示跟随 Provider 默认。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -541,6 +545,8 @@ async fn serve_internal(
             "/api/sessions/{id}/approval-mode",
             post(set_session_approval_mode),
         )
+        .route("/api/sessions/{id}/model", post(set_session_model))
+        .route("/api/models", get(list_models))
         .route("/api/sessions/{id}/steer", post(steer_session))
         .route("/api/sessions/{id}/fork", post(fork_session))
         .route("/api/sessions/{id}/rewind-points", get(rewind_points))
@@ -602,6 +608,7 @@ async fn serve_internal(
         )
         .route("/api/composer", get(composer::get))
         .merge(intake::routes())
+        .merge(shares::routes())
         .merge(agent_library::routes())
         .route("/", get(index))
         // 单页应用的 catch-all。插件的 /plugin-host/... 比它更具体，
@@ -1411,6 +1418,7 @@ async fn session_detail(
         response_style: session.response_style,
         approval_mode: session_approval_override(&state, id).await,
         workspace_access: workspace.access.wire_name(),
+        model: session.model,
     }))
 }
 
@@ -1539,6 +1547,75 @@ async fn set_session_approval_mode(
 struct ResponseStyleRequest {
     /// `"short"` / `"detailed"`；`null` 清掉偏好、回到默认（简洁）。别的值直接拒绝。
     response_style: Option<willdeep_core::ResponseStyle>,
+}
+
+#[derive(Serialize)]
+struct ModelOption {
+    /// 切换目标：`session.configure` 用的 Provider 配置名。
+    provider_id: String,
+    /// 显示给用户看的 Provider 类型（openai-compatible / some-im / …）。
+    provider: String,
+    model: String,
+}
+
+/// `/model` 的候选列表。来源就是配置页里那几组 Provider——用户能选的就是
+/// 自己配过的，不另外去网关猜一遍。
+async fn list_models(State(state): State<Arc<WebState>>) -> Result<Json<Vec<ModelOption>>, WebError> {
+    let settings = crate::model_routing::load(&state.config_path, state.profile.as_deref())
+        .map_err(WebError::from_anyhow)?;
+    Ok(Json(
+        settings
+            .providers
+            .into_iter()
+            .filter(|option| !option.model.trim().is_empty())
+            .map(|option| ModelOption {
+                provider_id: option.id,
+                provider: option.provider,
+                model: option.model,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelRequest {
+    model: String,
+    /// 带上 Provider 时走 `session.configure`，同时换 Provider 与模型；
+    /// 不带就只换模型名，Provider 保持会话当前的。
+    #[serde(default)]
+    provider_id: Option<String>,
+}
+
+async fn set_session_model(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Json(request): Json<ModelRequest>,
+) -> Result<StatusCode, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "changing the model from the browser is only available when the Web server \
+             listens on a loopback address; run `/model` in the TUI instead",
+        ));
+    }
+    let model = request.model.trim();
+    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+        return Err(WebError::bad_request("model name is not valid"));
+    }
+    ensure_web_runtime_session(&state, id).await?;
+    match request.provider_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(provider) => {
+            crate::daemon::update_remote_session_provider(&state.home, id, provider, model)
+                .await
+                .map_err(WebError::from_anyhow)?;
+        }
+        None => {
+            crate::daemon::update_remote_session_model(&state.home, id, model.to_owned())
+                .await
+                .map_err(WebError::from_anyhow)?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `/short` 与 `/verbose` 的落点。风格只是这条会话的偏好，下一轮构建 harness 时才读，
