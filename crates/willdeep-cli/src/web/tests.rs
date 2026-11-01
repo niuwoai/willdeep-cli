@@ -861,6 +861,7 @@ fn suggestion_state(tag: &str, config: &str) -> (Arc<WebState>, PathBuf) {
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
         session_workspaces: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        intake: None,
     });
     (state, root)
 }
@@ -1018,6 +1019,7 @@ fn suggestion_state_at(home: &std::path::Path) -> Arc<WebState> {
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
         session_workspaces: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        intake: None,
     })
 }
 
@@ -1075,4 +1077,39 @@ async fn the_mcp_endpoint_initializes_and_lists_read_only_tools() {
     .await;
     assert_eq!(called["error"]["code"], -32602);
     let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn session_approval_mode_refuses_read_only_and_unconfirmed_full_access() {
+    use crate::daemon::WorkspaceAccess;
+
+    // 只读工作区是硬上限：会话档位越不过它，所以直接拒绝，而不是收下再压回。
+    assert_eq!(
+        check_session_approval_mode(WorkspaceAccess::ReadOnly, WorkspaceAccess::FullAccess, true),
+        Err(ApprovalModeRejection::ReadOnlyWorkspace)
+    );
+    // `read_only` 本身是工作区策略，不在会话可选的四档里。
+    assert_eq!(
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::ReadOnly, true),
+        Err(ApprovalModeRejection::ReadOnlyIsWorkspacePolicy)
+    );
+    // 升到完全访问要在请求里显式确认：插件页面也会走同一个接口。
+    assert_eq!(
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::FullAccess, false),
+        Err(ApprovalModeRejection::FullAccessNeedsConfirmation)
+    );
+    for mode in [
+        WorkspaceAccess::Strict,
+        WorkspaceAccess::Smart,
+        WorkspaceAccess::WorkspaceWrite,
+    ] {
+        assert_eq!(
+            check_session_approval_mode(WorkspaceAccess::Smart, mode, false),
+            Ok(())
+        );
+    }
+    assert_eq!(
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::FullAccess, true),
+        Ok(())
+    );
 }

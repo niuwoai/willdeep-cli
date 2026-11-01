@@ -1,0 +1,70 @@
+/* 公网入口管理页。视觉沿用它旁边那几页：同一套 --bg-* 变量、7px 圆角、
+   12px 正文说明。卡片只做分组，不再套一层阴影。 */
+
+.intake-manager { flex: 1; min-width: 0; padding: 24px; height: 100vh; overflow: auto; background: var(--bg-page); }
+.intake-manager header { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 16px; }
+.intake-manager h1 { font-size: 24px; font-weight: 650; }
+.intake-manager h2 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; }
+.intake-manager > header p { font-size: 13px; color: var(--text-dim); line-height: 1.65; max-width: 620px; }
+.intake-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+.intake-manager button { border: 1px solid var(--bg-panel-hover); border-radius: 7px; background: var(--bg-surface); color: var(--text); padding: 7px 12px; }
+.intake-manager button:hover:not(:disabled) { background: var(--bg-panel-hover); }
+.intake-manager button:disabled { opacity: .5; cursor: default; }
+.intake-manager button.intake-save { border-color: var(--accent); color: var(--text-strong); font-size: 12px; }
+.intake-manager button.intake-add { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.intake-manager button.intake-danger { color: var(--danger-text); font-size: 12px; }
+.intake-manager button.intake-link { border: 0; padding: 0; background: transparent; color: var(--accent-text, var(--accent)); text-decoration: underline; font-size: 12px; }
+.intake-manager input, .intake-manager textarea, .intake-manager select { width: 100%; border: 1px solid var(--bg-panel-hover); border-radius: 7px; padding: 7px 8px; background: var(--bg-surface); color: var(--text); font: inherit; font-size: 13px; }
+.intake-manager label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-muted); min-width: 0; }
+.intake-manager .intake-checkbox, .intake-manager .intake-inline { flex-direction: row; align-items: center; gap: 7px; }
+.intake-manager .intake-checkbox input, .intake-manager .intake-inline input { width: auto; }
+.intake-status { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--bg-panel-strong); color: var(--text-muted); white-space: nowrap; }
+.intake-status.running { background: var(--bg-panel-hover); color: var(--text-strong); }
+.intake-hint { font-size: 11px; color: var(--text-faint); line-height: 1.55; margin: 4px 0; }
+.intake-notice, .intake-dirty, .intake-error { font-size: 12px; padding: 9px 12px; border-radius: 8px; background: var(--bg-panel-hover); color: var(--text-muted); margin: 8px 0; }
+.intake-dirty { background: transparent; border: 1px dashed var(--bg-panel-hover); }
+.intake-error { color: var(--danger-text); }
+.intake-listener { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 16px; align-items: end; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; margin-bottom: 12px; }
+.intake-listener .intake-hint { grid-column: 1 / -1; margin: 0; }
+.intake-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--border); margin: 8px 0 14px; }
+.intake-manager .intake-tabs button { border: 0; border-radius: 0; padding: 9px 1px; background: transparent; font-size: 12px; color: var(--text-muted); border-bottom: 2px solid transparent; }
+.intake-manager .intake-tabs button[aria-pressed=true] { color: var(--text); border-bottom-color: var(--accent); }
+.intake-section { max-width: 900px; }
+.intake-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+.intake-section-heading h2 { margin: 0; }
+.intake-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 16px; padding: 14px; margin: 12px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-surface); }
+.intake-card-title { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.intake-card-title strong { font-size: 13px; font-weight: 600; }
+.intake-wide { grid-column: 1 / -1; }
+.intake-row { display: flex; gap: 8px; align-items: stretch; }
+.intake-row input { flex: 1; }
+.intake-row button { flex: none; font-size: 12px; }
+.intake-card-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
+.intake-card-actions a { font-size: 12px; color: var(--accent-text, var(--accent)); text-decoration: underline; }
+.intake-fields { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.intake-fields-title { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.intake-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 110px auto auto; gap: 8px; align-items: center; }
+.intake-manager .intake-field-row .intake-wide { grid-column: 1 / -1; }
+.intake-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.intake-table th { text-align: start; font-weight: 600; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.intake-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+.intake-table code, .intake-manager code { font-size: 11px; }
+.intake-reason { overflow-wrap: anywhere; }
+.intake-directories { display: flex; flex-direction: column; gap: 4px; max-height: 45vh; overflow: auto; }
+.intake-directory { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; }
+.intake-directory > button:last-child { font-size: 11px; padding: 3px 8px; }
+
+.mcp-page { flex: 1; min-width: 0; padding: 24px; height: 100vh; overflow: auto; background: var(--bg-page); }
+.mcp-page h1 { font-size: 24px; font-weight: 650; }
+.mcp-page > p { font-size: 13px; color: var(--text-dim); line-height: 1.65; max-width: 620px; margin: 8px 0 16px; }
+.mcp-page .mcp-body { max-width: 760px; }
+.mcp-page input { width: 100%; border: 1px solid var(--bg-panel-hover); border-radius: 7px; padding: 7px 8px; background: var(--bg-surface); color: var(--text); font: inherit; font-size: 13px; }
+.mcp-page button { border: 1px solid var(--bg-panel-hover); border-radius: 7px; background: var(--bg-surface); color: var(--text); padding: 7px 12px; font-size: 12px; }
+.mcp-page button:hover:not(:disabled) { background: var(--bg-panel-hover); }
+
+@media (max-width: 800px) {
+  .intake-manager, .mcp-page { padding: 16px; }
+  .intake-listener, .intake-card { grid-template-columns: 1fr; }
+  .intake-field-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .intake-header-actions { flex-direction: row; align-items: center; }
+}

@@ -31,6 +31,7 @@ mod agent_control;
 mod agent_store;
 mod agent_team;
 mod intake;
+pub(crate) use intake::IntakeService;
 pub(crate) mod web_app;
 // 审计导出直接读 `agents.json`，不走 `AgentStore::open`：open 会把运行中的 Agent
 // 标成中断并落盘，一个只读命令不能有这种副作用。
@@ -95,6 +96,7 @@ pub(crate) use tui_bridge::{
     start_runtime_event_follower, steer_remote_turn, stop_remote_agent, stop_remote_turn,
     submit_runtime_turn, submit_runtime_turn_with_id, submit_runtime_turn_with_options,
     update_remote_session_approval_mode, update_remote_session_model,
+    update_remote_session_provider,
 };
 pub(crate) use workspace_store::WorkspaceAccess;
 pub(crate) use workspace_store::{
@@ -1725,17 +1727,21 @@ async fn run(home: &Path) -> Result<()> {
         intake: Arc::new(intake::IntakeService::new(home)),
     });
     server_state.mobile.bind(&server_state);
+    // Web 页保存入口配置后要按新配置重开监听，把同一份句柄交过去。
+    server_state
+        .web_app
+        .attach_intake(Arc::clone(&server_state.intake));
     // 上次开着手机中继就接着连：关掉终端、升级 Runtime 都不该让手机掉线。
     server_state.mobile.resume();
     server_state.web_app.resume(shutdown_signal.subscribe());
     // 公网入口与 Web 是两个监听：站点、表单和 webhook 走这里，不碰管理面。
     server_state
         .intake
-        .apply(
-            &crate::config::default_config_path().unwrap_or_else(|_| home.join("config.toml")),
-            shutdown_signal.subscribe(),
-        )
+        .apply(&crate::config::default_config_path().unwrap_or_else(|_| home.join("config.toml")))
         .await;
+    server_state
+        .intake
+        .watch_shutdown(shutdown_signal.subscribe());
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
     scheduler::spawn(server_state.clone());
     screenplay::recover(home);

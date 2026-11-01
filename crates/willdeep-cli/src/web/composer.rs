@@ -73,6 +73,8 @@ pub(super) async fn get(
         commands: vec![
             "/help",
             "/goal",
+            "/permissions",
+            "/model",
             "/compress",
             "/skills",
             "/clear",

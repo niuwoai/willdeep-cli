@@ -37,6 +37,14 @@ language = "zh-CN" # zh-CN | en | ja; can be overridden by WILLDEEP_LANGUAGE/--l
 safety_judge = true
 # judge_model = "someim-security-guard" # some.im 默认走网关托管的安全策略；其它 provider 默认取会话模型
 # compressor_model = "someim-32b-compressor" # 上下文压缩模型；some.im 默认走网关托管压缩（固定指令服务端注入），其它 provider 默认取会话模型
+# 压缩专用的 Provider 档案（[providers.<id>]）。设了之后压缩整套换到该档案的
+# 端点、协议、密钥与模型，主模型仍留在会话 Provider 上——云端主模型配本机压缩器
+# 就是这一项；compressor_model 仍可覆盖档案里的模型名。档案里要写 context_window，
+# 否则摘要原料按会话窗口切块，本地端点收不下。
+# compressor_profile = "local-compressor"
+# 压缩摘要器一次能吃下的原料上限所用的窗口。不写取压缩档案的 context_window，
+# 再没有就沿用会话窗口。
+# compressor_context_window = 131072
 auto_title = true       # 会话第一轮自动整理标题；关掉后停在第一条提示词的派生标题
 # title_model = "glm-5" # 标题摘要模型；默认取会话模型（请求只发一问一答各 800 字）
 input_suggestions = true # 轮次结束后在空输入框里灰字预测你的下一句，Tab 采用；用 title_model 那一档模型，与 auto_title 互不影响
@@ -206,6 +214,19 @@ model = "claude-sonnet-4-5"
 # 单次回复的输出上限，三种协议都会带上；上下文压缩、会话标题和跟主模型的 Worker 也用它，
 # 思考 token 占同一额度。不写时缺省 16384。写得过小会让长会话的压缩因摘要被截断而失败。
 max_output_tokens = 16384
+
+# 本机压缩器示例：主模型在云端、只把上下文压缩交给本机的 llama.cpp / Ollama。
+# 在 [agent] 里写 compressor_profile = "local-compressor" 即可启用；api_key 用一个
+# 占位值，本地服务会忽略它（配置校验要求档案不能缺 Key）。context_window 必须写
+# 成服务端真实的 n_ctx，本仓库按它给摘要请求封顶。
+# [providers.local-compressor]
+# provider = "openai-compatible"
+# api = "chat-completions"
+# api_base = "http://127.0.0.1:8080/v1"
+# api_key = "local"
+# model = "qwen3.5-9b"
+# context_window = 131072
+# max_output_tokens = 4096
 
 # 每个 Worker 档位兑现成哪个模型。这是与 [subagents.*] 正交的另一根轴：
 # 那边配「这个职责平时用什么」，这边配「派工时说要贵一档，贵成什么样」。

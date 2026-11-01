@@ -66,6 +66,9 @@ pub(super) struct WebAppService {
     home: PathBuf,
     status: Arc<std::sync::Mutex<WebAppStatus>>,
     serving: AsyncMutex<Option<Serving>>,
+    /// 公网入口的句柄。Web 页保存 `[intake]` 后要按新配置重开监听，句柄从这里来。
+    /// 自己持有的是同一份 `Arc`，不是副本——状态只有一处。
+    intake: std::sync::Mutex<Option<Arc<super::IntakeService>>>,
 }
 
 impl WebAppService {
@@ -86,7 +89,13 @@ impl WebAppService {
             home: home.into(),
             status: Arc::new(std::sync::Mutex::new(initial)),
             serving: AsyncMutex::new(None),
+            intake: std::sync::Mutex::new(None),
         }
+    }
+
+    /// 启动时接上入口服务。Web 页改完配置后能立刻重开监听，不必重启 Runtime。
+    pub(super) fn attach_intake(&self, intake: Arc<super::IntakeService>) {
+        *self.intake.lock().expect("intake handle") = Some(intake);
     }
 
     pub(super) fn status(&self) -> WebAppStatus {
@@ -152,6 +161,11 @@ impl WebAppService {
             language,
             open_setup: false,
             setup_started: Some(started),
+            intake: self
+                .intake
+                .lock()
+                .ok()
+                .and_then(|value| value.as_ref().cloned()),
         };
         let task = tokio::spawn(async move {
             let result = crate::web::serve_managed(config, receiver).await;

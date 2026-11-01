@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, NativeSelect, Text } from "@chakra-ui/react";
 import { languageLabels, languages, type Language, type Messages } from "./i18n";
-import { McpAccess } from "./McpAccess";
 import { ModelRoutingSettings } from "./ModelRoutingSettings";
 import { SfIcon } from "./sfSymbols";
 
@@ -20,7 +19,6 @@ type Props = {
 export function SidebarSettings({ messages, language, onLanguageChange }: Props) {
   const [open, setOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
-  const [mcpOpen, setMcpOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -84,24 +82,12 @@ export function SidebarSettings({ messages, language, onLanguageChange }: Props)
             {messages.modelRouting}
             <span aria-hidden="true">›</span>
           </button>
-
-          <button
-            type="button"
-            className="sidebar-settings-item"
-            onClick={() => {
-              setOpen(false);
-              setMcpOpen(true);
-            }}
-          >
-            {messages.mcpAccess}
-            <span aria-hidden="true">›</span>
-          </button>
         </Box>
       )}
 
-      {/* 模型路由那个大对话框仍归 ModelRoutingSettings 自己管，这里只负责把它打开。 */}
+      {/* 模型路由那个大对话框仍归 ModelRoutingSettings 自己管，这里只负责把它打开。
+          MCP 接入已经提到一级入口，不再占侧栏齿轮的位置。 */}
       <ModelRoutingSettings messages={messages} open={routingOpen} onOpenChange={setRoutingOpen} />
-      <McpAccess messages={messages} open={mcpOpen} onOpenChange={setMcpOpen} />
     </Box>
   );
 }

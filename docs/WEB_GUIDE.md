@@ -103,7 +103,7 @@ TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 用户已经开始打字或新一轮已经开始时晚到的结果直接丢弃。预测只在浏览器内存里：刷新页面即无，也不写进会话。
 与 TUI 同一契约、同一档模型候选，受同一个 `[agent] input_suggestions` 开关管，见 TUI_GUIDE.md「轮次结束后的下一句预测」。
 
-Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。
+Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。`/model` 打开模型选择器（`/model <模型名>` 直接切换），`/permissions` 打开授权模式面板（`/permissions <档位>` 直接切换）。这两条和对应面板写的是同一份状态，且只在回环地址下可用。
 
 > **注意**：Web 端的 `/goal` 只存在于浏览器内存中，**刷新页面即失效**，与 TUI 中按 Session 持久保存的 `/goal` 语义不同。
 
@@ -124,6 +124,17 @@ Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印
 选中会话下方另有 Fork、回退（↶）和 Export；导出为浏览器本地下载的 `willdeep-session-<id>.json`。回退对话框单选一步、勾选是否同时恢复工作区文件（这一步没检查点时禁用并说明），底下写会丢几步；会话在跑时按钮禁用。口径见 [检查点回退](CHECKPOINT_REWIND.md)。
 
 "新会话"按钮只清空本地状态，不会在服务端创建空会话。
+
+### 会话分享
+
+会话工具栏的「分享会话」把当前会话挂到一个不透明 token 后面，链接走**公网入口**那个监听（默认 9857，见 [公网入口](PUBLIC_INTAKE.md#会话分享)），不是 Web 的 9847。分享页只有对话正文和一个输入框，没有配置、插件、工作区列表，也没有任何能改服务状态的端点。
+
+两种档位：
+
+- **只读**：只能看这条会话的全部消息。
+- **可以聊天**：还能继续发消息。访客的消息按会话当前授权模式执行，所以面板要求先勾选确认；可聊天的分享等于把这条会话的操作能力交给拿到链接的人。
+
+一条会话同时只有一个 token，重新分享就换一个新的，旧链接当场失效；「停止分享」同样立即生效。入口监听没在跑、或者只监听回环地址时，面板会如实说明链接目前打不开，而不是给一个点不动的 URL。
 
 ### Runtime 侧栏
 
@@ -273,6 +284,9 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 | POST | `/api/sessions/{id}/archive` · `/unarchive` | 归档 / 取消归档 |
 | POST | `/api/sessions/{id}/pin` · `/unpin` | 置顶 / 取消置顶 |
 | GET | `/api/sessions/{id}/export` | 脱敏 JSON 导出 |
+| GET | `/api/models` | 配置里的 Provider/模型候选 `[{ provider_id, provider, model }]` |
+| POST | `/api/sessions/{id}/model` | 切换会话模型：`{ model, provider_id? }`；带 `provider_id` 走会话 `configure`，否则只换模型名。仅回环监听开放 |
+| GET / POST / DELETE | `/api/sessions/{id}/share` | 读取 / 创建（`{ mode: "read" \| "chat" }`）/ 撤销分享链接。仅回环监听开放，且会话工作区须在 allowlist 内 |
 | POST | `/api/turns/{id}/stop` | 停止 Turn |
 | GET | `/api/workspaces` | 工作区列表与访问模式 |
 | GET | `/api/runtime/activity?workspace=` | 工具/产物/Agent/Task/待处理快照 |

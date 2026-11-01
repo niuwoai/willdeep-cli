@@ -57,6 +57,7 @@ mod qterm;
 mod schedule_cmd;
 mod screenplay_cmd;
 mod session_startup;
+mod shares;
 mod telemetry;
 mod titling;
 mod tui;
@@ -811,6 +812,7 @@ async fn run() -> Result<()> {
             language,
             open_setup: cli.onboarding || onboarding::needs_web_setup(&cli),
             setup_started: None,
+            intake: None,
         })
         .await;
     }

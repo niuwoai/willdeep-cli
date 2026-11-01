@@ -9,14 +9,14 @@
 
 import { Box, Flex, Portal, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
-import { FlaskConical, Library, Settings2, Users } from "lucide-react";
+import { FlaskConical, Globe, Library, Plug, Settings2, Users } from "lucide-react";
 import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
 import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
 
-export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
+export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "intake" } | { kind: "mcp" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
 type Props = {
   entries: Array<{ plugin: PluginView; destination: PluginDestinationView }>;
@@ -64,6 +64,8 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
         () => onSelect({ kind: "conversation" })
       )}
       {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
+      {button("intake", messages.intakeEntry, <Globe size={20} />, selection.kind === "intake", () => onSelect({ kind: "intake" }))}
+      {button("mcp", messages.mcpAccess, <Plug size={20} />, selection.kind === "mcp", () => onSelect({ kind: "mcp" }))}
       {agentsGroupLabel && <Text className="rail-agent-group"><Users size={20} />{agentsGroupLabel}</Text>}
       {agentsLabel && button("agents", agentsLabel, <Library size={20} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
       {experimentsLabel && button("agent-experiments", experimentsLabel, <FlaskConical size={20} />, selection.kind === "agent-experiments", () => onSelect({ kind: "agent-experiments" }))}
