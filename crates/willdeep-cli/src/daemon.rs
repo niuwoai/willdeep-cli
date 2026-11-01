@@ -1728,16 +1728,16 @@ async fn run(home: &Path) -> Result<()> {
     });
     server_state.mobile.bind(&server_state);
     // Web 页保存入口配置后要按新配置重开监听，把同一份句柄交过去。
-    server_state.web_app.attach_intake(Arc::clone(&server_state.intake));
+    server_state
+        .web_app
+        .attach_intake(Arc::clone(&server_state.intake));
     // 上次开着手机中继就接着连：关掉终端、升级 Runtime 都不该让手机掉线。
     server_state.mobile.resume();
     server_state.web_app.resume(shutdown_signal.subscribe());
     // 公网入口与 Web 是两个监听：站点、表单和 webhook 走这里，不碰管理面。
     server_state
         .intake
-        .apply(
-            &crate::config::default_config_path().unwrap_or_else(|_| home.join("config.toml")),
-        )
+        .apply(&crate::config::default_config_path().unwrap_or_else(|_| home.join("config.toml")))
         .await;
     server_state
         .intake

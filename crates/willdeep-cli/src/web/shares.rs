@@ -52,7 +52,10 @@ async fn authorize(state: &WebState, id: uuid::Uuid) -> Result<(), WebError> {
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
     let allowed = registered_web_workspaces(state).await?;
-    if !allowed.iter().any(|workspace| workspace.root == session.workspace) {
+    if !allowed
+        .iter()
+        .any(|workspace| workspace.root == session.workspace)
+    {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -77,7 +80,8 @@ async fn create(
 ) -> Result<Json<ShareResponse>, WebError> {
     authorize(&state, id).await?;
     shares::validate_mode(request.mode).map_err(WebError::from_anyhow)?;
-    let (token, share) = shares::create(&state.home, id, request.mode).map_err(WebError::from_anyhow)?;
+    let (token, share) =
+        shares::create(&state.home, id, request.mode).map_err(WebError::from_anyhow)?;
     Ok(Json(ShareResponse {
         share: Some(view(token, &share)),
     }))

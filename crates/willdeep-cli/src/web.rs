@@ -1424,10 +1424,7 @@ async fn session_detail(
 
 /// 会话自己选过的档位。daemon 不可达时按「没有覆盖」处理：详情页没有理由
 /// 因为读不到一个可选项就整页失败。
-async fn session_approval_override(
-    state: &WebState,
-    id: uuid::Uuid,
-) -> Option<&'static str> {
+async fn session_approval_override(state: &WebState, id: uuid::Uuid) -> Option<&'static str> {
     crate::daemon::remote_session_states(&state.home)
         .await
         .ok()?
@@ -1503,9 +1500,7 @@ async fn set_session_approval_mode(
         .iter()
         .find(|workspace| workspace.root == session.workspace)
         .map(|workspace| workspace.access)
-        .ok_or_else(|| {
-            WebError::bad_request("session workspace is not in the server allowlist")
-        })?;
+        .ok_or_else(|| WebError::bad_request("session workspace is not in the server allowlist"))?;
     check_session_approval_mode(workspace_access, request.approval_mode, request.confirm).map_err(
         |rejection| match rejection {
             ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
@@ -1560,7 +1555,9 @@ struct ModelOption {
 
 /// `/model` 的候选列表。来源就是配置页里那几组 Provider——用户能选的就是
 /// 自己配过的，不另外去网关猜一遍。
-async fn list_models(State(state): State<Arc<WebState>>) -> Result<Json<Vec<ModelOption>>, WebError> {
+async fn list_models(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<Vec<ModelOption>>, WebError> {
     let settings = crate::model_routing::load(&state.config_path, state.profile.as_deref())
         .map_err(WebError::from_anyhow)?;
     Ok(Json(
@@ -1603,7 +1600,12 @@ async fn set_session_model(
         return Err(WebError::bad_request("model name is not valid"));
     }
     ensure_web_runtime_session(&state, id).await?;
-    match request.provider_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    match request
+        .provider_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(provider) => {
             crate::daemon::update_remote_session_provider(&state.home, id, provider, model)
                 .await

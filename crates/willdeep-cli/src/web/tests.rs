@@ -1085,29 +1085,17 @@ fn session_approval_mode_refuses_read_only_and_unconfirmed_full_access() {
 
     // 只读工作区是硬上限：会话档位越不过它，所以直接拒绝，而不是收下再压回。
     assert_eq!(
-        check_session_approval_mode(
-            WorkspaceAccess::ReadOnly,
-            WorkspaceAccess::FullAccess,
-            true
-        ),
+        check_session_approval_mode(WorkspaceAccess::ReadOnly, WorkspaceAccess::FullAccess, true),
         Err(ApprovalModeRejection::ReadOnlyWorkspace)
     );
     // `read_only` 本身是工作区策略，不在会话可选的四档里。
     assert_eq!(
-        check_session_approval_mode(
-            WorkspaceAccess::Smart,
-            WorkspaceAccess::ReadOnly,
-            true
-        ),
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::ReadOnly, true),
         Err(ApprovalModeRejection::ReadOnlyIsWorkspacePolicy)
     );
     // 升到完全访问要在请求里显式确认：插件页面也会走同一个接口。
     assert_eq!(
-        check_session_approval_mode(
-            WorkspaceAccess::Smart,
-            WorkspaceAccess::FullAccess,
-            false
-        ),
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::FullAccess, false),
         Err(ApprovalModeRejection::FullAccessNeedsConfirmation)
     );
     for mode in [
@@ -1121,11 +1109,7 @@ fn session_approval_mode_refuses_read_only_and_unconfirmed_full_access() {
         );
     }
     assert_eq!(
-        check_session_approval_mode(
-            WorkspaceAccess::Smart,
-            WorkspaceAccess::FullAccess,
-            true
-        ),
+        check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::FullAccess, true),
         Ok(())
     );
 }
