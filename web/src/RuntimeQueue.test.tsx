@@ -20,7 +20,7 @@ it("puts the message above its actions and keeps the conditions beside the verbs
   expect(within(row).queryByText("图片")).toBeNull();
   expect(within(row).getByRole("button", { name: /优先处理/ }).textContent).toContain("仍需判断依赖");
   expect(within(row).getByRole("button", { name: /独立处理/ }).textContent).toContain("权限不变");
-  expect(screen.getByText(/仅明确独立的消息可以先处理/).closest("p")?.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(screen.getByText(/仅明确独立的消息可以先处理/).closest("p")!.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
 });
 it("shows the Runtime snapshot and sends edits with the original identity and text", async () => {
   let pending = [item];

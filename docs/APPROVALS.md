@@ -223,6 +223,12 @@ Runtime 控制 Token 只保留在 Daemon 与 Harness 内存中，不会作为环
 
 用户答案经长度限制和标记转义后回到同一工具轮次。
 
+## Web 端授权面板
+
+Web 会话工具栏的「授权模式」面板列出四档并显示当前生效值（`跟随工作区` 或某档显式覆盖），保存走 `POST /api/sessions/{id}/approval-mode`，与 TUI 的 `session.update_approval_mode` 是同一条 Runtime 通路，对正在跑的轮次立即生效。`/permissions` 是同一件事的口令版：不带参数打开面板，`/permissions <档位>` 直接切换；`full_access` 仍要求额外确认，且 `read-only` 工作区不能从 Web 越过。面板与命令都只在回环监听下可用（Web 没有应用层鉴权）。
+
+会话分享的「可以聊天」档位不改变授权模式，只是让访客也能提交轮次；这些轮次按会话当前档位执行，所以公开链接前先确认档位本身适合公开。
+
 ## 相关文档
 
 - [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)

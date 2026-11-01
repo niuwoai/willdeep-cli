@@ -21,9 +21,13 @@ import { McpPage } from "./McpAccess";
 import { ConversationSchedules } from "./ConversationSchedules";
 import { SessionCollaboration } from "./SessionCollaboration";
 import { PermissionsPanel } from "./PermissionsPanel";
+import { ModelPicker } from "./ModelPicker";
+import { SharePanel } from "./SharePanel";
 import { changeApprovalMode } from "./approvalModeApi";
+import { changeModel, ModelFailure as ModelSwitchFailure } from "./modelApi";
 import { accessLabel, type WorkspaceAccess } from "./accessModes";
 import { permissionsText } from "./permissionsMessages";
+import { modelText } from "./modelMessages";
 import { scheduleText } from "./scheduleMessages";
 import { PluginRail, type RailSelection } from "./PluginRail";
 import { PluginSidebar } from "./PluginSidebar";
@@ -53,7 +57,7 @@ import { agentText } from "./agentLibraryMessages";
 
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
 type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
-type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess };
+type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -121,7 +125,7 @@ type RuntimeStreamEvent = {
   plan_update?: { plan: Plan; replaced: boolean } | null;
   message?: string;
 };
-const defaultCommands = ["/help", "/goal", "/permissions", "/compress", "/skills", "/clear", "/short", "/verbose"];
+const defaultCommands = ["/help", "/goal", "/permissions", "/model", "/compress", "/skills", "/clear", "/short", "/verbose"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
 
@@ -263,6 +267,11 @@ export function App() {
   const [workspacePolicy, setWorkspacePolicy] = useState<WorkspaceAccess>("smart");
   // 审批面板由 App 持有开合状态：`/permissions` 命令也要能把面板摊开。
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  // 会话当前模型（`None` 表示跟随 Provider 默认）与 `/model` 选择器的开合。
+  const [sessionModel, setSessionModel] = useState<string | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
+  // 分享面板同理：工具栏一个按钮，开合状态留在 App 里，换会话时收起来。
+  const [shareOpen, setShareOpen] = useState(false);
   // 简洁模式还没落进聊天区的最近一段中途文字。轮次收尾时据此去重，中断时补写。
   const conciseLineRef = useRef<ConciseLine | null>(null);
   const [conciseNow, setConciseNow] = useState(() => Date.now());
@@ -491,6 +500,10 @@ export function App() {
     // 审批档位挂在会话上，换工作区就不再属于任何会话。
     setApprovalMode(null);
     setPermissionsOpen(false);
+    // 模型同理：会话没了，当前模型也就没有归属。
+    setSessionModel(null);
+    setModelOpen(false);
+    setShareOpen(false);
     setShowArchived(false);
     json<Session[]>("/api/sessions").then((values) => {
       setSessions(values);
@@ -587,6 +600,7 @@ export function App() {
     replyStyleRef.current = detail.response_style ?? null;
     setApprovalMode(detail.approval_mode ?? null);
     setWorkspacePolicy(detail.workspace_access);
+    setSessionModel(detail.model ?? null);
     conciseLineRef.current = null;
     setSessionId(detail.id);
     // 换会话才重置窗口；同一个会话的轮询刷新不能把用户展开的历史收回去。
@@ -1141,6 +1155,24 @@ export function App() {
       } catch (reason) { setError(`${copy.failed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
       return;
     }
+    // 换模型同样是本机管理动作：面板是主入口，这条命令是同一件事的口令版。
+    if (typed === "/model" || typed.startsWith("/model ")) {
+      setPrompt("");
+      const copy = modelText(language);
+      if (override !== undefined) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
+      if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.noSession }]); return; }
+      const argument = typed.slice("/model".length).trim();
+      if (!argument) { setModelOpen(true); return; }
+      try {
+        await changeModel(sessionId, argument);
+        setSessionModel(argument);
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.applied.replace("{model}", argument) }]);
+      } catch (reason) {
+        if (reason instanceof ModelSwitchFailure && reason.status === 403) setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.notWritable }]);
+        else setError(`${copy.failed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }
+      return;
+    }
     const goalToStart = typed.startsWith("/goal ") ? typed.slice(6).trim() : "";
     if (goalToStart) {
       setGoal(goalToStart);
@@ -1316,7 +1348,7 @@ export function App() {
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="5">
-        <Flex mb="2" justify="space-between" align="baseline"><Text fontSize="xs" color="var(--text-dim)">{t.session}</Text><Button size="xs" variant="ghost" color="var(--text-dim)" _hover={{ bg: "var(--bg-panel)", color: "var(--text-strong)" }} disabled={busy} onClick={() => { localStorage.removeItem(`${lastSessionPrefix}${workspace}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); }}>{t.newSession}</Button></Flex>
+        <Flex mb="2" justify="space-between" align="baseline"><Text fontSize="xs" color="var(--text-dim)">{t.session}</Text><Button size="xs" variant="ghost" color="var(--text-dim)" _hover={{ bg: "var(--bg-panel)", color: "var(--text-strong)" }} disabled={busy} onClick={() => { localStorage.removeItem(`${lastSessionPrefix}${workspace}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setModelOpen(false); setShareOpen(false); }}>{t.newSession}</Button></Flex>
         <div className="session-search"><Search size={15} /><Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" /></div>
         <Box className="session-list" flex="1" minH="0">
           <VStack align="stretch" gap="1">{liveSessions.map(sessionRow)}{!liveSessions.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}</VStack>
@@ -1390,6 +1422,8 @@ export function App() {
     <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span><h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
       {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} />}
+      {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} />}
+      {sessionId && <SharePanel key={`share-${sessionId}`} sessionId={sessionId} language={language} open={shareOpen} onOpenChange={setShareOpen} />}
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">

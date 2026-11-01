@@ -435,6 +435,10 @@ pub struct Agent {
     /// （some.im 的 someim-32b-compressor，服务端 replace 注入），
     /// 摘要请求只发裸转录；为假时仍携带行内压缩指令。
     compressors: Vec<(Arc<dyn Provider>, bool)>,
+    /// 压缩器自己的上下文窗口。不绑就沿用会话窗口：两者通常是同一个 Provider，
+    /// 分开算只会把原料切碎。绑了之后摘要请求按它封顶，本地压缩器窗口远小于
+    /// 云端会话时不至于发出一个对方收不下的请求。
+    compressor_window: Option<u64>,
     /// 会话标题摘要的专用 Provider。没绑就没有 L2 润色，列表停在 L1 派生标题。
     titlers: Vec<Arc<dyn Provider>>,
     /// 轮次结束后预测用户下一句的 Provider，与标题同一档。没绑就不预测。
@@ -476,6 +480,7 @@ impl Agent {
             sink: Arc::new(NoopSink),
             image_fallback: None,
             compressors: Vec::new(),
+            compressor_window: None,
             titlers: Vec::new(),
             input_suggesters: Vec::new(),
             subagents: None,
@@ -605,6 +610,16 @@ impl Agent {
     /// empty local summary falls through to the hosted/session candidate.
     pub fn with_compressors(mut self, providers: Vec<(Arc<dyn Provider>, bool)>) -> Self {
         self.compressors = providers;
+        self
+    }
+
+    /// Declare the context window the compressor accepts. Summaries are chunked
+    /// and truncated against it instead of the session window, so a small local
+    /// compressor never receives a prompt sized for the cloud model. Without
+    /// it the session window is used, which is correct when both are the same
+    /// endpoint.
+    pub fn with_compressor_window(mut self, window: u64) -> Self {
+        self.compressor_window = Some(window);
         self
     }
 

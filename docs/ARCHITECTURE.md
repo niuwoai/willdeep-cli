@@ -72,6 +72,7 @@ Agent Loop 只理解：
 - `strict` 对写入和命令逐次审批；`smart` 放行已通过工作区边界校验的创建和编辑；
 - Shell 命令走两级审批：`willdeep-core::safety` 的静态分类器（按 Shell 语义分段，只读/受限即放行，破坏性形状直接交用户且**不送 AI**），中间地带交 `willdeep-core::judge` 的 AI 判官——判官只能免审，不能扩权，NO / 不可用一律回落用户；命令在出网前本地脱敏，裁决只认唯一一个完整 `<verdict>` 标签；
 - 非交互审批失败时拒绝，不自动升级；
+- 会话分享是第三种对外面：Web（9847）只在回环开放创建/撤销 token（`shares.json`，0600，一条会话一个 token，重建即吊销旧链接），公开访问走 `[intake]` 监听（默认 9857）的 `/share/<token>` 与 `/api/share/<token>`。分享页只投影 `user`/`assistant` 正文，不列工作区、不读配置、不挂任何管理端点；`chat` 档的访客发言作为普通 Runtime 轮次按会话当前审批档位执行，另有 8 KiB 正文上限和每 token 每分钟 20 条的限流。这与插件宿主、Mobile Relay 一致：对外面只拿到一处刻意收窄的投影，管理面永远留在本机；
 - HTTP 错误体限长并进行基础凭据脱敏。
 
 ### 会话、Skills 与 MCP

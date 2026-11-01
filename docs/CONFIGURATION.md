@@ -101,10 +101,15 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `auto_title` | 自动整理会话标题；默认 `true`。关掉后标题停在第一条提示词的确定性派生，见 [会话标题](TUI_GUIDE.md#会话标题怎么来的) |
 | `title_model` | 标题摘要模型；默认取会话模型。请求只发一问一答各 800 字，与对话长度无关 |
 | `input_suggestions` | 轮次结束后在空输入框里灰字预测你的下一句，`Tab` 采用；默认 `true`。用与标题摘要相同的模型候选，开关独立于 `auto_title`，见 [下一句预测](TUI_GUIDE.md#轮次结束后的下一句预测) |
+| `compressor_model` | 上下文压缩模型。some.im 会话默认走网关托管压缩（固定指令由服务端注入），其它 Provider 默认取会话模型 |
+| `compressor_profile` | 压缩专用的 Provider 档案名（`[providers.<id>]`）。设了之后压缩整套换到该档案的端点、协议、密钥、模型与窗口，主模型仍留在会话 Provider 上——云端主模型配本机压缩器靠的就是这一项。`compressor_model` 仍可覆盖档案里的模型名 |
+| `compressor_context_window` | 摘要器一次能吃下的原料上限所用的窗口。不写取压缩档案的 `context_window`，再没有就沿用会话窗口。本地模型窗口远小于云端会话时必须写 |
+
+压缩失败会依次落到下一个候选，最后兜底会话模型；`compressor_profile` 指向不存在的档案、窗口超出 `4000..=1048576` 都会在启动时校验报错。压缩链本身**不**读 `[local_model]`：那一段的模型做坏了摘要不可逆，所以本地压缩必须显式配一个档案。
 
 ## `[local_model]` 段
 
-本段对齐 macOS Swift App 的“本地模型辅助”语义，复用一个轻量文本模型做短任务，避免标题和路由各自常驻一套模型。上下文压缩不在其中——它已经不再支持本地模型。当前通过配置文件启用：
+本段对齐 macOS Swift App 的“本地模型辅助”语义，复用一个轻量文本模型做短任务，避免标题和路由各自常驻一套模型。上下文压缩不在其中：它的候选链与冷却策略独立，本机压缩请改用 `[agent] compressor_profile`。
 
 | 键 | 说明 |
 |---|---|
@@ -129,7 +134,7 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `api_key` | 内联明文 Key（触发 `0600` 权限强制） |
 | `model` | 模型 ID |
 | `vision_model` | some.im 纯文本模型的视觉回退模型 |
-| `context_window` | 上下文窗口，用于状态栏占比显示 |
+| `context_window` | 上下文窗口，用于状态栏占比显示；被 `[agent] compressor_profile` 选中时，还决定压缩摘要器能吃下的原料上限 |
 | `max_output_tokens` | 单次回复的输出上限，三种协议都会带上。上下文压缩、会话标题和跟主模型的 Worker 都沿用它，思考 token 占同一额度。写小了，长会话的压缩会因为摘要被截断而失败，报「provider response did not include a completion」。不写时缺省 16384，不是模型的真实上限 |
 
 `api_key` 与 `api_key_env` 不能同时定义，也不允许为空字符串。

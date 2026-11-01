@@ -74,6 +74,7 @@ pub(super) async fn get(
             "/help",
             "/goal",
             "/permissions",
+            "/model",
             "/compress",
             "/skills",
             "/clear",

@@ -1309,11 +1309,11 @@ pub(crate) async fn build(
     if let Some((vision_provider, vision_model)) = image_fallback {
         agent = agent.with_image_fallback(vision_provider, format!("some.im / {vision_model}"));
     }
-    // 与 Swift App 同一候选顺序：显式 compressor_model / some.im 托管压缩器
-    // （仅在没有显式 compressor_model 时）→ 会话模型兜底。
+    // 与 Swift App 同一候选顺序：显式压缩档案 / 显式 compressor_model /
+    // some.im 托管压缩器（仅在没有显式配置时）→ 会话模型兜底。
     let mut compressors = Vec::new();
     for (compressor_config, hosted_prompt) in
-        compressor_candidate_configs(&loaded.file, &parent_provider_config, kind)
+        compressor_candidate_configs(loaded, &parent_provider_config, kind)?
     {
         let context = if hosted_prompt {
             "initialize hosted context compressor"
@@ -1328,6 +1328,9 @@ pub(crate) async fn build(
     // 会话模型兜底跟着 `/model` 走。
     compressors.push((follow_main.clone(), false));
     agent = agent.with_compressors(compressors);
+    if let Some(window) = compressor_context_window(&loaded.file) {
+        agent = agent.with_compressor_window(window);
+    }
 
     // 标题同样本地优先、会话 Provider 兜底；请求仍只带一问一答各 800 字。
     // 轮次结束后的「下一句预测」用同一档模型候选，但开关各管各的：关掉自动标题
@@ -1430,30 +1433,75 @@ pub(crate) fn resolve_parent_provider_config(
     crate::provider_settings::ProviderEnvironment::read().resolve(profile, Some(cli))
 }
 
-/// 上下文压缩在会话模型兜底之前的候选：显式 `[agent] compressor_model`，或者
-/// some.im 会话的托管压缩器（没有显式模型时）。`bool` 为真表示压缩指令存在服务端
-/// 并以 replace 模式注入，客户端这时只发裸转录。调用方在末尾追加会话 Provider，
-/// 所以这条链永远至少有一个候选。
+/// 上下文压缩在会话模型兜底之前的候选。
 ///
-/// 本地辅助模型刻意不在这条链上：压缩是拿一段摘要替换整段旧历史，弱模型做坏一次
-/// 就把长期上下文丢干净了，而且这是不可逆的。旧配置里的
+/// 顺序：显式 `[agent] compressor_profile`（整套端点、协议、密钥与模型都取
+/// `[providers.<id>]`）→ 显式 `[agent] compressor_model`（沿用会话 Provider，
+/// 只换模型名）→ some.im 会话的托管压缩器（仅在没有显式配置时）。`bool` 为真
+/// 表示压缩指令存在服务端并以 replace 模式注入，客户端这时只发裸转录。调用方
+/// 在末尾追加会话 Provider，所以这条链永远至少有一个候选。
+///
+/// 档案这条路是为了让主模型留在云端、压缩跑本机：压缩候选此前只是会话
+/// Provider 的克隆，主模型换端点，压缩就跟着换，没有别的出口。
+///
+/// 本地辅助模型（`[local_model]`）刻意不在这条链上：压缩是拿一段摘要替换整段
+/// 旧历史，弱模型做坏一次就把长期上下文丢干净了，而且这是不可逆的。旧配置里的
 /// `[local_model] prefer_for_context_summaries` 仍然能解析，但不再改变这里的顺序。
 fn compressor_candidate_configs(
-    file: &crate::config::ConfigFile,
+    loaded: &LoadedConfig,
     parent: &ProviderConfig,
     kind: ProviderKind,
-) -> Vec<(ProviderConfig, bool)> {
-    if let Some(compressor_model) = file.agent.compressor_model.clone() {
+) -> Result<Vec<(ProviderConfig, bool)>> {
+    if let Some(profile_name) = loaded
+        .file
+        .agent
+        .compressor_profile
+        .as_deref()
+        .map(str::trim)
+    {
+        let mut profile = loaded.file.providers.get(profile_name).cloned().with_context(|| {
+            format!(
+                "agent.compressor_profile names a provider profile that is not configured: \
+                 {profile_name}"
+            )
+        })?;
+        // `compressor_model` 既覆盖档案里的模型名，也可以在档案没写模型时补上：
+        // 只配一份端点（地址、密钥）再单独指模型，是很自然的写法。
+        if profile.model.is_none() {
+            profile.model = loaded.file.agent.compressor_model.clone();
+        }
+        let mut compressor_config = crate::provider_settings::ProviderEnvironment::read()
+            .resolve(Some(&profile), None)
+            .with_context(|| format!("resolve compressor provider profile {profile_name}"))?;
+        if let Some(compressor_model) = loaded.file.agent.compressor_model.clone() {
+            compressor_config.model = compressor_model;
+        }
+        return Ok(vec![(compressor_config, false)]);
+    }
+    if let Some(compressor_model) = loaded.file.agent.compressor_model.clone() {
         let mut compressor_config = parent.clone();
         compressor_config.model = compressor_model;
-        vec![(compressor_config, false)]
+        Ok(vec![(compressor_config, false)])
     } else if kind == ProviderKind::SomeIm {
         let mut compressor_config = parent.clone();
         compressor_config.model = SOMEIM_CONTEXT_COMPRESSOR_MODEL.to_owned();
-        vec![(compressor_config, true)]
+        Ok(vec![(compressor_config, true)])
     } else {
-        Vec::new()
+        Ok(Vec::new())
     }
+}
+
+/// 压缩摘要器自己的窗口：显式 `[agent] compressor_context_window` 优先，其次
+/// 压缩档案里的 `context_window`。都没有就不绑，沿用会话窗口。
+fn compressor_context_window(file: &crate::config::ConfigFile) -> Option<u64> {
+    file.agent.compressor_context_window.or_else(|| {
+        file.agent
+            .compressor_profile
+            .as_deref()
+            .map(str::trim)
+            .and_then(|name| file.providers.get(name))
+            .and_then(|profile| profile.context_window)
+    })
 }
 
 /// 标题与下一句预测共用的小模型候选：本地模型（`prefer_for_titles`）优先，
@@ -2347,7 +2395,9 @@ context_window = 500000
     fn compressor_candidates(source: &str, kind: ProviderKind) -> Vec<(String, String, bool)> {
         let file: crate::config::ConfigFile =
             toml::from_str(source).expect("parse compressor config fixture");
-        compressor_candidate_configs(&file, &parent_config(kind, "glm-5"), kind)
+        let loaded = crate::config::LoadedConfig { file };
+        compressor_candidate_configs(&loaded, &parent_config(kind, "glm-5"), kind)
+            .expect("resolve compressor candidates")
             .into_iter()
             .map(|(config, hosted)| (config.base_url.clone(), config.model.clone(), hosted))
             .collect()
@@ -2406,6 +2456,151 @@ prefer_for_context_summaries = true
                 "本地辅助端点不得出现在压缩候选链里"
             );
         }
+    }
+
+    /// 主模型在云端、压缩跑本机：显式档案把压缩整套搬走，会话 Provider 不动。
+    #[test]
+    fn a_compressor_profile_moves_only_the_summary_endpoint() {
+        let candidates = compressor_candidates(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api = "chat-completions"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = "local"
+model = "qwen3.5-9b"
+context_window = 131072
+"#,
+            ProviderKind::SomeIm,
+        );
+        assert_eq!(
+            candidates,
+            vec![(
+                "http://127.0.0.1:8080/v1".to_owned(),
+                "qwen3.5-9b".to_owned(),
+                false
+            )],
+            "压缩候选必须整条换成档案端点，而不是只换模型名"
+        );
+    }
+
+    #[test]
+    fn compressor_model_still_overrides_the_profile_model() {
+        let candidates = compressor_candidates(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+compressor_model = "qwen3.5-4b"
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = "local"
+model = "qwen3.5-9b"
+"#,
+            ProviderKind::OpenAiCompatible,
+        );
+        assert_eq!(
+            candidates,
+            vec![(
+                "http://127.0.0.1:8080/v1".to_owned(),
+                "qwen3.5-4b".to_owned(),
+                false
+            )]
+        );
+
+        // 档案只写端点、模型留给 compressor_model 也算数：只配一份本地地址
+        // 再单独指模型，是比两处都写更自然的写法。
+        let without_model = compressor_candidates(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+compressor_model = "qwen3.5-4b"
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = "local"
+"#,
+            ProviderKind::OpenAiCompatible,
+        );
+        assert_eq!(
+            without_model,
+            vec![(
+                "http://127.0.0.1:8080/v1".to_owned(),
+                "qwen3.5-4b".to_owned(),
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn an_unknown_compressor_profile_fails_loudly() {
+        let file: crate::config::ConfigFile =
+            toml::from_str("version = 1\n[agent]\ncompressor_profile = \"missing\"\n")
+                .expect("parse compressor fixture");
+        let loaded = crate::config::LoadedConfig { file };
+        let error = compressor_candidate_configs(
+            &loaded,
+            &parent_config(ProviderKind::SomeIm, "glm-5"),
+            ProviderKind::SomeIm,
+        )
+        .expect_err("an unknown profile must not silently fall back to the session model");
+        assert!(error.to_string().contains("missing"));
+    }
+
+    /// 摘要预算跟着压缩器走：显式窗口 > 档案的 `context_window` > 会话窗口。
+    #[test]
+    fn the_compressor_window_prefers_the_explicit_setting_then_the_profile() {
+        let profile: crate::config::ConfigFile = toml::from_str(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = "local"
+model = "qwen3.5-9b"
+context_window = 65536
+"#,
+        )
+        .expect("parse compressor profile");
+        assert_eq!(compressor_context_window(&profile), Some(65_536));
+
+        let explicit: crate::config::ConfigFile = toml::from_str(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+compressor_context_window = 32768
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = "local"
+model = "qwen3.5-9b"
+context_window = 65536
+"#,
+        )
+        .expect("parse explicit compressor window");
+        assert_eq!(compressor_context_window(&explicit), Some(32_768));
+
+        let unset: crate::config::ConfigFile =
+            toml::from_str("version = 1\n").expect("parse minimal config");
+        assert_eq!(compressor_context_window(&unset), None);
     }
 
     #[test]

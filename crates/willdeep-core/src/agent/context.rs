@@ -294,8 +294,17 @@ impl Agent {
     /// 口径和 [`message_capacity`] 一致：窗口减去输出预留，再减去摘要指令本身。
     /// 不敢取得更小——正常会话的待压缩前缀就在水位线（窗口的 75%）附近，预算
     /// 若低于它，每次压缩都要白白多切一刀。
+    ///
+    /// 窗口取压缩器自己声明的那个与会话窗口的较小值（[`Agent::with_compressor_window`]）：
+    /// 主模型在云端、压缩跑在本机时，两边的窗口可以差一个数量级，按会话窗口
+    /// 切出来的原料本地端点根本收不下；反过来压缩窗口比会话大时也没必要把
+    /// 一整段会话历史塞给摘要器。
     fn summary_input_budget(&self) -> u64 {
-        let window = self.config.context_window;
+        let window = self
+            .compressor_window
+            .map_or(self.config.context_window, |window| {
+                window.min(self.config.context_window)
+            });
         window
             .saturating_sub(window / OUTPUT_RESERVE_DIVISOR)
             .saturating_sub(SUMMARY_OVERHEAD_TOKENS)

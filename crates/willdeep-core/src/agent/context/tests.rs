@@ -662,6 +662,50 @@ async fn summary_requests_stay_within_budget_however_long_the_history_grows() {
     }
 }
 
+/// 主模型在云端、压缩器在本机时，摘要原料按压缩器自己的窗口封顶。按会话窗口
+/// 切出来的块本地端点收不下，整轮压缩会一直失败，而压缩是每轮必经之路。
+#[tokio::test]
+async fn a_bound_compressor_window_caps_every_summary_request() {
+    let (local, provider) = agent(WINDOW);
+    let local = local.with_compressor_window(WINDOW / 4);
+    let budget = local.summary_input_budget();
+    let (session, _) = agent(WINDOW);
+    assert!(
+        budget < session.summary_input_budget(),
+        "绑定更小的压缩窗口必须真的缩小摘要预算"
+    );
+
+    let mut messages = history();
+    for index in 20..80 {
+        let call = ToolCall {
+            id: format!("call-{index}"),
+            name: "read_file".to_owned(),
+            arguments: format!(r#"{{"path":"src/file-{index}.rs"}}"#),
+        };
+        messages.push(Message::assistant("inspect", vec![call.clone()]));
+        messages.push(Message::tool(
+            &call,
+            format!("file-{index}: {}", "x".repeat(1_900)),
+        ));
+    }
+    messages.push(Message::user("continue"));
+
+    local.request_messages(&messages, &mut None).await.unwrap();
+
+    let requests = provider.requests.lock().unwrap();
+    assert!(
+        requests.len() > 1,
+        "a history far larger than the compressor window must be chunked"
+    );
+    for request in requests.iter() {
+        let estimated = estimate_tokens(request);
+        assert!(
+            estimated <= budget + SUMMARY_OVERHEAD_TOKENS,
+            "summary request of {estimated} tokens exceeds the compressor budget {budget}"
+        );
+    }
+}
+
 /// 单条消息自己就超预算时不能原样放行，否则分块只是把超限往下挪了一层。
 #[tokio::test]
 async fn one_oversized_message_is_truncated_instead_of_being_sent_whole() {

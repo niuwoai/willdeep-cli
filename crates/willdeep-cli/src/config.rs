@@ -408,6 +408,14 @@ pub struct AgentSettings {
     /// the gateway-hosted `someim-32b-compressor`; elsewhere defaults to the
     /// session model with the inline instruction.
     pub compressor_model: Option<String>,
+    /// 压缩专用的 Provider 档案名（`[providers.<id>]`）。设了之后压缩走该档案的
+    /// 端点、协议、密钥、模型与窗口，主模型仍留在会话 Provider 上——云端主模型
+    /// 配本机压缩器就是这一项。`compressor_model` 仍可覆盖档案里的模型名。
+    pub compressor_profile: Option<String>,
+    /// 压缩摘要器能吃的原料上限所用的窗口。不写时取压缩档案里的
+    /// `context_window`；两处都没有才回落到会话窗口。本地模型窗口远小于云端
+    /// 会话时必须写，否则一份按会话窗口切出来的原料会被本地端点拒收。
+    pub compressor_context_window: Option<u64>,
     /// 自动整理会话标题。默认开：一屏 `New session` 的历史列表等于没有列表，
     /// 而这条链路只在会话**第一轮**花一次便宜调用，不随对话长度增长。
     /// 关掉后标题停在第一条提示词的确定性派生，仍然可读。
@@ -1224,6 +1232,31 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
     {
         bail!("agent.max_deep_calls_per_harness must be between 0 and 16");
     }
+    if file
+        .agent
+        .compressor_profile
+        .as_deref()
+        .is_some_and(|profile| profile.trim().is_empty())
+    {
+        bail!("agent.compressor_profile must not be empty");
+    }
+    if let Some(profile) = file.agent.compressor_profile.as_deref().map(str::trim)
+        && !file.providers.contains_key(profile)
+    {
+        bail!(
+            "agent.compressor_profile names a provider profile that is not configured: {profile}"
+        );
+    }
+    if let Some(window) = file.agent.compressor_context_window
+        && !(willdeep_core::CONTEXT_WINDOW_MIN..=willdeep_core::CONTEXT_WINDOW_MAX)
+            .contains(&window)
+    {
+        bail!(
+            "agent.compressor_context_window must be between {} and {}",
+            willdeep_core::CONTEXT_WINDOW_MIN,
+            willdeep_core::CONTEXT_WINDOW_MAX
+        );
+    }
     crate::i18n::Language::parse(file.agent.language.as_deref())?;
     if file.local_model.enabled {
         let base_url = reqwest::Url::parse(file.local_model.base_url.trim())
@@ -1652,6 +1685,53 @@ base_url = "https://example.com/v1"
                 .expect("parse configured judge");
         assert_eq!(configured.agent.safety_judge, Some(false));
         assert_eq!(configured.agent.judge_model.as_deref(), Some("glm-5"));
+    }
+
+    #[test]
+    fn a_compressor_profile_moves_compression_without_moving_the_session() {
+        let parsed: ConfigFile = toml::from_str(
+            r#"
+version = 1
+
+[agent]
+compressor_profile = "local-compressor"
+compressor_context_window = 32768
+
+[providers.local-compressor]
+provider = "openai-compatible"
+api = "chat-completions"
+api_base = "http://127.0.0.1:8080/v1"
+api_key_env = "WILLDEEP_LOCAL_KEY"
+model = "qwen3.5-9b"
+"#,
+        )
+        .expect("parse compressor profile");
+        assert_eq!(
+            parsed.agent.compressor_profile.as_deref(),
+            Some("local-compressor")
+        );
+        assert_eq!(parsed.agent.compressor_context_window, Some(32_768));
+        validate(&parsed, Path::new("config.toml")).expect("compressor profile validates");
+    }
+
+    #[test]
+    fn an_unknown_compressor_profile_is_rejected_at_startup() {
+        let parsed: ConfigFile =
+            toml::from_str("version = 1\n[agent]\ncompressor_profile = \"nope\"\n")
+                .expect("parse unknown compressor profile");
+        let error = validate(&parsed, Path::new("config.toml"))
+            .expect_err("a profile that does not exist must fail, not fall back");
+        assert!(error.to_string().contains("nope"));
+    }
+
+    #[test]
+    fn a_compressor_window_outside_the_supported_range_is_rejected() {
+        let parsed: ConfigFile =
+            toml::from_str("version = 1\n[agent]\ncompressor_context_window = 1024\n")
+                .expect("parse out-of-range compressor window");
+        let error = validate(&parsed, Path::new("config.toml"))
+            .expect_err("a window smaller than any usable budget must be rejected");
+        assert!(error.to_string().contains("compressor_context_window"));
     }
 
     #[test]
