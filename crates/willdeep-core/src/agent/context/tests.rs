@@ -57,6 +57,15 @@ async fn automatic_compression_keeps_unknown_call_parameters() {
 
 struct CaptureProvider {
     requests: Mutex<Vec<Vec<Message>>>,
+    /// 从第几条请求起挂住不回（模拟跑不完的一次压缩）。
+    stall_after: std::sync::atomic::AtomicUsize,
+}
+
+impl CaptureProvider {
+    fn stall_from(&self, call: usize) {
+        self.stall_after
+            .store(call, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[async_trait]
@@ -66,7 +75,14 @@ impl Provider for CaptureProvider {
         messages: &[Message],
         _: &[ToolDefinition],
     ) -> Result<crate::types::Completion, ProviderError> {
-        self.requests.lock().unwrap().push(messages.to_vec());
+        let call = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(messages.to_vec());
+            requests.len() - 1
+        };
+        if call >= self.stall_after.load(std::sync::atomic::Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         Ok(crate::types::Completion {
             reasoning: None,
             content: "OBJECTIVE: repair bug. USER CONSTRAINTS: preserve dirty files. COMPLETED: inspected. REMAINING: validate.".to_owned(),
@@ -80,6 +96,7 @@ fn agent(window: u64) -> (Agent, Arc<CaptureProvider>) {
     std::fs::create_dir_all(&workspace).unwrap();
     let provider = Arc::new(CaptureProvider {
         requests: Mutex::new(Vec::new()),
+        stall_after: std::sync::atomic::AtomicUsize::new(usize::MAX),
     });
     let tools = ToolRegistry::new(workspace, crate::ApprovalMode::Strict)
         .unwrap()
@@ -316,6 +333,7 @@ async fn hosted_compressor_receives_structured_transcript_without_duplicate_prom
     let (mut agent, _) = agent(WINDOW);
     let compressor = Arc::new(CaptureProvider {
         requests: Mutex::new(Vec::new()),
+        stall_after: std::sync::atomic::AtomicUsize::new(usize::MAX),
     });
     agent = agent.with_compressor(compressor.clone(), true);
     agent.request_messages(&history(), &mut None).await.unwrap();
@@ -397,15 +415,209 @@ async fn rewritten_prefix_invalidates_the_request_summary_cache() {
     let mut messages = history();
     let mut cache = None;
     agent.request_messages(&messages, &mut cache).await.unwrap();
-    // Refreshed system prompts must not invalidate the summary.
-    messages[0].content.push_str("\nrules refreshed");
-    agent.request_messages(&messages, &mut cache).await.unwrap();
-    assert_eq!(provider.requests.lock().unwrap().len(), 1);
     messages[3].content = "rewritten tool result".to_owned();
     agent.request_messages(&messages, &mut cache).await.unwrap();
     let requests = provider.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(requests[1][0].content.contains("src/file-0.rs"));
+}
+
+/// system 提示（全局规则、项目规则）改了，旧摘要必须作废。
+///
+/// 摘要会概括 system 的内容，而且现在跨运行复用：规则收紧或者删掉一条授权之后
+/// 还拿旧摘要，等于让已经删掉的指令继续随每次请求发出去。以前 system 不参与
+/// 失效判定，只能靠改前缀或者手动 `/compress` 才能甩掉它。
+#[tokio::test]
+async fn rewritten_system_prompt_invalidates_the_request_summary_cache() {
+    let (agent, provider) = agent(WINDOW);
+    let mut messages = history();
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    messages[0].content.push_str("\nrules refreshed");
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    let requests = provider.requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "a changed system prompt must re-summarize"
+    );
+    assert!(requests[1][0].content.contains("src/file-0.rs"));
+}
+
+/// 会话落盘再读回来的摘要，下一次 run 必须直接生效。
+///
+/// 自动压缩不改写 durable 历史，所以没有这一层，同一段前缀每来一条消息就要
+/// 从头再摘一遍：历史到 150 万 token 时，那是一轮七八分钟的串行模型调用。
+#[tokio::test]
+async fn persisted_summary_is_reused_by_the_next_run() {
+    let (agent, provider) = agent(WINDOW);
+    let messages = history();
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    let persisted = cache
+        .as_ref()
+        .expect("compression must leave a summary behind")
+        .persist();
+
+    // 下一次 run：从会话文件里读回同一份摘要，历史没动就一次调用都不发。
+    let mut next_run = Some(SummaryCache::restore(persisted.clone()));
+    let reused = agent
+        .request_messages(&messages, &mut next_run)
+        .await
+        .unwrap();
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    assert!(
+        reused
+            .iter()
+            .any(|message| message.content.contains("<context-summary"))
+    );
+
+    // 历史往前长到投影重新越过水位线，只摘新长出来的那一段：请求里带旧摘要，
+    // 不重发被摘过的老前缀。
+    let mut grown = messages;
+    for index in 100..140 {
+        push_batch(&mut grown, index);
+    }
+    agent.request_messages(&grown, &mut next_run).await.unwrap();
+    let requests = provider.requests.lock().unwrap();
+    assert!(
+        requests.len() >= 2,
+        "growth past the watermark must refresh the summary"
+    );
+    let refreshes = &requests[1..];
+    assert!(
+        refreshes
+            .iter()
+            .any(|request| request[0].content.contains("<context-summary")),
+        "the refresh must build on the persisted summary"
+    );
+    assert!(
+        refreshes
+            .iter()
+            .all(|request| !request[0].content.contains("src/file-0.rs")),
+        "the summarized prefix must not be sent again"
+    );
+}
+
+/// 重复的 host instruction 不能作废已落盘的摘要。
+///
+/// 指纹锚在 durable 历史的前缀上，而不是分页投影：`page_tool_outputs` 对重复的
+/// host instruction 只留最后一条（守护进程每一轮唤醒追加的是同一个提示），投影
+/// 下标会整体前移。指纹算在投影上的话，每次唤醒都要把整份摘要作废、重新按块摘
+/// 一遍——正好把这个缓存要省的那笔账又花了回去。
+#[tokio::test]
+async fn repeated_host_instruction_keeps_the_persisted_summary() {
+    const WAKE: &str = "Runtime events arrived while you were away. Review them and continue.";
+    let (agent, provider) = agent(WINDOW);
+    let mut messages = history();
+    messages.push(Message::host_instruction(WAKE));
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    // 本轮继续干活，把 wake prompt 推到 6 条尾巴之外，再触发一次增量压缩。
+    for index in 0..16 {
+        push_batch(&mut messages, 200 + index);
+    }
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    let persisted = cache
+        .as_ref()
+        .expect("compression must leave a summary behind")
+        .persist();
+    assert!(
+        persisted.through > 44,
+        "wake prompt must fall inside the summarized prefix (through={})",
+        persisted.through
+    );
+    let calls_before = provider.requests.lock().unwrap().len();
+
+    // 下一次 wake：同一条 host instruction 再追加一次，分页投影少一条。
+    messages.push(Message::host_instruction(WAKE));
+    let capacity =
+        message_capacity(agent.config.context_window, &agent.tools.definitions()).unwrap();
+    let projection = agent.page_tool_outputs(&messages, capacity).unwrap();
+    assert_eq!(
+        projection.messages.len(),
+        messages.len() - 1,
+        "the earlier wake prompt must be deduplicated away"
+    );
+    assert_eq!(
+        projection.projected_index(persisted.through),
+        persisted.through - 1,
+        "the projection index must follow the removed duplicate"
+    );
+    let mut restored = Some(SummaryCache::restore(persisted));
+    agent
+        .request_messages(&messages, &mut restored)
+        .await
+        .unwrap();
+    let calls_after = provider.requests.lock().unwrap().len();
+    assert_eq!(
+        calls_after, calls_before,
+        "persisted summary must survive host-instruction dedup"
+    );
+}
+
+/// 分页上限跟着 capacity 变，但摘要的锚点不能跟着动。
+///
+/// 换模型、挂上或断开 MCP 服务都会改 `message_capacity`，工具输出的缩写长度
+/// 随之改变，投影内容也就跟着变。指纹只算 durable 前缀，所以这些变化不该把
+/// 已经付过钱的摘要作废——否则「换个模型继续聊」先卡十分钟。
+#[tokio::test]
+async fn a_repaged_projection_keeps_the_persisted_summary_valid() {
+    let (agent, _) = agent(WINDOW);
+    let messages = history();
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    let persisted = cache
+        .expect("compression must leave a summary behind")
+        .persist();
+    let narrow = agent.page_tool_outputs(&messages, 256).unwrap();
+    let wide = agent.page_tool_outputs(&messages, 4_096).unwrap();
+    let size = |paged: &PagedHistory| -> usize {
+        paged
+            .messages
+            .iter()
+            .map(|message| message.content.len())
+            .sum()
+    };
+    assert_ne!(
+        size(&narrow),
+        size(&wide),
+        "the paging limit must actually rewrite tool output"
+    );
+    assert!(
+        SummaryCache::restore(persisted).matches(&messages),
+        "repaging must not invalidate a summary anchored on durable history"
+    );
+}
+
+/// 存下来的摘要只对它的那段前缀有效：历史被换掉、或者索引越界，只能作废重摘。
+#[tokio::test]
+async fn stale_persisted_summary_is_discarded() {
+    let (agent, provider) = agent(WINDOW);
+    let messages = history();
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    let valid = cache.as_ref().unwrap().persist();
+
+    // 索引落在历史之外：不能 panic，也不能当成命中。
+    let mut out_of_range = valid.clone();
+    out_of_range.through = messages.len() + 8;
+    let mut restored = Some(SummaryCache::restore(out_of_range));
+    agent
+        .request_messages(&messages, &mut restored)
+        .await
+        .unwrap();
+
+    // 指纹对不上：宁可整段重摘，也不能把别的历史的摘要喂给模型。
+    let mut rewritten = messages;
+    rewritten[5].content = "different evidence".to_owned();
+    let mut restored = Some(SummaryCache::restore(valid));
+    agent
+        .request_messages(&rewritten, &mut restored)
+        .await
+        .unwrap();
+    assert_eq!(provider.requests.lock().unwrap().len(), 3);
 }
 
 /// 真实故障的回归：会话历史涨到 94 万 token 后，压缩把整段前缀塞进一条 user
@@ -482,6 +694,58 @@ async fn one_oversized_message_is_truncated_instead_of_being_sent_whole() {
             .iter()
             .any(|request| request[0].content.contains("truncated for summarization")),
         "the oversized paste must be marked as truncated, not silently dropped"
+    );
+}
+
+/// 超时/取消不能把已经落盘的有效摘要抹成 None。
+///
+/// `request_messages_accounted` 先把缓存槽位 `take()` 走再 await 重摘；预算耗尽
+/// 时整个 future 被丢弃，槽位回不来。以前这里照写 `None`，等于把上一轮付过钱
+/// 的摘要从会话里删掉：下一轮没有基线，只能把整段 durable 前缀重新分块摘要，
+/// 预算型会话于是每轮都停在 BudgetLimited，永远出不来。
+#[tokio::test]
+async fn a_cancelled_refresh_keeps_the_previous_summary() {
+    let (agent, provider) = agent(WINDOW);
+    let mut messages = vec![Message::system("system")];
+    messages.extend(history().into_iter().skip(1));
+    let mut cache = None;
+    agent.request_messages(&messages, &mut cache).await.unwrap();
+    let persisted = cache
+        .expect("compression must leave a summary behind")
+        .persist();
+
+    // 历史长到投影再次越过水位线：这一轮本要做一次增量重摘。
+    let mut grown = messages;
+    for index in 100..140 {
+        push_batch(&mut grown, index);
+    }
+    let calls = provider.requests.lock().unwrap().len();
+    provider.stall_from(calls);
+    let agent = agent.with_time_budget(std::time::Duration::from_millis(400));
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        agent.run_checkpointed_with_summary(
+            grown,
+            Message::user("continue"),
+            None,
+            Some(persisted.clone()),
+        ),
+    )
+    .await
+    .expect("the time budget must end the run, not hang it")
+    .expect("a spent budget is an outcome, not an error");
+    assert_eq!(
+        outcome.stop_reason,
+        crate::agent::AgentStopReason::BudgetLimited
+    );
+    assert!(
+        provider.requests.lock().unwrap().len() > calls,
+        "the refresh must have started before the budget ran out"
+    );
+    assert_eq!(
+        outcome.context_summary,
+        Some(persisted),
+        "a cancelled refresh must hand the previous summary back untouched"
     );
 }
 

@@ -130,7 +130,7 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `model` | 模型 ID |
 | `vision_model` | some.im 纯文本模型的视觉回退模型 |
 | `context_window` | 上下文窗口，用于状态栏占比显示 |
-| `max_output_tokens` | Anthropic Messages 的输出上限 |
+| `max_output_tokens` | 单次回复的输出上限，三种协议都会带上。上下文压缩、会话标题和跟主模型的 Worker 都沿用它，思考 token 占同一额度。写小了，长会话的压缩会因为摘要被截断而失败，报「provider response did not include a completion」。不写时缺省 16384，不是模型的真实上限 |
 
 `api_key` 与 `api_key_env` 不能同时定义，也不允许为空字符串。
 

@@ -64,6 +64,10 @@ pub struct SubagentCatalog {
     parent_session: Option<uuid::Uuid>,
     /// Skill library used to resolve `task.skill` at dispatch time.
     skills: Option<Arc<crate::skills::SkillCatalog>>,
+    /// The user's configured global rules (`[rules].files`). `None` reads the
+    /// legacy `~/.willdeep/CLAUDE.md`; workers inherit them because they have no
+    /// project rules of their own.
+    global_rules: Option<Vec<String>>,
     /// 每一档兑现成哪个 provider。准入在上一层（[`crate::WorkerTier::requires_admission`]），
     /// 这里只负责兑现：档位说「这活儿值得贵一次」，绑定说「贵成什么样」。
     ///
@@ -133,6 +137,7 @@ impl SubagentCatalog {
             claimed_files: Arc::new(Mutex::new(BTreeSet::new())),
             safety_judge: None,
             skills: None,
+            global_rules: None,
             mcp: None,
             always_allow_store: None,
             state_home: None,
@@ -231,6 +236,12 @@ impl SubagentCatalog {
     /// its body inlined into the worker's opening message.
     pub fn with_skills(mut self, skills: Arc<crate::skills::SkillCatalog>) -> Self {
         self.skills = Some(skills);
+        self
+    }
+
+    /// Global rules the workers of this session inherit. See [`Self::global_rules`].
+    pub fn with_global_rules(mut self, rules: Vec<String>) -> Self {
+        self.global_rules = Some(rules);
         self
     }
 
@@ -921,6 +932,7 @@ impl SubagentCatalog {
             max_attempts,
             claimed_files: self.claimed_files.clone(),
             skills: self.skills.clone(),
+            global_rules: self.global_rules.clone(),
             safety_judge: self.safety_judge.clone(),
             approved_command,
             // 只给兜底工种。窄工种声明里也没有那两个工具名，双重保险。

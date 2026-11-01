@@ -120,6 +120,13 @@ pub struct Session {
     pub compression_generation: u64,
     #[serde(default)]
     pub compression_checkpoint: Option<CompressionCheckpoint>,
+    /// 上一次运行产出的压缩摘要，绑定到 `messages` 的某个前缀。
+    ///
+    /// 自动压缩只换请求投影、不改写 durable 历史，所以这份摘要是「同一段历史
+    /// 不要按轮重摘一遍」的唯一凭据。它只是缓存：前缀指纹对不上就作废，最多
+    /// 多花一次摘要的钱，不会把错的历史喂给模型。改写或截断历史时必须清空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_summary: Option<crate::context_summary::ContextSummary>,
     #[serde(default)]
     pub manual_compression_usage: CompressionUsage,
     #[serde(default)]
@@ -177,16 +184,29 @@ impl Session {
             response_style: None,
             compression_generation: 0,
             compression_checkpoint: None,
+            context_summary: None,
             manual_compression_usage: CompressionUsage::default(),
             execution_checkpoint: None,
             swift_source: None,
         }
     }
 
+    /// 用另一份会话的执行快照覆盖自己：消息、计划、压缩边界、上下文摘要、
+    /// 用量和执行检查点。
+    ///
+    /// 冲突兜底专用。只写 `messages` 会留下「新消息配旧摘要/旧压缩边界」这对
+    /// 对不上的组合：摘要按前缀指纹校验，对不上就只能整段重摘。不可变的身份
+    /// 字段（id、workspace、created_at）也照抄，调用方传进来的必须是自己那份。
+    pub fn adopt_execution_snapshot(&mut self, source: &Session) {
+        execution_state::copy(source, self);
+    }
+
     pub fn replace_with_compressed_messages(&mut self, messages: Vec<Message>) -> bool {
         let previous_message_count = self.messages.len();
         let compressed_message_count = messages.len();
         self.messages = messages;
+        // 新历史不再包含被摘掉的那些原文，旧摘要覆盖的前缀已经不存在了。
+        self.context_summary = None;
         if compressed_message_count >= previous_message_count {
             return false;
         }
@@ -212,6 +232,8 @@ impl Session {
         }
         self.messages.truncate(message_end);
         self.execution_checkpoint = None;
+        // 截断可能落在摘要覆盖的前缀里；索引对不上的缓存留着只会误导下一次校验。
+        self.context_summary = None;
         self.updated_at = now();
         true
     }
@@ -902,6 +924,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         response_style: None,
         compression_generation: 0,
         compression_checkpoint: None,
+        context_summary: None,
         manual_compression_usage: CompressionUsage::default(),
         execution_checkpoint: None,
         swift_source: Some(path.to_path_buf()),
@@ -1683,6 +1706,7 @@ mod tests {
         assert_eq!(loaded.config, None);
         assert_eq!(loaded.compression_generation, 0);
         assert_eq!(loaded.compression_checkpoint, None);
+        assert_eq!(loaded.context_summary, None);
     }
 
     #[test]
@@ -1691,9 +1715,17 @@ mod tests {
         session.messages = (0..10)
             .map(|index| Message::user(format!("message {index}")))
             .collect();
+        session.context_summary = Some(crate::context_summary::ContextSummary {
+            through: 8,
+            fingerprint: "stale".to_owned(),
+            system_fingerprint: "stale".to_owned(),
+            summary: "old summary".to_owned(),
+        });
         assert!(session.replace_with_compressed_messages(vec![Message::user("summary")]));
         assert_eq!(session.compression_generation, 1);
         assert_eq!(session.messages.len(), 1);
+        // 被摘掉的原文已经不在了，旧摘要覆盖的前缀跟着作废。
+        assert!(session.context_summary.is_none());
         assert_eq!(
             session.compression_checkpoint,
             Some(CompressionCheckpoint {
@@ -1721,10 +1753,20 @@ mod tests {
             )
         );
         session.execution_checkpoint = Some(crate::checkpoint::CheckpointMetadata::default());
+        session.context_summary = Some(crate::context_summary::ContextSummary {
+            through: 4,
+            fingerprint: "stale".to_owned(),
+            system_fingerprint: "stale".to_owned(),
+            summary: "old summary".to_owned(),
+        });
         assert!(session.rewind_to(2));
         assert_eq!(session.messages.len(), 2);
         assert_eq!(session.messages[1].content, "kept 1");
         assert!(session.execution_checkpoint.is_none());
+        assert!(
+            session.context_summary.is_none(),
+            "truncation can cut inside the summarized prefix"
+        );
         assert_eq!(
             session.compression_generation, 1,
             "truncation is not a compression"

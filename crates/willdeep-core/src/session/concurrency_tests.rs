@@ -71,6 +71,14 @@ fn stale_metadata_save_preserves_the_entire_new_execution_snapshot() {
             session.runtime_event_cursor = 7;
             session.compression_generation = 2;
             session.execution_checkpoint = Some(crate::checkpoint::CheckpointMetadata::default());
+            // 摘要绑在消息前缀上，属于执行快照：只改标题的那次 save 不能把它
+            // 换成调用方手里的旧值。
+            session.context_summary = Some(crate::context_summary::ContextSummary {
+                through: 1,
+                fingerprint: "a".repeat(64),
+                system_fingerprint: "b".repeat(64),
+                summary: "fresh summary".to_owned(),
+            });
         })
         .unwrap();
     stale.title = "user title".into();
@@ -82,6 +90,10 @@ fn stale_metadata_save_preserves_the_entire_new_execution_snapshot() {
     assert_eq!(saved.runtime_event_cursor, 7);
     assert_eq!(saved.compression_generation, 2);
     assert!(saved.execution_checkpoint.is_some());
+    assert_eq!(
+        saved.context_summary.map(|summary| summary.summary),
+        Some("fresh summary".to_owned())
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

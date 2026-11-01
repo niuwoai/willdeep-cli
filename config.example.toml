@@ -203,6 +203,8 @@ api = "anthropic-messages"
 api_base = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 model = "claude-sonnet-4-5"
+# 单次回复的输出上限，三种协议都会带上；上下文压缩、会话标题和跟主模型的 Worker 也用它，
+# 思考 token 占同一额度。不写时缺省 16384。写得过小会让长会话的压缩因摘要被截断而失败。
 max_output_tokens = 16384
 
 # 每个 Worker 档位兑现成哪个模型。这是与 [subagents.*] 正交的另一根轴：

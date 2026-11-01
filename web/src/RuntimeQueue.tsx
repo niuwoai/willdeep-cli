@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUp, Clock3, GitBranch, Image as ImageIcon, Paperclip, Pencil, Trash2 } from "lucide-react";
 import type { Language } from "./i18n";
 import { queueText } from "./queueMessages";
 import { Markdown } from "./Markdown";
@@ -51,19 +52,37 @@ export function RuntimeQueue({ sessionId, language }: { sessionId: string | null
       <textarea aria-label={t("edit")} value={draft} onChange={(event) => setDraft(event.target.value)} />
       <button onClick={() => setEditing(null)}>{t("cancel")}</button>
     </div>}
-    {!!queue.data?.length && <><header><strong>{t("title")}</strong><span>{queue.data.length}</span></header>
-      <p>{t("dependencyPolicy")}</p>
-      <ol>{queue.data.map((item) => <li key={item.id}><p>{item.text_preview}</p>
-        <small>{t("images")}: {item.image_count} · {t("attachments")}: {item.text_attachment_count}</small>
-        {editing?.id === item.id && editing.session_id === sessionId ? <div className="queue-editor">
+    {!!queue.data?.length && <><header><strong>{t("title")}</strong><span className="management-count">{queue.data.length}</span></header>
+      <ol>{queue.data.map((item) => { const editingItem = editing?.id === item.id && editing.session_id === sessionId;
+        return <li key={item.id}><p className="queue-message-content">{item.text_preview}</p>
+        {(item.image_count > 0 || item.text_attachment_count > 0) && <p className="queue-attachment-count">
+          {item.image_count > 0 && <span><ImageIcon size={12} aria-hidden="true" />{t("images")} {item.image_count}</span>}
+          {item.text_attachment_count > 0 && <span><Paperclip size={12} aria-hidden="true" />{t("attachments")} {item.text_attachment_count}</span>}
+        </p>}
+        {editingItem && <div className="queue-editor">
           <textarea aria-label={t("edit")} value={draft} onChange={(event) => setDraft(event.target.value)} />
-          <button disabled={mutation.isPending} onClick={() => setEditing(null)}>{t("cancel")}</button>
-          <button disabled={mutation.isPending || (!draft.trim() && !item.image_count && !item.text_attachment_count)}
-            onClick={() => mutation.mutate({ action: "edit", message_id: item.id, text: draft, expected_text: editing.text })}>{t("save")}</button>
-        </div> : <button disabled={mutation.isPending || !item.can_edit} onClick={() => { setEditing(item); setDraft(item.text); }}>{t("edit")}</button>}
-        <button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "remove", message_id: item.id })}>{t("delete")}</button>
-        <button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "send_now", message_id: item.id })}>{t("prioritize")}</button>
-        <button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "run_independently", message_id: item.id })}>{t("runIndependent")}</button>
-      </li>)}</ol></>}
+          <div className="management-editor-actions">
+            <button type="button" disabled={mutation.isPending} onClick={() => setEditing(null)}>{t("cancel")}</button>
+            <button type="button" className="management-primary" disabled={mutation.isPending || (!draft.trim() && !item.image_count && !item.text_attachment_count)}
+              onClick={() => mutation.mutate({ action: "edit", message_id: item.id, text: draft, expected_text: editing.text })}>{t("save")}</button>
+          </div>
+        </div>}
+        <div className="queue-row-actions">
+          <button type="button" className="queue-verb" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "send_now", message_id: item.id })}>
+            <ArrowUp size={13} aria-hidden="true" />{t("prioritize")}<small>{t("prioritizeHint")}</small>
+          </button>
+          <button type="button" className="queue-verb" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "run_independently", message_id: item.id })}>
+            <GitBranch size={13} aria-hidden="true" />{t("runIndependent")}<small>{t("runIndependentHint")}</small>
+          </button>
+          <span className="queue-row-spacer" />
+          {!editingItem && <button type="button" className="queue-verb quiet" disabled={mutation.isPending || !item.can_edit} onClick={() => { setEditing(item); setDraft(item.text); }}>
+            <Pencil size={13} aria-hidden="true" />{t("edit")}
+          </button>}
+          <button type="button" className="queue-verb quiet danger" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "remove", message_id: item.id })}>
+            <Trash2 size={13} aria-hidden="true" />{t("delete")}
+          </button>
+        </div>
+      </li>; })}</ol>
+      <p className="queue-policy"><Clock3 size={12} aria-hidden="true" />{t("dependencyPolicy")}</p></>}
   </section>;
 }

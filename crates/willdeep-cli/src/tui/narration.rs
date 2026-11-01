@@ -167,8 +167,11 @@ impl App {
         } else {
             format!(
                 "· {} · {}",
-                self.language
-                    .text("正在压缩上下文", "Compressing context", "コンテキストを圧縮中"),
+                self.language.text(
+                    "正在压缩上下文",
+                    "Compressing context",
+                    "コンテキストを圧縮中"
+                ),
                 format_elapsed_span(notice.started.elapsed().as_secs_f32(), 0)
             )
         })
@@ -1663,7 +1666,10 @@ mod tests {
         let row = app.compression_notice_row().unwrap();
         assert!(row.contains("上下文已压缩"), "{row}");
         assert!(!row.contains("正在压缩"), "{row}");
-        assert!(!row.contains('s'), "a finished row does not keep counting: {row}");
+        assert!(
+            !row.contains('s'),
+            "a finished row does not keep counting: {row}"
+        );
 
         // 真正的输出一开始，这行就不用再解释了。
         app.stream_transient(StreamKind::Reply, "结果是");

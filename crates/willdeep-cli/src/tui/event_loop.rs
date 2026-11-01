@@ -49,6 +49,171 @@ async fn handle_queue_action(
     }
 }
 
+/// 滚轮事件不带位移量，一格按这么多行算。侧栏、弹层和聊天记录原来都是这个数。
+const SCROLL_LINES_PER_TICK: usize = 3;
+
+/// 一次滚轮手势里已经到达的全部滚动事件，合成一份偏移。
+///
+/// `first` 是循环刚取到的那一格，`pending` 里是此刻已经在输入缓冲里排队的事件。
+/// 只吞滚轮：方向相反的互相抵消，碰到鼠标移动、按键等任何别的事件就停下来，
+/// 原样交还给调用方——那一格还得按它自己的语义处理。滚轮没有像素位移，
+/// 一格固定算 `SCROLL_LINES_PER_TICK` 行，所以这里数的是格数。
+fn coalesce_scroll(
+    first: MouseEvent,
+    pending: impl IntoIterator<Item = io::Result<Event>>,
+) -> (ScrollBurst, Vec<Event>) {
+    let mut scrolled = ScrollBurst::from_tick(first);
+    let mut pending = pending.into_iter();
+    let mut held_back = Vec::new();
+    for event in pending.by_ref() {
+        let Ok(event) = event else {
+            break;
+        };
+        let Event::Mouse(mouse) = event else {
+            held_back.push(event);
+            break;
+        };
+        if !scrolled.push(mouse) {
+            held_back.push(Event::Mouse(mouse));
+            break;
+        }
+    }
+    held_back.extend(pending.filter_map(Result::ok));
+    (scrolled, held_back)
+}
+
+/// 一次滚轮手势合成出来的偏移：落点、方向和格数。
+struct ScrollBurst {
+    column: u16,
+    row: u16,
+    /// 向上为正。方向相反的格互相抵消，所以一份手势只剩一个方向。
+    ticks_up: i32,
+}
+
+impl ScrollBurst {
+    fn from_tick(mouse: MouseEvent) -> Self {
+        Self {
+            column: mouse.column,
+            row: mouse.row,
+            ticks_up: scroll_tick_direction(mouse.kind).unwrap_or(0),
+        }
+    }
+
+    /// 同一轮滚动里的下一格。不是滚轮就拒绝，调用方要把它交还给正常的事件处理。
+    fn push(&mut self, mouse: MouseEvent) -> bool {
+        let Some(direction) = scroll_tick_direction(mouse.kind) else {
+            return false;
+        };
+        self.column = mouse.column;
+        self.row = mouse.row;
+        self.ticks_up += direction;
+        true
+    }
+
+    fn lines(&self) -> usize {
+        self.ticks_up.unsigned_abs() as usize * SCROLL_LINES_PER_TICK
+    }
+}
+
+fn scroll_tick_direction(kind: MouseEventKind) -> Option<i32> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(1),
+        MouseEventKind::ScrollDown => Some(-1),
+        _ => None,
+    }
+}
+
+/// 把合成好的一次滚动应用到界面上。落点决定滚动的是哪一块：
+/// 弹层和侧栏优先于聊天记录，跟原来逐格处理时的判断顺序一致。
+fn apply_scroll(app: &mut App, scrolled: ScrollBurst) {
+    let lines = scrolled.lines();
+    if lines == 0 {
+        return;
+    }
+    let up = scrolled.ticks_up > 0;
+    if app.agent_detail.is_some() {
+        app.agent_detail_scroll = if up {
+            app.agent_detail_scroll.saturating_sub(lines)
+        } else {
+            app.agent_detail_scroll.saturating_add(lines)
+        };
+    } else if app.task_detail.is_some() {
+        app.task_detail_scroll = if up {
+            app.task_detail_scroll.saturating_sub(lines)
+        } else {
+            app.task_detail_scroll.saturating_add(lines)
+        };
+    } else if app.attention_detail.is_some() {
+        let lines = lines.min(u16::MAX as usize) as u16;
+        app.attention_detail_scroll = if up {
+            app.attention_detail_scroll.saturating_sub(lines)
+        } else {
+            app.attention_detail_scroll.saturating_add(lines)
+        };
+    } else if app
+        .sidebar_rect
+        .contains((scrolled.column, scrolled.row).into())
+    {
+        let lines = lines.min(isize::MAX as usize) as isize;
+        app.sidebar_scroll_by(if up { -lines } else { lines });
+    } else {
+        if app
+            .transcript_rect
+            .contains((scrolled.column, scrolled.row).into())
+        {
+            app.focus = FocusPane::Chat;
+        }
+        if up {
+            app.scroll_up(lines);
+        } else {
+            app.scroll_down(lines);
+        }
+    }
+}
+
+/// 读出这一格之后已经到达、还没被取走的事件。
+///
+/// 事件流的内部读取是非阻塞的：没有事件就立刻返回，不会把循环卡住。
+/// 上限只是防止一次手势把循环留在这里太久，剩下的下一圈再合。
+async fn drain_pending_events(events: &mut EventStream) -> Vec<io::Result<Event>> {
+    const PENDING_EVENT_LIMIT: usize = 256;
+    let mut pending = Vec::new();
+    while pending.len() < PENDING_EVENT_LIMIT {
+        let Some(event) = futures_util::FutureExt::now_or_never(events.next()) else {
+            break;
+        };
+        let Some(event) = event else {
+            break;
+        };
+        pending.push(event);
+    }
+    pending
+}
+
+/// 工作区被切走之后，把事件跟随器指到新工作区。
+///
+/// 旧跟随器还在往通道里推上一个工作区的事件，先排空再换，否则两段事件会混在一起。
+fn retarget_runtime_follower(
+    app: &App,
+    runtime: &TuiRuntime,
+    runtime_event_rx: &mut mpsc::UnboundedReceiver<Vec<crate::daemon::RemoteRuntimeEvent>>,
+    follower: &mut crate::daemon::tui_bridge::RuntimeEventFollower,
+    runtime_event_tx: &mpsc::UnboundedSender<Vec<crate::daemon::RemoteRuntimeEvent>>,
+) {
+    while runtime_event_rx.try_recv().is_ok() {}
+    *follower = crate::daemon::start_runtime_event_follower(
+        runtime.home.clone(),
+        app.runtime_event_cursor,
+        runtime.runtime_submit.workspace.clone(),
+        runtime_event_tx.clone(),
+    );
+}
+
+/// 这一格滚轮带出来的一整段滚动：自身，加上此刻已经在输入缓冲里排队的滚轮事件。
+async fn scroll_burst(first: MouseEvent, events: &mut EventStream) -> ScrollBurst {
+    coalesce_scroll(first, drain_pending_events(events).await).0
+}
+
 /// 落一轮已经跑完的结果；撞上并发执行冲突时，重载最新快照再写一次。
 ///
 /// 为什么这里可以「重载后照写」，而 `SessionStore::save` 的冲突判定又必须留着：
@@ -69,10 +234,14 @@ fn persist_turn_result(session: &mut Session, store: &SessionStore) -> Result<()
     match store.save(session) {
         Ok(()) => Ok(()),
         Err(willdeep_core::session::SessionError::ConcurrentUpdate(_)) => {
-            let messages = std::mem::take(&mut session.messages);
             // `update` 在锁内从磁盘最新快照起改：别人刚写进去的字段全部保留，
-            // 只把本轮的消息放上去。
-            *session = store.update(session.id, |latest| latest.messages = messages)?;
+            // 只把本轮的执行快照放上去。快照必须整体替换——只写 messages 会把
+            // 本轮刚算出的摘要、压缩边界和检查点丢在冲突里，磁盘上留下「新消息
+            // 配旧摘要」这对对不上的组合。
+            let snapshot = session.clone();
+            *session = store.update(session.id, |latest| {
+                latest.adopt_execution_snapshot(&snapshot)
+            })?;
             Ok(())
         }
         Err(error) => Err(error.into()),
@@ -323,6 +492,8 @@ pub(super) async fn event_loop(
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
+    // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
+    let mut deferred_events: VecDeque<Event> = VecDeque::new();
     let (runtime_snapshot_tx, mut runtime_snapshot_rx) =
         mpsc::unbounded_channel::<Result<crate::daemon::RuntimeSnapshot, String>>();
     let snapshot_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -336,6 +507,37 @@ pub(super) async fn event_loop(
     );
     let mut qterm = crate::qterm::ViewState::from_env();
     loop {
+        // 上一圈滚轮合并把不是滚轮的事件让了出来：先处理完再做这一圈的其余事情，
+        // 否则那一格要多等一轮，而且循环顶部的提前返回会把它一直饿着。
+        if let Some(event) = deferred_events.pop_front() {
+            let outcome = dispatch_terminal_event(
+                event,
+                &mut deferred_events,
+                &mut events,
+                &mut app,
+                term,
+                session,
+                store,
+                runtime,
+                &agent,
+                language,
+                &mut interrupt_esc_deadline,
+            )
+            .await?;
+            if outcome.workspace_changed {
+                retarget_runtime_follower(
+                    &app,
+                    runtime,
+                    &mut runtime_event_rx,
+                    &mut _runtime_event_follower,
+                    &runtime_event_tx,
+                );
+            }
+            if outcome.quit {
+                break;
+            }
+            continue;
+        }
         qterm.observe(
             session.id,
             app.running,
@@ -593,7 +795,19 @@ pub(super) async fn event_loop(
             );
         }
         load_attention_diagnostics(&mut app, runtime);
-        draw(term, &mut app, &runtime.skills)?;
+        // 同步更新把这一帧包成一次原子绘制：支持的终端会攒到结束再一次性翻页，
+        // 不支持的把这两条序列当未知模式忽略。没有它，滚动时整片聊天区的改写会
+        // 被终端逐段画出来，看起来就是屏闪。
+        queue!(
+            term.backend_mut(),
+            crossterm::terminal::BeginSynchronizedUpdate
+        )?;
+        let drawn = draw(term, &mut app, &runtime.skills);
+        execute!(
+            term.backend_mut(),
+            crossterm::terminal::EndSynchronizedUpdate
+        )?;
+        drawn?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
             _ = async {
@@ -739,972 +953,14 @@ pub(super) async fn event_loop(
                     let _=tx.send(UiMessage::MediaResized(result));
                 });
             },
-            event=events.next()=>if let Some(Ok(event))=event { match event {
-                Event::Paste(value)=>{
-                    if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
-                    if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
-                        if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
-                        continue;
-                    }
-                    if app.approval.is_some() {
-                        app.handle_approval_text(&value);
-                    } else if app.routing_settings_paste(&value) {
-                    } else if let Some(picker)=app.model_picker.as_mut() {
-                        picker.editor.insert(&value);
-                        app.refresh_model_picker_matches();
-                    } else if let Some(picker)=app.workspace_picker.as_mut() {
-                        picker.editor.insert(&value);
-                        app.refresh_workspace_picker_matches();
-                    } else if let Some(picker)=app.session_picker.as_mut() {
-                        picker.editor.insert(&value);
-                        refresh_session_picker(&mut app,runtime,session).await;
-                    } else {
-                        app.handle_paste(value);
-                    }
-                },
-                Event::Mouse(mouse)=>{
-                    app.prompt_history = None;
-                    interrupt_esc_deadline = None;
-                    if app.question.is_some()||app.approval.is_some() {
-                        if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
-                            app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
-                        }
-                        continue;
-                    }
-                    if app.attachment_panel.is_some() { continue; }
-                    if app.prompt_queue.is_some() {
-                        if let Some(key) = app.queue_mouse_key(mouse) {
-                            handle_queue_action(key, &mut app, session, runtime, &agent).await;
-                        }
-                        continue;
-                    }
-                    // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
-                    // 否则「点外面」会先被下面那些 `continue` 吃掉。
-                    if mouse.kind==MouseEventKind::Down(MouseButton::Left)
-                        && (app.dismiss_overlay_on_close_click(mouse.column,mouse.row)
-                            || app.dismiss_overlay_on_outside_click(mouse.column,mouse.row))
-                    {
-                        continue;
-                    }
-                    if app.media.is_open() {
-                        let action=app.media.handle_mouse(mouse);
-                        dispatch_media_action(action,&mut app,runtime);
-                        continue;
-                    }
-                    if app.routing_settings.is_some() {
-                        continue;
-                    }
-                    if app.model_picker.is_some() {
-                        match mouse.kind {
-                            MouseEventKind::ScrollUp|MouseEventKind::ScrollDown=>{
-                                let delta=if mouse.kind==MouseEventKind::ScrollUp{-1}else{1};
-                                let action=app.model_picker_scroll_at(delta,mouse.column,mouse.row);
-                                model_provider::handle(action,&mut app,session,store,runtime,&agent).await;
-                            },
-                            MouseEventKind::Down(MouseButton::Left)=>{
-                                if let Some(action)=app.activate_model_picker_at(mouse.column,mouse.row) {
-                                    model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
-                                }
-                            },
-                            _=>{},
-                        }
-                        continue;
-                    }
-                    if app.workspace_picker.is_some() {
-                        match mouse.kind {
-                            MouseEventKind::ScrollUp=>app.workspace_picker_scroll(-1),
-                            MouseEventKind::ScrollDown=>app.workspace_picker_scroll(1),
-                            MouseEventKind::Down(MouseButton::Left)=>{
-                                if let Some(id)=app.activate_workspace_picker_at(mouse.column,mouse.row) {
-                                    app.workspace_picker=None;
-                                    app.pending_workspace_switch=Some(id);
-                                }
-                            },
-                            _=>{},
-                        }
-                        continue;
-                    }
-                    if app.session_picker.is_some() {
-                        if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
-                            app.activate_session_picker_at(mouse.column,mouse.row);
-                        }
-                        continue;
-                    }
-                    if let Some(action)=diff_review_mouse_action(app.diff_review.is_some(),mouse.kind) {
-                        if let Some(review)=app.diff_review.as_mut()
-                            && review.preview_draft.is_none()
-                        {
-                            match action {
-                                DiffReviewMouseAction::ScrollUp=>review.scroll=review.scroll.saturating_sub(3),
-                                DiffReviewMouseAction::ScrollDown=>review.scroll=review.scroll.saturating_add(3),
-                                DiffReviewMouseAction::Consume=>{},
-                            }
-                        }
-                        continue;
-                    }
-                    if mouse.kind==MouseEventKind::Down(MouseButton::Left)
-                        && let Some(action)=app.diff_attention_action_at(mouse.column,mouse.row)
-                    {
-                        if let Err(error)=handle_diff_attention_action(action,&mut app,session,store,runtime,language).await {
-                            app.notice=Some(format!("{}: {error}",language.text("Diff 操作失败","Diff action failed","Diff 操作に失敗")));
-                        }
-                        continue;
-                    }
-                    if mouse.kind==MouseEventKind::Down(MouseButton::Left)
-                        && let Some(action)=app.agent_detail_action_at(mouse.column,mouse.row)
-                    {
-                        handle_agent_detail_action(action,&mut app,runtime,language).await;
-                        continue;
-                    }
-                    if app.diff_review.is_none()
-                        && app.agent_detail.is_none()
-                        && app.task_detail.is_none()
-                        && app.attention_detail.is_none()
-                        && app.worktree_review.is_none()
-                        && app.handle_chat_selection_mouse(mouse)
-                    {
-                        continue;
-                    }
-                    match mouse.kind {
-                    MouseEventKind::Down(_)=>{
-                        app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
-                        if app.attention_detail.is_some()
-                            && let Some(gate)=app.selected_remote_gate()
-                        {
-                            app.attention_detail=None;
-                            open_remote_gate(&mut app,gate,runtime.home.clone(),runtime.tx.clone());
-                        }
-                    },
-                    MouseEventKind::ScrollUp if app.agent_detail.is_some()=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.agent_detail.is_some()=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.task_detail.is_some()=>app.task_detail_scroll=app.task_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(3),
-                    MouseEventKind::ScrollDown if app.attention_detail.is_some()=>app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(3),
-                    MouseEventKind::ScrollUp if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(-3),
-                    MouseEventKind::ScrollDown if app.sidebar_rect.contains((mouse.column,mouse.row).into())=>app.sidebar_scroll_by(3),
-                    MouseEventKind::ScrollUp if app.transcript_rect.contains((mouse.column,mouse.row).into())=>{app.focus=FocusPane::Chat;app.scroll_up(3);},
-                    MouseEventKind::ScrollDown if app.transcript_rect.contains((mouse.column,mouse.row).into())=>{app.focus=FocusPane::Chat;app.scroll_down(3);},
-                    MouseEventKind::ScrollUp=>app.scroll_up(3),
-                    MouseEventKind::ScrollDown=>app.scroll_down(3),
-                    _=>{}
-                }},
-                Event::Key(key) if key.kind==KeyEventKind::Press=>{
-                    if key.code != KeyCode::Esc {
-                        interrupt_esc_deadline = None;
-                    }
-                    if app.native_selection_mode {
-                        // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
-                        if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {
-                            continue;
-                        }
-                        execute!(term.backend_mut(), EnableMouseCapture)?;
-                        if selection_mode_exit_key(key) {
-                            app.exit_selection_mode();
-                            app.notice=Some(language.text("已恢复 WillDeep 鼠标操作","WillDeep mouse controls restored","WillDeep のマウス操作を復元しました").to_owned());
-                            continue;
-                        }
-                        // 其它键：退出原生选区，这个键照常处理（打字就进输入框）。
-                        app.release_selection_for_key(key);
-                    } else if app.selection_mode {
-                        if is_selection_copy_key(key) {
-                            app.copy_chat_selection();
-                            continue;
-                        } else if key.code==KeyCode::Char('q')&&!key.modifiers.intersects(KeyModifiers::CONTROL|KeyModifiers::SUPER|KeyModifiers::ALT) {
-                            app.quote_chat_selection();
-                            continue;
-                        } else if selection_mode_exit_key(key) {
-                            app.exit_selection_mode();
-                            app.notice=Some(language.text("已恢复鼠标滚动和点击","Mouse scrolling and clicks restored","マウス操作を復元しました").to_owned());
-                            continue;
-                        }
-                        // 以前这里把其余按键一律吞掉，选过字就打不了字、也没有任何提示。
-                        app.release_selection_for_key(key);
-                    }
-                    if app.routing_settings.is_none()&&key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('s'){
-                        execute!(term.backend_mut(), DisableMouseCapture)?;
-                        app.enter_native_selection_mode();
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('c'){break;}
-                    if key.code==KeyCode::Esc&&app.mobile_qr.take().is_some(){continue;}
-                    if app.question.is_some(){app.prompt_history=None;app.handle_question_key(key);continue;}
-                    if app.approval.is_some(){
-                        app.prompt_history=None;
-                        app.handle_approval_key(key);
-                        continue;
-                    }
-                    if app.prompt_history.is_some() && app.handle_prompt_history_key(key, &session.messages) { continue; }
-                    if app.media.is_open() { let action=app.media.handle_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
-                    if app.attachment_panel.is_some() { let action=app.handle_attachment_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
-                    if app.prompt_queue.is_some() {
-                        handle_queue_action(key, &mut app, session, runtime, &agent).await;
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('q') {
-                        app.open_prompt_queue();
-                        continue;
-                    }
-                    if app.media.is_open(){
-                        let action=app.media.handle_key(key);
-                        dispatch_media_action(action,&mut app,runtime);
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('l'){
-                        if !app.media.open(&app.transcript){
-                            app.notice=Some(language.text("当前会话里没有链接或图片","No links or images in this Session","現在のセッションにリンクや画像はありません").to_owned());
-                        }
-                        continue;
-                    }
-                    if let Some(detail)=app.attention_detail.clone(){
-                        if detail.source==AttentionSource::DiffReview {
-                            let action=diff_attention_action_for_key(key.code);
-                            if let Some(action)=action {
-                                if let Err(error)=handle_diff_attention_action(action,&mut app,session,store,runtime,language).await {
-                                    app.notice=Some(format!("{}: {error}",language.text("Diff 操作失败","Diff action failed","Diff 操作に失敗")));
-                                }
-                            } else if key.code==KeyCode::Esc {
-                                app.attention_detail=None;
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Esc => app.attention_detail=None,
-                                KeyCode::Enter => {
-                                    app.attention_diagnostics = None;
-                                    app.attention_diagnostics_loading = None;
-                                }
-                                KeyCode::Up => app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(1),
-                                KeyCode::Down => app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(1),
-                                KeyCode::PageUp => app.attention_detail_scroll=app.attention_detail_scroll.saturating_sub(10),
-                                KeyCode::PageDown => app.attention_detail_scroll=app.attention_detail_scroll.saturating_add(10),
-                                KeyCode::Home => app.attention_detail_scroll=0,
-                                _ => {},
-                            }
-                        }
-                        if detail.source != AttentionSource::DiffReview && matches!(key.code,KeyCode::Char('m')|KeyCode::Char('M')) {
-                            // Dismiss from the detail popup itself. Until now
-                            // `M` only worked with the sidebar focused on the
-                            // Inbox section, so an item whose only sane action
-                            // was "stop showing me this" had no exit here.
-                            if app.attention_dismiss(&detail.id) {
-                                session.attention_read=app.attention_read.clone();
-                                store.save(session)?;
-                                app.notice=Some(language.text("已从 Inbox 移除该条目","Item dismissed from the Inbox","この項目を Inbox から削除しました").to_owned());
-                            } else {
-                                app.notice=Some(language.text("运行中的条目不能忽略","A running item cannot be dismissed","実行中の項目は削除できません").to_owned());
-                            }
-                        }
-                        else if key.code==KeyCode::Enter
-                            && let Some(gate)=app.selected_remote_gate()
-                        {
-                            app.attention_detail=None;
-                            open_remote_gate(&mut app,gate,runtime.home.clone(),runtime.tx.clone());
-                        }
-                        continue;
-                    }
-                    if app.task_detail.is_some(){app.handle_task_detail_key(key,&runtime.background_tasks);continue;}
-                    if let Some(review)=app.worktree_review.clone(){
-                        match key.code {
-                            KeyCode::Esc=>app.worktree_review=None,
-                            KeyCode::Char('m')|KeyCode::Char('M') if review.can_merge=>{
-                                match crate::daemon::remote_merge(&runtime.home,review.agent_id,review.id).await {
-                                    Ok(result)=>{app.notice=Some(format!("{} · {}",language.text("Worktree 已合并","Worktree merged","Worktree をマージしました"),result.root_snapshot_id));app.worktree_review=None;app.agent_detail=None;},
-                                    Err(error)=>app.notice=Some(format!("{}: {error}",language.text("合并失败","Merge failed","マージ失敗"))),
-                                }
-                            }
-                            _=>{}
-                        }
-                        continue;
-                    }
-                    if let Some(agent)=app.agent_detail.clone(){
-                        match key.code {
-                            KeyCode::Esc=>{app.agent_detail=None;app.agent_detail_scroll=0;},
-                            KeyCode::Up=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_sub(1),
-                            KeyCode::Down=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_add(1),
-                            KeyCode::PageUp=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_sub(8),
-                            KeyCode::PageDown=>app.agent_detail_scroll=app.agent_detail_scroll.saturating_add(8),
-                            KeyCode::Home=>app.agent_detail_scroll=0,
-                            KeyCode::End=>app.agent_detail_scroll=usize::MAX,
-                            KeyCode::Char('i')|KeyCode::Char('I') if agent.background&&agent.status==willdeep_core::RuntimeStatus::Working=>handle_agent_detail_action(AgentDetailAction::Instruct,&mut app,runtime,language).await,
-                            KeyCode::Char('k')|KeyCode::Char('K') if agent.background&&matches!(agent.status,willdeep_core::RuntimeStatus::Working|willdeep_core::RuntimeStatus::Queued)=>handle_agent_detail_action(AgentDetailAction::Stop,&mut app,runtime,language).await,
-                            KeyCode::Char('r')|KeyCode::Char('R') if agent.background&&matches!(agent.status,willdeep_core::RuntimeStatus::Blocked|willdeep_core::RuntimeStatus::Failed|willdeep_core::RuntimeStatus::Interrupted|willdeep_core::RuntimeStatus::Done|willdeep_core::RuntimeStatus::Partial|willdeep_core::RuntimeStatus::Cancelled)=>handle_agent_detail_action(AgentDetailAction::Retry,&mut app,runtime,language).await,
-                            KeyCode::Char('m')|KeyCode::Char('M') if agent.background&&matches!(agent.status,willdeep_core::RuntimeStatus::Blocked|willdeep_core::RuntimeStatus::Failed|willdeep_core::RuntimeStatus::Interrupted|willdeep_core::RuntimeStatus::Done|willdeep_core::RuntimeStatus::Partial|willdeep_core::RuntimeStatus::Cancelled)=>handle_agent_detail_action(AgentDetailAction::RetryWithModel,&mut app,runtime,language).await,
-                            KeyCode::Char('w')|KeyCode::Char('W') if agent.dedicated_worktree=>handle_agent_detail_action(AgentDetailAction::ReviewWorktree,&mut app,runtime,language).await,
-                            _=>{}
-                        }
-                        continue;
-                    }
-                    if app.diff_review.is_some(){
-                        let mut close=false;
-                        let mut force_full_redraw=false;
-                        let mut open_file=None;
-                        let mut review_action=None;
-                        let mut revert_action=None;
-                        let mut commit_preview_action=None;
-                        let mut preview_draft_handled=false;
-                        if let Some(review)=app.diff_review.as_mut(){
-                            if review.commit_preview.is_some() {
-                                if key.code==KeyCode::Esc{review.commit_preview=None;}
-                                continue;
-                            } else if let Some(draft)=review.preview_draft.as_mut() {
-                                preview_draft_handled=true;
-                                match key.code {
-                                    KeyCode::Esc=>review.preview_draft=None,
-                                    KeyCode::Tab=>draft.field=(draft.field+1)%3,
-                                    KeyCode::BackTab=>draft.field=draft.field.checked_sub(1).unwrap_or(2),
-                                    KeyCode::Enter if !draft.message.text().trim().is_empty()=>{
-                                        commit_preview_action=Some((review.snapshot.id.clone(),draft.message.text().to_owned(),draft.remote.text().to_owned(),draft.tag.text().to_owned()));
-                                        review.preview_draft=None;
-                                    },
-                                    KeyCode::Left=>draft.editor_mut().left(),
-                                    KeyCode::Right=>draft.editor_mut().right(),
-                                    KeyCode::Home=>draft.editor_mut().home(),
-                                    KeyCode::End=>draft.editor_mut().end(),
-                                    KeyCode::Backspace=>draft.editor_mut().backspace(),
-                                    KeyCode::Delete=>draft.editor_mut().delete(),
-                                    KeyCode::Char(value) if !key.modifiers.intersects(KeyModifiers::CONTROL|KeyModifiers::SUPER)=>draft.editor_mut().insert(&value.to_string()),
-                                    _=>{},
-                                }
-                            } else if review.confirm_revert {
-                                if matches!(key.code,KeyCode::Char('y')|KeyCode::Char('Y')) {
-                                    revert_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),review.area));
-                                }
-                                review.confirm_revert=false;
-                                if revert_action.is_none(){app.notice=Some(language.text("已取消撤销","Revert cancelled","取り消しをキャンセルしました").to_owned());}
-                            } else if review.search.is_some() {
-                                match key.code {
-                                    KeyCode::Esc => review.search = None,
-                                    KeyCode::Enter if !review.search_matches.is_empty() => {
-                                        review.search_selected = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                            review.search_selected.checked_sub(1).unwrap_or(review.search_matches.len() - 1)
-                                        } else {
-                                            (review.search_selected + 1) % review.search_matches.len()
-                                        };
-                                        review.scroll = review.search_matches[review.search_selected];
-                                    }
-                                    KeyCode::Left => review.search.as_mut().unwrap().left(),
-                                    KeyCode::Right => review.search.as_mut().unwrap().right(),
-                                    KeyCode::Home => review.search.as_mut().unwrap().home(),
-                                    KeyCode::End => review.search.as_mut().unwrap().end(),
-                                    KeyCode::Backspace => { review.search.as_mut().unwrap().backspace(); refresh_diff_search(review); }
-                                    KeyCode::Delete => { review.search.as_mut().unwrap().delete(); refresh_diff_search(review); }
-                                    KeyCode::Char(value) if !key.modifiers.intersects(KeyModifiers::CONTROL|KeyModifiers::SUPER) => {
-                                        review.search.as_mut().unwrap().insert(&value.to_string());
-                                        refresh_diff_search(review);
-                                    }
-                                    _ => {}
-                                }
-                                continue;
-                            } else {match key.code {
-                                KeyCode::Esc if review.content.is_some()=>{review.content=None;review.scroll=0;force_full_redraw=true;},
-                                KeyCode::Esc=>{close=true;force_full_redraw=true;},
-                                KeyCode::Up if review.content.is_none()=>review.selected=review.selected.checked_sub(1).unwrap_or(review.snapshot.files.len().saturating_sub(1)),
-                                KeyCode::Down if review.content.is_none()&&!review.snapshot.files.is_empty()=>review.selected=(review.selected+1)%review.snapshot.files.len(),
-                                KeyCode::Enter if review.content.is_none()=>open_file=review.snapshot.files.get(review.selected).map(|file|(review.snapshot.id.clone(),file.path.clone(),review.area)),
-                                KeyCode::Char('v')|KeyCode::Char('V') if review.content.is_some()=>{
-                                    review.view=match review.view {DiffViewMode::Unified=>DiffViewMode::SideBySide,DiffViewMode::SideBySide=>DiffViewMode::Unified};
-                                    refresh_diff_search(review);
-                                },
-                                KeyCode::Char('s')|KeyCode::Char('S') if review.content.is_some()=>{
-                                    review.area=next_diff_area(review.area);
-                                    open_file=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),review.area));
-                                },
-                                KeyCode::Char('/') if review.content.is_some()=>review.search=Some(PromptEditor::default()),
-                                KeyCode::Char('n') if !review.search_matches.is_empty()=>{
-                                    review.search_selected=(review.search_selected+1)%review.search_matches.len();
-                                    review.scroll=review.search_matches[review.search_selected];
-                                },
-                                KeyCode::Char('N') if !review.search_matches.is_empty()=>{
-                                    review.search_selected=review.search_selected.checked_sub(1).unwrap_or(review.search_matches.len()-1);
-                                    review.scroll=review.search_matches[review.search_selected];
-                                },
-                                KeyCode::Char('a')|KeyCode::Char('A') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Accepted)),
-                                KeyCode::Char('d')|KeyCode::Char('D') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Rejected)),
-                                KeyCode::Char('c')|KeyCode::Char('C') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::ChangesRequested)),
-                                KeyCode::Char('m')|KeyCode::Char('M') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Reviewed)),
-                                KeyCode::Char('r')|KeyCode::Char('R') if review.content.is_some()=>review.confirm_revert=true,
-                                KeyCode::Char('p')|KeyCode::Char('P')=>review.preview_draft=Some(CommitPreviewDraft::default()),
-                                KeyCode::Up=>review.scroll=review.scroll.saturating_sub(1),
-                                KeyCode::Down=>review.scroll=review.scroll.saturating_add(1),
-                                KeyCode::PageUp=>review.scroll=review.scroll.saturating_sub(10),
-                                KeyCode::PageDown=>review.scroll=review.scroll.saturating_add(10),
-                                KeyCode::Home=>review.scroll=0,
-                                _=>{}
-                            }}
-                        }
-                        if preview_draft_handled&&commit_preview_action.is_none(){continue;}
-                        if force_full_redraw{term.clear()?;}
-                        if close{app.diff_review=None;continue;}
-                        if let Some((snapshot_id,path,area))=open_file{
-                            match crate::daemon::diff_review::remote_content(&runtime.home,&session.workspace,&snapshot_id,&path,area).await{
-                                Ok(content)=>if let Some(review)=app.diff_review.as_mut(){review.content=Some((path,content));review.scroll=0;review.search_matches.clear();review.search_selected=0;},
-                                Err(error)=>app.notice=Some(format!("{}: {error}",language.text("打开 Diff 失败","Open Diff failed","Diff を開けませんでした"))),
-                            }
-                        }
-                        if let Some((snapshot_id,path,decision))=review_action{
-                            let request=crate::daemon::diff_review::ReviewRequest{workspace:session.workspace.clone(),path:path.clone(),decision,note:None};
-                            match crate::daemon::diff_review::remote_review(&runtime.home,&snapshot_id,&request).await{
-                                Ok(record)=>{if let Some(review)=app.diff_review.as_mut(){review.reviews.insert(path,record.decision);}app.notice=Some(language.text("审查决定已保存","Review decision saved","レビュー結果を保存しました").to_owned());},
-                                Err(error)=>app.notice=Some(format!("{}: {error}",language.text("保存审查决定失败","Save review decision failed","レビュー結果を保存できませんでした"))),
-                            }
-                        }
-                        if let Some((snapshot_id,path,area))=revert_action{
-                            let request=crate::daemon::diff_review::RevertRequest{workspace:session.workspace.clone(),path,area};
-                            match crate::daemon::diff_review::remote_revert(&runtime.home,&snapshot_id,&request).await{
-                                Ok(result)=>match crate::daemon::diff_review::remote_snapshot(&runtime.home,&session.workspace).await{
-                                    Ok(snapshot)=>{if let Some(review)=app.diff_review.as_mut(){review.snapshot=snapshot;review.content=None;review.scroll=0;review.search_matches.clear();review.reviews.clear();review.verifications.clear();review.attributions.clear();}app.notice=Some(if let Some(path)=result.recovery_path{format!("{}: {}",language.text("已安全撤销，可从回收区恢复","Safely reverted; recovery copy","安全に戻しました。復元先"),path.display())}else{language.text("已安全撤销文件变更","File changes safely reverted","ファイル変更を安全に戻しました").to_owned()});},
-                                    Err(error)=>app.notice=Some(format!("{}: {error}",language.text("撤销成功，但刷新 Diff 失败","Reverted, but refresh failed","取り消しましたが更新に失敗しました"))),
-                                },
-                                Err(error)=>app.notice=Some(format!("{}: {error}",language.text("安全撤销失败","Safe revert failed","安全な取り消しに失敗しました"))),
-                            }
-                        }
-                        if let Some((snapshot_id,message,remote,tag))=commit_preview_action{
-                            let tag=(!tag.trim().is_empty()).then_some(tag);
-                            match crate::daemon::diff_review::remote_commit_preview(&runtime.home,&session.workspace,&snapshot_id,&message,&remote,tag.as_deref()).await{
-                                Ok(preview)=>if let Some(review)=app.diff_review.as_mut(){review.commit_preview=Some(preview);},
-                                Err(error)=>app.notice=Some(format!("{}: {error}",language.text("生成 Commit Preview 失败","Commit Preview failed","Commit Preview に失敗しました"))),
-                            }
-                        }
-                        continue;
-                    }
-                    if app.routing_settings.is_some(){
-                        match app.handle_routing_settings_key(key) {
-                            RoutingSettingsAction::None=>{},
-                            RoutingSettingsAction::Close=>app.routing_settings=None,
-                            RoutingSettingsAction::Save(update)=>{
-                                let config_path=runtime.runtime_submit.config.clone().map(Ok).unwrap_or_else(crate::config::default_config_path);
-                                match config_path.and_then(|path|crate::model_routing::save(&path,runtime.runtime_submit.profile.as_deref(),&update)) {
-                                    Ok(settings)=>{
-                                        app.set_routing_settings_saved(settings);
-                                        app.notice=Some(language.text("模型与路由设置已保存","Models and routing saved","モデルとルーティングを保存しました").to_owned());
-                                    },
-                                    Err(error)=>app.set_routing_settings_error(error.to_string()),
-                                }
-                            },
-                        }
-                        continue;
-                    }
-                    if app.permission_picker.is_some(){
-                        match app.handle_permission_picker_key(key) {
-                            PermissionPickerAction::None=>{},
-                            PermissionPickerAction::Close=>app.permission_picker=None,
-                            PermissionPickerAction::Apply(mode)=>{
-                                app.permission_picker=None;
-                                match permission_commands::apply(mode,&mut app,session,runtime,&agent).await {
-                                    Ok(message)=>app.append_transcript(message),
-                                    Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("切换审批模式失败","Approval mode switch failed","承認モードの切替に失敗"))),
-                                }
-                            },
-                        }
-                        continue;
-                    }
-                    if app.model_picker.is_some(){
-                        let action = app.handle_model_picker_key(key);
-                        model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
-                        continue;
-                    }
-                    if app.workspace_picker.is_some(){
-                        match app.handle_workspace_picker_key(key) {
-                            WorkspacePickerAction::None=>{},
-                            WorkspacePickerAction::Close=>app.workspace_picker=None,
-                            WorkspacePickerAction::Select(id)=>{
-                                app.workspace_picker=None;
-                                app.pending_workspace_switch=Some(id);
-                            },
-                        }
-                        continue;
-                    }
-                    if app.session_picker.is_some(){
-                        match app.handle_session_picker_key(key) {
-                            SessionPickerAction::None=>{},
-                            SessionPickerAction::Close=>app.session_picker=None,
-                            SessionPickerAction::Switch(target)=>{
-                                app.pending_session_switch=Some(target);
-                                app.session_picker=None;
-                            },
-                            SessionPickerAction::Refresh=>refresh_session_picker(&mut app,runtime,session).await,
-                        }
-                        continue;
-                    }
-                    if app.rewind_picker.is_some(){
-                        match app.handle_rewind_picker_key(key) {
-                            RewindPickerAction::None=>{},
-                            RewindPickerAction::Close=>app.rewind_picker=None,
-                            RewindPickerAction::Rewind{step,through_turn_id,restore_workspace}=>{
-                                app.rewind_picker=None;
-                                match crate::daemon::rewind_remote_session(&runtime.home,session.id,through_turn_id,restore_workspace).await {
-                                    Ok(result)=>{
-                                        // Runtime 已经把会话截断落盘；本地这份是旧的，整份重读再重画。
-                                        match store.load_baselined(session.id) {
-                                            Ok(loaded)=>{*session=loaded;app.load_session(session);},
-                                            Err(error)=>app.notice=Some(format!("{}: {error}",language.text("重新读取会话失败","Reload Session failed","セッションの再読込に失敗"))),
-                                        }
-                                        app.append_transcript(rewind_summary(&result,step,language));
-                                    },
-                                    Err(error)=>app.notice=Some(format!("{}: {error}",language.text("回退失败","Rewind failed","巻き戻しに失敗"))),
-                                }
-                            },
-                        }
-                        continue;
-                    }
-                    if app.palette.is_some(){app.handle_palette_key(key,&runtime.background_tasks);continue;}
-                    if app.search.is_some(){app.handle_search_key(key);continue;}
-                    if app.handle_help_key(key) {continue;}
-                    if key.code == KeyCode::F(2) {
-                        app.toggle_composer_expanded();
-                        continue;
-                    }
-                    if key.code == KeyCode::F(3) {
-                        app.open_attachments(super::attachment_panel::Target::Draft);
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('p'){
-                        app.open_palette(&runtime.skills,store,session);
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('r'){
-                        if app.running {
-                            app.notice=Some(language.text(
-                                "当前会话正在运行，结束后才能切换历史会话",
-                                "Wait for the current turn to finish before switching Sessions",
-                                "現在のターンが完了してから履歴セッションを切り替えてください"
-                            ).to_owned());
-                        } else {
-                            app.open_session_picker(session.id,SessionPickerRequest::default());
-                            refresh_session_picker(&mut app,runtime,session).await;
-                        }
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('f'){
-                        app.search=Some(SearchState::default());
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('b'){
-                        if app.sidebar_wide {
-                            app.sidebar_visible = !app.sidebar_visible;
-                            if !app.sidebar_visible {app.focus=FocusPane::Prompt;}
-                        } else if app.focus==FocusPane::Sidebar {
-                            app.focus=FocusPane::Prompt;
-                        } else {
-                            app.sidebar_visible=true;
-                            app.focus=FocusPane::Sidebar;
-                        }
-                        continue;
-                    }
-                    if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('w'){
-                        app.sidebar_visible=true;
-                        app.cycle_focus();
-                        continue;
-                    }
-                    if app.focus==FocusPane::Chat {
-                        match key.code {
-                            KeyCode::Esc=>app.focus=FocusPane::Prompt,
-                            KeyCode::Up=>app.scroll_up(1),
-                            KeyCode::Down=>app.scroll_down(1),
-                            KeyCode::Home=>app.scroll_to_top(),
-                            KeyCode::End=>app.scroll_to_bottom(),
-                            _=>{}
-                        }
-                        continue;
-                    }
-                    if app.focus==FocusPane::Activity {
-                        match key.code {
-                            KeyCode::Esc=>app.focus=FocusPane::Prompt,
-                            KeyCode::Enter|KeyCode::Char(' ')=>app.tools_expanded = !app.tools_expanded,
-                            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.tools_expanded = !app.tools_expanded,
-                            _=>{}
-                        }
-                        continue;
-                    }
-                    if app.focus==FocusPane::Sidebar {
-                        match key.code {
-                            KeyCode::Esc=>app.focus=FocusPane::Prompt,
-                            KeyCode::Up if app.sidebar_selected==1&&app.sidebar_expanded[1]=>app.attention_move(-1),
-                            KeyCode::Down if app.sidebar_selected==1&&app.sidebar_expanded[1]=>app.attention_move(1),
-                            KeyCode::Up if app.sidebar_selected==2&&app.sidebar_expanded[2]=>app.runtime_agent_move(-1),
-                            KeyCode::Down if app.sidebar_selected==2&&app.sidebar_expanded[2]=>app.runtime_agent_move(1),
-                            KeyCode::Up=>app.sidebar_move(-1),
-                            KeyCode::Down=>app.sidebar_move(1),
-                            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT)=>app.sidebar_move(-1),
-                            KeyCode::Tab=>app.sidebar_move(1),
-                            KeyCode::Enter=>{
-                                if let Some(gate)=app.selected_remote_gate(){
-                                    open_remote_gate(&mut app,gate,runtime.home.clone(),runtime.tx.clone());
-                                }else if app.sidebar_selected==2 {
-                                    if let Some(agent)=app.selected_runtime_agent(){
-                                        match crate::daemon::remote_agent_detail(&runtime.home,agent.id).await {
-                                            Ok(detail)=>app.agent_detail=Some(detail),
-                                            Err(error)=>app.notice=Some(format!("{}: {error}",language.text("加载 Agent 详情失败","Failed to load Agent details","Agent 詳細の読み込みに失敗"))),
-                                        }
-                                        app.agent_detail_scroll=0;
-                                    }
-                                }else{
-                                    app.sidebar_activate(&runtime.background_tasks);
-                                    // 打开的是 Runtime 任务详情时，把「哪条命令、为什么挂」一并取回来。
-                                    load_attention_diagnostics(&mut app,runtime);
-                                }
-                            },
-                            KeyCode::Char(' ')=>app.sidebar_toggle(),
-                            KeyCode::Char('n')|KeyCode::Char('N') if app.sidebar_selected==2=>app.prefill_new_agent(),
-                            KeyCode::Char('k')|KeyCode::Char('K') if app.sidebar_selected==1=>{
-                                if let Some(id)=app.selected_runtime_task_id(){
-                                    match crate::daemon::cancel_remote_task(&runtime.home,id).await {
-                                        Ok(())=>app.notice=Some(language.text("已请求停止 Runtime 任务","Runtime task stop requested","Runtime タスクの停止を要求しました").to_owned()),
-                                        Err(error)=>app.notice=Some(format!("{}: {error}",language.text("停止失败","Stop failed","停止に失敗"))),
-                                    }
-                                }else{app.attention_stop(&runtime.background_tasks);}
-                            },
-                            KeyCode::Char('r')|KeyCode::Char('R') if app.sidebar_selected==1=>{
-                                if app.attention_retry(&runtime.background_tasks){
-                                    session.attention_read=app.attention_read.clone();
-                                    store.save(session)?;
-                                }
-                            },
-                            KeyCode::Char('k')|KeyCode::Char('K') if app.sidebar_selected==2=>{
-                                if let Some(agent)=app.selected_runtime_agent(){
-                                    match crate::daemon::stop_remote_agent(&runtime.home,agent.id).await {
-                                        Ok(())=>app.notice=Some(language.text("已请求停止子 Agent","Child Agent stop requested","子 Agent の停止を要求しました").to_owned()),
-                                        Err(error)=>app.notice=Some(format!("{}: {error}",language.text("停止失败","Stop failed","停止に失敗"))),
-                                    }
-                                }
-                            },
-                            KeyCode::Char('r')|KeyCode::Char('R') if app.sidebar_selected==2=>{
-                                if let Some(agent)=app.selected_runtime_agent(){
-                                    match crate::daemon::retry_remote_agent(&runtime.home,agent.id).await {
-                                        Ok(())=>app.notice=Some(language.text("已请求重试子 Agent","Child Agent retry requested","子 Agent の再試行を要求しました").to_owned()),
-                                        Err(error)=>app.notice=Some(format!("{}: {error}",language.text("重试失败","Retry failed","再試行に失敗"))),
-                                    }
-                                }
-                            },
-                            KeyCode::Char('m')|KeyCode::Char('M') if app.sidebar_selected==1=>{
-                                if app.attention_mark_read(){
-                                    session.attention_read=app.attention_read.clone();
-                                    store.save(session)?;
-                                }
-                            },
-                            _=>{}
-                        }
-                        continue;
-                    }
-                    // Shift+Tab 只在「严格 → 智能 → 工作区可写」间循环；完全访问必须走
-                    // /permissions 的确认页。
-                    if key.code==KeyCode::BackTab||(key.code==KeyCode::Tab&&key.modifiers.contains(KeyModifiers::SHIFT)) {
-                        let next=app.approval_mode.next_in_cycle();
-                        match permission_commands::apply(next,&mut app,session,runtime,&agent).await {
-                            Ok(_)=>app.notice=Some(format!("{}：{} · Shift+Tab",language.text("审批模式","Approval mode","承認モード"),permission_commands::label(next,language))),
-                            Err(error)=>app.notice=Some(format!("{}: {error:#}",language.text("切换审批模式失败","Approval mode switch failed","承認モードの切替に失敗"))),
-                        }
-                        continue;
-                    }
-                    if app.handle_prompt_history_key(key, &session.messages) { continue; }
-                    // 空输入框里的灰字预测：Tab 采用（只填入不发送），Esc 放弃。
-                    // 命令 / 技能候选层的 Tab 与这里互不相干——那两层只在输入框非空时存在。
-                    if key.code==KeyCode::Tab&&key.modifiers.is_empty()&&app.accept_input_suggestion() { continue; }
-                    if key.code==KeyCode::Esc&&app.dismiss_input_suggestion() { continue; }
-                    if let Some(action) = prompt_line_navigation_for_key(key) {
-                        match action {
-                            PromptLineNavigation::Start => app.edit_input(|input| input.home()),
-                            PromptLineNavigation::End => app.edit_input(|input| input.end()),
-                        }
-                        continue;
-                    }
-                    if app.handle_command_key(key) || app.handle_skill_key(key, &runtime.skills) || app.handle_reference_key(key) { continue; }
-                    if is_clipboard_image_paste_key(key) {
-                        app.paste_clipboard_image();
-                        continue;
-                    }
-                    match key.code {
-                        KeyCode::PageUp=>app.scroll_up(app.viewport_height.saturating_sub(1).max(1)),KeyCode::PageDown=>app.scroll_down(app.viewport_height.saturating_sub(1).max(1)),
-                        KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT)=>app.scroll_up(1),KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT)=>app.scroll_down(1),
-                        KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL)=>app.scroll_to_top(),KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL)=>app.scroll_to_bottom(),
-                        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.tools_expanded = !app.tools_expanded,
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.stash_input_for_queue(),
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.delete_selected_attachment(),
-                        KeyCode::Enter if key.modifiers.intersects(KeyModifiers::SHIFT|KeyModifiers::ALT)=>app.input.insert("\n"),
-                        KeyCode::Enter if is_queue_for_later_key(key)&&(!app.input.is_empty()||!app.attachments.is_empty())=>{
-                            // 先入队、以后再发：走服务端队列并暂缓。本地队列不行——
-                            // 空闲时 queued_prompt_ready 会立刻把它发出去。
-                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
-                                app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
-                            }
-                        },
-                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
-                        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
-                        KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
-                            if app.input.text().trim()=="/peers" || app.input.text().trim().starts_with("/peers ") {
-                                let command=app.input.take();
-                                if let Err(error)=peer_commands::handle(&command,&mut app,session,store,runtime).await {
-                                    app.input.insert(&command);
-                                    app.notice=Some(format!("{}: {error}",language.text("协作操作失败，输入已保留","Coordination failed; input retained","連携操作に失敗しました。入力は保持されています")));
-                                }
-                                continue;
-                            }
-                            if app.input.text().trim()=="/schedule" || app.input.text().trim().starts_with("/schedule ") {
-                                let command=app.input.take();
-                                let home=runtime.home.clone(); let tx=runtime.tx.clone();
-                                tokio::spawn(async move {
-                                    let result=match crate::schedule_cmd::slash(&command,&home).await {
-                                        Ok(result)=>result,
-                                        Err(error)=>format!("{}: {error:#}",language.text("定时任务操作失败","Schedule operation failed","定期タスク操作に失敗")),
-                                    };
-                                    let _=tx.send(UiMessage::RuntimeResult(result));
-                                });
-                                continue;
-                            }
-                            if app.input.text().trim()=="/attachments sent" {
-                                app.input.take(); let home=runtime.home.clone(); let id=session.id; let tx=runtime.tx.clone();
-                                tokio::task::spawn_blocking(move || {
-                                    match SessionStore::new(&home).load(id) {
-                                        Ok(saved) => {
-                                            let items=saved.messages.into_iter().flat_map(|message| message.attachments.into_iter().map(|message| DraftAttachment { id: uuid::Uuid::new_v4(), message })).collect();
-                                            let _=tx.send(UiMessage::SentAttachments { session_id: id, items });
-                                        }
-                                        Err(error) => { let _=tx.send(UiMessage::RuntimeNotice(format!("{}: {error}", language.text("读取已发送附件失败", "Could not read sent attachments", "送信済み添付を読み込めません")))); }
-                                    }
-                                });
-                                continue;
-                            }
-                            if app.input.text().trim()=="/attachments" {
-                                app.input.take(); app.open_attachments(attachment_panel::Target::Draft); continue;
-                            }
-                            if app.input.text().trim()=="/queue" {
-                                app.take_submitted_input();
-                                app.open_prompt_queue();
-                                continue;
-                            }
-                            // 拿不到 Cmd 的终端用这条命令把当前输入先放进队列。
-                            // 命令本身不占输入框，带的是上一次暂存的草稿。
-                            if app.input.text().trim()=="/queue add" {
-                                app.input.take();
-                                if app.queue_draft.text().trim().is_empty() && app.queue_draft_attachments.is_empty() {
-                                    app.notice = Some(language.text(
-                                        "没有可入队的内容；先输入，再按 Ctrl+U 暂存，然后 /queue add",
-                                        "Nothing to queue; type it, press Ctrl+U to set it aside, then /queue add",
-                                        "追加するものがありません。入力して Ctrl+U で取っておき、/queue add を実行してください",
-                                    ).to_owned());
-                                    continue;
-                                }
-                                app.restore_queue_draft();
-                                if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
-                                    app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
-                                }
-                                continue;
-                            }
-                            if confirmation_example::try_submit(&mut app, &runtime.tx) {
-                                continue;
-                            }
-                            // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
-                            // 提示词排队，其余命令说清楚为什么现在不行。
-                            if app.running {
-                                match busy_input(app.input.text()) {
-                                    BusyInput::RunNow=>{},
-                                    BusyInput::Queue=>{
-                                        if app.runtime_turn {
-                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false).await {
-                                                app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
-                                            }
-                                            continue;
-                                        }
-                                        app.queue_submitted_prompt();
-                                        if let Some(text) = app.queued_prompts.back().map(|item| item.text.clone()) {
-                                            app.note_prompt_submitted(&text);
-                                        }
-                                        continue;
-                                    },
-                                    BusyInput::Refuse=>{
-                                        let notice = language.text(
-                                            "该命令会改动会话或 Runtime，本轮结束后才能执行；Esc 可立即中断",
-                                            "That command changes Session or Runtime state; it runs after this turn. Esc interrupts now",
-                                            "このコマンドはセッション/Runtime を変更するため、ターン終了後に実行されます。Esc で即中断",
-                                        ).to_owned();
-                                        app.notice = Some(notice.clone());
-                                        app.notice_hold = Some((notice, Instant::now() + Duration::from_secs(10)));
-                                        continue;
-                                    },
-                                }
-                            }
-                            let prompt=app.take_submitted_input();
-                            app.append_transcript(format!("You: {prompt}"));
-                            app.note_prompt_submitted(&prompt);
-                            if let Some(command)=permission_commands::parse(&prompt) {
-                                match command {
-                                    PermissionCommand::Open=>app.open_permission_picker(false),
-                                    PermissionCommand::Switch(willdeep_core::ApprovalMode::FullAccess)=>app.open_permission_picker(true),
-                                    PermissionCommand::Switch(mode)=>match permission_commands::apply(mode,&mut app,session,runtime,&agent).await {
-                                        Ok(message)=>app.append_transcript(message),
-                                        Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("切换审批模式失败","Approval mode switch failed","承認モードの切替に失敗"))),
-                                    },
-                                    PermissionCommand::SaveDefault(mode)=>match permission_commands::save_default(mode,runtime) {
-                                        Ok(path)=>app.append_transcript(format!("System: {}：{} · {path}",language.text("默认审批模式已写入配置，下次启动生效","Default approval mode saved; applies on next start","既定の承認モードを保存しました（次回起動から有効）"),permission_commands::label(mode,language))),
-                                        Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("写入默认审批模式失败","Save default approval mode failed","既定の承認モードの保存に失敗"))),
-                                    },
-                                    PermissionCommand::Usage=>app.append_transcript(permission_commands::usage(language)),
-                                }
-                                continue;
-                            }
-                            if app.handle_mobile_command(&prompt,&runtime.home,&runtime.tx){continue;}
-                            match handle_agent_command(&prompt,&mut app,runtime,session.id).await {
-                                Ok(true)=>continue,
-                                Ok(false)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("Agent 操作失败","Agent action failed","Agent 操作に失敗しました")));continue;},
-                            }
-                            // `/history` 与 `/session search` 都开面板，必须排在 handle_session_command 前面。
-                            match parse_session_picker_command(&prompt) {
-                                // 这条分支本身就要求 !app.running；真正的运行中保护在切换那一步。
-                                Ok(Some(request))=>{
-                                    app.open_session_picker(session.id,request);
-                                    refresh_session_picker(&mut app,runtime,session).await;
-                                    continue;
-                                },
-                                Ok(None)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("打开历史会话面板失败","Open Session history panel failed","履歴セッションパネルを開けませんでした")));continue;},
-                            }
-                            match handle_new_session_command(&prompt,&mut app,session,store,runtime).await {
-                                Ok(true)=>continue,
-                                Ok(false)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("开始新会话失败","Start new Session failed","新しいセッションの開始に失敗しました")));continue;},
-                            }
-                            // `/session retitle` 要 agent 与 UI 通道，落在这里而不是
-                            // handle_session_command 里——摘要是网络往返，必须扔进后台任务。
-                            if prompt.trim()=="/session retitle" {
-                                if session.title_source==willdeep_core::TitleSource::User {
-                                    app.append_transcript(format!("System: {}",language.text("这条会话的标题是你自己起的；先 /session rename 交回控制权再重算","This Session's title was set by you; hand it back with /session rename before recomputing","このセッション名はあなたが付けたものです。再計算する前に /session rename で戻してください")));
-                                } else {
-                                    dispatch_retitle(session,&agent,&runtime.tx,true);
-                                    app.append_transcript(format!("System: {}",language.text("正在整理会话标题…","Retitling the Session…","セッション名を整理しています…")));
-                                }
-                                continue;
-                            }
-                            match handle_session_command(&prompt,&mut app,session,store,runtime).await {
-                                Ok(true)=>continue,
-                                Ok(false)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("会话操作失败","Session action failed","セッション操作に失敗しました")));continue;},
-                            }
-                            let previous_workspace=runtime.runtime_submit.workspace.clone();
-                            match handle_workspace_command(&prompt,&mut app,session,store,runtime).await {
-                                Ok(true)=>{
-                                    if runtime.runtime_submit.workspace!=previous_workspace {
-                                        while runtime_event_rx.try_recv().is_ok() {}
-                                        _runtime_event_follower=crate::daemon::start_runtime_event_follower(
-                                            runtime.home.clone(),
-                                            app.runtime_event_cursor,
-                                            runtime.runtime_submit.workspace.clone(),
-                                            runtime_event_tx.clone(),
-                                        );
-                                    }
-                                    continue;
-                                },
-                                Ok(false)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("工作区操作失败","Workspace action failed","ワークスペース操作に失敗しました")));continue;},
-                            }
-                            if let Some(model_command)=model_commands::parse(&prompt) {
-                                match model_command {
-                                    ModelCommand::List=>{
-                                        let current=session.model.clone().unwrap_or_else(||runtime.provider_config.model.clone());
-                                        request_model_list(&mut app,runtime,current);
-                                    },
-                                    ModelCommand::Switch(model)=>match switch_or_defer_model(&model,&mut app,session,store,runtime,&agent).await {
-                                        Ok(message)=>app.append_transcript(format!("System: {message}")),
-                                        Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("切换模型失败","Model switch failed","モデル切替に失敗"))),
-                                    },
-                                }
-                                continue;
-                            }
-                            if prompt.trim()=="/routing" {
-                                let config_path=runtime.runtime_submit.config.clone().map(Ok).unwrap_or_else(crate::config::default_config_path);
-                                match config_path.and_then(|path|crate::model_routing::load(&path,runtime.runtime_submit.profile.as_deref())) {
-                                    Ok(settings)=>app.open_routing_settings(settings),
-                                    Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("读取模型路由设置失败","Load model routing settings failed","モデルルーティング設定の読込に失敗"))),
-                                }
-                                continue;
-                            }
-                            if prompt.trim()=="/compress" {dispatch_compress(&mut app,session,store,&agent,&runtime.tx)?;continue;}
-                            if let Some(parsed)=daemon_commands::parse(&prompt) {
-                                match parsed {
-                                    Ok(command)=>{
-                                        app.append_transcript(format!("System: {} · {}",language.text("Runtime 操作已提交","Runtime action submitted","Runtime 操作を送信しました"),prompt.trim()));
-                                        daemon_commands::dispatch(command,runtime.home.clone(),language,runtime.tx.clone());
-                                    },
-                                    Err(usage)=>app.append_transcript(format!("Error: {usage}")),
-                                }
-                                continue;
-                            }
-                            match webapp_commands::handle_webapp_command(&prompt,&runtime.home,&runtime.runtime_submit.workspace,runtime.runtime_submit.config.as_deref(),runtime.runtime_submit.profile.as_deref(),language).await {
-                                Ok(Some(message))=>{app.append_transcript(message);continue;},
-                                Ok(None)=>{},
-                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("启动 Web App 失败","Start Web App failed","Web App の起動に失敗しました")));continue;},
-                            }
-                            if prompt.trim()=="/diff" {
-                                match load_diff_review_state(&runtime.home,&session.workspace).await {
-                                    Ok(review)=>app.diff_review=Some(review),
-                                    Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("打开 Diff Review 失败","Open Diff Review failed","Diff Review を開けませんでした"))),
-                                }
-                                continue;
-                            }
-                            if prompt.trim()=="/rewind" {
-                                match crate::daemon::remote_rewind_points(&runtime.home,session.id).await {
-                                    Ok(points) if points.is_empty()=>app.append_transcript(format!("System: {}",language.text("没有可回退的步骤：只有 Runtime 跑完的轮次才能回，最后一步不算","Nothing to rewind to: only completed Runtime turns count, and the last one is where you already are","戻せるステップがありません：Runtime が完了したターンのみ対象で、最後のステップは現在地です"))),
-                                    Ok(points)=>app.open_rewind_picker(points),
-                                    Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("读取可回退步骤失败","Load rewind steps failed","戻せるステップの取得に失敗"))),
-                                }
-                                continue;
-                            }
-                            if let PromptExecution::Local(local_prompt)=prompt_execution(&prompt) {
-                                if local_prompt.is_empty(){app.append_transcript(format!("System: {}",language.text("用法：/local <任务>","Usage: /local <task>","使用法: /local <タスク>")));continue;}
-                                if session.workspace.canonicalize()?!=runtime.local_workspace.canonicalize()?{app.append_transcript(format!("System: {}",language.text("切换工作区后 /local 已禁用；请使用 Runtime，或从目标目录重新启动 TUI","/local is disabled after switching Workspace; use Runtime or restart the TUI from the target directory","ワークスペース切替後は /local を使用できません。Runtime を使うか対象ディレクトリから TUI を再起動してください")));continue;}
-                                dispatch_prompt(&mut app,session,store,&runtime.skills,&agent,&runtime.tx,local_prompt)?;
-                                continue;
-                            }
-                            let runtime_alias=prompt.trim()=="/runtime"||prompt.trim().starts_with("/runtime ");
-                            if !runtime_alias {
-                                let previous_goal=app.goal.clone();
-                                let previous_style=app.response_style;
-                                if app.handle_slash_command(&prompt,&runtime.skills){
-                                    if app.goal!=previous_goal{session.goal=app.goal.clone();}
-                                    if app.response_style!=previous_style{session.response_style=app.response_style;}
-                                    if app.goal!=previous_goal||app.response_style!=previous_style{store.save(session)?;}
-                                    if app.quit_requested{break;}
-                                    // /goal <目标> 同时是执行请求。此前只保存开关就返回，
-                                    // 界面立刻显示「轮到你」，必须再发一句「继续」才会开工。
-                                    if let Some(goal)=runtime_ui::goal_command_to_start(&prompt) {
-                                        match runtime_ui::submit_turn(&mut app,session,store,runtime,goal.to_owned()).await {
-                                            Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                            Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
-                                        }
-                                    }
-                                    continue;
-                                }
-                            }
-                            let PromptExecution::Runtime(remote_prompt)=prompt_execution(&prompt) else {unreachable!("local prompts were handled above")};
-                            match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt).await {
-                                Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
-                            }
-                        }
-                        // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。
-                        // 连续两次按下可避免生成时误触中断。
-                        KeyCode::Esc if app.running=>{
-                            let now = Instant::now();
-                            if interrupt_esc_deadline.is_some_and(|deadline| now <= deadline) {
-                                interrupt_esc_deadline = None;
-                                match interrupt_turn(&mut app,session,runtime).await {
-                                    Ok(message)=>app.notice=Some(message),
-                                    Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
-                                }
-                            } else {
-                                interrupt_esc_deadline = Some(now + Duration::from_millis(800));
-                                app.notice=Some(language.text("再按一次 Esc 可中断当前输出","Press Esc again within 800 ms to interrupt the current response","800 ミリ秒以内に Esc をもう一度押すと応答を中断します").to_owned());
-                            }
-                        },
-                        KeyCode::Left=>app.edit_input(|input| input.left()),KeyCode::Right=>app.edit_input(|input| input.right()),
-                        KeyCode::Up=>{let width=app.prompt_rect.width.saturating_sub(2).max(1) as usize;app.edit_input(|input| input.up_visual(width));},
-                        KeyCode::Down=>{let width=app.prompt_rect.width.saturating_sub(2).max(1) as usize;app.edit_input(|input| input.down_visual(width));},
-                        KeyCode::Home=>app.edit_input(|input| input.home()),KeyCode::End=>app.edit_input(|input| input.end()),KeyCode::Backspace=>app.edit_input(|input| input.backspace()),KeyCode::Delete=>app.edit_input(|input| input.delete()),
-                        KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL|KeyModifiers::SUPER)=>app.edit_input(|input| input.insert(&c.to_string())),_=>{}
-                    }
+            event=events.next()=>if let Some(Ok(event))=event {
+                let outcome = dispatch_terminal_event(event,&mut deferred_events,&mut events,&mut app,term,session,store,runtime,&agent,language,&mut interrupt_esc_deadline).await?;
+                if outcome.workspace_changed {
+                    retarget_runtime_follower(&app, runtime, &mut runtime_event_rx, &mut _runtime_event_follower, &runtime_event_tx);
                 }
-                _=>{}
-            }},
+                if outcome.quit { break; }
+                if outcome.skip_turn { continue; }
+            },
             Some(message)=runtime.rx.recv()=>match message {
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
                     willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),
@@ -1747,7 +1003,7 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::GoalBudgetLimited{reason})=>app.record_progress(format!("{} · {reason:?}",language.text("目标预算耗尽 · 转入收尾","Goal budget exhausted · wrapping up","目標の予算を使い切りました · まとめに移ります"))),
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
-                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
+                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;session.context_summary=outcome.context_summary;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
                 UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));app.finish_turn();},
                 UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});app.finish_turn();},
                 UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));app.finish_turn();},
@@ -1801,4 +1057,2381 @@ pub(super) async fn event_loop(
     app.save_message_times();
     qterm.reporter.finish(false).await;
     Ok(())
+}
+/// 一个终端事件处理完之后，循环该怎么走。
+struct TerminalEventOutcome {
+    /// 这一格的处理已经把状态改完了，后面的分支不该再碰它，直接回到循环顶部。
+    skip_turn: bool,
+    /// Ctrl+C，或者一条命令要求退出：跳出整个事件循环。
+    quit: bool,
+    /// 工作区刚被切走：事件跟随器还指着旧工作区，调用方要按新的重建。
+    workspace_changed: bool,
+}
+
+/// 处理一个终端事件。
+///
+/// 滚轮合并时被打断出来的事件走 `deferred`，下一圈再处理。
+async fn dispatch_terminal_event(
+    event: Event,
+    deferred: &mut VecDeque<Event>,
+    events: &mut EventStream,
+    mut app: &mut App,
+    term: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    mut session: &mut Session,
+    store: &SessionStore,
+    runtime: &mut TuiRuntime,
+    agent: &Arc<Agent>,
+    language: Language,
+    interrupt_esc_deadline: &mut Option<Instant>,
+) -> Result<TerminalEventOutcome> {
+    let mut skip_turn = false;
+    let mut quit = false;
+    let mut workspace_changed = false;
+    'handled: {
+        match event {
+            Event::Paste(value) => {
+                if app.approval.is_none()
+                    && app.question.is_none()
+                    && app.attachment_panel.is_some()
+                {
+                    app.attachment_paste(&value);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.approval.is_none()
+                    && app.question.is_none()
+                    && let Some(panel) = app.prompt_queue.as_mut()
+                {
+                    if let Some(editor) = panel.editor.as_mut() {
+                        editor.insert(&value);
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.approval.is_some() {
+                    app.handle_approval_text(&value);
+                } else if app.routing_settings_paste(&value) {
+                } else if let Some(picker) = app.model_picker.as_mut() {
+                    picker.editor.insert(&value);
+                    app.refresh_model_picker_matches();
+                } else if let Some(picker) = app.workspace_picker.as_mut() {
+                    picker.editor.insert(&value);
+                    app.refresh_workspace_picker_matches();
+                } else if let Some(picker) = app.session_picker.as_mut() {
+                    picker.editor.insert(&value);
+                    refresh_session_picker(&mut app, runtime, session).await;
+                } else {
+                    app.handle_paste(value);
+                }
+            }
+            Event::Mouse(mouse) => {
+                app.prompt_history = None;
+                *interrupt_esc_deadline = None;
+                if app.question.is_some() || app.approval.is_some() {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        app.handle_mouse(
+                            mouse.column,
+                            mouse.row,
+                            &runtime.background_tasks,
+                            &runtime.skills,
+                        );
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.attachment_panel.is_some() {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.prompt_queue.is_some() {
+                    if let Some(key) = app.queue_mouse_key(mouse) {
+                        handle_queue_action(key, &mut app, session, runtime, &agent).await;
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                // 点在弹层边界外 == 按 Esc。放在所有弹层各自的鼠标处理之前，
+                // 否则「点外面」会先被下面那些 `continue` 吃掉。
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && (app.dismiss_overlay_on_close_click(mouse.column, mouse.row)
+                        || app.dismiss_overlay_on_outside_click(mouse.column, mouse.row))
+                {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.media.is_open() {
+                    let action = app.media.handle_mouse(mouse);
+                    dispatch_media_action(action, &mut app, runtime);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.routing_settings.is_some() {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.model_picker.is_some() {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                            let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                                -1
+                            } else {
+                                1
+                            };
+                            let action = app.model_picker_scroll_at(delta, mouse.column, mouse.row);
+                            model_provider::handle(
+                                action, &mut app, session, store, runtime, &agent,
+                            )
+                            .await;
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(action) =
+                                app.activate_model_picker_at(mouse.column, mouse.row)
+                            {
+                                model_provider::handle(
+                                    action, &mut app, session, store, runtime, &agent,
+                                )
+                                .await;
+                            }
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.workspace_picker.is_some() {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => app.workspace_picker_scroll(-1),
+                        MouseEventKind::ScrollDown => app.workspace_picker_scroll(1),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(id) =
+                                app.activate_workspace_picker_at(mouse.column, mouse.row)
+                            {
+                                app.workspace_picker = None;
+                                app.pending_workspace_switch = Some(id);
+                            }
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.session_picker.is_some() {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        app.activate_session_picker_at(mouse.column, mouse.row);
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if let Some(action) =
+                    diff_review_mouse_action(app.diff_review.is_some(), mouse.kind)
+                {
+                    if let Some(review) = app.diff_review.as_mut()
+                        && review.preview_draft.is_none()
+                    {
+                        match action {
+                            DiffReviewMouseAction::ScrollUp => {
+                                review.scroll = review.scroll.saturating_sub(3)
+                            }
+                            DiffReviewMouseAction::ScrollDown => {
+                                review.scroll = review.scroll.saturating_add(3)
+                            }
+                            DiffReviewMouseAction::Consume => {}
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && let Some(action) = app.diff_attention_action_at(mouse.column, mouse.row)
+                {
+                    if let Err(error) = handle_diff_attention_action(
+                        action, &mut app, session, store, runtime, language,
+                    )
+                    .await
+                    {
+                        app.notice = Some(format!(
+                            "{}: {error}",
+                            language.text("Diff 操作失败", "Diff action failed", "Diff 操作に失敗")
+                        ));
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && let Some(action) = app.agent_detail_action_at(mouse.column, mouse.row)
+                {
+                    handle_agent_detail_action(action, &mut app, runtime, language).await;
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.diff_review.is_none()
+                    && app.agent_detail.is_none()
+                    && app.task_detail.is_none()
+                    && app.attention_detail.is_none()
+                    && app.worktree_review.is_none()
+                    && app.handle_chat_selection_mouse(mouse)
+                {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                match mouse.kind {
+                    MouseEventKind::Down(_) => {
+                        app.handle_mouse(
+                            mouse.column,
+                            mouse.row,
+                            &runtime.background_tasks,
+                            &runtime.skills,
+                        );
+                        if app.attention_detail.is_some()
+                            && let Some(gate) = app.selected_remote_gate()
+                        {
+                            app.attention_detail = None;
+                            open_remote_gate(
+                                &mut app,
+                                gate,
+                                runtime.home.clone(),
+                                runtime.tx.clone(),
+                            );
+                        }
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        // 滚轮事件没有位移量，一格就是固定 3 行，而触控板一划会连续送出几十格。
+                        // 每格都让循环画一整帧，聊天区就会一格一格地整片重写进终端——那就是滚动时的屏闪。
+                        // 先把已经到达的同一轮滚动排空，合成一次偏移，再画一帧。
+                        let (scrolled, rest) =
+                            coalesce_scroll(mouse, drain_pending_events(events).await);
+                        apply_scroll(app, scrolled);
+                        deferred.extend(rest);
+                    }
+                    _ => {}
+                }
+            }
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if key.code != KeyCode::Esc {
+                    *interrupt_esc_deadline = None;
+                }
+                if app.native_selection_mode {
+                    // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
+                    if is_selection_copy_key(key)
+                        || (key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL))
+                    {
+                        skip_turn = true;
+                        break 'handled;
+                    }
+                    execute!(term.backend_mut(), EnableMouseCapture)?;
+                    if selection_mode_exit_key(key) {
+                        app.exit_selection_mode();
+                        app.notice = Some(
+                            language
+                                .text(
+                                    "已恢复 WillDeep 鼠标操作",
+                                    "WillDeep mouse controls restored",
+                                    "WillDeep のマウス操作を復元しました",
+                                )
+                                .to_owned(),
+                        );
+                        skip_turn = true;
+                        break 'handled;
+                    }
+                    // 其它键：退出原生选区，这个键照常处理（打字就进输入框）。
+                    app.release_selection_for_key(key);
+                } else if app.selection_mode {
+                    if is_selection_copy_key(key) {
+                        app.copy_chat_selection();
+                        skip_turn = true;
+                        break 'handled;
+                    } else if key.code == KeyCode::Char('q')
+                        && !key.modifiers.intersects(
+                            KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT,
+                        )
+                    {
+                        app.quote_chat_selection();
+                        skip_turn = true;
+                        break 'handled;
+                    } else if selection_mode_exit_key(key) {
+                        app.exit_selection_mode();
+                        app.notice = Some(
+                            language
+                                .text(
+                                    "已恢复鼠标滚动和点击",
+                                    "Mouse scrolling and clicks restored",
+                                    "マウス操作を復元しました",
+                                )
+                                .to_owned(),
+                        );
+                        skip_turn = true;
+                        break 'handled;
+                    }
+                    // 以前这里把其余按键一律吞掉，选过字就打不了字、也没有任何提示。
+                    app.release_selection_for_key(key);
+                }
+                if app.routing_settings.is_none()
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('s')
+                {
+                    execute!(term.backend_mut(), DisableMouseCapture)?;
+                    app.enter_native_selection_mode();
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    quit = true;
+                    break 'handled;
+                }
+                if key.code == KeyCode::Esc && app.mobile_qr.take().is_some() {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.question.is_some() {
+                    app.prompt_history = None;
+                    app.handle_question_key(key);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.approval.is_some() {
+                    app.prompt_history = None;
+                    app.handle_approval_key(key);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.prompt_history.is_some()
+                    && app.handle_prompt_history_key(key, &session.messages)
+                {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.media.is_open() {
+                    let action = app.media.handle_key(key);
+                    dispatch_media_action(action, &mut app, runtime);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.attachment_panel.is_some() {
+                    let action = app.handle_attachment_key(key);
+                    dispatch_media_action(action, &mut app, runtime);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.prompt_queue.is_some() {
+                    handle_queue_action(key, &mut app, session, runtime, &agent).await;
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+                    app.open_prompt_queue();
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.media.is_open() {
+                    let action = app.media.handle_key(key);
+                    dispatch_media_action(action, &mut app, runtime);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+                    if !app.media.open(&app.transcript) {
+                        app.notice = Some(
+                            language
+                                .text(
+                                    "当前会话里没有链接或图片",
+                                    "No links or images in this Session",
+                                    "現在のセッションにリンクや画像はありません",
+                                )
+                                .to_owned(),
+                        );
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if let Some(detail) = app.attention_detail.clone() {
+                    if detail.source == AttentionSource::DiffReview {
+                        let action = diff_attention_action_for_key(key.code);
+                        if let Some(action) = action {
+                            if let Err(error) = handle_diff_attention_action(
+                                action, &mut app, session, store, runtime, language,
+                            )
+                            .await
+                            {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "Diff 操作失败",
+                                        "Diff action failed",
+                                        "Diff 操作に失敗"
+                                    )
+                                ));
+                            }
+                        } else if key.code == KeyCode::Esc {
+                            app.attention_detail = None;
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Esc => app.attention_detail = None,
+                            KeyCode::Enter => {
+                                app.attention_diagnostics = None;
+                                app.attention_diagnostics_loading = None;
+                            }
+                            KeyCode::Up => {
+                                app.attention_detail_scroll =
+                                    app.attention_detail_scroll.saturating_sub(1)
+                            }
+                            KeyCode::Down => {
+                                app.attention_detail_scroll =
+                                    app.attention_detail_scroll.saturating_add(1)
+                            }
+                            KeyCode::PageUp => {
+                                app.attention_detail_scroll =
+                                    app.attention_detail_scroll.saturating_sub(10)
+                            }
+                            KeyCode::PageDown => {
+                                app.attention_detail_scroll =
+                                    app.attention_detail_scroll.saturating_add(10)
+                            }
+                            KeyCode::Home => app.attention_detail_scroll = 0,
+                            _ => {}
+                        }
+                    }
+                    if detail.source != AttentionSource::DiffReview
+                        && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M'))
+                    {
+                        // Dismiss from the detail popup itself. Until now
+                        // `M` only worked with the sidebar focused on the
+                        // Inbox section, so an item whose only sane action
+                        // was "stop showing me this" had no exit here.
+                        if app.attention_dismiss(&detail.id) {
+                            session.attention_read = app.attention_read.clone();
+                            store.save(session)?;
+                            app.notice = Some(
+                                language
+                                    .text(
+                                        "已从 Inbox 移除该条目",
+                                        "Item dismissed from the Inbox",
+                                        "この項目を Inbox から削除しました",
+                                    )
+                                    .to_owned(),
+                            );
+                        } else {
+                            app.notice = Some(
+                                language
+                                    .text(
+                                        "运行中的条目不能忽略",
+                                        "A running item cannot be dismissed",
+                                        "実行中の項目は削除できません",
+                                    )
+                                    .to_owned(),
+                            );
+                        }
+                    } else if key.code == KeyCode::Enter
+                        && let Some(gate) = app.selected_remote_gate()
+                    {
+                        app.attention_detail = None;
+                        open_remote_gate(&mut app, gate, runtime.home.clone(), runtime.tx.clone());
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.task_detail.is_some() {
+                    app.handle_task_detail_key(key, &runtime.background_tasks);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if let Some(review) = app.worktree_review.clone() {
+                    match key.code {
+                        KeyCode::Esc => app.worktree_review = None,
+                        KeyCode::Char('m') | KeyCode::Char('M') if review.can_merge => {
+                            match crate::daemon::remote_merge(
+                                &runtime.home,
+                                review.agent_id,
+                                review.id,
+                            )
+                            .await
+                            {
+                                Ok(result) => {
+                                    app.notice = Some(format!(
+                                        "{} · {}",
+                                        language.text(
+                                            "Worktree 已合并",
+                                            "Worktree merged",
+                                            "Worktree をマージしました"
+                                        ),
+                                        result.root_snapshot_id
+                                    ));
+                                    app.worktree_review = None;
+                                    app.agent_detail = None;
+                                }
+                                Err(error) => {
+                                    app.notice = Some(format!(
+                                        "{}: {error}",
+                                        language.text("合并失败", "Merge failed", "マージ失敗")
+                                    ))
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if let Some(agent) = app.agent_detail.clone() {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.agent_detail = None;
+                            app.agent_detail_scroll = 0;
+                        }
+                        KeyCode::Up => {
+                            app.agent_detail_scroll = app.agent_detail_scroll.saturating_sub(1)
+                        }
+                        KeyCode::Down => {
+                            app.agent_detail_scroll = app.agent_detail_scroll.saturating_add(1)
+                        }
+                        KeyCode::PageUp => {
+                            app.agent_detail_scroll = app.agent_detail_scroll.saturating_sub(8)
+                        }
+                        KeyCode::PageDown => {
+                            app.agent_detail_scroll = app.agent_detail_scroll.saturating_add(8)
+                        }
+                        KeyCode::Home => app.agent_detail_scroll = 0,
+                        KeyCode::End => app.agent_detail_scroll = usize::MAX,
+                        KeyCode::Char('i') | KeyCode::Char('I')
+                            if agent.background
+                                && agent.status == willdeep_core::RuntimeStatus::Working =>
+                        {
+                            handle_agent_detail_action(
+                                AgentDetailAction::Instruct,
+                                &mut app,
+                                runtime,
+                                language,
+                            )
+                            .await
+                        }
+                        KeyCode::Char('k') | KeyCode::Char('K')
+                            if agent.background
+                                && matches!(
+                                    agent.status,
+                                    willdeep_core::RuntimeStatus::Working
+                                        | willdeep_core::RuntimeStatus::Queued
+                                ) =>
+                        {
+                            handle_agent_detail_action(
+                                AgentDetailAction::Stop,
+                                &mut app,
+                                runtime,
+                                language,
+                            )
+                            .await
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R')
+                            if agent.background
+                                && matches!(
+                                    agent.status,
+                                    willdeep_core::RuntimeStatus::Blocked
+                                        | willdeep_core::RuntimeStatus::Failed
+                                        | willdeep_core::RuntimeStatus::Interrupted
+                                        | willdeep_core::RuntimeStatus::Done
+                                        | willdeep_core::RuntimeStatus::Partial
+                                        | willdeep_core::RuntimeStatus::Cancelled
+                                ) =>
+                        {
+                            handle_agent_detail_action(
+                                AgentDetailAction::Retry,
+                                &mut app,
+                                runtime,
+                                language,
+                            )
+                            .await
+                        }
+                        KeyCode::Char('m') | KeyCode::Char('M')
+                            if agent.background
+                                && matches!(
+                                    agent.status,
+                                    willdeep_core::RuntimeStatus::Blocked
+                                        | willdeep_core::RuntimeStatus::Failed
+                                        | willdeep_core::RuntimeStatus::Interrupted
+                                        | willdeep_core::RuntimeStatus::Done
+                                        | willdeep_core::RuntimeStatus::Partial
+                                        | willdeep_core::RuntimeStatus::Cancelled
+                                ) =>
+                        {
+                            handle_agent_detail_action(
+                                AgentDetailAction::RetryWithModel,
+                                &mut app,
+                                runtime,
+                                language,
+                            )
+                            .await
+                        }
+                        KeyCode::Char('w') | KeyCode::Char('W') if agent.dedicated_worktree => {
+                            handle_agent_detail_action(
+                                AgentDetailAction::ReviewWorktree,
+                                &mut app,
+                                runtime,
+                                language,
+                            )
+                            .await
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.diff_review.is_some() {
+                    let mut close = false;
+                    let mut force_full_redraw = false;
+                    let mut open_file = None;
+                    let mut review_action = None;
+                    let mut revert_action = None;
+                    let mut commit_preview_action = None;
+                    let mut preview_draft_handled = false;
+                    if let Some(review) = app.diff_review.as_mut() {
+                        if review.commit_preview.is_some() {
+                            if key.code == KeyCode::Esc {
+                                review.commit_preview = None;
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        } else if let Some(draft) = review.preview_draft.as_mut() {
+                            preview_draft_handled = true;
+                            match key.code {
+                                KeyCode::Esc => review.preview_draft = None,
+                                KeyCode::Tab => draft.field = (draft.field + 1) % 3,
+                                KeyCode::BackTab => {
+                                    draft.field = draft.field.checked_sub(1).unwrap_or(2)
+                                }
+                                KeyCode::Enter if !draft.message.text().trim().is_empty() => {
+                                    commit_preview_action = Some((
+                                        review.snapshot.id.clone(),
+                                        draft.message.text().to_owned(),
+                                        draft.remote.text().to_owned(),
+                                        draft.tag.text().to_owned(),
+                                    ));
+                                    review.preview_draft = None;
+                                }
+                                KeyCode::Left => draft.editor_mut().left(),
+                                KeyCode::Right => draft.editor_mut().right(),
+                                KeyCode::Home => draft.editor_mut().home(),
+                                KeyCode::End => draft.editor_mut().end(),
+                                KeyCode::Backspace => draft.editor_mut().backspace(),
+                                KeyCode::Delete => draft.editor_mut().delete(),
+                                KeyCode::Char(value)
+                                    if !key.modifiers.intersects(
+                                        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+                                    ) =>
+                                {
+                                    draft.editor_mut().insert(&value.to_string())
+                                }
+                                _ => {}
+                            }
+                        } else if review.confirm_revert {
+                            if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                                revert_action = review.content.as_ref().map(|(path, _)| {
+                                    (review.snapshot.id.clone(), path.clone(), review.area)
+                                });
+                            }
+                            review.confirm_revert = false;
+                            if revert_action.is_none() {
+                                app.notice = Some(
+                                    language
+                                        .text(
+                                            "已取消撤销",
+                                            "Revert cancelled",
+                                            "取り消しをキャンセルしました",
+                                        )
+                                        .to_owned(),
+                                );
+                            }
+                        } else if review.search.is_some() {
+                            match key.code {
+                                KeyCode::Esc => review.search = None,
+                                KeyCode::Enter if !review.search_matches.is_empty() => {
+                                    review.search_selected =
+                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                            review
+                                                .search_selected
+                                                .checked_sub(1)
+                                                .unwrap_or(review.search_matches.len() - 1)
+                                        } else {
+                                            (review.search_selected + 1)
+                                                % review.search_matches.len()
+                                        };
+                                    review.scroll = review.search_matches[review.search_selected];
+                                }
+                                KeyCode::Left => review.search.as_mut().unwrap().left(),
+                                KeyCode::Right => review.search.as_mut().unwrap().right(),
+                                KeyCode::Home => review.search.as_mut().unwrap().home(),
+                                KeyCode::End => review.search.as_mut().unwrap().end(),
+                                KeyCode::Backspace => {
+                                    review.search.as_mut().unwrap().backspace();
+                                    refresh_diff_search(review);
+                                }
+                                KeyCode::Delete => {
+                                    review.search.as_mut().unwrap().delete();
+                                    refresh_diff_search(review);
+                                }
+                                KeyCode::Char(value)
+                                    if !key.modifiers.intersects(
+                                        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+                                    ) =>
+                                {
+                                    review.search.as_mut().unwrap().insert(&value.to_string());
+                                    refresh_diff_search(review);
+                                }
+                                _ => {}
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        } else {
+                            match key.code {
+                    KeyCode::Esc if review.content.is_some()=>{review.content=None;review.scroll=0;force_full_redraw=true;},
+                    KeyCode::Esc=>{close=true;force_full_redraw=true;},
+                    KeyCode::Up if review.content.is_none()=>review.selected=review.selected.checked_sub(1).unwrap_or(review.snapshot.files.len().saturating_sub(1)),
+                    KeyCode::Down if review.content.is_none()&&!review.snapshot.files.is_empty()=>review.selected=(review.selected+1)%review.snapshot.files.len(),
+                    KeyCode::Enter if review.content.is_none()=>open_file=review.snapshot.files.get(review.selected).map(|file|(review.snapshot.id.clone(),file.path.clone(),review.area)),
+                    KeyCode::Char('v')|KeyCode::Char('V') if review.content.is_some()=>{
+                        review.view=match review.view {DiffViewMode::Unified=>DiffViewMode::SideBySide,DiffViewMode::SideBySide=>DiffViewMode::Unified};
+                        refresh_diff_search(review);
+                    },
+                    KeyCode::Char('s')|KeyCode::Char('S') if review.content.is_some()=>{
+                        review.area=next_diff_area(review.area);
+                        open_file=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),review.area));
+                    },
+                    KeyCode::Char('/') if review.content.is_some()=>review.search=Some(PromptEditor::default()),
+                    KeyCode::Char('n') if !review.search_matches.is_empty()=>{
+                        review.search_selected=(review.search_selected+1)%review.search_matches.len();
+                        review.scroll=review.search_matches[review.search_selected];
+                    },
+                    KeyCode::Char('N') if !review.search_matches.is_empty()=>{
+                        review.search_selected=review.search_selected.checked_sub(1).unwrap_or(review.search_matches.len()-1);
+                        review.scroll=review.search_matches[review.search_selected];
+                    },
+                    KeyCode::Char('a')|KeyCode::Char('A') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Accepted)),
+                    KeyCode::Char('d')|KeyCode::Char('D') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Rejected)),
+                    KeyCode::Char('c')|KeyCode::Char('C') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::ChangesRequested)),
+                    KeyCode::Char('m')|KeyCode::Char('M') if review.content.is_some()=>review_action=review.content.as_ref().map(|(path,_)|(review.snapshot.id.clone(),path.clone(),crate::daemon::diff_review::ReviewDecision::Reviewed)),
+                    KeyCode::Char('r')|KeyCode::Char('R') if review.content.is_some()=>review.confirm_revert=true,
+                    KeyCode::Char('p')|KeyCode::Char('P')=>review.preview_draft=Some(CommitPreviewDraft::default()),
+                    KeyCode::Up=>review.scroll=review.scroll.saturating_sub(1),
+                    KeyCode::Down=>review.scroll=review.scroll.saturating_add(1),
+                    KeyCode::PageUp=>review.scroll=review.scroll.saturating_sub(10),
+                    KeyCode::PageDown=>review.scroll=review.scroll.saturating_add(10),
+                    KeyCode::Home=>review.scroll=0,
+                    _=>{}
+                }
+                        }
+                    }
+                    if preview_draft_handled && commit_preview_action.is_none() {
+                        skip_turn = true;
+                        break 'handled;
+                    }
+                    if force_full_redraw {
+                        term.clear()?;
+                    }
+                    if close {
+                        app.diff_review = None;
+                        skip_turn = true;
+                        break 'handled;
+                    }
+                    if let Some((snapshot_id, path, area)) = open_file {
+                        match crate::daemon::diff_review::remote_content(
+                            &runtime.home,
+                            &session.workspace,
+                            &snapshot_id,
+                            &path,
+                            area,
+                        )
+                        .await
+                        {
+                            Ok(content) => {
+                                if let Some(review) = app.diff_review.as_mut() {
+                                    review.content = Some((path, content));
+                                    review.scroll = 0;
+                                    review.search_matches.clear();
+                                    review.search_selected = 0;
+                                }
+                            }
+                            Err(error) => {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "打开 Diff 失败",
+                                        "Open Diff failed",
+                                        "Diff を開けませんでした"
+                                    )
+                                ))
+                            }
+                        }
+                    }
+                    if let Some((snapshot_id, path, decision)) = review_action {
+                        let request = crate::daemon::diff_review::ReviewRequest {
+                            workspace: session.workspace.clone(),
+                            path: path.clone(),
+                            decision,
+                            note: None,
+                        };
+                        match crate::daemon::diff_review::remote_review(
+                            &runtime.home,
+                            &snapshot_id,
+                            &request,
+                        )
+                        .await
+                        {
+                            Ok(record) => {
+                                if let Some(review) = app.diff_review.as_mut() {
+                                    review.reviews.insert(path, record.decision);
+                                }
+                                app.notice = Some(
+                                    language
+                                        .text(
+                                            "审查决定已保存",
+                                            "Review decision saved",
+                                            "レビュー結果を保存しました",
+                                        )
+                                        .to_owned(),
+                                );
+                            }
+                            Err(error) => {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "保存审查决定失败",
+                                        "Save review decision failed",
+                                        "レビュー結果を保存できませんでした"
+                                    )
+                                ))
+                            }
+                        }
+                    }
+                    if let Some((snapshot_id, path, area)) = revert_action {
+                        let request = crate::daemon::diff_review::RevertRequest {
+                            workspace: session.workspace.clone(),
+                            path,
+                            area,
+                        };
+                        match crate::daemon::diff_review::remote_revert(
+                            &runtime.home,
+                            &snapshot_id,
+                            &request,
+                        )
+                        .await
+                        {
+                            Ok(result) => match crate::daemon::diff_review::remote_snapshot(
+                                &runtime.home,
+                                &session.workspace,
+                            )
+                            .await
+                            {
+                                Ok(snapshot) => {
+                                    if let Some(review) = app.diff_review.as_mut() {
+                                        review.snapshot = snapshot;
+                                        review.content = None;
+                                        review.scroll = 0;
+                                        review.search_matches.clear();
+                                        review.reviews.clear();
+                                        review.verifications.clear();
+                                        review.attributions.clear();
+                                    }
+                                    app.notice = Some(if let Some(path) = result.recovery_path {
+                                        format!(
+                                            "{}: {}",
+                                            language.text(
+                                                "已安全撤销，可从回收区恢复",
+                                                "Safely reverted; recovery copy",
+                                                "安全に戻しました。復元先"
+                                            ),
+                                            path.display()
+                                        )
+                                    } else {
+                                        language
+                                            .text(
+                                                "已安全撤销文件变更",
+                                                "File changes safely reverted",
+                                                "ファイル変更を安全に戻しました",
+                                            )
+                                            .to_owned()
+                                    });
+                                }
+                                Err(error) => {
+                                    app.notice = Some(format!(
+                                        "{}: {error}",
+                                        language.text(
+                                            "撤销成功，但刷新 Diff 失败",
+                                            "Reverted, but refresh failed",
+                                            "取り消しましたが更新に失敗しました"
+                                        )
+                                    ))
+                                }
+                            },
+                            Err(error) => {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "安全撤销失败",
+                                        "Safe revert failed",
+                                        "安全な取り消しに失敗しました"
+                                    )
+                                ))
+                            }
+                        }
+                    }
+                    if let Some((snapshot_id, message, remote, tag)) = commit_preview_action {
+                        let tag = (!tag.trim().is_empty()).then_some(tag);
+                        match crate::daemon::diff_review::remote_commit_preview(
+                            &runtime.home,
+                            &session.workspace,
+                            &snapshot_id,
+                            &message,
+                            &remote,
+                            tag.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok(preview) => {
+                                if let Some(review) = app.diff_review.as_mut() {
+                                    review.commit_preview = Some(preview);
+                                }
+                            }
+                            Err(error) => {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "生成 Commit Preview 失败",
+                                        "Commit Preview failed",
+                                        "Commit Preview に失敗しました"
+                                    )
+                                ))
+                            }
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.routing_settings.is_some() {
+                    match app.handle_routing_settings_key(key) {
+                        RoutingSettingsAction::None => {}
+                        RoutingSettingsAction::Close => app.routing_settings = None,
+                        RoutingSettingsAction::Save(update) => {
+                            let config_path = runtime
+                                .runtime_submit
+                                .config
+                                .clone()
+                                .map(Ok)
+                                .unwrap_or_else(crate::config::default_config_path);
+                            match config_path.and_then(|path| {
+                                crate::model_routing::save(
+                                    &path,
+                                    runtime.runtime_submit.profile.as_deref(),
+                                    &update,
+                                )
+                            }) {
+                                Ok(settings) => {
+                                    app.set_routing_settings_saved(settings);
+                                    app.notice = Some(
+                                        language
+                                            .text(
+                                                "模型与路由设置已保存",
+                                                "Models and routing saved",
+                                                "モデルとルーティングを保存しました",
+                                            )
+                                            .to_owned(),
+                                    );
+                                }
+                                Err(error) => app.set_routing_settings_error(error.to_string()),
+                            }
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.permission_picker.is_some() {
+                    match app.handle_permission_picker_key(key) {
+                        PermissionPickerAction::None => {}
+                        PermissionPickerAction::Close => app.permission_picker = None,
+                        PermissionPickerAction::Apply(mode) => {
+                            app.permission_picker = None;
+                            match permission_commands::apply(
+                                mode, &mut app, session, runtime, &agent,
+                            )
+                            .await
+                            {
+                                Ok(message) => app.append_transcript(message),
+                                Err(error) => app.append_transcript(format!(
+                                    "Error: {}: {error:#}",
+                                    language.text(
+                                        "切换审批模式失败",
+                                        "Approval mode switch failed",
+                                        "承認モードの切替に失敗"
+                                    )
+                                )),
+                            }
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.model_picker.is_some() {
+                    let action = app.handle_model_picker_key(key);
+                    model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.workspace_picker.is_some() {
+                    match app.handle_workspace_picker_key(key) {
+                        WorkspacePickerAction::None => {}
+                        WorkspacePickerAction::Close => app.workspace_picker = None,
+                        WorkspacePickerAction::Select(id) => {
+                            app.workspace_picker = None;
+                            app.pending_workspace_switch = Some(id);
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.session_picker.is_some() {
+                    match app.handle_session_picker_key(key) {
+                        SessionPickerAction::None => {}
+                        SessionPickerAction::Close => app.session_picker = None,
+                        SessionPickerAction::Switch(target) => {
+                            app.pending_session_switch = Some(target);
+                            app.session_picker = None;
+                        }
+                        SessionPickerAction::Refresh => {
+                            refresh_session_picker(&mut app, runtime, session).await
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.rewind_picker.is_some() {
+                    match app.handle_rewind_picker_key(key) {
+                        RewindPickerAction::None => {}
+                        RewindPickerAction::Close => app.rewind_picker = None,
+                        RewindPickerAction::Rewind {
+                            step,
+                            through_turn_id,
+                            restore_workspace,
+                        } => {
+                            app.rewind_picker = None;
+                            match crate::daemon::rewind_remote_session(
+                                &runtime.home,
+                                session.id,
+                                through_turn_id,
+                                restore_workspace,
+                            )
+                            .await
+                            {
+                                Ok(result) => {
+                                    // Runtime 已经把会话截断落盘；本地这份是旧的，整份重读再重画。
+                                    match store.load_baselined(session.id) {
+                                        Ok(loaded) => {
+                                            *session = loaded;
+                                            app.load_session(session);
+                                        }
+                                        Err(error) => {
+                                            app.notice = Some(format!(
+                                                "{}: {error}",
+                                                language.text(
+                                                    "重新读取会话失败",
+                                                    "Reload Session failed",
+                                                    "セッションの再読込に失敗"
+                                                )
+                                            ))
+                                        }
+                                    }
+                                    app.append_transcript(rewind_summary(&result, step, language));
+                                }
+                                Err(error) => {
+                                    app.notice = Some(format!(
+                                        "{}: {error}",
+                                        language.text(
+                                            "回退失败",
+                                            "Rewind failed",
+                                            "巻き戻しに失敗"
+                                        )
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.palette.is_some() {
+                    app.handle_palette_key(key, &runtime.background_tasks);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.search.is_some() {
+                    app.handle_search_key(key);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.handle_help_key(key) {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.code == KeyCode::F(2) {
+                    app.toggle_composer_expanded();
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.code == KeyCode::F(3) {
+                    app.open_attachments(super::attachment_panel::Target::Draft);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+                    app.open_palette(&runtime.skills, store, session);
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+                    if app.running {
+                        app.notice = Some(
+                            language
+                                .text(
+                                    "当前会话正在运行，结束后才能切换历史会话",
+                                    "Wait for the current turn to finish before switching Sessions",
+                                    "現在のターンが完了してから履歴セッションを切り替えてください",
+                                )
+                                .to_owned(),
+                        );
+                    } else {
+                        app.open_session_picker(session.id, SessionPickerRequest::default());
+                        refresh_session_picker(&mut app, runtime, session).await;
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f') {
+                    app.search = Some(SearchState::default());
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+                    if app.sidebar_wide {
+                        app.sidebar_visible = !app.sidebar_visible;
+                        if !app.sidebar_visible {
+                            app.focus = FocusPane::Prompt;
+                        }
+                    } else if app.focus == FocusPane::Sidebar {
+                        app.focus = FocusPane::Prompt;
+                    } else {
+                        app.sidebar_visible = true;
+                        app.focus = FocusPane::Sidebar;
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+                    app.sidebar_visible = true;
+                    app.cycle_focus();
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.focus == FocusPane::Chat {
+                    match key.code {
+                        KeyCode::Esc => app.focus = FocusPane::Prompt,
+                        KeyCode::Up => app.scroll_up(1),
+                        KeyCode::Down => app.scroll_down(1),
+                        KeyCode::Home => app.scroll_to_top(),
+                        KeyCode::End => app.scroll_to_bottom(),
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.focus == FocusPane::Activity {
+                    match key.code {
+                        KeyCode::Esc => app.focus = FocusPane::Prompt,
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            app.tools_expanded = !app.tools_expanded
+                        }
+                        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app.tools_expanded = !app.tools_expanded
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.focus == FocusPane::Sidebar {
+                    match key.code {
+                        KeyCode::Esc => app.focus = FocusPane::Prompt,
+                        KeyCode::Up if app.sidebar_selected == 1 && app.sidebar_expanded[1] => {
+                            app.attention_move(-1)
+                        }
+                        KeyCode::Down if app.sidebar_selected == 1 && app.sidebar_expanded[1] => {
+                            app.attention_move(1)
+                        }
+                        KeyCode::Up if app.sidebar_selected == 2 && app.sidebar_expanded[2] => {
+                            app.runtime_agent_move(-1)
+                        }
+                        KeyCode::Down if app.sidebar_selected == 2 && app.sidebar_expanded[2] => {
+                            app.runtime_agent_move(1)
+                        }
+                        KeyCode::Up => app.sidebar_move(-1),
+                        KeyCode::Down => app.sidebar_move(1),
+                        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            app.sidebar_move(-1)
+                        }
+                        KeyCode::Tab => app.sidebar_move(1),
+                        KeyCode::Enter => {
+                            if let Some(gate) = app.selected_remote_gate() {
+                                open_remote_gate(
+                                    &mut app,
+                                    gate,
+                                    runtime.home.clone(),
+                                    runtime.tx.clone(),
+                                );
+                            } else if app.sidebar_selected == 2 {
+                                if let Some(agent) = app.selected_runtime_agent() {
+                                    match crate::daemon::remote_agent_detail(
+                                        &runtime.home,
+                                        agent.id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(detail) => app.agent_detail = Some(detail),
+                                        Err(error) => {
+                                            app.notice = Some(format!(
+                                                "{}: {error}",
+                                                language.text(
+                                                    "加载 Agent 详情失败",
+                                                    "Failed to load Agent details",
+                                                    "Agent 詳細の読み込みに失敗"
+                                                )
+                                            ))
+                                        }
+                                    }
+                                    app.agent_detail_scroll = 0;
+                                }
+                            } else {
+                                app.sidebar_activate(&runtime.background_tasks);
+                                // 打开的是 Runtime 任务详情时，把「哪条命令、为什么挂」一并取回来。
+                                load_attention_diagnostics(&mut app, runtime);
+                            }
+                        }
+                        KeyCode::Char(' ') => app.sidebar_toggle(),
+                        KeyCode::Char('n') | KeyCode::Char('N') if app.sidebar_selected == 2 => {
+                            app.prefill_new_agent()
+                        }
+                        KeyCode::Char('k') | KeyCode::Char('K') if app.sidebar_selected == 1 => {
+                            if let Some(id) = app.selected_runtime_task_id() {
+                                match crate::daemon::cancel_remote_task(&runtime.home, id).await {
+                                    Ok(()) => {
+                                        app.notice = Some(
+                                            language
+                                                .text(
+                                                    "已请求停止 Runtime 任务",
+                                                    "Runtime task stop requested",
+                                                    "Runtime タスクの停止を要求しました",
+                                                )
+                                                .to_owned(),
+                                        )
+                                    }
+                                    Err(error) => {
+                                        app.notice = Some(format!(
+                                            "{}: {error}",
+                                            language.text("停止失败", "Stop failed", "停止に失敗")
+                                        ))
+                                    }
+                                }
+                            } else {
+                                app.attention_stop(&runtime.background_tasks);
+                            }
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R') if app.sidebar_selected == 1 => {
+                            if app.attention_retry(&runtime.background_tasks) {
+                                session.attention_read = app.attention_read.clone();
+                                store.save(session)?;
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Char('K') if app.sidebar_selected == 2 => {
+                            if let Some(agent) = app.selected_runtime_agent() {
+                                match crate::daemon::stop_remote_agent(&runtime.home, agent.id)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        app.notice = Some(
+                                            language
+                                                .text(
+                                                    "已请求停止子 Agent",
+                                                    "Child Agent stop requested",
+                                                    "子 Agent の停止を要求しました",
+                                                )
+                                                .to_owned(),
+                                        )
+                                    }
+                                    Err(error) => {
+                                        app.notice = Some(format!(
+                                            "{}: {error}",
+                                            language.text("停止失败", "Stop failed", "停止に失敗")
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R') if app.sidebar_selected == 2 => {
+                            if let Some(agent) = app.selected_runtime_agent() {
+                                match crate::daemon::retry_remote_agent(&runtime.home, agent.id)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        app.notice = Some(
+                                            language
+                                                .text(
+                                                    "已请求重试子 Agent",
+                                                    "Child Agent retry requested",
+                                                    "子 Agent の再試行を要求しました",
+                                                )
+                                                .to_owned(),
+                                        )
+                                    }
+                                    Err(error) => {
+                                        app.notice = Some(format!(
+                                            "{}: {error}",
+                                            language.text(
+                                                "重试失败",
+                                                "Retry failed",
+                                                "再試行に失敗"
+                                            )
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('m') | KeyCode::Char('M') if app.sidebar_selected == 1 => {
+                            if app.attention_mark_read() {
+                                session.attention_read = app.attention_read.clone();
+                                store.save(session)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                // Shift+Tab 只在「严格 → 智能 → 工作区可写」间循环；完全访问必须走
+                // /permissions 的确认页。
+                if key.code == KeyCode::BackTab
+                    || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
+                {
+                    let next = app.approval_mode.next_in_cycle();
+                    match permission_commands::apply(next, &mut app, session, runtime, &agent).await
+                    {
+                        Ok(_) => {
+                            app.notice = Some(format!(
+                                "{}：{} · Shift+Tab",
+                                language.text("审批模式", "Approval mode", "承認モード"),
+                                permission_commands::label(next, language)
+                            ))
+                        }
+                        Err(error) => {
+                            app.notice = Some(format!(
+                                "{}: {error:#}",
+                                language.text(
+                                    "切换审批模式失败",
+                                    "Approval mode switch failed",
+                                    "承認モードの切替に失敗"
+                                )
+                            ))
+                        }
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.handle_prompt_history_key(key, &session.messages) {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                // 空输入框里的灰字预测：Tab 采用（只填入不发送），Esc 放弃。
+                // 命令 / 技能候选层的 Tab 与这里互不相干——那两层只在输入框非空时存在。
+                if key.code == KeyCode::Tab
+                    && key.modifiers.is_empty()
+                    && app.accept_input_suggestion()
+                {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if key.code == KeyCode::Esc && app.dismiss_input_suggestion() {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if let Some(action) = prompt_line_navigation_for_key(key) {
+                    match action {
+                        PromptLineNavigation::Start => app.edit_input(|input| input.home()),
+                        PromptLineNavigation::End => app.edit_input(|input| input.end()),
+                    }
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if app.handle_command_key(key)
+                    || app.handle_skill_key(key, &runtime.skills)
+                    || app.handle_reference_key(key)
+                {
+                    skip_turn = true;
+                    break 'handled;
+                }
+                if is_clipboard_image_paste_key(key) {
+                    app.paste_clipboard_image();
+                    skip_turn = true;
+                    break 'handled;
+                }
+                match key.code {
+                    KeyCode::PageUp => app.scroll_up(app.viewport_height.saturating_sub(1).max(1)),
+                    KeyCode::PageDown => {
+                        app.scroll_down(app.viewport_height.saturating_sub(1).max(1))
+                    }
+                    KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => app.scroll_up(1),
+                    KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => {
+                        app.scroll_down(1)
+                    }
+                    KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.scroll_to_top()
+                    }
+                    KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.scroll_to_bottom()
+                    }
+                    KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.tools_expanded = !app.tools_expanded
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.stash_input_for_queue()
+                    }
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.delete_selected_attachment()
+                    }
+                    KeyCode::Enter
+                        if key
+                            .modifiers
+                            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+                    {
+                        app.input.insert("\n")
+                    }
+                    KeyCode::Enter
+                        if is_queue_for_later_key(key)
+                            && (!app.input.is_empty() || !app.attachments.is_empty()) =>
+                    {
+                        // 先入队、以后再发：走服务端队列并暂缓。本地队列不行——
+                        // 空闲时 queued_prompt_ready 会立刻把它发出去。
+                        if let Err(error) =
+                            runtime_queue::submit_input(&mut app, session, runtime, store, true)
+                                .await
+                        {
+                            app.notice = Some(format!(
+                                "{}: {error}",
+                                language.text(
+                                    "入队失败，输入与附件已保留",
+                                    "Could not queue; input and attachments retained",
+                                    "キューへの追加に失敗。入力と添付を保持しました"
+                                )
+                            ));
+                        }
+                    }
+                    KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.input.insert("\n")
+                    }
+                    KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.pending_external_editor = true
+                    }
+                    KeyCode::Enter if !app.input.is_empty() || !app.attachments.is_empty() => {
+                        if app.input.text().trim() == "/peers"
+                            || app.input.text().trim().starts_with("/peers ")
+                        {
+                            let command = app.input.take();
+                            if let Err(error) =
+                                peer_commands::handle(&command, &mut app, session, store, runtime)
+                                    .await
+                            {
+                                app.input.insert(&command);
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "协作操作失败，输入已保留",
+                                        "Coordination failed; input retained",
+                                        "連携操作に失敗しました。入力は保持されています"
+                                    )
+                                ));
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if app.input.text().trim() == "/schedule"
+                            || app.input.text().trim().starts_with("/schedule ")
+                        {
+                            let command = app.input.take();
+                            let home = runtime.home.clone();
+                            let tx = runtime.tx.clone();
+                            tokio::spawn(async move {
+                                let result = match crate::schedule_cmd::slash(&command, &home).await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => format!(
+                                        "{}: {error:#}",
+                                        language.text(
+                                            "定时任务操作失败",
+                                            "Schedule operation failed",
+                                            "定期タスク操作に失敗"
+                                        )
+                                    ),
+                                };
+                                let _ = tx.send(UiMessage::RuntimeResult(result));
+                            });
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if app.input.text().trim() == "/attachments sent" {
+                            app.input.take();
+                            let home = runtime.home.clone();
+                            let id = session.id;
+                            let tx = runtime.tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                match SessionStore::new(&home).load(id) {
+                                    Ok(saved) => {
+                                        let items = saved
+                                            .messages
+                                            .into_iter()
+                                            .flat_map(|message| {
+                                                message.attachments.into_iter().map(|message| {
+                                                    DraftAttachment {
+                                                        id: uuid::Uuid::new_v4(),
+                                                        message,
+                                                    }
+                                                })
+                                            })
+                                            .collect();
+                                        let _ = tx.send(UiMessage::SentAttachments {
+                                            session_id: id,
+                                            items,
+                                        });
+                                    }
+                                    Err(error) => {
+                                        let _ = tx.send(UiMessage::RuntimeNotice(format!(
+                                            "{}: {error}",
+                                            language.text(
+                                                "读取已发送附件失败",
+                                                "Could not read sent attachments",
+                                                "送信済み添付を読み込めません"
+                                            )
+                                        )));
+                                    }
+                                }
+                            });
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if app.input.text().trim() == "/attachments" {
+                            app.input.take();
+                            app.open_attachments(attachment_panel::Target::Draft);
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if app.input.text().trim() == "/queue" {
+                            app.take_submitted_input();
+                            app.open_prompt_queue();
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        // 拿不到 Cmd 的终端用这条命令把当前输入先放进队列。
+                        // 命令本身不占输入框，带的是上一次暂存的草稿。
+                        if app.input.text().trim() == "/queue add" {
+                            app.input.take();
+                            if app.queue_draft.text().trim().is_empty()
+                                && app.queue_draft_attachments.is_empty()
+                            {
+                                app.notice = Some(language.text(
+                            "没有可入队的内容；先输入，再按 Ctrl+U 暂存，然后 /queue add",
+                            "Nothing to queue; type it, press Ctrl+U to set it aside, then /queue add",
+                            "追加するものがありません。入力して Ctrl+U で取っておき、/queue add を実行してください",
+                        ).to_owned());
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            app.restore_queue_draft();
+                            if let Err(error) =
+                                runtime_queue::submit_input(&mut app, session, runtime, store, true)
+                                    .await
+                            {
+                                app.notice = Some(format!(
+                                    "{}: {error}",
+                                    language.text(
+                                        "入队失败，输入与附件已保留",
+                                        "Could not queue; input and attachments retained",
+                                        "キューへの追加に失敗。入力と添付を保持しました"
+                                    )
+                                ));
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if confirmation_example::try_submit(&mut app, &runtime.tx) {
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
+                        // 提示词排队，其余命令说清楚为什么现在不行。
+                        if app.running {
+                            match busy_input(app.input.text()) {
+                                BusyInput::RunNow => {}
+                                BusyInput::Queue => {
+                                    if app.runtime_turn {
+                                        if let Err(error) = runtime_queue::submit_input(
+                                            &mut app, session, runtime, store, false,
+                                        )
+                                        .await
+                                        {
+                                            app.notice = Some(format!(
+                                            "{}: {error}",
+                                            language.text(
+                                                "提交失败，输入与附件已保留",
+                                                "Submission failed; input and attachments retained",
+                                                "送信失敗。入力と添付を保持しました"
+                                            )
+                                        ));
+                                        }
+                                        skip_turn = true;
+                                        break 'handled;
+                                    }
+                                    app.queue_submitted_prompt();
+                                    if let Some(text) =
+                                        app.queued_prompts.back().map(|item| item.text.clone())
+                                    {
+                                        app.note_prompt_submitted(&text);
+                                    }
+                                    skip_turn = true;
+                                    break 'handled;
+                                }
+                                BusyInput::Refuse => {
+                                    let notice = language.text(
+                                "该命令会改动会话或 Runtime，本轮结束后才能执行；Esc 可立即中断",
+                                "That command changes Session or Runtime state; it runs after this turn. Esc interrupts now",
+                                "このコマンドはセッション/Runtime を変更するため、ターン終了後に実行されます。Esc で即中断",
+                            ).to_owned();
+                                    app.notice = Some(notice.clone());
+                                    app.notice_hold =
+                                        Some((notice, Instant::now() + Duration::from_secs(10)));
+                                    skip_turn = true;
+                                    break 'handled;
+                                }
+                            }
+                        }
+                        let prompt = app.take_submitted_input();
+                        app.append_transcript(format!("You: {prompt}"));
+                        app.note_prompt_submitted(&prompt);
+                        if let Some(command) = permission_commands::parse(&prompt) {
+                            match command {
+                                PermissionCommand::Open => app.open_permission_picker(false),
+                                PermissionCommand::Switch(
+                                    willdeep_core::ApprovalMode::FullAccess,
+                                ) => app.open_permission_picker(true),
+                                PermissionCommand::Switch(mode) => {
+                                    match permission_commands::apply(
+                                        mode, &mut app, session, runtime, &agent,
+                                    )
+                                    .await
+                                    {
+                                        Ok(message) => app.append_transcript(message),
+                                        Err(error) => app.append_transcript(format!(
+                                            "Error: {}: {error:#}",
+                                            language.text(
+                                                "切换审批模式失败",
+                                                "Approval mode switch failed",
+                                                "承認モードの切替に失敗"
+                                            )
+                                        )),
+                                    }
+                                }
+                                PermissionCommand::SaveDefault(mode) => {
+                                    match permission_commands::save_default(mode, runtime) {
+                                        Ok(path) => app.append_transcript(format!(
+                                        "System: {}：{} · {path}",
+                                        language.text(
+                                            "默认审批模式已写入配置，下次启动生效",
+                                            "Default approval mode saved; applies on next start",
+                                            "既定の承認モードを保存しました（次回起動から有効）"
+                                        ),
+                                        permission_commands::label(mode, language)
+                                    )),
+                                        Err(error) => app.append_transcript(format!(
+                                            "Error: {}: {error:#}",
+                                            language.text(
+                                                "写入默认审批模式失败",
+                                                "Save default approval mode failed",
+                                                "既定の承認モードの保存に失敗"
+                                            )
+                                        )),
+                                    }
+                                }
+                                PermissionCommand::Usage => {
+                                    app.append_transcript(permission_commands::usage(language))
+                                }
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if app.handle_mobile_command(&prompt, &runtime.home, &runtime.tx) {
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        match handle_agent_command(&prompt, &mut app, runtime, session.id).await {
+                            Ok(true) => {
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "Agent 操作失败",
+                                        "Agent action failed",
+                                        "Agent 操作に失敗しました"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        // `/history` 与 `/session search` 都开面板，必须排在 handle_session_command 前面。
+                        match parse_session_picker_command(&prompt) {
+                            // 这条分支本身就要求 !app.running；真正的运行中保护在切换那一步。
+                            Ok(Some(request)) => {
+                                app.open_session_picker(session.id, request);
+                                refresh_session_picker(&mut app, runtime, session).await;
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "打开历史会话面板失败",
+                                        "Open Session history panel failed",
+                                        "履歴セッションパネルを開けませんでした"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        match handle_new_session_command(&prompt, &mut app, session, store, runtime)
+                            .await
+                        {
+                            Ok(true) => {
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "开始新会话失败",
+                                        "Start new Session failed",
+                                        "新しいセッションの開始に失敗しました"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        // `/session retitle` 要 agent 与 UI 通道，落在这里而不是
+                        // handle_session_command 里——摘要是网络往返，必须扔进后台任务。
+                        if prompt.trim() == "/session retitle" {
+                            if session.title_source == willdeep_core::TitleSource::User {
+                                app.append_transcript(format!("System: {}",language.text("这条会话的标题是你自己起的；先 /session rename 交回控制权再重算","This Session's title was set by you; hand it back with /session rename before recomputing","このセッション名はあなたが付けたものです。再計算する前に /session rename で戻してください")));
+                            } else {
+                                dispatch_retitle(session, &agent, &runtime.tx, true);
+                                app.append_transcript(format!(
+                                    "System: {}",
+                                    language.text(
+                                        "正在整理会话标题…",
+                                        "Retitling the Session…",
+                                        "セッション名を整理しています…"
+                                    )
+                                ));
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        match handle_session_command(&prompt, &mut app, session, store, runtime)
+                            .await
+                        {
+                            Ok(true) => {
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "会话操作失败",
+                                        "Session action failed",
+                                        "セッション操作に失敗しました"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        let previous_workspace = runtime.runtime_submit.workspace.clone();
+                        match handle_workspace_command(&prompt, &mut app, session, store, runtime)
+                            .await
+                        {
+                            Ok(true) => {
+                                workspace_changed =
+                                    runtime.runtime_submit.workspace != previous_workspace;
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "工作区操作失败",
+                                        "Workspace action failed",
+                                        "ワークスペース操作に失敗しました"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        if let Some(model_command) = model_commands::parse(&prompt) {
+                            match model_command {
+                                ModelCommand::List => {
+                                    let current = session
+                                        .model
+                                        .clone()
+                                        .unwrap_or_else(|| runtime.provider_config.model.clone());
+                                    request_model_list(&mut app, runtime, current);
+                                }
+                                ModelCommand::Switch(model) => match switch_or_defer_model(
+                                    &model, &mut app, session, store, runtime, &agent,
+                                )
+                                .await
+                                {
+                                    Ok(message) => {
+                                        app.append_transcript(format!("System: {message}"))
+                                    }
+                                    Err(error) => app.append_transcript(format!(
+                                        "Error: {}: {error:#}",
+                                        language.text(
+                                            "切换模型失败",
+                                            "Model switch failed",
+                                            "モデル切替に失敗"
+                                        )
+                                    )),
+                                },
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if prompt.trim() == "/routing" {
+                            let config_path = runtime
+                                .runtime_submit
+                                .config
+                                .clone()
+                                .map(Ok)
+                                .unwrap_or_else(crate::config::default_config_path);
+                            match config_path.and_then(|path| {
+                                crate::model_routing::load(
+                                    &path,
+                                    runtime.runtime_submit.profile.as_deref(),
+                                )
+                            }) {
+                                Ok(settings) => app.open_routing_settings(settings),
+                                Err(error) => app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "读取模型路由设置失败",
+                                        "Load model routing settings failed",
+                                        "モデルルーティング設定の読込に失敗"
+                                    )
+                                )),
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if prompt.trim() == "/compress" {
+                            dispatch_compress(&mut app, session, store, &agent, &runtime.tx)?;
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if let Some(parsed) = daemon_commands::parse(&prompt) {
+                            match parsed {
+                                Ok(command) => {
+                                    app.append_transcript(format!(
+                                        "System: {} · {}",
+                                        language.text(
+                                            "Runtime 操作已提交",
+                                            "Runtime action submitted",
+                                            "Runtime 操作を送信しました"
+                                        ),
+                                        prompt.trim()
+                                    ));
+                                    daemon_commands::dispatch(
+                                        command,
+                                        runtime.home.clone(),
+                                        language,
+                                        runtime.tx.clone(),
+                                    );
+                                }
+                                Err(usage) => app.append_transcript(format!("Error: {usage}")),
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        match webapp_commands::handle_webapp_command(
+                            &prompt,
+                            &runtime.home,
+                            &runtime.runtime_submit.workspace,
+                            runtime.runtime_submit.config.as_deref(),
+                            runtime.runtime_submit.profile.as_deref(),
+                            language,
+                        )
+                        .await
+                        {
+                            Ok(Some(message)) => {
+                                app.append_transcript(message);
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "启动 Web App 失败",
+                                        "Start Web App failed",
+                                        "Web App の起動に失敗しました"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        if prompt.trim() == "/diff" {
+                            match load_diff_review_state(&runtime.home, &session.workspace).await {
+                                Ok(review) => app.diff_review = Some(review),
+                                Err(error) => app.append_transcript(format!(
+                                    "Error: {}: {error}",
+                                    language.text(
+                                        "打开 Diff Review 失败",
+                                        "Open Diff Review failed",
+                                        "Diff Review を開けませんでした"
+                                    )
+                                )),
+                            }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if prompt.trim() == "/rewind" {
+                            match crate::daemon::remote_rewind_points(&runtime.home,session.id).await {
+                        Ok(points) if points.is_empty()=>app.append_transcript(format!("System: {}",language.text("没有可回退的步骤：只有 Runtime 跑完的轮次才能回，最后一步不算","Nothing to rewind to: only completed Runtime turns count, and the last one is where you already are","戻せるステップがありません：Runtime が完了したターンのみ対象で、最後のステップは現在地です"))),
+                        Ok(points)=>app.open_rewind_picker(points),
+                        Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("读取可回退步骤失败","Load rewind steps failed","戻せるステップの取得に失敗"))),
+                    }
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        if let PromptExecution::Local(local_prompt) = prompt_execution(&prompt) {
+                            if local_prompt.is_empty() {
+                                app.append_transcript(format!(
+                                    "System: {}",
+                                    language.text(
+                                        "用法：/local <任务>",
+                                        "Usage: /local <task>",
+                                        "使用法: /local <タスク>"
+                                    )
+                                ));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            if session.workspace.canonicalize()?
+                                != runtime.local_workspace.canonicalize()?
+                            {
+                                app.append_transcript(format!("System: {}",language.text("切换工作区后 /local 已禁用；请使用 Runtime，或从目标目录重新启动 TUI","/local is disabled after switching Workspace; use Runtime or restart the TUI from the target directory","ワークスペース切替後は /local を使用できません。Runtime を使うか対象ディレクトリから TUI を再起動してください")));
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                            dispatch_prompt(
+                                &mut app,
+                                session,
+                                store,
+                                &runtime.skills,
+                                &agent,
+                                &runtime.tx,
+                                local_prompt,
+                            )?;
+                            skip_turn = true;
+                            break 'handled;
+                        }
+                        let runtime_alias =
+                            prompt.trim() == "/runtime" || prompt.trim().starts_with("/runtime ");
+                        if !runtime_alias {
+                            let previous_goal = app.goal.clone();
+                            let previous_style = app.response_style;
+                            if app.handle_slash_command(&prompt, &runtime.skills) {
+                                if app.goal != previous_goal {
+                                    session.goal = app.goal.clone();
+                                }
+                                if app.response_style != previous_style {
+                                    session.response_style = app.response_style;
+                                }
+                                if app.goal != previous_goal || app.response_style != previous_style
+                                {
+                                    store.save(session)?;
+                                }
+                                if app.quit_requested {
+                                    quit = true;
+                                    break 'handled;
+                                }
+                                // /goal <目标> 同时是执行请求。此前只保存开关就返回，
+                                // 界面立刻显示「轮到你」，必须再发一句「继续」才会开工。
+                                if let Some(goal) = runtime_ui::goal_command_to_start(&prompt) {
+                                    match runtime_ui::submit_turn(
+                                        &mut app,
+                                        session,
+                                        store,
+                                        runtime,
+                                        goal.to_owned(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            app.notice = Some(
+                                                language
+                                                    .text(
+                                                        "AI 正在处理…",
+                                                        "AI is working…",
+                                                        "AI が処理しています…",
+                                                    )
+                                                    .to_owned(),
+                                            )
+                                        }
+                                        Err(error) => app.append_transcript(format!(
+                                            "Error: {}: {error}",
+                                            language.text(
+                                                "提交 Runtime 轮次失败",
+                                                "Submit Runtime turn failed",
+                                                "Runtime ターンの送信に失敗"
+                                            )
+                                        )),
+                                    }
+                                }
+                                skip_turn = true;
+                                break 'handled;
+                            }
+                        }
+                        let PromptExecution::Runtime(remote_prompt) = prompt_execution(&prompt)
+                        else {
+                            unreachable!("local prompts were handled above")
+                        };
+                        match runtime_ui::submit_turn(
+                            &mut app,
+                            session,
+                            store,
+                            runtime,
+                            remote_prompt,
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                app.notice = Some(
+                                    language
+                                        .text(
+                                            "AI 正在处理…",
+                                            "AI is working…",
+                                            "AI が処理しています…",
+                                        )
+                                        .to_owned(),
+                                )
+                            }
+                            Err(error) => app.append_transcript(format!(
+                                "Error: {}: {error}",
+                                language.text(
+                                    "提交 Runtime 轮次失败",
+                                    "Submit Runtime turn failed",
+                                    "Runtime ターンの送信に失敗"
+                                )
+                            )),
+                        }
+                    }
+                    // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。
+                    // 连续两次按下可避免生成时误触中断。
+                    KeyCode::Esc if app.running => {
+                        let now = Instant::now();
+                        if interrupt_esc_deadline.is_some_and(|deadline| now <= deadline) {
+                            *interrupt_esc_deadline = None;
+                            match interrupt_turn(&mut app, session, runtime).await {
+                                Ok(message) => app.notice = Some(message),
+                                Err(error) => {
+                                    app.notice = Some(format!(
+                                        "{}: {error}",
+                                        language.text("中断失败", "Interrupt failed", "中断に失敗")
+                                    ))
+                                }
+                            }
+                        } else {
+                            *interrupt_esc_deadline = Some(now + Duration::from_millis(800));
+                            app.notice=Some(language.text("再按一次 Esc 可中断当前输出","Press Esc again within 800 ms to interrupt the current response","800 ミリ秒以内に Esc をもう一度押すと応答を中断します").to_owned());
+                        }
+                    }
+                    KeyCode::Left => app.edit_input(|input| input.left()),
+                    KeyCode::Right => app.edit_input(|input| input.right()),
+                    KeyCode::Up => {
+                        let width = app.prompt_rect.width.saturating_sub(2).max(1) as usize;
+                        app.edit_input(|input| input.up_visual(width));
+                    }
+                    KeyCode::Down => {
+                        let width = app.prompt_rect.width.saturating_sub(2).max(1) as usize;
+                        app.edit_input(|input| input.down_visual(width));
+                    }
+                    KeyCode::Home => app.edit_input(|input| input.home()),
+                    KeyCode::End => app.edit_input(|input| input.end()),
+                    KeyCode::Backspace => app.edit_input(|input| input.backspace()),
+                    KeyCode::Delete => app.edit_input(|input| input.delete()),
+                    KeyCode::Char(c)
+                        if !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) =>
+                    {
+                        app.edit_input(|input| input.insert(&c.to_string()))
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(TerminalEventOutcome {
+        skip_turn,
+        quit,
+        workspace_changed,
+    })
+}
+
+#[cfg(test)]
+mod scroll_coalesce_tests {
+    use super::*;
+
+    fn wheel(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn wheel_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        match wheel(kind, column, row) {
+            Event::Mouse(mouse) => mouse,
+            _ => unreachable!(),
+        }
+    }
+
+    /// 一次手势里连续到达的滚轮格合成一份偏移，一格 3 行。
+    #[test]
+    fn a_burst_of_wheel_ticks_becomes_one_offset() {
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 5, 5),
+            [
+                Ok(wheel(MouseEventKind::ScrollUp, 5, 6)),
+                Ok(wheel(MouseEventKind::ScrollUp, 5, 7)),
+                Ok(wheel(MouseEventKind::ScrollUp, 6, 8)),
+            ],
+        );
+        assert!(rest.is_empty());
+        assert_eq!(scrolled.ticks_up, 4);
+        assert_eq!(scrolled.lines(), 12);
+        // 落点跟着最后一格走，滚动命中哪一块由它决定。
+        assert_eq!((scrolled.column, scrolled.row), (6, 8));
+    }
+
+    /// 方向相反的格互相抵消，而不是各滚各的。
+    #[test]
+    fn opposite_ticks_cancel_out() {
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 1, 1),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 1, 1)),
+                Ok(wheel(MouseEventKind::ScrollDown, 1, 1)),
+                Ok(wheel(MouseEventKind::ScrollUp, 1, 1)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, 0);
+        assert_eq!(scrolled.lines(), 0);
+    }
+
+    /// 滚到一半来了按键或鼠标移动：停下来，剩下的事件原样交还，一格不丢。
+    #[test]
+    fn a_non_wheel_event_ends_the_burst_and_is_kept() {
+        let key = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollDown, 3, 3),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 3, 4)),
+                Ok(key),
+                Ok(wheel(MouseEventKind::ScrollDown, 3, 5)),
+                Ok(wheel(MouseEventKind::Moved, 3, 6)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, -2);
+        assert_eq!(scrolled.lines(), 6);
+        assert_eq!(rest.len(), 3);
+        assert!(matches!(rest[0], Event::Key(_)));
+        assert!(matches!(
+            rest[1],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..
+            })
+        ));
+        assert!(matches!(
+            rest[2],
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                ..
+            })
+        ));
+    }
+
+    /// 读事件出错就停，不能把错误后面的事件错当成这一轮滚动。
+    #[test]
+    fn a_read_error_stops_the_burst() {
+        let (scrolled, rest) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 2, 2),
+            [
+                Err(io::Error::other("terminal gone")),
+                Ok(wheel(MouseEventKind::ScrollUp, 2, 3)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, 1);
+        // 出错的那一格丢掉，但它后面的事件不能跟着丢。
+        assert_eq!(rest.len(), 1);
+    }
+
+    /// 合成出来的偏移一次滚完，而不是一格一格滚。
+    #[test]
+    fn the_coalesced_offset_scrolls_the_transcript_once() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.transcript_height = 100;
+        app.viewport_height = 10;
+        app.transcript_rect = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        };
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 4, 4),
+            std::iter::repeat_with(|| Ok(wheel(MouseEventKind::ScrollUp, 4, 4))).take(5),
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.scroll_from_bottom, 18);
+        assert_eq!(app.focus, FocusPane::Chat);
+        assert!(!app.follow_bottom);
+    }
+
+    /// 落在侧栏上的滚轮滚的是侧栏，不能把聊天记录带走。
+    #[test]
+    fn a_burst_over_the_sidebar_scrolls_the_sidebar() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.sidebar_rect = Rect {
+            x: 60,
+            y: 0,
+            width: 20,
+            height: 40,
+        };
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollDown, 65, 10),
+            [
+                Ok(wheel(MouseEventKind::ScrollDown, 66, 11)),
+                Ok(wheel(MouseEventKind::ScrollDown, 67, 12)),
+            ],
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.sidebar_scroll, 9);
+        assert_eq!(app.focus, FocusPane::Sidebar);
+        assert_eq!(app.scroll_from_bottom, 0);
+    }
+
+    /// 完全抵消的一轮什么都不动，连焦点都不改。
+    #[test]
+    fn a_cancelled_burst_changes_nothing() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let focus = app.focus;
+        let (scrolled, _) = coalesce_scroll(
+            wheel_event(MouseEventKind::ScrollUp, 4, 4),
+            [Ok(wheel(MouseEventKind::ScrollDown, 4, 4))],
+        );
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.focus, focus);
+        assert!(app.follow_bottom);
+    }
+}
+
+#[cfg(test)]
+mod persist_turn_result_tests {
+    use super::*;
+
+    /// 并发冲突兜底要把整个执行快照写回，而不是只写消息。
+    ///
+    /// 现场：TUI 手里的基线过期，或者同一会话正被守护进程接管。只写 messages
+    /// 会留下「本轮的消息配磁盘上的旧摘要」——摘要按前缀指纹校验，对不上就只能
+    /// 整段重摘，长历史下正是这个缓存要省的那七八分钟。
+    #[test]
+    fn a_concurrent_save_fallback_keeps_the_whole_execution_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "tui-persist-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "turn");
+        store.save(&mut session).unwrap();
+        // 另一个写者（守护进程/另一个客户端）刚往同一会话写了一条消息。
+        store
+            .update(session.id, |latest| {
+                latest.messages.push(willdeep_core::Message::assistant(
+                    "other writer",
+                    Vec::new(),
+                ));
+            })
+            .unwrap();
+
+        // 本轮结果：消息和摘要一起交回来。
+        session
+            .messages
+            .push(willdeep_core::Message::user("this turn"));
+        session.context_summary = Some(willdeep_core::context_summary::ContextSummary {
+            through: 1,
+            fingerprint: "a".repeat(64),
+            system_fingerprint: "b".repeat(64),
+            summary: "this turn summary".to_owned(),
+        });
+        persist_turn_result(&mut session, &store).unwrap();
+
+        let saved = store.load(session.id).unwrap();
+        assert!(
+            saved
+                .messages
+                .iter()
+                .any(|message| message.content == "this turn")
+        );
+        assert_eq!(
+            saved.context_summary.map(|summary| summary.summary),
+            Some("this turn summary".to_owned()),
+            "the fallback must not leave the disk snapshot on the stale summary"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

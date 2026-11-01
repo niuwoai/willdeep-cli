@@ -57,10 +57,11 @@ pub(super) fn dispatch_prompt(
     let agent = agent.clone();
     let tx = tx.clone();
     // 句柄留着，Esc 中断本地轮次时要靠它把在途的 Harness 掐掉。
+    let summary = session.context_summary.clone();
     app.local_turn = Some(tokio::spawn(async move {
         let _ = tx.send(UiMessage::Finished(
             agent
-                .run_checkpointed(history, user, Some(&checkpoint))
+                .run_checkpointed_with_summary(history, user, Some(&checkpoint), summary)
                 .await,
             checkpoint,
         ));
@@ -164,10 +165,11 @@ pub(super) fn dispatch_notification(
     store.save(session)?;
     let agent = agent.clone();
     let tx = tx.clone();
+    let summary = session.context_summary.clone();
     app.local_turn = Some(tokio::spawn(async move {
         let _ = tx.send(UiMessage::Finished(
             agent
-                .run_checkpointed(history, message, Some(&checkpoint))
+                .run_checkpointed_with_summary(history, message, Some(&checkpoint), summary)
                 .await,
             checkpoint,
         ));

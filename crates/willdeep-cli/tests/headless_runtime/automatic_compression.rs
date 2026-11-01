@@ -120,3 +120,129 @@ fn local_automatic_compression_preserves_constraints_batches_and_usage() {
                 && message.content == constraint)
     );
 }
+
+/// 压缩结果随会话落盘：同一段历史的下一次 run 不再重摘。
+///
+/// 以前摘要缓存只活在单次 run 里，durable 历史又从不因压缩变短，于是一轮七八
+/// 分钟的压缩每来一条消息就要重跑一遍——这个会话在 150 万 token 时正是这样。
+#[test]
+fn persisted_summary_spares_the_next_run_from_recompressing() {
+    let _serial = process_test_guard();
+    let root = temporary_root();
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(home.join("sessions")).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    let provider = MockProvider::start();
+    let config = root.join("config.toml");
+    write_private_config(&config, provider.api_base());
+    let mut contents = std::fs::read_to_string(&config).unwrap();
+    contents.push_str("context_window = 32000\n");
+    std::fs::write(&config, contents).unwrap();
+    let _guard = TestGuard::new(root, home.clone());
+    let id = uuid::Uuid::new_v4();
+    let mut messages =
+        vec![serde_json::json!({"role":"user","content":"Keep the migration history intact."})];
+    for index in 0..10 {
+        messages.push(serde_json::json!({"role":"assistant","content":format!("old-inspection-{index}: {}", "historical evidence ".repeat(1000))}));
+    }
+    write_json(
+        &home.join("sessions").join(format!("{id}.json")),
+        serde_json::json!({"version":1,"id":id,"title":"Persisted summary","workspace":workspace,"profile":"mock","created_at":1,"updated_at":1,"messages":messages}),
+    );
+
+    let run = |prompt: &str| {
+        let output = willdeep(&home)
+            .args([
+                "run",
+                "--local",
+                "--config",
+                path_text(&config),
+                "--workspace",
+                path_text(&workspace),
+                "--session",
+                &id.to_string(),
+                "--output",
+                "ndjson",
+                prompt,
+            ])
+            .output()
+            .unwrap();
+        assert_success(&output, "conversation turn");
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+
+    let first = run("Start the inspection");
+    assert!(
+        first
+            .iter()
+            .any(|event| event["type"] == "compression_started"),
+        "the first turn must compress the oversized history"
+    );
+    let after_first = {
+        let requests = provider.captured_requests.lock().unwrap();
+        requests.len()
+    };
+    assert!(
+        after_first >= 2,
+        "expected chunked summaries plus the task request, got {after_first}"
+    );
+    let session = willdeep_core::SessionStore::new(&home).load(id).unwrap();
+    assert!(
+        session.context_summary.is_some(),
+        "the summary must be persisted with the session"
+    );
+
+    let second = run("Continue the inspection");
+    assert!(
+        !second
+            .iter()
+            .any(|event| event["type"] == "compression_started"),
+        "the persisted summary must cover the unchanged history"
+    );
+    assert!(
+        second.iter().any(|event| event["type"] == "completed"),
+        "the second turn must still finish"
+    );
+    let after_second = {
+        let requests = provider.captured_requests.lock().unwrap();
+        requests.len()
+    };
+    assert_eq!(
+        after_second,
+        after_first + 1,
+        "only the task request itself may be sent on the next turn"
+    );
+    // 请求数对得上不算数：摘要正文空着、历史被截短，都长上面那个样子。
+    let task = {
+        let requests = provider.captured_requests.lock().unwrap();
+        requests.last().cloned().expect("the second turn must call")
+    };
+    let body = task["messages"].to_string();
+    assert!(
+        body.contains(MOCK_REPLY),
+        "the reused summary must carry the summarizer's text, not just its shell"
+    );
+    assert!(
+        body.contains("<context-summary"),
+        "the reused summary must reach the model"
+    );
+    assert!(
+        !body.contains("old-inspection-0"),
+        "the summarized prefix must not be sent again"
+    );
+    let reloaded = willdeep_core::SessionStore::new(&home).load(id).unwrap();
+    assert_eq!(
+        reloaded.context_summary, session.context_summary,
+        "the summary must survive the second turn unchanged"
+    );
+    assert_eq!(
+        reloaded.messages.len(),
+        session.messages.len() + 2,
+        "the second turn must append its own exchange, not truncate history"
+    );
+}

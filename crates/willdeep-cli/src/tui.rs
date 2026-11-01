@@ -12,7 +12,7 @@ use crossterm::event::{
     EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
-use crossterm::{execute, terminal};
+use crossterm::{execute, queue, terminal};
 use futures_util::StreamExt;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use ratatui::Terminal;

@@ -381,6 +381,9 @@ pub struct AgentOutcome {
     /// 非流式响应或纯工具调用取完整响应。重试提示与用量事件不算响应。
     /// 后续轮次不会覆盖该值；它包含首次请求前的上下文准备时间。
     pub first_response_millis: Option<u64>,
+    /// 本次运行产出的压缩摘要，调用方应随会话一起落盘，下一次运行再交回来。
+    /// 没有压缩就没有它；调用方原样存回即可。
+    pub context_summary: Option<crate::context_summary::ContextSummary>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -832,6 +835,22 @@ impl Agent {
         user_message: Message,
         sink: Option<&dyn crate::checkpoint::CheckpointSink>,
     ) -> Result<AgentOutcome, AgentError> {
+        self.run_checkpointed_with_summary(messages, user_message, sink, None)
+            .await
+    }
+
+    /// 同 [`Self::run_checkpointed`]，但先把上一次运行留下的压缩摘要交回来。
+    ///
+    /// 自动压缩不改写 durable 历史，所以没有这份摘要，每一轮都要把同一段前缀
+    /// 从头再摘一遍；长会话里那是一次七八分钟的串行模型调用。摘要带着它覆盖的
+    /// 前缀指纹，历史对不上就会被丢弃，最多浪费一次压缩。
+    pub async fn run_checkpointed_with_summary(
+        &self,
+        messages: Vec<Message>,
+        user_message: Message,
+        sink: Option<&dyn crate::checkpoint::CheckpointSink>,
+        summary: Option<crate::context_summary::ContextSummary>,
+    ) -> Result<AgentOutcome, AgentError> {
         let _execution_guard = sink
             .map(|sink| sink.acquire_run())
             .transpose()
@@ -900,10 +919,20 @@ impl Agent {
                 .and_then(|feedback| feedback.runtime_parameters())
                 .cloned(),
         );
-        let result = if let Some(deadline) = deadline {
+        // 摘要缓存跨 run 复用：轮内命中省一次调用，从会话文件读回来才省掉整轮
+        // 重摘。它只在 run_inner 里被替换成更新的一份。
+        let previous_summary = summary.clone();
+        let mut summary_cache = summary.map(context::SummaryCache::restore);
+        let mut result = if let Some(deadline) = deadline {
             match tokio::time::timeout_at(
                 deadline,
-                self.run_inner(messages, user_message, &mut recorder, feedback.as_ref()),
+                self.run_inner(
+                    messages,
+                    user_message,
+                    &mut recorder,
+                    feedback.as_ref(),
+                    &mut summary_cache,
+                ),
             )
             .await
             {
@@ -911,9 +940,28 @@ impl Agent {
                 Err(_) => Ok(recorder.deadline_outcome()),
             }
         } else {
-            self.run_inner(messages, user_message, &mut recorder, feedback.as_ref())
-                .await
+            self.run_inner(
+                messages,
+                user_message,
+                &mut recorder,
+                feedback.as_ref(),
+                &mut summary_cache,
+            )
+            .await
         };
+        // 失败也照常上报：压缩钱已经花过，下次运行不该再买一遍。调用方只在
+        // `Ok` 时落盘，所以这里只管把结果挂到 outcome 上。
+        //
+        // 超时/取消会把正在重摘的槽位掏空（`request_messages_accounted` 先
+        // `take()` 再 await）；这时手上那份旧摘要仍然有效，不能拿 None 把会话
+        // 里已经付过钱的摘要抹掉——预算型会话会因此每一轮都从头重摘，永远走不出
+        // BudgetLimited。
+        if let Ok(outcome) = &mut result {
+            outcome.context_summary = summary_cache
+                .as_ref()
+                .map(context::SummaryCache::persist)
+                .or(previous_summary);
+        }
         if let Some(goal) = &self.goal_continuation {
             goal.pause();
         }
@@ -949,6 +997,7 @@ impl Agent {
         mut user_message: Message,
         checkpoint: &mut crate::checkpoint::CheckpointRecorder<'_>,
         feedback: Option<&crate::feedback::FeedbackRecorder>,
+        compressed: &mut Option<context::SummaryCache>,
     ) -> Result<AgentOutcome, AgentError> {
         let patch_baseline = checkpoint.patch_baseline().cloned();
         // Persisted history can come from older desktop bridges that retained
@@ -1012,7 +1061,6 @@ impl Agent {
                 .find_map(|item| item.plan)
         });
         checkpoint.plan = plan.clone();
-        let mut compressed: Option<context::SummaryCache> = None;
         let mut used_tokens = 0_u64;
         // 分别累计输入/输出，供 AgentOutcome 上报——`used_tokens` 是预算判定用的
         // 合计值，两者语义不同，不能互相顶替。
@@ -1102,7 +1150,7 @@ impl Agent {
                     .map_err(AgentError::TeamBudgetBlocked)?;
             }
             let prepared = self
-                .request_messages_accounted(&messages, &mut compressed, &mut |usage| {
+                .request_messages_accounted(&messages, compressed, &mut |usage| {
                     input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
                     output_tokens = output_tokens.saturating_add(usage.output_tokens.unwrap_or(0));
                     let call_tokens = usage.billable_tokens();
@@ -1318,6 +1366,7 @@ impl Agent {
                         input_tokens,
                         output_tokens,
                         first_response_millis,
+                        context_summary: None,
                     });
                 }
                 messages.push(Message::host_instruction("[response-incomplete] The provider ended the previous response before completion. No tool calls from that incomplete response were executed. Continue the outstanding work, using smaller complete steps. Do not treat the partial output as task completion."));
@@ -1357,6 +1406,7 @@ impl Agent {
                             input_tokens,
                             output_tokens,
                             first_response_millis,
+                            context_summary: None,
                         });
                     }
                     messages.push(Message::host_instruction(format!("[completion-verification-required] {feedback} Continue the outstanding task. Do not weaken checks or claim completion. If verification is unavailable, explain the limitation; the runtime will retain a partial result.")));
@@ -1424,6 +1474,7 @@ impl Agent {
                                 input_tokens,
                                 output_tokens,
                                 first_response_millis,
+                                context_summary: None,
                             });
                         }
                         None => {}
@@ -1437,6 +1488,7 @@ impl Agent {
                     input_tokens,
                     output_tokens,
                     first_response_millis,
+                    context_summary: None,
                 });
             }
             messages.push(
@@ -1564,6 +1616,7 @@ impl Agent {
             input_tokens,
             output_tokens,
             first_response_millis,
+            context_summary: None,
         })
     }
 
