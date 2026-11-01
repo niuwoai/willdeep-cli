@@ -118,6 +118,7 @@ pub(crate) async fn configure_in_browser(cli: &crate::Cli) -> Result<SetupServer
         language: crate::i18n::Language::parse(cli.language.as_deref())?,
         open_setup: true,
         setup_started: Some(started),
+        intake: None,
     })));
     let address = tokio::time::timeout(Duration::from_secs(30), ready)
         .await

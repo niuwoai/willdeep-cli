@@ -811,6 +811,7 @@ async fn run() -> Result<()> {
             language,
             open_setup: cli.onboarding || onboarding::needs_web_setup(&cli),
             setup_started: None,
+            intake: None,
         })
         .await;
     }

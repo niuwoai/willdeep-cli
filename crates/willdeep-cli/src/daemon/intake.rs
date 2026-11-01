@@ -39,9 +39,11 @@ struct Pending {
 struct Serving {
     stop: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
+    /// 正在使用的监听地址（配置里那一个）。Web 页只用来显示「在跑」和「跑在哪」。
+    listen: SocketAddr,
 }
 
-pub(super) struct IntakeService {
+pub(crate) struct IntakeService {
     home: PathBuf,
     serving: AsyncMutex<Option<Serving>>,
     bindings: AsyncMutex<HashMap<String, uuid::Uuid>>,
@@ -57,11 +59,10 @@ impl IntakeService {
     }
 
     /// 按当前配置重新启动入口。配置缺失或关闭时停掉已有的监听。
-    pub(super) async fn apply(
-        self: &Arc<Self>,
-        config_path: &Path,
-        shutdown: watch::Receiver<bool>,
-    ) {
+    ///
+    /// 停监听这一步放在 `apply` 里而不是另起一个关闭任务，是因为 Web 端改完配置
+    /// 要立刻按新配置重开——它拿不到启动时那个 shutdown 信号，也不需要。
+    pub(crate) async fn apply(self: &Arc<Self>, config_path: &Path) {
         let settings = match read_settings(config_path) {
             Ok(settings) => settings,
             Err(error) => {
@@ -94,7 +95,11 @@ impl IntakeService {
                 eprintln!("Intake: {error:#}");
             }
         });
-        *self.serving.lock().await = Some(Serving { stop, task });
+        *self.serving.lock().await = Some(Serving { stop, task, listen });
+    }
+
+    /// 守护进程退出时收掉监听。启动时接一次就够了，`apply` 本身不管关闭信号。
+    pub(crate) fn watch_shutdown(self: &Arc<Self>, shutdown: watch::Receiver<bool>) {
         let service = Arc::clone(self);
         tokio::spawn(async move {
             wait_for_shutdown(shutdown).await;
@@ -102,7 +107,13 @@ impl IntakeService {
         });
     }
 
-    async fn stop(&self) {
+    /// 监听是否在跑、跑在哪个地址。Web 页要显示状态，不能靠配置文件猜。
+    pub(crate) async fn status(&self) -> Option<SocketAddr> {
+        let serving = self.serving.lock().await;
+        serving.as_ref().map(|serving| serving.listen)
+    }
+
+    pub(crate) async fn stop(&self) {
         if let Some(server) = self.serving.lock().await.take() {
             let _ = server.stop.send(true);
             server.task.abort();
