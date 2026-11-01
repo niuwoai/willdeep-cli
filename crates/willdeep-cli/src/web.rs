@@ -24,6 +24,7 @@ use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 mod agent_library;
 mod composer;
 mod configuration;
+mod intake;
 mod mcp_tokens;
 mod peer_sessions;
 mod runtime_chat;
@@ -51,6 +52,9 @@ pub struct WebConfig {
     pub language: Language,
     pub open_setup: bool,
     pub setup_started: Option<tokio::sync::oneshot::Sender<SocketAddr>>,
+    /// 由 Runtime 托管时，入口服务的句柄。Web 页改完 `[intake]` 要按新配置重开
+    /// 监听；独立跑 `willdeep web` 时没有这个句柄，页面只保存并提示重启。
+    pub intake: Option<Arc<crate::daemon::IntakeService>>,
 }
 
 pub(crate) struct WebState {
@@ -76,6 +80,8 @@ pub(crate) struct WebState {
     /// （长会话有几 MB）。归属只看工作区，文件没变就不必重读。包在 `Arc` 里是
     /// 因为未命中时的整读要挪到 blocking 线程上，缓存得跟着走。
     session_workspaces: Arc<std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>>,
+    /// 公网入口的句柄；独立 Web 模式下为 `None`。
+    intake: Option<Arc<crate::daemon::IntakeService>>,
 }
 
 /// 会话文件的指纹：修改时间（纳秒）+ 字节数。任一变化都重新读。
@@ -179,6 +185,13 @@ struct SessionDetail {
     /// `/short` 与 `/verbose` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
     #[serde(skip_serializing_if = "Option::is_none")]
     response_style: Option<willdeep_core::ResponseStyle>,
+    /// 这个会话里选过的审批档位；`None` 表示跟随工作区策略。档位只记在
+    /// Runtime 会话上，核心会话文件里没有，所以要从 daemon 读。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_mode: Option<&'static str>,
+    /// 工作区策略，是会话档位的硬上限（`read_only` 时压过任何会话值）。
+    /// 与它一起下发，前端不必再指望工作区列表是新鲜的。
+    workspace_access: &'static str,
 }
 
 #[derive(Serialize)]
@@ -474,6 +487,7 @@ async fn serve_internal(
         settings_write_lock: Mutex::new(()),
         config_tools: tokio::sync::OnceCell::new(),
         session_workspaces: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        intake: config.intake,
     });
     let app = Router::new()
         .merge(schedules::routes())
@@ -517,6 +531,10 @@ async fn serve_internal(
         .route(
             "/api/sessions/{id}/response-style",
             post(set_response_style),
+        )
+        .route(
+            "/api/sessions/{id}/approval-mode",
+            post(set_session_approval_mode),
         )
         .route("/api/sessions/{id}/steer", post(steer_session))
         .route("/api/sessions/{id}/fork", post(fork_session))
@@ -578,6 +596,7 @@ async fn serve_internal(
             get(model_routing_settings).put(update_model_routing_settings),
         )
         .route("/api/composer", get(composer::get))
+        .merge(intake::routes())
         .merge(agent_library::routes())
         .route("/", get(index))
         // 单页应用的 catch-all。插件的 /plugin-host/... 比它更具体，
@@ -1367,11 +1386,15 @@ async fn session_detail(
     let session = SessionStore::new(&state.home)
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
-    if !workspace_allowed(&state, &session.workspace).await? {
+    let allowed = registered_web_workspaces(&state).await?;
+    let Some(workspace) = allowed
+        .iter()
+        .find(|workspace| workspace.root == session.workspace)
+    else {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
-    }
+    };
     let messages =
         willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
     Ok(Json(SessionDetail {
@@ -1379,7 +1402,129 @@ async fn session_detail(
         workspace: session.workspace.display().to_string(),
         messages,
         response_style: session.response_style,
+        approval_mode: session_approval_override(&state, id).await,
+        workspace_access: workspace.access.wire_name(),
     }))
+}
+
+/// 会话自己选过的档位。daemon 不可达时按「没有覆盖」处理：详情页没有理由
+/// 因为读不到一个可选项就整页失败。
+async fn session_approval_override(
+    state: &WebState,
+    id: uuid::Uuid,
+) -> Option<&'static str> {
+    crate::daemon::remote_session_states(&state.home)
+        .await
+        .ok()?
+        .into_iter()
+        .find(|session| session.id == id)
+        .and_then(|session| session.approval_mode)
+        .map(crate::daemon::WorkspaceAccess::wire_name)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApprovalModeRequest {
+    /// `strict` / `smart` / `workspace_write` / `full_access`。`read_only` 是
+    /// 工作区策略，不是会话档位，这里不接受。
+    approval_mode: crate::daemon::WorkspaceAccess,
+    /// 升到完全访问要在请求里显式说一声。前端有确认页，但服务端不能只信前端：
+    /// 插件页面也能把这个请求发出来。
+    #[serde(default)]
+    confirm: bool,
+}
+
+/// 会话档位能不能这么改。纯函数，方便把两条拒绝规则单独测出来。
+fn check_session_approval_mode(
+    workspace: crate::daemon::WorkspaceAccess,
+    requested: crate::daemon::WorkspaceAccess,
+    confirm: bool,
+) -> Result<(), ApprovalModeRejection> {
+    use crate::daemon::WorkspaceAccess;
+    if requested == WorkspaceAccess::ReadOnly {
+        return Err(ApprovalModeRejection::ReadOnlyIsWorkspacePolicy);
+    }
+    if workspace == WorkspaceAccess::ReadOnly {
+        return Err(ApprovalModeRejection::ReadOnlyWorkspace);
+    }
+    if requested == WorkspaceAccess::FullAccess && !confirm {
+        return Err(ApprovalModeRejection::FullAccessNeedsConfirmation);
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ApprovalModeRejection {
+    ReadOnlyIsWorkspacePolicy,
+    ReadOnlyWorkspace,
+    FullAccessNeedsConfirmation,
+}
+
+/// Web 里切换会话审批档位。
+///
+/// 档位不只是会话上的一个偏好：`session.update_approval_mode` 会先落盘，再把
+/// 这个会话正在跑的任务句柄换掉，下一次工具调用就按新档位判。所以这里走的
+/// 是 Runtime 协议，而不是像 `/response-style` 那样直接改核心会话文件。
+///
+/// 只对回环 Web 开放。远程 Web 没有应用层鉴权，把「每次都问」换成「长期免
+/// 审」不该只凭「你能连上这个端口」。
+async fn set_session_approval_mode(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Json(request): Json<ApprovalModeRequest>,
+) -> Result<StatusCode, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "changing the approval mode from the browser is only available when the Web \
+             server listens on a loopback address; run `/permissions` in the TUI instead",
+        ));
+    }
+    let session = SessionStore::new(&state.home)
+        .load(id)
+        .map_err(|_| WebError::bad_request("session was not found"))?;
+    ensure_web_runtime_session(&state, id).await?;
+    let allowed = registered_web_workspaces(&state).await?;
+    let workspace_access = allowed
+        .iter()
+        .find(|workspace| workspace.root == session.workspace)
+        .map(|workspace| workspace.access)
+        .ok_or_else(|| {
+            WebError::bad_request("session workspace is not in the server allowlist")
+        })?;
+    check_session_approval_mode(workspace_access, request.approval_mode, request.confirm).map_err(
+        |rejection| match rejection {
+            ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
+                WebError::bad_request("read_only is a workspace policy, not a session mode")
+            }
+            ApprovalModeRejection::ReadOnlyWorkspace => WebError::conflict(
+                "this workspace is read-only; the session mode cannot override it",
+            ),
+            ApprovalModeRejection::FullAccessNeedsConfirmation => {
+                WebError::bad_request("switching to full_access requires \"confirm\": true")
+            }
+        },
+    )?;
+    crate::daemon::update_remote_session_approval_mode(
+        &state.home,
+        id,
+        request.approval_mode.approval_mode(),
+    )
+    .await
+    .map_err(WebError::from_anyhow)?;
+    // 与 TUI 同口径留一条审计：Runtime 只写事件流，不写 approvals.jsonl。
+    crate::harness::record_approval_trace(
+        &state.home.join("approvals.jsonl"),
+        Some(id),
+        &willdeep_core::tools::ApprovalTrace {
+            command: request.approval_mode.wire_name().to_owned(),
+            source: willdeep_core::tools::ApprovalSource::ModeChange,
+            detail: format!(
+                "operator switched approval mode to {} in the Web client",
+                request.approval_mode.wire_name()
+            ),
+        },
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
