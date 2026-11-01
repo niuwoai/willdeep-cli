@@ -317,3 +317,5 @@ ruby scripts/test/range_report_test.rb && ruby scripts/test/range_trend_test.rb
 Apache License 2.0。`WillDeep` 名称和商标不随源代码许可证授权。
 
 如果「能查账的自主」正是你在等的那种 Agent，点个 ⭐ 让更多人看到它。
+
+<!-- push-probe: 写权限验证占位注释，分支 ai/push-probe-20261101-2306，确认后可删除 -->
