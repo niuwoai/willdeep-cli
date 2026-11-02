@@ -624,6 +624,12 @@ fn backup_config(config_path: &std::path::Path, home: &std::path::Path) -> anyho
 mod tests {
     use super::*;
 
+    /// 测试里的「绝对路径」按平台取：Windows 上 `/srv/blog` 既不是绝对路径
+    /// 也没有盘符，配置校验会拒绝它。
+    fn absolute(name: &str) -> PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
     fn settings() -> IntakeSettings {
         IntakeSettings {
             enabled: true,
@@ -631,12 +637,12 @@ mod tests {
             public_url: "https://intake.example.com".to_owned(),
             sites: vec![IntakeSite {
                 slug: "blog".to_owned(),
-                root: PathBuf::from("/srv/blog"),
+                root: absolute("willdeep-intake-site"),
             }],
             forms: vec![IntakeForm {
                 slug: "apply".to_owned(),
                 title: "申请".to_owned(),
-                workspace: PathBuf::from("/srv/work"),
+                workspace: absolute("willdeep-intake-workspace"),
                 session: "continue".to_owned(),
                 prompt: "收到一份新申请".to_owned(),
                 fields: vec![IntakeField {

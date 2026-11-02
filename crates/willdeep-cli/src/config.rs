@@ -2661,16 +2661,22 @@ secret = "inline-secret"
         }
     }
 
+    /// 测试里的「绝对路径」必须是当前平台的绝对路径：Windows 上 `/srv/work`
+    /// 既不是绝对路径也没有盘符，配置校验会拒绝它。
+    fn platform_absolute(name: &str) -> PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
     #[test]
     fn intake_number_bounds_accept_integers_and_floats() {
-        let file: ConfigFile = toml::from_str(
+        let mut file: ConfigFile = toml::from_str(
             "[intake]\n\
              enabled = false\n\
              listen = \"127.0.0.1:9857\"\n\
              [[intake.forms]]\n\
              slug = \"apply\"\n\
              title = \"申请\"\n\
-             workspace = \"/srv/work\"\n\
+             workspace = \".\"\n\
              session = \"new\"\n\
              prompt = \"收到一份申请\"\n\
              [[intake.forms.fields]]\n\
@@ -2685,6 +2691,8 @@ secret = "inline-secret"
              type = \"tel\"\n",
         )
         .unwrap();
+        // 绝对路径按平台取：Windows 上 `/srv/work` 不是绝对路径。
+        file.intake.forms[0].workspace = platform_absolute("willdeep-intake-bounds");
         let age = &file.intake.forms[0].fields[0];
         assert_eq!(age.min, Some(18.0));
         assert_eq!(age.max, Some(99.5));
@@ -2708,7 +2716,7 @@ secret = "inline-secret"
         settings.forms.push(IntakeForm {
             slug: "apply".to_owned(),
             title: "申请".to_owned(),
-            workspace: PathBuf::from("/srv/work"),
+            workspace: platform_absolute("willdeep-intake-number-options"),
             session: "new".to_owned(),
             prompt: "收到一份申请".to_owned(),
             fields: vec![field("number", Some(10.0), Some(1.0))],
@@ -2743,7 +2751,7 @@ secret = "inline-secret"
         let error = validate_federation(&federation, &intake).expect_err("workspace must be absolute");
         assert!(error.to_string().contains("absolute"), "{error}");
 
-        federation.workspace = "/srv/federation".to_owned();
+        federation.workspace = platform_absolute("willdeep-federation").display().to_string();
         federation.reply = "sometimes".to_owned();
         let error = validate_federation(&federation, &intake).expect_err("reply must be known");
         assert!(error.to_string().contains("reply"), "{error}");

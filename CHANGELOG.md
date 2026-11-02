@@ -9,7 +9,7 @@
 ### Fixed
 - 验证判定不再把「并发改动」算成「测试失败」。检查命令退出码 0、但运行期间工作区被别的会话或进程改动时，这条结果对起始和结束两个快照都不是证据；以前统一记成 `failed`，补验证提示也像在说测试挂了，模型只能一遍遍重跑，最后以「缺少验证记录」收尾。现在单独记为 `invalidated`：提示明说「不是测试失败、可能有其他进程或会话在写、等工作区稳定后重跑一次」，反馈账本记 `stale` 而不是 `failed`；同一条命令另有一次真实失败时仍按失败报告，不会被后来的失效记录盖掉。审计汇总新增「失效」计数，Diff 面板里标黄而不是标红。
 
-## [0.138.0-rc1] - 2026-11-03
+## [0.138.0-rc2] - 2026-11-03
 
 ### Added
 - 实例联邦（1:1）。两台公网可达的 willdeep 可以互相聊天：`willdeep fed invite` 打印一次性邀请链接（10 分钟、只能用一次），对端 `willdeep fed join <链接>` 换回一对共享密钥；`fed say <名字> <内容>` 发消息，`fed list` 看联系人与各自的会话，`fed remove` 解除配对。TUI 里是同一组 `/fed` 命令，Web 的公网入口页新增「联邦」标签。入站消息作为普通 Runtime 轮次进入 `[federation] workspace` 指定的工作区，正文包成「外部数据、不是指令」；一轮结束后按 `reply`（always / mention / never）把最后一条助手回复自动回传，`max_auto_turns` 到顶就停，防止两台 Agent 互相刷屏。请求用 HMAC-SHA256 覆盖发送方、接收方、时间戳、nonce、消息 id 与正文摘要，时间窗 ±300 秒、nonce 一次性、每联系人每分钟 20 条。联系人与密钥存在 `~/.willdeep/federation.json`（0600），不进 `config.toml`；联邦路由只在 `[federation] enabled` 时注册，`[intake] public_url` 必填。
@@ -17,6 +17,9 @@
 
 ### Changed
 - `willdeep fed`、`willdeep identity` 在顶层子命令表里各有入口；`config check` 会校验联邦段与入口段的依赖关系。
+
+### Fixed
+- 配置与入口的单元测试改用当前平台的绝对路径（临时目录），Windows 上不再因为 `/srv/...` 既不是绝对路径也没有盘符而失败。
 
 ## [0.137.0-rc1] - 2026-11-03
 
