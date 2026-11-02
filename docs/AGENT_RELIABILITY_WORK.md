@@ -16,6 +16,15 @@
 
 ## 验证记录
 
+### 压缩摘要跨运行持久化（rc10，2026-11-01）
+
+- 现场：会话 75b11e69（`opencode-go/hy4-preview`，2732 条消息，durable 历史估算 1,538,714 token）每轮都从头上百万 token 重摘。一次压缩 = 7 个分块 + 1 次合并，共 8 次串行、非流式调用，实测 490–776 秒；2026-11-01 20:44 那次第 5 块撞上单请求 600 秒上限，899 秒后整轮失败。
+- 根因：自动压缩只生成请求投影、从不改写 durable 历史，`SummaryCache` 又只活在单次 run 内；该会话 `compression_generation` 始终为 0，用量账本里已有 400 条 `compression` 记录、142,294,052 输入 token。
+- 修复：`ContextSummary{through, fingerprint, system_fingerprint, summary}` 随 `Session` 落盘，下一次运行经 `run_checkpointed_with_summary` 交回。`through` 与指纹锚在 durable 历史的前缀上（分页投影会因工具输出缩写和 host instruction 去重而挪位置）；前缀指纹从 `DefaultHasher(u64)` 改为 SHA-256 十六进制：它要跨进程、跨二进制版本存活，而工具输出是不可信输入，64 位哈希可被构造碰撞。命中后只对新增尾部做增量摘要；指纹不符或索引越界一律作废重摘，最坏多花一次压缩。`replace_with_compressed_messages` 与 `rewind_to` 清空缓存；执行快照（fingerprint/copy）纳入该字段，与消息同进同退。
+- 验证：Core 全量 851 项通过（113 秒），含上下文专项新增的持久化复用、失效、重复唤醒与取消兜底用例；CLI 二进制 1140 项通过，另有 2 项失败属于本次改动之外的工作区未提交模块 `skill_library`（`github_addresses_parse_and_strangers_do_not`、`editing_is_confined_to_the_user_directory`），与压缩无关；CLI/Runtime 集成 41 项通过（182 秒），新增 `persisted_summary_spares_the_next_run_from_recompressing` 断言第二次运行不产生 `compression_started`、只多发一条任务请求，且请求体里带着非空摘要正文、不含被摘掉的老前缀。
+- 对抗性评审（正确性 / 并发 / 安全 / 测试四路，逐条独立核验）在首版实现上确认了五个真问题，已一并修掉：① 摘要按分页投影的下标与内容存指纹，而投影会随工具输出缩写上限（跟着 `context_window` 和工具定义走）和重复 host instruction 去重而挪位置——后台唤醒循环里每次唤醒都会把缓存判废、退回全量重摘；现改为锚在持久历史下标与内容上，投影只负责换算摆位。② 超时/取消会把正在重摘的缓存槽位掏空，随后把 `None` 写回会话，抹掉上一轮已付费的摘要，预算型会话此后每轮都从头重摘并再次超时；现保留输入摘要兜底。③ TUI 并发冲突兜底只回写 `messages`，磁盘上留下「本轮消息 + 上一写者的摘要」；现改为整份替换执行快照。④ 系统提示不参与失效判定，规则删改后旧摘要继续生效；现把 system 指纹纳入 `ContextSummary`，不一致即作废。⑤ 落盘摘要没有长度与指纹格式校验、单块摘要输出也不封顶；现统一按 256 KiB 封顶并在命中前校验。
+- 评审同时确认了两条「不成立」：摘要投毒不会因为落盘而新增不可撤销的传播面（原文在 durable 历史里本来就长期存在），以及摘要不会被原样当可信指令回放（外壳标注 `derived-untrusted-history`、system 提示要求把工具输出当数据）；但 system 指纹一项仍按加固做了，代价只是规则变化后多一次摘要。
+
 ### DeepSeek 真实评测暴露问题与 rc58 修复（2026-09-06）
 
 - 首轮完整真实评测 rc57：五场景执行，3/5 通过、误报完成率 0%，已核实中断 1 次且恢复成功。连续失败场景暴露本地 CLI 输出 partial/unverified 却返回退出码 0；子任务场景使用了公开目录已不支持的 scout 名称，模型尝试其他职责后耗尽轮次。首轮报告保留在 target/agent-reliability-deepseek-rc57。

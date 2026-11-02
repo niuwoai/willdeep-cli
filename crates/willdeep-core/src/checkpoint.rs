@@ -167,6 +167,7 @@ impl<'a> CheckpointRecorder<'a> {
             input_tokens: latest.map_or(0, |c| c.metadata.input_tokens),
             output_tokens: latest.map_or(0, |c| c.metadata.output_tokens),
             first_response_millis: None,
+            context_summary: None,
         }
     }
 

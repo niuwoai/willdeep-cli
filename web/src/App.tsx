@@ -56,6 +56,7 @@ import { RunCard, ThoughtCard } from "./RunCard";
 import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
+import { RuntimeFailureDetails } from "./RuntimeFailureDetails";
 
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; archived: boolean; active: boolean; active_turn_id: string | null };
@@ -135,10 +136,66 @@ type RuntimeStreamEvent = {
   is_error?: boolean;
   plan_update?: { plan: Plan; replaced: boolean } | null;
   message?: string;
+  task_id?: string | null;
+  reason?: string | null;
+  failure_domain?: string | null;
 };
+type RuntimeFailureReference = { sessionId: string; taskId: string };
+const failureReasonMessageKeys: Record<string, keyof Messages> = {
+  context_overflow: "turnFailureContextOverflow",
+  rate_limited: "turnFailureRateLimited",
+  auth: "turnFailureAuth",
+  quota: "turnFailureQuota",
+  stream_timeout: "turnFailureStreamTimeout",
+  timeout: "turnFailureTimeout",
+  network: "turnFailureNetwork",
+  provider_unavailable: "turnFailureProviderUnavailable",
+  execution_owner_conflict: "turnFailureOwnerConflict",
+  unclassified: "turnFailureUnclassified",
+  runtime_restarted: "turnFailureRuntimeRestarted",
+};
+const failureDomainMessageKeys: Record<string, keyof Messages> = {
+  provider: "failureProvider",
+  policy: "failurePolicy",
+  tool: "failureTool",
+  harness: "failureHarness",
+  internal: "failureInternal",
+  unknown: "failureInternal",
+};
+function runtimeFailureMessage(event: RuntimeStreamEvent, t: Messages): string {
+  if (event.message === "turn.cancelled") return t.turnFailureCancelled;
+  if (event.message === "turn.interrupted") return t.turnFailureInterrupted;
+  const reasonKey = event.reason ? failureReasonMessageKeys[event.reason] : undefined;
+  const reason = reasonKey ? t[reasonKey] : t.turnFailureUnknown;
+  const domainKey = event.failure_domain ? failureDomainMessageKeys[event.failure_domain] : undefined;
+  const domain = domainKey ? ` · ${t.failureDomain}: ${t[domainKey]}` : "";
+  return `${t.requestFailed}: ${reason}${domain}`;
+}
 const defaultCommands = ["/help", "/goal", "/permissions", "/model", "/compress", "/skills", "/clear", "/short", "/verbose"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
+const goalPreferencePrefix = "willdeep.web.goal.";
+
+type GoalPreference = { text: string; enabled: boolean };
+function savedGoalPreference(sessionId: string): GoalPreference {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(`${goalPreferencePrefix}${sessionId}`) || "null");
+    if (value && typeof value === "object" && "text" in value && "enabled" in value
+      && typeof value.text === "string" && typeof value.enabled === "boolean") {
+      return { text: value.text, enabled: value.enabled };
+    }
+  } catch { /* Invalid local state falls back to the default. */ }
+  return { text: "", enabled: false };
+}
+
+type SkillMention = { start: number; end: number; query: string };
+function skillMentionAtCursor(value: string, cursor: number): SkillMention | null {
+  const before = value.slice(0, cursor);
+  const match = /(?:^|\s)\$([\w-]*)$/.exec(before);
+  if (!match) return null;
+  const start = match.index + match[0].lastIndexOf("$");
+  return { start, end: cursor, query: match[1].toLowerCase() };
+}
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init); const value = await response.json();
@@ -303,14 +360,29 @@ export function App() {
     setAttachments([...attachmentsRef.current, { ...payload, id: crypto.randomUUID() }]);
   };
   const [goal, setGoal] = useState("");
+  const [goalEnabled, setGoalEnabled] = useState(false);
+  const pendingGoalPreference = useRef<GoalPreference | null>(null);
+  function updateGoalPreference(text: string, enabled: boolean) {
+    const preference = { text, enabled };
+    setGoal(text);
+    setGoalEnabled(enabled);
+    if (sessionId) localStorage.setItem(`${goalPreferencePrefix}${sessionId}`, JSON.stringify(preference));
+    else pendingGoalPreference.current = preference;
+  }
+  const [composerCursor, setComposerCursor] = useState(0);
+  const [skillSelected, setSkillSelected] = useState(0);
+  const [skillPickerDismissed, setSkillPickerDismissed] = useState(false);
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
   const [error, setError] = useState("");
+  const [runtimeFailure, setRuntimeFailure] = useState<RuntimeFailureReference | null>(null);
   const references = useComposerReferences(workspace, prompt, t.loadFailed, setError);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   function chooseReference(entry: Reference) {
     if (!references.query) return;
     const cursor = references.query.start + entry.value.length + 1;
     setPrompt(insertReference(prompt, references.query, entry.value));
+    setComposerCursor(cursor);
+    setSkillPickerDismissed(false);
     references.dismiss();
     requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(cursor, cursor); });
   }
@@ -519,6 +591,10 @@ export function App() {
     setSessionModel(null);
     setModelOpen(false);
     setShareOpen(false);
+    setGoal("");
+    setGoalEnabled(false);
+    pendingGoalPreference.current = null;
+    setRuntimeFailure(null);
     setShowArchived(false);
     json<Session[]>("/api/sessions").then((values) => {
       setSessions(values);
@@ -611,12 +687,25 @@ export function App() {
   const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
   const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
   const commandMatches = useMemo(() => prompt.startsWith("/") ? composer.commands.filter((item) => item.startsWith(prompt.split(/\s/)[0])).slice(0, 6) : [], [prompt, composer.commands]);
-  const skillQuery = prompt.match(/(?:^|\s)\$([\w-]*)$/)?.[1]?.toLowerCase();
+  const skillMention = skillMentionAtCursor(prompt, composerCursor);
+  const skillQuery = skillMention?.query;
   const skillMatches = useMemo(() => {
     if (skillQuery === undefined) return [];
     const query = skillSearch.trim().toLowerCase() || skillQuery;
     return composer.skills.filter((skill) => `${skill.identifier} ${skill.name} ${skill.description}`.toLowerCase().includes(query)).slice(0, 8);
   }, [skillQuery, skillSearch, composer.skills]);
+  useEffect(() => { setSkillSelected(0); setSkillSearch(""); setSkillPickerDismissed(false); }, [skillQuery]);
+  useEffect(() => { setSkillSelected((current) => Math.min(current, Math.max(0, skillMatches.length - 1))); }, [skillMatches.length]);
+
+  function chooseSkill(skill: ComposerSkill) {
+    if (!skillMention) return;
+    const insertion = `$${skill.identifier} `;
+    const cursor = skillMention.start + insertion.length;
+    setPrompt(`${prompt.slice(0, skillMention.start)}${insertion}${prompt.slice(skillMention.end)}`);
+    setComposerCursor(cursor);
+    setSkillPickerDismissed(true);
+    requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(cursor, cursor); });
+  }
 
   function updateRun(runId: string, updater: (steps: RunStep[]) => RunStep[]) {
     setChat((current) => current.map((message) => message.id === runId ? { ...message, steps: updater(message.steps ?? []) } : message));
@@ -642,6 +731,10 @@ export function App() {
     setSessionModel(detail.model ?? null);
     conciseLineRef.current = null;
     setSessionId(detail.id);
+    pendingGoalPreference.current = null;
+    const goalPreference = savedGoalPreference(detail.id);
+    setGoal(goalPreference.text);
+    setGoalEnabled(goalPreference.enabled);
     // 换会话才重置窗口；同一个会话的轮询刷新不能把用户展开的历史收回去。
     if (chatSessionRef.current !== detail.id) {
       chatSessionRef.current = detail.id;
@@ -666,6 +759,11 @@ export function App() {
       const nextSessionId = event.session_id || activeSessionRef.current || "";
       const nextTurnId = event.turn_id || activeTurnRef.current;
       setSessionId(nextSessionId);
+      if (event.type === "submitted" && nextSessionId) {
+        const preference = pendingGoalPreference.current ?? { text: goal, enabled: goalEnabled };
+        localStorage.setItem(`${goalPreferencePrefix}${nextSessionId}`, JSON.stringify(preference));
+        pendingGoalPreference.current = null;
+      }
       setActiveRuntimeSessionId(nextSessionId);
       activeSessionRef.current = nextSessionId || null;
       activeTurnRef.current = nextTurnId || null;
@@ -691,7 +789,12 @@ export function App() {
       activeTurnRef.current = null;
       return { terminal: true as const, text: event.text || t.emptyReply };
     }
-    if (event.type === "error") return { terminal: true as const, error: event.message || t.requestFailed };
+    if (event.type === "error") {
+      if (currentSessionId && event.task_id && (event.message === "turn.failed" || event.message === "turn.interrupted")) {
+        setRuntimeFailure({ sessionId: currentSessionId, taskId: event.task_id });
+      }
+      return { terminal: true as const, error: runtimeFailureMessage(event, t) };
+    }
     if (event.type === "assistant_text_delta") {
       // 正文一开始，思维链尾巴就隐藏。
       setChat((current) => current.map((message) => {
@@ -850,7 +953,7 @@ export function App() {
           const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/stream?after=${cursor}&language=${encodeURIComponent(language)}`, { signal: controller.signal, headers: { accept: "text/event-stream" } });
           if (response.status === 409) { terminal = true; break; }
           if (!response.ok && response.status >= 400 && response.status < 500) {
-            terminalError = (await response.text()) || t.requestFailed;
+            terminalError = `${t.requestFailed}: ${(await response.text()) || t.requestFailed}`;
             terminal = true;
             break;
           }
@@ -892,7 +995,7 @@ export function App() {
         const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
         applySessionDetail(detail);
         setChat((current) => [...current, divider]);
-        if (terminalError) setError(`${t.requestFailed}: ${terminalError}`);
+        if (terminalError) setError(terminalError);
         else if (terminal) requestInputSuggestion(detail.id, turnId);
       }
       await refreshSessions();
@@ -912,6 +1015,7 @@ export function App() {
     if (busy) return;
     inputSuggestion.clear();
     setError("");
+    setRuntimeFailure(null);
     try {
       const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
       if (detail.workspace !== workspace) {
@@ -1118,7 +1222,7 @@ export function App() {
     if (!target) return;
     try {
       await mutate(`/api/sessions/${encodeURIComponent(target.id)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmation: target.id }) });
-      if (sessionId === target.id) { setSessionId(""); setChat([]); }
+      if (sessionId === target.id) { setSessionId(""); setChat([]); setGoal(""); setGoalEnabled(false); pendingGoalPreference.current = null; setRuntimeFailure(null); }
       await refreshSessions();
     } catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
     finally { setDeleteTarget(null); }
@@ -1150,14 +1254,14 @@ export function App() {
   // `override` 给插件的 `window.willdeep.chat.send` 用：它递进来的文本要
   // 立刻起一个回合，而 setPrompt 是异步的——读 state 会读到上一轮的值。
   // 走的是与用户敲回车完全相同的这条路：审批档位与沙箱一个都不绕。
-  async function send(override?: string) {
+  async function send(override?: string, source: "composer" | "plugin" = "composer") {
     const sendAttachments = attachmentsRef.current;
     const typed = (override ?? prompt).trim();
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
     if (typed === "/clear") { setChat([]); setPrompt(""); return; }
     if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); setPrompt(""); return; }
     if (typed === "/skills") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: composer.skills.length ? composer.skills.map((skill) => `$${skill.identifier} · ${skill.name}\n${skill.description}`).join("\n\n") : t.noSkills }]); setPrompt(""); return; }
-    if (typed === "/goal off") { setGoal(""); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); setPrompt(""); return; }
+    if (typed === "/goal off") { updateGoalPreference("", false); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); setPrompt(""); return; }
     if (typed === "/short" || typed === "/verbose") {
       setPrompt("");
       // 风格记在会话上。还没有会话时无处可记，先说清楚，不假装已经切过去了。
@@ -1176,7 +1280,7 @@ export function App() {
       const copy = permissionsText(language);
       // 插件页面也能调 send()。档位只认用户亲手敲的字——否则一个页面就能
       // 替用户把会话升到完全访问。
-      if (override !== undefined) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
+      if (source === "plugin") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
       if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.needsSession }]); return; }
       const argument = typed.slice("/permissions".length).trim();
       if (!argument) { setPermissionsOpen(true); void refreshApprovalMode(sessionId); return; }
@@ -1198,7 +1302,7 @@ export function App() {
     if (typed === "/model" || typed.startsWith("/model ")) {
       setPrompt("");
       const copy = modelText(language);
-      if (override !== undefined) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
+      if (source === "plugin") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
       if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.noSession }]); return; }
       const argument = typed.slice("/model".length).trim();
       if (!argument) { setModelOpen(true); return; }
@@ -1214,7 +1318,7 @@ export function App() {
     }
     const goalToStart = typed.startsWith("/goal ") ? typed.slice(6).trim() : "";
     if (goalToStart) {
-      setGoal(goalToStart);
+      updateGoalPreference(goalToStart, true);
       setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: `${t.goalSet}: ${goalToStart}` }]);
       if (busy) { setPrompt(""); return; }
     }
@@ -1223,7 +1327,7 @@ export function App() {
     inputSuggestion.settleSent(typed);
     // Runtime owns submitted messages; clients never keep a second execution queue.
     if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
-    const activeGoal = goalToStart || goal;
+    const activeGoal = goalToStart || (goalEnabled ? goal : "");
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
     const outgoingAttachments = sendAttachments;
     const outgoingPrompt = prompt;
@@ -1236,10 +1340,11 @@ export function App() {
     const startedAt = Date.now();
     activeRunRef.current = runId;
     followBottomRef.current = true;
-    setError(""); setActivity(t.thinking); setBusy(true);
+    setError(""); setRuntimeFailure(null); setActivity(t.thinking); setBusy(true);
     inputSuggestion.clear();
     setChat((current) => [...current, { id: nextId("user"), role: "user", content: `${content}${outgoingAttachments.length ? `\n[${outgoingAttachments.length} ${t.attachmentCount}]` : ""}` }, { id: runId, role: "activity", content: "", steps: [] }]);
     let terminalFailure = false;
+    let terminalFailureMessage = "";
     try {
       const response = await fetch("/api/chat/stream", { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", accept: "text/event-stream" }, body: requestBody });
       let answer = "";
@@ -1257,6 +1362,7 @@ export function App() {
         const result = await applyStreamEvent(event, runId);
         if (result.terminal && result.error) {
           terminalFailure = Boolean(event.turn_id);
+          terminalFailureMessage = result.error;
           throw new Error(result.error);
         }
         if (result.terminal) {
@@ -1298,7 +1404,7 @@ export function App() {
         await resumeTurn(recoverSessionId, recoverTurnId);
       } else if (!(reason instanceof DOMException && reason.name === "AbortError")) {
         keepInterruptedLine();
-        setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+        setError(terminalFailureMessage || `${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
       }
     } finally { if (abortRef.current === controller) abortRef.current = null; if (activeRunRef.current === runId) activeRunRef.current = null; activeTurnRef.current = null; activeSessionRef.current = null; setActiveRuntimeSessionId(""); pendingStopRef.current = false; setBusy(false); setActivity(""); }
   }
@@ -1349,7 +1455,7 @@ export function App() {
       }} />}
       <PluginPage plugin={plugin} destination={destination} messages={t} locale={language} colorScheme={colorScheme} workspace={workspace || null} sessionId={sessionId || null} selectedItemId={pluginSelectedItem} onSelectItem={setPluginSelectedItem} onNavigate={navigateToDestination} onOpenPluginCenter={() => setRail({ kind: "center" })} busy={busy} onChatText={(text, sendNow) => {
         setRail({ kind: "conversation" });
-        if (sendNow) void send(text); else setPrompt(text);
+        if (sendNow) void send(text, "plugin"); else setPrompt(text);
       }} onOpenSession={(id) => { setRail({ kind: "conversation" }); void loadSessionRef.current(id); }} />
       {pluginOverlays}
     </Flex></Box>;
@@ -1490,8 +1596,6 @@ export function App() {
     <Flex flex="1" minW="0" className="conversation-with-schedules">
     <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span>{selectedSession?.started_by && <span className="session-lineage">{t.sessionLineage.replace("{parent}", sessions.find((item) => item.id === selectedSession.started_by)?.title || selectedSession.started_by.slice(0, 8)).replace("{time}", lineageTime(selectedSession.created_at, t))}</span>}<h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
-      {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} />}
-      {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} />}
       {sessionId && <SharePanel key={`share-${sessionId}`} sessionId={sessionId} language={language} open={shareOpen} onOpenChange={setShareOpen} />}
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>
@@ -1500,7 +1604,7 @@ export function App() {
         <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
-        {error && <Text color="var(--danger-text)" py="4">{error}</Text>}<div ref={endRef} />
+        {error && <Box className="request-error"><Text role="alert">{error}</Text>{runtimeFailure && <RuntimeFailureDetails key={`${runtimeFailure.sessionId}:${runtimeFailure.taskId}`} sessionId={runtimeFailure.sessionId} taskId={runtimeFailure.taskId} messages={t} />}</Box>}<div ref={endRef} />
       </Box>
       {/* 聊天正文选中气泡。插件拿到的 `text` 是用户真正看到的那段字，
           `source` 固定 "chat.selection"，与 macOS 宿主传的两个参数一致。 */}
@@ -1517,13 +1621,26 @@ export function App() {
       <Box className="composer-shell">
         {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
-        {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); setPrompt(command); }}>{command}</button>)}</Box>}
-        {skillQuery !== undefined && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill) => <button key={skill.identifier} type="button" onMouseDown={(event) => { event.preventDefault(); setSkillSearch(""); setPrompt((current) => current.replace(/\$[\w-]*$/, `$${skill.identifier} `)); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
+        {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); if (command === "/permissions" || command === "/model") void send(command); else setPrompt(command); }}>{command}</button>)}</Box>}
+        {skillQuery !== undefined && !skillPickerDismissed && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill, index) => <button key={skill.identifier} type="button" aria-selected={index === skillSelected} onMouseDown={(event) => { event.preventDefault(); chooseSkill(skill); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
         {enqueueButton.visible && <button type="button" className="queue-enqueue" title={enqueueButton.enabled ? queueText("enqueue", language) : queueText("enqueueNeedsSession", language)} disabled={!enqueueButton.enabled} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
         <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
-        <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
+        <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); setComposerCursor(event.target.selectionStart); setSkillPickerDismissed(false); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; setComposerCursor(field.selectionStart); setSkillPickerDismissed(false); if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
+          if (skillMention && !skillPickerDismissed) {
+            if (event.key === "Escape") { event.preventDefault(); setSkillPickerDismissed(true); setSkillSearch(""); return; }
+            if (skillMatches.length && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+              event.preventDefault();
+              setSkillSelected((current) => (current + (event.key === "ArrowUp" ? -1 : 1) + skillMatches.length) % skillMatches.length);
+              return;
+            }
+            if (skillMatches.length && ["Enter", "Tab"].includes(event.key) && !event.shiftKey) {
+              event.preventDefault();
+              chooseSkill(skillMatches[skillSelected]);
+              return;
+            }
+          }
           if (references.query) {
             if (event.key === "Escape") { event.preventDefault(); references.dismiss(); return; }
             if (references.entries.length && ["ArrowUp", "ArrowDown", "Tab", "Enter"].includes(event.key) && !event.shiftKey) {
@@ -1557,6 +1674,19 @@ export function App() {
         <Text className={`send-hint ${busy ? "busy" : "idle"}`}>{busy ? attachments.length ? queueText("composerHint", language) : t.hintBusy : t.hintIdle}</Text>
         <Button aria-label={busy ? t.stop : t.send} title={busy ? t.stop : t.send} className={`send-button ${busy ? "stop" : ""}`} onClick={busy ? () => void stop() : () => void send()} disabled={!busy && ((!prompt.trim() && !attachments.length) || selectedSession?.archived)}>{busy ? <Box className="stop-icon" /> : <Text className="send-icon">↑</Text>}</Button>
       </Box>
+      <div className="composer-control-row">
+        <div className="composer-control-items">
+          {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} />}
+          {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} />}
+        </div>
+        <div className="goal-mode-control">
+          <label className="goal-mode-toggle">
+            <input type="checkbox" checked={goalEnabled} onChange={(event) => updateGoalPreference(goal, event.target.checked)} />
+            <span>{t.goalMode}</span>
+          </label>
+          <Input className="goal-mode-input" size="sm" value={goal} onChange={(event) => updateGoalPreference(event.target.value, goalEnabled)} placeholder={t.goalModePlaceholder} aria-label={t.goalMode} title={t.goalModeHint} disabled={!goalEnabled} />
+        </div>
+      </div>
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />
     </Container>
     </Flex>

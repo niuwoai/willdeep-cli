@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RuntimeQueue, type RuntimeQueueItem } from "./RuntimeQueue";
 
@@ -11,6 +11,17 @@ function mount() {
   render(<QueryClientProvider client={client}><RuntimeQueue sessionId="session-a" language="zh-CN" /></QueryClientProvider>);
   return client;
 }
+it("puts the message above its actions and keeps the conditions beside the verbs", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [item] })));
+  mount();
+  const message = await screen.findByText(item.text);
+  const row = message.closest("li") as HTMLElement;
+  expect(message.compareDocumentPosition(screen.getByRole("button", { name: /优先处理/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(row).queryByText("图片")).toBeNull();
+  expect(within(row).getByRole("button", { name: /优先处理/ }).textContent).toContain("仍需判断依赖");
+  expect(within(row).getByRole("button", { name: /独立处理/ }).textContent).toContain("权限不变");
+  expect(screen.getByText(/仅明确独立的消息可以先处理/).closest("p")!.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+});
 it("shows the Runtime snapshot and sends edits with the original identity and text", async () => {
   let pending = [item];
   const requests: unknown[] = [];

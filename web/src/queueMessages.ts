@@ -24,8 +24,10 @@ const text = {
   paused: ["管理期间暂停自动发送", "Automatic sending is paused while managing", "管理中は自動送信を停止"],
   enqueue: ["加入待发队列", "Add to queue", "送信待ちに追加"],
   enqueueNeedsSession: ["先发送一条消息开始会话，才能把内容放进队列", "Send a message to start a session before queueing", "キューに追加する前に、メッセージを送ってセッションを開始してください"],
-  prioritize: ["优先处理（仍需判断依赖）", "Prioritize (dependency checks still apply)", "優先処理（依存関係を確認）"],
-  runIndependent: ["标记为独立任务并处理（权限不变）", "Run as independent work (permissions unchanged)", "独立タスクとして処理（権限は変更しない）"],
+  prioritize: ["优先处理", "Prioritize", "優先処理"],
+  prioritizeHint: ["仍需判断依赖", "Dependency checks still apply", "依存関係を確認"],
+  runIndependent: ["独立处理", "Run independently", "独立して処理"],
+  runIndependentHint: ["权限不变", "Permissions unchanged", "権限は変更しない"],
   dependencyPolicy: ["等待期间，仅明确独立的消息可以先处理；有依赖或尚不明确的消息继续排队。", "While waiting, only clearly independent messages can run first; dependent or uncertain messages remain queued.", "待機中は独立性が明確なメッセージのみ先に処理し、依存関係があるか不明なものは待機します。"],
   copyCode: ["复制", "Copy", "コピー"], copiedCode: ["已复制", "Copied", "コピーしました"], copyFailed: ["复制失败", "Couldn't copy", "コピーできませんでした"],
 } as const;

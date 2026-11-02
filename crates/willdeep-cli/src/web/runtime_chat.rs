@@ -123,7 +123,7 @@ pub(super) async fn run_runtime_turn_inner(
                 "session_id": remote_session.id, "turn_id": turn.id,
             }),
             status => {
-                serde_json::json!({"type":"error", "message":format!("turn.{status:?}").to_ascii_lowercase(), "session_id":remote_session.id,"turn_id":turn.id})
+                serde_json::json!({"type":"error", "message":format!("turn.{status:?}").to_ascii_lowercase(), "session_id":remote_session.id,"turn_id":turn.id,"task_id":turn.active_task_id})
             }
         };
         send_event(tx, event).await;

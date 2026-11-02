@@ -600,7 +600,12 @@ pub(crate) async fn execute_noninteractive(
     );
     let run_result = built
         .agent
-        .run_checkpointed(history, user_message, Some(&checkpointer))
+        .run_checkpointed_with_summary(
+            history,
+            user_message,
+            Some(&checkpointer),
+            session.context_summary.clone(),
+        )
         .await;
     // Synchronize even on error: files may already have changed during this run.
     *session = store.load_baselined(session.id)?;
@@ -614,6 +619,8 @@ pub(crate) async fn execute_noninteractive(
     let mut outcome = run_result?;
     present_partial_outcome(&mut outcome, language);
     session.messages = outcome.messages.clone();
+    // 摘要随消息一起落盘：下一轮直接复用它，不再把整段历史按块重摘。
+    session.context_summary = outcome.context_summary.clone();
     store.save(session)?;
     let mut waiting_background = false;
     loop {
@@ -686,7 +693,7 @@ pub(crate) async fn execute_noninteractive(
         waiting_background = false;
         outcome = built
             .agent
-            .run_checkpointed(
+            .run_checkpointed_with_summary(
                 session.messages.clone(),
                 willdeep_core::Message::host_instruction(if instruction_wake {
                     INSTRUCTION_WAKE_PROMPT
@@ -694,10 +701,12 @@ pub(crate) async fn execute_noninteractive(
                     KERNEL_WAKE_PROMPT
                 }),
                 Some(&checkpointer),
+                session.context_summary.clone(),
             )
             .await?;
         *session = store.load_baselined(session.id)?;
         session.messages = outcome.messages.clone();
+        session.context_summary = outcome.context_summary.clone();
         store.save(session)?;
         willdeep_core::kernel_store::flush(&built.kernel, &built.kernel_store);
     }

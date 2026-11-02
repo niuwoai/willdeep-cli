@@ -33,6 +33,7 @@ mod command_tests {
             input_tokens: 12_345,
             output_tokens: 678,
             first_response_millis,
+            context_summary: None,
         }
     }
 

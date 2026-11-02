@@ -206,6 +206,20 @@ module ConfigSchema
         { key: "max_attempts", label: "验证重试次数", type: "int", default: nil,
           min: 1, max: 6, description: "1 到 6" }
       ]
+    },
+    {
+      id: "worker_tiers", prefix: "worker_tiers", title: "Worker 档位",
+      description: "每个 [worker_tiers.<档>] 把这一档兑现成哪个模型；显式配置压过网关默认表",
+      instanceHint: "档位名，只能是 standard、advanced 或 expert",
+      suggestions: %w[standard advanced expert],
+      fields: [
+        { key: "model", label: "模型", type: "string", default: nil,
+          description: "这一档用的模型。基础档默认不绑定，派工时用各工种自己的模型；写上后会盖过工种自己的选择" },
+        { key: "context_window", label: "上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS,
+          description: "4000 到 1048576。不写时基础档 131072，进阶档与专家档 262144" },
+        { key: "provider_profile", label: "提供商", type: "string", default: nil, ref: "providers",
+          description: "改走另一个 [providers.<id>]；不写则沿用当前提供商的端点与凭据" }
+      ]
     }
   ].freeze
 

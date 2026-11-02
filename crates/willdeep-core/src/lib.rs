@@ -5,6 +5,7 @@ pub mod background;
 pub mod background_notice;
 pub mod board;
 pub mod checkpoint;
+pub mod context_summary;
 pub mod conversation;
 pub mod detached_job;
 mod execution;

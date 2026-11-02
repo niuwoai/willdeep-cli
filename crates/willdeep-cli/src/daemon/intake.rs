@@ -8,10 +8,10 @@
 //! 一条消息送进指定工作区的会话。
 
 use super::*;
-use crate::config::{IntakeForm, IntakeSettings, IntakeSite};
+use crate::config::{INTAKE_FORM_TOKEN_FIELD, IntakeForm, IntakeSettings, IntakeSite};
 use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
-use axum::http::header::{CONTENT_TYPE, HeaderName};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderName};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -20,6 +20,9 @@ const MAX_SITE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_WEBHOOK_BYTES: usize = 256 * 1024;
 const MAX_FIELD_CHARS: usize = 8 * 1024;
 const MAX_PENDING_RECORDS: usize = 200;
+const FORM_TOKEN_TTL_SECONDS: u64 = 15 * 60;
+const MAX_FORM_TOKEN_CHARS: usize = 256;
+const MAX_CONSUMED_FORM_NONCES: usize = 4096;
 
 type SignatureMac = Hmac<Sha256>;
 
@@ -182,7 +185,12 @@ async fn serve(
     listen: SocketAddr,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    let state = Arc::new(IntakeState { service, settings });
+    let state = Arc::new(IntakeState {
+        service,
+        settings,
+        form_signing_key: new_form_signing_key(),
+        consumed_form_nonces: std::sync::Mutex::new(HashMap::new()),
+    });
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/s/{slug}", get(site_index))
@@ -209,6 +217,38 @@ async fn serve(
 struct IntakeState {
     service: Arc<IntakeService>,
     settings: IntakeSettings,
+    form_signing_key: [u8; 32],
+    consumed_form_nonces: std::sync::Mutex<HashMap<String, u64>>,
+}
+
+struct FormTokenClaims {
+    nonce: String,
+    expires_at: u64,
+}
+
+enum FormNonceError {
+    Expired,
+    Replay,
+    Capacity,
+}
+
+impl IntakeState {
+    fn consume_form_nonce(&self, claims: &FormTokenClaims) -> Result<(), FormNonceError> {
+        let now = now_seconds();
+        if claims.expires_at <= now {
+            return Err(FormNonceError::Expired);
+        }
+        let mut consumed = self.consumed_form_nonces.lock().expect("form nonce cache");
+        consumed.retain(|_, expires_at| *expires_at > now);
+        if consumed.contains_key(&claims.nonce) {
+            return Err(FormNonceError::Replay);
+        }
+        if consumed.len() >= MAX_CONSUMED_FORM_NONCES {
+            return Err(FormNonceError::Capacity);
+        }
+        consumed.insert(claims.nonce.clone(), claims.expires_at);
+        Ok(())
+    }
 }
 
 async fn site_index(
@@ -297,14 +337,23 @@ async fn form_page(
     let Some(form) = state.settings.forms.iter().find(|form| form.slug == slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let token = issue_form_token(&state, &slug);
     (
-        [(CONTENT_TYPE, "text/html; charset=utf-8")],
-        render_form(form),
+        [
+            (CONTENT_TYPE, "text/html; charset=utf-8"),
+            (CACHE_CONTROL, "no-store"),
+        ],
+        render_form_with_token(form, &token),
     )
         .into_response()
 }
 
+#[cfg(test)]
 fn render_form(form: &IntakeForm) -> String {
+    render_form_with_token(form, "")
+}
+
+fn render_form_with_token(form: &IntakeForm, token: &str) -> String {
     let mut fields = String::new();
     for field in &form.fields {
         let required = if field.required { " required" } else { "" };
@@ -341,9 +390,14 @@ fn render_form(form: &IntakeForm) -> String {
         };
         fields.push_str(&format!("<label>{}{control}</label>", escape(&field.label)));
     }
+    let token_field = format!(
+        "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+        escape(INTAKE_FORM_TOKEN_FIELD),
+        escape(token)
+    );
     format!(
         "<!doctype html><meta charset=\"utf-8\"><title>{}</title>\
-         <form method=\"post\"><h1>{}</h1>{fields}<button type=\"submit\">提交</button></form>",
+         <form method=\"post\">{token_field}<h1>{}</h1>{fields}<button type=\"submit\">提交</button></form>",
         escape(&form.title),
         escape(&form.title)
     )
@@ -363,10 +417,23 @@ async fn form_submit(
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let values = parse_form_body(&body);
+    let mut values = parse_form_body(&body);
+    let Some(token) = values.remove(INTAKE_FORM_TOKEN_FIELD) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let Some(claims) = verify_form_token(&state, &slug, &token) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
     let Ok(text) = render_submission(&form, &values) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
+    match state.consume_form_nonce(&claims) {
+        Ok(()) => {}
+        Err(FormNonceError::Capacity) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(FormNonceError::Expired | FormNonceError::Replay) => {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
     deliver(
         &state,
         &form.slug,
@@ -376,6 +443,71 @@ async fn form_submit(
         text,
     )
     .await
+}
+
+fn new_form_signing_key() -> [u8; 32] {
+    let mut key = [0; 32];
+    key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    key
+}
+
+fn issue_form_token(state: &IntakeState, slug: &str) -> String {
+    let expires_at = now_seconds().saturating_add(FORM_TOKEN_TTL_SECONDS);
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let mut mac = SignatureMac::new_from_slice(&state.form_signing_key)
+        .expect("form signing key has a fixed length");
+    update_form_token_mac(&mut mac, slug, expires_at, &nonce);
+    let signature = hex_encode(&mac.finalize().into_bytes());
+    format!("v1.{expires_at}.{nonce}.{signature}")
+}
+
+fn verify_form_token(state: &IntakeState, slug: &str, token: &str) -> Option<FormTokenClaims> {
+    if token.len() > MAX_FORM_TOKEN_CHARS {
+        return None;
+    }
+    let mut parts = token.split('.');
+    if parts.next() != Some("v1") {
+        return None;
+    }
+    let expires_at = parts.next()?.parse::<u64>().ok()?;
+    let nonce = parts.next()?;
+    let signature = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let parsed_nonce = uuid::Uuid::parse_str(nonce).ok()?;
+    if parsed_nonce.to_string() != nonce {
+        return None;
+    }
+    let nonce = parsed_nonce.to_string();
+    let now = now_seconds();
+    if expires_at <= now || expires_at > now.saturating_add(FORM_TOKEN_TTL_SECONDS) {
+        return None;
+    }
+    let signature = hex_decode(signature).ok()?;
+    if signature.len() != 32 {
+        return None;
+    }
+    let mut mac = SignatureMac::new_from_slice(&state.form_signing_key).ok()?;
+    update_form_token_mac(&mut mac, slug, expires_at, &nonce);
+    mac.verify_slice(&signature).ok()?;
+    Some(FormTokenClaims { nonce, expires_at })
+}
+
+fn update_form_token_mac(mac: &mut SignatureMac, slug: &str, expires_at: u64, nonce: &str) {
+    let expires_at = expires_at.to_string();
+    mac.update(b"willdeep-intake-form-v1");
+    mac.update(&[0]);
+    mac.update(slug.as_bytes());
+    mac.update(&[0]);
+    mac.update(expires_at.as_bytes());
+    mac.update(&[0]);
+    mac.update(nonce.as_bytes());
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn parse_form_body(body: &Bytes) -> HashMap<String, String> {

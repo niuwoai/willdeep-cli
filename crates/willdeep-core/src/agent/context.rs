@@ -13,6 +13,9 @@ const SUMMARY_OVERHEAD_TOKENS: u64 = 1_024;
 /// 合并分块摘要的轮数上限：真实历史两三轮就收敛，这是防呆不是预期路径。
 const MAX_SUMMARY_REDUCE_ROUNDS: usize = 8;
 const SUMMARY_TRUNCATION_MARKER: &str = "\n[…truncated for summarization…]\n";
+/// 落盘摘要正文的字节上限。正常的一份任务状态摘要是几千字，到不了这个数；
+/// 超过了只能是模型抽风或被手改过，一律当没缓存。
+const MAX_PERSISTED_SUMMARY_BYTES: usize = 256 * 1024;
 
 impl Agent {
     pub async fn compress_history(
@@ -33,7 +36,7 @@ impl Agent {
         uncertain::UncertainCalls::recover(&mut messages);
         let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
         let target = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
-        messages = self.page_tool_outputs(&messages, capacity)?;
+        messages = self.page_tool_outputs(&messages, capacity)?.messages;
         if messages.len() < KEEP_RECENT_MESSAGES + 2 && estimate_tokens(&messages) < target {
             return Ok(messages);
         }
@@ -96,23 +99,31 @@ impl Agent {
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
         let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
-        let mut result = self.page_tool_outputs(messages, capacity)?;
+        let paged = self.page_tool_outputs(messages, capacity)?;
         let watermark = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
-        let raw_estimate = estimate_tokens(&result);
+        let raw_estimate = estimate_tokens(&paged.messages);
         if raw_estimate < watermark {
-            return Ok(result);
+            return Ok(paged.messages);
         }
         // Durable history is never rewritten here, so the raw estimate stays above
         // the watermark for the rest of the run. Hysteresis is judged on the
         // compacted projection instead: an existing summary is reused until the
         // projection built from it crosses the watermark again.
+        //
+        // 缓存的 `through` 是 durable 下标，`matches` 也只看 durable 历史：分页
+        // 去重（重复的 host instruction）和随窗口变化的工具输出缩写都不会让
+        // 摘要失效，只有真被改写的前缀或换掉的 system 提示才会。
         let cached = cache
             .take()
-            .filter(|entry| entry.through <= result.len() && entry.matches(&result));
-        if let Some(entry) = &cached {
-            let reused = compact_prefix(&result, entry.through, &entry.summary);
+            .filter(|entry| entry.matches(messages))
+            .map(|entry| {
+                let through = paged.projected_index(entry.through);
+                (through, entry)
+            });
+        if let Some((through, entry)) = &cached {
+            let reused = compact_prefix(&paged.messages, *through, &entry.summary);
             if estimate_tokens(&reused) < watermark {
-                *cache = cached;
+                *cache = cached.map(|(_, entry)| entry);
                 return Ok(reused);
             }
         }
@@ -123,62 +134,57 @@ impl Agent {
             .await;
         // Preserve every original user/system message verbatim, including pasted text.
         // Only tool/assistant material is replaceable by the model's summary.
-        let mut split = batch_boundary(&result, result.len().saturating_sub(KEEP_RECENT_MESSAGES));
+        let mut split = batch_boundary(
+            &paged.messages,
+            paged.messages.len().saturating_sub(KEEP_RECENT_MESSAGES),
+        );
         if split == 0 {
-            split = batch_boundary(&result, result.len().saturating_sub(1));
+            split = batch_boundary(&paged.messages, paged.messages.len().saturating_sub(1));
         }
+        // 新摘要要落盘，锚点必须是 durable 下标。
+        let split_through = paged.durable_index(split, messages.len());
         let replaceable = |range: &[Message]| {
             range
                 .iter()
                 .any(|message| matches!(message.role, Role::Tool | Role::Assistant))
         };
-        match cached {
-            Some(entry) if entry.through >= split => {
+        let mut result = paged.messages;
+        if let Some((through, entry)) = cached {
+            if through >= split {
                 // Nothing new is old enough to fold in; keep the summary and let
                 // batch archiving handle the recent tail.
-                result = compact_prefix(&result, entry.through, &entry.summary);
+                result = compact_prefix(&result, through, &entry.summary);
                 *cache = Some(entry);
-            }
-            Some(entry) if !replaceable(&result[entry.through..split]) => {
-                let entry = SummaryCache::new(&result, split, entry.summary);
+            } else if !replaceable(&result[through..split]) {
                 result = compact_prefix(&result, split, &entry.summary);
-                *cache = Some(entry);
-            }
-            Some(entry) => {
+                *cache = Some(SummaryCache::new(messages, split_through, entry.summary));
+            } else {
                 // Incremental: previous summary plus only the messages it does not cover.
-                // The outgoing summary's marker is recomputed from the original prefix, not
-                // from this source. The source still carries it, because the previous summary
-                // is itself a message the compressor reads back.
-                let mut source = vec![summary_message(
-                    &entry.summary,
-                    result[..entry.through]
-                        .iter()
-                        .any(Message::requires_reasoning_replay),
-                )];
-                source.extend_from_slice(&result[entry.through..split]);
+                // The outgoing marker is recomputed from the original durable prefix;
+                // this incremental slice uses the projected index for this run.
+                let requires_reasoning_replay = messages[..entry.through]
+                    .iter()
+                    .any(Message::requires_reasoning_replay);
+                let mut source = vec![summary_message(&entry.summary, requires_reasoning_replay)];
+                source.extend_from_slice(&result[through..split]);
                 let summary = self.summarize_history(&source, record_usage).await?;
-                let entry = SummaryCache::new(&result, split, summary);
-                result = compact_prefix(&result, split, &entry.summary);
-                *cache = Some(entry);
+                result = compact_prefix(&result, split, &summary);
+                *cache = Some(SummaryCache::new(messages, split_through, summary));
             }
-            None if split > 0 && replaceable(&result[..split]) => {
-                let summary = self
-                    .summarize_history(&result[..split], record_usage)
-                    .await?;
-                let entry = SummaryCache::new(&result, split, summary);
-                result = compact_prefix(&result, split, &entry.summary);
-                *cache = Some(entry);
-            }
-            None => {}
+        } else if split > 0 && replaceable(&result[..split]) {
+            let summary = self
+                .summarize_history(&result[..split], record_usage)
+                .await?;
+            result = compact_prefix(&result, split, &summary);
+            *cache = Some(SummaryCache::new(messages, split_through, summary));
         }
         // The usual recent tail is a preference, not a licence to exceed the
         // window. A single thinking response can be larger than that whole tail.
         if estimate_tokens(&result) > capacity && replaceable(&result) {
             let summary = self.summarize_history(&result, record_usage).await?;
-            let source = self.page_tool_outputs(messages, capacity)?;
-            let entry = SummaryCache::new(&source, source.len(), summary);
-            result = compact_prefix(&source, entry.through, &entry.summary);
-            *cache = Some(entry);
+            let full = self.page_tool_outputs(messages, capacity)?;
+            result = compact_prefix(&full.messages, full.messages.len(), &summary);
+            *cache = Some(SummaryCache::new(messages, messages.len(), summary));
         }
         // If the recent tail remains too large, replace complete tool batches with
         // archived references. Never remove individual protocol messages.
@@ -203,7 +209,7 @@ impl Agent {
         &self,
         messages: &[Message],
         capacity: u64,
-    ) -> Result<Vec<Message>, AgentError> {
+    ) -> Result<PagedHistory, AgentError> {
         let limit = (capacity / TOOL_MESSAGE_WINDOW_DIVISOR).max(64);
         // Host steering can be re-injected every turn. Keep the last exact
         // occurrence, preserving its ordering/authority; operator input and
@@ -218,19 +224,39 @@ impl Agent {
                 keep[index] = false;
             }
         }
-        messages.iter().enumerate().filter(|(index, _)| keep[*index]).map(|(_, message)| {
+        let mut paged = PagedHistory {
+            messages: Vec::with_capacity(messages.len()),
+            durable: Vec::with_capacity(messages.len()),
+        };
+        for (index, message) in messages.iter().enumerate() {
+            if !keep[index] {
+                continue;
+            }
             let mut result = message.clone();
-            if message.role == Role::Tool && !uncertain::has_unknown_effect(std::slice::from_ref(message)) && text_tokens(&message.content) > limit {
+            if message.role == Role::Tool
+                && !uncertain::has_unknown_effect(std::slice::from_ref(message))
+                && text_tokens(&message.content) > limit
+            {
                 let id = self.tools.archive_output(&message.content)?;
                 // Unicode-safe excerpts are hints; the archived result is authoritative.
                 let head: String = message.content.chars().take(limit as usize).collect();
-                let tail: String = message.content.chars().rev().take(limit as usize / 2).collect::<String>().chars().rev().collect();
+                let tail: String = message
+                    .content
+                    .chars()
+                    .rev()
+                    .take(limit as usize / 2)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
                 result.content = format!(
                     "{head}\n[Tool output abbreviated; use read_tool_output with id={id:?} and character offset to retrieve the full result.]\n{tail}"
                 );
             }
-            Ok(result)
-        }).collect()
+            paged.messages.push(result);
+            paged.durable.push(index);
+        }
+        Ok(paged)
     }
 
     fn archive_old_batches(
@@ -456,7 +482,7 @@ impl Agent {
                 {
                     self.report_model_fallback("compressor", &skipped, Some(model))
                         .await;
-                    return Ok(completion.content);
+                    return Ok(clamp_summary(completion.content));
                 }
                 Ok(_) => {
                     skipped.push((model, "empty or incomplete summary".to_owned()));
@@ -518,12 +544,43 @@ fn summary_message(summary: &str, reasoning_replay: bool) -> Message {
     }
 }
 
-/// Request-time summary of `messages[..through]`, valid only while that prefix
-/// is unchanged. System messages are excluded from the fingerprint: they are
-/// refreshed every turn and always kept verbatim outside the summary.
+/// 分页投影，以及每条投影消息在 durable 历史里的下标。
+///
+/// 下标必须记下来：摘要是按 durable 前缀存的，投影却会随去重和窗口变化挪位置。
+pub(super) struct PagedHistory {
+    messages: Vec<Message>,
+    /// 严格递增的 durable 下标。
+    durable: Vec<usize>,
+}
+
+impl PagedHistory {
+    /// 投影下标 → durable 下标；落在末尾之后即整段。
+    fn durable_index(&self, projected: usize, total: usize) -> usize {
+        self.durable.get(projected).copied().unwrap_or(total)
+    }
+
+    /// durable 下标 → 投影下标：`durable[..index]` 里有多少条留在了投影里。
+    fn projected_index(&self, durable: usize) -> usize {
+        self.durable.partition_point(|index| *index < durable)
+    }
+}
+
+/// Request-time summary of `messages[..through]`, valid only while that prefix,
+/// the system prompt, and the summary itself are what they were.
+///
+/// System messages are excluded from the prefix fingerprint: they are refreshed
+/// every turn and always kept verbatim outside the summary. They are hashed
+/// separately as [`Self::system`] so that editing rules invalidates the summary
+/// instead of leaving the old one in force.
+///
+/// 这份缓存会随会话落盘（见 [`crate::context_summary`]）。run 内复用只是省一次
+/// 调用，跨 run 复用才是真正的账：durable 历史从不因压缩变短，没有它每一轮都
+/// 要把同一段前缀从头再摘一遍。
 pub(super) struct SummaryCache {
+    /// 覆盖到 durable 历史第几条（不含）。
     through: usize,
-    fingerprint: u64,
+    fingerprint: String,
+    system: String,
     summary: String,
 }
 
@@ -532,27 +589,107 @@ impl SummaryCache {
         Self {
             through,
             fingerprint: prefix_fingerprint(&messages[..through]),
-            summary,
+            system: system_fingerprint(messages),
+            // 分块合并那条路按 token 预算截断，按字节算仍可能超上限；入缓存时
+            // 统一封顶，保证落盘的东西一定能通过 `matches` 的长度校验。
+            summary: clamp_summary(summary),
+        }
+    }
+
+    /// 上一次运行存下来的摘要。信任但不豁免校验：调用方仍要用 [`Self::matches`]
+    /// 对当前历史验一遍。
+    pub(super) fn restore(entry: crate::context_summary::ContextSummary) -> Self {
+        Self {
+            through: entry.through,
+            fingerprint: entry.fingerprint,
+            system: entry.system_fingerprint,
+            summary: entry.summary,
+        }
+    }
+
+    pub(super) fn persist(&self) -> crate::context_summary::ContextSummary {
+        crate::context_summary::ContextSummary {
+            through: self.through,
+            fingerprint: self.fingerprint.clone(),
+            system_fingerprint: self.system.clone(),
+            // 从旧文件读回来的正文可能已经超限；写回时顺手封顶，免得这份
+            // 永远过不了校验的缓存一直留在会话里。
+            summary: clamp_summary(self.summary.clone()),
         }
     }
 
     fn matches(&self, messages: &[Message]) -> bool {
-        prefix_fingerprint(&messages[..self.through]) == self.fingerprint
+        // 落盘的摘要是外部输入：越界、坏指纹、超长正文都只能算不匹配，不能
+        // panic，也不能把来路不明的文本当成可信缓存回放。
+        self.through <= messages.len()
+            && self.summary.len() <= MAX_PERSISTED_SUMMARY_BYTES
+            && is_sha256_hex(&self.fingerprint)
+            && is_sha256_hex(&self.system)
+            && system_fingerprint(messages) == self.system
+            && prefix_fingerprint(&messages[..self.through]) == self.fingerprint
     }
 }
 
-fn prefix_fingerprint(messages: &[Message]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for message in messages
-        .iter()
-        .filter(|message| message.role != Role::System)
-    {
-        serde_json::to_string(message)
-            .unwrap_or_default()
-            .hash(&mut hasher);
+/// 前缀指纹。
+///
+/// 用 SHA-256 而不是 `DefaultHasher`：这份指纹要跨进程、跨二进制版本活在会话
+/// 文件里，而 `DefaultHasher` 不保证跨版本稳定；六十四位又挡不住工具输出这种
+/// 不可信输入构造出碰撞——真撞上就是把 A 段历史的摘要喂给 B 段。哈希只算一次
+/// 前缀，几 MB 的序列化对一次模型调用来说可以忽略。
+fn prefix_fingerprint(messages: &[Message]) -> String {
+    fingerprint_of(
+        messages
+            .iter()
+            .filter(|message| message.role != Role::System),
+    )
+}
+
+/// system 提示（系统提示、全局/项目规则、技能目录）的指纹。
+///
+/// 摘要里会概括 system 的内容，而摘要现在跨运行复用：规则删改之后还拿旧摘要，
+/// 等于让已经删掉的指令继续随请求发出去。system 每轮由宿主重新拼一遍，同一个
+/// 会话里内容稳定，按内容比对不会误伤。
+fn system_fingerprint(messages: &[Message]) -> String {
+    fingerprint_of(
+        messages
+            .iter()
+            .filter(|message| message.role == Role::System),
+    )
+}
+
+fn fingerprint_of<'a>(messages: impl Iterator<Item = &'a Message>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for message in messages {
+        hasher.update(serde_json::to_vec(message).unwrap_or_default());
     }
-    hasher.finish()
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// 摘要正文自己也要封顶。
+///
+/// 分块路径会把每一块摘完再 `clamp_text`，单块路径不经过那一步——模型抽风给出
+/// 超长 completion 时，它会原样落盘，之后每一轮都跟着重发。留出截断标记的
+/// 位置，保证封顶后的正文仍能通过 [`SummaryCache::matches`] 的长度校验。
+fn clamp_summary(text: String) -> String {
+    let limit = MAX_PERSISTED_SUMMARY_BYTES.saturating_sub(SUMMARY_TRUNCATION_MARKER.len());
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut clamped = text[..end].to_owned();
+    clamped.push_str(SUMMARY_TRUNCATION_MARKER);
+    clamped
 }
 
 /// Advance over a whole tool-result group so no split starts with a tool result.

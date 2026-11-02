@@ -314,6 +314,8 @@ pub struct IntakeSite {
     pub root: PathBuf,
 }
 
+pub(crate) const INTAKE_FORM_TOKEN_FIELD: &str = "__willdeep_form_token";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IntakeForm {
@@ -886,6 +888,9 @@ pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
         }
         let mut names = HashSet::new();
         for field in &form.fields {
+            if field.name == INTAKE_FORM_TOKEN_FIELD {
+                bail!("intake form {} uses a reserved field name", form.slug);
+            }
             if field.name.trim().is_empty() || !names.insert(field.name.clone()) {
                 bail!(
                     "intake form {} has an empty or repeated field name",

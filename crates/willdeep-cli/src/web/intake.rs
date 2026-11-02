@@ -273,6 +273,11 @@ async fn browse(
 }
 
 async fn read(State(state): State<Arc<WebState>>) -> Result<Json<IntakeView>, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "reading public intake settings is available only from a loopback Web server",
+        ));
+    }
     let settings = load_settings(&state.config_path)?;
     let running_listen = match state.intake.as_ref() {
         Some(intake) => intake.status().await.map(|address| address.to_string()),

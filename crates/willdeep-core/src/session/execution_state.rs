@@ -41,6 +41,7 @@ pub(super) fn fingerprint(session: &Session) -> Result<[u8; 32], SessionError> {
             &session.current_plan,
             session.compression_generation,
             &session.compression_checkpoint,
+            &session.context_summary,
             &session.manual_compression_usage,
             &session.execution_checkpoint,
             &session.goal_state,
@@ -60,6 +61,8 @@ pub(super) fn copy(source: &Session, target: &mut Session) {
     // 所以这里也不覆盖调用方手上的那一份。
     target.compression_generation = source.compression_generation;
     target.compression_checkpoint = source.compression_checkpoint.clone();
+    // 摘要绑定在消息前缀上，必须跟消息、压缩边界同进同退。
+    target.context_summary = source.context_summary.clone();
     target.manual_compression_usage = source.manual_compression_usage.clone();
     target.execution_checkpoint = source.execution_checkpoint.clone();
     target.goal_state = source.goal_state.clone();
