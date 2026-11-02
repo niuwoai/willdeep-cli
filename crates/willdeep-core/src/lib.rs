@@ -35,7 +35,6 @@ pub mod prompt_optimizer;
 pub mod prompt_sections;
 pub mod provider;
 pub mod routing;
-pub mod rules;
 pub mod rsi;
 pub mod rules;
 pub mod runtime_parameters;

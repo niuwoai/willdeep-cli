@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Clock3 } from "lucide-react";
+import { Clock3 } from "lucide-react";
 import type { Language, Messages } from "./i18n";
 import { ScheduleForm } from "./ScheduleForm";
 import { ScheduleHistory } from "./ScheduleHistory";
@@ -27,6 +27,7 @@ export function ConversationSchedules({ sessionId, workspace, workspaces, langua
   const request = useRef<{ fingerprint: string; id: string } | null>(null);
   const writable = list.data?.writable ?? false;
   const current = tasks.find((view) => view.task.id === selected);
+  const summaryLabel = tasks.length > 0 ? `${s("conversationTasks")} · ${tasks.length}` : s("conversationTasks");
   const leave = () => !dirty || window.confirm(s("discard"));
   const refresh = () => Promise.all(["schedules", "schedule-history", "schedule-run"].map((key) => client.invalidateQueries({ queryKey: [key] })));
   const operation = async (path: string, body: Record<string, unknown>) => {
@@ -44,7 +45,7 @@ export function ConversationSchedules({ sessionId, workspace, workspaces, langua
     } finally { setPending(false); }
   };
   return <aside className="conversation-schedules" aria-label={s("conversationTasks")}><details ref={panel} className="conversation-disclosure" open={panelOpen} onToggle={(event) => setPanelOpen(event.currentTarget.open)}>
-    <summary aria-label={s("conversationTasks")} title={s("conversationTasks")}><Clock3 size={16} /><span>{s("conversationTasks")}</span>{tasks.length > 0 && <span className="task-count">{tasks.length}</span>}<ChevronDown size={13} /></summary>
+    <summary aria-label={summaryLabel} title={summaryLabel}><Clock3 size={16} /></summary>
     <div className="conversation-inspector schedule-inspector"><div className="inspector-heading"><h2>{s("conversationTasks")}</h2></div>
     <p>{s("conversationHint")}</p>
     <button type="button" disabled={!writable} onClick={() => {

@@ -35,6 +35,7 @@ mod turn_queue;
 
 const MAX_PROMPT_CHARS: usize = 100_000;
 const MAX_AGENT_LABEL_CHARS: usize = 128;
+const MAX_DIAGNOSTIC_CHARS: usize = 12_000;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/dist"]
@@ -536,6 +537,10 @@ async fn serve_internal(
             get(session_detail).delete(delete_session),
         )
         .route("/api/sessions/{id}/stream", get(resume_session_stream))
+        .route(
+            "/api/sessions/{id}/tasks/{task_id}/diagnostics",
+            get(task_diagnostics),
+        )
         .route("/api/sessions/{id}/rename", post(rename_session))
         .route(
             "/api/sessions/{id}/response-style",
@@ -1422,6 +1427,76 @@ async fn session_detail(
     }))
 }
 
+#[derive(Serialize)]
+struct WebTaskDiagnostics {
+    failure_domain: Option<willdeep_runtime_protocol::FailureDomain>,
+    exit_code: Option<i32>,
+    failure: Option<String>,
+    failed_tools: Vec<WebToolFailure>,
+}
+
+#[derive(Serialize)]
+struct WebToolFailure {
+    sequence: u64,
+    name: String,
+    arguments: Option<String>,
+    output: Option<String>,
+}
+
+async fn task_diagnostics(
+    State(state): State<Arc<WebState>>,
+    Path((session_id, task_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<Json<WebTaskDiagnostics>, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "task diagnostics are only available on loopback",
+        ));
+    }
+    authorized_event_session(&state, session_id).await?;
+    let diagnostics = crate::daemon::remote_task_diagnostics(&state.home, task_id)
+        .await
+        .map_err(WebError::from_anyhow)?;
+    if diagnostics.task.session_id != Some(session_id)
+        || !matches!(
+            diagnostics.task.status,
+            willdeep_runtime_protocol::TaskStatus::Failed
+                | willdeep_runtime_protocol::TaskStatus::Interrupted
+        )
+    {
+        return Err(WebError::not_found("task diagnostics were not found"));
+    }
+    Ok(Json(WebTaskDiagnostics {
+        failure_domain: diagnostics.task.failure_domain,
+        exit_code: diagnostics.task.exit_code,
+        failure: diagnostics.failure.as_deref().map(diagnostic_failure_text),
+        failed_tools: diagnostics
+            .failed_tools
+            .into_iter()
+            .map(|tool| WebToolFailure {
+                sequence: tool.sequence,
+                name: tool.name,
+                arguments: tool.arguments.as_deref().map(diagnostic_text),
+                output: tool.output.as_deref().map(diagnostic_text),
+            })
+            .collect(),
+    }))
+}
+
+fn diagnostic_failure_text(message: &str) -> String {
+    diagnostic_text(
+        message
+            .split_once(" error=")
+            .map_or(message, |(_, detail)| detail),
+    )
+}
+
+fn diagnostic_text(value: &str) -> String {
+    willdeep_core::judge::redact_credentials(value)
+        .chars()
+        .take(MAX_DIAGNOSTIC_CHARS)
+        .collect()
+}
+
 /// 会话自己选过的档位。daemon 不可达时按「没有覆盖」处理：详情页没有理由
 /// 因为读不到一个可选项就整页失败。
 async fn session_approval_override(state: &WebState, id: uuid::Uuid) -> Option<&'static str> {
@@ -2050,6 +2125,8 @@ async fn relay_runtime_turn(
         language,
     } = relay;
     let mut final_text = None;
+    let mut failure_reason = None;
+    let mut failure_domain = None;
     loop {
         if tx.is_closed() {
             return Ok(());
@@ -2063,6 +2140,13 @@ async fn relay_runtime_turn(
                 && event_uuid(&event.message, "turn_id") == Some(turn_id)
             {
                 task_id = event_uuid(&event.message, "task_id");
+            }
+            if matches!(event.kind.as_str(), "task.failed" | "task.interrupted")
+                && event_uuid(&event.message, "turn_id") == Some(turn_id)
+            {
+                task_id = event_uuid(&event.message, "task_id").or(task_id);
+                failure_reason = safe_failure_reason(event_field(&event.message, "reason"));
+                failure_domain = safe_failure_domain(event_field(&event.message, "failure_domain"));
             }
             if event.kind == "task.output"
                 && task_id.is_some()
@@ -2106,6 +2190,12 @@ async fn relay_runtime_turn(
                     )
                     .await;
                 } else {
+                    task_id = event_uuid(&event.message, "task_id").or(task_id);
+                    failure_reason = safe_failure_reason(event_field(&event.message, "reason"))
+                        .or(failure_reason);
+                    failure_domain =
+                        safe_failure_domain(event_field(&event.message, "failure_domain"))
+                            .or(failure_domain);
                     send_event_at(
                         tx,
                         serde_json::json!({
@@ -2113,6 +2203,9 @@ async fn relay_runtime_turn(
                             "message":event.kind,
                             "session_id":session_id,
                             "turn_id":turn_id,
+                            "task_id":task_id,
+                            "reason":failure_reason,
+                            "failure_domain":failure_domain,
                         }),
                         event.sequence,
                     )
@@ -2131,12 +2224,43 @@ fn runtime_output_payload(message: &str) -> Option<serde_json::Value> {
 }
 
 fn event_uuid(message: &str, key: &str) -> Option<uuid::Uuid> {
+    event_field(message, key).and_then(|value| uuid::Uuid::parse_str(value).ok())
+}
+
+fn event_field<'a>(message: &'a str, key: &str) -> Option<&'a str> {
     message.split_whitespace().find_map(|part| {
         let (candidate, value) = part.split_once('=')?;
-        (candidate == key)
-            .then(|| uuid::Uuid::parse_str(value).ok())
-            .flatten()
+        (candidate == key).then_some(value)
     })
+}
+
+fn safe_failure_reason(value: Option<&str>) -> Option<&'static str> {
+    match value? {
+        "context_overflow" => Some("context_overflow"),
+        "rate_limited" => Some("rate_limited"),
+        "auth" => Some("auth"),
+        "quota" => Some("quota"),
+        "stream_timeout" => Some("stream_timeout"),
+        "timeout" => Some("timeout"),
+        "network" => Some("network"),
+        "provider_unavailable" => Some("provider_unavailable"),
+        "execution_owner_conflict" => Some("execution_owner_conflict"),
+        "unclassified" => Some("unclassified"),
+        "runtime_restarted" => Some("runtime_restarted"),
+        _ => None,
+    }
+}
+
+fn safe_failure_domain(value: Option<&str>) -> Option<&'static str> {
+    match value? {
+        "provider" => Some("provider"),
+        "policy" => Some("policy"),
+        "tool" => Some("tool"),
+        "harness" => Some("harness"),
+        "internal" => Some("internal"),
+        "unknown" => Some("unknown"),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize)]

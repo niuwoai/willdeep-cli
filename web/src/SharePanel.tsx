@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Share2, X } from "lucide-react";
+import { Share2, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { shareText } from "./shareMessages";
 import { createShare, loadShare, removeShare, shareUrl, ShareFailure, type ShareMode, type ShareView } from "./shareApi";
@@ -72,7 +72,7 @@ export function SharePanel({ sessionId, language, open, onOpenChange }: {
   return <aside className="conversation-permissions">
     <details ref={panel} className="conversation-disclosure" onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary aria-label={t.title} title={t.title}>
-        <Share2 size={16} /><span>{t.title}</span><ChevronDown size={13} />
+        <Share2 size={16} />
       </summary>
       <div className="conversation-inspector permissions-inspector share-inspector">
         <div className="inspector-heading">

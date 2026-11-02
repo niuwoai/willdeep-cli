@@ -31,10 +31,11 @@ pub(super) async fn get(
     Query(query): Query<ComposerQuery>,
 ) -> Result<Json<ComposerData>, WebError> {
     let workspace = select_workspace(&state, query.workspace.as_deref()).await?;
+    let config = crate::config::LoadedConfig::load(Some(&state.config_path))
+        .map_err(WebError::from_anyhow)?
+        .file;
+    let skill_roots = config.skills.roots.clone();
     let references = if let Some(query) = query.reference_query {
-        let config = crate::config::LoadedConfig::load(Some(&state.config_path))
-            .map_err(WebError::from_anyhow)?
-            .file;
         let root = workspace.root.clone();
         let allowed = workspace.mcp_servers.clone();
         let home = state.home.clone();
@@ -58,7 +59,8 @@ pub(super) async fn get(
     } else {
         Vec::new()
     };
-    let catalog = SkillCatalog::discover(&workspace.root, &[]).allow_only(&workspace.skills);
+    let catalog =
+        SkillCatalog::discover(&workspace.root, &skill_roots).allow_only(&workspace.skills);
     let skills = catalog
         .list()
         .iter()

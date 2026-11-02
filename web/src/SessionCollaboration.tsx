@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, ChevronDown, MessageSquare, RefreshCw, Send, X } from "lucide-react";
+import { ArrowUpRight, Check, MessageSquare, RefreshCw, Send, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { collaborationText } from "./collaborationMessages";
 import { useInspectorDismiss } from "./useInspectorDismiss";
@@ -62,9 +62,10 @@ export function SessionCollaboration({ sessionId, language, onOpenSession }: {
   };
   const notes = inbox.data ?? [];
   const unread = notes.filter((note) => note.to_session === sessionId && !note.read_by.includes("web")).length;
+  const summaryLabel = unread > 0 ? `${t.title} · ${t.unread} ${unread}` : t.title;
   const title = (id: string) => peers.data?.find((peer) => peer.id === id)?.title || id.slice(0, 8);
   return <aside className="session-collaboration"><details ref={panel} className="conversation-disclosure">
-    <summary aria-label={unread > 0 ? `${t.title} · ${t.unread} ${unread}` : t.title} title={t.title}><MessageSquare size={16} /><span>{t.title}</span>{unread > 0 && <span className="peer-unread" aria-label={`${t.unread} ${unread}`}>{unread}</span>}<ChevronDown size={13} /></summary>
+    <summary aria-label={summaryLabel} title={summaryLabel}><MessageSquare size={16} /></summary>
     <div className="conversation-inspector peer-inspector">
     <div className="inspector-heading"><div><h2>{t.title}</h2><p>{t.subtitle}</p></div><div className="inspector-controls"><button className="inspector-icon" type="button" aria-label={t.refresh} title={t.refresh} onClick={() => void refresh()}><RefreshCw size={16} /></button><button className="inspector-icon" type="button" aria-label={t.close} title={t.close} onClick={() => { if (panel.current) { panel.current.open = false; panel.current.querySelector("summary")?.focus(); } }}><X size={16} /></button></div></div>
     {(peers.isPending || inbox.isPending) && <p role="status">{t.loading}</p>}

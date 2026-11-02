@@ -68,9 +68,10 @@ TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 `someim-32b`、档位恢复网关默认表，其他 Provider 则继承 Root/Provider 默认模型。
 
 设置直接原子更新启动时选中的 `config.toml`，并用版本指纹防止覆盖用户同时进行的
-手工编辑。保存后对新 Harness/子 Agent 生效，正在运行的任务不变。Web 没有应用层
+手工编辑。保存后对新 Harness/子 Agent 生效，正在运行的任务不变。Web 没有通用应用层
 鉴权，因此配置写入仅在服务器监听回环地址时开放；`--listen 0.0.0.0:...` 等非回环
-模式只能查看设置。
+模式只能查看普通设置。公网入口的 `GET /api/intake` 也只允许回环访问，避免远程读取
+工作区路径、表单/Webhook 配置、失败投递记录和会话绑定。
 
 ### 聊天区
 
@@ -103,9 +104,11 @@ TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 用户已经开始打字或新一轮已经开始时晚到的结果直接丢弃。预测只在浏览器内存里：刷新页面即无，也不写进会话。
 与 TUI 同一契约、同一档模型候选，受同一个 `[agent] input_suggestions` 开关管，见 TUI_GUIDE.md「轮次结束后的下一句预测」。
 
-Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。`/model` 打开模型选择器（`/model <模型名>` 直接切换），`/permissions` 打开授权模式面板（`/permissions <档位>` 直接切换）。这两条和对应面板写的是同一份状态，且只在回环地址下可用。
+Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。点击 `/model` 或 `/permissions` 命令候选会直接打开对应面板；输入完整命令也会打开面板。模型与权限选择器位于输入框下方。顶部协作、分享和定时任务入口只显示图标，悬停提示使用当前界面语言。
 
-> **注意**：Web 端的 `/goal` 只存在于浏览器内存中，**刷新页面即失效**，与 TUI 中按 Session 持久保存的 `/goal` 语义不同。
+目标模式的开关和文本框也在输入框下方。启用后，目标会附加到本会话后续消息；关闭开关会保留文本供重新启用，`/goal off` 会清空目标。Web 将目标按 Session ID 保存在当前浏览器的 localStorage，刷新后仍有效，但不会同步到 TUI 或其他浏览器。
+
+`@` 候选支持 MCP 服务、智能体和工作区文件，并可用光标定位与键盘选择。`$` 技能候选按当前光标识别，可用上下键移动、Enter 或 Tab 插入，Escape 关闭；插入会保留光标后的文本。技能列表同时扫描当前工作区和配置的额外技能根目录。
 
 ### 会话列表里的标题
 
@@ -256,6 +259,7 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 
 - 审批、提问、Agent 操作会二次校验目标对象确实属于该工作区，跨工作区操作返回 404；
 - 停止 Turn（`POST /api/turns/{id}/stop`）请求体里没有 `workspace`，服务端先按 Turn id 反查所属 Session，再校验该 Session 的工作区在 allowlist 内；Turn 不存在、会话读不到、工作区不在白名单三种情况统一返回 404；
+- 失败详情仅由用户展开后读取，且只允许回环监听；服务端校验会话在 allowlist 内、Task 归属会话且状态为失败或中断，返回字段另做凭据脱敏和长度限制；
 - 所有请求体都是 `deny_unknown_fields`，客户端夹带 `workspace_root` / `task_id` / `agent_id` 等额外作用域字段会直接反序列化失败；
 - 子 Agent Spawn 只公开 `reader` / `judge` 两种无 Shell、无写入 Profile，父级、Task、Workspace 和 Child ID 全部由 Runtime 推导；
 - 模型路由设置可读取但只允许回环监听实例写入；保存携带配置版本指纹，陈旧请求返回 409；
@@ -276,6 +280,7 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 | GET | `/api/sessions/{id}` | 会话详情 |
 | DELETE | `/api/sessions/{id}` | 删除会话（需 `confirmation`） |
 | GET | `/api/sessions/{id}/stream?after=` | 断线重连，重新附着活动 Turn |
+| GET | `/api/sessions/{id}/tasks/{task_id}/diagnostics` | 显式读取失败任务详情；仅回环监听，且会话与任务归属必须匹配 |
 | POST | `/api/sessions/{id}/rename` | 重命名 |
 | POST | `/api/sessions/{id}/fork` | Fork |
 | GET | `/api/sessions/{id}/rewind-points` | 还能回到的步骤（步号、提示词首行、有无文件检查点） |
@@ -309,7 +314,7 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 
 客户端可见的事件类型：`submitted`、`resumed`、`turn_started`、`tool_requested`、`tool_completed`、`compression_started`、`compression_completed`、`usage`、`thought`、`completed`、`error`。
 
-事件标签按语言本地化，且**剥离工具参数和输出**。`thought` 文本截断到 240 字。
+事件标签按语言本地化，且**剥离工具参数和输出**。失败事件只带任务 ID、失败域和闭集合中的安全 `reason` 分类；Web 将分类翻译为当前界面语言，不向 SSE 加入原始错误。`thought` 文本截断到 240 字。用户展开失败详情时，回环 Web 才调用上表中的诊断适配端点；服务端再次校验 Session 工作区在 allowlist 内、任务属于该 Session 且状态为失败或中断，并对错误、工具参数和输出摘要做凭据脱敏及长度限制。
 
 传输全部使用 SSE，没有 WebSocket（聊天是 POST + SSE 响应，所以前端手写 SSE 解析而非用 `EventSource`）。
 

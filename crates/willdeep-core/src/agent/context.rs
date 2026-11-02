@@ -160,13 +160,12 @@ impl Agent {
                 *cache = Some(SummaryCache::new(messages, split_through, entry.summary));
             } else {
                 // Incremental: previous summary plus only the messages it does not cover.
-// The outgoing marker is recomputed from the original durable prefix;
+                // The outgoing marker is recomputed from the original durable prefix;
                 // this incremental slice uses the projected index for this run.
                 let requires_reasoning_replay = messages[..entry.through]
                     .iter()
                     .any(Message::requires_reasoning_replay);
-                let mut source =
-                    vec![summary_message(&entry.summary, requires_reasoning_replay)];
+                let mut source = vec![summary_message(&entry.summary, requires_reasoning_replay)];
                 source.extend_from_slice(&result[through..split]);
                 let summary = self.summarize_history(&source, record_usage).await?;
                 result = compact_prefix(&result, split, &summary);
