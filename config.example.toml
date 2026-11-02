@@ -99,6 +99,7 @@ prefer_for_worker_routing = true
 # [intake]
 # enabled = true
 # listen = "127.0.0.1:9857"
+# public_url = "https://intake.example.com"  # 访客实际访问的地址；分享/站点/表单链接用它
 #
 # [[intake.sites]]
 # slug = "docs"

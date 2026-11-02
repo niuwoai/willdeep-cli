@@ -26,6 +26,7 @@
 .intake-error { color: var(--danger-text); }
 .intake-listener { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 16px; align-items: end; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; margin-bottom: 12px; }
 .intake-listener .intake-hint { grid-column: 1 / -1; margin: 0; }
+.intake-listener-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 2px; }
 .intake-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--border); margin: 8px 0 14px; }
 .intake-manager .intake-tabs button { border: 0; border-radius: 0; padding: 9px 1px; background: transparent; font-size: 12px; color: var(--text-muted); border-bottom: 2px solid transparent; }
 .intake-manager .intake-tabs button[aria-pressed=true] { color: var(--text); border-bottom-color: var(--accent); }

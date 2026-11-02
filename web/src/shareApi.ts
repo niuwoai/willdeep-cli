@@ -51,7 +51,7 @@ export async function removeShare(sessionId: string): Promise<ShareResponse> {
 
 /// 分享链接的完整地址。入口没在跑时返回 `null`——链接存在但打不开，
 /// 页面要如实说这一层，而不是给一个点不动的 URL。
-export function shareUrl(share: ShareView, intake: Pick<IntakeView, "running" | "running_listen" | "listen"> | null): string | null {
+export function shareUrl(share: ShareView, intake: Pick<IntakeView, "running" | "running_listen" | "listen" | "public_url"> | null): string | null {
   if (!intake) return null;
   const base = intakeBase(intake);
   return base ? `${base}${share.path}` : null;

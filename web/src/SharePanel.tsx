@@ -9,7 +9,7 @@ import { Share2, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { shareText } from "./shareMessages";
 import { createShare, loadShare, removeShare, shareUrl, ShareFailure, type ShareMode, type ShareView } from "./shareApi";
-import { loadIntake } from "./intakeApi";
+import { intakeBase, intakeBaseIsLoopback, loadIntake } from "./intakeApi";
 import { useInspectorDismiss } from "./useInspectorDismiss";
 import "./permissionsPanel.css";
 
@@ -38,6 +38,8 @@ export function SharePanel({ sessionId, language, open, onOpenChange }: {
 
   const current: ShareView | null = share.data?.share ?? null;
   const url = current ? shareUrl(current, intake.data ?? null) : null;
+  // 配置了公网地址也要看它解析到哪儿：填成回环地址时链接照样只有本机能开。
+  const loopbackBase = intake.data ? intakeBaseIsLoopback(intakeBase(intake.data)) : false;
 
   async function create() {
     if (pending) return;
@@ -87,7 +89,7 @@ export function SharePanel({ sessionId, language, open, onOpenChange }: {
         {share.error && <p role="alert" className="permissions-failure">{t.loadFailed}: {share.error.message}</p>}
 
         {intake.data && !intake.data.running && <p className="permissions-blocked" role="note">{t.needsIntake}</p>}
-        {intake.data?.running && intake.data.running_listen?.startsWith("127.") && <p className="permissions-blocked" role="note">{t.loopbackOnly}</p>}
+        {intake.data?.running && loopbackBase && <p className="permissions-blocked" role="note">{t.loopbackOnly}</p>}
 
         {current ? <>
           <dl className="permissions-current">

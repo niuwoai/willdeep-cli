@@ -1,6 +1,6 @@
 # 公网入口：站点、表单与 Webhook
 
-> 状态：已实现。表单令牌与 Web 管理读取边界于 0.136.0-rc3 更新。代码在 `crates/willdeep-cli/src/daemon/intake.rs`，配置解析在 `crates/willdeep-cli/src/config.rs`。
+> 状态：已实现。公网地址（`public_url`）于 0.136.0-rc4 加入；表单令牌与 Web 管理读取边界于 0.136.0-rc3 更新。代码在 `crates/willdeep-cli/src/daemon/intake.rs`，配置解析在 `crates/willdeep-cli/src/config.rs`。
 
 目标：一台已经跑着 `willdeep-cli` 并开着 Web 的服务器，要能再对外提供三种东西——发布出来的站点、收集信息的表单、接收消息的 webhook。对外的域名、HTTPS 和访问限制交给前面的反向代理，sslcat 和 nginx-proxy 都行；willdeep 只负责在本机监听，并把收到的内容作为一条消息送进指定工作区的会话，由 Agent 处理。
 
@@ -87,6 +87,7 @@ Web 端的「分享会话」把一条会话挂到入口监听上，链接形如 
 [intake]
 enabled = true
 listen = "127.0.0.1:9857"
+public_url = "https://intake.example.com"
 
 [[intake.sites]]
 slug = "docs"
@@ -114,6 +115,8 @@ prompt = "这是 GitHub 发来的一条 webhook。请判断是否需要处理，
 
 `session = "continue"` 第一次收到消息时建会话，之后的都进同一个。会话 id 记在 daemon 主目录的 `intake-sessions.json`，不写回配置文件。这两个状态文件都是 0600 权限、先写临时文件再改名。
 
+`public_url` 写访客最终访问的地址（含协议），分享、站点和表单链接都以它为准。只填 origin，不带路径、查询、片段或凭据；前面的反向代理把域名转到 `listen`。不写时按实际监听地址拼链接，只适合本机自己打开。
+
 ## 不做的事
 
 - 不在 willdeep 里终止 TLS，不管证书。HTTPS 交给前面的反向代理，不管它是 sslcat 还是 nginx-proxy。
@@ -127,4 +130,5 @@ prompt = "这是 GitHub 发来的一条 webhook。请判断是否需要处理，
 - 站点能用 `curl http://127.0.0.1:9857/s/<slug>/index.html` 取到文件；路径里带 `..` 或符号链接指向目录外时返回 404。
 - 表单 GET 返回 `Cache-Control: no-store` 和短时令牌；有效令牌首次提交能进入指定工作区，缺少/伪造/过期/重放令牌会被拒绝。必填缺失或单选值不在选项里时返回 400，会话里不出现内容。
 - 非回环 Web 的 `GET /api/intake` 返回 403，回环 Web 仍可查看配置与状态。
+- 配置 `public_url` 后，分享面板与站点、表单链接都以该地址为前缀；留空时仍按实际监听地址拼。带路径、查询或凭据的地址在保存时被拒绝。
 - webhook 密钥错误时返回 401，会话里不出现任何内容。

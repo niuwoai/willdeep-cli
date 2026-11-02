@@ -37,6 +37,8 @@ export type BindingView = { slug: string; session_id: string };
 export type IntakeView = {
   enabled: boolean;
   listen: string;
+  /// 访客最终访问的地址（含协议）；空串表示按监听地址拼。
+  public_url: string;
   running: boolean;
   running_listen?: string | null;
   runtime_managed: boolean;
@@ -51,6 +53,7 @@ export type IntakeView = {
 export type IntakePayload = {
   enabled: boolean;
   listen: string;
+  public_url: string;
   sites: IntakeSite[];
   forms: IntakeForm[];
   webhooks: IntakeWebhook[];
@@ -93,10 +96,14 @@ export async function browseDirectory(path: string): Promise<BrowseView> {
   return await response.json() as BrowseView;
 }
 
-/// 站点、表单、webhook 各自的公开路径。入口服务与 Web 分开监听，所以链接用
-/// 入口的实际监听地址组出来；监听在 0.0.0.0 时换成本机访问这个页面时用的主机名。
-export function intakeBase(view: Pick<IntakeView, "running" | "running_listen" | "listen">): string | null {
-  const address = view.running ? view.running_listen : null;
+/// 站点、表单和分享链接的前缀。配置了 `public_url` 就直接用它——那是访客最终
+/// 访问的域名，前面通常有反向代理；没配置时退回监听地址，监听在 0.0.0.0 时换成
+/// 本机访问这个页面时用的主机名。
+export function intakeBase(view: Pick<IntakeView, "running" | "running_listen" | "listen" | "public_url">): string | null {
+  if (!view.running) return null;
+  const configured = view.public_url?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const address = view.running_listen;
   if (!address) return null;
   const index = address.lastIndexOf(":");
   if (index <= 0) return null;
@@ -109,4 +116,21 @@ export function intakeBase(view: Pick<IntakeView, "running" | "running_listen" |
 export function intakeLink(view: IntakeView, kind: "s" | "f" | "w", slug: string): string | null {
   const base = intakeBase(view);
   return base && slug ? `${base}/${kind}/${encodeURIComponent(slug)}` : null;
+}
+
+/// 这个前缀是不是只有本机（或本机等价地址）能打开。配置了 `public_url` 也不代表
+/// 它对外可达——把公网地址填成 `127.0.0.1`、`localhost` 或 `0.0.0.0` 是最容易犯的错。
+export function intakeBaseIsLoopback(base: string | null): boolean {
+  if (!base) return false;
+  try {
+    const host = new URL(base).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "localhost"
+      || host.endsWith(".localhost")
+      || host === "::1"
+      || host === "::"
+      || host === "0.0.0.0"
+      || host.startsWith("127.");
+  } catch {
+    return false;
+  }
 }

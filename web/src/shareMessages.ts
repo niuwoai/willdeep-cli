@@ -25,7 +25,7 @@ const zh = {
   create: "创建链接",
   creating: "正在创建…",
   needsIntake: "公网入口没有在运行。分享页走入口那个监听，先在「公网入口」里启用它。",
-  loopbackOnly: "公网入口当前只听回环地址，这台机器以外的人打不开；公网使用要改成 0.0.0.0:端口 并放在反向代理后面。",
+  loopbackOnly: "公网入口现在解析出来的地址是本机地址，这台机器以外的人打不开。在「公网入口」里把公网地址填成对外的域名（比如 https://intake.example.com），并让反向代理转到监听端口；没有代理、要直接暴露端口时，再把监听改成 0.0.0.0:端口。",
   noSession: "先打开一条会话。",
   created_at: "创建于",
 };
@@ -54,7 +54,7 @@ const en: typeof zh = {
   create: "Create link",
   creating: "Creating…",
   needsIntake: "The public intake listener is not running. Shared pages are served there; enable it under Public intake first.",
-  loopbackOnly: "The intake listener only accepts loopback addresses, so nobody else can open this link; for public use set 0.0.0.0:port and put it behind a reverse proxy.",
+  loopbackOnly: "The intake address currently resolves to this machine, so nobody else can open the link. Set the public address under Public intake to the external domain (e.g. https://intake.example.com) and point the reverse proxy at the listen port; only use 0.0.0.0:port when exposing the port directly without a proxy.",
   noSession: "Open a session first.",
   created_at: "Created",
 };
@@ -83,7 +83,7 @@ const ja: typeof zh = {
   create: "リンクを作成",
   creating: "作成中…",
   needsIntake: "公開エントリのリスナーが動いていません。共有ページはそちらで配信されます。先に「公開エントリ」で有効にしてください。",
-  loopbackOnly: "公開エントリはループバックのみの待受なので、他のマシンからは開けません。公開する場合は 0.0.0.0:ポート にしてリバースプロキシの後ろに置いてください。",
+  loopbackOnly: "公開エントリのアドレスがこのマシンのままなので、他のマシンからは開けません。「公開エントリ」で公開アドレスを外部ドメイン（例: https://intake.example.com）にし、リバースプロキシから待ち受けポートへ転送してください。プロキシなしでポートを直接公開する場合だけ 0.0.0.0:ポート にします。",
   noSession: "先にセッションを開いてください。",
   created_at: "作成日時",
 };

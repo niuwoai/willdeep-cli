@@ -13,7 +13,7 @@ const t = intakeText("zh-CN");
 
 function view(over: Partial<IntakeView> = {}): IntakeView {
   return {
-    enabled: false, listen: "127.0.0.1:9857", running: false, running_listen: null,
+    enabled: false, listen: "127.0.0.1:9857", public_url: "", running: false, running_listen: null,
     runtime_managed: true, writable: true, sites: [], forms: [], webhooks: [], pending: [], bindings: [],
     ...over,
   };
@@ -43,10 +43,43 @@ it("saves a newly published site with the exact payload the intake service reads
   expect(save.disabled).toBe(false);
   fireEvent.click(save);
   await waitFor(() => expect(sent).toEqual([{
-    enabled: false, listen: "127.0.0.1:9857",
+    enabled: false, listen: "127.0.0.1:9857", public_url: "",
     sites: [{ slug: "docs", root: "/Users/rocky/Sites/docs" }], forms: [], webhooks: [],
   }]));
   await screen.findByRole("status");
+});
+
+it("saves the public address used for share and site links", async () => {
+  const sent: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "PUT") {
+      sent.push(JSON.parse(String(init.body)));
+      return { ok: true, json: async () => view({ public_url: "https://wd.niuwoai.com", running: true, running_listen: "127.0.0.1:9857" }) };
+    }
+    return { ok: true, json: async () => view() };
+  }));
+  renderPage();
+  await screen.findByText(t.title);
+  fireEvent.change(screen.getByPlaceholderText("https://intake.example.com"), { target: { value: "https://wd.niuwoai.com" } });
+  const save = screen.getByRole("button", { name: t.save }) as HTMLButtonElement;
+  expect(save.disabled).toBe(false);
+  fireEvent.click(save);
+  await waitFor(() => expect((sent[0] as { public_url?: string }).public_url).toBe("https://wd.niuwoai.com"));
+  await screen.findByRole("status");
+});
+
+it("rejects a public address with a path before hitting the server", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    calls.push(init?.method ?? "GET");
+    return { ok: true, json: async () => view() };
+  }));
+  renderPage();
+  await screen.findByText(t.title);
+  fireEvent.change(screen.getByPlaceholderText("https://intake.example.com"), { target: { value: "https://example.com/intake" } });
+  fireEvent.click(screen.getByRole("button", { name: t.save }));
+  await screen.findByText(t.badPublicUrl);
+  expect(calls).toEqual(["GET"]);
 });
 
 it("blocks saving from a non-loopback page and says so", async () => {

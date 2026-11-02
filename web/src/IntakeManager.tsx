@@ -31,7 +31,7 @@ type SiteRow = IntakeSite & { key: string };
 type FieldRow = IntakeField & { key: string };
 type FormRow = Omit<IntakeForm, "fields"> & { key: string; fields: FieldRow[] };
 type HookRow = IntakeWebhook & { key: string };
-type Draft = { enabled: boolean; listen: string; sites: SiteRow[]; forms: FormRow[]; webhooks: HookRow[] };
+type Draft = { enabled: boolean; listen: string; publicUrl: string; sites: SiteRow[]; forms: FormRow[]; webhooks: HookRow[] };
 type Tab = "sites" | "forms" | "webhooks" | "records";
 type Picker = { target: "site" | "form" | "hook"; rowKey: string; path: string; data: BrowseView | null; error: string };
 type Copy = ReturnType<typeof intakeText>;
@@ -40,10 +40,11 @@ type Update = (change: (draft: Draft) => Draft) => void;
 const fieldTypes: IntakeFieldType[] = ["text", "textarea", "email", "choice"];
 const emptyField = (): FieldRow => ({ key: crypto.randomUUID(), name: "", label: "", type: "text", required: false, options: [] });
 
-function fromView(view: Pick<IntakeView, "enabled" | "listen" | "sites" | "forms" | "webhooks">): Draft {
+function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "sites" | "forms" | "webhooks">): Draft {
   return {
     enabled: view.enabled,
     listen: view.listen,
+    publicUrl: view.public_url ?? "",
     sites: view.sites.map((site) => ({ ...site, key: crypto.randomUUID() })),
     forms: view.forms.map((form) => ({
       ...form,
@@ -58,6 +59,7 @@ function payload(draft: Draft): IntakePayload {
   return {
     enabled: draft.enabled,
     listen: draft.listen.trim(),
+    public_url: draft.publicUrl.trim(),
     sites: draft.sites.map(({ slug, root }) => ({ slug: slug.trim(), root: root.trim() })),
     forms: draft.forms.map((form) => ({
       slug: form.slug.trim(),
@@ -169,9 +171,6 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
         <span className={`intake-status${data.running ? " running" : ""}`}>
           {data.running ? `${t.running}${data.running_listen ? ` · ${data.running_listen}` : ""}` : t.stopped}
         </span>
-        <button type="button" className="intake-save" disabled={!writable || !dirty || saving} onClick={() => void save()}>
-          {saving ? t.saving : t.save}
-        </button>
       </div>
     </header>
 
@@ -189,6 +188,15 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
         <input value={draft.listen} disabled={!writable} placeholder="127.0.0.1:9857" onChange={(event) => update((current) => ({ ...current, listen: event.target.value }))} />
       </label>
       <p className="intake-hint">{t.listenHint}</p>
+      <label className="intake-wide">{t.publicUrl}
+        <input value={draft.publicUrl} disabled={!writable} placeholder="https://intake.example.com" onChange={(event) => update((current) => ({ ...current, publicUrl: event.target.value }))} />
+        <span className="intake-hint">{t.publicUrlHint}</span>
+      </label>
+      <div className="intake-listener-actions">
+        <button type="button" className="intake-save" disabled={!writable || !dirty || saving} onClick={() => void save()}>
+          {saving ? t.saving : t.save}
+        </button>
+      </div>
     </section>
 
     <nav className="intake-tabs">
@@ -392,9 +400,37 @@ function parentPath(path: string) {
   return index <= 0 ? "/" : trimmed.slice(0, index);
 }
 
+/// 公网地址只能是 origin：带协议和主机，不带路径、查询、片段或凭据。带路径时
+/// `/share/...` 拼出来的地址和入口实际挂载的路径对不上，所以前端先挡掉。
+/// 这里同样检查原串的结构——`https://x\`、`https://x?` 会被 URL 解析器改写，
+/// 原样拼路径同样打不开；大小写、显式默认端口和国际化域名则照常放行。
+function validPublicUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const schemeEnd = trimmed.indexOf("://");
+    if (schemeEnd <= 0) return false;
+    const rawAuthority = trimmed.slice(schemeEnd + 3);
+    const authority = rawAuthority.endsWith("/") ? rawAuthority.slice(0, -1) : rawAuthority;
+    const hasControl = [...authority].some((char) => {
+      const code = char.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    });
+    return authority.length > 0
+      && url.hostname.length > 0
+      && !hasControl
+      && !/[/\\?#\s]/.test(authority);
+  } catch {
+    return false;
+  }
+}
+
 /// 前端先挡掉后端一定会拒绝的输入，省得用户点了保存才看到一句英文报错。
 function validate(draft: Draft, t: Copy): string | null {
   if (!/^[^\s]+:\d+$/.test(draft.listen.trim())) return t.missingField.replace("{field}", t.listen);
+  if (!validPublicUrl(draft.publicUrl)) return t.badPublicUrl;
   const groups: Array<[string, Array<{ slug: string }>, string]> = [
     ["site", draft.sites, t.sites],
     ["form", draft.forms, t.forms],
