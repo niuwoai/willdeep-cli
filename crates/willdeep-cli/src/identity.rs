@@ -194,11 +194,17 @@ mod tests {
     fn renaming_keeps_the_id_and_records_the_change() {
         let root = home();
         let first = load(&root).unwrap();
-        let renamed = rename(&root, "  jack  ").unwrap();
-        assert_eq!(renamed.name, "jack");
+        // 首次生成的名字是从池子里随机挑的，可能正好就是目标名；改成一个一定不同的。
+        let target = if first.name == "jack" {
+            "smith"
+        } else {
+            "jack"
+        };
+        let renamed = rename(&root, &format!("  {target}  ")).unwrap();
+        assert_eq!(renamed.name, target);
         assert_eq!(renamed.id, first.id);
         assert!(renamed.renamed_at.is_some());
-        assert_eq!(load(&root).unwrap().name, "jack");
+        assert_eq!(load(&root).unwrap().name, target);
         std::fs::remove_dir_all(root).unwrap();
     }
 

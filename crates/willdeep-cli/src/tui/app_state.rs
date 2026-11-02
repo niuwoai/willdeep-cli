@@ -2947,7 +2947,7 @@ async fn join_peer(
     url: &str,
 ) -> anyhow::Result<crate::federation::Contact> {
     let identity = crate::identity::load(home)?;
-    let public_url = crate::read_intake_public_url(config)?;
+    let public_url = crate::identity_cmd::read_intake_public_url(config)?;
     if public_url.is_empty() {
         anyhow::bail!("[intake] public_url is empty: the peer could not reach this machine back");
     }
