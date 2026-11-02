@@ -36,6 +36,10 @@ const FEDERATION_REPLY_TIMEOUT_SECONDS: u64 = 20 * 60;
 
 type SignatureMac = Hmac<Sha256>;
 
+/// 联邦消息用过的 nonce：一个按时间排队的 deque 加一个集合，两边同步删。
+/// 拆出来只因为 clippy 嫌内联类型太长。
+type FederationNonces = (VecDeque<(String, u64)>, std::collections::HashSet<String>);
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Binding {
     session_id: uuid::Uuid,
@@ -67,8 +71,7 @@ pub(crate) struct IntakeService {
     federation_sends: std::sync::Mutex<HashMap<uuid::Uuid, (u64, u32)>>,
     /// 联邦消息用过的 nonce。放进程里、活到时间窗过完；重启会清空，所以文档里
     /// 明说「时间窗 + 进程内缓存」这一层在重启后重新计时。
-    federation_nonces:
-        std::sync::Mutex<(VecDeque<(String, u64)>, std::collections::HashSet<String>)>,
+    federation_nonces: std::sync::Mutex<FederationNonces>,
 }
 
 impl IntakeService {
@@ -964,13 +967,17 @@ async fn federation_message(
     if federation::check_timestamp(timestamp, federation::now_seconds()).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let from_text = from.to_string();
+    let to_text = to.to_string();
     if federation::verify(
         &contact.secret,
-        &from.to_string(),
-        &to.to_string(),
-        timestamp,
-        nonce,
-        message_id,
+        &federation::Signed {
+            from: &from_text,
+            to: &to_text,
+            ts: timestamp,
+            nonce,
+            message_id,
+        },
         &body,
         signature,
     )

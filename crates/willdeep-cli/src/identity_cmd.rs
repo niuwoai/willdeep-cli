@@ -49,7 +49,6 @@ pub(crate) async fn federation_command(
             let store = federation::load(home)?;
             if store.contacts.is_empty() {
                 println!(
-                    "{}",
                     "no peers yet; run `willdeep fed invite` on this machine, or `willdeep fed join <url>` with a peer's invitation"
                 );
                 return Ok(());

@@ -245,39 +245,37 @@ pub fn consume_invite(home: &Path, token: &str) -> Result<()> {
 
 // ---------------------------------------------------------------- 签名
 
-fn canonical(from: &str, to: &str, ts: u64, nonce: &str, message_id: &str, body: &[u8]) -> String {
-    let digest = hex_encode(&Sha256::digest(body));
-    format!("{PROTOCOL}\n{from}\n{to}\n{ts}\n{nonce}\n{message_id}\n{digest}")
+/// 一条请求里参与签名的全部字段。打包成结构体，`sign` 与 `verify` 的入参
+/// 才不会长到需要被 clippy 点名。
+pub struct Signed<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+    pub ts: u64,
+    pub nonce: &'a str,
+    pub message_id: &'a str,
 }
 
-pub fn sign(
-    secret: &str,
-    from: &str,
-    to: &str,
-    ts: u64,
-    nonce: &str,
-    message_id: &str,
-    body: &[u8],
-) -> Result<String> {
+impl Signed<'_> {
+    fn canonical(&self, body: &[u8]) -> String {
+        let digest = hex_encode(&Sha256::digest(body));
+        format!(
+            "{PROTOCOL}\n{}\n{}\n{}\n{}\n{}\n{digest}",
+            self.from, self.to, self.ts, self.nonce, self.message_id
+        )
+    }
+}
+
+pub fn sign(secret: &str, signed: &Signed<'_>, body: &[u8]) -> Result<String> {
     let mut mac = SignatureMac::new_from_slice(secret.as_bytes())
         .map_err(|error| anyhow::anyhow!("invalid federation secret: {error}"))?;
-    mac.update(canonical(from, to, ts, nonce, message_id, body).as_bytes());
+    mac.update(signed.canonical(body).as_bytes());
     Ok(hex_encode(&mac.finalize().into_bytes()))
 }
 
-pub fn verify(
-    secret: &str,
-    from: &str,
-    to: &str,
-    ts: u64,
-    nonce: &str,
-    message_id: &str,
-    body: &[u8],
-    signature: &str,
-) -> Result<()> {
+pub fn verify(secret: &str, signed: &Signed<'_>, body: &[u8], signature: &str) -> Result<()> {
     let mut mac = SignatureMac::new_from_slice(secret.as_bytes())
         .map_err(|error| anyhow::anyhow!("invalid federation secret: {error}"))?;
-    mac.update(canonical(from, to, ts, nonce, message_id, body).as_bytes());
+    mac.update(signed.canonical(body).as_bytes());
     let Ok(expected) = hex_decode(signature) else {
         bail!("the signature is not hexadecimal");
     };
@@ -328,7 +326,17 @@ pub async fn send_message_as(from: uuid::Uuid, contact: &Contact, text: &str) ->
     })
     .context("encode the federation message")?;
     let from = from.to_string();
-    let signature = sign(&contact.secret, &from, &to, ts, &nonce, &message_id, &body)?;
+    let signature = sign(
+        &contact.secret,
+        &Signed {
+            from: &from,
+            to: &to,
+            ts,
+            nonce: &nonce,
+            message_id: &message_id,
+        },
+        &body,
+    )?;
     let response = client()?
         .post(format!(
             "{}/p/v1/message",
@@ -526,7 +534,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn hex_decode(value: &str) -> Result<Vec<u8>> {
     let value = value.trim();
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         bail!("hex string has an odd length");
     }
     (0..value.len())
@@ -609,19 +617,34 @@ mod tests {
     fn a_signature_covers_every_part_of_the_request() {
         let secret = new_secret();
         let body = br#"{"text":"hi"}"#;
-        let signature = sign(&secret, "a", "b", 1000, "n", "m", body).unwrap();
-        verify(&secret, "a", "b", 1000, "n", "m", body, &signature).unwrap();
+        let signed = |from: &'static str,
+                      to: &'static str,
+                      ts: u64,
+                      nonce: &'static str,
+                      id: &'static str| {
+            Signed {
+                from,
+                to,
+                ts,
+                nonce,
+                message_id: id,
+            }
+        };
+        let baseline = signed("a", "b", 1000, "n", "m");
+        let signature = sign(&secret, &baseline, body).unwrap();
+        verify(&secret, &baseline, body, &signature).unwrap();
         for changed in [
-            sign(&secret, "x", "b", 1000, "n", "m", body).unwrap(),
-            sign(&secret, "a", "x", 1000, "n", "m", body).unwrap(),
-            sign(&secret, "a", "b", 1001, "n", "m", body).unwrap(),
-            sign(&secret, "a", "b", 1000, "x", "m", body).unwrap(),
-            sign(&secret, "a", "b", 1000, "n", "x", body).unwrap(),
-            sign(&secret, "a", "b", 1000, "n", "m", b"{}").unwrap(),
+            sign(&secret, &signed("x", "b", 1000, "n", "m"), body).unwrap(),
+            sign(&secret, &signed("a", "x", 1000, "n", "m"), body).unwrap(),
+            sign(&secret, &signed("a", "b", 1001, "n", "m"), body).unwrap(),
+            sign(&secret, &signed("a", "b", 1000, "x", "m"), body).unwrap(),
+            sign(&secret, &signed("a", "b", 1000, "n", "x"), body).unwrap(),
+            sign(&secret, &baseline, b"{}").unwrap(),
         ] {
-            assert!(verify(&secret, "a", "b", 1000, "n", "m", body, &changed).is_err());
+            assert!(verify(&secret, &baseline, body, &changed).is_err());
         }
-        assert!(verify("other", "a", "b", 1000, "n", "m", body, &signature).is_err());
+        assert!(verify("other", &baseline, body, &signature).is_err());
+        assert!(verify(&secret, &baseline, body, "zz").is_err());
     }
 
     #[test]
