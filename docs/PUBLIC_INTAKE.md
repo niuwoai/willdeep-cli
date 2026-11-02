@@ -46,7 +46,9 @@
 
 ### 表单
 
-一个表单定义是一组字段：名字、类型（短文本、长文本、单选、邮箱）、是否必填。入口按字段生成一个极简的 HTML 页，不引入任何外部脚本。每次 GET 都签发绑定表单 slug、随机 nonce 和 15 分钟有效期的 HMAC-SHA256 令牌，放入隐藏字段；签名密钥只保存在 Intake 进程内，响应设为 `Cache-Control: no-store`。提交后按字段白名单校验，多余字段丢掉，再填进消息模板；令牌验签成功后会原子消费 nonce，重复提交、伪造或过期令牌都会被拒绝。表单令牌只防止盲跨站提交和令牌重放，不识别提交者，也不能阻止机器人重新获取表单。
+一个表单定义是一组字段：名字、类型、是否必填。类型有单行文本、多行文本、邮箱、电话号码、网址、日期、数字、单选；单选用 `options` 列选项，数字可以设 `allow_decimal`（是否收小数，默认只收整数）和 `min` / `max`（含端点，缺省表示这一端不限）。Web 管理页按标题自动生成表单 slug、按显示名自动生成字段名，重名时自动加 `-2`、`-3`，手动改过就不再覆盖；这些只是编辑器的默认值，配置文件里写什么就是什么。
+
+入口按字段生成一个极简的 HTML 页，不引入任何外部脚本；数字、电话、网址、日期用对应的 HTML 控件，必填项由浏览器先挡一次。每次 GET 都签发绑定表单 slug、随机 nonce 和 15 分钟有效期的 HMAC-SHA256 令牌，放入隐藏字段；签名密钥只保存在 Intake 进程内，响应设为 `Cache-Control: no-store`。提交后按字段白名单校验，多余字段丢掉，再填进消息模板；令牌验签成功后会原子消费 nonce，重复提交、伪造或过期令牌都会被拒绝。表单令牌只防止盲跨站提交和令牌重放，不识别提交者，也不能阻止机器人重新获取表单。
 
 第一版不做上传文件、多步表单、条件显示。
 
@@ -102,6 +104,9 @@ prompt = "这是网站联系表单的一条新提交。请整理字段并草拟�
 fields = [
   { name = "name", label = "姓名", type = "text", required = true },
   { name = "email", label = "邮箱", type = "email", required = true },
+  { name = "phone", label = "电话", type = "tel" },
+  { name = "age", label = "年龄", type = "number", min = 18, max = 120 },
+  { name = "score", label = "评分", type = "number", allow_decimal = true, min = 0, max = 5 },
   { name = "message", label = "内容", type = "textarea", required = true },
 ]
 

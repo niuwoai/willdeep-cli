@@ -22,7 +22,7 @@ pub(super) fn routes() -> Router<Arc<WebState>> {
 struct FieldView {
     name: String,
     label: String,
-    /// `text`、`textarea`、`email`、`choice`。
+    /// `text`、`textarea`、`email`、`tel`、`url`、`date`、`number`、`choice`。
     #[serde(rename = "type")]
     kind: String,
     #[serde(default)]
@@ -30,6 +30,14 @@ struct FieldView {
     /// 只对 `choice` 有意义。
     #[serde(default)]
     options: Vec<String>,
+    /// 只对 `number` 有意义：是否接受小数。
+    #[serde(default)]
+    allow_decimal: bool,
+    /// 只对 `number` 有意义：允许的范围，含端点。
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -166,6 +174,9 @@ impl IntakeRequest {
                                 .map(|option| option.trim().to_owned())
                                 .filter(|option| !option.is_empty())
                                 .collect(),
+                            allow_decimal: field.allow_decimal,
+                            min: field.min,
+                            max: field.max,
                         })
                         .collect(),
                 })
@@ -215,6 +226,9 @@ fn form_views(settings: &IntakeSettings) -> Vec<FormView> {
                     kind: field.kind.clone(),
                     required: field.required,
                     options: field.options.clone(),
+                    allow_decimal: field.allow_decimal,
+                    min: field.min,
+                    max: field.max,
                 })
                 .collect(),
         })
@@ -410,8 +424,16 @@ fn splice_intake(original: &str, block: &str) -> String {
     }
 }
 
-fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
-    let sites: Vec<toml::Value> = settings
+/// 数字边界写回 TOML：整数值用整数，别把 `min = 1` 改写成 `min = 1.0`。
+fn toml_number(value: f64) -> toml::Value {
+    if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+        toml::Value::Integer(value as i64)
+    } else {
+        toml::Value::Float(value)
+    }
+}
+
+fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {    let sites: Vec<toml::Value> = settings
         .sites
         .iter()
         .map(|site| {
@@ -448,6 +470,18 @@ fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
                                     .collect(),
                             ),
                         );
+                    }
+                    // 数字的附加项只写给数字字段：写到别的类型上会被配置校验拒绝。
+                    if field.kind == "number" {
+                        if field.allow_decimal {
+                            table.insert("allow_decimal".to_owned(), toml::Value::Boolean(true));
+                        }
+                        if let Some(min) = field.min {
+                            table.insert("min".to_owned(), toml_number(min));
+                        }
+                        if let Some(max) = field.max {
+                            table.insert("max".to_owned(), toml_number(max));
+                        }
                     }
                     toml::Value::Table(table)
                 })
@@ -611,6 +645,9 @@ mod tests {
                     kind: "email".to_owned(),
                     required: true,
                     options: Vec::new(),
+                    allow_decimal: false,
+                    min: None,
+                    max: None,
                 }],
             }],
             webhooks: Vec::new(),
@@ -661,6 +698,31 @@ mod tests {
         settings.public_url = "  ".to_owned();
         let block = settings_block(&settings).unwrap();
         assert!(!block.contains("public_url"));
+    }
+
+    #[test]
+    fn number_bounds_round_trip_as_toml_numbers() {
+        let mut settings = settings();
+        settings.forms[0].fields.push(IntakeField {
+            name: "age".to_owned(),
+            label: "年龄".to_owned(),
+            kind: "number".to_owned(),
+            required: true,
+            options: Vec::new(),
+            allow_decimal: true,
+            min: Some(18.0),
+            max: Some(99.5),
+        });
+        let block = settings_block(&settings).unwrap();
+        assert!(block.contains("min = 18\n"), "{block}");
+        assert!(block.contains("max = 99.5"), "{block}");
+        assert!(block.contains("allow_decimal = true"), "{block}");
+        let parsed: crate::config::ConfigFile = toml::from_str(&block).expect("block parses");
+        let field = &parsed.intake.forms[0].fields[1];
+        assert_eq!(field.min, Some(18.0));
+        assert_eq!(field.max, Some(99.5));
+        assert!(field.allow_decimal);
+        crate::config::validate_intake(&parsed.intake).expect("written block validates");
     }
 
     #[test]

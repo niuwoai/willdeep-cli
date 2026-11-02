@@ -3,6 +3,7 @@ import { ComposerReferences } from "./ComposerReferences";
 import { insertReference, useComposerReferences, type Reference } from "./useComposerReferences";
 import { Box, Button, Container, Dialog, Flex, Heading, Input, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { detectLanguage, messages, type Language, type Messages } from "./i18n";
+import { loadIdentity, renameIdentity, type IdentityView } from "./identityApi";
 import { RuntimeSidebar, type AgentSpawnProfile, type RuntimeActivity, type RuntimeEvent } from "./RuntimeSidebar";
 import { Markdown } from "./Markdown";
 import { UserMessage } from "./UserMessage";
@@ -171,7 +172,7 @@ function runtimeFailureMessage(event: RuntimeStreamEvent, t: Messages): string {
   const domain = domainKey ? ` · ${t.failureDomain}: ${t[domainKey]}` : "";
   return `${t.requestFailed}: ${reason}${domain}`;
 }
-const defaultCommands = ["/help", "/goal", "/permissions", "/model", "/compress", "/skills", "/clear", "/short", "/verbose"];
+const defaultCommands = ["/help", "/goal", "/permissions", "/model", "/compress", "/skills", "/clear", "/short", "/verbose", "/name"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
 const goalPreferencePrefix = "willdeep.web.goal.";
@@ -325,6 +326,8 @@ export function App() {
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
   const [skillSearch, setSkillSearch] = useState("");
   const [version, setVersion] = useState("");
+  // 这台实例的名字与 UUID。只在回环 Web 上读得到；读到之前先不渲染，免得闪一下占位。
+  const [identity, setIdentity] = useState<IdentityView | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]); const [prompt, setPrompt] = useState("");
   // 轮次收尾时要从运行卡片里数工具步，而会话重载会把卡片整个换掉，先照一份镜像。
   const chatRef = useRef<ChatMessage[]>([]);
@@ -578,6 +581,7 @@ export function App() {
 
   useEffect(() => { document.title = t.documentTitle; document.documentElement.lang = language; localStorage.setItem("willdeep.language", language); }, [language, t.documentTitle]);
   useEffect(() => { json<Health>("/health").then((value) => setVersion(value.version)).catch(() => setVersion("")); }, []);
+  useEffect(() => { loadIdentity().then(setIdentity).catch(() => setIdentity(null)); }, []);
   useEffect(() => { json<Workspace[]>("/api/workspaces").then((values) => { setWorkspaces(values); setWorkspace(values[0]?.path ?? ""); }).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`)); }, [t.loadFailed]);
   useEffect(() => {
     if (!workspace) return;
@@ -1165,6 +1169,19 @@ export function App() {
     </Flex>;
   }
 
+  async function renameInstance() {
+    if (!identity) return;
+    const name = window.prompt(t.instanceRenamePrompt, identity.name)?.trim();
+    if (!name || name === identity.name) return;
+    try {
+      const next = await renameIdentity(name);
+      setIdentity(next);
+      setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.instanceRenamed.replace("{name}", next.name) }]);
+    } catch (reason) {
+      setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
+  }
+
   async function renameSession(target: Session) {
     const title = window.prompt(t.renamePrompt, target.title)?.trim(); if (!title) return;
     try { await mutate(`/api/sessions/${encodeURIComponent(target.id)}/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) }); await refreshSessions(); }
@@ -1271,6 +1288,22 @@ export function App() {
         await mutate(`/api/sessions/${encodeURIComponent(sessionId)}/response-style`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_style: detailed ? "detailed" : "short" }) });
         replyStyleRef.current = detailed ? "detailed" : "short";
         setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: detailed ? t.verboseOn : t.shortOn }]);
+      } catch (reason) { setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      return;
+    }
+    if (typed === "/name" || typed.startsWith("/name ")) {
+      setPrompt("");
+      // 改名是本机管理动作：插件页面不能替用户改这台机器的身份。
+      if (source === "plugin") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.instancePluginBlocked }]); return; }
+      const argument = typed.slice("/name".length).trim();
+      if (!argument) {
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: identity ? `${t.instanceName}: ${identity.name} · ${identity.id}\n${t.instanceUsage}` : `${t.instanceUnavailable}\n${t.instanceUsage}` }]);
+        return;
+      }
+      try {
+        const next = await renameIdentity(argument);
+        setIdentity(next);
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.instanceRenamed.replace("{name}", next.name) }]);
       } catch (reason) { setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
       return;
     }
@@ -1469,7 +1502,10 @@ export function App() {
     <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileSessionsOpen(false); }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
       <Flex justify="space-between" align="flex-start" mb="5">
         <Box minW="0">
-          <Heading size="md" lineHeight="1.2">{t.appName}</Heading>
+          <Flex align="center" gap="2">
+            <Heading size="md" lineHeight="1.2">{t.appName}</Heading>
+            {identity && <button type="button" className="instance-name" title={`${t.instanceRenameHint} · ${identity.id}`} onClick={() => void renameInstance()}>{identity.name}</button>}
+          </Flex>
           <Text color="var(--text-faint)" fontSize="xs">{t.conversation}</Text>
         </Box>
         <SidebarSettings messages={t} language={language} onLanguageChange={setLanguage} />
@@ -1527,13 +1563,16 @@ export function App() {
               </VStack>}
             </Box>;
           })}
-          {archivedSessions.length > 0 && <Box mt="2">
-            <button type="button" className="archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived((current) => !current)}>
-              <span className={`archived-caret${showArchived ? " open" : ""}`}>▸</span>{t.archived} ({archivedSessions.length})
-            </button>
-            {showArchived && <VStack align="stretch" gap="1" mt="1">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
-          </Box>}
         </Box>
+        {/* 已归档会话固定在列表下方，不跟着滚动。会话多的项目会把滚动区顶得很长，
+            收在滚动区底部就等于藏起来了——用户看不到这个入口。展开后的归档列表
+            自己限高滚动，仍然不挤压项目树。 */}
+        {archivedSessions.length > 0 && <Box className="archived-section" flex="0 0 auto">
+          <button type="button" className="archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived((current) => !current)}>
+            <span className={`archived-caret${showArchived ? " open" : ""}`}>▸</span>{t.showArchived} ({archivedSessions.length})
+          </button>
+          {showArchived && <VStack align="stretch" gap="1" className="archived-sessions">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
+        </Box>}
         {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
         {rewindNotice && <Text mt="1" fontSize="xs" color="var(--text-dim)">{rewindNotice}</Text>}
       </Flex>

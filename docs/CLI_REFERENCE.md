@@ -15,6 +15,8 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | `run` | 执行一次非交互 Coding Agent 轮次 |
 | `web` | 未运行时启动 Runtime Web App，并打开浏览器 |
 | `qr` | 开启手机中继并直接显示配对二维码 |
+| `identity` | 查看或修改这台实例的名字；UUID 与文件位置见 [FEDERATION.md](FEDERATION.md) |
+| `fed` | 与其他 willdeep 实例配对、列出联系人、发消息；见 [FEDERATION.md](FEDERATION.md) |
 | `session` | 查询或停止持久 Runtime Session |
 | `config` | 创建、校验或脱敏查看 TOML 配置 |
 | `daemon` | 管理持久本地 Runtime Daemon |
@@ -34,6 +36,10 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | `man` | 输出 roff man page |
 
 `willdeep web` 复用已运行的 Runtime Web App；如果服务未运行，则在当前工作区以 `127.0.0.1:9847` 启动。每次执行都会尝试打开浏览器并打印地址。`willdeep qr` 会启用手机中继并打印配对码；二维码包含配对凭据，只应由自己的 WillDeep Mobile 扫描。
+
+`willdeep identity` 打印实例名与 UUID；`willdeep identity rename <名字>` 改名（UUID 不变），`willdeep identity names` 列出首次运行会用的名字池。身份存于 `$WILLDEEP_HOME/identity.json`（0600），TUI 的 `/name [新名字]` 与 Web 侧栏的实例徽标是同一件事。
+
+`willdeep fed invite|join|list|say|remove` 管理跨实例联邦：邀请是一次性链接（10 分钟），配对后 `fed say` 直接发消息；入站消息进入 `[federation] workspace` 指定的工作区，并要求 `[intake] enabled` 且配了 `public_url`。协议、限流与自动回复策略见 [FEDERATION.md](FEDERATION.md)。
 
 TUI 中的 `/thinking [show|hide]` 控制思考内容是否显示；显示时每段思考先以可点击的 Thought 耗时摘要呈现。`[ui].show_thinking` 是初始默认值，TUI 中切换后会保存到本机偏好文件。显示设置只影响界面，不会改变模型收到的推理配置；模型推理档位仍由 Provider/API 能力决定。
 

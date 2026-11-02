@@ -122,3 +122,123 @@ it("refuses to save two sites with the same slug before hitting the server", asy
   await screen.findByText(new RegExp(t.duplicateSlug));
   expect(calls).toEqual(["GET"]);
 });
+
+async function openFormsTab() {
+  await screen.findByText(t.title);
+  fireEvent.click(screen.getByRole("button", { name: t.forms }));
+}
+
+it("derives a unique form slug from the title and stops after an edit", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => view() })));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  const title = screen.getByLabelText(t.formTitle);
+  fireEvent.change(title, { target: { value: "Contact us" } });
+  expect((screen.getByLabelText(t.slug) as HTMLInputElement).value).toBe("contact-us");
+  fireEvent.change(title, { target: { value: "Support" } });
+  expect((screen.getByLabelText(t.slug) as HTMLInputElement).value).toBe("support");
+
+  // 手改之后不再跟着标题走；清空则回到自动，并立刻重算。
+  fireEvent.change(screen.getByLabelText(t.slug), { target: { value: "help" } });
+  fireEvent.change(title, { target: { value: "Contact us" } });
+  expect((screen.getByLabelText(t.slug) as HTMLInputElement).value).toBe("help");
+  fireEvent.change(screen.getByLabelText(t.slug), { target: { value: "" } });
+  expect((screen.getByLabelText(t.slug) as HTMLInputElement).value).toBe("contact-us");
+});
+
+it("falls back to a placeholder slug when the title has no latin letters", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => view() })));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getByLabelText(t.formTitle), { target: { value: "你的信息" } });
+  expect((screen.getByLabelText(t.slug) as HTMLInputElement).value).toBe("form");
+  expect(screen.getByText(t.slugAutoFallback)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getAllByLabelText(t.formTitle)[1], { target: { value: "联系方式" } });
+  expect((screen.getAllByLabelText(t.slug)[1] as HTMLInputElement).value).toBe("form-2");
+});
+
+it("keeps automatically derived slugs unique across forms", async () => {  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => view() })));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getByLabelText(t.formTitle), { target: { value: "Contact us" } });
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getAllByLabelText(t.formTitle)[1], { target: { value: "Contact us" } });
+  const slugs = screen.getAllByLabelText(t.slug) as HTMLInputElement[];
+  expect(slugs.map((input) => input.value)).toEqual(["contact-us", "contact-us-2"]);
+});
+
+it("names a field from its label, infers the type, and saves number bounds", async () => {
+  const sent: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "PUT") {
+      sent.push(JSON.parse(String(init.body)));
+      return { ok: true, json: async () => view() };
+    }
+    return { ok: true, json: async () => view() };
+  }));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getByLabelText(t.formTitle), { target: { value: "Sign up" } });
+  fireEvent.change(screen.getByLabelText(t.workspace), { target: { value: "/tmp/work" } });
+  fireEvent.change(screen.getByLabelText(t.prompt), { target: { value: "收到一份报名" } });
+  fireEvent.click(screen.getByRole("button", { name: t.addField }));
+
+  fireEvent.change(screen.getByLabelText(t.fieldLabel), { target: { value: "年龄" } });
+  const name = screen.getByLabelText(t.fieldName) as HTMLInputElement;
+  expect(name.value).toBe("年龄");
+  expect((screen.getByLabelText(t.fieldType) as HTMLSelectElement).value).toBe("number");
+  expect(screen.getByLabelText(t.minValue)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: t.allowDecimal }));
+  fireEvent.change(screen.getByLabelText(t.minValue), { target: { value: "18" } });
+  fireEvent.change(screen.getByLabelText(t.maxValue), { target: { value: "99" } });
+  fireEvent.click(screen.getByRole("button", { name: t.save }));
+
+  await waitFor(() => expect(sent).toHaveLength(1));
+  const form = (sent[0] as { forms: Array<Record<string, unknown>> }).forms[0];
+  expect(form.slug).toBe("sign-up");
+  expect(form.fields).toEqual([{
+    name: "年龄", label: "年龄", type: "number", required: false, options: [],
+    allow_decimal: true, min: 18, max: 99,
+  }]);
+});
+
+it("keeps automatically derived field names unique", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => view() })));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.click(screen.getByRole("button", { name: t.addField }));
+  fireEvent.click(screen.getByRole("button", { name: t.addField }));
+  const labels = screen.getAllByLabelText(t.fieldLabel);
+  fireEvent.change(labels[0], { target: { value: "邮箱" } });
+  fireEvent.change(labels[1], { target: { value: "邮箱" } });
+  const names = screen.getAllByLabelText(t.fieldName) as HTMLInputElement[];
+  expect(names.map((input) => input.value)).toEqual(["邮箱", "邮箱-2"]);
+});
+
+it("blocks a number field whose minimum is greater than its maximum", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    calls.push(init?.method ?? "GET");
+    return { ok: true, json: async () => view() };
+  }));
+  renderPage();
+  await openFormsTab();
+  fireEvent.click(screen.getByRole("button", { name: t.addForm }));
+  fireEvent.change(screen.getByLabelText(t.formTitle), { target: { value: "Sign up" } });
+  fireEvent.change(screen.getByLabelText(t.workspace), { target: { value: "/tmp/work" } });
+  fireEvent.change(screen.getByLabelText(t.prompt), { target: { value: "收到一份报名" } });
+  fireEvent.click(screen.getByRole("button", { name: t.addField }));
+  fireEvent.change(screen.getByLabelText(t.fieldLabel), { target: { value: "年龄" } });
+  fireEvent.change(screen.getByLabelText(t.minValue), { target: { value: "10" } });
+  fireEvent.change(screen.getByLabelText(t.maxValue), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: t.save }));
+  await screen.findByText(new RegExp(t.badNumberRange));
+  expect(calls).toEqual(["GET"]);
+});

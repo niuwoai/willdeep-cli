@@ -4,8 +4,11 @@
 .mobile-session-toggle, .session-sidebar-backdrop { display: none; }
 .chat-sidebar select { border-radius: 9px; font-size: 12px; }
 .chat-workspace .chat-sidebar button { color: var(--text-dim); }
-.chat-sidebar .session-row { border-radius: 9px; margin-bottom: 3px; }
-.chat-sidebar .session-title { padding: 11px 9px; font-size: 13px; }
+/* 实例名：标题旁边的小徽标，点一下改名。视觉上比标题轻，但可点。 */
+.instance-name { flex: none; padding: 1px 7px; border: 1px solid var(--border-subtle); border-radius: 999px; background: var(--bg-panel); color: var(--text-muted) !important; font-size: 11px; line-height: 1.7; cursor: pointer; }
+.instance-name:hover { border-color: var(--border); color: var(--text) !important; }
+.chat-sidebar .session-row { border-radius: 9px; margin-bottom: 2px; }
+.chat-sidebar .session-title { padding: 6px 9px; font-size: 13px; }
 .chat-sidebar .session-row.selected { --row-bg: var(--bg-panel); box-shadow: inset 2px 0 var(--accent); }
 /* 分凉出来的会话缩进，左侧一条竖线把它和来源连起来。 */
 .chat-sidebar .session-row.nested { margin-left: 14px; }
@@ -32,6 +35,10 @@
 .session-search { position: relative; margin: 4px 0 12px; }
 .session-search > svg { position: absolute; top: 10px; left: 10px; z-index: 1; color: var(--text-faint); pointer-events: none; }
 .session-search input { padding-left: 32px; border-color: transparent; background: var(--bg-page); border-radius: 8px; font-size: 12px; }
+/* 已归档固定在会话列表下方：入口永远可见。展开的列表自己限高滚动，
+   不把上面的项目树挤走，也不会撑破侧栏。 */
+.archived-section { border-top: 1px solid var(--border-subtle); margin-top: 6px; padding-top: 4px; }
+.archived-sessions { max-height: 34vh; overflow-y: auto; padding-right: 2px; }
 .chat-workspace .conversation-with-schedules { position: relative; flex-direction: column; height: 100dvh; min-height: 0; background: var(--bg-surface); }
 .conversation-toolbar { flex: 0 0 auto; min-height: 78px; padding: 15px 30px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border-subtle); }
 .conversation-location { min-width: 0; }

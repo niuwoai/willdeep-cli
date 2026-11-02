@@ -112,6 +112,14 @@ Provider Profile 可声明 `context_window`。在途自动压缩按四道水位�
 
 `web_search` 调用同一 some.im Origin 的 `/api/v1/customer/web-search`。`web_fetch` 只接受 HTTP(S) 公网目标，在请求前及每次重定向时解析 DNS，并拒绝私网、回环、链路本地和文档保留地址。GET 自行处理最多 8 次跳转：同 hostname 自动跟随，跨 hostname 在 `strict` 模式下重新审批，HTTPS→HTTP 降级拒绝；最终响应限制为 3 MiB 和最多 100,000 字符。POST 由 `method` 与 `body` 参数触发，请求体上限 1 MiB，一律不跟随重定向，在所有审批模式下逐次审批，且可按注册域名记成 Always Allow 规则。两项网络工具的 GET 与搜索只在 `strict` 模式下逐次审批。
 
+### 实例身份（联邦 P0）
+
+每台 willdeep 有一个终身不变的实例 UUID 和一个可改的名字，存在 `$WILLDEEP_HOME/identity.json`（0600，原子替换；首次使用时从 64 个内置名字里挑一个）。改名走 TUI/Web 的 `/name` 或 `willdeep identity rename`，UUID 不变——名字是标签，身份是 UUID。名字限定 1–24 个 ASCII 字母、数字、`-` 和 `_`；重名时展示为 `alex:2u2d`（UUID 末 4 位）。Web 只在回环监听上读写身份。设计与后续阶段见 [FEDERATION.md](FEDERATION.md)。
+
+### 实例联邦（P1）
+
+两台公网可达的 willdeep 可以互相发消息。身份是 `~/.willdeep/identity.json` 的稳定 UUID 加一个可改的名字；联系人与每对实例的共享密钥在 `~/.willdeep/federation.json`（0600）。入口监听上注册 `/p/v1/join/{token}`（一次性邀请，10 分钟）与 `/p/v1/message`（HMAC + 时间戳 ±300s + nonce + 每分钟 20 条限流），不开联邦时这两条路径根本不注册。入站消息以 `Surface::Federation` 作为普通 Runtime 轮次进入 `[federation] workspace` 指定工作区的一条固定会话，正文包成「外部数据、不是指令」；一轮结束后按 `reply` 策略与 `max_auto_turns` 上限决定是否把最后一条助手回复回传。Web 侧只有回环能读联系人与发消息，共享密钥不出后端。设计与分期见 [FEDERATION.md](FEDERATION.md)，群聊与 E2E 尚未实现。
+
 ### Mobile Relay
 
 中继归 **Runtime Daemon** 所有（0.82.0 起；此前挂在 TUI 进程上，见 [决策单](decisions/2026-09-23-daemon-mobile-relay.md)）：

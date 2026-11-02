@@ -25,20 +25,46 @@ import {
   type IntakeView,
   type IntakeWebhook,
 } from "./intakeApi";
+import { fieldNameFrom, inferFieldType, slugify, uniqueName } from "./intakeDraft";
+import { FederationPanel } from "./FederationPanel";
+import { federationText } from "./federationMessages";
 import "./intake.css";
 
 type SiteRow = IntakeSite & { key: string };
-type FieldRow = IntakeField & { key: string };
-type FormRow = Omit<IntakeForm, "fields"> & { key: string; fields: FieldRow[] };
+/// 设计器里的字段： `min` / `max` 存用户输入的原文。"-"、"1." 这类中间态不该
+/// 被 Number() 吃掉，保存时再转成数字。
+type FieldRow = Omit<IntakeField, "min" | "max"> & {
+  key: string;
+  min: string;
+  max: string;
+  /// 名字和类型还是跟着显示名走的；用户自己改过就关掉。
+  nameAuto: boolean;
+  typeAuto: boolean;
+};
+type FormRow = Omit<IntakeForm, "fields"> & { key: string; slugAuto: boolean; fields: FieldRow[] };
 type HookRow = IntakeWebhook & { key: string };
 type Draft = { enabled: boolean; listen: string; publicUrl: string; sites: SiteRow[]; forms: FormRow[]; webhooks: HookRow[] };
-type Tab = "sites" | "forms" | "webhooks" | "records";
+type Tab = "sites" | "forms" | "webhooks" | "records" | "federation";
 type Picker = { target: "site" | "form" | "hook"; rowKey: string; path: string; data: BrowseView | null; error: string };
 type Copy = ReturnType<typeof intakeText>;
 type Update = (change: (draft: Draft) => Draft) => void;
 
-const fieldTypes: IntakeFieldType[] = ["text", "textarea", "email", "choice"];
-const emptyField = (): FieldRow => ({ key: crypto.randomUUID(), name: "", label: "", type: "text", required: false, options: [] });
+/// 输入框里空着表示这一端不限，所以下拉里没有「无」这个选项，只有文本输入。
+const emptyField = (): FieldRow => ({
+  key: crypto.randomUUID(), name: "", label: "", type: "text", required: false,
+  options: [], allow_decimal: false, min: "", max: "", nameAuto: true, typeAuto: true,
+});
+
+/// 类型下拉按用途分组，选起来比一长串平铺快。
+const fieldTypeGroups: Array<{ key: string; label: "typeGroupText" | "typeGroupContact" | "typeGroupOther"; types: IntakeFieldType[] }> = [
+  { key: "text", label: "typeGroupText", types: ["text", "textarea"] },
+  { key: "contact", label: "typeGroupContact", types: ["email", "tel"] },
+  { key: "other", label: "typeGroupOther", types: ["number", "url", "date", "choice"] },
+];
+
+/// 与 `crates/willdeep-cli/src/config.rs` 的 `INTAKE_FORM_TOKEN_FIELD` 一致：
+/// 这个字段名放令牌，不能给用户字段用。前端先挡，省得保存时才收到英文报错。
+const RESERVED_FIELD_NAME = "__willdeep_form_token";
 
 function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "sites" | "forms" | "webhooks">): Draft {
   return {
@@ -49,10 +75,27 @@ function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "
     forms: view.forms.map((form) => ({
       ...form,
       key: crypto.randomUUID(),
-      fields: form.fields.map((field) => ({ ...field, key: crypto.randomUUID() })),
+      slugAuto: false,
+      fields: form.fields.map((field) => ({
+        ...field,
+        key: crypto.randomUUID(),
+        allow_decimal: field.allow_decimal ?? false,
+        min: field.min == null ? "" : String(field.min),
+        max: field.max == null ? "" : String(field.max),
+        nameAuto: false,
+        typeAuto: false,
+      })),
     })),
     webhooks: view.webhooks.map((hook) => ({ ...hook, key: crypto.randomUUID() })),
   };
+}
+
+/// 输入框原文转数字。空串、写坏的值都当成「不限」，交给前端校验去拦。
+function numberOrNull(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
 }
 
 function payload(draft: Draft): IntakePayload {
@@ -73,6 +116,9 @@ function payload(draft: Draft): IntakePayload {
         type: field.type,
         required: field.required,
         options: field.type === "choice" ? field.options.map((option) => option.trim()).filter(Boolean) : [],
+        allow_decimal: field.type === "number" ? field.allow_decimal : false,
+        min: field.type === "number" ? numberOrNull(field.min) : null,
+        max: field.type === "number" ? numberOrNull(field.max) : null,
       })),
     })),
     webhooks: draft.webhooks.map((hook) => ({
@@ -200,8 +246,8 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
     </section>
 
     <nav className="intake-tabs">
-      {(["sites", "forms", "webhooks", "records"] as const).map((key) => (
-        <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{t[key]}</button>
+      {(["sites", "forms", "webhooks", "records", "federation"] as const).map((key) => (
+        <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{key === "federation" ? federationText(language).tab : t[key]}</button>
       ))}
     </nav>
 
@@ -209,6 +255,7 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
     {tab === "forms" && <FormsTab draft={draft} writable={writable} update={update} t={t} view={data} onBrowse={openPicker} />}
     {tab === "webhooks" && <WebhooksTab draft={draft} writable={writable} update={update} t={t} view={data} onBrowse={openPicker} />}
     {tab === "records" && <RecordsTab view={data} language={language} t={t} onOpenSession={onOpenSession} onRefresh={() => void view.refetch()} />}
+    {tab === "federation" && <FederationPanel language={language} onOpenSession={onOpenSession} />}
 
     <Dialog.Root open={picker !== null} onOpenChange={(details) => { if (!details.open) setPicker(null); }}>
       <Portal>
@@ -273,51 +320,158 @@ function FormsTab({ draft, writable, update, t, view, onBrowse }: {
     update((current) => ({ ...current, forms: current.forms.map((form) => form.key === key ? change(form) : form) }));
   const changeField = (formKey: string, fieldKey: string, change: (field: FieldRow) => FieldRow) =>
     changeForm(formKey, (form) => ({ ...form, fields: form.fields.map((field) => field.key === fieldKey ? change(field) : field) }));
+
+  // slug 在站点、表单和 webhook 之间共用一个命名空间，自动命名时要避开别人。
+  const takenSlugs = (current: Draft, exceptFormKey: string) => {
+    const taken = new Set<string>();
+    for (const site of current.sites) if (site.slug.trim()) taken.add(site.slug.trim());
+    for (const form of current.forms) if (form.key !== exceptFormKey && form.slug.trim()) taken.add(form.slug.trim());
+    for (const hook of current.webhooks) if (hook.slug.trim()) taken.add(hook.slug.trim());
+    return taken;
+  };
+
+  // 只有还处在自动模式的表单才跟着标题重算 slug；手动改过的不动。
+  // 中文标题没有可用的转写，退到 `form` 占位——至少能直接保存，标题下面会说明。
+  const autoSlug = (title: string): string => slugify(title) || (title.trim() ? "form" : "");
+  const changeTitle = (formKey: string, title: string) =>
+    update((current) => ({
+      ...current,
+      forms: current.forms.map((form) => {
+        if (form.key !== formKey) return form;
+        if (!form.slugAuto) return { ...form, title };
+        const base = autoSlug(title);
+        return { ...form, title, slug: base ? uniqueName(base, takenSlugs(current, formKey)) : "" };
+      }),
+    }));
+
+  // 显示名一改，自动模式的字段名和类型跟着走；手动改过的不动。
+  const changeLabel = (formKey: string, fieldKey: string, label: string) =>
+    changeForm(formKey, (form) => {
+      const taken = new Set(form.fields.filter((field) => field.key !== fieldKey && field.name.trim()).map((field) => field.name.trim()));
+      return {
+        ...form,
+        fields: form.fields.map((field) => {
+          if (field.key !== fieldKey) return field;
+          const next = { ...field, label };
+          if (field.nameAuto) next.name = uniqueName(fieldNameFrom(label), taken);
+          if (field.typeAuto) next.type = inferFieldType(label) ?? "text";
+          return next;
+        }),
+      };
+    });
+
+  const moveField = (formKey: string, fieldKey: string, delta: number) =>
+    changeForm(formKey, (form) => {
+      const index = form.fields.findIndex((field) => field.key === fieldKey);
+      const target = index + delta;
+      if (index < 0 || target < 0 || target >= form.fields.length) return form;
+      const fields = [...form.fields];
+      [fields[index], fields[target]] = [fields[target], fields[index]];
+      return { ...form, fields };
+    });
+
   return <section className="intake-section">
     <p className="intake-hint">{t.formsHint}</p>
-    {draft.forms.map((form) => <div className="intake-card" key={form.key}>
-      <div className="intake-card-title">
-        <strong>{form.title || form.slug || t.addForm}</strong>
-        {intakeLink(view, "f", form.slug) && <a href={intakeLink(view, "f", form.slug) ?? ""} target="_blank" rel="noreferrer">{`/f/${form.slug}`}</a>}
-      </div>
-      <label>{t.slug}<input value={form.slug} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, slug: event.target.value }))} /></label>
-      <label>{t.formTitle}<input value={form.title} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, title: event.target.value }))} /></label>
-      <label className="intake-wide">{t.workspace}
-        <div className="intake-row">
-          <input value={form.workspace} disabled={!writable} placeholder={t.rootPlaceholder} onChange={(event) => changeForm(form.key, (row) => ({ ...row, workspace: event.target.value }))} />
-          <button type="button" disabled={!writable} onClick={() => onBrowse("form", form.key, form.workspace)}>{t.browse}</button>
+    {draft.forms.map((form) => {
+      const link = intakeLink(view, "f", form.slug);
+      const autoBase = slugify(form.title);
+      const slugHint = !form.slugAuto ? t.slugHint : !form.title.trim() ? t.slugAutoEmpty : autoBase ? t.slugAutoHint : t.slugAutoFallback;
+      return <div className="intake-card" key={form.key}>
+        <div className="intake-card-title">
+          <strong>{form.title || form.slug || t.addForm}</strong>
+          {link && <a href={link} target="_blank" rel="noreferrer">{`/f/${form.slug}`}</a>}
         </div>
-      </label>
-      <label>{t.session}
-        <select value={form.session} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, session: event.target.value as IntakeForm["session"] }))}>
-          <option value="continue">{t.sessionContinue}</option>
-          <option value="new">{t.sessionNew}</option>
-        </select>
-      </label>
-      <label className="intake-wide">{t.prompt}
-        <textarea rows={2} value={form.prompt} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, prompt: event.target.value }))} />
-        <span className="intake-hint">{t.promptHint}</span>
-      </label>
-      <div className="intake-fields intake-wide">
-        <Text className="intake-fields-title">{t.fields}</Text>
-        {form.fields.map((field) => <div className="intake-field-row" key={field.key}>
-          <input aria-label={t.fieldName} value={field.name} disabled={!writable} placeholder={t.fieldName} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, name: event.target.value }))} />
-          <input aria-label={t.fieldLabel} value={field.label} disabled={!writable} placeholder={t.fieldLabel} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, label: event.target.value }))} />
-          <select aria-label={t.fieldType} value={field.type} disabled={!writable} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, type: event.target.value as IntakeFieldType }))}>
-            {fieldTypes.map((type) => <option key={type} value={type}>{fieldTypeLabel(type, t)}</option>)}
+        <label>{t.slug}
+          <div className="intake-input-badge">
+            <input aria-label={t.slug} value={form.slug} disabled={!writable} placeholder={t.slugPlaceholder} onChange={(event) => {
+              const value = event.target.value;
+              update((current) => ({
+                ...current,
+                forms: current.forms.map((row) => {
+                  if (row.key !== form.key) return row;
+                  if (value.trim()) return { ...row, slug: value, slugAuto: false };
+                  // 清空 = 交还给标题：立刻按现在的标题重算，而不是留个空框。
+                  const base = autoSlug(row.title);
+                  return { ...row, slug: base ? uniqueName(base, takenSlugs(current, row.key)) : "", slugAuto: true };
+                }),
+              }));
+            }} />
+            {form.slugAuto && <span className="intake-auto" title={t.slugAutoHint}>{t.auto}</span>}
+          </div>
+          <span className="intake-hint">{slugHint}</span>
+        </label>
+        <label>{t.formTitle}
+          <input aria-label={t.formTitle} value={form.title} disabled={!writable} onChange={(event) => changeTitle(form.key, event.target.value)} />
+        </label>
+        <label className="intake-wide">{t.workspace}
+          <div className="intake-row">
+            <input aria-label={t.workspace} value={form.workspace} disabled={!writable} placeholder={t.rootPlaceholder} onChange={(event) => changeForm(form.key, (row) => ({ ...row, workspace: event.target.value }))} />
+            <button type="button" disabled={!writable} onClick={() => onBrowse("form", form.key, form.workspace)}>{t.browse}</button>
+          </div>
+        </label>
+        <label>{t.session}
+          <select value={form.session} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, session: event.target.value as IntakeForm["session"] }))}>
+            <option value="continue">{t.sessionContinue}</option>
+            <option value="new">{t.sessionNew}</option>
           </select>
-          <label className="intake-inline"><input type="checkbox" checked={field.required} disabled={!writable} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, required: event.target.checked }))} />{t.fieldRequired}</label>
-          {field.type === "choice" && <input className="intake-wide" aria-label={t.fieldOptions} value={field.options.join(", ")} disabled={!writable} placeholder={t.fieldOptions} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, options: event.target.value.split(",").map((option) => option.trim()) }))} />}
-          <button type="button" className="intake-danger" disabled={!writable} onClick={() => changeForm(form.key, (row) => ({ ...row, fields: row.fields.filter((item) => item.key !== field.key) }))}>{t.remove}</button>
-        </div>)}
-        <button type="button" className="intake-add" disabled={!writable} onClick={() => changeForm(form.key, (row) => ({ ...row, fields: [...row.fields, emptyField()] }))}>{t.addField}</button>
-      </div>
-      <div className="intake-card-actions">
-        <button type="button" className="intake-danger" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: current.forms.filter((row) => row.key !== form.key) }))}>{t.remove}</button>
-      </div>
-    </div>)}
+        </label>
+        <label className="intake-wide">{t.prompt}
+          <textarea aria-label={t.prompt} rows={2} value={form.prompt} disabled={!writable} onChange={(event) => changeForm(form.key, (row) => ({ ...row, prompt: event.target.value }))} />
+          <span className="intake-hint">{t.promptHint}</span>
+        </label>
+        <div className="intake-fields intake-wide">
+          <Text className="intake-fields-title">{t.fields}</Text>
+          {form.fields.map((field, index) => <div className="intake-field-row" key={field.key}>
+            <div className="intake-field-line">
+              <input className="intake-field-label" aria-label={t.fieldLabel} value={field.label} disabled={!writable} placeholder={t.fieldLabelPlaceholder} onChange={(event) => changeLabel(form.key, field.key, event.target.value)} />
+              <select className="intake-field-type" aria-label={t.fieldType} value={field.type} disabled={!writable} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, type: event.target.value as IntakeFieldType, typeAuto: false }))}>
+                {fieldTypeGroups.map((group) => <optgroup key={group.key} label={t[group.label]}>
+                  {group.types.map((type) => <option key={type} value={type}>{fieldTypeLabel(type, t)}</option>)}
+                </optgroup>)}
+              </select>
+              <label className="intake-inline"><input type="checkbox" checked={field.required} disabled={!writable} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, required: event.target.checked }))} />{t.fieldRequired}</label>
+              <div className="intake-field-actions">
+                <button type="button" title={t.moveUp} aria-label={t.moveUp} disabled={!writable || index === 0} onClick={() => moveField(form.key, field.key, -1)}>↑</button>
+                <button type="button" title={t.moveDown} aria-label={t.moveDown} disabled={!writable || index === form.fields.length - 1} onClick={() => moveField(form.key, field.key, 1)}>↓</button>
+                <button type="button" className="intake-danger" title={t.remove} aria-label={t.remove} disabled={!writable} onClick={() => changeForm(form.key, (row) => ({ ...row, fields: row.fields.filter((item) => item.key !== field.key) }))}>×</button>
+              </div>
+            </div>
+            <div className="intake-field-meta">
+              <span>{t.fieldName}</span>
+              <input className="intake-mono" aria-label={t.fieldName} value={field.name} disabled={!writable} placeholder={t.fieldName} onChange={(event) => {
+                const value = event.target.value;
+                changeForm(form.key, (row) => {
+                  const taken = new Set(row.fields.filter((item) => item.key !== field.key && item.name.trim()).map((item) => item.name.trim()));
+                  return {
+                    ...row,
+                    fields: row.fields.map((item) => {
+                      if (item.key !== field.key) return item;
+                      // 清空同样交还给显示名，和 slug 的规则一致。
+                      return value.trim()
+                        ? { ...item, name: value, nameAuto: false }
+                        : { ...item, name: uniqueName(fieldNameFrom(item.label), taken), nameAuto: true };
+                    }),
+                  };
+                });
+              }} />
+              {field.nameAuto && <span className="intake-auto" title={t.nameAutoHint}>{t.auto}</span>}
+            </div>
+            {field.type === "choice" && <input className="intake-mono" aria-label={t.fieldOptions} value={field.options.join(", ")} disabled={!writable} placeholder={t.fieldOptions} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, options: event.target.value.split(",") }))} />}
+            {field.type === "number" && <div className="intake-field-extra">
+              <label className="intake-inline"><input type="checkbox" checked={field.allow_decimal} disabled={!writable} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, allow_decimal: event.target.checked }))} />{t.allowDecimal}</label>
+              <label>{t.minValue}<input className="intake-mono" inputMode="decimal" aria-label={t.minValue} value={field.min} disabled={!writable} placeholder={t.noLimit} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, min: event.target.value }))} /></label>
+              <label>{t.maxValue}<input className="intake-mono" inputMode="decimal" aria-label={t.maxValue} value={field.max} disabled={!writable} placeholder={t.noLimit} onChange={(event) => changeField(form.key, field.key, (row) => ({ ...row, max: event.target.value }))} /></label>
+            </div>}
+          </div>)}
+          <button type="button" className="intake-add" disabled={!writable} onClick={() => changeForm(form.key, (row) => ({ ...row, fields: [...row.fields, emptyField()] }))}>{t.addField}</button>
+        </div>
+        <div className="intake-card-actions">
+          <button type="button" className="intake-danger" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: current.forms.filter((row) => row.key !== form.key) }))}>{t.remove}</button>
+        </div>
+      </div>;
+    })}
     {!draft.forms.length && <p>{t.emptyForms}</p>}
-    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: [...current.forms, { key: crypto.randomUUID(), slug: "", title: "", workspace: "", session: "continue", prompt: "", fields: [] }] }))}>{t.addForm}</button>
+    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: [...current.forms, { key: crypto.randomUUID(), slug: "", slugAuto: true, title: "", workspace: "", session: "continue", prompt: "", fields: [] }] }))}>{t.addForm}</button>
   </section>;
 }
 
@@ -391,6 +545,10 @@ function fieldTypeLabel(type: IntakeFieldType, t: Copy) {
   if (type === "textarea") return t.typeTextarea;
   if (type === "email") return t.typeEmail;
   if (type === "choice") return t.typeChoice;
+  if (type === "number") return t.typeNumber;
+  if (type === "tel") return t.typeTel;
+  if (type === "url") return t.typeUrl;
+  if (type === "date") return t.typeDate;
   return t.typeText;
 }
 
@@ -439,30 +597,42 @@ function validate(draft: Draft, t: Copy): string | null {
   for (const [kind, list, label] of groups) {
     const seen = new Set<string>();
     for (const row of list) {
-      const slug = row.slug.trim();
-      if (!/^[A-Za-z0-9-]{1,64}$/.test(slug)) return `${t.badSlug}: ${label} ${slug || "—"}`;
-      if (seen.has(slug)) return `${t.duplicateSlug}: ${slug}`;
-      seen.add(slug);
+      // 先问「填了没有」，再问格式：新建的空表单说「缺标题」比说「slug 格式错」清楚。
       if (kind === "site" && !(row as SiteRow).root.trim()) return t.missingField.replace("{field}", `${label} · ${t.root}`);
       if (kind === "form") {
         const form = row as FormRow;
         if (!form.title.trim()) return t.missingField.replace("{field}", `${label} · ${t.formTitle}`);
         if (!form.workspace.trim()) return t.missingField.replace("{field}", `${label} · ${t.workspace}`);
         if (!form.prompt.trim()) return t.missingField.replace("{field}", `${label} · ${t.prompt}`);
-        const names = new Set<string>();
-        for (const field of form.fields) {
-          const name = field.name.trim();
-          if (!name) return t.missingField.replace("{field}", `${label} · ${t.fieldName}`);
-          if (names.has(name)) return `${t.duplicateSlug}: ${name}`;
-          names.add(name);
-          if (field.type === "choice" && !field.options.some((option) => option.trim())) return t.missingField.replace("{field}", `${label} · ${name} · ${t.fieldOptions}`);
-        }
       }
       if (kind === "webhook") {
         const hook = row as HookRow;
         if (!hook.workspace.trim()) return t.missingField.replace("{field}", `${label} · ${t.workspace}`);
         if (!hook.prompt.trim()) return t.missingField.replace("{field}", `${label} · ${t.prompt}`);
         if (!hook.secret_env.trim()) return t.missingField.replace("{field}", `${label} · ${t.secretEnv}`);
+      }
+      const slug = row.slug.trim();
+      if (!/^[A-Za-z0-9-]{1,64}$/.test(slug)) return `${t.badSlug}: ${label} ${slug || "—"}`;
+      if (seen.has(slug)) return `${t.duplicateSlug}: ${slug}`;
+      seen.add(slug);
+      if (kind === "form") {
+        const form = row as FormRow;
+        const names = new Set<string>();
+        for (const field of form.fields) {
+          const name = field.name.trim();
+          if (!name) return t.missingField.replace("{field}", `${label} · ${t.fieldName}`);
+          if (name === RESERVED_FIELD_NAME) return `${label} · ${name} · ${t.reservedFieldName}`;
+          if (names.has(name)) return `${t.duplicateSlug}: ${name}`;
+          names.add(name);
+          if (field.type === "choice" && !field.options.some((option) => option.trim())) return t.missingField.replace("{field}", `${label} · ${name} · ${t.fieldOptions}`);
+          if (field.type === "number") {
+            const min = numberOrNull(field.min);
+            const max = numberOrNull(field.max);
+            if (field.min.trim() && min === null) return `${label} · ${name} · ${t.badNumberBound}`;
+            if (field.max.trim() && max === null) return `${label} · ${name} · ${t.badNumberBound}`;
+            if (min !== null && max !== null && min > max) return `${label} · ${name} · ${t.badNumberRange}`;
+          }
+        }
       }
     }
   }

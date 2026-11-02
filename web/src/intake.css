@@ -44,8 +44,24 @@
 .intake-card-actions a { font-size: 12px; color: var(--accent-text, var(--accent)); text-decoration: underline; }
 .intake-fields { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
 .intake-fields-title { font-size: 12px; font-weight: 600; color: var(--text-muted); }
-.intake-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 110px auto auto; gap: 8px; align-items: center; }
-.intake-manager .intake-field-row .intake-wide { grid-column: 1 / -1; }
+/* 一个字段是一张小卡：第一行显示名 + 类型 + 必填 + 排序，第二行才是内部字段名。
+   字段名大多由显示名自动生成，退到次要位置；数字字段再展开范围设置。 */
+.intake-field-row { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-page); }
+.intake-field-line { display: grid; grid-template-columns: minmax(0, 1fr) 136px auto auto; gap: 8px; align-items: center; }
+.intake-field-label { font-size: 13px; }
+.intake-field-type { padding: 6px 6px; font-size: 12px; }
+.intake-field-line .intake-inline { white-space: nowrap; font-size: 11px; }
+.intake-field-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.intake-field-meta > span:first-child { flex: none; font-size: 11px; color: var(--text-faint); }
+.intake-field-meta input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px; }
+.intake-field-actions { display: flex; gap: 2px; }
+.intake-field-actions button { padding: 3px 8px; font-size: 12px; }
+.intake-field-extra { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: end; }
+.intake-field-extra input { padding: 5px 8px; font-size: 12px; }
+.intake-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.intake-auto { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--bg-panel-hover); color: var(--text-faint); font-size: 10px; line-height: 1.6; }
+.intake-input-badge { display: flex; align-items: center; gap: 6px; }
+.intake-input-badge input { flex: 1; min-width: 0; }
 .intake-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .intake-table th { text-align: start; font-weight: 600; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .intake-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
@@ -54,6 +70,11 @@
 .intake-directories { display: flex; flex-direction: column; gap: 4px; max-height: 45vh; overflow: auto; }
 .intake-directory { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; }
 .intake-directory > button:last-child { font-size: 11px; padding: 3px 8px; }
+/* 联邦面板：邀请链接要能整行复制，联系人的 UUID 末四位比全量 UUID 好认。 */
+.federation-invite { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--bg-page); overflow-wrap: anywhere; }
+.federation-invite code { font-size: 12px; }
+.federation-short { color: var(--text-faint); font-weight: 500; }
+.federation-me .intake-card-title code { font-size: 11px; }
 
 .mcp-page { flex: 1; min-width: 0; padding: 24px; height: 100vh; overflow: auto; background: var(--bg-page); }
 .mcp-page h1 { font-size: 24px; font-weight: 650; }
@@ -66,6 +87,7 @@
 @media (max-width: 800px) {
   .intake-manager, .mcp-page { padding: 16px; }
   .intake-listener, .intake-card { grid-template-columns: 1fr; }
-  .intake-field-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .intake-field-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .intake-field-extra { grid-template-columns: 1fr 1fr; }
   .intake-header-actions { flex-direction: row; align-items: center; }
 }

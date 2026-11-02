@@ -2530,6 +2530,41 @@ impl App {
                     )
                 ));
             }
+            "/name" => {
+                // 身份落在 $WILLDEEP_HOME/identity.json。TUI 没拿到家目录时
+                // 只能展示进程内的副本，不假装已经写进去了。
+                let Some(home) = self.display_home.as_deref() else {
+                    self.append_transcript("Error: this client has no willdeep home directory".to_owned());
+                    return true;
+                };
+                let requested = args.trim();
+                if requested.is_empty() {
+                    match crate::identity::load(home) {
+                        Ok(identity) => self.append_transcript(format!(
+                            "System: {} · {}\n  {} · {}",
+                            self.language.text("实例名", "Instance name", "インスタンス名"),
+                            identity.display_name(false),
+                            identity.id,
+                            self.language.text(
+                                "改名用 /name <新名字>；UUID 保持不变",
+                                "Rename with /name <new name>; the UUID never changes",
+                                "名前を変えるには /name <新しい名前>。UUID は変わりません",
+                            )
+                        )),
+                        Err(error) => self.append_transcript(format!("Error: {error}")),
+                    }
+                    return true;
+                }
+                match crate::identity::rename(home, requested) {
+                    Ok(identity) => self.append_transcript(format!(
+                        "System: {} · {} · {}",
+                        self.language.text("实例已改名", "Instance renamed", "インスタンス名を変更しました"),
+                        identity.display_name(false),
+                        identity.id
+                    )),
+                    Err(error) => self.append_transcript(format!("Error: {error}")),
+                }
+            }
             "/sidebar" => {
                 let argument = args.trim().to_ascii_lowercase();
                 let visible = match argument.as_str() {
@@ -2577,6 +2612,177 @@ impl App {
         }
         true
     }
+    /// `/fed`：联邦联系人与发言。列联系人、邀请、移除都是本地文件操作，当场
+    /// 办完；加入和发言要打对端，放到后台，结果经 [`UiMessage::Federation`] 回来。
+    pub(super) fn handle_federation_command(
+        &mut self,
+        prompt: &str,
+        home: &std::path::Path,
+        config: Option<&std::path::Path>,
+        ui: &mpsc::UnboundedSender<UiMessage>,
+    ) -> bool {
+        let value = prompt.trim();
+        if !(value == "/fed" || value.starts_with("/fed ")) {
+            return false;
+        }
+        let rest = value["/fed".len()..].trim();
+        let (sub, args) = rest
+            .split_once(char::is_whitespace)
+            .unwrap_or((rest, ""));
+        let args = args.trim();
+        match sub {
+            "" | "list" => match crate::federation::load(home) {
+                Ok(store) if store.contacts.is_empty() => self.append_transcript(format!(
+                    "System: {}",
+                    self.language.text(
+                        "还没有联邦联系人。用 /fed invite 生成邀请，或 /fed join <链接> 加入对端。",
+                        "No federation peers yet. Use /fed invite to create an invitation, or /fed join <url> to join a peer.",
+                        "連携相手はまだいません。/fed invite で招待を作るか、/fed join <URL> で参加します。",
+                    )
+                )),
+                Ok(store) => {
+                    let mut lines = vec![format!(
+                        "System: {}",
+                        self.language.text("联邦联系人", "Federation peers", "連携相手")
+                    )];
+                    for contact in store.contacts {
+                        lines.push(format!(
+                            "  {} · {} · {} · auto_turns={}",
+                            contact.name,
+                            crate::identity::short_id(contact.id),
+                            contact.url,
+                            contact.auto_turns
+                        ));
+                    }
+                    lines.push(format!(
+                        "  {}",
+                        self.language.text(
+                            "发言：/fed say <名字> <内容>；移除：/fed remove <名字>",
+                            "Say: /fed say <name> <text>; remove: /fed remove <name>",
+                            "送信: /fed say <名前> <本文>。削除: /fed remove <名前>",
+                        )
+                    ));
+                    self.append_transcript(lines.join("\n"));
+                }
+                Err(error) => self.append_transcript(format!("Error: {error}")),
+            },
+            "invite" => {
+                let public_url = config
+                    .and_then(|path| crate::config::LoadedConfig::load(Some(path)).ok())
+                    .map(|loaded| {
+                        loaded
+                            .file
+                            .intake
+                            .public_url
+                            .trim()
+                            .trim_end_matches('/')
+                            .to_owned()
+                    })
+                    .unwrap_or_default();
+                if public_url.is_empty() {
+                    self.append_transcript(format!(
+                        "Error: {}",
+                        self.language.text(
+                            "先在配置里填 [intake] public_url，别人才能按这个地址回连这台机器",
+                            "Set [intake] public_url first, or the peer cannot reach this machine back",
+                            "先に設定の [intake] public_url を埋めてください。相手がこのマシンに接続できません",
+                        )
+                    ));
+                    return true;
+                }
+                match crate::federation::create_invite(home) {
+                    Ok(created) => self.append_transcript(format!(
+                        "System: {}\n  {}\n  {}",
+                        self.language.text(
+                            "一次性邀请，10 分钟内有效",
+                            "One-time invitation, valid for 10 minutes",
+                            "1 回限りの招待。10 分間有効",
+                        ),
+                        crate::federation::invite_url(&public_url, &created.token),
+                        self.language.text(
+                            "让对方执行 /fed join <上面的链接>",
+                            "Have the peer run /fed join <the link above>",
+                            "相手に /fed join <上のリンク> を実行してもらいます",
+                        ),
+                    )),
+                    Err(error) => self.append_transcript(format!("Error: {error}")),
+                }
+            }
+            "remove" => {
+                if args.is_empty() {
+                    self.append_transcript("Error: /fed remove <name>".to_owned());
+                    return true;
+                }
+                match crate::federation::remove_contact(home, args) {
+                    Ok(contact) => self.append_transcript(format!(
+                        "System: {} {}",
+                        self.language.text("已移除", "Removed", "削除しました"),
+                        contact.name
+                    )),
+                    Err(error) => self.append_transcript(format!("Error: {error}")),
+                }
+            }
+            "join" => {
+                if args.is_empty() {
+                    self.append_transcript("Error: /fed join <invitation URL>".to_owned());
+                    return true;
+                }
+                let home = home.to_path_buf();
+                let config = config.map(std::path::Path::to_path_buf);
+                let language = self.language;
+                let ui = ui.clone();
+                let url = args.to_owned();
+                self.notice = Some(
+                    language
+                        .text("正在连接对端…", "Joining the peer…", "相手に接続しています…")
+                        .to_owned(),
+                );
+                tokio::spawn(async move {
+                    let message = join_peer(&home, config.as_deref(), &url).await;
+                    let _ = ui.send(UiMessage::Federation(match message {
+                        Ok(contact) => format!(
+                            "System: {} {} · {}",
+                            language.text("已配对", "Paired with", "連携しました"),
+                            contact.name,
+                            contact.url
+                        ),
+                        Err(error) => format!("Error: {error:#}"),
+                    }));
+                });
+            }
+            "say" => {
+                let Some((peer, text)) = args.split_once(char::is_whitespace) else {
+                    self.append_transcript("Error: /fed say <name> <text>".to_owned());
+                    return true;
+                };
+                let (peer, text) = (peer.to_owned(), text.trim().to_owned());
+                if text.is_empty() {
+                    self.append_transcript("Error: /fed say <name> <text>".to_owned());
+                    return true;
+                }
+                let home = home.to_path_buf();
+                let language = self.language;
+                let ui = ui.clone();
+                tokio::spawn(async move {
+                    let message = say_to_peer(&home, &peer, &text).await;
+                    let _ = ui.send(UiMessage::Federation(match message {
+                        Ok(name) => format!(
+                            "System: {} {}",
+                            language.text("已发送给", "Sent to", "送信しました:"),
+                            name
+                        ),
+                        Err(error) => format!("Error: {error:#}"),
+                    }));
+                });
+            }
+            other => self.append_transcript(format!(
+                "Error: {} /fed list|invite|join <url>|say <name> <text>|remove <name> (got `{other}`)",
+                self.language.text("用法：", "usage:", "使い方:")
+            )),
+        }
+        true
+    }
+
     /// `/mobile` 只是遥控器：中继归 Runtime 所有。打开可能要先拉起 Runtime，
     /// 所以放到后台去办，结果经 [`UiMessage::MobileRelay`] 回来。
     pub(super) fn handle_mobile_command(
@@ -2726,4 +2932,30 @@ pub(super) fn version_is_older(a: &str, b: &str) -> bool {
     };
     let rank = |pre: Option<u64>| pre.map_or((1, 0), |rc| (0, rc));
     (a.0, a.1, a.2, rank(a.3)) < (b.0, b.1, b.2, rank(b.3))
+}
+
+/// `/fed join` 的后台部分。放进独立函数是为了让事件循环里那段 spawn 短一点，
+/// 也便于单独测。
+async fn join_peer(
+    home: &std::path::Path,
+    config: Option<&std::path::Path>,
+    url: &str,
+) -> anyhow::Result<crate::federation::Contact> {
+    let identity = crate::identity::load(home)?;
+    let public_url = crate::read_intake_public_url(config)?;
+    if public_url.is_empty() {
+        anyhow::bail!("[intake] public_url is empty: the peer could not reach this machine back");
+    }
+    let contact = crate::federation::join(url, &identity, &public_url).await?;
+    crate::federation::upsert_contact(home, contact)
+}
+
+/// `/fed say` 的后台部分。手动发言会把自动回复计数清零。
+async fn say_to_peer(home: &std::path::Path, peer: &str, text: &str) -> anyhow::Result<String> {
+    let store = crate::federation::load(home)?;
+    let contact = crate::federation::find(&store, peer)?.clone();
+    let identity = crate::identity::load(home)?;
+    crate::federation::send_message_as(identity.id, &contact, text).await?;
+    crate::federation::note_manual_message(home, contact.id)?;
+    Ok(contact.name)
 }

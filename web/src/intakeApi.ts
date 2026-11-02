@@ -1,7 +1,7 @@
 // 公网入口管理面的接口层。类型与 `crates/willdeep-cli/src/web/intake.rs` 里的
 // 视图一一对应：字段名照抄后端，不在这里另起别名。
 
-export type IntakeFieldType = "text" | "textarea" | "email" | "choice";
+export type IntakeFieldType = "text" | "textarea" | "email" | "tel" | "url" | "date" | "number" | "choice";
 export type IntakeSession = "continue" | "new";
 
 export type IntakeField = {
@@ -10,6 +10,11 @@ export type IntakeField = {
   type: IntakeFieldType;
   required: boolean;
   options: string[];
+  /// 只对 `number` 有意义：是否接受小数。
+  allow_decimal: boolean;
+  /// 只对 `number` 有意义：允许的范围（含端点）；null 表示这一端不限。
+  min: number | null;
+  max: number | null;
 };
 
 export type IntakeSite = { slug: string; root: string };

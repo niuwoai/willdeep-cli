@@ -241,6 +241,9 @@ pub struct ConfigFile {
     /// webhook 是反方向的两件事。
     #[serde(default)]
     pub intake: IntakeSettings,
+    /// 实例联邦：两台公网可达的 willdeep 互发消息。挂在入口监听上。
+    #[serde(default)]
+    pub federation: FederationSettings,
     /// 生命周期挂钩：审计留痕与门禁拦截。
     ///
     /// 与 `[notifications]` 那条 webhook 分开是有意的：webhook 是事后的礼貌
@@ -312,6 +315,34 @@ impl Default for IntakeSettings {
     }
 }
 
+/// 实例联邦。挂在公网入口那个监听上，所以开联邦必须同时开入口。
+///
+/// 联系人、共享密钥和每段对话对应的会话都在 `$WILLDEEP_HOME/federation.json`，
+/// 不写进配置：配置会被脚本整段重写，密钥不该跟着注释一起消失。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FederationSettings {
+    pub enabled: bool,
+    /// 联邦对话落在哪个工作区。必须是绝对路径；空串表示还没配。
+    pub workspace: String,
+    /// 自动回复策略：`always` 每条都回，`mention` 只在被 `@名字` 点到时回，
+    /// `never` 从不自动回（手动 `/fed say` 仍然可用）。
+    pub reply: String,
+    /// 一段对话里连续自动回复的上限。到顶后只收人工消息，防止两台 Agent 互相刷屏。
+    pub max_auto_turns: u32,
+}
+
+impl Default for FederationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            workspace: String::new(),
+            reply: "always".to_owned(),
+            max_auto_turns: crate::federation::DEFAULT_MAX_AUTO_TURNS,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IntakeSite {
@@ -341,7 +372,7 @@ pub struct IntakeForm {
 pub struct IntakeField {
     pub name: String,
     pub label: String,
-    /// `text`、`textarea`、`email`、`choice`。
+    /// `text`、`textarea`、`email`、`tel`、`url`、`date`、`number`、`choice`。
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
@@ -349,6 +380,37 @@ pub struct IntakeField {
     /// 只对 `choice` 有意义。
     #[serde(default)]
     pub options: Vec<String>,
+    /// 只对 `number` 有意义：是否接受小数，为假时只收整数。
+    #[serde(default)]
+    pub allow_decimal: bool,
+    /// 只对 `number` 有意义：允许的范围，含端点。缺省表示这一端不限。
+    #[serde(default, deserialize_with = "deserialize_optional_number")]
+    pub min: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_number")]
+    pub max: Option<f64>,
+}
+
+/// 表单字段可以用的类型。与入口页渲染的控件、提交时的校验一一对应。
+pub(crate) const INTAKE_FIELD_KINDS: &[&str] = &[
+    "text", "textarea", "email", "tel", "url", "date", "number", "choice",
+];
+
+/// TOML 里 `min = 1` 和 `min = 1.5` 都得认。serde 直接反序列化 `Option<f64>`
+/// 遇到整数会报类型错误，所以两种数值都收下来再统一成 f64。
+fn deserialize_optional_number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Number {
+        Int(i64),
+        Float(f64),
+    }
+    Ok(Option::<Number>::deserialize(deserializer)?.map(|value| match value {
+        Number::Int(value) => value as f64,
+        Number::Float(value) => value,
+    }))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -873,6 +935,35 @@ pub fn deprecations(file: &ConfigFile) -> Vec<Deprecation> {
     notes
 }
 
+/// 实例联邦的语义校验。联邦路由挂在入口监听上，所以开联邦必须同时开入口；
+/// 落点工作区必须是绝对路径，否则 `canonicalize` 会按 daemon 的当前目录去猜。
+pub(crate) fn validate_federation(
+    settings: &FederationSettings,
+    intake: &IntakeSettings,
+) -> Result<()> {
+    if !settings.enabled {
+        return Ok(());
+    }
+    if !intake.enabled {
+        bail!("[federation] enabled requires [intake] enabled: peers are reached through the intake listener");
+    }
+    if intake.public_url.trim().is_empty() {
+        bail!("[federation] needs [intake] public_url so the peer can reach this machine");
+    }
+    check_intake_public_url(&intake.public_url)?;
+    let workspace = PathBuf::from(settings.workspace.trim());
+    if !workspace.is_absolute() {
+        bail!("[federation] workspace must be an absolute path");
+    }
+    if !matches!(settings.reply.as_str(), "always" | "mention" | "never") {
+        bail!("[federation] reply must be always, mention or never");
+    }
+    if !(1..=50).contains(&settings.max_auto_turns) {
+        bail!("[federation] max_auto_turns must be between 1 and 50");
+    }
+    Ok(())
+}
+
 /// 公网入口的语义校验。`config check` 和入口启动都走这里，规则只写一份。
 pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
     settings
@@ -906,10 +997,7 @@ pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
                     form.slug
                 );
             }
-            if !matches!(
-                field.kind.as_str(),
-                "text" | "textarea" | "email" | "choice"
-            ) {
+            if !INTAKE_FIELD_KINDS.contains(&field.kind.as_str()) {
                 bail!(
                     "intake form {} field {} has an unknown type",
                     form.slug,
@@ -919,6 +1007,36 @@ pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
             if field.kind == "choice" && field.options.is_empty() {
                 bail!(
                     "intake form {} field {} needs options",
+                    form.slug,
+                    field.name
+                );
+            }
+            if field.kind != "number"
+                && (field.allow_decimal || field.min.is_some() || field.max.is_some())
+            {
+                bail!(
+                    "intake form {} field {} sets number options on a {} field",
+                    form.slug,
+                    field.name,
+                    field.kind
+                );
+            }
+            for (bound, value) in [("min", field.min), ("max", field.max)] {
+                if let Some(value) = value
+                    && !value.is_finite()
+                {
+                    bail!(
+                        "intake form {} field {} has a non-finite {bound}",
+                        form.slug,
+                        field.name
+                    );
+                }
+            }
+            if let (Some(min), Some(max)) = (field.min, field.max)
+                && min > max
+            {
+                bail!(
+                    "intake form {} field {} has min greater than max",
                     form.slug,
                     field.name
                 );
@@ -1477,6 +1595,7 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     }
     validate_intake(&file.intake)?;
+    validate_federation(&file.federation, &file.intake)?;
     for root in &file.agent.sandbox_writable_roots {
         // 相对路径相对谁？工作区、家目录、当前目录都说得通，所以谁都不算——
         // 一条被猜错基准的放行等于放行了别的目录。
@@ -2540,6 +2659,101 @@ secret = "inline-secret"
             let error = validate_intake(&settings).expect_err("not a bare origin");
             assert!(error.to_string().contains("public_url"), "{value}: {error}");
         }
+    }
+
+    #[test]
+    fn intake_number_bounds_accept_integers_and_floats() {
+        let file: ConfigFile = toml::from_str(
+            "[intake]\n\
+             enabled = false\n\
+             listen = \"127.0.0.1:9857\"\n\
+             [[intake.forms]]\n\
+             slug = \"apply\"\n\
+             title = \"申请\"\n\
+             workspace = \"/srv/work\"\n\
+             session = \"new\"\n\
+             prompt = \"收到一份申请\"\n\
+             [[intake.forms.fields]]\n\
+             name = \"age\"\n\
+             label = \"年龄\"\n\
+             type = \"number\"\n\
+             min = 18\n\
+             max = 99.5\n\
+             [[intake.forms.fields]]\n\
+             name = \"phone\"\n\
+             label = \"电话\"\n\
+             type = \"tel\"\n",
+        )
+        .unwrap();
+        let age = &file.intake.forms[0].fields[0];
+        assert_eq!(age.min, Some(18.0));
+        assert_eq!(age.max, Some(99.5));
+        assert!(file.intake.forms[0].fields[1].min.is_none());
+        validate_intake(&file.intake).expect("number bounds and the new field types are accepted");
+    }
+
+    #[test]
+    fn intake_number_options_only_apply_to_number_fields_and_must_be_ordered() {
+        let field = |kind: &str, min: Option<f64>, max: Option<f64>| IntakeField {
+            name: "age".to_owned(),
+            label: "年龄".to_owned(),
+            kind: kind.to_owned(),
+            required: false,
+            options: Vec::new(),
+            allow_decimal: false,
+            min,
+            max,
+        };
+        let mut settings = IntakeSettings::default();
+        settings.forms.push(IntakeForm {
+            slug: "apply".to_owned(),
+            title: "申请".to_owned(),
+            workspace: PathBuf::from("/srv/work"),
+            session: "new".to_owned(),
+            prompt: "收到一份申请".to_owned(),
+            fields: vec![field("number", Some(10.0), Some(1.0))],
+        });
+        let error = validate_intake(&settings).expect_err("min greater than max");
+        assert!(error.to_string().contains("min greater than max"), "{error}");
+
+        settings.forms[0].fields = vec![field("text", Some(1.0), None)];
+        let error = validate_intake(&settings).expect_err("bounds on a text field");
+        assert!(error.to_string().contains("number options"), "{error}");
+
+        settings.forms[0].fields = vec![field("number", Some(1.0), Some(10.0))];
+        validate_intake(&settings).expect("an ordered range is accepted");
+    }
+
+    #[test]
+    fn federation_requires_the_intake_listener_and_a_public_address() {
+        let mut intake = IntakeSettings::default();
+        let mut federation = FederationSettings::default();
+        validate_federation(&federation, &intake).expect("disabled federation needs nothing");
+
+        federation.enabled = true;
+        let error = validate_federation(&federation, &intake).expect_err("intake must be on");
+        assert!(error.to_string().contains("requires [intake] enabled"), "{error}");
+
+        intake.enabled = true;
+        let error = validate_federation(&federation, &intake).expect_err("public_url is required");
+        assert!(error.to_string().contains("public_url"), "{error}");
+
+        intake.public_url = "https://intake.example.com".to_owned();
+        federation.workspace = "relative/path".to_owned();
+        let error = validate_federation(&federation, &intake).expect_err("workspace must be absolute");
+        assert!(error.to_string().contains("absolute"), "{error}");
+
+        federation.workspace = "/srv/federation".to_owned();
+        federation.reply = "sometimes".to_owned();
+        let error = validate_federation(&federation, &intake).expect_err("reply must be known");
+        assert!(error.to_string().contains("reply"), "{error}");
+
+        federation.reply = "always".to_owned();
+        federation.max_auto_turns = 0;
+        assert!(validate_federation(&federation, &intake).is_err());
+
+        federation.max_auto_turns = 6;
+        validate_federation(&federation, &intake).expect("a complete federation section is accepted");
     }
 
     #[test]

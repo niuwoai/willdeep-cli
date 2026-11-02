@@ -136,7 +136,7 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 34);
+        assert_eq!(commands.len(), 36);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
             "/daemon",
@@ -217,6 +217,38 @@ mod command_tests {
         assert!(enriched.ends_with("continue"));
         assert!(app.handle_slash_command("/goal off", &skills));
         assert_eq!(app.enrich_prompt("continue", &skills), "continue");
+    }
+
+    /// `/name` 读写 `$WILLDEEP_HOME/identity.json`：不带参数显示当前名字，
+    /// 带参数改名且 UUID 不变。没有家目录时明确报错，不假装改了。
+    #[test]
+    fn the_name_command_shows_and_renames_the_instance_identity() {
+        let home = std::env::temp_dir().join(format!("willdeep-tui-name-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.display_home = Some(home.clone());
+        let skills = SkillCatalog::default();
+
+        assert!(app.handle_slash_command("/name", &skills));
+        let shown = app.transcript.last().unwrap().clone();
+        assert!(shown.contains("实例名"), "{shown}");
+        let first = crate::identity::load(&home).unwrap();
+
+        assert!(app.handle_slash_command("/name jack", &skills));
+        assert!(app.transcript.last().unwrap().contains("jack"));
+        let renamed = crate::identity::load(&home).unwrap();
+        assert_eq!(renamed.name, "jack");
+        assert_eq!(renamed.id, first.id);
+
+        // 非法名字只说名字不合法，不能把原来的名字改掉。
+        assert!(app.handle_slash_command("/name alex:2u2d", &skills));
+        assert!(app.transcript.last().unwrap().starts_with("Error:"));
+        assert_eq!(crate::identity::load(&home).unwrap().name, "jack");
+
+        app.display_home = None;
+        assert!(app.handle_slash_command("/name alex", &skills));
+        assert!(app.transcript.last().unwrap().contains("willdeep home"));
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     /// 默认是简洁；`/short` 与 `/verbose` 各管一个方向，提示里互相点名。

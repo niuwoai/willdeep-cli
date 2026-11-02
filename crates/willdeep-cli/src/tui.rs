@@ -175,6 +175,8 @@ pub enum UiMessage {
     /// `/mobile` 在 Runtime 那边办完了。打开中继可能要先拉起 Runtime，不能在
     /// 事件循环里等。
     MobileRelay(MobileRelayUpdate),
+    /// `/fed` 的网络操作回来了。加入与发言都要打对端，结果进聊天记录。
+    Federation(String),
 }
 
 pub enum MobileRelayUpdate {
@@ -651,7 +653,8 @@ fn busy_input(prompt: &str) -> BusyInput {
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
         "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/skills" | "/history"
-        | "/permissions" | "/permission-mode" | "/queue" | "/short" | "/verbose" => {
+        | "/permissions" | "/permission-mode" | "/queue" | "/short" | "/verbose" | "/name"
+        | "/fed" => {
             BusyInput::RunNow
         }
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，

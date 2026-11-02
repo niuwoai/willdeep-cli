@@ -1716,6 +1716,7 @@ pub(super) async fn event_loop(
                                 continue;
                             }
                             if app.handle_mobile_command(&prompt,&runtime.home,&runtime.tx){continue;}
+                            if app.handle_federation_command(&prompt,&runtime.home,runtime.runtime_submit.config.as_deref(),&runtime.tx){continue;}
                             match handle_agent_command(&prompt,&mut app,runtime,session.id).await {
                                 Ok(true)=>continue,
                                 Ok(false)=>{},
@@ -1927,6 +1928,7 @@ pub(super) async fn event_loop(
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
+                UiMessage::Federation(message)=>app.append_transcript(message),
                 UiMessage::RuntimeResult(message)=>{task_diagnostics::record_runtime_result(&mut app,message.clone());app.notice=Some(message);},
                 UiMessage::AttentionDiagnosticsLoaded { item_id, text } => {
                     if app.attention_diagnostics_loading.as_deref() == Some(item_id.as_str()) {

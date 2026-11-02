@@ -24,6 +24,8 @@ use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 mod agent_library;
 mod composer;
 mod configuration;
+mod federation;
+mod identity;
 mod intake;
 mod mcp_tokens;
 mod peer_sessions;
@@ -613,6 +615,8 @@ async fn serve_internal(
         )
         .route("/api/composer", get(composer::get))
         .merge(intake::routes())
+        .merge(identity::routes())
+        .merge(federation::routes())
         .merge(shares::routes())
         .merge(agent_library::routes())
         .route("/", get(index))

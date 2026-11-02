@@ -44,6 +44,8 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         Language::ZhCn => [
             "/help",
             "/version",
+            "/name [新名字]",
+            "/fed [list|invite|join <链接>|say <名字> <内容>|remove <名字>]",
             "/goal <文本>|off",
             "/plan",
             "/tools",
@@ -79,6 +81,8 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         Language::En => [
             "/help",
             "/version",
+            "/name [new name]",
+            "/fed [list|invite|join <url>|say <name> <text>|remove <name>]",
             "/goal <text>|off",
             "/plan",
             "/tools",
@@ -114,6 +118,8 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         Language::Ja => [
             "/help",
             "/version",
+            "/name [新しい名前]",
+            "/fed [list|invite|join <URL>|say <名前> <本文>|remove <名前>]",
             "/goal <テキスト>|off",
             "/plan",
             "/tools",
@@ -189,6 +195,8 @@ pub(super) fn command_runs_immediately(command: &str) -> bool {
             | "/clear"
             | "/short"
             | "/verbose"
+            | "/name"
+            | "/fed"
     )
 }
 
@@ -204,6 +212,22 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "查看 CLI 与 Runtime 的版本",
                 "Show CLI and Runtime versions",
                 "CLI と Runtime のバージョンを表示",
+            ),
+        ),
+        (
+            "/name",
+            language.text(
+                "查看或修改这台实例的名字（UUID 不变）",
+                "Show or change this instance's name (the UUID stays)",
+                "このインスタンスの名前を表示・変更（UUID は不変）",
+            ),
+        ),
+        (
+            "/fed",
+            language.text(
+                "联邦：与其他 willdeep 实例配对、列出联系人和发消息",
+                "Federation: pair with other willdeep instances, list peers, send messages",
+                "連携：他の willdeep インスタンスとペアリング・一覧・送信",
             ),
         ),
         (
