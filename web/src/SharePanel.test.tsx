@@ -13,7 +13,7 @@ const t = shareText("zh-CN");
 
 function intake(over: Partial<IntakeView> = {}): IntakeView {
   return {
-    enabled: true, listen: "0.0.0.0:9857", running: true, running_listen: "0.0.0.0:9857",
+    enabled: true, listen: "0.0.0.0:9857", public_url: "", running: true, running_listen: "0.0.0.0:9857",
     runtime_managed: true, writable: true, sites: [], forms: [], webhooks: [], pending: [], bindings: [],
     ...over,
   };
@@ -77,6 +77,40 @@ it("turns the token into a link on the public intake listener and stops sharing"
   fireEvent.click(screen.getByRole("button", { name: t.stop }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0]).toMatchObject({ method: "DELETE", url: "/api/sessions/s-1/share" });
+});
+
+it("prefers the configured public address over the listener address", async () => {
+  stub({
+    share: { token: "abc123", mode: "read", created_at: 1_700_000_000, path: "/share/abc123" },
+    intake: { running: true, running_listen: "127.0.0.1:9857", public_url: "https://wd.niuwoai.com" },
+  });
+  mount();
+
+  const link = await screen.findByRole("link");
+  expect(link.getAttribute("href")).toBe("https://wd.niuwoai.com/share/abc123");
+  expect(screen.queryByText(t.loopbackOnly)).toBeNull();
+});
+
+it("warns when the configured public address is itself loopback", async () => {
+  stub({
+    share: { token: "abc123", mode: "read", created_at: 1_700_000_000, path: "/share/abc123" },
+    intake: { running: true, running_listen: "127.0.0.1:9857", public_url: "http://127.0.0.1:9857" },
+  });
+  mount();
+
+  const link = await screen.findByRole("link");
+  expect(link.getAttribute("href")).toBe("http://127.0.0.1:9857/share/abc123");
+  expect(screen.getByText(t.loopbackOnly)).toBeTruthy();
+});
+
+it("warns about a loopback-only listener when no public address is set", async () => {
+  stub({
+    share: { token: "abc123", mode: "read", created_at: 1_700_000_000, path: "/share/abc123" },
+    intake: { running: true, running_listen: "127.0.0.1:9857" },
+  });
+  mount();
+
+  expect(await screen.findByText(t.loopbackOnly)).toBeTruthy();
 });
 
 it("says the link cannot be opened while the intake listener is down", async () => {

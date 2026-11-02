@@ -289,6 +289,11 @@ impl Default for LocalModelSettings {
 pub struct IntakeSettings {
     pub enabled: bool,
     pub listen: String,
+    /// 访客最终访问的地址，含协议，比如 `https://intake.example.com`。
+    ///
+    /// 分享、站点和表单链接都以它为准；前面的反向代理把域名转到这里。
+    /// 留空时按实际监听地址拼——只适合本机自己打开的场景。
+    pub public_url: String,
     pub sites: Vec<IntakeSite>,
     pub forms: Vec<IntakeForm>,
     pub webhooks: Vec<IntakeWebhook>,
@@ -299,6 +304,7 @@ impl Default for IntakeSettings {
         Self {
             enabled: false,
             listen: "127.0.0.1:9857".to_owned(),
+            public_url: String::new(),
             sites: Vec::new(),
             forms: Vec::new(),
             webhooks: Vec::new(),
@@ -873,6 +879,9 @@ pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
         .listen
         .parse::<std::net::SocketAddr>()
         .context("intake.listen must be IP:PORT")?;
+    if !settings.public_url.trim().is_empty() {
+        check_intake_public_url(&settings.public_url)?;
+    }
     let mut slugs = HashSet::new();
     for site in &settings.sites {
         check_intake_slug("site", &site.slug, &mut slugs)?;
@@ -922,6 +931,39 @@ pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
         if hook.prompt.trim().is_empty() || hook.secret_env.trim().is_empty() {
             bail!("intake webhook {} needs a prompt and secret_env", hook.slug);
         }
+    }
+    Ok(())
+}
+
+/// `public_url` 是拼给访客的完整前缀，只能是一个 origin：带协议和主机，
+/// 不带路径、查询、片段或凭据。带路径会让 `/share/...` 的拼接结果和入口
+/// 实际挂载的路径对不上。
+fn check_intake_public_url(value: &str) -> Result<()> {
+    let trimmed = value.trim();
+    let parsed = reqwest::Url::parse(trimmed)
+        .with_context(|| format!("intake.public_url must be a valid URL: {trimmed}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        bail!("intake.public_url must use http or https and include a host");
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        bail!("intake.public_url must not carry credentials");
+    }
+    // 只接受 scheme + authority 的形状：协议后面不能再出现路径、查询、片段或
+    // 反斜杠。判断看原串而不是归一化后的 URL——`https://x\`、`https://x?`
+    // 会被解析器改写成别的形状，原样拼上 `/share/...` 就是一条打不开的链接。
+    // 用结构判断而不是和规范化 origin 比字符串，是为了放行大小写、显式默认端口
+    // 和国际化域名这些浏览器能正确处理的写法。
+    let authority = trimmed
+        .find("://")
+        .map(|index| &trimmed[index + 3..])
+        .ok_or_else(|| anyhow::anyhow!("intake.public_url must start with http:// or https://"))?;
+    let authority = authority.strip_suffix('/').unwrap_or(authority);
+    if authority.is_empty()
+        || authority.chars().any(|char| {
+            matches!(char, '/' | '\\' | '?' | '#') || char.is_whitespace() || char.is_control()
+        })
+    {
+        bail!("intake.public_url must be an origin without a path, query or fragment");
     }
     Ok(())
 }
@@ -2464,6 +2506,40 @@ secret = "inline-secret"
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         validate(&parsed, &path).expect("0600 config is accepted");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn intake_public_url_is_optional_but_must_be_an_origin() {
+        let mut settings = IntakeSettings::default();
+        validate_intake(&settings).expect("an empty public_url is fine");
+
+        settings.public_url = "https://intake.example.com".to_owned();
+        validate_intake(&settings).expect("an https origin is accepted");
+
+        settings.public_url = "https://intake.example.com/".to_owned();
+        validate_intake(&settings).expect("a single trailing slash is accepted");
+
+        settings.public_url = "http://127.0.0.1:9857".to_owned();
+        validate_intake(&settings).expect("an http origin with a port is accepted");
+
+        settings.public_url = "https://example.com:443".to_owned();
+        validate_intake(&settings).expect("an explicit default port is accepted");
+
+        settings.public_url = "https://例子.测试".to_owned();
+        validate_intake(&settings).expect("an internationalized host is accepted");
+
+        for value in [
+            "example.com",
+            "ftp://example.com",
+            "https://example.com/intake",
+            "https://example.com?next=1",
+            "https://example.com\\",
+            "https://user:secret@example.com",
+        ] {
+            settings.public_url = value.to_owned();
+            let error = validate_intake(&settings).expect_err("not a bare origin");
+            assert!(error.to_string().contains("public_url"), "{value}: {error}");
+        }
     }
 
     #[test]

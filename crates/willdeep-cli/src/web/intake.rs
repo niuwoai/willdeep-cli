@@ -67,6 +67,8 @@ struct WebhookView {
 struct IntakeView {
     enabled: bool,
     listen: String,
+    /// 访客最终访问的地址（含协议）；空串表示按监听地址拼。
+    public_url: String,
     /// 配置里开着，但监听起没起来要问 Runtime——端口被占、配置非法都会让它不在跑。
     running: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,6 +111,9 @@ struct BrowseView {
 struct IntakeRequest {
     enabled: bool,
     listen: String,
+    /// 访客最终访问的地址（含协议）。旧客户端不传时按空串处理。
+    #[serde(default)]
+    public_url: String,
     #[serde(default)]
     sites: Vec<SiteView>,
     #[serde(default)]
@@ -129,6 +134,7 @@ impl IntakeRequest {
         IntakeSettings {
             enabled: self.enabled,
             listen: self.listen.trim().to_owned(),
+            public_url: self.public_url.trim().to_owned(),
             sites: self
                 .sites
                 .iter()
@@ -286,6 +292,7 @@ async fn read(State(state): State<Arc<WebState>>) -> Result<Json<IntakeView>, We
     Ok(Json(IntakeView {
         enabled: settings.enabled,
         listen: settings.listen.clone(),
+        public_url: settings.public_url.clone(),
         running: running_listen.is_some(),
         running_listen,
         runtime_managed: state.intake.is_some(),
@@ -495,6 +502,13 @@ fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
         "listen".to_owned(),
         toml::Value::String(settings.listen.clone()),
     );
+    let public_url = settings.public_url.trim();
+    if !public_url.is_empty() {
+        intake.insert(
+            "public_url".to_owned(),
+            toml::Value::String(public_url.to_owned()),
+        );
+    }
     if !sites.is_empty() {
         intake.insert("sites".to_owned(), toml::Value::Array(sites));
     }
@@ -516,7 +530,17 @@ fn save_settings(
     home: &std::path::Path,
     settings: &IntakeSettings,
 ) -> anyhow::Result<()> {
-    let original = std::fs::read_to_string(config_path).unwrap_or_default();
+    // 读不出来 ≠ 文件是空的。只有「文件不存在」才按空配置处理；编码或权限错误
+    // 原样上抛，否则 splice_intake 会把整份配置换成只剩 [intake] 的一小段。
+    let original = match std::fs::read_to_string(config_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(
+                anyhow::Error::new(error).context(format!("cannot read {}", config_path.display()))
+            );
+        }
+    };
     let next = splice_intake(&original, &settings_block(settings)?);
     // 整个文件重新解析一遍：段外的内容一个字都没动，出错只可能是我们拼错了。
     toml::from_str::<crate::config::ConfigFile>(&next)
@@ -570,6 +594,7 @@ mod tests {
         IntakeSettings {
             enabled: true,
             listen: "127.0.0.1:9857".to_owned(),
+            public_url: "https://intake.example.com".to_owned(),
             sites: vec![IntakeSite {
                 slug: "blog".to_owned(),
                 root: PathBuf::from("/srv/blog"),
@@ -610,6 +635,13 @@ mod tests {
         );
         assert_eq!(
             parsed
+                .get("intake")
+                .and_then(|intake| intake.get("public_url"))
+                .and_then(toml::Value::as_str),
+            Some("https://intake.example.com")
+        );
+        assert_eq!(
+            parsed
                 .get("agent")
                 .and_then(|agent| agent.get("approval"))
                 .and_then(toml::Value::as_str),
@@ -621,5 +653,28 @@ mod tests {
     fn empty_file_gets_just_the_intake_block() {
         let block = "[intake]\nenabled = false\nlisten = \"127.0.0.1:9857\"";
         assert_eq!(splice_intake("", block), block);
+    }
+
+    #[test]
+    fn an_empty_public_url_is_not_written_back() {
+        let mut settings = settings();
+        settings.public_url = "  ".to_owned();
+        let block = settings_block(&settings).unwrap();
+        assert!(!block.contains("public_url"));
+    }
+
+    #[test]
+    fn an_unreadable_config_is_never_replaced_with_only_the_intake_block() {
+        let root = std::env::temp_dir().join(format!("willdeep-intake-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        let broken = [0xff, 0xfe, 0x00, 0x41];
+        std::fs::write(&config, broken).unwrap();
+
+        let error = save_settings(&config, &root, &settings())
+            .expect_err("an unreadable configuration must fail instead of being replaced");
+        assert!(error.to_string().contains("config.toml"), "{error}");
+        assert_eq!(std::fs::read(&config).unwrap(), broken);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
