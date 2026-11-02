@@ -2534,7 +2534,9 @@ impl App {
                 // 身份落在 $WILLDEEP_HOME/identity.json。TUI 没拿到家目录时
                 // 只能展示进程内的副本，不假装已经写进去了。
                 let Some(home) = self.display_home.as_deref() else {
-                    self.append_transcript("Error: this client has no willdeep home directory".to_owned());
+                    self.append_transcript(
+                        "Error: this client has no willdeep home directory".to_owned(),
+                    );
                     return true;
                 };
                 let requested = args.trim();
@@ -2542,7 +2544,8 @@ impl App {
                     match crate::identity::load(home) {
                         Ok(identity) => self.append_transcript(format!(
                             "System: {} · {}\n  {} · {}",
-                            self.language.text("实例名", "Instance name", "インスタンス名"),
+                            self.language
+                                .text("实例名", "Instance name", "インスタンス名"),
                             identity.display_name(false),
                             identity.id,
                             self.language.text(
@@ -2558,7 +2561,11 @@ impl App {
                 match crate::identity::rename(home, requested) {
                     Ok(identity) => self.append_transcript(format!(
                         "System: {} · {} · {}",
-                        self.language.text("实例已改名", "Instance renamed", "インスタンス名を変更しました"),
+                        self.language.text(
+                            "实例已改名",
+                            "Instance renamed",
+                            "インスタンス名を変更しました"
+                        ),
                         identity.display_name(false),
                         identity.id
                     )),
@@ -2626,9 +2633,7 @@ impl App {
             return false;
         }
         let rest = value["/fed".len()..].trim();
-        let (sub, args) = rest
-            .split_once(char::is_whitespace)
-            .unwrap_or((rest, ""));
+        let (sub, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
         let args = args.trim();
         match sub {
             "" | "list" => match crate::federation::load(home) {

@@ -74,8 +74,7 @@ pub fn load(home: &Path) -> Result<Identity> {
                     identity.schema
                 );
             }
-            validate_name(&identity.name)
-                .context("identity.json holds an invalid name")?;
+            validate_name(&identity.name).context("identity.json holds an invalid name")?;
             Ok(identity)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -184,7 +183,10 @@ mod tests {
         assert!(first.renamed_at.is_none());
 
         let second = load(&root).unwrap();
-        assert_eq!(first, second, "the second read must reuse the stored identity");
+        assert_eq!(
+            first, second,
+            "the second read must reuse the stored identity"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -230,7 +232,10 @@ mod tests {
             renamed_at: None,
         };
         assert_eq!(identity.display_name(false), "alex");
-        assert_eq!(identity.display_name(true), format!("alex:{}", short_id(identity.id)));
+        assert_eq!(
+            identity.display_name(true),
+            format!("alex:{}", short_id(identity.id))
+        );
     }
 
     #[cfg(unix)]

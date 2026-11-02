@@ -652,7 +652,10 @@ async fn federation_command(
         FedAction::List => {
             let store = federation::load(home)?;
             if store.contacts.is_empty() {
-                println!("{}", "no peers yet; run `willdeep fed invite` on this machine, or `willdeep fed join <url>` with a peer's invitation");
+                println!(
+                    "{}",
+                    "no peers yet; run `willdeep fed invite` on this machine, or `willdeep fed join <url>` with a peer's invitation"
+                );
                 return Ok(());
             }
             let identity = identity::load(home)?;

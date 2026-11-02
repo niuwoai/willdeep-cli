@@ -98,7 +98,9 @@ pub fn load(home: &Path) -> Result<FederationStore> {
             }
             Ok(store)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(FederationStore::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(FederationStore::default())
+        }
         Err(error) => Err(error).context("cannot read federation.json"),
     }
 }
@@ -248,7 +250,15 @@ fn canonical(from: &str, to: &str, ts: u64, nonce: &str, message_id: &str, body:
     format!("{PROTOCOL}\n{from}\n{to}\n{ts}\n{nonce}\n{message_id}\n{digest}")
 }
 
-pub fn sign(secret: &str, from: &str, to: &str, ts: u64, nonce: &str, message_id: &str, body: &[u8]) -> Result<String> {
+pub fn sign(
+    secret: &str,
+    from: &str,
+    to: &str,
+    ts: u64,
+    nonce: &str,
+    message_id: &str,
+    body: &[u8],
+) -> Result<String> {
     let mut mac = SignatureMac::new_from_slice(secret.as_bytes())
         .map_err(|error| anyhow::anyhow!("invalid federation secret: {error}"))?;
     mac.update(canonical(from, to, ts, nonce, message_id, body).as_bytes());
@@ -297,11 +307,7 @@ struct Outgoing<'a> {
 }
 
 /// 把一句话发给对端。返回 202 即已进入对端的会话队列，不代表已经回复。
-pub async fn send_message_as(
-    from: uuid::Uuid,
-    contact: &Contact,
-    text: &str,
-) -> Result<()> {
+pub async fn send_message_as(from: uuid::Uuid, contact: &Contact, text: &str) -> Result<()> {
     let text = text.trim();
     if text.is_empty() {
         bail!("the message is empty");
@@ -324,7 +330,10 @@ pub async fn send_message_as(
     let from = from.to_string();
     let signature = sign(&contact.secret, &from, &to, ts, &nonce, &message_id, &body)?;
     let response = client()?
-        .post(format!("{}/p/v1/message", contact.url.trim_end_matches('/')))
+        .post(format!(
+            "{}/p/v1/message",
+            contact.url.trim_end_matches('/')
+        ))
         .header("content-type", "application/json")
         .header("x-willdeep-from", &from)
         .header("x-willdeep-to", &to)
@@ -357,7 +366,11 @@ struct JoinResponse {
 }
 
 /// 用别人的邀请 URL 加入。`our_url` 是对端回连我们时用的基地址。
-pub async fn join(invite_url: &str, identity: &crate::identity::Identity, our_url: &str) -> Result<Contact> {
+pub async fn join(
+    invite_url: &str,
+    identity: &crate::identity::Identity,
+    our_url: &str,
+) -> Result<Contact> {
     let invite = parse_invite_url(invite_url)?;
     let base = invite.base;
     let body = serde_json::to_vec(&serde_json::json!({
@@ -388,7 +401,11 @@ pub async fn join(invite_url: &str, identity: &crate::identity::Identity, our_ur
     }
     crate::identity::validate_name(&reply.name)
         .context("the peer sent an invalid instance name")?;
-    if hex_decode(&reply.secret).map(|bytes| bytes.len()).unwrap_or(0) != 32 {
+    if hex_decode(&reply.secret)
+        .map(|bytes| bytes.len())
+        .unwrap_or(0)
+        != 32
+    {
         bail!("{base} sent a malformed shared secret");
     }
     Ok(Contact {
@@ -443,8 +460,8 @@ fn parse_invite_url(value: &str) -> Result<ParsedInvite> {
 
 pub fn validate_peer_url(value: &str) -> Result<String> {
     let trimmed = value.trim().trim_end_matches('/');
-    let parsed = reqwest::Url::parse(trimmed)
-        .with_context(|| format!("`{trimmed}` is not a valid URL"))?;
+    let parsed =
+        reqwest::Url::parse(trimmed).with_context(|| format!("`{trimmed}` is not a valid URL"))?;
     if parsed.scheme() != "https" && !is_loopback(&parsed) {
         bail!("a peer address must use https (http is allowed only for loopback)");
     }
@@ -465,10 +482,7 @@ fn is_loopback(url: &reqwest::Url) -> bool {
         return false;
     };
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    host == "localhost"
-        || host.ends_with(".localhost")
-        || host == "::1"
-        || host.starts_with("127.")
+    host == "localhost" || host.ends_with(".localhost") || host == "::1" || host.starts_with("127.")
 }
 
 fn client() -> Result<reqwest::Client> {
@@ -489,7 +503,8 @@ pub fn invite_url(public_url: &str, token: &str) -> String {
     )
 }
 
-pub fn new_token() -> String {    // 两个 v4 拼起来是 256 位随机量；邀请令牌和 nonce 都用它。
+pub fn new_token() -> String {
+    // 两个 v4 拼起来是 256 位随机量；邀请令牌和 nonce 都用它。
     format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -624,7 +639,10 @@ mod tests {
             validate_peer_url("https://alex.example.com/").unwrap(),
             "https://alex.example.com"
         );
-        assert!(validate_peer_url("http://127.0.0.1:9857").is_ok(), "loopback may use http");
+        assert!(
+            validate_peer_url("http://127.0.0.1:9857").is_ok(),
+            "loopback may use http"
+        );
         assert!(validate_peer_url("http://alex.example.com").is_err());
         assert!(validate_peer_url("https://alex.example.com/p").is_err());
         assert!(validate_peer_url("https://user:secret@alex.example.com").is_err());

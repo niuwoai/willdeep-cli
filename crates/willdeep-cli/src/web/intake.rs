@@ -433,7 +433,8 @@ fn toml_number(value: f64) -> toml::Value {
     }
 }
 
-fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {    let sites: Vec<toml::Value> = settings
+fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
+    let sites: Vec<toml::Value> = settings
         .sites
         .iter()
         .map(|site| {

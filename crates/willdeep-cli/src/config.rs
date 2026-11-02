@@ -407,10 +407,12 @@ where
         Int(i64),
         Float(f64),
     }
-    Ok(Option::<Number>::deserialize(deserializer)?.map(|value| match value {
-        Number::Int(value) => value as f64,
-        Number::Float(value) => value,
-    }))
+    Ok(
+        Option::<Number>::deserialize(deserializer)?.map(|value| match value {
+            Number::Int(value) => value as f64,
+            Number::Float(value) => value,
+        }),
+    )
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -945,7 +947,9 @@ pub(crate) fn validate_federation(
         return Ok(());
     }
     if !intake.enabled {
-        bail!("[federation] enabled requires [intake] enabled: peers are reached through the intake listener");
+        bail!(
+            "[federation] enabled requires [intake] enabled: peers are reached through the intake listener"
+        );
     }
     if intake.public_url.trim().is_empty() {
         bail!("[federation] needs [intake] public_url so the peer can reach this machine");
@@ -2722,7 +2726,10 @@ secret = "inline-secret"
             fields: vec![field("number", Some(10.0), Some(1.0))],
         });
         let error = validate_intake(&settings).expect_err("min greater than max");
-        assert!(error.to_string().contains("min greater than max"), "{error}");
+        assert!(
+            error.to_string().contains("min greater than max"),
+            "{error}"
+        );
 
         settings.forms[0].fields = vec![field("text", Some(1.0), None)];
         let error = validate_intake(&settings).expect_err("bounds on a text field");
@@ -2740,7 +2747,10 @@ secret = "inline-secret"
 
         federation.enabled = true;
         let error = validate_federation(&federation, &intake).expect_err("intake must be on");
-        assert!(error.to_string().contains("requires [intake] enabled"), "{error}");
+        assert!(
+            error.to_string().contains("requires [intake] enabled"),
+            "{error}"
+        );
 
         intake.enabled = true;
         let error = validate_federation(&federation, &intake).expect_err("public_url is required");
@@ -2748,10 +2758,13 @@ secret = "inline-secret"
 
         intake.public_url = "https://intake.example.com".to_owned();
         federation.workspace = "relative/path".to_owned();
-        let error = validate_federation(&federation, &intake).expect_err("workspace must be absolute");
+        let error =
+            validate_federation(&federation, &intake).expect_err("workspace must be absolute");
         assert!(error.to_string().contains("absolute"), "{error}");
 
-        federation.workspace = platform_absolute("willdeep-federation").display().to_string();
+        federation.workspace = platform_absolute("willdeep-federation")
+            .display()
+            .to_string();
         federation.reply = "sometimes".to_owned();
         let error = validate_federation(&federation, &intake).expect_err("reply must be known");
         assert!(error.to_string().contains("reply"), "{error}");
@@ -2761,7 +2774,8 @@ secret = "inline-secret"
         assert!(validate_federation(&federation, &intake).is_err());
 
         federation.max_auto_turns = 6;
-        validate_federation(&federation, &intake).expect("a complete federation section is accepted");
+        validate_federation(&federation, &intake)
+            .expect("a complete federation section is accepted");
     }
 
     #[test]

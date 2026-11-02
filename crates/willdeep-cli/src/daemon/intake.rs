@@ -9,13 +9,14 @@
 
 use super::*;
 use crate::config::{
-    FederationSettings, INTAKE_FORM_TOKEN_FIELD, IntakeField, IntakeForm, IntakeSettings, IntakeSite,
+    FederationSettings, INTAKE_FORM_TOKEN_FIELD, IntakeField, IntakeForm, IntakeSettings,
+    IntakeSite,
 };
 use crate::federation::{self, Contact, PROTOCOL};
 use axum::body::Bytes;
 use axum::extract::DefaultBodyLimit;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderName};
 use axum::http::HeaderMap;
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderName};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::{HashMap, VecDeque};
@@ -66,7 +67,8 @@ pub(crate) struct IntakeService {
     federation_sends: std::sync::Mutex<HashMap<uuid::Uuid, (u64, u32)>>,
     /// 联邦消息用过的 nonce。放进程里、活到时间窗过完；重启会清空，所以文档里
     /// 明说「时间窗 + 进程内缓存」这一层在重启后重新计时。
-    federation_nonces: std::sync::Mutex<(VecDeque<(String, u64)>, std::collections::HashSet<String>)>,
+    federation_nonces:
+        std::sync::Mutex<(VecDeque<(String, u64)>, std::collections::HashSet<String>)>,
 }
 
 impl IntakeService {
@@ -77,7 +79,10 @@ impl IntakeService {
             bindings: AsyncMutex::new(load_bindings(&home.join("intake-sessions.json"))),
             share_sends: std::sync::Mutex::new(HashMap::new()),
             federation_sends: std::sync::Mutex::new(HashMap::new()),
-            federation_nonces: std::sync::Mutex::new((VecDeque::new(), std::collections::HashSet::new())),
+            federation_nonces: std::sync::Mutex::new((
+                VecDeque::new(),
+                std::collections::HashSet::new(),
+            )),
         }
     }
 
@@ -94,7 +99,8 @@ impl IntakeService {
                 return;
             }
         };
-        let Some((settings, federation_settings)) = settings.filter(|(settings, _)| settings.enabled)
+        let Some((settings, federation_settings)) =
+            settings.filter(|(settings, _)| settings.enabled)
         else {
             self.stop().await;
             return;
@@ -117,7 +123,9 @@ impl IntakeService {
         let (stop, receiver) = watch::channel(false);
         let service = Arc::clone(self);
         let task = tokio::spawn(async move {
-            if let Err(error) = serve(service, settings, federation_settings, listen, receiver).await {
+            if let Err(error) =
+                serve(service, settings, federation_settings, listen, receiver).await
+            {
                 eprintln!("Intake: {error:#}");
             }
         });
@@ -181,7 +189,10 @@ impl IntakeService {
     /// 一个联系人一分钟最多 20 条。联邦是双向流，限得和分享访客一样紧。
     fn allow_federation_send(&self, from: uuid::Uuid) -> bool {
         let now = now_seconds();
-        let mut windows = self.federation_sends.lock().expect("federation send windows");
+        let mut windows = self
+            .federation_sends
+            .lock()
+            .expect("federation send windows");
         if windows.len() > 1024 {
             windows.retain(|_, (start, _)| now.saturating_sub(*start) < 60);
         }
@@ -905,11 +916,13 @@ async fn federation_message(
     body: Bytes,
 ) -> Response {
     let home = &state.service.home;
-    let Some(from) = federation_header(&headers, "x-willdeep-from").and_then(|value| uuid::Uuid::parse_str(value).ok())
+    let Some(from) = federation_header(&headers, "x-willdeep-from")
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Some(to) = federation_header(&headers, "x-willdeep-to").and_then(|value| uuid::Uuid::parse_str(value).ok())
+    let Some(to) = federation_header(&headers, "x-willdeep-to")
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -919,7 +932,8 @@ async fn federation_message(
     let Some(nonce) = federation_header(&headers, "x-willdeep-nonce") else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Some(timestamp) = federation_header(&headers, "x-willdeep-ts").and_then(|value| value.parse::<u64>().ok())
+    let Some(timestamp) =
+        federation_header(&headers, "x-willdeep-ts").and_then(|value| value.parse::<u64>().ok())
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -1027,7 +1041,13 @@ async fn federation_message(
             StatusCode::ACCEPTED.into_response()
         }
         Err(error) => {
-            record_pending(home, &contact.id.to_string(), "federation", &format!("{error:#}")).await;
+            record_pending(
+                home,
+                &contact.id.to_string(),
+                "federation",
+                &format!("{error:#}"),
+            )
+            .await;
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     }
@@ -1118,8 +1138,13 @@ async fn watch_federation_reply(
 
 /// 这一轮回复的正文。`message_end` 是这一轮在会话消息里的上界；拿不到就退回
 /// 「最后一条非空助手消息」——刚跑完的一轮，最后一条助手消息就是它。
-fn last_assistant_text(session: &willdeep_core::Session, message_end: Option<usize>) -> Option<String> {
-    let end = message_end.unwrap_or(session.messages.len()).min(session.messages.len());
+fn last_assistant_text(
+    session: &willdeep_core::Session,
+    message_end: Option<usize>,
+) -> Option<String> {
+    let end = message_end
+        .unwrap_or(session.messages.len())
+        .min(session.messages.len());
     session.messages[..end]
         .iter()
         .rev()
@@ -1129,7 +1154,8 @@ fn last_assistant_text(session: &willdeep_core::Session, message_end: Option<usi
 }
 
 fn authorized(headers: &HeaderMap, body: &Bytes, secret: &str) -> bool {
-    if let Some(header) = headers.get(HeaderName::from_static("authorization"))        && let Ok(value) = header.to_str()
+    if let Some(header) = headers.get(HeaderName::from_static("authorization"))
+        && let Ok(value) = header.to_str()
         && let Some(token) = value.strip_prefix("Bearer ")
         && constant_eq(token.as_bytes(), secret.as_bytes())
     {
@@ -1195,9 +1221,16 @@ async fn submit(
     title: &str,
     text: String,
 ) -> Result<uuid::Uuid> {
-    Ok(submit_with_turn(home, workspace, session_id, title, text, crate::Surface::Web)
-        .await?
-        .0)
+    Ok(submit_with_turn(
+        home,
+        workspace,
+        session_id,
+        title,
+        text,
+        crate::Surface::Web,
+    )
+    .await?
+    .0)
 }
 
 /// 投递一轮并带回会话与轮次 id。联邦要轮次 id 才能等它跑完再自动回复。
@@ -1663,7 +1696,10 @@ mod tests {
         let always = federation_settings("always", 3);
         assert!(should_auto_reply(&always, "jack", "hi", 0));
         assert!(should_auto_reply(&always, "jack", "hi", 2));
-        assert!(!should_auto_reply(&always, "jack", "hi", 3), "the cap stops loops");
+        assert!(
+            !should_auto_reply(&always, "jack", "hi", 3),
+            "the cap stops loops"
+        );
 
         let mention = federation_settings("mention", 6);
         assert!(!should_auto_reply(&mention, "jack", "hi", 0));
@@ -1703,7 +1739,8 @@ mod tests {
 
     #[test]
     fn federation_nonces_are_single_use() {
-        let root = std::env::temp_dir().join(format!("willdeep-fed-nonce-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("willdeep-fed-nonce-{}", uuid::Uuid::new_v4()));
         let service = IntakeService::new(&root);
         assert!(service.consume_federation_nonce("nonce-1"));
         assert!(!service.consume_federation_nonce("nonce-1"));
@@ -1718,8 +1755,14 @@ mod tests {
         for _ in 0..federation::MESSAGES_PER_MINUTE {
             assert!(service.allow_federation_send(peer));
         }
-        assert!(!service.allow_federation_send(peer), "the 21st within a minute is refused");
-        assert!(service.allow_federation_send(uuid::Uuid::new_v4()), "another peer is unaffected");
+        assert!(
+            !service.allow_federation_send(peer),
+            "the 21st within a minute is refused"
+        );
+        assert!(
+            service.allow_federation_send(uuid::Uuid::new_v4()),
+            "another peer is unaffected"
+        );
     }
     use crate::config::{IntakeField, IntakeWebhook};
 

@@ -1,8 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-03 | 当前版本：v0.138.0-rc2
+> 最后更新：2026-11-03 | 当前版本：v0.138.0-rc3
 
-0.138.0-rc2 把实例联邦做到可用：两台公网可达的 willdeep 用 `fed invite` / `fed join` 配对后，可以互相发消息，入站内容作为普通轮次进入 `[federation] workspace` 指定的工作区，Agent 的回复按策略自动回传，并有连续自动回复上限、每分钟限流和 300 秒重放窗口；TUI 用 `/fed`，Web 在公网入口页多了「联邦」标签，CLI 是 `willdeep fed`。联系人密钥存 `~/.willdeep/federation.json`（0600），不进配置。群聊与端到端加密留到后续阶段。
+0.138.0-rc3 把实例联邦做到可用：两台公网可达的 willdeep 用 `fed invite` / `fed join` 配对后，可以互相发消息，入站内容作为普通轮次进入 `[federation] workspace` 指定的工作区，Agent 的回复按策略自动回传，并有连续自动回复上限、每分钟限流和 300 秒重放窗口；TUI 用 `/fed`，Web 在公网入口页多了「联邦」标签，CLI 是 `willdeep fed`。联系人密钥存 `~/.willdeep/federation.json`（0600），不进配置。群聊与端到端加密留到后续阶段。
 
 0.137.0-rc1 给每台 willdeep 一个稳定的实例身份：首次使用时生成终身不变的 UUID，并从 64 个内置名字里挑一个，存进 `$WILLDEEP_HOME/identity.json`；`/name`（TUI 与 Web）与 `willdeep identity` 可以查看和改名，改名不换 UUID，重名时展示为 `alex:2u2d`。同一版把公网入口的表单设计器补完整，并收紧 Web 侧栏的会话行高、「显示已归档」固定在列表下方。
 

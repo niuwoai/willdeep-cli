@@ -125,8 +125,7 @@ async fn invite(State(state): State<Arc<WebState>>) -> Result<Json<serde_json::V
             "[intake] public_url is empty: peers could not reach this machine",
         ));
     }
-    let created =
-        crate::federation::create_invite(&state.home).map_err(WebError::from_anyhow)?;
+    let created = crate::federation::create_invite(&state.home).map_err(WebError::from_anyhow)?;
     Ok(Json(serde_json::json!({
         "url": crate::federation::invite_url(&base, &created.token),
         "expires_at": created.expires_at,
