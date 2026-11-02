@@ -29,6 +29,14 @@ check('1M parses as an integer', parsed.value === 1048576);
 check('blank clears an int', parseInput('int', '  ').clear === true);
 check('words are rejected', !!parseInput('int', '256k').error);
 
+// 区间跟着字段走：128 回合那次故障就是页面不看区间，存下了运行时拒绝的值。
+parseInput.field = { min: 1, max: 1000 };
+check('a turn count inside the range is accepted', parseInput('int', '128').value === 128);
+check('a turn count past the range is rejected here', !!parseInput('int', '1001').error);
+check('the rejection names both bounds', parseInput('int', '1001').error.includes('1000'));
+parseInput.field = null;
+check('a field without bounds still accepts any safe integer', parseInput('int', '1001').value === 1001);
+
 const original = { present: true, value: 32768, secret: false, plaintext: null };
 commitValue('providers.magpie', 'max_output_tokens', 'int', '1048576', original);
 const edit = edits.get('providers.magpie\u0000max_output_tokens');

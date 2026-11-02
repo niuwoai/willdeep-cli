@@ -825,18 +825,25 @@ async fn share_view(
     let home = state.service.home.clone();
     let session_id = share.session_id;
     // 会话文件可能很大，读它不能占着异步线程。
-    let loaded = tokio::task::spawn_blocking(move || crate::shares::ensure_session(&home, session_id)).await;
+    let loaded =
+        tokio::task::spawn_blocking(move || crate::shares::ensure_session(&home, session_id)).await;
     let Ok(Ok(session)) = loaded else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let running = session.runtime_managed && session_is_active(&state.service.home, session.id).await;
-    let items = willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
+    let running =
+        session.runtime_managed && session_is_active(&state.service.home, session.id).await;
+    let items =
+        willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
     let messages = items
         .into_iter()
         .filter(|item| matches!(item.role, "user" | "assistant"))
         .filter(|item| !item.content.trim().is_empty())
         .map(|item| ShareMessage {
-            role: if item.role == "user" { "user" } else { "assistant" },
+            role: if item.role == "user" {
+                "user"
+            } else {
+                "assistant"
+            },
             content: item.content,
         })
         .collect();
@@ -873,17 +880,33 @@ async fn share_send(
         return StatusCode::NOT_FOUND.into_response();
     };
     if share.mode != crate::shares::ShareMode::Chat {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"这个分享只能查看"}))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"这个分享只能查看"})),
+        )
+            .into_response();
     }
     let text = request.message.trim();
     if text.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"消息为空"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"消息为空"})),
+        )
+            .into_response();
     }
     if text.chars().count() > crate::shares::MAX_SHARE_MESSAGE_CHARS {
-        return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error":"消息太长"}))).into_response();
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({"error":"消息太长"})),
+        )
+            .into_response();
     }
     if !state.service.allow_share_send(&token) {
-        return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({"error":"发得太快了，稍等一下"}))).into_response();
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error":"发得太快了，稍等一下"})),
+        )
+            .into_response();
     }
     // 访客不是数据源，是对话的一方：原文发出去，只在前面标一下来源，让模型知道
     // 这句话不是本机主人说的。
@@ -892,11 +915,14 @@ async fn share_send(
         Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(error) => {
             eprintln!("Intake share: {error:#}");
-            (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error":"暂时发不出去，稍后再试"}))).into_response()
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":"暂时发不出去，稍后再试"})),
+            )
+                .into_response()
         }
     }
 }
-
 
 fn percent_decode(value: &str) -> String {
     let bytes = value.replace('+', " ").into_bytes();

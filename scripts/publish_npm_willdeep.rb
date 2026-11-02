@@ -93,8 +93,17 @@ def publish(version, dry_run: false)
   abort '版本不一致' unless [package['version'], manifest['version'], manifest['tag'].to_s.delete_prefix('v')].uniq == [version]
   abort '仓库不一致' unless manifest['repository'] == 'niuwoai/willdeep-cli'
   manifest['assets'] = verify_assets(manifest)
+  # npm 10 先打包、再从磁盘重读 package.json 作为发给 registry 的元数据。
+  # 打包那一步写进压缩包的 readme 不会出现在这份重读的清单里，registry 收到的
+  # readme 就是空字符串，npmjs 页面因此显示没有 README。把 README 直接写进
+  # package.json，重读时才带得走。
+  readme = File.read(File.join(PACKAGE, 'README.md'))
+  abort 'npm/willdeep/README.md 是空的' if readme.strip.empty?
+  package['readme'] = readme
+  package['readmeFilename'] = 'README.md'
   unless dry_run
     File.write(File.join(PACKAGE, 'install-manifest.json'), JSON.pretty_generate(manifest) + "\n")
+    File.write(File.join(PACKAGE, 'package.json'), JSON.pretty_generate(package) + "\n")
   end
 
   if dry_run

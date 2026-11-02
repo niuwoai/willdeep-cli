@@ -14,6 +14,37 @@ fn ask_user_tool_rows_keep_the_question() {
     assert_eq!(tool_detail("ask_user", r#"{"question":"   "}"#), None);
 }
 
+/// 点开后看完整命令：路径原样保留，凭据照旧打码，长度不截断。
+#[test]
+fn tool_expansion_keeps_the_whole_command_and_still_redacts_secrets() {
+    let command = format!(
+        "ssh -o BatchMode=yes q4-pub '/home/ml-data/run.py' token=secret {}",
+        "x".repeat(200)
+    );
+    let arguments = serde_json::json!({"command": command}).to_string();
+    let expanded = tool_expansion("run_command", &arguments).unwrap();
+    assert!(expanded.contains("/home/ml-data/run.py"), "{expanded}");
+    assert!(
+        expanded.contains(&"x".repeat(200)),
+        "expansion must not truncate"
+    );
+    assert!(!expanded.contains("secret"), "{expanded}");
+
+    // 摘要行相反：路径换成省略号，超长截断。路径包在引号里也要认出来。
+    let summary = tool_detail("run_command", &arguments).unwrap();
+    assert!(!summary.contains("/home/ml-data"), "{summary}");
+    assert!(summary.ends_with('\u{2026}'), "{summary}");
+    let quoted = tool_detail(
+        "run_command",
+        r#"{"command":"cat \"/etc/hosts\" '~/notes'"}"#,
+    )
+    .unwrap();
+    assert!(!quoted.contains("/etc/hosts"), "{quoted}");
+    assert!(!quoted.contains("~/notes"), "{quoted}");
+
+    assert_eq!(tool_expansion("read_file", r#"{"path":"/tmp/a"}"#), None);
+}
+
 /// 工具行回放：只带工具调用的 assistant 消息也进投影，每条调用带名字、脱敏摘要
 /// 与有无结果；原始参数不出投影。
 #[test]

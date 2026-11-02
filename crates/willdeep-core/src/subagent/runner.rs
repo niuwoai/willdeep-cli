@@ -753,7 +753,7 @@ async fn run_once(
     }
     .replace("{workspace}", &workspace.display().to_string());
     if let Some(rules) = (!isolated_evaluation)
-        .then(|| crate::prompt::global_user_instructions(global_rules.as_deref()))
+        .then(|| crate::prompt::global_user_instructions(global_rules))
         .flatten()
     {
         system_prompt.push_str("\n\n");

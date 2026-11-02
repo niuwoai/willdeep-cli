@@ -49,6 +49,7 @@ Runtime Session（长期存在）
 - `active_turn_id`
 - `created_at`
 - `updated_at`
+- `started_by`（可选）：这条会话是从哪条分凉出来的，只记直接来源。缺省表示本来就没有，或是这个字段出现之前的会话。
 - `last_error`
 - `title_source`（私有元数据）：`auto_pending | auto | user | legacy`
 
@@ -120,7 +121,7 @@ turn.stop
 - 标题和消息正文仍以 Core `SessionStore` 为唯一来源；Runtime 元数据不得复制标题或消息。
 - 新建且未显式命名的 Session 以 `auto_pending` 开始，首个真实 Turn 入队前在本地从 Prompt 生成最多 80 字符的标题；不得为标题调用 Provider。疑似密码、Token、API Key、私钥、常见凭据前缀或高熵字段必须回退到通用标题。显式 Rename、旧会话收养与 Fork 不得被自动覆盖。
 - Rename 只更新 Core 标题，并同步推进 Runtime `updated_at`；标题去除首尾空白后必须为 1–200 个字符。
-- Fork 创建新的 Session ID 与 Root Agent ID，复制当前 Core 消息、Workspace、Profile、模型覆盖和配置引用，但不复制 Turn、Task、Interaction、事件游标和 Inbox 已读状态。请求可携带 `through_turn_id`，仅复制到该已完成 Turn 的持久 `message_end` 边界；缺失边界的旧 Turn 明确拒绝精确 Fork。`provider_profile` 和 `model` 可覆盖源 Session，并用于后续所有 Turn 的原生 Harness 构建。
+- Fork 创建新的 Session ID 与 Root Agent ID，复制当前 Core 消息、Workspace、Profile、模型覆盖和配置引用，但不复制 Turn、Task、Interaction、事件游标和 Inbox 已读状态。服务端把 `started_by` 写成源 Session ID，请求体不带这个字段，客户端不能自己指定来源；再分凉一次只指向直接来源，不继承祖父。请求可携带 `through_turn_id`，仅复制到该已完成 Turn 的持久 `message_end` 边界；缺失边界的旧 Turn 明确拒绝精确 Fork。`provider_profile` 和 `model` 可覆盖源 Session，并用于后续所有 Turn 的原生 Harness 构建。
 - Archive 禁止新 Turn，但不删除历史；Unarchive 恢复为 Idle。活跃或仍有 Queued Turn 的 Session 不允许归档。
 - Delete 永久删除 Runtime Session、所属 Turn 元数据和本地 Core Session 文件；API 请求体必须携带与路径一致的 Session ID 确认。活跃或仍有 Queued Turn 的 Session 不允许删除。
 - Export 返回带 schema/version 的 JSON 快照，包含 Runtime 元数据、Core 消息和 Turn 审计元数据；不得包含已排队的私密 Prompt、附件副本、Runtime Token 或 Provider 凭据。
@@ -170,7 +171,7 @@ Web 会话摘要公开可选 `active_turn_id`。刷新时客户端先从 Core Se
 
 ### 6.1 数据迁移
 
-- Runtime Session 元数据当前 schema 为 2；schema 1 在内存完成确定性字段补全后升级。
+- Runtime Session 元数据当前 schema 为 2；schema 1 在内存完成确定性字段补全后升级。`started_by` 是 schema 2 上的可选字段，缺省为空，不加 schema 号。
 - 改写源文件前必须在同一私有 Runtime 目录创建原始字节备份，备份名包含源 schema、时间和随机 ID，且不得覆盖既有备份。
 - 新 schema 使用原子替换持久化；写入失败时原文件与备份仍可恢复。完成迁移后再次启动不得重复创建备份。
 - 高于当前实现的未来 schema 必须拒绝读取，不能忽略未知语义后降级写回。

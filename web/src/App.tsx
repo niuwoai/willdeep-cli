@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ComposerReferences } from "./ComposerReferences";
 import { insertReference, useComposerReferences, type Reference } from "./useComposerReferences";
-import { Box, Button, Container, Dialog, Flex, Heading, Input, NativeSelect, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
+import { Box, Button, Container, Dialog, Flex, Heading, Input, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { detectLanguage, messages, type Language, type Messages } from "./i18n";
 import { RuntimeSidebar, type AgentSpawnProfile, type RuntimeActivity, type RuntimeEvent } from "./RuntimeSidebar";
 import { Markdown } from "./Markdown";
@@ -38,6 +38,8 @@ import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
 import { enqueueButtonState, queueText } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
+import { sessionTree } from "./sessionTree";
+import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
 import "./chatWorkspace.css";
 import "./runCard.css";
 import { RuntimeQueue, IndependentTasks } from "./RuntimeQueue";
@@ -56,7 +58,16 @@ import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
 
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
-type Session = { id: string; title: string; preview?: string; workspace: string; updated_at: number; pinned_at: number | null; archived: boolean; active: boolean; active_turn_id: string | null };
+type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; archived: boolean; active: boolean; active_turn_id: string | null };
+
+/** 谱系行的时间按子会话的创建时间算，不用最后更新时间。 */
+function lineageTime(createdAt: number, t: Messages): string {
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - createdAt);
+  if (elapsed < 60) return t.timeJustNow;
+  if (elapsed < 3600) return t.timeMinutesAgo.replace("{count}", String(Math.floor(elapsed / 60)));
+  if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
+  return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
+}
 type SessionDetail = { id: string; workspace: string; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
@@ -243,6 +254,10 @@ export function App() {
   const colorScheme = useResolvedColorScheme(theme);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [workspace, setWorkspace] = useState("");
   const [sessions, setSessions] = useState<Session[]>([]); const [sessionId, setSessionId] = useState("");
+  // 项目树的展开与每个项目已加载的条数。默认只展开最近更新的项目，其余收起。
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [projectShown, setProjectShown] = useState<Record<string, number>>({});
+  const treeInitialized = useRef(false);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
   // 轮询闭包里读得到当前会话，而不必把 sessionId 放进依赖数组重开定时器。
   const sessionIdRef = useRef(sessionId);
@@ -558,16 +573,40 @@ export function App() {
   }, [chat]);
 
   const [showArchived, setShowArchived] = useState(false);
-  const { liveSessions, archivedSessions } = useMemo(() => {
-    const query = sessionSearch.trim().toLowerCase();
-    const filtered = sessions
-      .filter((item) => item.workspace === workspace && (!query || item.title.toLowerCase().includes(query)))
+  const sessionQuery = sessionSearch.trim().toLowerCase();
+  const searching = sessionQuery.length > 0;
+  // 搜索跨所有项目。不搜索时每个项目只露已加载的那几条，置顶的排在前面。
+  const projectSessions = useMemo(() => {
+    const grouped = new Map<string, Session[]>();
+    for (const item of sessions) {
+      if (item.archived) continue;
+      const group = grouped.get(item.workspace) ?? [];
+      group.push(item);
+      grouped.set(item.workspace, group);
+    }
+    for (const group of grouped.values()) group.sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0) || b.updated_at - a.updated_at);
+    return grouped;
+  }, [sessions]);
+  const projectLatest = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (const item of sessions) latest.set(item.workspace, Math.max(latest.get(item.workspace) ?? 0, item.updated_at));
+    return latest;
+  }, [sessions]);
+  const orderedProjects = useMemo(
+    () => orderWorkspaces(workspaces.map((item) => ({ ...item, latest: projectLatest.get(item.path) ?? 0 }))),
+    [workspaces, projectLatest],
+  );
+  // 第一次拿到项目名单时只展开最近更新的那个。之后新加进来的项目保持收起。
+  useEffect(() => {
+    if (treeInitialized.current || !orderedProjects.length) return;
+    treeInitialized.current = true;
+    setExpandedProjects(new Set([orderedProjects[0].path]));
+  }, [orderedProjects]);
+  const archivedSessions = useMemo(() => {
+    return sessions
+      .filter((item) => item.archived && item.workspace === workspace && matchesSessionQuery(item, sessionQuery))
       .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0) || b.updated_at - a.updated_at);
-    return {
-      liveSessions: filtered.filter((item) => !item.archived),
-      archivedSessions: filtered.filter((item) => item.archived),
-    };
-  }, [sessions, workspace, sessionSearch]);
+  }, [sessions, workspace, sessionQuery]);
   const selectedSession = useMemo(() => sessions.find((item) => item.id === sessionId), [sessions, sessionId]);
   const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
   const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
@@ -998,9 +1037,9 @@ export function App() {
     }
   }
 
-  function sessionRow(item: Session) {
+  function sessionRow(item: Session, depth: number) {
     const selected = sessionId === item.id;
-    return <Flex key={item.id} className={`session-row${selected ? " selected" : ""}`} opacity={item.archived ? 0.68 : 1}
+    return <Flex key={item.id} className={`session-row${depth ? " nested" : ""}${selected ? " selected" : ""}`} opacity={item.archived ? 0.68 : 1}
       onContextMenu={(event) => {
         // 没有插件贡献这个位置时不劫持右键——浏览器自带的菜单仍然该能用。
         if (!sessionContextEntries.length) return;
@@ -1008,7 +1047,7 @@ export function App() {
         setPopup({ entries: sessionContextEntries, x: event.clientX, y: event.clientY, args: { session: item.id } });
       }}>
       <button type="button" className="session-title" disabled={busy} onClick={() => void loadSession(item.id, item.active_turn_id)}>
-        {item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
+        {item.active && <span className="session-active-dot" aria-hidden="true" />}{item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
         {/* 标题没生成时后端会带回首条用户消息。显示它而不是一排
             一模一样的 New session——那些会话是有内容的。 */}
         {item.preview ? <span className="session-untitled">{item.preview}</span> : item.title}
@@ -1329,10 +1368,8 @@ export function App() {
         </Box>
         <SidebarSettings messages={t} language={language} onLanguageChange={setLanguage} />
       </Flex>
-      {/* 工作区收成一行：选择器占满，加号贴右。标签文字省掉——下拉里
-          显示的就是工作区名和访问模式，再顶一行「工作区」是废话。 */}
-      <Flex gap="1" align="center">
-        <NativeSelect.Root size="sm" flex="1" minW="0"><NativeSelect.Field aria-label={t.workspace} title={workspace} value={workspace} onChange={(event) => setWorkspace(event.target.value)} bg="var(--bg-raised)" borderColor="var(--border)" color="var(--text)">{workspaces.map((item) => <option key={item.id} value={item.path}>{item.name} · {accessLabel(item.access, t)}{item.active ? ` · ${t.activeWorkspace}` : ""}</option>)}</NativeSelect.Field><NativeSelect.Indicator /></NativeSelect.Root>
+      {/* 项目是一棵树，不再用下拉框切换。加号贴在树的右上角。 */}
+      <Flex gap="1" align="center" justify="flex-end">
         <button type="button" className={`workspace-add${addingWorkspace ? " active" : ""}`} title={addingWorkspace ? t.cancel : t.addWorkspace} aria-label={addingWorkspace ? t.cancel : t.addWorkspace} aria-expanded={addingWorkspace} onClick={() => { setAddingWorkspace((current) => !current); setWorkspaceError(""); }}>
           <SfIcon name={addingWorkspace ? "sf:x.mark" : "sf:plus.circle"} size={15} />
         </button>
@@ -1347,16 +1384,48 @@ export function App() {
       <RuntimeSidebar onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
-      <Flex direction="column" flex="1" minH="0" mt="5">
-        <Flex mb="2" justify="space-between" align="baseline"><Text fontSize="xs" color="var(--text-dim)">{t.session}</Text><Button size="xs" variant="ghost" color="var(--text-dim)" _hover={{ bg: "var(--bg-panel)", color: "var(--text-strong)" }} disabled={busy} onClick={() => { localStorage.removeItem(`${lastSessionPrefix}${workspace}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setModelOpen(false); setShareOpen(false); }}>{t.newSession}</Button></Flex>
+      <Flex direction="column" flex="1" minH="0" mt="4">
         <div className="session-search"><Search size={15} /><Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" /></div>
         <Box className="session-list" flex="1" minH="0">
-          <VStack align="stretch" gap="1">{liveSessions.map(sessionRow)}{!liveSessions.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}</VStack>
+          {!orderedProjects.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}
+          {searching && !orderedProjects.some((project) => (projectSessions.get(project.path) ?? []).some((item) => matchesSessionQuery(item, sessionQuery))) && <Text color="var(--text-faint)" fontSize="sm">{t.noSessionMatch}</Text>}
+          {orderedProjects.map((project) => {
+            const all = projectSessions.get(project.path) ?? [];
+            // 搜索按标题，占位标题还比对侧栏上显示的首条消息。命中全部列出，不受 20 条上限。
+            const matched = searching ? all.filter((item) => matchesSessionQuery(item, sessionQuery)) : all;
+            if (searching && !matched.length) return null;
+            const open = searching || expandedProjects.has(project.path);
+            const shown = listedSessionCount(matched.length, projectShown[project.path] ?? PROJECT_PREVIEW, searching);
+            const rows = sessionTree(matched.slice(0, shown));
+            const canShowMore = !searching && shown < Math.min(matched.length, PROJECT_CAP);
+            const canCollapse = !searching && shown > PROJECT_PREVIEW;
+            const capped = shown >= PROJECT_CAP && matched.length > PROJECT_CAP;
+            return <Box key={project.id} className="project-group">
+              <div className={`project-head${project.path === workspace ? " current" : ""}`}>
+                <button type="button" className="project-toggle" aria-expanded={open} title={project.path} onClick={() => setExpandedProjects((current) => { const next = new Set(current); if (next.has(project.path)) next.delete(project.path); else next.add(project.path); return next; })}>
+                  <span className={`archived-caret${open ? " open" : ""}`}>▸</span>
+                  <FolderGit2 size={13} />
+                  <span className="project-name">{project.name}</span>
+                  <span className="project-count">{matched.length}</span>
+                </button>
+                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => { setWorkspace(project.path); localStorage.removeItem(`${lastSessionPrefix}${project.path}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setModelOpen(false); setShareOpen(false); }}><SfIcon name="sf:plus.circle" size={13} /></button>
+              </div>
+              {open && <VStack align="stretch" gap="1" className="project-sessions">
+                {rows.map((entry) => sessionRow(entry.session, entry.depth))}
+                {!rows.length && <Text color="var(--text-faint)" fontSize="sm" pl="5">{t.noSessions}</Text>}
+                {(canShowMore || canCollapse) && <div className="project-more">
+                  {canShowMore && <button type="button" onClick={() => setProjectShown((current) => ({ ...current, [project.path]: afterShowMore(current[project.path] ?? PROJECT_PREVIEW) }))}>{t.showMoreSessions}</button>}
+                  {canCollapse && <button type="button" onClick={() => setProjectShown((current) => ({ ...current, [project.path]: PROJECT_PREVIEW }))}>{t.collapseSessions}</button>}
+                </div>}
+                {capped && <Text color="var(--text-ghost)" fontSize="2xs" pl="5">{t.sessionLimit.replace("{count}", String(PROJECT_CAP))}</Text>}
+              </VStack>}
+            </Box>;
+          })}
           {archivedSessions.length > 0 && <Box mt="2">
             <button type="button" className="archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived((current) => !current)}>
               <span className={`archived-caret${showArchived ? " open" : ""}`}>▸</span>{t.archived} ({archivedSessions.length})
             </button>
-            {showArchived && <VStack align="stretch" gap="1" mt="1">{archivedSessions.map(sessionRow)}</VStack>}
+            {showArchived && <VStack align="stretch" gap="1" mt="1">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
           </Box>}
         </Box>
         {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
@@ -1419,7 +1488,7 @@ export function App() {
       </Dialog.Root>
     </Box>
     <Flex flex="1" minW="0" className="conversation-with-schedules">
-    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span><h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
+    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span>{selectedSession?.started_by && <span className="session-lineage">{t.sessionLineage.replace("{parent}", sessions.find((item) => item.id === selectedSession.started_by)?.title || selectedSession.started_by.slice(0, 8)).replace("{time}", lineageTime(selectedSession.created_at, t))}</span>}<h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
       {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} />}
       {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} />}

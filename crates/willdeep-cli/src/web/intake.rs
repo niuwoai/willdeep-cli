@@ -501,7 +501,9 @@ fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
     }
     let mut root = toml::Table::new();
     root.insert("intake".to_owned(), toml::Value::Table(intake));
-    Ok(toml::to_string_pretty(&toml::Value::Table(root))?.trim_end().to_owned())
+    Ok(toml::to_string_pretty(&toml::Value::Table(root))?
+        .trim_end()
+        .to_owned())
 }
 
 fn save_settings(
@@ -596,7 +598,9 @@ mod tests {
         assert!(next.contains("[[intake.sites]]") || next.contains("[intake.sites]"));
         let parsed: toml::Value = toml::from_str(&next).expect("edited configuration parses");
         assert_eq!(
-            parsed.get("intake").and_then(|intake| intake.get("enabled")),
+            parsed
+                .get("intake")
+                .and_then(|intake| intake.get("enabled")),
             Some(&toml::Value::Boolean(true))
         );
         assert_eq!(

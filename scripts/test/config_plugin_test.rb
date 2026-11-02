@@ -124,6 +124,29 @@ Dir.mktmpdir("willdeep-config-test") do |dir|
     raise "the other provider changed:\n#{local}" if local.include?("glm-next")
   end
 
+  # 页面存得下、运行时才拒绝，是 128 回合那次故障的成因：schema 的区间必须在
+  # 写入前拦住，而不是只写在字段说明里。
+  check(failures, "an integer outside its declared range is refused before writing") do
+    ranged = File.join(dir, "ranged.toml")
+    File.write(ranged, SAMPLE)
+    before = File.read(ranged)
+    result = box.call("config.apply", {
+      "path" => ranged, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "subagents.implementer", "key" => "max_turns", "value" => 1001 }]
+    })
+    raise "1001 turns was accepted: #{result}" if result["ok"]
+    reasons = (result.dig("details", "edits") || []).map { |edit| edit["reason"].to_s }.join(" ")
+    raise "the refusal does not name the range: #{result}" unless reasons.include?("1000")
+    raise "a refused edit was written" unless File.read(ranged) == before
+
+    accepted = box.call("config.apply", {
+      "path" => ranged, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "subagents.implementer", "key" => "max_turns", "value" => 128 }]
+    })
+    raise "128 turns was refused: #{accepted['message']}" unless accepted["ok"]
+    raise "128 turns was not stored" unless File.read(ranged).include?("max_turns = 128")
+  end
+
   check(failures, "a default model without any provider is refused") do
     bare = File.join(dir, "bare.toml")
     File.write(bare, "version = 1\n")

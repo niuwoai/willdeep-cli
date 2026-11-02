@@ -1459,12 +1459,17 @@ fn compressor_candidate_configs(
         .as_deref()
         .map(str::trim)
     {
-        let mut profile = loaded.file.providers.get(profile_name).cloned().with_context(|| {
-            format!(
-                "agent.compressor_profile names a provider profile that is not configured: \
+        let mut profile = loaded
+            .file
+            .providers
+            .get(profile_name)
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "agent.compressor_profile names a provider profile that is not configured: \
                  {profile_name}"
-            )
-        })?;
+                )
+            })?;
         // `compressor_model` 既覆盖档案里的模型名，也可以在档案没写模型时补上：
         // 只配一份端点（地址、密钥）再单独指模型，是很自然的写法。
         if profile.model.is_none() {

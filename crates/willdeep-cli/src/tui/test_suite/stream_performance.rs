@@ -115,12 +115,12 @@ fn deterministic_stream_render_benchmark() {
         app.sidebar_visible = false;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(160, 50)).unwrap();
         let skills = SkillCatalog::default();
-        draw(&mut terminal, &mut app, &skills).unwrap();
+        draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
         let mut timings = Vec::new();
         for _ in 0..FRAMES {
             let started = Instant::now();
             app.stream_transient(StreamKind::Reply, "新字");
-            draw(&mut terminal, &mut app, &skills).unwrap();
+            draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
             timings.push(started.elapsed().as_secs_f64() * 1_000.0);
         }
         timings.sort_by(f64::total_cmp);
@@ -147,7 +147,7 @@ fn paced_stream_display_latency() {
     app.sidebar_visible = false;
     let skills = SkillCatalog::default();
     let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(160, 50)).unwrap();
-    draw(&mut terminal, &mut app, &skills).unwrap();
+    draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     let producer = std::thread::spawn(move || {
         for _ in 0..100 {
@@ -158,7 +158,7 @@ fn paced_stream_display_latency() {
     let mut latency = Vec::new();
     for sent in rx {
         app.stream_transient(StreamKind::Reply, "新字");
-        draw(&mut terminal, &mut app, &skills).unwrap();
+        draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
         latency.push(sent.elapsed().as_secs_f64() * 1_000.0);
     }
     producer.join().unwrap();

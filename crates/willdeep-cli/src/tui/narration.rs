@@ -9,8 +9,8 @@
 //! - 流式增量仍走临时行预览，压过那一行状态；
 //! - 每次工具调用先落一行 `· … 名字 · 摘要`，完成后原地改成 `✓` / `✗`；
 //! - 收尾文字只追加还没显示过的部分（比如轮次上限提示），不重复最后一段；
-//! - 显示层把每段连续工具行收起：早先的段一行汇总，最新的段一行汇总加最新一条，
-//!   `/tools` 展开。夹在中间、当前可见的思考行不切段，一段连续的只留最后一条。
+//! - 显示层只保留最近一段连续工具行，收成一行汇总，不列出具体工具，`/tools` 展开。
+//!   更早的段完全不显示。夹在中间、当前可见的思考行不切段，一段连续的只留最后一条。
 //!
 //! 进程内轮次与 Runtime 轮次共用这一套，行为一致。
 use super::*;
@@ -20,13 +20,27 @@ const TOOL_PENDING: &str = "…";
 const TOOL_DONE: &str = "✓";
 const TOOL_FAILED: &str = "✗";
 
-/// 最新那段连续工具行最多占这么多行：一行汇总加最新一条，正在跑的那条永远看得见。
-/// 更早的段一律只留一行汇总（只有一条时原样保留）。
-const LAST_TOOL_RUN_ROWS: usize = 2;
+/// 只有最近那段连续工具行会显示，而且只占一行汇总。更早的段完全不显示，
+/// 记录本身不动，`/tools` 展开后照常逐条可见。
 /// 汇总行的标记，与三种工具行标记都不同；渲染层照样按 `· ` 账目行的灰色画。
 const TOOL_FOLD_MARKER: &str = "⋯";
+/// 整段不显示的工具行的临时编号。比任何一段的行数都大，输出循环对不上它，
+/// 定稿后再改成「本段之后的第一行」。
+const HIDDEN_RUN_ROW: usize = usize::MAX;
 const THOUGHT_ENTRY_PREFIX: &str = "· + Thought: ";
 const THOUGHT_EXPANDED_PREFIX: &str = "· − Thought: ";
+
+/// 点开的工具行下面那一行「收起」。三种语言各一句。
+const TOOL_COLLAPSE_LABELS: [&str; 3] = ["− 收起", "− Show less", "− 折りたたむ"];
+
+/// 这句是只改状态、不送去模型的斜杠命令。这类命令不回显成 `You:` 行：
+/// `/model`、`/help` 这类操作留在聊天区里只是噪声，结果由命令自己写一行说明。
+/// `/goal`、`/local`、`/runtime` 会开工，那句是用户的任务，照常显示。
+pub(super) fn is_display_only_command(prompt: &str) -> bool {
+    let value = prompt.trim();
+    let command = value.split_whitespace().next().unwrap_or(value);
+    command.starts_with('/') && command != "/goal" && command != "/local" && command != "/runtime"
+}
 
 /// 一行工具记录。`· ` 前缀让渲染层按账目行的灰色画，不与正文抢注意力。
 fn tool_line(marker: &str, name: &str, detail: Option<&str>) -> String {
@@ -72,6 +86,17 @@ pub(super) fn is_tool_display_row(line: &str) -> bool {
     line.starts_with("· ⋯ ") || tool_row_marker(line).is_some()
 }
 
+/// 点开的工具行下面那一行「收起」，按界面语言挑一句。
+pub(super) fn tool_collapse_label(language: Language) -> &'static str {
+    match language {
+        Language::ZhCn => TOOL_COLLAPSE_LABELS[0],
+        Language::En => TOOL_COLLAPSE_LABELS[1],
+        Language::Ja => TOOL_COLLAPSE_LABELS[2],
+    }
+}
+
+/// 汇总行不再点名具体工具，这个解析只留给测试核对工具行的格式。
+#[cfg(test)]
 fn tool_row_name(line: &str) -> Option<&str> {
     let marker = tool_row_marker(line)?;
     let rest = line.strip_prefix("· ")?.strip_prefix(marker)?.trim_start();
@@ -276,6 +301,46 @@ impl App {
             self.append_transcript(format!("{THOUGHT_ENTRY_PREFIX}{elapsed}\n{thought}"));
         }
         self.thought_started_at = None;
+    }
+
+    /// 点工具行展开，点它下面的「收起」收回。
+    ///
+    /// 展开只记在显示层：记录里那行原样不动。完整命令在发起时就记在
+    /// `tool_expansions` 里，点开直接取；没有记下的（比如重开会话回放出来的）
+    /// 点开只多一行「收起」。点在别的地方返回 `false`，让点击继续走原来的处理。
+    pub(super) fn toggle_tool_row_at(&mut self, y: u16) -> bool {
+        // 同一个屏幕行上「收起」优先于工具行本身：窄屏折行时两段会挤到一行，
+        // 点下去应该收回而不是再展开一次。
+        let Some((_, source, collapse)) = self
+            .tool_row_hits
+            .iter()
+            .filter(|(row, _, _)| *row == y)
+            .max_by_key(|(_, _, collapse)| *collapse)
+        else {
+            return false;
+        };
+        let source = *source;
+        // 点「收起」，或者点一行已经展开的工具行，都收回；点收着的工具行才展开。
+        // 上面已经按「收起优先」挑过命中，这里不用再分两种收回。
+        if *collapse || self.expanded_tool_rows.contains(&source) {
+            self.expanded_tool_rows.remove(&source);
+        } else {
+            self.expanded_tool_rows.insert(source);
+        }
+        self.transcript_render_cache = None;
+        self.tool_row_hits.clear();
+        self.refresh_transcript_height();
+        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+        true
+    }
+
+    /// 记下这一行工具调用点开后要显示的完整内容。按记录位置记，记录本身不改。
+    fn remember_tool_expansion(&mut self, expansion: Option<String>) {
+        let Some(expansion) = expansion.filter(|text| !text.trim().is_empty()) else {
+            return;
+        };
+        let index = self.transcript.len().saturating_sub(1);
+        self.tool_expansions.insert(index, expansion);
     }
 
     pub(super) fn toggle_thought_at(&mut self, y: u16) -> bool {
@@ -620,10 +685,10 @@ pub(super) struct FoldedTranscript {
 }
 
 /// 每段连续的活动行在显示层收起。活动行指工具行，以及夹在它们中间、当前
-/// 可见的思考行——思考行不切段。收起时只收工具行：不是最新那段的一律收成
-/// 一行汇总；最新那段最多留 [`LAST_TOOL_RUN_ROWS`] 条工具行，正在跑的那条
-/// 永远看得见。一段连续的思考行只留最后一条，更早的指向它（搜索跳转仍落得上）；
-/// 用户展开过的那条原样留着。`expanded` 只展开工具行（`/tools`），不展开思考。
+/// 可见的思考行——思考行不切段。只有最近那段工具行会显示，收成一行汇总，
+/// 不留任何具体工具行；更早的段连汇总都不显示。一段连续的思考行只留最后一条，
+/// 更早的指向它（搜索跳转仍落得上）；用户展开过的那条原样留着。`expanded`
+/// 只展开工具行（`/tools`），不展开思考。
 pub(super) fn fold_tool_rows(
     entries: &[String],
     expanded: bool,
@@ -669,16 +734,15 @@ pub(super) fn fold_tool_rows(
             .filter(|row| tool_row_marker(row).is_some())
             .count();
         let is_last = start >= latest_turn && last_run == Some((start, end));
+        // 只显示最近一段：收成一行汇总，一条具体工具行都不留。更早的段连汇总
+        // 都不显示。`/tools` 展开后逐条可见，只有一条时原样保留，不值得配汇总。
         let keep_tools = if expanded || tool_count == 1 {
             tool_count
-        } else if !is_last {
-            0
-        } else if tool_count <= LAST_TOOL_RUN_ROWS {
-            tool_count
         } else {
-            1
+            0
         };
         let hidden_tools = tool_count - keep_tools;
+        let show_summary = is_last && hidden_tools > 0;
         // 收起的总是靠前的工具行：正在跑的那条（最新的）永远留着。
         let hidden = run
             .iter()
@@ -694,11 +758,12 @@ pub(super) fn fold_tool_rows(
                 && !run[offset].starts_with(THOUGHT_EXPANDED_PREFIX)
                 && kept_thought.is_some_and(|kept| offset < kept)
         };
-        // 先定每行的去向，再统一编号。被收起的工具行共用一行汇总，被收起的思考行
-        // 指向本段留下的最后一条思考。
+        // 先定每行的去向，再统一编号。最近一段被收起的工具行共用一行汇总；更早的段
+        // 整段不显示，那些行先记一个越界编号，定稿后再夹到本段之后的第一行。
+        // 被收起的思考行指向本段留下的最后一条思考。
         let summary_at = rows.len();
         let mut placed = Vec::with_capacity(run.len());
-        let mut emitted = usize::from(hidden_tools > 0);
+        let mut emitted = usize::from(show_summary);
         for (offset, line) in run.iter().enumerate() {
             let hidden_tool = tool_row_marker(line).is_some()
                 && run[..=offset]
@@ -706,8 +771,11 @@ pub(super) fn fold_tool_rows(
                     .filter(|row| tool_row_marker(row).is_some())
                     .count()
                     <= hidden_tools;
-            if hidden_tool {
+            if hidden_tool && show_summary {
                 placed.push(summary_at);
+            } else if hidden_tool {
+                // 这段不显示。越界编号对不上任何输出位置，自然不画。
+                placed.push(HIDDEN_RUN_ROW);
             } else if folded_thought(offset) {
                 // 占位，等最后一条思考的位置定下来再回填。
                 placed.push(usize::MAX);
@@ -723,44 +791,49 @@ pub(super) fn fold_tool_rows(
                 }
             }
         }
-        if hidden_tools > 0 {
-            rows.push(fold_summary(&hidden, is_last, language));
+        if show_summary {
+            rows.push(fold_summary(&hidden, language));
         }
+        // 不显示的段没有自己的行，那些越界编号留到最后统一夹到最后一行：
+        // 搜索跳转落在那里。这里不能夹——本段还没输出完，当时的行数恰好等于
+        // 本段起点，夹完第一条会被当成可见行画出来。
         for (offset, line) in run.iter().enumerate() {
-            let hidden_tool = hidden_tools > 0 && placed[offset] == summary_at;
-            if !hidden_tool && !folded_thought(offset) {
-                debug_assert_eq!(placed[offset], rows.len());
+            if placed[offset] == rows.len() && !folded_thought(offset) {
                 rows.push(line.clone());
             }
             index_of.push(placed[offset]);
         }
     }
+    // 不显示的段没有行可指。搜索跳转落到它后面的第一条消息上：那段工具调用
+    // 属于它前面那一轮，跳到下一句至少还在附近。后面什么都没有才落到最后一行。
+    let tail = rows.len().saturating_sub(1);
+    for index in 0..index_of.len() {
+        if index_of[index] != HIDDEN_RUN_ROW {
+            continue;
+        }
+        let after = index_of[index + 1..]
+            .iter()
+            .copied()
+            .find(|target| *target != HIDDEN_RUN_ROW);
+        index_of[index] = after.unwrap_or(tail);
+    }
     FoldedTranscript { rows, index_of }
 }
 
-/// `· ⋯ 已收起 12 条工具调用 · read_file×3 · run_command×9 · 2 失败 · /tools 展开`
-/// 「/tools 展开」只挂在最新那段的汇总上，早先的段不重复提示。
-fn fold_summary(hidden: &[String], with_hint: bool, language: Language) -> String {
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut failed = 0;
-    for line in hidden {
-        if let Some(name) = tool_row_name(line) {
-            *counts.entry(name).or_default() += 1;
-        }
-        if tool_row_marker(line) == Some(TOOL_FAILED) {
-            failed += 1;
-        }
-    }
+/// `· ⋯ 已收起 12 条工具调用 · 2 失败 · /tools 展开`
+/// 只报条数和失败数，不列具体工具；具体是哪些 `/tools` 展开后逐条看。
+fn fold_summary(hidden: &[String], language: Language) -> String {
+    let failed = hidden
+        .iter()
+        .filter(|line| tool_row_marker(line) == Some(TOOL_FAILED))
+        .count();
     let mut summary = language
         .text(
             "已收起 {n} 条工具调用",
-            "{n} earlier tool calls folded",
+            "{n} tool calls folded",
             "ツール呼び出し {n} 件を折りたたみ",
         )
         .replace("{n}", &hidden.len().to_string());
-    for (name, count) in counts {
-        summary.push_str(&format!(" · {name}×{count}"));
-    }
     if failed > 0 {
         summary.push_str(
             &language
@@ -768,13 +841,7 @@ fn fold_summary(hidden: &[String], with_hint: bool, language: Language) -> Strin
                 .replace("{k}", &failed.to_string()),
         );
     }
-    if with_hint {
-        summary.push_str(language.text(
-            " · /tools 展开",
-            " · /tools to expand",
-            " · /tools で展開",
-        ));
-    }
+    summary.push_str(language.text(" · /tools 展开", " · /tools to expand", " · /tools で展開"));
     format!("· {TOOL_FOLD_MARKER} {summary}")
 }
 
@@ -913,18 +980,33 @@ impl App {
     }
 
     /// 工具刚发起：先占一行，完成时原地改标记。
-    pub(super) fn note_tool_requested(&mut self, name: &str, detail: Option<&str>) {
+    ///
+    /// `expansion` 是点开后显示的完整内容，与摘要行分开记：摘要要短、要打码，
+    /// 点开是为了看清整条命令。
+    pub(super) fn note_tool_requested(
+        &mut self,
+        name: &str,
+        detail: Option<&str>,
+        expansion: Option<String>,
+    ) {
         self.finish_thought();
         self.transient_thought = None;
         // 工具调用是这一轮的第一份可见输出，压缩状态行到此为止。
         self.dismiss_compression_notice();
         self.append_transcript(tool_line(TOOL_PENDING, name, detail));
+        self.remember_tool_expansion(expansion);
     }
 
     /// 工具结束：把最近那条同名的进行中行改成成功/失败。只按名字对行，完成事件
     /// 不带摘要也能对上；实在找不到（比如重开会话后才收到完成事件）就补一行，
     /// 宁可多一行也不丢结果。
-    pub(super) fn note_tool_completed(&mut self, name: &str, detail: Option<&str>, is_error: bool) {
+    pub(super) fn note_tool_completed(
+        &mut self,
+        name: &str,
+        detail: Option<&str>,
+        expansion: Option<String>,
+        is_error: bool,
+    ) {
         let marker = if is_error { TOOL_FAILED } else { TOOL_DONE };
         let pending = tool_line(TOOL_PENDING, name, None);
         let with_detail = format!("{pending} · ");
@@ -938,7 +1020,9 @@ impl App {
         if settled {
             self.refresh_transcript_height();
         } else {
+            // 对不上进行中的那行就补一行，完整内容跟着补上的这一行走。
             self.append_transcript(tool_line(marker, name, detail));
+            self.remember_tool_expansion(expansion);
         }
     }
 
@@ -1009,6 +1093,21 @@ fn unshown_reply(final_text: &str, narrated: Option<&str>) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// 这一帧里某条工具记录对应的屏幕行。`collapse` 选「收起」那一行，否则选工具行本身。
+    /// 读的是点击实际匹配的命中表，不是记录位置。
+    fn screen_row(app: &App, source: usize, collapse: bool) -> u16 {
+        app.tool_row_hits
+            .iter()
+            .find(|(_, row_source, is_collapse)| *row_source == source && *is_collapse == collapse)
+            .map(|(row, _, _)| *row)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no hit for {source} collapse={collapse}: {:?}",
+                    app.tool_row_hits
+                )
+            })
+    }
+
     /// 交替的 run_command / read_file，每第三条失败。
     fn tool_rows(count: usize) -> Vec<String> {
         (0..count)
@@ -1028,6 +1127,34 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// 只改状态的斜杠命令不进聊天区；会开工的三条命令和普通提问照常显示。
+    #[test]
+    fn display_only_commands_stay_out_of_the_transcript() {
+        for command in [
+            "/model",
+            "/model claude",
+            "  /help  ",
+            "/tools",
+            "/session rename x",
+        ] {
+            assert!(
+                is_display_only_command(command),
+                "{command} changes state only and should not echo"
+            );
+        }
+        for prompt in [
+            "/goal ship it",
+            "/local cargo test",
+            "/runtime status",
+            "看一下日志",
+        ] {
+            assert!(
+                !is_display_only_command(prompt),
+                "{prompt} reaches the model and should echo"
+            );
+        }
     }
 
     #[test]
@@ -1060,84 +1187,121 @@ mod tests {
         assert_eq!(tool_row_marker("WillDeep: ✓ done"), None);
     }
 
+    /// 点工具行展开，点下面的「收起」收回；点在别处什么都不做。
     #[test]
-    fn one_or_two_row_runs_stay_as_they_are() {
-        for count in 1..=LAST_TOOL_RUN_ROWS {
-            let entries = tool_rows(count);
-            let folded = fold_tool_rows(&entries, false, Language::En);
-            assert_eq!(folded.rows, entries);
-            assert_eq!(folded.index_of, (0..count).collect::<Vec<_>>());
-        }
+    fn clicking_a_tool_row_expands_it_and_collapse_folds_it_back() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        // 命中表按视口过滤。测试里没有布局，给一个装得下整帧的高度。
+        app.viewport_height = 40;
+        let command = "ssh -o BatchMode=yes -o ConnectTimeout=12 q4-pub '/home/ml-data/rsi-smoke/venv/bin/python'";
+        app.note_tool_requested(
+            "run_command",
+            Some("ssh -o BatchMode=yes …"),
+            Some(command.to_owned()),
+        );
+        app.note_tool_completed("run_command", None, None, false);
+        let source = app.transcript.len() - 1;
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        let tool_row = screen_row(&app, source, false);
+        assert!(app.toggle_tool_row_at(tool_row));
+        assert!(app.expanded_tool_rows.contains(&source));
+        assert!(
+            !app.toggle_tool_row_at(9),
+            "a miss must not change anything"
+        );
+
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        let shown = app.transcript_rows.join("\n");
+        assert!(shown.contains("/home/ml-data/rsi-smoke"), "{shown}");
+        assert!(shown.contains("− 收起"), "{shown}");
+
+        // 展开后点的是这一帧真实画出来的「收起」那一行，而不是手造的命中。
+        // 点一下会清空命中表，所以先按这一帧重新算屏幕行。
+        app.update_user_message_hits(0, 0);
+        let collapse_row = screen_row(&app, source, true);
+        assert!(app.toggle_tool_row_at(collapse_row), "{collapse_row:?}");
+        assert!(
+            app.expanded_tool_rows.is_empty(),
+            "still expanded: {:?}",
+            app.expanded_tool_rows
+        );
+        app.prepare_transcript_frame();
+        let after = app.transcript_rows.join("\n");
+        assert!(!after.contains("− 收起"), "{after}");
+        assert!(
+            !after.contains("/home/ml-data/rsi-smoke"),
+            "collapsed row still shows the command: {after}"
+        );
     }
 
+    /// 只有一条的段原样保留，不值得配一行汇总。
     #[test]
-    fn the_latest_run_keeps_one_summary_plus_its_newest_row() {
+    fn a_single_tool_row_stays_as_it_is() {
+        let entries = tool_rows(1);
+        let folded = fold_tool_rows(&entries, false, Language::En);
+        assert_eq!(folded.rows, entries);
+        assert_eq!(folded.index_of, vec![0]);
+    }
+
+    /// 最近一段只留一行汇总，一条具体工具行都不留，也不列出是哪些工具。
+    #[test]
+    fn the_latest_run_folds_to_one_summary_without_naming_tools() {
         let mut entries = vec!["You: go".to_owned()];
         entries.extend(tool_rows(8));
         entries.push("WillDeep: done".to_owned());
         let folded = fold_tool_rows(&entries, false, Language::En);
-        assert_eq!(
-            folded.rows.len(),
-            1 + LAST_TOOL_RUN_ROWS + 1,
-            "{:?}",
-            folded.rows
-        );
+        assert_eq!(folded.rows.len(), 1 + 1 + 1, "{:?}", folded.rows);
         assert_eq!(folded.rows[0], "You: go");
         let summary = &folded.rows[1];
-        assert!(
-            summary.starts_with("· ⋯ 7 earlier tool calls folded"),
+        assert_eq!(
+            summary, "· ⋯ 8 tool calls folded · 2 failed · /tools to expand",
             "{summary}"
         );
         assert!(
-            summary.contains(" · read_file×3 · run_command×4"),
-            "{summary}"
+            !summary.contains('×'),
+            "the summary names no tool: {summary}"
         );
-        assert!(summary.contains(" · 2 failed"), "{summary}");
-        assert!(summary.ends_with(" · /tools to expand"), "{summary}");
-        assert_eq!(folded.rows[2], entries[8], "the newest row stays visible");
-        assert_eq!(folded.rows[3], "WillDeep: done");
-        assert_eq!(folded.index_of, vec![0, 1, 1, 1, 1, 1, 1, 1, 2, 3]);
+        assert_eq!(folded.rows[2], "WillDeep: done");
+        assert_eq!(folded.index_of, vec![0, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
     }
 
+    /// 更早的段连汇总都不显示，只有最近一段留一行；`/tools` 展开后全部回来。
     #[test]
-    fn earlier_runs_collapse_to_one_line_and_expanded_view_shows_all() {
+    fn earlier_runs_disappear_and_expanded_view_shows_all() {
         let mut entries = tool_rows(5);
         entries.push("WillDeep: half way".to_owned());
         entries.extend(tool_rows(3));
         let folded = fold_tool_rows(&entries, false, Language::ZhCn);
-        assert_eq!(
-            folded.rows.len(),
-            1 + 1 + LAST_TOOL_RUN_ROWS,
-            "{:?}",
+        assert_eq!(folded.rows.len(), 1 + 1, "{:?}", folded.rows);
+        assert_eq!(folded.rows[0], "WillDeep: half way");
+        assert!(
+            folded.rows[1].starts_with("· ⋯ 已收起 3 条工具调用")
+                && folded.rows[1].ends_with("/tools 展开"),
+            "{}",
+            folded.rows[1]
+        );
+        assert!(
+            !folded.rows.iter().any(|row| row.contains('×')),
+            "no tool names: {:?}",
             folded.rows
         );
-        assert!(
-            folded.rows[0].starts_with("· ⋯ 已收起 5 条工具调用"),
-            "{}",
-            folded.rows[0]
-        );
-        assert!(
-            !folded.rows[0].contains("/tools"),
-            "the hint belongs to the latest run only: {}",
-            folded.rows[0]
-        );
-        assert_eq!(folded.rows[1], "WillDeep: half way");
-        assert!(
-            folded.rows[2].starts_with("· ⋯ 已收起 2 条工具调用")
-                && folded.rows[2].ends_with("/tools 展开"),
-            "{}",
-            folded.rows[2]
-        );
-        assert_eq!(folded.rows[3], entries[8]);
-        assert_eq!(folded.index_of, vec![0, 0, 0, 0, 0, 1, 2, 2, 3]);
+        // 被收起的早先段没有汇总行可指，搜索跳转落到它后面的第一条消息上。
+        assert_eq!(folded.index_of, vec![0, 0, 0, 0, 0, 0, 1, 1, 1]);
 
-        // 早先的段只有一条时原样保留，不值得配一行汇总。
+        // 只有一条的段不配汇总，早先那段也照样留着：单条没有什么可收的。
         let mut single = tool_rows(1);
         single.push("WillDeep: x".to_owned());
-        single.extend(tool_rows(3));
+        single.extend(tool_rows(1));
+        let folded = fold_tool_rows(&single, false, Language::ZhCn);
         assert_eq!(
-            fold_tool_rows(&single, false, Language::ZhCn).rows[0],
-            single[0]
+            folded.rows,
+            vec![
+                single[0].clone(),
+                "WillDeep: x".to_owned(),
+                single[2].clone()
+            ]
         );
 
         assert_eq!(fold_tool_rows(&entries, true, Language::ZhCn).rows, entries);
@@ -1159,15 +1323,10 @@ mod tests {
             ));
         }
         let folded = fold_tool_rows(&entries, false, Language::En);
-        // 四段思考只留最后一条；四条工具行收成一条汇总加最新一条。
-        assert_eq!(folded.rows.len(), 1 + 1 + 1 + 1, "{:?}", folded.rows);
-        assert!(
-            folded.rows[1].starts_with("· ⋯ 3 earlier tool calls folded"),
-            "{}",
-            folded.rows[1]
-        );
-        assert!(
-            folded.rows[1].contains(" · read_file×1 · run_command×2"),
+        // 四段思考只留最后一条；四条工具行收成一条汇总，一条具体的都不留。
+        assert_eq!(folded.rows.len(), 1 + 1 + 1, "{:?}", folded.rows);
+        assert_eq!(
+            folded.rows[1], "· ⋯ 4 tool calls folded · /tools to expand",
             "{}",
             folded.rows[1]
         );
@@ -1182,18 +1341,13 @@ mod tests {
             folded.rows
         );
         assert!(folded.rows[2].contains("reason 3"), "{:?}", folded.rows);
-        assert_eq!(
-            folded
-                .rows
-                .iter()
-                .filter(|row| tool_row_marker(row).is_some())
-                .count(),
-            1,
-            "only the newest tool row stays: {:?}",
+        assert!(
+            !folded.rows.iter().any(|row| tool_row_marker(row).is_some()),
+            "no individual tool row stays: {:?}",
             folded.rows
         );
         // 被收起的工具行指向汇总行，被收起的思考行指向留下的那条。
-        assert_eq!(folded.index_of, vec![0, 2, 1, 2, 1, 2, 1, 2, 3]);
+        assert_eq!(folded.index_of, vec![0, 2, 1, 2, 1, 2, 1, 2, 1]);
     }
 
     #[test]
@@ -1233,7 +1387,8 @@ mod tests {
         for line in tool_rows(9) {
             app.append_transcript(line);
         }
-        assert_eq!(app.display_transcript().rows.len(), LAST_TOOL_RUN_ROWS);
+        // 收起时只剩一行汇总。
+        assert_eq!(app.display_transcript().rows.len(), 1);
 
         assert!(app.handle_slash_command("/tools", &SkillCatalog::default()));
         assert!(app.tool_rows_expanded);
@@ -1242,7 +1397,8 @@ mod tests {
 
         assert!(app.handle_slash_command("/tools", &SkillCatalog::default()));
         assert!(!app.tool_rows_expanded);
-        assert_eq!(app.display_transcript().rows.len(), LAST_TOOL_RUN_ROWS + 2);
+        // 再收起：一行汇总，加上两次 /tools 各自写的 System 行。
+        assert_eq!(app.display_transcript().rows.len(), 1 + 2);
     }
 
     #[test]
@@ -1371,7 +1527,7 @@ mod tests {
         );
 
         // 工具在跑时也要等模型读取，不能把“已送达”当成“已处理”。
-        app.note_tool_requested("run_command", None);
+        app.note_tool_requested("run_command", None, None);
         app.note_steering_delivered("stop", message_time::now());
         assert!(app.queue_activity().unwrap().contains("Delivered"));
         app.note_model_step_started();
@@ -1472,7 +1628,7 @@ mod tests {
         assert!(app.composer_state().0.contains("Enter sends text"));
         assert!(!app.bell_pending);
 
-        app.note_tool_requested("read_file", None);
+        app.note_tool_requested("read_file", None, None);
         app.append_turn_stats(None);
         let divider = app.transcript.last().cloned().unwrap();
         assert!(divider.starts_with(TURN_DIVIDER_PREFIX), "{divider}");
@@ -1527,23 +1683,23 @@ mod tests {
     #[test]
     fn tool_rows_settle_in_place_and_fall_back_to_a_new_row() {
         let mut app = App::new(Vec::new(), Language::En);
-        app.note_tool_requested("run_command", Some("cargo test -p"));
-        app.note_tool_requested("read_file", None);
+        app.note_tool_requested("run_command", Some("cargo test -p"), None);
+        app.note_tool_requested("read_file", None, None);
         assert_eq!(
             app.transcript,
             vec!["· … run_command · cargo test -p", "· … read_file"]
         );
 
         // 完成事件不带摘要也要对上发起行；同名多行时改最近那条。
-        app.note_tool_completed("run_command", None, true);
-        app.note_tool_completed("read_file", None, false);
+        app.note_tool_completed("run_command", None, None, true);
+        app.note_tool_completed("read_file", None, None, false);
         assert_eq!(
             app.transcript,
             vec!["· ✗ run_command · cargo test -p", "· ✓ read_file"]
         );
 
         // 找不到发起行（重开会话后才收到完成事件）就补一行。
-        app.note_tool_completed("edit_file", Some("main.rs"), false);
+        app.note_tool_completed("edit_file", Some("main.rs"), None, false);
         assert_eq!(
             app.transcript.last().map(String::as_str),
             Some("· ✓ edit_file · main.rs")
@@ -1678,7 +1834,7 @@ mod tests {
         // 工具调用同样是第一份可见输出。
         app.note_compression_started();
         app.note_compression_completed();
-        app.note_tool_requested("read_file", None);
+        app.note_tool_requested("read_file", None, None);
         assert!(app.compression_notice_row().is_none());
 
         // 中断或换会话时这行不能残留。

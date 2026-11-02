@@ -91,7 +91,10 @@ pub fn token_for(home: &Path, session_id: uuid::Uuid) -> Option<(String, Share)>
 }
 
 pub fn by_token(home: &Path, token: &str) -> Option<(String, Share)> {
-    load(home).0.remove(token).map(|share| (token.to_owned(), share))
+    load(home)
+        .0
+        .remove(token)
+        .map(|share| (token.to_owned(), share))
 }
 
 /// 公开访问路径。监听地址为 `0.0.0.0` 时让调用方换成本机域名——这里只管拼，
@@ -150,7 +153,10 @@ pub fn validate_mode(mode: ShareMode) -> Result<()> {
 
 /// 分享链接要求会话存在且工作区还在白名单里。这里给出统一的拒绝文案，
 /// 免得 Web 与入口各写一套、口径不一。
-pub fn ensure_session(home: &Path, session_id: uuid::Uuid) -> Result<willdeep_core::session::Session> {
+pub fn ensure_session(
+    home: &Path,
+    session_id: uuid::Uuid,
+) -> Result<willdeep_core::session::Session> {
     willdeep_core::session::SessionStore::new(home)
         .load(session_id)
         .map_err(|_| anyhow::anyhow!("session was not found"))
@@ -176,8 +182,14 @@ mod tests {
         assert_ne!(first, second);
         // 一条会话只有一个 token：旧链接当场失效，不是留着一个还能用的。
         assert!(by_token(&home, &first).is_none());
-        assert_eq!(by_token(&home, &second).map(|(_, share)| share.mode), Some(ShareMode::Chat));
-        assert_eq!(token_for(&home, session).map(|(token, _)| token), Some(second));
+        assert_eq!(
+            by_token(&home, &second).map(|(_, share)| share.mode),
+            Some(ShareMode::Chat)
+        );
+        assert_eq!(
+            token_for(&home, session).map(|(token, _)| token),
+            Some(second)
+        );
         assert_eq!(share.session_id, session);
     }
 

@@ -71,11 +71,30 @@ pub fn tool_detail(name: &str, arguments: &str) -> Option<String> {
     })
 }
 
+/// 工具行点开后展示的完整内容。
+///
+/// 与 [`tool_detail`] 同一套打码，但不省略路径、不截断：点开就是为了看清
+/// 到底执行了什么。只认已经打过码的工具；认不出的返回 `None`，点开不显示
+/// 一段来路不明的参数。
+pub fn tool_expansion(name: &str, arguments: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
+    let full = match name {
+        "run_command" => parsed.get("command")?.as_str()?.to_owned(),
+        "spawn_agent" | "ask_user" => return tool_detail(name, arguments),
+        _ => return None,
+    };
+    let redacted = crate::judge::redact_credentials(&full);
+    let redacted = redacted.trim();
+    (!redacted.is_empty()).then(|| redacted.to_owned())
+}
+
 /// 看起来像路径的词换成省略号。
 ///
 /// 判定放宽到 `--flag=/abs` 这种形式：把路径藏在等号后面是最常见的漏法。
+/// 单引号和双引号也先剥掉再看，否则 `'/abs/x'` 会原样漏出去。
 fn elide_path_like(token: &str) -> String {
     let candidate = token.split_once('=').map_or(token, |(_, value)| value);
+    let candidate = candidate.trim_matches(|c| c == '\'' || c == '"');
     if candidate.starts_with('/') || candidate.starts_with('~') || candidate.starts_with("./") {
         return match token.split_once('=') {
             Some((flag, _)) => format!("{flag}=…"),

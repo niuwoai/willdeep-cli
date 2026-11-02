@@ -37,6 +37,7 @@ pub mod provider;
 pub mod routing;
 pub mod rules;
 pub mod rsi;
+pub mod rules;
 pub mod runtime_parameters;
 pub mod safety;
 pub mod sandbox;

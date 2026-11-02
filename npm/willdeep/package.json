@@ -16,7 +16,8 @@
   "files": [
     "bin",
     "lib",
-    "install-manifest.json"
+    "install-manifest.json",
+    "README.md"
   ],
   "scripts": {
     "postinstall": "node lib/install.js"

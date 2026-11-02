@@ -58,7 +58,6 @@ mod schedule_cmd;
 mod screenplay_cmd;
 mod session_startup;
 mod shares;
-mod skill_library;
 mod telemetry;
 mod titling;
 mod tui;
@@ -1981,10 +1980,16 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
                 "id": call.id,
                 "name": call.name
             });
-            if let Some(detail) = tool_detail(&call.name, &call.arguments)
-                && let Some(object) = value.as_object_mut()
-            {
-                object.insert("detail".to_owned(), serde_json::Value::String(detail));
+            if let Some(object) = value.as_object_mut() {
+                if let Some(detail) = tool_detail(&call.name, &call.arguments) {
+                    object.insert("detail".to_owned(), serde_json::Value::String(detail));
+                }
+                // 点开工具行时显示的完整命令。与摘要分开：摘要要短、要省略路径。
+                if let Some(expansion) =
+                    willdeep_core::conversation::tool_expansion(&call.name, &call.arguments)
+                {
+                    object.insert("expansion".to_owned(), serde_json::Value::String(expansion));
+                }
             }
             value
         }
@@ -2023,10 +2028,15 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
             {
                 value["background_delay_seconds"] = seconds.into();
             }
-            if let Some(detail) = tool_detail(&call.name, &call.arguments)
-                && let Some(object) = value.as_object_mut()
-            {
-                object.insert("detail".to_owned(), serde_json::Value::String(detail));
+            if let Some(object) = value.as_object_mut() {
+                if let Some(detail) = tool_detail(&call.name, &call.arguments) {
+                    object.insert("detail".to_owned(), serde_json::Value::String(detail));
+                }
+                if let Some(expansion) =
+                    willdeep_core::conversation::tool_expansion(&call.name, &call.arguments)
+                {
+                    object.insert("expansion".to_owned(), serde_json::Value::String(expansion));
+                }
             }
             if is_error && let Some(object) = value.as_object_mut() {
                 object.insert(

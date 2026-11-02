@@ -10,10 +10,13 @@ pub(super) fn prompt_history_entries(
     messages: &[Message],
     pending: &VecDeque<String>,
 ) -> Vec<String> {
-    let persisted = messages.iter().rev().filter_map(|message| {
-        (message.role == Role::User && message.source != Some(MessageSource::HostInstruction))
-            .then(|| willdeep_core::conversation::visible_user_text(&message.content))
-    });
+    let persisted = messages
+        .iter()
+        .rev()
+        .filter(|message| {
+            message.role == Role::User && message.source != Some(MessageSource::HostInstruction)
+        })
+        .map(|message| willdeep_core::conversation::visible_user_text(&message.content));
     let mut seen = BTreeSet::new();
     let mut entries: Vec<String> = pending
         .iter()

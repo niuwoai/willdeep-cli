@@ -146,6 +146,10 @@ pub struct RuntimeSession {
     /// 会话里选过的审批档位；`None` 跟随工作区策略。旧版 Runtime 不发这个字段。
     #[serde(default)]
     pub approval_mode: Option<WorkspaceAccess>,
+    /// 直接分凉来源。旧版 Runtime 不发这个字段，缺省表示来源未知；
+    /// 没有来源时也不发出去，线上保持原来的形状。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<uuid::Uuid>,
     pub status: SessionStatus,
     pub active_turn_id: Option<uuid::Uuid>,
     pub created_at: u64,
@@ -449,6 +453,9 @@ pub struct SessionSearchResult {
     /// 之前唯一存在的来源。
     #[serde(default)]
     pub origin: SessionOrigin,
+    /// 直接分凉来源。旧版 Runtime 不发这个字段。
+    #[serde(default)]
+    pub started_by: Option<uuid::Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1818,6 +1825,7 @@ mod tests {
             profile: Some("coding".to_owned()),
             model: Some("model".to_owned()),
             approval_mode: Some(WorkspaceAccess::WorkspaceWrite),
+            started_by: None,
             status: SessionStatus::Idle,
             active_turn_id: None,
             created_at: 1,
@@ -1826,6 +1834,32 @@ mod tests {
         let json = serde_json::to_value(&session).unwrap();
         assert!(json.get("config").is_none());
         assert!(json.get("last_error").is_none());
+        // 没有来源时这个字段不出现在线上。
+        assert!(json.get("started_by").is_none());
+        // 老 Runtime 的响应里根本没有这个字段，读出来是空。
+        let mut legacy_session = json.clone();
+        legacy_session.as_object_mut().unwrap().remove("started_by");
+        assert_eq!(
+            serde_json::from_value::<RuntimeSession>(legacy_session)
+                .unwrap()
+                .started_by,
+            None
+        );
+        let parent = uuid::Uuid::new_v4();
+        let forked = RuntimeSession {
+            started_by: Some(parent),
+            ..session.clone()
+        };
+        let round_trip: RuntimeSession =
+            serde_json::from_value(serde_json::to_value(&forked).unwrap()).unwrap();
+        assert_eq!(round_trip.started_by, Some(parent));
+        let search: SessionSearchResult = serde_json::from_value(serde_json::json!({
+            "id": session.id, "title": "old", "workspace": null, "status": "idle",
+            "profile": null, "model": null, "updated_at": 1, "message_count": 0,
+            "snippet": null, "origin": "runtime"
+        }))
+        .unwrap();
+        assert_eq!(search.started_by, None);
 
         let turn = RuntimeTurn {
             execution_session_id: None,

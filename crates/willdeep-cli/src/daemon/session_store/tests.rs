@@ -1011,6 +1011,9 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
     assert_eq!(fork_core.messages[0].content, "first");
     assert_eq!(fork_core.messages[1].content, "first answer");
     assert!(store.list_turns(fork.id).unwrap().is_empty());
+    // 分凉来源记的是直接母会话，运行时记录和核心文件各一份。
+    assert_eq!(fork.started_by, Some(session.id));
+    assert_eq!(fork_core.started_by, Some(session.id));
 
     let mut compressed_core = core_store.load_baselined(session.id).unwrap();
     assert!(
@@ -1052,6 +1055,13 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
         )
         .unwrap();
     assert_eq!(core_store.load(current_fork.id).unwrap().messages.len(), 3);
+    // 重新打开仓库，分凉来源还在。
+    drop(store);
+    let reopened = RuntimeSessionStore::open(root.join("runtime-sessions.json"), &root).unwrap();
+    assert_eq!(
+        reopened.get(fork.id).unwrap().unwrap().started_by,
+        Some(session.id)
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -1533,6 +1543,7 @@ fn session_stop_targets_only_its_declared_active_turn() {
         profile: None,
         model: None,
         approval_mode: None,
+        started_by: None,
         status: willdeep_runtime_protocol::SessionStatus::Running,
         active_turn_id: Some(active_turn_id),
         created_at: 1,

@@ -442,6 +442,7 @@ pub(super) async fn switch_model(
         return Err(error).with_context(|| format!("update Runtime Session model to `{model}`"));
     }
     session.model = Some(model.to_owned());
+    app.display_model = Some(model.to_owned());
     runtime.runtime_submit.model = Some(model.to_owned());
     runtime.provider_config.model = model.to_owned();
     store.save(session)?;

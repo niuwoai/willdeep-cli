@@ -207,14 +207,32 @@ mod tests {
     fn full_ui_is_default_and_compact_does_not_change_on_input() {
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
         let mut app = App::new(vec![], Language::En);
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(!app.quiet_drawn);
         assert!(screen(&terminal).contains("Activity"));
         app.ui.mode = crate::config::UiMode::Compact;
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(app.quiet_drawn);
         app.handle_paste("first character".into());
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(app.quiet_drawn);
         assert_eq!(app.input.text(), "first character");
         assert!(!screen(&terminal).contains("Activity"));
@@ -232,7 +250,13 @@ mod tests {
                 for (width, height) in [(120, 30), (45, 18), (160, 40)] {
                     terminal.backend_mut().resize(width, height);
                     terminal.resize(Rect::new(0, 0, width, height)).unwrap();
-                    draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                    draw(
+                        &mut terminal,
+                        &mut app,
+                        &SkillCatalog::default(),
+                        &quiet_test_session(),
+                    )
+                    .unwrap();
                     let buffer = terminal.backend().buffer();
                     let top = app.prompt_rect.y;
                     for x in 0..width {
@@ -289,7 +313,13 @@ mod tests {
                 for (width, height) in [(120, 30), (45, 18), (160, 40), (8, 4)] {
                     terminal.backend_mut().resize(width, height);
                     terminal.resize(Rect::new(0, 0, width, height)).unwrap();
-                    draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                    draw(
+                        &mut terminal,
+                        &mut app,
+                        &SkillCatalog::default(),
+                        &quiet_test_session(),
+                    )
+                    .unwrap();
                     let buffer = terminal.backend().buffer();
                     let bg = buffer[(0, height - 1)].bg;
                     assert_eq!(bg, COMPOSER_BACKGROUND);
@@ -314,7 +344,13 @@ mod tests {
         let mut app = compact_app();
         app.language = Language::ZhCn;
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let rendered = screen(&terminal).replace(' ', "");
         assert!(
             rendered.contains("请说出你的需求"),
@@ -327,7 +363,13 @@ mod tests {
             &BackgroundTaskRegistry::default(),
             &SkillCatalog::default(),
         );
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(
             !screen(&terminal)
                 .replace(' ', "")
@@ -335,7 +377,13 @@ mod tests {
         );
 
         app.handle_paste("帮我修复这个问题".into());
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let rendered = screen(&terminal).replace(' ', "");
         assert!(rendered.contains("帮我修复这个问题"));
         assert!(!rendered.contains("请说出你的需求"));
@@ -349,19 +397,37 @@ mod tests {
         for language in [Language::ZhCn, Language::En, Language::Ja] {
             app.language = language;
             app.ui.mode = crate::config::UiMode::Full;
-            draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+            draw(
+                &mut terminal,
+                &mut app,
+                &SkillCatalog::default(),
+                &quiet_test_session(),
+            )
+            .unwrap();
             let expected: Vec<_> = (0..180)
                 .map(|x| terminal.backend().buffer()[(x, 29)].symbol().to_owned())
                 .collect();
             app.ui.mode = crate::config::UiMode::Compact;
-            draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+            draw(
+                &mut terminal,
+                &mut app,
+                &SkillCatalog::default(),
+                &quiet_test_session(),
+            )
+            .unwrap();
             let buffer = terminal.backend().buffer();
             let last: Vec<_> = (0..180)
                 .map(|x| buffer[(x, 29)].symbol().to_owned())
                 .collect();
             assert_eq!(last, expected);
             app.ui.compact_status_line = false;
-            draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+            draw(
+                &mut terminal,
+                &mut app,
+                &SkillCatalog::default(),
+                &quiet_test_session(),
+            )
+            .unwrap();
             assert!(!screen(&terminal).contains("27%"));
             app.ui.compact_status_line = true;
         }
@@ -373,19 +439,37 @@ mod tests {
         app.input.insert("unsent draft");
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(160, 30)).unwrap();
         app.sidebar_visible = true;
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(app.quiet_drawn);
         assert!(app.sidebar_rect.width > 0);
         assert_eq!(app.prompt_rect.width, 160);
         assert!(app.sidebar_rect.bottom() <= app.prompt_rect.y);
         app.open_prompt_queue();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(app.quiet_drawn);
         assert!(screen(&terminal).to_lowercase().contains("queue"));
         app.prompt_queue = None;
         let (sender, _receiver) = oneshot::channel();
         app.approval = Some(("approval remains visible".into(), false, sender));
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(screen(&terminal).contains("approval remains visible"));
         assert_eq!(app.input.text(), "unsent draft");
         assert!(app.quiet_drawn);
@@ -397,11 +481,23 @@ mod tests {
         app.ui.compact_status_line = false;
         app.notice = Some("Important action result".into());
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(app.quiet_drawn);
         assert!(screen(&terminal).contains("Important action result"));
         assert!(app.notice.is_none());
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(!screen(&terminal).contains("Important action result"));
     }
 
@@ -422,7 +518,13 @@ mod tests {
         app.finish_thought();
 
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(!screen(&terminal).contains("hidden chain of thought"));
         assert_eq!(app.thought_hit_rows.len(), 1);
         let (thought_row, _) = app.thought_hit_rows[0];
@@ -433,7 +535,13 @@ mod tests {
             &BackgroundTaskRegistry::default(),
             &SkillCatalog::default(),
         );
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(screen(&terminal).contains("hidden chain of thought"));
 
         app.handle_mouse(
@@ -442,7 +550,13 @@ mod tests {
             &BackgroundTaskRegistry::default(),
             &SkillCatalog::default(),
         );
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         assert!(!screen(&terminal).contains("hidden chain of thought"));
     }
 }

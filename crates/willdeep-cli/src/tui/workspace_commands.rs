@@ -179,6 +179,7 @@ pub(super) async fn switch(
     runtime.skills =
         Arc::new(SkillCatalog::discover(&workspace.root, &[]).allow_only(&workspace.skills));
     app.load_session(&target);
+    refresh_session_lineage(app, &target, store);
     app.runtime_event_cursor = target.runtime_event_cursor;
     app.runtime_attention.clear();
     app.runtime_gates.clear();

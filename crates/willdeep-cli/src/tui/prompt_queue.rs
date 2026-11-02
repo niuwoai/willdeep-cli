@@ -1246,7 +1246,13 @@ mod tests {
         app.queue_submitted_prompt();
         app.stream_transient(StreamKind::Reply, "hi 的回复仍在生成");
         let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let screen: String = terminal
             .backend()
             .buffer()
@@ -1378,7 +1384,13 @@ mod tests {
             .unwrap()
             .insert(&format!("{}\nvisible tail", "\nline".repeat(40)));
         let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
-        draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
         let screen: String = terminal
             .backend()
             .buffer()
@@ -1401,7 +1413,13 @@ mod tests {
                 app.note_model_step_started();
                 app.stream_transient(StreamKind::Reply, "Streaming reply");
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                draw(
+                    &mut terminal,
+                    &mut app,
+                    &SkillCatalog::default(),
+                    &quiet_test_session(),
+                )
+                .unwrap();
                 let screen: String = terminal
                     .backend()
                     .buffer()
@@ -1413,7 +1431,13 @@ mod tests {
                 assert!(screen.contains("first"), "{screen}");
                 assert!(screen.contains("Streaming reply"), "{screen}");
                 app.open_prompt_queue();
-                draw(&mut terminal, &mut app, &SkillCatalog::default()).unwrap();
+                draw(
+                    &mut terminal,
+                    &mut app,
+                    &SkillCatalog::default(),
+                    &quiet_test_session(),
+                )
+                .unwrap();
                 let screen: String = terminal
                     .backend()
                     .buffer()

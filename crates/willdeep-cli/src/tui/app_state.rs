@@ -58,6 +58,7 @@ impl App {
             queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
+            display_model: None,
             pending_provider: None,
             local_turn: None,
             latest_usage: Usage::default(),
@@ -112,6 +113,10 @@ impl App {
             transient_thought: None,
             thought_started_at: None,
             thought_hit_rows: Vec::new(),
+            expanded_tool_rows: BTreeSet::new(),
+            tool_expansions: BTreeMap::new(),
+            tool_row_hits: Vec::new(),
+            tool_row_controls: Vec::new(),
             expanded_user_messages: BTreeMap::new(),
             user_message_controls: Vec::new(),
             user_message_hit_rows: Vec::new(),
@@ -164,6 +169,7 @@ impl App {
             attention_deny_rect: Rect::default(),
             search: None,
             workspace: None,
+            session_lineage: None,
             palette: None,
             palette_rect: Rect::default(),
             palette_hits: Vec::new(),
@@ -238,6 +244,7 @@ impl App {
         self.runtime_follow_after = None;
         self.pending_model = None;
         self.pending_provider = None;
+        self.display_model = session.model.clone().filter(|model| !model.is_empty());
         let display = self
             .display_home
             .as_ref()
@@ -282,6 +289,10 @@ impl App {
         self.transient_thought = None;
         self.thought_started_at = None;
         self.thought_hit_rows.clear();
+        self.expanded_tool_rows.clear();
+        self.tool_expansions.clear();
+        self.tool_row_hits.clear();
+        self.tool_row_controls.clear();
         self.expanded_user_messages.clear();
         self.user_message_controls.clear();
         self.user_message_hit_rows.clear();
@@ -301,6 +312,7 @@ impl App {
         self.pending_session_switch = None;
         self.attention_read = session.attention_read.clone();
         self.workspace = Some(session.workspace.clone());
+        self.session_lineage = None;
         self.workspace_status = workspace_status(&session.workspace, self.language);
         self.workspace_attention = workspace_attention(&session.workspace);
         self.focus = FocusPane::Prompt;
@@ -851,7 +863,7 @@ impl App {
         let labels = self.message_time_labels(&folded, message_time::now());
         let total = self
             .render_user_transcript(&folded, &labels, None, folded.rows.len())
-            .0
+            .text
             .lines
             .len();
         let through_match = folded
@@ -859,7 +871,7 @@ impl App {
             .get(entry - self.archive_floor + usize::from(self.archive_floor > 0))
             .map(|&row| {
                 self.render_user_transcript(&folded, &labels, None, row + 1)
-                    .0
+                    .text
                     .lines
                     .len()
             })
@@ -2305,8 +2317,8 @@ impl App {
             }
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
-            if !self.toggle_user_message_at(y) {
-                self.toggle_thought_at(y);
+            if !self.toggle_user_message_at(y) && !self.toggle_thought_at(y) {
+                self.toggle_tool_row_at(y);
             }
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;

@@ -83,6 +83,7 @@ pub(super) async fn start_new(
     )
     .await?;
     app.load_session(&target);
+    refresh_session_lineage(app, &target, store);
     app.runtime_event_cursor = target.runtime_event_cursor;
     // 这三份都是上一条会话的运行产物，留着只会让新会话看起来像在干活。
     app.runtime_agents.clear();
@@ -290,6 +291,7 @@ pub(super) async fn switch(
     runtime.runtime_submit.config = target.config.clone();
     let _ = runtime.refresh_provider_config();
     app.load_session(&target);
+    refresh_session_lineage(app, &target, store);
     *session = target;
     Ok(format!(
         "{}: {} · {}",

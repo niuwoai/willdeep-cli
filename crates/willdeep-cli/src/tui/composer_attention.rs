@@ -78,7 +78,7 @@ mod tests {
         app.finish_turn();
         assert_eq!(app.composer_style().fg, Some(Color::Cyan));
         assert_eq!(app.composer_style().bg, Some(Color::Black));
-        draw(&mut terminal, &mut app, &skills).unwrap();
+        draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
         let rect = app.prompt_rect;
         for y in rect.y..rect.bottom() {
             for x in rect.x..rect.right() {
@@ -88,7 +88,7 @@ mod tests {
         assert_eq!(app.input.text(), "unsent draft");
         app.begin_turn(true, "next".into());
         app.set_background_wait(true);
-        draw(&mut terminal, &mut app, &skills).unwrap();
+        draw(&mut terminal, &mut app, &skills, &quiet_test_session()).unwrap();
         let rect = app.prompt_rect;
         assert_eq!(
             terminal.backend().buffer()[(rect.x + 1, rect.bottom() - 2)].bg,

@@ -209,6 +209,7 @@ fn the_summary_line_reports_dropped_turns_and_file_changes() {
         profile: None,
         model: None,
         approval_mode: None,
+        started_by: None,
         status: willdeep_runtime_protocol::SessionStatus::Idle,
         active_turn_id: None,
         created_at: 1,

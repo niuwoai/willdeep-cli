@@ -119,6 +119,8 @@ diff.revert
 }
 ```
 
+`session.fork` 的结果带 `started_by`，由服务端写成源会话 ID，请求体没有这个字段。
+
 先持久化到 Runtime 会话，再立即改写这个会话正在跑的任务的档位句柄，事件 `session.approval_mode_updated` 记录生效的任务数。工作区策略为 `read_only` 时仍按只读执行。`RuntimeSession` 公共对象随之带可选字段 `approval_mode`，旧版 Runtime 不发。
 
 `agent.spawn` 的稳定参数为：

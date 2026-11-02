@@ -92,7 +92,10 @@ pub fn stable_prefix(global_rules: Option<&str>) -> String {
             .into_owned(),
         crate::subagent::public_trade_contract(),
     ];
-    if let Some(rules) = global_rules.map(str::trim).filter(|rules| !rules.is_empty()) {
+    if let Some(rules) = global_rules
+        .map(str::trim)
+        .filter(|rules| !rules.is_empty())
+    {
         sections.push(rules.to_owned());
     }
     sections.join("\n\n")
@@ -154,7 +157,10 @@ mod tests {
 
         let rules_at = prompt.find("Keep the final constraint").unwrap();
         let workspace_at = prompt.find("Dynamic workspace context:").unwrap();
-        assert!(rules_at < workspace_at, "rules must precede the dynamic context");
+        assert!(
+            rules_at < workspace_at,
+            "rules must precede the dynamic context"
+        );
         assert!(prompt.contains(&format!("Rule source: {}", path.display())));
         let other = build_system_prompt_with_rules(
             Path::new("/work/two"),

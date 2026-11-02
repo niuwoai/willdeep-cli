@@ -13,9 +13,11 @@ fn session_picker_result_includes_content_snippet_without_embedded_lines() {
         message_count: 4,
         snippet: Some("RBAC\n数据权限".to_owned()),
         origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
+        started_by: None,
     };
 
-    let line = session_picker_ui::session_picker_result_line(&result, true, Language::ZhCn, true);
+    let line =
+        session_picker_ui::session_picker_result_line(&result, true, Language::ZhCn, true, 0);
 
     assert!(line.contains("SSO 设计"));
     assert!(line.contains("RBAC 数据权限"));
