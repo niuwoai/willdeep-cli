@@ -169,6 +169,7 @@ impl App {
             attention_deny_rect: Rect::default(),
             search: None,
             workspace: None,
+            session_id: None,
             session_lineage: None,
             palette: None,
             palette_rect: Rect::default(),
@@ -250,13 +251,8 @@ impl App {
             .as_ref()
             .and_then(|home| crate::daemon::turn_queue::display_session(home, session).ok());
         self.transcript = session_transcript(display.as_ref().unwrap_or(session), self.language);
-        if self.transcript.is_empty() {
-            self.transcript.push(welcome_message(
-                &session.workspace,
-                session.id,
-                self.language,
-            ));
-        }
+        self.session_id = Some(session.id);
+        self.ensure_welcome(&session.workspace, session.id, self.language);
         self.reload_message_times(session.id);
         self.archive_floor = 0;
         self.archive_old_rounds();
@@ -2640,6 +2636,12 @@ impl App {
                 self.message_times.clear_rows(&self.transcript);
                 self.transcript.clear();
                 self.expanded_user_messages.clear();
+                // 清空之后也是首屏：给回欢迎语，而不是留一整屏空白。
+                self.ensure_welcome(
+                    &self.workspace.clone().unwrap_or_default(),
+                    self.session_id.unwrap_or_default(),
+                    self.language,
+                );
                 self.scroll_to_bottom();
             }
             _ => self.append_transcript(format!("Error: unknown command {command}; use /help")),

@@ -505,6 +505,8 @@ struct App {
     attention_deny_rect: Rect,
     search: Option<SearchState>,
     workspace: Option<PathBuf>,
+    /// 当前会话的 id。`/clear` 之后要重新画首屏，欢迎语里的续接命令得用真的 id。
+    session_id: Option<uuid::Uuid>,
     /// 打开的会话是从哪条分凉出来的，以及来源的标题。`None` 表示没有来源。
     session_lineage: Option<(uuid::Uuid, String)>,
     palette: Option<PaletteState>,

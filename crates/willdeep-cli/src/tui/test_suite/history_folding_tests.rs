@@ -195,3 +195,71 @@ fn older_thoughts_do_not_split_tools_or_steal_latest_thought_clicks() {
     assert!(app.transcript[7].starts_with("· − Thought:"));
     assert!(app.transcript[1].starts_with("· + Thought:"));
 }
+
+/// 首屏判断只看 `transcript.is_empty()` 会漏掉「列表非空、屏幕全白」：
+/// 会话里只剩空白行，或者思考行全被关掉，用户进来看到的是一整屏空白。
+#[test]
+fn a_blank_or_thought_only_history_still_gets_the_welcome_screen() {
+    let workspace = std::path::Path::new("/tmp/willdeep-rs");
+    let id = uuid::Uuid::nil();
+
+    // 空白行不算内容。
+    let mut app = App::new(vec![String::new(), "   ".to_owned()], Language::En);
+    assert!(!app.has_visible_transcript());
+    app.ensure_welcome(workspace, id, Language::En);
+    assert!(app.has_visible_transcript());
+    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        !app.transcript.iter().any(String::is_empty),
+        "blank rows should be dropped"
+    );
+
+    // 思考行在关掉显示时也不算内容。
+    let thought = "· + Thought: 1.2s hidden reasoning".to_owned();
+    let mut app = App::new(vec![thought.clone()], Language::En);
+    app.ui.show_thinking = false;
+    assert!(!app.has_visible_transcript());
+    app.ensure_welcome(workspace, id, Language::En);
+    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+
+    // 打开显示时它就是内容，不该再补一遍欢迎语。
+    let mut app = App::new(vec![thought], Language::En);
+    app.ui.show_thinking = true;
+    assert!(app.has_visible_transcript());
+    app.ensure_welcome(workspace, id, Language::En);
+    assert!(!app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+}
+
+/// 简洁 UI 同样要显示首屏：同一段历史，两种布局都能看到产品名。
+#[test]
+fn the_welcome_screen_is_visible_in_both_layouts() {
+    use ratatui::backend::TestBackend;
+    for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
+        let mut app = App::new(vec![String::new()], Language::En);
+        app.ensure_welcome(
+            std::path::Path::new("/tmp/willdeep-rs"),
+            uuid::Uuid::nil(),
+            Language::En,
+        );
+        app.ui.mode = mode;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            screen.contains("WILLDEEP"),
+            "{mode:?} layout lost the welcome screen"
+        );
+    }
+}

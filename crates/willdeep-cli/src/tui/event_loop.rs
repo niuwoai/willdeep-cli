@@ -437,12 +437,7 @@ pub(super) async fn event_loop(
         }
     }
 
-    let mut initial_transcript = session_transcript(session, language);
-    if initial_transcript.is_empty() {
-        initial_transcript.push(welcome_message(&session.workspace, session.id, language));
-    }
-    // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
-    initial_transcript.extend(startup_notices(runtime, language));
+    let initial_transcript = session_transcript(session, language);
     let mut app = App::new(initial_transcript, language);
     app.load_message_times(&runtime.home, session.id);
     app.ui = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?
@@ -451,6 +446,12 @@ pub(super) async fn event_loop(
     if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
         app.ui.show_thinking = show_thinking;
     }
+    // 判断「要不要补欢迎语」看的是屏幕上有没有看得见的内容，不是列表空不空：
+    // 只有空白行、或思考行全被关掉时，列表非空但整屏空白。必须在读完 [ui] 之后
+    // 判断，否则 show_thinking 的默认值会让这个结论算错。
+    app.ensure_welcome(&session.workspace, session.id, language);
+    // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
+    app.transcript.extend(startup_notices(runtime, language));
     app.feedback = agent
         .feedback()
         .cloned()
@@ -463,6 +464,7 @@ pub(super) async fn event_loop(
     app.display_model = session.model.clone().filter(|model| !model.is_empty());
     app.runtime_event_cursor = session.runtime_event_cursor;
     app.workspace = Some(session.workspace.clone());
+    app.session_id = Some(session.id);
     app.workspace_status = workspace_status(&session.workspace, language);
     app.workspace_attention = workspace_attention(&session.workspace);
     app.attention_read = session.attention_read.clone();

@@ -71,6 +71,37 @@ fn is_thought_row(line: &str) -> bool {
     line.starts_with(THOUGHT_ENTRY_PREFIX) || line.starts_with(THOUGHT_EXPANDED_PREFIX)
 }
 
+impl App {
+    /// 屏幕上还有没有一条看得见的记录。
+    ///
+    /// 判断首屏要不要补欢迎语只能看这个，不能看 `transcript.is_empty()`：会话里
+    /// 可能只剩空白行，或者全是关掉的思考行，列表非空但整屏空白，用户会以为
+    /// 程序没起来。
+    pub(super) fn has_visible_transcript(&self) -> bool {
+        self.transcript
+            .iter()
+            .any(|row| !row.trim().is_empty() && (self.ui.show_thinking || !is_thought_row(row)))
+    }
+
+    /// 屏幕上一条可见记录都没有时补上首屏欢迎语，顺带丢掉那些空白行——
+    /// 留着它们只会把真正的内容往下挤。多个入口（启动、换会话、`/clear`）
+    /// 共用这一条规则，别各自写一份 `is_empty()` 判断。
+    pub(super) fn ensure_welcome(
+        &mut self,
+        workspace: &std::path::Path,
+        session_id: uuid::Uuid,
+        language: Language,
+    ) {
+        if self.has_visible_transcript() {
+            return;
+        }
+        self.transcript.retain(|row| !row.trim().is_empty());
+        self.transcript.push(super::rendering::welcome_message(
+            workspace, session_id, language,
+        ));
+    }
+}
+
 /// 这行是不是工具行；是的话给出它的状态标记。
 fn tool_row_marker(line: &str) -> Option<&'static str> {
     let rest = line.strip_prefix("· ")?;
