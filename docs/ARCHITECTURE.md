@@ -114,7 +114,7 @@ Provider Profile 可声明 `context_window`。在途自动压缩按四道水位�
 
 ### 实例身份（联邦 P0）
 
-每台 willdeep 有一个终身不变的实例 UUID 和一个可改的名字，存在 `$WILLDEEP_HOME/identity.json`（0600，原子替换；首次使用时从 64 个内置名字里挑一个）。改名走 TUI/Web 的 `/name` 或 `willdeep identity rename`，UUID 不变——名字是标签，身份是 UUID。名字限定 1–24 个 ASCII 字母、数字、`-` 和 `_`；重名时展示为 `alex:2u2d`（UUID 末 4 位）。Web 只在回环监听上读写身份。设计与后续阶段见 [FEDERATION.md](FEDERATION.md)。
+每台 willdeep 有一个终身不变的实例 UUID 和一个可改的名字，存在 `$WILLDEEP_HOME/identity.json`（0600，原子替换；首次使用时从 64 个内置名字里挑一个）。改名走 TUI/Web 的 `/name` 或 `willdeep identity rename`，UUID 不变——名字是标签，身份是 UUID。名字限定 1–24 个字符且显示宽度不超过 24 列，可用中文、日文等宽字符，但不能含空白、控制字符、方向覆盖符、冒号与路径分隔符；重名时展示为 `alex:2u2d`（UUID 末 4 位）。Web 只在回环监听上读写身份。设计与后续阶段见 [FEDERATION.md](FEDERATION.md)。
 
 ### 实例联邦（P1）
 

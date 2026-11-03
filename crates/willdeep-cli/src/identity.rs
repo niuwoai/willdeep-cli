@@ -11,10 +11,22 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use unicode_width::UnicodeWidthStr;
 
 pub const IDENTITY_SCHEMA: &str = "willdeep.identity.v1";
 /// 名字的长度上限。侧栏、状态行和以后的消息来源行都要放得下。
 pub const MAX_NAME_CHARS: usize = 24;
+/// 显示宽度的上限（终端列数）。中文、日文一个字占两列，所以同样的宽度只放得下
+/// 一半的字数；按列数算，ASCII 的旧上限不变，宽字符也不会把侧栏撑开。
+pub const MAX_NAME_WIDTH: usize = 24;
+
+/// 名字里一律不接受的字符：终端里的双向控制符和零宽连接符能把后面的文字写成
+/// 别的样子（`a\u{202E}b` 在屏幕上会倒着显示），日志里看起来也像另一个名字。
+/// 组合附加符号（分解形式的 é）不在此列——它们不改变阅读方向。
+const FORBIDDEN_NAME_CHARS: &[char] = &[
+    '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}',
+    '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{FEFF}',
+];
 
 /// 首次运行的名字池。纯 ASCII、小写、没有相近拼写，念出来就能打对。
 pub const NAME_POOL: &[&str] = &[
@@ -99,10 +111,12 @@ pub fn rename(home: &Path, name: &str) -> Result<Identity> {
     Ok(identity)
 }
 
-/// 名字的规则：1–24 个字符，ASCII 字母、数字、`-`、`_`。
+/// 名字的规则：1–24 个字符，显示宽度不超过 24 列，不能有空白、控制字符和冒号。
 ///
-/// 不放中文：名字会出现在消息来源行、日志和以后的 URL 参数里，纯 ASCII 省掉
-/// 转义和宽度对齐两件事。冒号也不允许——`alex:2u2d` 里它是分隔符。
+/// 允许中文、日文这些宽字符：名字只在 JSON 里传递（`identity.json`、
+/// 联邦的 `join` 与会话来源行），不进 URL，所以不需要转义；宽度按终端列数算，
+/// 宽字符自然只能写一半字数，侧栏不会被撑开。冒号仍然不允许——重名时
+/// `alex:2u2d` 里它是分隔符。
 pub fn validate_name(value: &str) -> Result<String> {
     let name = value.trim();
     if name.is_empty() {
@@ -111,17 +125,21 @@ pub fn validate_name(value: &str) -> Result<String> {
     if name.chars().count() > MAX_NAME_CHARS {
         bail!("the instance name must be at most {MAX_NAME_CHARS} characters");
     }
-    if !name
+    if name
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, ':' | '/' | '\\'))
     {
-        bail!("the instance name may only use ASCII letters, digits, '-' and '_'");
+        bail!(
+            "the instance name cannot contain whitespace, control characters, ':', or path separators"
+        );
     }
-    if !name
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphanumeric())
-    {
+    if name.chars().any(|ch| FORBIDDEN_NAME_CHARS.contains(&ch)) {
+        bail!("the instance name cannot contain zero-width or direction-control characters");
+    }
+    if UnicodeWidthStr::width(name) > MAX_NAME_WIDTH {
+        bail!("the instance name must be at most {MAX_NAME_WIDTH} columns wide");
+    }
+    if !name.chars().next().is_some_and(char::is_alphanumeric) {
         bail!("the instance name must start with a letter or digit");
     }
     Ok(name.to_owned())
@@ -209,14 +227,32 @@ mod tests {
     }
 
     #[test]
-    fn names_are_ascii_without_the_display_separator() {
+    fn names_allow_wide_scripts_but_not_the_display_separator() {
         assert_eq!(validate_name("alex").unwrap(), "alex");
         assert_eq!(validate_name("deep-2").unwrap(), "deep-2");
+        // 中文、日文都行：名字只在 JSON 里传，不进 URL。
+        assert_eq!(validate_name(" 张三 ").unwrap(), "张三");
+        assert_eq!(validate_name("さくら").unwrap(), "さくら");
+        assert_eq!(validate_name("キツネ-2").unwrap(), "キツネ-2");
+
         assert!(validate_name("").is_err());
+        // 重名后缀的分隔符不能出现在名字里，否则 `alex:2u2d` 会有两种读法。
         assert!(validate_name("alex:2u2d").is_err());
-        assert!(validate_name("张三").is_err());
         assert!(validate_name("-alex").is_err());
+        assert!(validate_name("张 三").is_err(), "no whitespace");
+        assert!(validate_name("a/b").is_err(), "no path separators");
+        assert!(
+            validate_name("a\u{202E}b").is_err(),
+            "no direction overrides"
+        );
+        // 宽度才是真正的上限：24 个 ASCII 字母放得下，24 个汉字放不下——
+        // 它们占 48 列，会把侧栏和状态行撑开。
+        let ascii = "a".repeat(MAX_NAME_CHARS);
+        assert_eq!(validate_name(&ascii).unwrap(), ascii);
         assert!(validate_name(&"a".repeat(MAX_NAME_CHARS + 1)).is_err());
+        let wide = "鲸".repeat(MAX_NAME_WIDTH / 2);
+        assert_eq!(validate_name(&wide).unwrap(), wide);
+        assert!(validate_name(&"鲸".repeat(MAX_NAME_WIDTH / 2 + 1)).is_err());
     }
 
     #[test]
