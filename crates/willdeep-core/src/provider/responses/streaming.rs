@@ -181,7 +181,10 @@ impl State {
             updates.push(ProviderEvent::Usage(usage));
         }
         if status == "failed" {
-            return Err(invalid("Responses generation failed"));
+            // 网关的 `response.failed` 自带原因（模型不支持某种协议、上游拒绝等），
+            // 只回一句「生成失败」等于把唯一的线索扔掉：同样的文案既可能是模型
+            // 不支持 Responses，也可能是额度或参数问题，用户和日志都无从分辨。
+            return Err(invalid(failed_detail(response)));
         }
         let output = response["output"]
             .as_array()
@@ -378,4 +381,34 @@ fn index(value: &Value, key: &str) -> Result<u64, ProviderError> {
 }
 fn invalid(message: impl Into<String>) -> ProviderError {
     ProviderError::InvalidResponse(message.into())
+}
+
+/// 把一个 `status = "failed"` 的终局事件变成一条能查问题的错误。
+///
+/// 只取 `error.code` 与 `error.message`，不带整个事件体：请求正文也在那份 JSON
+/// 里，整段抄进错误会把它顺着日志和界面带出去。两者都没有时退回原来的说法。
+fn failed_detail(response: &Value) -> String {
+    const MAX_DETAIL_CHARS: usize = 400;
+    let error = &response["error"];
+    let code = error["code"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let message = error["message"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let detail = match (code, message) {
+        (Some(code), Some(message)) => format!("{code}: {message}"),
+        (Some(code), None) => code.to_owned(),
+        (None, Some(message)) => message.to_owned(),
+        (None, None) => String::new(),
+    };
+    let detail = detail.chars().take(MAX_DETAIL_CHARS).collect::<String>();
+    let detail = detail.trim();
+    if detail.is_empty() {
+        "Responses generation failed".to_owned()
+    } else {
+        format!("Responses generation failed: {detail}")
+    }
 }

@@ -158,3 +158,44 @@ async fn responses_eof_keeps_partial_text_and_does_not_retry() {
     assert!(partial.tool_calls.is_empty());
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
+
+/// 网关说 `status = "failed"` 时，它给的原因必须跟着错误走。
+///
+/// 只回一句「Responses generation failed」，用户和分类器都无从判断是模型不支持
+/// 这套协议、还是上游拒了这次调用——这两种情况修法完全不同。
+#[test]
+fn a_failed_terminal_event_keeps_the_gateway_reason() {
+    let mut state = State::default();
+    let error = push(
+        &mut state,
+        json!({
+            "type":"response.failed",
+            "response":{
+                "id":"r1","status":"failed",
+                "error":{"code":"model_not_supported","message":"tools are not supported for this model"}
+            }
+        }),
+    )
+    .unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("Responses generation failed"), "{text}");
+    assert!(text.contains("model_not_supported"), "{text}");
+    assert!(text.contains("tools are not supported"), "{text}");
+}
+
+/// 没有原因时保持原来的说法，不要多出一个空冒号。
+#[test]
+fn a_failed_terminal_event_without_detail_stays_short() {
+    let mut state = State::default();
+    let error = push(
+        &mut state,
+        json!({"type":"response.failed","response":{"id":"r1","status":"failed"}}),
+    )
+    .unwrap_err();
+    let text = error.to_string();
+    assert!(text.ends_with("Responses generation failed"), "{text}");
+    assert!(
+        !text.trim_end().ends_with(':'),
+        "no dangling separator: {text}"
+    );
+}
