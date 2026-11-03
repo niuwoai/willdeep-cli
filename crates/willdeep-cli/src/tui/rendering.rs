@@ -1141,11 +1141,11 @@ fn welcome_header() -> String {
     )
 }
 
-pub(super) fn welcome_message(
-    workspace: &std::path::Path,
-    session_id: uuid::Uuid,
-    language: Language,
-) -> String {
+/// 首屏欢迎语：吉祥物、产品名与版本，然后是一句问候。
+///
+/// 不再写会话 id 与续接命令——那两行退出时已经打印了（见 `run_tui` 收尾），
+/// 首屏再抄一遍只是把真正的入口往后挤，用户每天开一次终端并不需要复制它。
+pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -> String {
     let project = workspace
         .file_name()
         .and_then(|value| value.to_str())
@@ -1154,13 +1154,13 @@ pub(super) fn welcome_message(
     let header = welcome_header();
     match language {
         Language::ZhCn => format!(
-            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
+            "{header}\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
         ),
         Language::En => format!(
-            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
+            "{header}\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
         ),
         Language::Ja => format!(
-            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
+            "{header}\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
     }
 }

@@ -2388,11 +2388,7 @@ fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
 /// 这里按行核对，顺带保证产品名那一行用的是强调色而不是默认黄色。
 #[test]
 fn the_welcome_banner_is_drawn_row_by_row_with_colour() {
-    let welcome = welcome_message(
-        std::path::Path::new("/tmp/willdeep-rs"),
-        uuid::Uuid::nil(),
-        Language::En,
-    );
+    let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::En);
     let text = colored_transcript(&[welcome], None, 120, Language::En);
     let rows = text_rows(&text);
 

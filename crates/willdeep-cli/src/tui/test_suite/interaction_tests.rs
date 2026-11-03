@@ -46,28 +46,25 @@ fn command_menu_discovers_webapp() {
 
 #[test]
 fn welcome_mentions_workspace_without_entering_model_history() {
-    let welcome = welcome_message(
-        std::path::Path::new("/tmp/willdeep-rs"),
-        uuid::Uuid::nil(),
-        Language::ZhCn,
-    );
+    let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::ZhCn);
     // 首屏第一行就是吉祥物：它进的是 transcript 原文，拖动选中复制出来的也是这串字。
     assert!(welcome.starts_with(super::super::banner::art_rows()[0].as_str()));
     assert!(welcome.contains(super::super::banner::NAME));
     assert!(welcome.contains(env!("CARGO_PKG_VERSION")));
     assert!(welcome.contains("WillDeep:"));
     assert!(welcome.contains("willdeep-rs"));
+    // 会话 id 与续接命令只在退出时打印。首屏再抄一遍只是把真正的入口往后挤，
+    // 用户每天开一次终端并不需要复制它。
+    assert!(!welcome.contains("Session:"), "{welcome}");
+    assert!(!welcome.contains("Continue:"), "{welcome}");
+    assert!(!welcome.contains("willdeep -s "), "{welcome}");
 }
 
 /// 第一屏就得告诉用户从哪儿问路，否则命令表等于不存在。
 #[test]
 fn welcome_points_at_help_and_model_in_every_language() {
     for language in [Language::ZhCn, Language::En, Language::Ja] {
-        let welcome = welcome_message(
-            std::path::Path::new("/tmp/willdeep-rs"),
-            uuid::Uuid::nil(),
-            language,
-        );
+        let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), language);
         assert!(welcome.contains("/help"), "{language:?} must mention /help");
         assert!(
             welcome.contains("/model"),

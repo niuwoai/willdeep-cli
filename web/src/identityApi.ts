@@ -10,10 +10,14 @@ export type IdentityView = {
   renamed_at?: number;
 };
 
-async function failure(response: Response): Promise<Error> {
+export class IdentityFailure extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+async function failure(response: Response): Promise<IdentityFailure> {
   const body: unknown = await response.json().catch(() => null);
   const detail = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : "";
-  return new Error(detail || response.statusText);
+  return new IdentityFailure(response.status, detail || response.statusText);
 }
 
 export async function loadIdentity(signal?: AbortSignal): Promise<IdentityView> {

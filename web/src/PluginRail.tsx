@@ -1,20 +1,14 @@
-// 一级入口栏。对话固定在最上，插件目的地排在它下面，插件中心殿后。
-//
-// 与 macOS 宿主同一条规则：最多固定 5 个插件目的地，多出来的收进「更多插件」。
-// 选中状态只用灰度表达，插件的品牌色不参与——一栏入口花花绿绿会让用户
-// 分不清哪个是当前位置。
-//
-// macOS 把插件放在侧栏「插件」分组里，一行图标 + 名称；Web 宿主保留竖向入口栏
-// 的布局（平台差异），但分组标题、图标取法和灰度层次与那边一致。
+// 一级入口栏。对话和定时任务保留为常用入口，配置与插件目的地按需展开。
+// 所有选中状态沿用宿主灰度，不使用插件自己的品牌色。
 
 import { Box, Flex, Portal, Text } from "@chakra-ui/react";
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { FlaskConical, Globe, Library, Plug, Settings2, Users } from "lucide-react";
 import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
-import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
+import { type PluginDestinationView, type PluginView } from "./plugins";
 
 export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "intake" } | { kind: "mcp" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
@@ -30,21 +24,53 @@ type Props = {
   onSelect: (selection: RailSelection) => void;
 };
 
-export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, experimentsLabel, agentsGroupLabel, brandLabel, onSelect }: Props) {
-  const [showOverflow, setShowOverflow] = useState(false);
-  const pinned = entries.slice(0, MAX_PINNED_DESTINATIONS);
-  const overflow = entries.slice(MAX_PINNED_DESTINATIONS);
-  const activeId = selection.kind === "plugin" ? selection.qualifiedId : null;
-  const overflowActive = overflow.some(({ destination }) => destination.qualified_id === activeId);
+type OpenMenu = "configuration" | "plugins" | null;
+type ButtonOptions = { current?: boolean; expanded?: boolean; controls?: string };
 
-  const button = (key: string, label: string, icon: ReactNode, active: boolean, onClick: () => void) => (
+export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, experimentsLabel, agentsGroupLabel, brandLabel, onSelect }: Props) {
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const configurationTriggerRef = useRef<HTMLDivElement>(null);
+  const configurationMenuRef = useRef<HTMLDivElement>(null);
+  const pluginsTriggerRef = useRef<HTMLDivElement>(null);
+  const pluginsMenuRef = useRef<HTMLDivElement>(null);
+  const activeId = selection.kind === "plugin" ? selection.qualifiedId : null;
+  const configurationActive = selection.kind === "configuration" || selection.kind === "intake" || selection.kind === "mcp"
+    || selection.kind === "agents" || selection.kind === "agent-experiments";
+  const pluginsActive = selection.kind === "center" || selection.kind === "plugin";
+
+  const closeMenus = useCallback(() => setOpenMenu(null), []);
+
+  useEffect(() => {
+    if (openMenu === null) return;
+    const triggerRef = openMenu === "configuration" ? configurationTriggerRef : pluginsTriggerRef;
+    const menuRef = openMenu === "configuration" ? configurationMenuRef : pluginsMenuRef;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      closeMenus();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openMenu, closeMenus]);
+
+  const button = (key: string, label: string, icon: ReactNode, active: boolean, onClick: () => void, options: ButtonOptions = {}) => (
     <button
       key={key}
       type="button"
       className={`rail-button${active ? " active" : ""}`}
       title={label}
       aria-label={label}
-      aria-current={active ? "page" : undefined}
+      aria-current={(options.current ?? active) ? "page" : undefined}
+      aria-expanded={options.expanded}
+      aria-controls={options.controls}
       onClick={onClick}
     >
       {icon}
@@ -52,74 +78,90 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
     </button>
   );
 
+  const menuItem = (key: string, label: string, icon: ReactNode, active: boolean, onClick: () => void) => (
+    <button
+      key={key}
+      type="button"
+      className={`rail-menu-item${active ? " active" : ""}`}
+      aria-current={active ? "page" : undefined}
+      onClick={() => {
+        closeMenus();
+        onClick();
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+
+  const toggleMenu = (menu: Exclude<OpenMenu, null>) => {
+    setOpenMenu((current) => current === menu ? null : menu);
+  };
+
   return (
     <Flex as="nav" className="plugin-rail" direction="column" aria-label={messages.pluginNavigation}>
       <div className="rail-brand" title={brandLabel}><img src={brandIcon} alt={brandLabel ?? messages.appName} /></div>
       <div className="rail-scroll">
-      {button(
-        "conversation",
-        messages.conversation,
-        <SfIcon name="sf:text.badge.plus" size={20} />,
-        selection.kind === "conversation",
-        () => onSelect({ kind: "conversation" })
-      )}
-      {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
-      {button("intake", messages.intakeEntry, <Globe size={20} />, selection.kind === "intake", () => onSelect({ kind: "intake" }))}
-      {button("mcp", messages.mcpAccess, <Plug size={20} />, selection.kind === "mcp", () => onSelect({ kind: "mcp" }))}
-      {agentsGroupLabel && <Text className="rail-agent-group"><Users size={20} />{agentsGroupLabel}</Text>}
-      {agentsLabel && button("agents", agentsLabel, <Library size={20} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
-      {experimentsLabel && button("agent-experiments", experimentsLabel, <FlaskConical size={20} />, selection.kind === "agent-experiments", () => onSelect({ kind: "agent-experiments" }))}
-      <Box className="rail-divider" />
-      {entries.length > 0 && <Text className="rail-section-label">{messages.pluginSectionTitle}</Text>}
-      {pinned.map(({ plugin, destination }) =>
-        button(
-          destination.qualified_id,
-          destination.title,
-          <PluginIcon pluginId={plugin.id} icon={destination.icon} size={20} />,
-          activeId === destination.qualified_id,
-          () => onSelect({ kind: "plugin", qualifiedId: destination.qualified_id })
-        )
-      )}
-      {overflow.length > 0 && (
-        <Box className="rail-overflow">
-          {button(
-            "more",
-            messages.pluginMore,
-            <SfIcon name="sf:ellipsis.circle" size={20} />,
-            overflowActive,
-            () => setShowOverflow((current) => !current)
-          )}
-          {showOverflow && (
-            <Portal><Box className="rail-overflow-menu" role="menu">
-              <Text className="rail-overflow-heading">{messages.pluginMore}</Text>
-              {overflow.map(({ plugin, destination }) => (
-                <button
-                  key={destination.qualified_id}
-                  type="button"
-                  role="menuitem"
-                  className={`rail-overflow-item${activeId === destination.qualified_id ? " active" : ""}`}
-                  aria-current={activeId === destination.qualified_id ? "page" : undefined}
-                  onClick={() => {
-                    setShowOverflow(false);
-                    onSelect({ kind: "plugin", qualifiedId: destination.qualified_id });
-                  }}
-                >
-                  <PluginIcon pluginId={plugin.id} icon={destination.icon} size={14} />
-                  <span>{destination.title}</span>
-                </button>
-              ))}
-            </Box></Portal>
-          )}
-        </Box>
-      )}
+        {button(
+          "conversation",
+          messages.conversation,
+          <SfIcon name="sf:text.badge.plus" size={20} />,
+          selection.kind === "conversation",
+          () => onSelect({ kind: "conversation" })
+        )}
+        {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
       </div>
-      {button("configuration", messages.configEntry, <Settings2 size={20} />, selection.kind === "configuration", () => onSelect({ kind: "configuration" }))}
-      {button(
-        "center",
-        messages.pluginCenter,
-        <SfIcon name="sf:gearshape" size={20} />,
-        selection.kind === "center",
-        () => onSelect({ kind: "center" })
+      <Box className="rail-config-anchor" ref={configurationTriggerRef}>
+        {button(
+          "configuration",
+          messages.configEntry,
+          <Settings2 size={20} />,
+          configurationActive,
+          () => toggleMenu("configuration"),
+          { current: configurationActive && openMenu !== "configuration", expanded: openMenu === "configuration", controls: "rail-configuration-menu" }
+        )}
+      </Box>
+      <Box className="rail-plugins-anchor" ref={pluginsTriggerRef}>
+        {button(
+          "plugins",
+          messages.pluginSectionTitle,
+          <Plug size={20} />,
+          pluginsActive,
+          () => toggleMenu("plugins"),
+          { current: pluginsActive && openMenu !== "plugins", expanded: openMenu === "plugins", controls: "rail-plugin-menu" }
+        )}
+      </Box>
+      {openMenu === "configuration" && (
+        <Portal>
+          <Box id="rail-configuration-menu" ref={configurationMenuRef} className="rail-configuration-menu" role="group" aria-label={messages.configEntry}>
+            <Text className="rail-configuration-heading">{messages.configEntry}</Text>
+            {menuItem("configuration-page", messages.configTitle, <Settings2 size={16} />, selection.kind === "configuration", () => onSelect({ kind: "configuration" }))}
+            {menuItem("intake", messages.intakeEntry, <Globe size={16} />, selection.kind === "intake", () => onSelect({ kind: "intake" }))}
+            {menuItem("mcp", messages.mcpAccess, <Plug size={16} />, selection.kind === "mcp", () => onSelect({ kind: "mcp" }))}
+            {(agentsLabel || experimentsLabel) && <>
+              <Box className="rail-menu-divider" />
+              {agentsGroupLabel && <Text className="rail-menu-group-label"><Users size={14} />{agentsGroupLabel}</Text>}
+              {agentsLabel && menuItem("agents", agentsLabel, <Library size={16} />, selection.kind === "agents", () => onSelect({ kind: "agents" }))}
+              {experimentsLabel && menuItem("agent-experiments", experimentsLabel, <FlaskConical size={16} />, selection.kind === "agent-experiments", () => onSelect({ kind: "agent-experiments" }))}
+            </>}
+          </Box>
+        </Portal>
+      )}
+      {openMenu === "plugins" && (
+        <Portal>
+          <Box id="rail-plugin-menu" ref={pluginsMenuRef} className="rail-plugin-menu" role="group" aria-label={messages.pluginSectionTitle}>
+            <Text className="rail-configuration-heading">{messages.pluginSectionTitle}</Text>
+            {menuItem("plugin-center", messages.pluginCenter, <SfIcon name="sf:gearshape" size={16} />, selection.kind === "center", () => onSelect({ kind: "center" }))}
+            {entries.length > 0 && <Box className="rail-menu-divider" />}
+            {entries.map(({ plugin, destination }) => menuItem(
+              destination.qualified_id,
+              destination.title,
+              <PluginIcon pluginId={plugin.id} icon={destination.icon} size={14} />,
+              activeId === destination.qualified_id,
+              () => onSelect({ kind: "plugin", qualifiedId: destination.qualified_id })
+            ))}
+          </Box>
+        </Portal>
       )}
     </Flex>
   );

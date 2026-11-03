@@ -1266,6 +1266,7 @@ pub(crate) async fn build(
             path.display()
         );
     }
+    let instance_home = home.to_path_buf();
     let mut agent = Agent::new(
         provider.clone(),
         tools,
@@ -1277,6 +1278,11 @@ pub(crate) async fn build(
             token_budget: loaded.file.agent.token_budget,
         },
     )
+    .with_instance_name_source(move || {
+        crate::identity::load(&instance_home)
+            .map(|identity| identity.name)
+            .map_err(|error| format!("{error:#}"))
+    })
     .with_main_model(main_model)
     .with_event_sink(sink.clone())
     .with_subagents(subagents.clone())

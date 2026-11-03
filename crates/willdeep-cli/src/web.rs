@@ -216,6 +216,9 @@ struct SessionDetail {
     /// 这条会话当前用的模型；`None` 表示跟随 Provider 默认。
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    /// 当前 Runtime Provider 档案，用于让模型选择器准确处理同名模型。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1433,14 +1436,27 @@ async fn session_detail(
     };
     let messages =
         willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
+    let runtime_session = crate::daemon::remote_session_states(&state.home)
+        .await
+        .ok()
+        .and_then(|sessions| sessions.into_iter().find(|candidate| candidate.id == id));
     Ok(Json(SessionDetail {
         id: session.id.to_string(),
         workspace: session.workspace.display().to_string(),
         messages,
         response_style: session.response_style,
-        approval_mode: session_approval_override(&state, id).await,
+        approval_mode: runtime_session
+            .as_ref()
+            .and_then(|candidate| candidate.approval_mode.clone())
+            .map(crate::daemon::WorkspaceAccess::wire_name),
         workspace_access: workspace.access.wire_name(),
-        model: session.model,
+        model: runtime_session
+            .as_ref()
+            .and_then(|candidate| candidate.model.clone())
+            .or(session.model),
+        provider_id: runtime_session
+            .and_then(|candidate| candidate.profile)
+            .or(session.profile),
     }))
 }
 
@@ -1512,18 +1528,6 @@ fn diagnostic_text(value: &str) -> String {
         .chars()
         .take(MAX_DIAGNOSTIC_CHARS)
         .collect()
-}
-
-/// 会话自己选过的档位。daemon 不可达时按「没有覆盖」处理：详情页没有理由
-/// 因为读不到一个可选项就整页失败。
-async fn session_approval_override(state: &WebState, id: uuid::Uuid) -> Option<&'static str> {
-    crate::daemon::remote_session_states(&state.home)
-        .await
-        .ok()?
-        .into_iter()
-        .find(|session| session.id == id)
-        .and_then(|session| session.approval_mode)
-        .map(crate::daemon::WorkspaceAccess::wire_name)
 }
 
 #[derive(Deserialize)]

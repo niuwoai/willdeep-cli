@@ -301,7 +301,11 @@ const I18N = {
     'protocol.adjusted': '已根据所选模型的能力调整接口协议，请在保存前确认。',
     'models.refresh': '刷新模型列表', 'models.loading': '正在加载模型…',
     'models.empty': '接口未返回可用模型', 'models.idle': '填写接口地址后刷新模型列表',
-    'models.pickProvider': '先选择默认提供商',
+    'models.pickProvider': '请选择提供商，或使用手动输入',
+    'models.unavailable': '提供商不存在或将被删除，可保留当前模型或手动输入',
+    'models.source': '模型列表来自提供商 {provider}；留空使用默认设置',
+    'models.manual': '手动输入模型', 'models.choose': '从列表选择',
+    'models.manualPlaceholder': '输入自定义或未公开的模型名',
     'models.savedAs': '保存到 [providers.{provider}] 的 model',
     'models.failed': '加载失败：{msg}', 'models.current': '{value}（当前配置）',
     'page.title': 'WillDeep 配置',
@@ -427,7 +431,11 @@ const I18N = {
     'protocol.adjusted': 'The API protocol was adjusted for this model. Review it before saving.',
     'models.refresh': 'Refresh models', 'models.loading': 'Loading models…',
     'models.empty': 'The API returned no models', 'models.idle': 'Enter the API base, then refresh models',
-    'models.pickProvider': 'Choose the default provider first',
+    'models.pickProvider': 'Choose a provider or enter a model manually',
+    'models.unavailable': 'The provider is missing or being deleted; keep the current model or enter one manually',
+    'models.source': 'Models from provider {provider}; leave empty to use the defaults',
+    'models.manual': 'Enter a model manually', 'models.choose': 'Choose from the list',
+    'models.manualPlaceholder': 'Enter a custom or unlisted model name',
     'models.savedAs': 'Saved as [providers.{provider}] model',
     'models.failed': 'Could not load models: {msg}', 'models.current': '{value} (current configuration)',
     'page.title': 'WillDeep Config',
@@ -769,6 +777,7 @@ let drafts = new Map();     // ek -> { raw, error }：输入不合法、还没�
 let plaintexts = new Map(); // ek -> 已显示的密钥明文，只在内存
 let secretOpen = new Set(); // ek：密钥输入框处于展开状态
 let secretVisible = new Set(); // ek：明文可见（否则是密码框）
+const manualModels = new Set(); // ek：明确切到手动输入，候选刷新不改变编辑方式
 
 function ekOf(section, key) { return section + NUL + key; }
 
@@ -1127,6 +1136,73 @@ function renderModelProtocol(sec, field, id, disabled, cur, unsetLabel) {
     '<div role="status" class="' + (info.incompatible ? 'error' : 'muted') + '">' + esc(t(message)) + '</div>';
 }
 
+// 只识别 schema 中确实绑定 Provider 的模型字段；本地摘要模型使用独立地址。
+// 返回 null 表示普通字段，空串表示模型字段尚无可用的默认 Provider。
+function modelProviderSection(sec, field) {
+  if (sec.groupID === 'providers' && ['model', 'vision_model'].includes(field.key)) return sec.name;
+  let profile;
+  if (sec.groupID === 'root' && field.key === 'default_model') {
+    profile = currentDefaultProvider();
+  } else if (['subagents', 'worker_tiers'].includes(sec.groupID) && field.key === 'model') {
+    profile = providerValue(sec, 'provider_profile') || currentDefaultProvider();
+  } else if (sec.groupID === 'agent' && field.key === 'compressor_model') {
+    profile = String(providerValue(sec, 'compressor_profile') || '').trim() || currentDefaultProvider();
+  } else {
+    return null;
+  }
+  return profile ? 'providers.' + profile : '';
+}
+
+function renderModelControl(field, ek, id, disabled, cur, unsetLabel, section) {
+  const available = section && S.sections.has(section) && !S.removed.has(section);
+  const state = available ? S.models.get(section) : null;
+  const models = state && state.models || [];
+  const val = cur == null ? '' : String(cur);
+  const opts = [{ value: '', label: unsetLabel }].concat(models.map(value => ({ value, label: value })));
+  if (val && !models.includes(val)) opts.push({ value: val, label: t('models.current', { value: val }) });
+  const provider = section.replace(/^providers\./, '');
+  const message = !section ? t('models.pickProvider') : !available ? t('models.unavailable') :
+    !state ? t('models.idle') : state.loading ? t('models.loading') :
+    state.error ? t('models.failed', { msg: state.error }) : !models.length ? t('models.empty') :
+    field.key === 'default_model' ? t('models.savedAs', { provider }) : t('models.source', { provider });
+  const controlDisabled = disabled || (field.key === 'default_model' && !available ? ' disabled' : '');
+  const manual = manualModels.has(ek);
+  const control = manual ? '<input type="text" id="' + id + '" data-input data-model-manual spellcheck="false" autocomplete="off" value="' +
+    esc(val) + '" placeholder="' + esc(t('models.manualPlaceholder')) + '"' + controlDisabled + '>' :
+    renderSelect(id, controlDisabled, opts, val);
+  return control + '<button type="button" class="btn btn-sm" data-act="toggle-model-input"' + controlDisabled + '>' +
+    esc(t(manual ? 'models.choose' : 'models.manual')) + '</button> ' +
+    '<button type="button" class="btn btn-sm" data-act="refresh-models" data-section="' + esc(section) + '"' +
+    (disabled || !available || (state && state.loading) ? ' disabled' : '') + '>' + esc(t('models.refresh')) + '</button>' +
+    '<div role="status" class="muted">' + esc(message) + '</div>';
+}
+
+function rerenderModelFields(providerSection) {
+  for (const { section, field } of S.fields.values()) {
+    const source = modelProviderSection(section, field);
+    if (source !== null && (!providerSection || source === providerSection)) rerenderRow(section.name, field.key);
+  }
+}
+
+function ensureModelLists() {
+  if (parseLocked() || S.busy) return;
+  const sources = new Set();
+  for (const { section, field } of S.fields.values()) {
+    if (!S.removed.has(section.name) && section.kind !== 'unknown') sources.add(modelProviderSection(section, field));
+  }
+  for (const source of sources) {
+    const provider = source && S.sections.get(source);
+    if (provider && !S.removed.has(source) && !S.models.has(source) && providerValue(provider, 'api_base')) loadModels(source);
+  }
+}
+
+function toggleModelInput(section, key) {
+  const ek = ekOf(section, key);
+  if (manualModels.has(ek)) manualModels.delete(ek); else manualModels.add(ek);
+  rerenderRow(section, key);
+  focusField(section, key, false);
+}
+
 function renderControl(sec, field, ek, id, disabled) {
 
   const type = field.type;
@@ -1136,34 +1212,8 @@ function renderControl(sec, field, ek, id, disabled) {
   if (sec.groupID === 'providers' && field.key === 'api') {
     return renderModelProtocol(sec, field, id, disabled, cur, unsetLabel);
   }
-  if (field.key === 'default_model') {
-    const provider = currentDefaultProvider();
-    const state = provider ? S.models.get('providers.' + provider) : null;
-    const models = state && state.models || [];
-    const val = cur == null ? '' : String(cur);
-    const opts = [{ value: '', label: unsetLabel }].concat(models.map(value => ({ value, label: value })));
-    if (val && !models.includes(val)) opts.push({ value: val, label: t('models.current', { value: val }) });
-    const message = !provider ? t('models.pickProvider') : !state ? t('models.idle') : state.loading ? t('models.loading') :
-      state.error ? t('models.failed', { msg: state.error }) : models.length ? t('models.savedAs', { provider }) : t('models.empty');
-    return renderSelect(id, disabled || (!provider ? ' disabled' : ''), opts, val) +
-      '<button class="btn" data-act="refresh-models" data-section="providers.' + esc(provider || '') + '"' +
-      (disabled || !provider || (state && state.loading ? ' disabled' : '')) + '>' +
-      esc(t('models.refresh')) + '</button>' +
-      '<div role="status" class="muted">' + esc(message) + '</div>';
-  }
-  if (sec.groupID === 'providers' && field.key === 'model') {
-    const state = S.models.get(sec.name);
-    const models = state && state.models || [];
-    const val = cur == null ? '' : String(cur);
-    const opts = [{ value: '', label: unsetLabel }].concat(models.map(value => ({ value, label: value })));
-    if (val && !models.includes(val)) opts.push({ value: val, label: t('models.current', { value: val }) });
-    const message = !state ? t('models.idle') : state.loading ? t('models.loading') :
-      state.error ? t('models.failed', { msg: state.error }) : models.length ? '' : t('models.empty');
-    return renderSelect(id, disabled, opts, val) +
-      '<button class="btn" data-act="refresh-models"' + (disabled || (state && state.loading ? ' disabled' : '')) + '>' +
-      esc(t('models.refresh')) + '</button>' +
-      '<div role="status" class="muted">' + esc(message) + '</div>';
-  }
+  const modelSource = modelProviderSection(sec, field);
+  if (modelSource !== null) return renderModelControl(field, ek, id, disabled, cur, unsetLabel, modelSource);
 
   if (field.ref) {
     const names = instanceNames(field.ref).filter(n => !S.removed.has(field.ref + '.' + n));
@@ -1304,7 +1354,17 @@ function rerenderRow(section, key) {
   const field = (sec.fields || []).find(f => f.key === key);
   const el = document.getElementById(domId('row', ekOf(section, key)));
   if (!field || !el) return;
+  const active = document.activeElement;
+  const editingModel = active && active.hasAttribute('data-model-manual') && el.contains(active);
+  const selection = editingModel ? [active.selectionStart, active.selectionEnd] : null;
   el.outerHTML = renderRow(sec, field);
+  if (editingModel) {
+    const input = document.getElementById(domId('f', ekOf(section, key)));
+    if (input) {
+      input.focus();
+      if (input.setSelectionRange) input.setSelectionRange(selection[0], selection[1]);
+    }
+  }
 }
 
 // 依赖别的行状态的行（默认提供商依赖提供商列表）
@@ -1312,6 +1372,8 @@ function rerenderDependents() {
   for (const [ek, info] of S.fields) {
     if (info.field.ref) rerenderRow(info.section.name, info.field.key);
   }
+  rerenderModelFields();
+  ensureModelLists();
 }
 
 // ======================================================================
@@ -1431,6 +1493,7 @@ function renderAll() {
   renderToc();
   renderMain();
   renderSavebar();
+  ensureModelLists();
 }
 
 // 行级改动之后的局部刷新：不重画整页，焦点不会丢
@@ -1451,12 +1514,7 @@ function afterRowChange(section, key) {
     rerenderRow(section, 'api');
   }
   rerenderRow(section, key);
-  // 默认提供商变了，默认模型的候选列表和保存位置都跟着变
-  if (section === '' && key === 'default_provider') {
-    const provider = currentDefaultProvider();
-    if (provider && !S.models.has('providers.' + provider)) loadModels('providers.' + provider);
-    rerenderRow('', 'default_model');
-  }
+  // Provider 引用、默认提供商与端点变化都刷新依赖模型，保留各字段现有编辑。
   rerenderDependents();
   const sec = S.sections.get(section);
   if (sec && sec.isNew) {
@@ -1570,6 +1628,7 @@ function resetEdits() {
   plaintexts.clear();
   secretOpen.clear();
   secretVisible.clear();
+  manualModels.clear();
   S.added.clear();
   S.removed.clear();
   S.armedRemove = null;
@@ -1590,10 +1649,6 @@ async function loadSnapshot() {
   resetEdits();
   renderAll();
   loadLibraries();
-  for (const sec of S.sections.values()) {
-    const base = sec.fields.find(f => f.key === 'api_base');
-    if (sec.groupID === 'providers' && sec.editable && base && base.hasValue && !parseLocked()) loadModels(sec.name);
-  }
 }
 
 async function loadModels(section) {
@@ -1602,7 +1657,7 @@ async function loadModels(section) {
   if (previous && previous.loading) return;
   const state = { loading: true, models: [], protocols: previous && previous.protocols || {}, error: null };
   S.models.set(section, state);
-  rerenderRow(section, 'model');
+  rerenderModelFields(section);
   rerenderRow(section, 'api');
   renderSavebar();
   const args = { section };
@@ -1618,7 +1673,7 @@ async function loadModels(section) {
     state.protocols = result.model_protocols || {};
   }
   else state.error = result && result.message || '?';
-  rerenderRow(section, 'model');
+  rerenderModelFields(section);
   rerenderRow(section, 'api');
   renderSavebar();
 }
@@ -2168,6 +2223,7 @@ function onClick(event) {
     case 'revert': revertField(section, key); break;
     case 'reveal': revealSecret(section, key); break;
     case 'refresh-models': loadModels(el.getAttribute('data-section') || section); break;
+    case 'toggle-model-input': toggleModelInput(section, key); break;
     case 'preset': applyPreset(row, el.getAttribute('data-value')); break;
     case 'replace': replaceSecret(section, key); break;
     case 'collapse-secret': collapseSecret(section, key); break;
@@ -2209,6 +2265,17 @@ function onInput(event) {
   if (!el.hasAttribute || !el.hasAttribute('data-input')) return;
   const row = el.closest('.row');
   if (!row) return;
+  if (el.hasAttribute('data-model-manual') && !el.disabled) {
+    const section = row.getAttribute('data-section');
+    const key = row.getAttribute('data-key');
+    const info = S.fields.get(ekOf(section, key));
+    if (info) {
+      commitValue(section, key, info.field.type, el.value, originalOf(ekOf(section, key)), info.field);
+      renderToc();
+      renderSavebar();
+    }
+    return;
+  }
   const type = row.getAttribute('data-type');
   if (type !== 'int' && type !== 'float') return;
   const parsed = parseInput(type, el.value);

@@ -19,19 +19,42 @@ impl App {
             })
     }
 
+    /// 空输入框里的灰字预测用这一份样式。
+    ///
+    /// 始终带 `DIM`：预测不是用户写的字，得比正文明显退后一层，否则它读起来
+    /// 像已经填进去的内容——有人会直接按 Enter，把一句自己没打算说的话发出去。
     pub(super) fn composer_hint_style(&self) -> Style {
         let ui = self.ui;
-        let mut style = Style::default().fg(ui.input_suggestion_color.ratatui());
+        let mut style = Style::default()
+            .fg(ui.input_suggestion_color.ratatui())
+            .add_modifier(Modifier::DIM);
         if ui.input_suggestion_italic {
             style = style.add_modifier(Modifier::ITALIC);
         }
         if ui.input_suggestion_underline {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
-        if !self.composer_ready() {
-            style = style.add_modifier(Modifier::DIM);
-        }
         style
+    }
+
+    /// 输入框里那行灰字：预测正文 + 「按 Tab 键采用」。
+    ///
+    /// 两种布局共用。提示只用于绘制，不写入输入框或被 Tab 采用的建议正文。
+    pub(super) fn composer_suggestion_text(&self) -> Option<Text<'static>> {
+        let suggestion = self.visible_input_suggestion()?;
+        let hint = self.language.text(
+            "（按 Tab 键采用）",
+            "(press Tab to accept)",
+            "（Tab キーで採用）",
+        );
+        Some(Text::from(Line::from(vec![
+            Span::styled(suggestion.to_owned(), self.composer_hint_style()),
+            Span::styled(
+                format!("  {hint}"),
+                self.composer_hint_style()
+                    .remove_modifier(Modifier::ITALIC | Modifier::UNDERLINED),
+            ),
+        ])))
     }
 
     pub(super) fn ring_turn_bell(&mut self, writer: &mut impl Write) -> io::Result<()> {
@@ -152,8 +175,40 @@ mod tests {
         assert_eq!(style.fg, Some(Color::Gray));
         assert!(style.add_modifier.contains(Modifier::ITALIC));
         assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+        // 预测始终比正文退后一层：它看起来像已输入的内容会让人误按 Enter。
+        assert!(style.add_modifier.contains(Modifier::DIM));
 
-        app.ui.input_suggestion_color = crate::config::InputSuggestionColor::DarkGray;
-        assert_eq!(app.composer_hint_style().fg, Some(Color::DarkGray));
+        app.ui.input_suggestion_color = crate::config::InputSuggestionColor::Cyan;
+        assert_eq!(app.composer_hint_style().fg, Some(Color::Cyan));
+    }
+
+    /// 三种语言都说明采用快捷键，且提示沿用预测的淡化样式。
+    #[test]
+    fn the_suggestion_line_names_the_accept_key_in_every_language() {
+        for (language, needle) in [
+            (Language::ZhCn, "按 Tab 键采用"),
+            (Language::En, "press Tab to accept"),
+            (Language::Ja, "Tab キーで採用"),
+        ] {
+            let mut app = App::new(Vec::new(), language);
+            app.input_suggestion = Some("帮我写一个 Python 爬虫".to_owned());
+            let text = app.composer_suggestion_text().expect("suggestion line");
+            let rendered = text.lines[0]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(rendered.contains("帮我写一个 Python 爬虫"), "{language:?}");
+            assert!(rendered.contains(needle), "{language:?}: {rendered}");
+            let hint = &text.lines[0].spans[1];
+            assert!(
+                hint.style.add_modifier.contains(Modifier::DIM),
+                "{language:?}: the hint must stay dim"
+            );
+            assert!(
+                !hint.style.add_modifier.contains(Modifier::UNDERLINED),
+                "{language:?}: the hint is an aside, not part of the prediction"
+            );
+        }
     }
 }

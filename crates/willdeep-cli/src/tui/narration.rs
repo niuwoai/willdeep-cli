@@ -86,19 +86,13 @@ impl App {
     /// 屏幕上一条可见记录都没有时补上首屏欢迎语，顺带丢掉那些空白行——
     /// 留着它们只会把真正的内容往下挤。多个入口（启动、换会话、`/clear`）
     /// 共用这一条规则，别各自写一份 `is_empty()` 判断。
-    pub(super) fn ensure_welcome(
-        &mut self,
-        workspace: &std::path::Path,
-        session_id: uuid::Uuid,
-        language: Language,
-    ) {
+    pub(super) fn ensure_welcome(&mut self, workspace: &std::path::Path, language: Language) {
         if self.has_visible_transcript() {
             return;
         }
         self.transcript.retain(|row| !row.trim().is_empty());
-        self.transcript.push(super::rendering::welcome_message(
-            workspace, session_id, language,
-        ));
+        self.transcript
+            .push(super::rendering::welcome_message(workspace, language));
     }
 
     /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
@@ -106,7 +100,7 @@ impl App {
     /// 路径就是这样把欢迎语又覆盖掉的——列表非空、屏幕空白。
     pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
         self.transcript = super::plan_ui::session_transcript(session, self.language);
-        self.ensure_welcome(&session.workspace, session.id, self.language);
+        self.ensure_welcome(&session.workspace, self.language);
     }
 }
 

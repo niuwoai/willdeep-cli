@@ -111,13 +111,14 @@ pub(super) fn render(
     let (row, col) = app.input.cursor_visual(width);
     let visible = areas[3].height.saturating_sub(1).max(1) as usize;
     app.prompt_scroll = row.saturating_sub(visible - 1);
-    let suggestion = app.visible_input_suggestion();
-    let show_placeholder = suggestion.is_none()
+    let suggestion = app.composer_suggestion_text();
+    let suggestion_visible = suggestion.is_some();
+    let show_placeholder = !suggestion_visible
         && app.composer_ready()
         && app.input.is_empty()
         && !app.composer_placeholder_dismissed;
     let body = match suggestion {
-        Some(text) => Text::from(Span::styled(text.to_owned(), app.composer_hint_style())),
+        Some(text) => text,
         None if show_placeholder => Text::from(Span::styled(
             match app.language {
                 Language::ZhCn => "请说出你的需求",
@@ -172,7 +173,7 @@ pub(super) fn render(
                 .border_style(Style::default().fg(Color::DarkGray)),
         )
         .scroll((app.prompt_scroll.min(u16::MAX as usize) as u16, 0));
-    let input = if suggestion.is_some() || show_placeholder {
+    let input = if suggestion_visible || show_placeholder {
         input.wrap(Wrap { trim: false })
     } else {
         input
