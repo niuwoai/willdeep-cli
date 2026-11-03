@@ -10,12 +10,6 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const t = modelText("zh-CN");
 
-const OPTIONS = [
-  { provider_id: "main", provider: "OpenAI 兼容网关", model: "gpt-5.1" },
-  { provider_id: "main", provider: "OpenAI 兼容网关", model: "gpt-5.1-mini" },
-  { provider_id: "backup", provider: "备用网关", model: "claude-sonnet-5-5" },
-];
-
 function mount(over: {
   current?: string | null;
   sessionId?: string | null;
@@ -34,7 +28,14 @@ function mount(over: {
     if (url === "/api/models/default") {
       return Response.json(over.default ?? { model: null, writable: true });
     }
-    return Response.json(OPTIONS);
+    if (url === "/api/settings/model-routing") {
+      return Response.json({ default_provider: "main", providers: [
+        { id: "main", provider: "openai-compatible", model: "gpt-5.1" },
+        { id: "backup", provider: "backup-gateway", model: "claude-sonnet-5-5" },
+      ] });
+    }
+    const profile = new URL(url, "http://localhost").searchParams.get("profile");
+    return Response.json({ models: profile === "backup" ? ["claude-sonnet-5-5"] : ["gpt-5.1", "gpt-5.1-mini"], warning: null });
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(<QueryClientProvider client={client}>
@@ -50,22 +51,29 @@ function mount(over: {
   return { ...view, picked, applied, opened, posts };
 }
 
-it("groups the configured models by provider and marks the session's current one", async () => {
-  const { container } = mount({ current: "gpt-5.1" });
-  await screen.findByText("claude-sonnet-5-5");
+it("selects a provider first, searches only its models, and marks the current model", async () => {
+  mount({ current: "gpt-5.1" });
+  const provider = await screen.findByRole("combobox", { name: t.provider });
+  const search = screen.getByRole("searchbox", { name: t.searchModels });
+  await screen.findByRole("button", { name: "gpt-5.1" });
+  expect((provider as HTMLSelectElement).value).toBe("main");
+  expect(screen.queryByRole("button", { name: "claude-sonnet-5-5" })).toBeNull();
 
-  const titles = [...container.querySelectorAll(".model-group-title")].map((node) => node.textContent);
-  expect(titles).toHaveLength(2);
-  expect(titles[0]).toContain("main");
-  expect(titles[1]).toContain("backup");
+  fireEvent.change(search, { target: { value: "mini" } });
+  expect(screen.getByRole("button", { name: "gpt-5.1-mini" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "gpt-5.1" })).toBeNull();
 
-  const current = screen.getByRole("button", { name: "gpt-5.1" });
-  expect(current.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.change(provider, { target: { value: "backup" } });
+  expect((search as HTMLInputElement).value).toBe("");
+  await screen.findByRole("button", { name: "claude-sonnet-5-5" });
+  expect(screen.queryByRole("button", { name: "gpt-5.1-mini" })).toBeNull();
 });
 
 it("switches the session to the picked provider and model", async () => {
   const { picked, applied, opened, posts } = mount();
-  await screen.findByText("claude-sonnet-5-5");
+  const provider = await screen.findByRole("combobox", { name: t.provider });
+  fireEvent.change(provider, { target: { value: "backup" } });
+  await screen.findByRole("button", { name: "claude-sonnet-5-5" });
 
   fireEvent.click(screen.getByRole("button", { name: "claude-sonnet-5-5" }));
 

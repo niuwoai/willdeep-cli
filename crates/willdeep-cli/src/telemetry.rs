@@ -289,6 +289,7 @@ pub fn error_code(error: &willdeep_core::AgentError) -> &'static str {
         AgentError::SubagentPartial { .. } => "subagent_partial",
         AgentError::Checkpoint(_) => "checkpoint_failed",
         AgentError::VerificationSnapshot(_) => "verification_snapshot_failed",
+        AgentError::InstanceIdentity(_) => "instance_identity_failed",
         AgentError::ContextCapacity { .. } => "context_capacity",
     }
 }

@@ -516,8 +516,6 @@ struct App {
     attention_deny_rect: Rect,
     search: Option<SearchState>,
     workspace: Option<PathBuf>,
-    /// 当前会话的 id。`/clear` 之后要重新画首屏，欢迎语里的续接命令得用真的 id。
-    session_id: Option<uuid::Uuid>,
     /// 打开的会话是从哪条分凉出来的，以及来源的标题。`None` 表示没有来源。
     session_lineage: Option<(uuid::Uuid, String)>,
     palette: Option<PaletteState>,
@@ -1281,6 +1279,7 @@ fn dispatch_media_action(action: MediaAction, app: &mut App, runtime: &TuiRuntim
 }
 
 mod app_state;
+mod chat_selection;
 
 fn clipboard_image() -> Result<DraftAttachment> {
     let image = arboard::Clipboard::new()?.get_image()?;
@@ -1704,17 +1703,8 @@ fn draw<B: ratatui::backend::Backend>(
         let wrapped_input = app.input.wrapped_text(width);
         // 空输入框里的灰字预测：顶替正文而不是叠加，「Tab 采用」的提示跟在后面。
         let suggestion_visible = app.visible_input_suggestion().is_some();
-        let composer_body = match app.visible_input_suggestion() {
-            Some(suggestion) => Text::from(Line::from(vec![
-                Span::styled(suggestion.to_owned(), app.composer_hint_style()),
-                Span::styled(
-                    format!(
-                        "  {}",
-                        app.language.text("Tab 采用", "Tab to accept", "Tab で採用")
-                    ),
-                    app.composer_hint_style(),
-                ),
-            ])),
+        let composer_body = match app.composer_suggestion_text() {
+            Some(suggestion) => suggestion,
             None => Text::from(wrapped_input),
         };
         let composer = Paragraph::new(composer_body)

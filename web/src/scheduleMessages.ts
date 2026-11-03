@@ -16,6 +16,7 @@ const text = {
   intro: ["由 Runtime 持续管理，关闭网页或终端也会按计划运行。", "Managed by the Runtime, even when the browser or terminal closes.", "Runtime が管理し、ブラウザーや端末を閉じても実行します。"],
   new: ["新建任务", "New task", "タスクを作成"], search: ["搜索任务名称或工作区", "Search task or workspace", "名前・作業領域を検索"],
   all: ["全部任务", "All tasks", "すべて"], enabled: ["已启用", "Enabled", "有効"], paused: ["已暂停", "Paused", "一時停止"], archived: ["已归档", "Archived", "アーカイブ"], completedTask: ["已完成", "Completed", "完了"],
+  statusFilter: ["按任务状态筛选", "Filter by task status", "タスクの状態で絞り込む"], filterEmpty: ["这个状态下没有定时任务", "No scheduled tasks in this status", "この状態の定期タスクはありません"], searchEmpty: ["没有符合搜索条件的定时任务", "No scheduled tasks match the search", "検索条件に一致する定期タスクはありません"],
   empty: ["暂无定时任务", "No scheduled tasks", "定期タスクなし"], select: ["选择任务查看配置和运行历史", "Select a task to inspect configuration and history", "タスクを選択して設定と履歴を確認"],
   config: ["配置", "Configuration", "設定"], history: ["运行历史", "Run history", "実行履歴"], name: ["任务名称", "Task name", "タスク名"], prompt: ["每次运行的任务", "Task for each run", "毎回実行する内容"], goal: ["目标达成后停止（可选）", "Stop when this goal is met (optional)", "達成後に停止する目標（任意）"],
   timezone: ["任务时区", "Task timezone", "タイムゾーン"], interval: ["每隔一段时间", "At an interval", "一定間隔"], dailyAt: ["每天", "Every day", "毎日"], weekdaysAt: ["工作日", "Weekdays", "平日"], weeklyAt: ["每周", "Every week", "毎週"], onceAt: ["仅一次", "Once", "1 回のみ"],

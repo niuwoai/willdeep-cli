@@ -465,7 +465,6 @@ pub(super) async fn event_loop(
     app.display_model = session.model.clone().filter(|model| !model.is_empty());
     app.runtime_event_cursor = session.runtime_event_cursor;
     app.workspace = Some(session.workspace.clone());
-    app.session_id = Some(session.id);
     app.workspace_status = workspace_status(&session.workspace, language);
     app.workspace_attention = workspace_attention(&session.workspace);
     app.attention_read = session.attention_read.clone();

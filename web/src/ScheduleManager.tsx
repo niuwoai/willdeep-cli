@@ -9,6 +9,10 @@ import { scheduleText } from "./scheduleMessages";
 import { newSchedule, taskDraft, scheduleJson, scheduleWrite, ScheduleRequestError, type ScheduleDraft, type ScheduleList, type ScheduleView, type ScheduleWorkspace } from "./scheduleTypes";
 import "./schedules.css";
 
+const scheduleFilters = ["all", "enabled", "paused", "archived", "completedTask", "deleted"] as const;
+type ScheduleFilter = (typeof scheduleFilters)[number];
+type ScheduleState = Exclude<ScheduleFilter, "all">;
+
 export function ScheduleManager({ workspaces, workspace, language, messages, onOpenSession, onDirty }: {
   workspaces: ScheduleWorkspace[]; workspace: string; language: Language; messages: Messages; onOpenSession: (id: string, turnId?: string | null) => void; onDirty: (value: boolean) => void;
 }) {
@@ -22,7 +26,7 @@ export function ScheduleManager({ workspaces, workspace, language, messages, onO
   const [formKey, setFormKey] = useState(0);
   const [tab, setTab] = useState<"config" | "history">("config");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<ScheduleFilter>("all");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const pendingOperation = useRef<{ fingerprint: string; id: string } | null>(null);
@@ -31,8 +35,15 @@ export function ScheduleManager({ workspaces, workspace, language, messages, onO
   const leaveDraft = () => { if (dirty && !window.confirm(s("discard"))) return false; changeDirty(false); return true; };
   const [cleanupCount, setCleanupCount] = useState<number | null>(null);
   const writable = list.data?.writable ?? false;
+  const countsAvailable = list.data !== undefined && deleted.data !== undefined;
   const current = views.find((view) => view.task.id === selection?.task.id) ?? selection;
-  const state = (view: ScheduleView) => view.deleted ? "deleted" : view.task.archived_at ? "archived" : view.task.completed_at ? "completedTask" : view.task.enabled ? "enabled" : "paused";
+  const state = (view: ScheduleView): ScheduleState => view.deleted ? "deleted" : view.task.archived_at ? "archived" : view.task.completed_at ? "completedTask" : view.task.enabled ? "enabled" : "paused";
+  const counts = views.reduce<Record<ScheduleFilter, number>>((result, view) => {
+    result.all += 1;
+    result[state(view)] += 1;
+    return result;
+  }, { all: 0, enabled: 0, paused: 0, archived: 0, completedTask: 0, deleted: 0 });
+  const filteredViews = views.filter((view) => (filter === "all" || state(view) === filter) && `${view.task.name} ${view.task.workspace}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   const select = (view: ScheduleView) => { if (!leaveDraft()) return; setSelection(view); setDraft(taskDraft(view.task)); setFormKey((key) => key + 1); setTab(view.deleted ? "history" : "config"); setCleanupCount(null); setError(""); };
   const refresh = async () => { await client.invalidateQueries({ queryKey: ["schedules"] }); await client.invalidateQueries({ queryKey: ["deleted-schedules"] }); await client.invalidateQueries({ queryKey: ["schedule-history"] }); await client.invalidateQueries({ queryKey: ["schedule-run"] }); };
   const operation = async (path: string, body: Record<string, unknown>) => {
@@ -65,10 +76,16 @@ export function ScheduleManager({ workspaces, workspace, language, messages, onO
   return <main className="schedule-manager"><header><div><h1>{s("title")}</h1><p>{s("intro")}</p></div><button className="schedule-new" disabled={!writable} onClick={() => { if (!leaveDraft()) return; setSelection(null); setDraft(newSchedule(workspace || workspaces[0]?.path || "", Intl.DateTimeFormat().resolvedOptions().timeZone)); setFormKey((key) => key + 1); setTab("config"); }}><Plus size={16} />{s("new")}</button></header>
     {!writable && list.data && <p className="schedule-notice">{s("readOnly")}</p>}
     {list.error && <p role="alert">{s("error")}: {list.error.message} <button onClick={() => void list.refetch()}>{s("refresh")}</button></p>}
+    {deleted.error && <p role="alert" className="schedule-error">{s("error")}: {deleted.error.message}</p>}
     {error && <p role="alert" className="schedule-error">{error}</p>}
-    <div className="schedule-layout"><aside><input aria-label={s("search")} placeholder={s("search")} value={search} onChange={(event) => setSearch(event.target.value)} /><select aria-label={s("all")} value={filter} onChange={(event) => setFilter(event.target.value)}>{(["all", "enabled", "paused", "archived", "completedTask", "deleted"] as const).map((key) => <option key={key} value={key}>{s(key)}</option>)}</select>
-      {views.filter((view) => (filter === "all" || state(view) === filter) && `${view.task.name} ${view.task.workspace}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map((view) => <button key={view.task.id} className={`schedule-task${selection?.task.id === view.task.id ? " active" : ""}`} onClick={() => select(view)}><strong>{view.task.name}</strong><span>{s(state(view))}</span><small>{view.task.workspace}</small><small>{view.active_run ? `${s("activeRun")}: ${s(view.active_run.status)}` : view.last_run && s(view.last_run.status)}</small></button>)}
-      {list.data && views.length === 0 && <p>{s("empty")}</p>}
+    <div className="schedule-filter-tabs" role="group" aria-label={s("statusFilter")}>
+      {scheduleFilters.map((key) => <button key={key} type="button" className={`schedule-filter-tab${filter === key ? " active" : ""}`} aria-pressed={filter === key} onClick={() => setFilter(key)}><span>{s(key)}</span><span className="schedule-filter-count">{countsAvailable ? counts[key] : "…"}</span></button>)}
+    </div>
+    <div className="schedule-layout"><aside><input aria-label={s("search")} placeholder={s("search")} value={search} onChange={(event) => setSearch(event.target.value)} />
+      {filteredViews.map((view) => <button key={view.task.id} className={`schedule-task${selection?.task.id === view.task.id ? " active" : ""}`} onClick={() => select(view)}><strong>{view.task.name}</strong><span>{s(state(view))}</span><small>{view.task.workspace}</small><small>{view.active_run ? `${s("activeRun")}: ${s(view.active_run.status)}` : view.last_run && s(view.last_run.status)}</small></button>)}
+      {!countsAvailable && views.length === 0 && !list.error && !deleted.error && <p role="status">{s("loadingTasks")}</p>}
+      {countsAvailable && views.length === 0 && <p>{s("empty")}</p>}
+      {countsAvailable && views.length > 0 && filteredViews.length === 0 && <p>{s(counts[filter] === 0 ? "filterEmpty" : "searchEmpty")}</p>}
     </aside><section className="schedule-content">{draft ? <>
       {current && <><h2>{current.task.name}</h2><p>{s("next")}: {current.next_fire_at ? new Date(current.next_fire_at * 1000).toLocaleString(language) : s("noNext")}</p>
         {current.task.migration_reason && <p className="schedule-notice">{current.task.migration_reason === "legacy_plugin_disabled" ? s("migrationPaused") : current.task.migration_reason === "consecutive_failures" ? s("consecutivePaused") : current.task.migration_reason}</p>}

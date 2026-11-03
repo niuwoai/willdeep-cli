@@ -220,12 +220,11 @@ fn older_thoughts_do_not_split_tools_or_steal_latest_thought_clicks() {
 #[test]
 fn a_blank_or_thought_only_history_still_gets_the_welcome_screen() {
     let workspace = std::path::Path::new("/tmp/willdeep-rs");
-    let id = uuid::Uuid::nil();
 
     // 空白行不算内容。
     let mut app = App::new(vec![String::new(), "   ".to_owned()], Language::En);
     assert!(!app.has_visible_transcript());
-    app.ensure_welcome(workspace, id, Language::En);
+    app.ensure_welcome(workspace, Language::En);
     assert!(app.has_visible_transcript());
     assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
     assert!(
@@ -238,14 +237,14 @@ fn a_blank_or_thought_only_history_still_gets_the_welcome_screen() {
     let mut app = App::new(vec![thought.clone()], Language::En);
     app.ui.show_thinking = false;
     assert!(!app.has_visible_transcript());
-    app.ensure_welcome(workspace, id, Language::En);
+    app.ensure_welcome(workspace, Language::En);
     assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
 
     // 打开显示时它就是内容，不该再补一遍欢迎语。
     let mut app = App::new(vec![thought], Language::En);
     app.ui.show_thinking = true;
     assert!(app.has_visible_transcript());
-    app.ensure_welcome(workspace, id, Language::En);
+    app.ensure_welcome(workspace, Language::En);
     assert!(!app.transcript.iter().any(|row| row.contains("WILLDEEP")));
 }
 
@@ -255,11 +254,7 @@ fn the_welcome_screen_is_visible_in_both_layouts() {
     use ratatui::backend::TestBackend;
     for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
         let mut app = App::new(vec![String::new()], Language::En);
-        app.ensure_welcome(
-            std::path::Path::new("/tmp/willdeep-rs"),
-            uuid::Uuid::nil(),
-            Language::En,
-        );
+        app.ensure_welcome(std::path::Path::new("/tmp/willdeep-rs"), Language::En);
         app.ui.mode = mode;
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         draw(
@@ -364,5 +359,53 @@ fn dragging_maps_to_the_row_under_the_cursor_in_both_layouts() {
                 .is_some(),
             "{mode:?}: the bottom content row should be selectable"
         );
+    }
+}
+
+/// 输入框里的灰字预测要在两种布局里都带「按 Tab 键采用」，并且画得比正文淡。
+///
+/// 预测是服务端猜的下一句，不是用户打的字；提示不明显时，用户既不知道有预测、
+/// 也不知道按哪个键能收下它。
+#[test]
+fn the_composer_suggestion_names_the_accept_key_in_both_layouts() {
+    use ratatui::backend::TestBackend;
+    for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.ui.mode = mode;
+        app.input_suggestion = Some("帮我写一个 Python 爬虫".to_owned());
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
+        // 宽字符占两格，第二格是空白占位；按显示宽度跳过它，才能读取真实文字。
+        let mut screen = String::new();
+        for y in app.prompt_rect.y..app.prompt_rect.bottom() {
+            let mut x = app.prompt_rect.x;
+            while x < app.prompt_rect.right() {
+                let cell = &terminal.backend().buffer()[(x, y)];
+                screen.push_str(cell.symbol());
+                x += UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
+            }
+            screen.push('\n');
+        }
+        assert!(screen.contains("帮我写一个 Python 爬虫"), "{mode:?}");
+        assert!(screen.contains("（按 Tab 键采用）"), "{mode:?}");
+        let suggestion_cell = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "帮")
+            .expect("rendered suggestion");
+        assert_eq!(suggestion_cell.fg, Color::Gray, "{mode:?}");
+        assert!(suggestion_cell.modifier.contains(Modifier::DIM), "{mode:?}");
+
+        assert!(app.accept_input_suggestion());
+        assert_eq!(app.input.text(), "帮我写一个 Python 爬虫", "{mode:?}");
+        assert!(app.composer_suggestion_text().is_none());
     }
 }

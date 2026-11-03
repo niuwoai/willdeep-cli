@@ -159,6 +159,9 @@ pub(crate) struct RemoteSessionState {
     pub archived: bool,
     pub active: bool,
     pub active_turn_id: Option<uuid::Uuid>,
+    /// Runtime 当前的 Provider 和模型选择；Web 需要 Provider ID 才能准确标记同名模型。
+    pub profile: Option<String>,
+    pub model: Option<String>,
     /// 这个会话里用户选过的档位；`None` 表示跟随工作区策略。Web 要靠它显示
     /// 当前生效档位——档位只存在 Runtime 会话上，核心会话文件里没有。
     pub approval_mode: Option<super::WorkspaceAccess>,
@@ -182,6 +185,8 @@ pub(crate) async fn remote_session_states(home: &Path) -> Result<Vec<RemoteSessi
             archived: session.status == willdeep_runtime_protocol::SessionStatus::Archived,
             active: session.active_turn_id.is_some(),
             active_turn_id: session.active_turn_id,
+            profile: session.profile,
+            model: session.model,
             approval_mode: session
                 .approval_mode
                 .map(super::workspace_store::local_access),

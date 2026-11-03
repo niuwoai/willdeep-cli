@@ -39,6 +39,8 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 
 Provider 身份回答“如何鉴权、是否附带 some.im 上下文”；API Dialect 回答“如何编码消息和 Tool Call”。因此同一个 some.im Provider 可以承载 Chat Completions、Responses 或 Anthropic Messages。
 
+Web 模型选择先通过 `/api/settings/model-routing` 读取 Provider 档案，再以档案 id 请求 `/api/schedules/models?profile=<id>` 发现模型目录。模型切换同时提交模型名与 `provider_id`，会话详情也返回当前 Provider 身份；前端据此区分不同 Provider 下的同名模型，并把搜索限制在当前档案目录。
+
 ### 统一领域模型
 
 Agent Loop 只理解：
@@ -115,6 +117,8 @@ Provider Profile 可声明 `context_window`。在途自动压缩按四道水位�
 ### 实例身份（联邦 P0）
 
 每台 willdeep 有一个终身不变的实例 UUID 和一个可改的名字，存在 `$WILLDEEP_HOME/identity.json`（0600，原子替换；首次使用时从 64 个内置名字里挑一个）。改名走 TUI/Web 的 `/name` 或 `willdeep identity rename`，UUID 不变——名字是标签，身份是 UUID。名字限定 1–24 个字符且显示宽度不超过 24 列，可用中文、日文等宽字符，但不能含空白、控制字符、方向覆盖符、冒号与路径分隔符；重名时展示为 `alex:2u2d`（UUID 末 4 位）。Web 只在回环监听上读写身份。设计与后续阶段见 [FEDERATION.md](FEDERATION.md)。
+
+共享 harness 将实例名读取器注册到主 Agent；每次模型请求前读取当前名字，作为 JSON 数据追加到系统提示词的动态区域。稳定的 WillDeep 产品身份不被替换，显示名不承载指令、权限或 Provider 身份。Runtime 重建的主会话与复用 Agent 的 `/local` 都在下一次请求使用最新名字；身份读取错误明确上报，不沿用过期称呼。Web 配置页通过现有身份接口读写同一文件，保存回调同步侧栏；实例名不写入 `config.toml`。
 
 ### 实例联邦（P1）
 

@@ -20,9 +20,6 @@
 .rail-brand img { width: 28px; height: 28px; object-fit: contain; }
 .rail-scroll { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 4px; overflow-y: auto; scrollbar-width: none; }
 .rail-scroll::-webkit-scrollbar { display: none; }
-.rail-agent-group { display: flex; justify-content: center; color: var(--text-dim); font-size: 9px; margin: 10px 0 0; }
-.rail-agent-group svg { display: none; }
-
 .rail-button {
   display: flex;
   flex-direction: column;
@@ -60,79 +57,75 @@
 .rail-button:hover .rail-label { color: var(--text-soft); }
 .rail-button.active .rail-label { color: var(--text); font-weight: 600; }
 
-.rail-divider { height: 1px; background: var(--bg-panel); margin: 6px 8px; }
+.rail-config-anchor,
+.rail-plugins-anchor { flex: none; }
 
-/* 插件分组的小标题，对应 macOS 侧栏「插件」那一行。 */
-.rail-section-label {
-  font-size: 9px;
-  line-height: 1.2;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  text-align: center;
-  color: var(--text-ghost);
-  margin: 0 0 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-overflow-heading {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  padding: 4px 9px 5px;
-}
-
-.rail-overflow { position: relative; }
-
-.rail-overflow-menu {
+.rail-configuration-menu,
+.rail-plugin-menu {
   position: fixed;
   left: 76px;
   bottom: 12px;
   z-index: 20;
+  width: min(248px, calc(100vw - 104px));
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
-  min-width: 200px;
-  padding: 6px;
+  padding: 8px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 32px var(--shadow);
 }
 
-@media (max-width: 767px) {
-  .plugin-rail { --rail-width: 54px; padding: 14px 4px 10px; }
-  .rail-label { font-size: 9px; }
-  .rail-agent-group { display: none; }
-  .rail-brand img { width: 26px; height: 26px; }
-  .rail-overflow-menu { left: 62px; }
+.rail-configuration-heading {
+  padding: 4px 9px 7px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
 }
 
-/* 「更多插件」里的行照 macOS 侧栏插件行：行高 31、图标 14、图标与文字
-   间距 9、圆角 10 的灰色选中底；图标次要色，悬停/选中提亮。 */
-.rail-overflow-item {
+.rail-menu-divider { height: 1px; margin: 6px 4px; background: var(--border-subtle); }
+
+.rail-menu-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 0 9px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.rail-menu-item {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
-  min-height: 31px;
+  min-height: 35px;
   padding: 0 9px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
+  font: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
 
-.rail-overflow-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail-overflow-item svg { color: var(--text-dim); }
-.rail-overflow-item:hover { background: var(--bg-panel); }
-.rail-overflow-item:hover svg { color: var(--text-soft); }
-.rail-overflow-item.active { background: var(--bg-panel-hover); }
-.rail-overflow-item.active svg { color: var(--text); }
+.rail-menu-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-menu-item svg { flex: none; color: var(--text-dim); }
+.rail-menu-item:hover { background: var(--bg-panel); }
+.rail-menu-item.active { background: var(--bg-panel-hover); color: var(--text-strong); }
+.rail-menu-item.active svg { color: var(--text); }
+.rail-menu-item:focus-visible,
+.rail-menu-section:focus-visible { outline: 2px solid var(--accent-border); outline-offset: -2px; }
+@media (max-width: 767px) {
+  .plugin-rail { --rail-width: 54px; padding: 14px 4px 10px; }
+  .rail-label { font-size: 9px; }
+  .rail-brand img { width: 26px; height: 26px; }
+  .rail-configuration-menu,
+  .rail-plugin-menu { left: 62px; }
+}
 
 /* ---------------------------------------------------------------- 页面 */
 

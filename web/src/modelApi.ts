@@ -1,6 +1,9 @@
-// `/model` 的数据层。候选来自配置里的 Provider，切换下发到 Runtime 的会话。
+// `/model` 的数据层：先读 Provider 档案，再发现该档案的模型目录并切换 Runtime 会话。
 
 export type ModelOption = { provider_id: string; provider: string; model: string };
+export type ModelProvider = { id: string; provider: string; model: string };
+export type ModelProviderCatalog = { default_provider: string; providers: ModelProvider[] };
+export type ProviderModels = { models: string[]; warning: string | null };
 
 export class ModelFailure extends Error {
   constructor(readonly status: number, detail: string) {
@@ -14,10 +17,17 @@ async function failure(response: Response): Promise<ModelFailure> {
   return new ModelFailure(response.status, detail || response.statusText);
 }
 
-export async function loadModels(signal?: AbortSignal): Promise<ModelOption[]> {
-  const response = await fetch("/api/models", { signal });
+export async function loadModelProviders(signal?: AbortSignal): Promise<ModelProviderCatalog> {
+  const response = await fetch("/api/settings/model-routing", { signal });
   if (!response.ok) throw await failure(response);
-  return await response.json() as ModelOption[];
+  return await response.json() as ModelProviderCatalog;
+}
+
+export async function loadProviderModels(providerId: string, signal?: AbortSignal): Promise<ProviderModels> {
+  const query = new URLSearchParams({ profile: providerId });
+  const response = await fetch(`/api/schedules/models?${query}`, { signal });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as ProviderModels;
 }
 
 /// 还没建会话时这一轮会用哪个模型。服务端按 Web 所用的 Provider 档案解析，

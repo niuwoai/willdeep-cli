@@ -15,6 +15,7 @@ use crate::types::{Message, ToolCall, Usage, sanitize_tool_history};
 
 mod context;
 mod guidance;
+mod instance_identity;
 mod messaging;
 mod parallel;
 mod planning;
@@ -418,6 +419,8 @@ pub enum AgentError {
     Checkpoint(String),
     #[error("cannot capture verification snapshot: {0}")]
     VerificationSnapshot(String),
+    #[error("cannot load current instance identity: {0}")]
+    InstanceIdentity(String),
     #[error(
         "protected instructions and task context need {estimated} tokens, but only {capacity} remain after reserving tool schemas and output; select a larger context window or explicitly narrow the task"
     )]
@@ -429,6 +432,7 @@ pub struct Agent {
     provider: crate::provider::MainModelHandle,
     tools: ToolRegistry,
     config: AgentConfig,
+    instance_name_source: Option<Arc<instance_identity::InstanceNameSource>>,
     sink: Arc<dyn EventSink>,
     image_fallback: Option<(Arc<dyn Provider>, String)>,
     /// 上下文压缩的专用 Provider。bool 为真表示压缩指令由网关托管
@@ -477,6 +481,7 @@ impl Agent {
             provider: crate::provider::MainModelHandle::new(provider),
             tools,
             config,
+            instance_name_source: None,
             sink: Arc::new(NoopSink),
             image_fallback: None,
             compressors: Vec::new(),
@@ -1103,6 +1108,7 @@ impl Agent {
                 self.tools.required_verification_prompt(),
                 self.tools.completion_contract_prompt()
             );
+            self.append_instance_identity(&mut messages[0].content)?;
             if self.tools.allows_agent_tool("update_plan") {
                 messages[0].content.push_str("\n\n");
                 messages[0]
