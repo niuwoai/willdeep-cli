@@ -12,7 +12,7 @@ import { changeModel, loadModels, ModelFailure, type ModelOption } from "./model
 import { useInspectorDismiss } from "./useInspectorDismiss";
 import "./permissionsPanel.css";
 
-export function ModelPicker({ sessionId, language, current, open, onOpenChange, onPicked }: {
+export function ModelPicker({ sessionId, language, current, open, onOpenChange, onPicked, onApplied }: {
   sessionId: string;
   language: Language;
   /// 会话当前的模型名；`null` 表示跟随 Provider 默认。
@@ -20,6 +20,9 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPicked: (model: string) => void;
+  /// 切换成功后调用：弹窗会被收起，成功提示交给常驻的宿主显示，
+  /// 否则提示跟着面板一起消失，看起来像没反应。
+  onApplied?: (message: string) => void;
 }) {
   const t = modelText(language);
   const panel = useInspectorDismiss();
@@ -41,7 +44,12 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
     try {
       await changeModel(sessionId, option.model, option.provider_id);
       onPicked(option.model);
-      setNotice({ tone: "ok", text: t.applied.replace("{model}", option.model) });
+      const text = t.applied.replace("{model}", option.model);
+      // 成功就收起面板：模型名已经写进工具栏的按钮里，再挂着反而挡住对话。
+      // 失败时保持在面板里，用户要能看到原因并重试。
+      onApplied?.(text);
+      onOpenChange(false);
+      setNotice({ tone: "ok", text });
     } catch (reason) {
       const detail = reason instanceof ModelFailure ? reason.message : String(reason);
       setNotice({ tone: "error", text: `${t.failed}: ${detail}` });

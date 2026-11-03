@@ -7,7 +7,7 @@ import { useInspectorDismiss } from "./useInspectorDismiss";
 import type { Language, Messages } from "./i18n";
 import "./permissionsPanel.css";
 
-export function PermissionsPanel({ sessionId, language, messages, override, workspaceAccess, open, onOpenChange, onSaved }: {
+export function PermissionsPanel({ sessionId, language, messages, override, workspaceAccess, open, onOpenChange, onSaved, onApplied }: {
   sessionId: string;
   language: Language;
   messages: Messages;
@@ -19,6 +19,8 @@ export function PermissionsPanel({ sessionId, language, messages, override, work
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: (mode: WorkspaceAccess) => void;
+  /** 保存成功后调用：面板收起，成功提示交给常驻的宿主显示。 */
+  onApplied?: (message: string) => void;
 }) {
   const t = permissionsText(language);
   const panel = useInspectorDismiss();
@@ -51,7 +53,12 @@ export function PermissionsPanel({ sessionId, language, messages, override, work
       await changeApprovalMode(sessionId, draft);
       onSaved(draft);
       setAcknowledged(false);
-      setNotice(t.saved.replace("{mode}", accessLabel(draft, messages)));
+      const text = t.saved.replace("{mode}", accessLabel(draft, messages));
+      // 档位已经生效，工具栏的按钮就是新的标签；面板留着只会挡住对话。
+      // 失败时保持摊开，错误原因要留在原处。
+      onApplied?.(text);
+      onOpenChange(false);
+      setNotice(text);
     } catch (reason) {
       if (reason instanceof ApprovalModeFailure && reason.status === 403) setFailure(t.notWritable);
       else if (reason instanceof ApprovalModeFailure && reason.status === 409) setFailure(t.readOnlyWorkspace);

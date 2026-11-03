@@ -347,6 +347,16 @@ export function App() {
   const [modelOpen, setModelOpen] = useState(false);
   // 分享面板同理：工具栏一个按钮，开合状态留在 App 里，换会话时收起来。
   const [shareOpen, setShareOpen] = useState(false);
+  // 模型和审批档位选完就把弹窗收起来，成功反馈改由这里常驻几秒——
+  // 提示若只画在面板里，面板一关就再也看不见，用户会以为没切换成功。
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+  const selectionNoticeTimer = useRef<number | undefined>(undefined);
+  const showSelectionNotice = useCallback((text: string) => {
+    window.clearTimeout(selectionNoticeTimer.current);
+    setSelectionNotice(text);
+    selectionNoticeTimer.current = window.setTimeout(() => setSelectionNotice(null), 4000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(selectionNoticeTimer.current), []);
   // 简洁模式还没落进聊天区的最近一段中途文字。轮次收尾时据此去重，中断时补写。
   const conciseLineRef = useRef<ConciseLine | null>(null);
   const [conciseNow, setConciseNow] = useState(() => Date.now());
@@ -1657,6 +1667,7 @@ export function App() {
         />
       )}
       <RuntimeQueue key={sessionId ?? "new"} sessionId={sessionId || null} language={language} />
+      {selectionNotice && <Text className="selection-notice" role="status">{selectionNotice}</Text>}
       <Box className="composer-shell">
         {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
@@ -1715,8 +1726,8 @@ export function App() {
       </Box>
       <div className="composer-control-row">
         <div className="composer-control-items">
-          {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} />}
-          {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} />}
+          {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} onApplied={showSelectionNotice} />}
+          {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />}
         </div>
         <div className="goal-mode-control">
           <label className="goal-mode-toggle">

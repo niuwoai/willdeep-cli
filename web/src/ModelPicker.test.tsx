@@ -18,6 +18,8 @@ const OPTIONS = [
 
 function mount(over: { current?: string | null; post?: (url: string, init?: RequestInit) => Response } = {}) {
   const picked: string[] = [];
+  const applied: string[] = [];
+  const opened: boolean[] = [];
   const posts: { url: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
@@ -29,10 +31,15 @@ function mount(over: { current?: string | null; post?: (url: string, init?: Requ
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(<QueryClientProvider client={client}>
     <ChakraProvider value={defaultSystem}>
-      <ModelPicker sessionId="s-1" language="zh-CN" current={over.current ?? null} open onOpenChange={vi.fn()} onPicked={(model) => { picked.push(model); }} />
+      <ModelPicker
+        sessionId="s-1" language="zh-CN" current={over.current ?? null} open
+        onOpenChange={(open) => { opened.push(open); }}
+        onPicked={(model) => { picked.push(model); }}
+        onApplied={(text) => { applied.push(text); }}
+      />
     </ChakraProvider>
   </QueryClientProvider>);
-  return { ...view, picked, posts };
+  return { ...view, picked, applied, opened, posts };
 }
 
 it("groups the configured models by provider and marks the session's current one", async () => {
@@ -49,7 +56,7 @@ it("groups the configured models by provider and marks the session's current one
 });
 
 it("switches the session to the picked provider and model", async () => {
-  const { picked, posts } = mount();
+  const { picked, applied, opened, posts } = mount();
   await screen.findByText("claude-sonnet-5-5");
 
   fireEvent.click(screen.getByRole("button", { name: "claude-sonnet-5-5" }));
@@ -60,10 +67,14 @@ it("switches the session to the picked provider and model", async () => {
   // Provider 一起下发：同名模型在不同网关下可能是两回事。
   expect(posts[0].body).toEqual({ model: "claude-sonnet-5-5", provider_id: "backup" });
   expect(screen.getByRole("status").textContent).toContain("已切换到 claude-sonnet-5-5");
+  // 选完就收起面板，成功提示交给宿主常驻显示——否则提示跟着面板一起消失。
+  // 初始渲染时 details 自己也会触发一次 toggle(true)，所以只看最后一次。
+  expect(applied).toEqual(["已切换到 claude-sonnet-5-5"]);
+  expect(opened.at(-1)).toBe(false);
 });
 
 it("reports a loopback-only refusal instead of pretending the switch happened", async () => {
-  const { picked, posts } = mount({ post: () => Response.json({ error: "loopback only" }, { status: 403 }) });
+  const { picked, applied, opened, posts } = mount({ post: () => Response.json({ error: "loopback only" }, { status: 403 }) });
   await screen.findByText("gpt-5.1");
 
   fireEvent.click(screen.getByRole("button", { name: "gpt-5.1" }));
@@ -73,4 +84,7 @@ it("reports a loopback-only refusal instead of pretending the switch happened", 
   expect(screen.getByRole("alert").textContent).toContain("loopback only");
   expect(picked).toEqual([]);
   expect(posts).toHaveLength(1);
+  // 失败时面板留在原地：原因要看得见，也能马上重试。
+  expect(applied).toEqual([]);
+  expect(opened).not.toContain(false);
 });

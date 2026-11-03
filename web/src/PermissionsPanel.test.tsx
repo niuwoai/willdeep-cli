@@ -9,6 +9,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function mount(props: { override?: WorkspaceAccess | null; workspaceAccess?: WorkspaceAccess } = {}) {
   const saved: WorkspaceAccess[] = [];
+  const applied: string[] = [];
+  const opened: boolean[] = [];
   const requests: { url: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     requests.push({ url, body: JSON.parse(String(init?.body)) });
@@ -21,15 +23,16 @@ function mount(props: { override?: WorkspaceAccess | null; workspaceAccess?: Wor
     override={props.override ?? null}
     workspaceAccess={props.workspaceAccess ?? "smart"}
     open={false}
-    onOpenChange={vi.fn()}
+    onOpenChange={(open) => { opened.push(open); }}
     onSaved={(mode) => { saved.push(mode); }}
+    onApplied={(text) => { applied.push(text); }}
   />);
-  return { ...view, saved, requests };
+  return { ...view, saved, applied, opened, requests };
 }
 
 describe("permissions panel", () => {
   it("shows the effective mode and applies a plain switch", async () => {
-    const { container, saved, requests } = mount();
+    const { container, saved, applied, opened, requests } = mount();
     expect(container.textContent).toContain("跟随工作区");
     // 还没改草稿时应用按钮没有意义。
     const apply = screen.getByRole("button", { name: "应用" });
@@ -42,6 +45,10 @@ describe("permissions panel", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].url).toBe("/api/sessions/s-1/approval-mode");
     expect(requests[0].body).toEqual({ approval_mode: "strict", confirm: false });
+    // 应用成功就收起面板，成功提示交给宿主常驻几秒。
+    // 初始渲染时 details 自己也会触发一次 toggle(true)，所以只看最后一次。
+    expect(applied).toEqual(["已切换到严格，下一轮生效"]);
+    expect(opened.at(-1)).toBe(false);
   });
 
   it("refuses to raise full access until the operator acknowledges it", async () => {
@@ -71,15 +78,21 @@ describe("permissions panel", () => {
 
   it("explains that a non-loopback page cannot write settings", async () => {
     const saved: WorkspaceAccess[] = [];
+    const applied: string[] = [];
+    const opened: boolean[] = [];
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "loopback only" }, { status: 403 })));
     render(<PermissionsPanel
       sessionId="s-1" language="zh-CN" messages={messages["zh-CN"]} override={null} workspaceAccess="smart"
-      open onOpenChange={vi.fn()} onSaved={(mode) => { saved.push(mode); }}
+      open onOpenChange={(open) => { opened.push(open); }} onSaved={(mode) => { saved.push(mode); }}
+      onApplied={(text) => { applied.push(text); }}
     />);
     fireEvent.click(screen.getByRole("radio", { name: /^严格/ }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("只有在本机回环地址");
     expect(saved).toEqual([]);
+    // 失败不收起面板，也不报成功。
+    expect(applied).toEqual([]);
+    expect(opened).not.toContain(false);
   });
 });

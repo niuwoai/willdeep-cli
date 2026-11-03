@@ -86,6 +86,9 @@
 .goal-mode-control input.goal-mode-input { min-width: 0; max-width: 420px; flex: 1 1 220px; background: var(--bg-raised); border-color: var(--border); color: var(--text); }
 .goal-mode-control input.goal-mode-input:focus { border-color: var(--accent-dim); box-shadow: 0 0 0 1px var(--accent-dim); }
 .request-error { flex: 0 0 auto; margin-top: 10px; padding: 10px 12px; border-inline-start: 3px solid var(--danger-text); border-radius: 7px; background: var(--bg-page); color: var(--danger-text); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+/* 模型 / 审批档位选完后的短暂确认。面板同时收起，所以提示挂在输入框正上方，
+   而不是留在已经关掉的面板里。 */
+.selection-notice { flex: 0 0 auto; margin-bottom: 8px; padding: 6px 10px; border-radius: 7px; background: var(--bg-page); color: var(--success); font-size: 12px; line-height: 1.6; }
 .runtime-failure-details { margin-top: 5px; color: var(--text-dim); }
 .runtime-failure-details > summary { width: fit-content; cursor: pointer; color: var(--text); }
 .runtime-failure-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
