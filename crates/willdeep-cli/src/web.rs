@@ -1447,7 +1447,7 @@ async fn session_detail(
         response_style: session.response_style,
         approval_mode: runtime_session
             .as_ref()
-            .and_then(|candidate| candidate.approval_mode.clone())
+            .and_then(|candidate| candidate.approval_mode)
             .map(crate::daemon::WorkspaceAccess::wire_name),
         workspace_access: workspace.access.wire_name(),
         model: runtime_session
