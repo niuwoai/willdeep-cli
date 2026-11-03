@@ -14,6 +14,20 @@ pub(super) async fn run_runtime_turn_inner(
         .await
         .map_err(|error| WebError::internal(error.to_string()))?;
     let store = SessionStore::new(&state.home);
+    // 第一条消息之前选的模型与档案从这里带进来；会话已经存在时它们不生效，
+    // 以 `/model` 那条路为准——那里改完会立刻告诉 Runtime。
+    let requested_model = input
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let requested_profile = input
+        .provider_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let mut session = if let Some(raw_id) = input.session_id.as_deref() {
         let id = uuid::Uuid::parse_str(raw_id)
             .map_err(|_| WebError::bad_request("session_id must be a UUID"))?;
@@ -34,10 +48,25 @@ pub(super) async fn run_runtime_turn_inner(
             }
             saved
         } else {
-            let mut session = Session::new(workspace.clone(), profile.clone(), input.prompt.trim());
+            let session_profile = requested_profile.clone().or(profile.clone());
+            let mut session = Session::new(
+                workspace.clone(),
+                session_profile.clone(),
+                input.prompt.trim(),
+            );
             if let Some(id) = id {
                 session.id = id;
             }
+            // 没选就当场把默认模型写下来：不让「空模型」一路漂到 Provider 那一层
+            // 才变成一句「model is required」，界面上也能显示这一轮到底用谁。
+            session.model = requested_model.clone().or_else(|| {
+                crate::model_routing::load(&state.config_path, state.profile.as_deref())
+                    .ok()
+                    .and_then(|settings| {
+                        resolve_default_model(&settings, session_profile.as_deref())
+                    })
+                    .map(|(_, model)| model)
+            });
             session
         }
     };
@@ -59,6 +88,9 @@ pub(super) async fn run_runtime_turn_inner(
     }
     let language = Language::parse(input.language.as_deref()).unwrap_or(state_language(&state));
     let session_profile = session.profile.clone().or(profile);
+    let session_model = session.model.clone();
+    let requested_access = input.approval_mode;
+    let approval_writable = state.settings_writable;
     let prompt = input.prompt.trim().to_owned();
     // 领养会话与提交都可能撞上旧 Runtime 的排空闸门；两步一起重来，
     // 领养本身幂等，不会多建会话。
@@ -71,6 +103,9 @@ pub(super) async fn run_runtime_turn_inner(
             let workspace = workspace.clone();
             let session_id = session.id;
             let session_profile = session_profile.clone();
+            // 会话上写着哪个模型就按哪个跑。空着交给配置默认只适用于旧会话，
+            // 新会话在上面的创建分支里已经把默认模型写下来了。
+            let session_model = session_model.clone();
             let prompt = prompt.clone();
             let attachments = input.attachments.clone();
 
@@ -79,10 +114,59 @@ pub(super) async fn run_runtime_turn_inner(
                     &home,
                     session_id,
                     &workspace,
-                    session_profile,
-                    None,
+                    session_profile.clone(),
+                    session_model.clone(),
                 )
                 .await?;
+                // `ensure` 对已经存在的 Runtime 会话只回原样，不看这次带的内容。
+                // 会话文件里有模型而 Runtime 那边还空着（先改模型后领养、或者重试
+                // 打到了上一次建好的会话）时，得显式补一次，否则这一轮又按默认模型跑。
+                // 这里不判断「是不是本来就一样」：写一次是幂等的，比多读一份状态稳。
+                if let Some(model) = session_model.as_deref() {
+                    match session_profile.as_deref() {
+                        Some(profile) => {
+                            crate::daemon::update_remote_session_provider(
+                                &home,
+                                remote_session.id,
+                                profile,
+                                model,
+                            )
+                            .await?;
+                        }
+                        None => {
+                            crate::daemon::update_remote_session_model(
+                                &home,
+                                remote_session.id,
+                                model.to_owned(),
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                // 档位要在提交之前落地：这一轮的第一个工具调用就按它判。
+                if let Some(access) = requested_access
+                    && approval_writable
+                {
+                    crate::daemon::update_remote_session_approval_mode(
+                        &home,
+                        session_id,
+                        access.approval_mode(),
+                    )
+                    .await?;
+                    // 与 `/api/sessions/{id}/approval-mode` 同口径留一条审计。
+                    crate::harness::record_approval_trace(
+                        &home.join("approvals.jsonl"),
+                        Some(session_id),
+                        &willdeep_core::tools::ApprovalTrace {
+                            command: access.wire_name().to_owned(),
+                            source: willdeep_core::tools::ApprovalSource::ModeChange,
+                            detail: format!(
+                                "operator chose approval mode {} for a new Web session",
+                                access.wire_name()
+                            ),
+                        },
+                    );
+                }
                 let turn = crate::daemon::submit_runtime_turn_with_id(
                     &home,
                     remote_session.id,

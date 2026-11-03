@@ -8,18 +8,21 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Cpu, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { modelText } from "./modelMessages";
-import { changeModel, loadModels, ModelFailure, type ModelOption } from "./modelApi";
+import { changeModel, loadDefaultModel, loadModels, ModelFailure, type ModelOption } from "./modelApi";
 import { useInspectorDismiss } from "./useInspectorDismiss";
 import "./permissionsPanel.css";
 
 export function ModelPicker({ sessionId, language, current, open, onOpenChange, onPicked, onApplied }: {
-  sessionId: string;
+  /// 还没有会话时为空：这时列表照常能看，选中的结果由调用方带进第一条消息，
+  /// 不在这里对服务端下手——一条谁都没开的会话不该为了选个模型就被建出来。
+  sessionId?: string | null;
   language: Language;
-  /// 会话当前的模型名；`null` 表示跟随 Provider 默认。
+  /// 会话当前的模型名；`null` 表示还没选，按 Provider 默认走。
   current: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onPicked: (model: string) => void;
+  /// 选中的模型与它的 Provider 档案；会话已存在时服务端已经切好了。
+  onPicked: (model: string, providerId: string) => void;
   /// 切换成功后调用：弹窗会被收起，成功提示交给常驻的宿主显示，
   /// 否则提示跟着面板一起消失，看起来像没反应。
   onApplied?: (message: string) => void;
@@ -27,8 +30,14 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
   const t = modelText(language);
   const panel = useInspectorDismiss();
   const models = useQuery({ queryKey: ["models"], queryFn: ({ signal }) => loadModels(signal), enabled: open });
+  // 没选过模型时也要说清楚这一轮到底会用谁，而不是留一个空按钮让人猜。
+  const defaults = useQuery({ queryKey: ["models", "default"], queryFn: ({ signal }) => loadDefaultModel(signal), enabled: open || !current });
   const [pending, setPending] = useState("");
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const fallback = defaults.data?.model?.model ?? null;
+  // 远程页面改不了模型：把选择器置灰并写明原因，别让用户选完才知道。
+  const locked = defaults.data?.writable === false;
+  const shown = current ?? fallback ?? t.title;
 
   useEffect(() => {
     const node = panel.current;
@@ -42,8 +51,9 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
     setPending(`${option.provider_id}:${option.model}`);
     setNotice(null);
     try {
-      await changeModel(sessionId, option.model, option.provider_id);
-      onPicked(option.model);
+      // 有会话才写服务端；没有的话这一选只是草稿，跟着第一条消息一起交出去。
+      if (sessionId) await changeModel(sessionId, option.model, option.provider_id);
+      onPicked(option.model, option.provider_id);
       const text = t.applied.replace("{model}", option.model);
       // 成功就收起面板：模型名已经写进工具栏的按钮里，再挂着反而挡住对话。
       // 失败时保持在面板里，用户要能看到原因并重试。
@@ -69,12 +79,15 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
 
   return <aside className="conversation-permissions">
     <details ref={panel} className="conversation-disclosure" onToggle={(event) => onOpenChange(event.currentTarget.open)}>
-      <summary aria-label={`${t.title}${current ? ` · ${current}` : ""}`} title={t.title}>
-        <Cpu size={16} /><span>{current ?? t.title}</span><ChevronDown size={13} />
+      <summary aria-label={`${t.title} · ${shown}`} title={`${t.title} · ${shown}`}>
+        <Cpu size={16} /><span>{shown}</span><ChevronDown size={13} />
       </summary>
       <div className="conversation-inspector permissions-inspector model-inspector">
         <div className="inspector-heading">
-          <div><h2>{t.title}</h2><p>{current ?? t.followDefault} · {t.subtitle}</p></div>
+          <div>
+            <h2>{t.title}</h2>
+            <p>{locked ? t.notWritable : `${current ? current : fallback ? t.defaultModel.replace("{model}", fallback) : t.followDefault} · ${t.subtitle}`}</p>
+          </div>
           <div className="inspector-controls">
             <button className="inspector-icon" type="button" aria-label={t.close} title={t.close} onClick={() => onOpenChange(false)}><X size={16} /></button>
           </div>
@@ -94,18 +107,20 @@ export function ModelPicker({ sessionId, language, current, open, onOpenChange, 
             <h3 className="model-group-title">{providerId}<small>{options[0]?.provider}</small></h3>
             {options.map((option) => {
               const active = current === option.model;
+              const isDefault = !current && fallback === option.model;
               const busy = pending === `${option.provider_id}:${option.model}`;
               return (
                 <button
                   key={`${option.provider_id}:${option.model}`}
                   type="button"
-                  className={`permissions-option${active ? " selected" : ""}`}
-                  disabled={Boolean(pending)}
-                  aria-pressed={active}
+                  className={`permissions-option${active || isDefault ? " selected" : ""}`}
+                  disabled={Boolean(pending) || locked}
+                  aria-pressed={active || isDefault}
                   onClick={() => void pick(option)}
                 >
-                  <span className="model-option-mark" aria-hidden="true">{active ? <Check size={13} /> : null}</span>
+                  <span className="model-option-mark" aria-hidden="true">{active || isDefault ? <Check size={13} /> : null}</span>
                   <strong>{option.model}</strong>
+                  {isDefault && <small>{t.defaultLabel}</small>}
                   {busy && <small>{t.applying}</small>}
                 </button>
               );

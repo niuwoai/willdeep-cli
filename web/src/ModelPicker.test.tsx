@@ -16,8 +16,13 @@ const OPTIONS = [
   { provider_id: "backup", provider: "备用网关", model: "claude-sonnet-5-5" },
 ];
 
-function mount(over: { current?: string | null; post?: (url: string, init?: RequestInit) => Response } = {}) {
-  const picked: string[] = [];
+function mount(over: {
+  current?: string | null;
+  sessionId?: string | null;
+  default?: { model: { provider_id: string; provider: string; model: string } | null; writable: boolean };
+  post?: (url: string, init?: RequestInit) => Response;
+} = {}) {
+  const picked: { model: string; providerId: string }[] = [];
   const applied: string[] = [];
   const opened: boolean[] = [];
   const posts: { url: string; body: unknown }[] = [];
@@ -26,15 +31,18 @@ function mount(over: { current?: string | null; post?: (url: string, init?: Requ
       posts.push({ url, body: JSON.parse(String(init.body)) });
       return over.post ? over.post(url, init) : Response.json({});
     }
+    if (url === "/api/models/default") {
+      return Response.json(over.default ?? { model: null, writable: true });
+    }
     return Response.json(OPTIONS);
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(<QueryClientProvider client={client}>
     <ChakraProvider value={defaultSystem}>
       <ModelPicker
-        sessionId="s-1" language="zh-CN" current={over.current ?? null} open
+        sessionId={over.sessionId === undefined ? "s-1" : over.sessionId} language="zh-CN" current={over.current ?? null} open
         onOpenChange={(open) => { opened.push(open); }}
-        onPicked={(model) => { picked.push(model); }}
+        onPicked={(model, providerId) => { picked.push({ model, providerId }); }}
         onApplied={(text) => { applied.push(text); }}
       />
     </ChakraProvider>
@@ -61,7 +69,7 @@ it("switches the session to the picked provider and model", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "claude-sonnet-5-5" }));
 
-  await waitFor(() => expect(picked).toEqual(["claude-sonnet-5-5"]));
+  await waitFor(() => expect(picked).toEqual([{ model: "claude-sonnet-5-5", providerId: "backup" }]));
   expect(posts).toHaveLength(1);
   expect(posts[0].url).toBe("/api/sessions/s-1/model");
   // Provider 一起下发：同名模型在不同网关下可能是两回事。
@@ -87,4 +95,32 @@ it("reports a loopback-only refusal instead of pretending the switch happened", 
   // 失败时面板留在原地：原因要看得见，也能马上重试。
   expect(applied).toEqual([]);
   expect(opened).not.toContain(false);
+});
+
+it("keeps the pick as a draft when the session does not exist yet", async () => {
+  // 新会话还没有 id：选中只记在本地，随第一条消息一起交给服务端。
+  // 不能为了选个模型先建一条空会话，那会在历史里留下一屏没人用过的条目。
+  const { picked, applied, opened, posts } = mount({ sessionId: null });
+  await screen.findByText("gpt-5.1");
+
+  fireEvent.click(screen.getByRole("button", { name: "gpt-5.1-mini" }));
+
+  await waitFor(() => expect(picked).toEqual([{ model: "gpt-5.1-mini", providerId: "main" }]));
+  expect(posts).toHaveLength(0);
+  expect(applied).toEqual(["已切换到 gpt-5.1-mini"]);
+  expect(opened.at(-1)).toBe(false);
+});
+
+it("shows which model the first turn will use before any session exists", async () => {
+  const { container } = mount({ sessionId: null, default: { model: { provider_id: "main", provider: "OpenAI 兼容网关", model: "gpt-5.1" }, writable: true } });
+  // 按钮上直接写模型名，而不是留一句「选择模型」让人猜这一轮会跑什么。
+  await waitFor(() => expect(container.querySelector("summary")?.textContent).toContain("gpt-5.1"));
+  expect(screen.getByText(/默认 gpt-5\.1/)).toBeTruthy();
+});
+
+it("disables the options when the page cannot change models", async () => {
+  mount({ sessionId: null, default: { model: null, writable: false } });
+  await screen.findByText("gpt-5.1");
+  await waitFor(() => expect((screen.getByRole("button", { name: "gpt-5.1" }) as HTMLButtonElement).disabled).toBe(true));
+  expect(screen.getByText(t.notWritable)).toBeTruthy();
 });

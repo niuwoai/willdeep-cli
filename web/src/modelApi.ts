@@ -20,6 +20,17 @@ export async function loadModels(signal?: AbortSignal): Promise<ModelOption[]> {
   return await response.json() as ModelOption[];
 }
 
+/// 还没建会话时这一轮会用哪个模型。服务端按 Web 所用的 Provider 档案解析，
+/// 与 `/api/models` 列的是同一份配置。`writable` 说的是这个页面能不能改：
+/// 只有回环监听可以，远程页面据它把选择器置灰，而不是等发出去才报 403。
+export type DefaultModel = { model: ModelOption | null; writable: boolean };
+
+export async function loadDefaultModel(signal?: AbortSignal): Promise<DefaultModel> {
+  const response = await fetch("/api/models/default", { signal });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as DefaultModel;
+}
+
 /// `providerId` 为空时只换模型名，Provider 保持会话当前的。
 export async function changeModel(sessionId: string, model: string, providerId?: string): Promise<void> {
   const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/model`, {

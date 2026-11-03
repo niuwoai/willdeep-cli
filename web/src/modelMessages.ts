@@ -16,6 +16,8 @@ const zh = {
   current: "当前",
   usage: "用法：/model 打开选择器，或 /model 模型名 直接切换。",
   followDefault: "跟随 Provider 默认",
+  defaultModel: "默认 {model}",
+  defaultLabel: "默认",
   pluginBlocked: "模型只能由你亲手切换：插件页面不能替这条会话换模型。",
 };
 
@@ -34,6 +36,8 @@ const en: typeof zh = {
   current: "Current",
   usage: "Usage: /model opens the picker, or /model <name> switches directly.",
   followDefault: "Provider default",
+  defaultModel: "Default {model}",
+  defaultLabel: "Default",
   pluginBlocked: "Only you can switch the model; a plugin page cannot do it for this session.",
 };
 
@@ -52,6 +56,8 @@ const ja: typeof zh = {
   current: "現在",
   usage: "使い方：/model で選択画面、/model モデル名 で直接切り替え。",
   followDefault: "Provider の既定",
+  defaultModel: "既定 {model}",
+  defaultLabel: "既定",
   pluginBlocked: "モデルの切り替えは本人のみ可能です。プラグイン画面からは変更できません。",
 };
 

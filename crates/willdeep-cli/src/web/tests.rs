@@ -1113,3 +1113,72 @@ fn session_approval_mode_refuses_read_only_and_unconfirmed_full_access() {
         Ok(())
     );
 }
+
+/// 新会话默认模型的取法与选择器列的是同一份配置：Web 服务指定了 Profile 就用它，
+/// 没指定就用默认 Provider；两者都没有模型时宁可返回空，也不猜一个。
+#[test]
+fn the_default_model_follows_the_web_profile_then_the_default_provider() {
+    use crate::model_routing::{ModelProviderOption, ModelRoutingSettings};
+
+    let settings = |default: &str, override_profile: Option<&str>| ModelRoutingSettings {
+        revision: "r1".to_owned(),
+        default_provider: default.to_owned(),
+        active_provider_override: override_profile.map(str::to_owned),
+        root_model: "root-model".to_owned(),
+        small_model_routing: true,
+        auto_dispatch_read_only: true,
+        max_deep_calls_per_harness: 1,
+        providers: vec![
+            ModelProviderOption {
+                id: "main".to_owned(),
+                provider: "some-im".to_owned(),
+                model: "glm-5".to_owned(),
+            },
+            ModelProviderOption {
+                id: "review".to_owned(),
+                provider: "some-im".to_owned(),
+                model: "deepseek-v4-flash".to_owned(),
+            },
+            ModelProviderOption {
+                id: "empty".to_owned(),
+                provider: "openai-compatible".to_owned(),
+                model: String::new(),
+            },
+        ],
+        profiles: Vec::new(),
+        tiers: Vec::new(),
+    };
+
+    // 没指定 Profile：用默认 Provider 的模型。
+    assert_eq!(
+        resolve_default_model(&settings("main", None), None),
+        Some(("main".to_owned(), "glm-5".to_owned()))
+    );
+    // Web 以另一个 Profile 启动：跟它走，而不是默认 Provider。
+    assert_eq!(
+        resolve_default_model(&settings("main", Some("review")), None),
+        Some(("review".to_owned(), "deepseek-v4-flash".to_owned()))
+    );
+    // 工作区显式指定的 Profile 优先于启动参数。
+    assert_eq!(
+        resolve_default_model(&settings("main", Some("review")), Some("main")),
+        Some(("main".to_owned(), "glm-5".to_owned()))
+    );
+    // 选中的档案没写模型：不拿空串冒充模型，交给上层回落。
+    assert_eq!(
+        resolve_default_model(&settings("main", None), Some("empty")),
+        None
+    );
+}
+
+/// 模型名与 Provider 名要在进会话之前挡掉脏值，否则它们会一路写进档案。
+#[test]
+fn model_and_provider_names_are_validated_before_they_reach_the_session() {
+    assert!(validate_model_name("glm-5").is_ok());
+    assert!(validate_model_name("  ").is_err());
+    assert!(validate_model_name(&"x".repeat(257)).is_err());
+    assert!(validate_model_name("a\nb").is_err());
+    assert!(validate_provider_id("some-im").is_ok());
+    assert!(validate_provider_id("").is_err());
+    assert!(validate_provider_id("a\u{0}b").is_err());
+}

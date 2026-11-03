@@ -8,7 +8,8 @@ import type { Language, Messages } from "./i18n";
 import "./permissionsPanel.css";
 
 export function PermissionsPanel({ sessionId, language, messages, override, workspaceAccess, open, onOpenChange, onSaved, onApplied }: {
-  sessionId: string;
+  /// 还没有会话时为空：这一选只是草稿，由调用方带进第一条消息。
+  sessionId?: string | null;
   language: Language;
   messages: Messages;
   /** 会话里选过的档位；`null` 表示跟随工作区策略。 */
@@ -50,7 +51,9 @@ export function PermissionsPanel({ sessionId, language, messages, override, work
     if (needsAcknowledgement || pending || readOnlyWorkspace || unchanged) return;
     setPending(true); setFailure(null); setNotice(null);
     try {
-      await changeApprovalMode(sessionId, draft);
+      // 有会话就当场生效；没有会话时这一档跟着第一条消息一起交出去，
+      // 不必为了选个档位先把空会话建出来。
+      if (sessionId) await changeApprovalMode(sessionId, draft);
       onSaved(draft);
       setAcknowledged(false);
       const text = t.saved.replace("{mode}", accessLabel(draft, messages));

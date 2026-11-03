@@ -26,7 +26,7 @@ import { ModelPicker } from "./ModelPicker";
 import { SharePanel } from "./SharePanel";
 import { changeApprovalMode } from "./approvalModeApi";
 import { changeModel, ModelFailure as ModelSwitchFailure } from "./modelApi";
-import { accessLabel, type WorkspaceAccess } from "./accessModes";
+import { accessLabel, isDangerousAccess, type WorkspaceAccess } from "./accessModes";
 import { permissionsText } from "./permissionsMessages";
 import { modelText } from "./modelMessages";
 import { scheduleText } from "./scheduleMessages";
@@ -344,6 +344,9 @@ export function App() {
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   // 会话当前模型（`None` 表示跟随 Provider 默认）与 `/model` 选择器的开合。
   const [sessionModel, setSessionModel] = useState<string | null>(null);
+  // 还没建会话时先选好的模型。它不是会话上的设置，只是第一条消息的草稿：
+  // 发出去时随请求一起交给服务端，建会话时一次写进去。
+  const [draftModel, setDraftModel] = useState<{ model: string; providerId: string } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   // 分享面板同理：工具栏一个按钮，开合状态留在 App 里，换会话时收起来。
   const [shareOpen, setShareOpen] = useState(false);
@@ -603,6 +606,7 @@ export function App() {
     setPermissionsOpen(false);
     // 模型同理：会话没了，当前模型也就没有归属。
     setSessionModel(null);
+    setDraftModel(null);
     setModelOpen(false);
     setShareOpen(false);
     setGoal("");
@@ -743,6 +747,8 @@ export function App() {
     setApprovalMode(detail.approval_mode ?? null);
     setWorkspacePolicy(detail.workspace_access);
     setSessionModel(detail.model ?? null);
+    // 会话已经存在，草稿里的选择要么已经被采纳，要么不再相关。
+    setDraftModel(null);
     conciseLineRef.current = null;
     setSessionId(detail.id);
     pendingGoalPreference.current = null;
@@ -1374,7 +1380,16 @@ export function App() {
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
     const outgoingAttachments = sendAttachments;
     const outgoingPrompt = prompt;
-    const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments.map(attachmentPayload) };
+    // 新会话第一条消息顺便把开局选好的模型与档位带上：会话是这条消息建的，
+    // 不带上它们就只能等建好之后再补一次，中间那一轮已经按默认跑掉了。
+    const draftChoices = sessionId ? {} : {
+      model: draftModel?.model ?? null,
+      provider_id: draftModel?.providerId ?? null,
+      approval_mode: approvalMode,
+      // 升到完全访问要在请求里显式确认；面板上的勾选就是那次确认。
+      approval_confirm: approvalMode ? isDangerousAccess(approvalMode) : false,
+    };
+    const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), ...draftChoices };
     const fingerprint = JSON.stringify(payload);
     if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
     const requestBody = JSON.stringify({ ...payload, request_id: draftSendRequest.current?.id });
@@ -1560,7 +1575,7 @@ export function App() {
                   <span className="project-name">{project.name}</span>
                   <span className="project-count">{matched.length}</span>
                 </button>
-                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => { setWorkspace(project.path); localStorage.removeItem(`${lastSessionPrefix}${project.path}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setModelOpen(false); setShareOpen(false); }}><SfIcon name="sf:plus.circle" size={13} /></button>
+                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => { setWorkspace(project.path); localStorage.removeItem(`${lastSessionPrefix}${project.path}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setDraftModel(null); setModelOpen(false); setShareOpen(false); }}><SfIcon name="sf:plus.circle" size={13} /></button>
               </div>
               {open && <VStack align="stretch" gap="1" className="project-sessions">
                 {rows.map((entry) => sessionRow(entry.session, entry.depth))}
@@ -1726,8 +1741,9 @@ export function App() {
       </Box>
       <div className="composer-control-row">
         <div className="composer-control-items">
-          {sessionId && <ModelPicker key={`model-${sessionId}`} sessionId={sessionId} language={language} current={sessionModel} open={modelOpen} onOpenChange={setModelOpen} onPicked={setSessionModel} onApplied={showSelectionNotice} />}
-          {sessionId && <PermissionsPanel key={`permissions-${sessionId}`} sessionId={sessionId} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />}
+          {/* 还没建会话也要能选：这两个面板在没有会话时只存草稿，跟着第一条消息一起交出去。 */}
+          <ModelPicker key={`model-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionModel : draftModel?.model ?? null} open={modelOpen} onOpenChange={setModelOpen} onPicked={(model, providerId) => { setSessionModel(model); if (!sessionId) setDraftModel({ model, providerId }); }} onApplied={showSelectionNotice} />
+          <PermissionsPanel key={`permissions-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open && sessionId) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />
         </div>
         <div className="goal-mode-control">
           <label className="goal-mode-toggle">

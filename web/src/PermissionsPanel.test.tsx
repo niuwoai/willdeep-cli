@@ -7,7 +7,7 @@ import type { WorkspaceAccess } from "./accessModes";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(props: { override?: WorkspaceAccess | null; workspaceAccess?: WorkspaceAccess } = {}) {
+function mount(props: { override?: WorkspaceAccess | null; workspaceAccess?: WorkspaceAccess; sessionId?: string | null } = {}) {
   const saved: WorkspaceAccess[] = [];
   const applied: string[] = [];
   const opened: boolean[] = [];
@@ -17,7 +17,7 @@ function mount(props: { override?: WorkspaceAccess | null; workspaceAccess?: Wor
     return Response.json({});
   }));
   const view = render(<PermissionsPanel
-    sessionId="s-1"
+    sessionId={props.sessionId === undefined ? "s-1" : props.sessionId}
     language="zh-CN"
     messages={messages["zh-CN"]}
     override={props.override ?? null}
@@ -94,5 +94,18 @@ describe("permissions panel", () => {
     // 失败不收起面板，也不报成功。
     expect(applied).toEqual([]);
     expect(opened).not.toContain(false);
+  });
+
+  it("keeps the choice in the draft when the session does not exist yet", async () => {
+    // 新会话还没发第一条消息时，档位只能先记在本地：为此建一条空会话只会在
+    // 历史里留一屏没人用过的条目。
+    const { saved, applied, opened, requests } = mount({ sessionId: null, workspaceAccess: "workspace_write" });
+    fireEvent.click(screen.getByRole("radio", { name: /^严格/ }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    await waitFor(() => expect(saved).toEqual(["strict"]));
+    expect(requests).toHaveLength(0);
+    expect(applied).toEqual(["已切换到严格，下一轮生效"]);
+    expect(opened.at(-1)).toBe(false);
   });
 });

@@ -126,6 +126,18 @@ struct ChatRequest {
     language: Option<String>,
     #[serde(default)]
     attachments: Vec<MessageAttachment>,
+    /// 第一条消息之前就能选的模型与 Provider 档案。会话还不存在时由这里带过来，
+    /// 建会话时一并写进会话；已经有会话时以 `/model` 那条路为准，不在这里改。
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    provider_id: Option<String>,
+    /// 同理：新会话开局就选好的审批档位。已有会话用 `/permissions`。
+    #[serde(default)]
+    approval_mode: Option<crate::daemon::WorkspaceAccess>,
+    /// 升到完全访问要在请求里显式确认，规则与 `/api/sessions/{id}/approval-mode` 相同。
+    #[serde(default)]
+    approval_confirm: bool,
     /// 先入队、以后再发。只有队列端点认它；聊天流忽略它，避免一条普通消息被暂缓。
     #[serde(default)]
     defer_until_released: bool,
@@ -554,6 +566,7 @@ async fn serve_internal(
         )
         .route("/api/sessions/{id}/model", post(set_session_model))
         .route("/api/models", get(list_models))
+        .route("/api/models/default", get(default_model))
         .route("/api/sessions/{id}/steer", post(steer_session))
         .route("/api/sessions/{id}/fork", post(fork_session))
         .route("/api/sessions/{id}/rewind-points", get(rewind_points))
@@ -1653,6 +1666,86 @@ async fn list_models(
     ))
 }
 
+/// 模型名与 Provider 档案名的形状校验。与 `/api/sessions/{id}/model` 同一条规则：
+/// 空串、超长、带控制字符的一律拒绝，别让它们顺着建会话写进档案。
+fn validate_model_name(model: &str) -> Result<(), WebError> {
+    let model = model.trim();
+    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+        return Err(WebError::bad_request("model name is not valid"));
+    }
+    Ok(())
+}
+
+fn validate_provider_id(provider: &str) -> Result<(), WebError> {
+    let provider = provider.trim();
+    if provider.is_empty() || provider.len() > 128 || provider.chars().any(char::is_control) {
+        return Err(WebError::bad_request("provider id is not valid"));
+    }
+    Ok(())
+}
+
+/// 还没建会话时要显示的默认模型：取这条 Web 服务所用档案里的 `model`，
+/// 没有就退回根 Provider 的模型。与选择器列的是同一份配置，不另起一套口径。
+#[derive(Serialize)]
+struct DefaultModel {
+    /// 首轮会用的模型；配置里一个都没有时为 `None`。
+    model: Option<ModelOption>,
+    /// 本页面能不能改模型与档位（只有回环监听可以）。新会话的选择器据此
+    /// 决定是可选还是只读，而不是等用户点完再报 403。
+    writable: bool,
+}
+
+async fn default_model(State(state): State<Arc<WebState>>) -> Result<Json<DefaultModel>, WebError> {
+    let settings = crate::model_routing::load(&state.config_path, state.profile.as_deref())
+        .map_err(WebError::from_anyhow)?;
+    let preferred = state
+        .profile
+        .clone()
+        .or(settings.active_provider_override.clone())
+        .unwrap_or_else(|| settings.default_provider.clone());
+    let picked = settings
+        .providers
+        .iter()
+        .find(|option| option.id == preferred)
+        .or_else(|| {
+            settings
+                .providers
+                .iter()
+                .find(|option| option.id == settings.default_provider)
+        });
+    Ok(Json(DefaultModel {
+        model: picked.map(|option| ModelOption {
+            provider_id: option.id.clone(),
+            provider: option.provider.clone(),
+            model: option.model.clone(),
+        }),
+        writable: state.settings_writable,
+    }))
+}
+
+/// 新会话没选模型时该用哪个。与 [`default_model`] 同一套取法，只是这里要在
+/// 建会话之前把名字定下来，写进会话里。
+pub(super) fn resolve_default_model(
+    settings: &crate::model_routing::ModelRoutingSettings,
+    profile: Option<&str>,
+) -> Option<(String, String)> {
+    let preferred = profile
+        .map(str::to_owned)
+        .or(settings.active_provider_override.clone())
+        .unwrap_or_else(|| settings.default_provider.clone());
+    let option = settings
+        .providers
+        .iter()
+        .find(|option| option.id == preferred)
+        .or_else(|| {
+            settings
+                .providers
+                .iter()
+                .find(|option| option.id == settings.default_provider)
+        })?;
+    (!option.model.trim().is_empty()).then(|| (option.id.clone(), option.model.clone()))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModelRequest {
@@ -1934,6 +2027,40 @@ async fn chat_stream(
     Json(input): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, WebError> {
     let workspace = validate_chat(&state, &input).await?;
+    // 第一条消息带过来的模型、档案与档位：与 `/model`、`/permissions` 走同一道门。
+    // 远程 Web 没有应用层鉴权，「能把页面打开」不该等于「能替这台机器换模型或
+    // 长期免审」。被拒时直接回 403，别让用户以为选上了、其实首轮还按默认跑。
+    let carries_choices =
+        input.model.is_some() || input.provider_id.is_some() || input.approval_mode.is_some();
+    if carries_choices && !state.settings_writable {
+        return Err(WebError::forbidden(
+            "choosing a model or approval mode from the browser is only available when the \
+             Web server listens on a loopback address; run `/model` in the TUI instead",
+        ));
+    }
+    if let Some(model) = input.model.as_deref() {
+        validate_model_name(model)?;
+    }
+    if let Some(provider) = input.provider_id.as_deref() {
+        validate_provider_id(provider)?;
+    }
+    // 新会话开局就选的档位在提交之前校验：档位一旦进了 Runtime 就会改变接下来
+    // 每一次工具调用的判定，不能等消息发出去再回头说「这个档位不行」。
+    if let Some(requested) = input.approval_mode {
+        check_session_approval_mode(workspace.access, requested, input.approval_confirm).map_err(
+            |rejection| match rejection {
+                ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
+                    WebError::bad_request("read_only is a workspace policy, not a session mode")
+                }
+                ApprovalModeRejection::ReadOnlyWorkspace => WebError::conflict(
+                    "this workspace is read-only; the session mode cannot override it",
+                ),
+                ApprovalModeRejection::FullAccessNeedsConfirmation => {
+                    WebError::bad_request("switching to full_access requires \"confirm\": true")
+                }
+            },
+        )?;
+    }
     let profile = workspace
         .provider_profile
         .clone()
