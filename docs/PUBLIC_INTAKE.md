@@ -122,6 +122,8 @@ prompt = "这是 GitHub 发来的一条 webhook。请判断是否需要处理，
 
 `public_url` 写访客最终访问的地址（含协议），分享、站点和表单链接都以它为准。只填 origin，不带路径、查询、片段或凭据；前面的反向代理把域名转到 `listen`。不写时按实际监听地址拼链接，只适合本机自己打开。
 
+配置工作台（willdeep-config 插件）可以编辑 `enabled`、`listen`、`public_url` 三个标量，并在保存前校验格式；站点、表单和 webhook 的数组表请在 Web 的「公网入口」页维护。两组入口写的是同一段 `[intake]`，保存后重新打开另一边即可看到最新值。
+
 ## 不做的事
 
 - 不在 willdeep 里终止 TLS，不管证书。HTTPS 交给前面的反向代理，不管它是 sslcat 还是 nginx-proxy。

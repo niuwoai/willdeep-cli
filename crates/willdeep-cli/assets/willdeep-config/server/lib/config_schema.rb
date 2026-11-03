@@ -4,10 +4,16 @@
 # unknownKeys，页面只读展示、不改不删，避免这个插件猜错了键名就把用户配置搞坏。
 #
 # default 只在宿主已明确约定默认值时提供，其余为 nil，页面显示未设置。
+require "ipaddr"
+
 module ConfigSchema
   TYPES = %w[string int float bool stringArray secret enum].freeze
 
   SECRET_NEVER_REVEAL = "仅供插件页面显示已保存的密钥，Agent 不要调用"
+
+  # 与 willdeep-cli 的 CONFIG_VERSION 同一口径：解析器只认这一个值，
+  # 写别的整数会让 `config check` 和配置加载直接失败。
+  KNOWN_CONFIG_VERSION = 1
 
   ROOT = "".freeze
 
@@ -64,7 +70,9 @@ module ConfigSchema
     {
       id: "root", section: ROOT, title: "常规", description: "全局默认值",
       fields: [
-        { key: "version", label: "配置版本", type: "int", default: nil },
+        { key: "version", label: "配置版本", type: "int", default: nil,
+          options: [KNOWN_CONFIG_VERSION], optionLabels: { KNOWN_CONFIG_VERSION => KNOWN_CONFIG_VERSION.to_s },
+          description: "配置文件格式版本，运行时只认 1；写别的值会让整份配置加载失败，不写按 1 处理" },
         { key: "default_provider", label: "默认提供商", type: "string", default: nil, ref: "providers",
           description: "对应 [providers.<id>] 里的 id" },
         { key: "default_model", label: "默认模型", type: "string", default: nil, virtual: true,
@@ -84,6 +92,8 @@ module ConfigSchema
         { key: "input_suggestion_color", label: "输入建议颜色", type: "enum", default: "gray",
           options: INPUT_SUGGESTION_COLORS.map { |m| m[:id] }, optionLabels: labels_of(INPUT_SUGGESTION_COLORS),
           description: "模型给出的输入建议文字颜色；支持终端 16 色名称" },
+        { key: "copy_on_select", label: "拖选后自动复制", type: "bool", default: true,
+          description: "在聊天区拖选文字，松手就写进剪贴板；关掉之后仍可用 Ctrl+C 或 y 手动复制。只想看不想覆盖剪贴板时关掉它" },
         { key: "input_suggestion_italic", label: "输入建议斜体", type: "bool", default: false },
         { key: "input_suggestion_underline", label: "输入建议下划线", type: "bool", default: false }
       ]
@@ -144,6 +154,18 @@ module ConfigSchema
         { key: "webhook_url", label: "Webhook 地址", type: "string", default: "" },
         { key: "webhook_on_task_completed", label: "任务完成时通知", type: "bool", default: nil },
         { key: "webhook_on_attention_required", label: "需要关注时通知", type: "bool", default: nil }
+      ]
+    },
+    {
+      id: "intake", section: "intake", title: "公网入口",
+      description: "站点、表单与 webhook 的对外监听；这几组数组表在 Web 的「公网入口」页维护，这里只改三个标量。",
+      fields: [
+        { key: "enabled", label: "启用公网入口", type: "bool", default: false,
+          description: "开启后按监听地址提供站点、表单和 webhook；实例联邦已启用时不能关，否则整份配置加载失败" },
+        { key: "listen", label: "监听地址", type: "string", default: "127.0.0.1:9857", format: "socket_addr",
+          description: "必须是 IP:PORT（如 127.0.0.1:9857、[::1]:9857），不能写 localhost；前面用反向代理按域名转发到这个端口" },
+        { key: "public_url", label: "访客访问地址", type: "string", default: "", format: "intake_origin",
+          description: "访客实际打开的 http(s) origin，如 https://intake.example.com；不能带路径、查询、片段或账号密码，留空时按监听地址拼" }
       ]
     }
   ].freeze
@@ -393,6 +415,10 @@ module ConfigSchema
       case field[:type]
       when "int"
         return ["期望整数，得到 #{value.class}"] unless value.is_a?(Integer)
+        # 有的整数键只有一组已知取值（配置版本就是），页面上是下拉框，
+        # 但直接调工具也要拦，否则能写进运行时拒绝的值。
+        allowed = field[:options]
+        return ["取值必须是 #{allowed.inspect} 之一，得到 #{value}"] if allowed && !allowed.include?(value)
         # min/max 是 schema 对运行时校验区间的声明：缺了它，页面能存下任意整数，
         # 下一次任务加载才报错。
         low = field[:min]
@@ -408,8 +434,16 @@ module ConfigSchema
         (value == true || value == false) ? [] : ["期望布尔值，得到 #{value.class}"]
       when "string", "secret"
         return ["期望字符串，得到 #{value.class}"] unless value.is_a?(String)
-        return [] unless field[:type] == "secret"
-        value.strip.empty? ? ["密钥不能为空字符串（要清空请用 unset）"] : []
+        return ["密钥不能为空字符串（要清空请用 unset）"] if field[:type] == "secret" && value.strip.empty?
+        # 有些字符串字段的格式是运行时硬校验的：写错了整份配置都加载不了。
+        # schema 只标 format，校验口径与 Rust 端保持一致。
+        case field[:format]
+        when "socket_addr"
+          return ["必须是 IP:PORT（如 127.0.0.1:9857、[::1]:9857），得到 #{value.inspect}"] unless valid_socket_addr?(value)
+        when "intake_origin"
+          return ["必须是 http(s) origin，不带路径、查询或账号密码，得到 #{value.inspect}"] unless valid_intake_origin?(value)
+        end
+        []
       when "enum"
         (field[:options] || []).include?(value) ? [] : ["取值必须是 #{field[:options].inspect} 之一"]
       when "stringArray"
@@ -419,6 +453,53 @@ module ConfigSchema
       else
         []
       end
+    end
+
+    # 与 Rust 的 SocketAddr::from_str 同口径：数字 IP 加端口，不接受 localhost
+    # 这类主机名。IPv6 必须写成 [addr]:port。
+    def valid_socket_addr?(value)
+      text = value.to_s
+      host, port =
+        if (m = text.match(/\A\[([^\[\]]+)\]:(\d+)\z/))
+          [m[1], m[2]]
+        elsif (m = text.match(/\A([^:\[\]]+):(\d+)\z/))
+          [m[1], m[2]]
+        end
+      return false if host.nil? || port.to_i > 65_535
+      # IPAddr 会顺手接受 CIDR 和带 zone 的写法，Rust 的 SocketAddr 不认。
+      return false if host.match?(%r{[/%\s]})
+      ip_literal?(host)
+    end
+
+    # 与 Rust 的 check_intake_public_url 同口径：空串合法；非空必须是 http(s)
+    # origin。放行大小写、单个尾部斜杠、显式端口和国际化域名；路径、查询、
+    # 片段、凭据与空白一律拒绝。
+    def valid_intake_origin?(value)
+      trimmed = value.to_s.strip
+      return true if trimmed.empty?
+      m = trimmed.match(/\Ahttps?:\/\/(.*)\z/i)
+      return false if m.nil?
+      authority = m[1]
+      authority = authority[0...-1] if authority.end_with?("/")
+      return false if authority.empty? || authority.include?("@")
+      return false if authority.match?(%r{[/\\?#]})
+      return false if authority.each_char.any? { |ch| ch.match?(/[[:space:][:cntrl:]]/) }
+      if authority.start_with?("[")
+        ipv6 = authority.match(/\A\[([^\[\]]+)\](?::(\d+))?\z/)
+        return false if ipv6.nil? || ipv6[2].to_i > 65_535
+        return ip_literal?(ipv6[1])
+      end
+      port = authority[/:(\d+)\z/, 1]
+      return false if port && port.to_i > 65_535
+      host = authority.sub(/:\d+\z/, "")
+      !host.empty? && !host.include?(":")
+    end
+
+    def ip_literal?(host)
+      IPAddr.new(host)
+      true
+    rescue IPAddr::Error, ArgumentError
+      false
     end
   end
 end

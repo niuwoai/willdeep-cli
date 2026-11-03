@@ -48,6 +48,7 @@ mod activity;
 mod agent_commands;
 mod agent_worktree_ui;
 mod attachment_panel;
+mod banner;
 mod command_catalog;
 mod composer_attention;
 mod confirmation_example;

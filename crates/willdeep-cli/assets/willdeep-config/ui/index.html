@@ -552,11 +552,16 @@ const I18N_SCHEMA_EN = {
   'ui.check_updates': ['Check for CLI updates in the background', 'Check public releases infrequently, notify once per version when idle; never install automatically.'],
   'ui.mode': ['UI mode', 'Full UI is the default. Compact UI stays compact while typing, clicking or idle.'],
   'ui.compact_status_line': ['Show bottom information line in Compact UI', 'Show status, focus, context, tokens, cache, elapsed time and shortcuts on the last row.'],
+  'ui.copy_on_select': ['Copy text on selection', 'Dragging over chat text writes it to the clipboard when you release. Turn it off if you only want to look without replacing what is already in the clipboard; Ctrl+C and y still copy.'],
   'section.root': ['General', 'Global defaults'],
   'section.agent': ['Agent', 'Turn limits, approval and dispatch'],
   'section.local_model': ['Local model', 'How to reach a local inference server'],
   'section.skills': ['Skills', 'Where skills are searched'],
   'section.notifications': ['Notifications', 'Sounds and webhook notifications'],
+  'section.intake': ['Public intake', 'Sites, forms and webhooks on the public listener. The array tables are edited on the Web Public intake page; this card only holds the three scalars.'],
+  'intake.enabled': ['Enable the intake listener', 'Serves sites, forms and webhooks on the listen address. It cannot be turned off while instance federation is enabled, or the whole configuration fails to load.'],
+  'intake.listen': ['Listen address', 'Must be IP:PORT, for example 127.0.0.1:9857 or [::1]:9857; hostnames such as localhost are rejected. A reverse proxy forwards a domain to this port.'],
+  'intake.public_url': ['Visitor-facing URL', 'The http(s) origin visitors open, for example https://intake.example.com. No path, query, fragment or credentials; leave empty to build links from the listen address.'],
   'section.providers': ['Model providers', 'Each [providers.<id>] is one provider'],
   'section.mcp_servers': ['MCP servers', 'Each [mcp_servers.<name>] is an external MCP server'],
   'section.subagents': ['Subagents', 'Each [subagents.<profile>] overrides that role’s defaults'],
@@ -564,7 +569,7 @@ const I18N_SCHEMA_EN = {
   'worker_tiers.model': ['Model', 'The model for this tier. Standard is unbound by default and uses each role’s own model; setting one overrides that choice'],
   'worker_tiers.context_window': ['Context window', '4000 to 1048576. Defaults: standard 131072, advanced and expert 262144'],
   'worker_tiers.provider_profile': ['Provider', 'Use another [providers.<id>] instead; otherwise this tier keeps the current provider’s endpoint and credentials'],
-  'root.version': ['Config version'],
+  'root.version': ['Config version', 'Format version of the file. The runtime only accepts 1; any other value fails to load, and leaving it unset means 1.'],
   'root.default_provider': ['Default provider', 'The id of a [providers.<id>] section'],
   'root.default_model': ['Default model', 'The model the default provider actually uses; saved as that provider’s model'],
   'agent.max_turns': ['Max turns', '1 to 1000; otherwise the built-in default'],
@@ -1180,6 +1185,14 @@ function renderControl(sec, field, ek, id, disabled) {
     const val = cur == null ? '' : String(cur);
     const opts = [{ value: '', label: unsetLabel }].concat(field.options.map(o => ({ value: o, label: optionLabel(field, o) })));
     if (val && field.options.indexOf(val) < 0) opts.push({ value: val, label: t('value.unknownOption', { value: val }) });
+    return renderSelect(id, disabled, opts, val);
+  }
+  if (type === 'int' && Array.isArray(field.options)) {
+    // 只有一组已知取值的整数键（如配置版本）：给下拉，别让人手填一个运行时不要的数
+    const val = cur == null ? '' : String(cur);
+    const known = field.options.map(o => String(o));
+    const opts = [{ value: '', label: unsetLabel }].concat(field.options.map(o => ({ value: String(o), label: optionLabel(field, o) })));
+    if (val && known.indexOf(val) < 0) opts.push({ value: val, label: t('value.unknownOption', { value: val }) });
     return renderSelect(id, disabled, opts, val);
   }
   if (type === 'stringArray') {

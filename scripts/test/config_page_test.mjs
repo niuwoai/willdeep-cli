@@ -52,6 +52,14 @@ const html = renderControl({ name: 'providers.magpie', groupID: 'providers', fie
 check('chips show the labels', html.includes('>32K<') && html.includes('>1M<'));
 check('chips carry the exact values', html.includes('data-value="32768"') && html.includes('data-value="1048576"'));
 
+const versionField = { type: 'int', key: 'version', hasValue: false, value: null, options: [1], optionLabels: { 1: '1' } };
+const versionHtml = renderControl({ name: '', groupID: 'root', fields: [] }, versionField, 'version', 'idv', '');
+check('a known-values int renders as a select', versionHtml.indexOf('<select') >= 0);
+check('the known value is offered', versionHtml.indexOf('value="1"') >= 0);
+commitValue('', 'version', 'int', '1', { present: false, value: null, secret: false }, versionField);
+const versionEdit = edits.get('\u0000version');
+check('the picked version is committed as an integer', versionEdit && versionEdit.value === 1);
+
 const row = document.createElement('div');
 row.className = 'row';
 row.setAttribute('data-section', 'providers.magpie');

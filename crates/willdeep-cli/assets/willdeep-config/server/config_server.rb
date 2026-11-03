@@ -30,7 +30,7 @@ require "rule_library"
 module WilldeepConfig
   PROTOCOL_VERSION = "2025-06-18"
   SERVER_NAME = "config"
-  SERVER_VERSION = "0.6.0-rc4"
+  SERVER_VERSION = "0.6.0-rc5"
   MASK = "••••"
   ABSENT = :__absent__
   OCTAL_FILE_MODE = 0o600
@@ -345,16 +345,20 @@ module WilldeepConfig
       return invalid_edits_result(bad) unless bad.empty?
 
       changes = []
+      rendered = nil
       begin
         normalized.each { |edit| changes << apply_edit(doc, edit) }
-        diff = doc.diff
+        rendered = doc.render
       rescue ConfigDoc::RenderError => e
         return Json.error("render_failed", e.message)
+      end
+      if (error = intake_dependency_error(normalized, rendered))
+        return Json.error("invalid_edits", error)
       end
 
       Json.obj(
         ["ok", true], ["valid", true], ["path", path],
-        ["diff", masked_diff(text, doc.render)], ["changes", changes], ["warnings", []]
+        ["diff", masked_diff(text, rendered)], ["changes", changes], ["warnings", []]
       )
     end
 
@@ -398,6 +402,9 @@ module WilldeepConfig
         rendered = doc.render
       rescue ConfigDoc::RenderError => e
         return Json.error("render_failed", e.message)
+      end
+      if (error = intake_dependency_error(normalized, rendered))
+        return Json.error("invalid_edits", error)
       end
 
       diff = masked_diff(text, rendered)
@@ -667,6 +674,31 @@ module WilldeepConfig
       end
       return nil if ConfigSchema.static_groups.any? { |g| g[:section] == section }
       "schema 未收录节 #{section}，拒绝写入（未知内容不会被本插件改动）"
+    end
+
+    # 实例联邦挂在入口监听上：Rust 每次加载配置都会校验
+    # [federation] enabled → [intake] enabled 且 public_url 非空。页面只在本次
+    # 改动碰到这两个键时拦一次，避免写出一个下次启动就加载失败的组合。
+    def intake_dependency_error(edits, rendered)
+      touches = edits.any? do |edit|
+        edit[:op] != :remove_section && edit[:section] == "intake" &&
+          %w[enabled public_url].include?(edit[:key])
+      end
+      return nil unless touches
+      root = TomlLite.parse_document(rendered)[:root]
+      federation = root["federation"]
+      return nil unless federation.is_a?(Hash) && federation["enabled"] == true
+      intake = root["intake"]
+      intake = {} unless intake.is_a?(Hash)
+      unless intake["enabled"] == true
+        return "实例联邦已启用（[federation] enabled = true），关掉 [intake] enabled 会让整份配置无法加载"
+      end
+      if intake["public_url"].to_s.strip.empty?
+        return "实例联邦已启用（[federation] enabled = true），[intake] public_url 不能为空"
+      end
+      nil
+    rescue TomlLite::ParseError
+      nil
     end
 
     def validate_overrides(overrides)

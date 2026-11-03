@@ -238,11 +238,13 @@ pub(super) fn colored_transcript(
         } else {
             Style::default().fg(Color::Yellow)
         };
-        lines.extend(
-            value
-                .lines()
-                .map(|line| Line::styled(line.to_owned(), style)),
-        );
+        // 首屏吉祥物是夹在一条多行记录里的，所以要逐行认，不能只看整条记录的开头。
+        // 文本本身不变：复制、搜索拿到的还是屏幕上这些字（窄屏会画小号，行数不变）。
+        lines.extend(value.lines().map(|line| {
+            banner::styled_line(line, width)
+                .or_else(|| banner::styled_name_line(line))
+                .unwrap_or_else(|| Line::styled(line.to_owned(), style))
+        }));
         // 用户消息后面留一行空白，问答之间才分得开。分隔线本身已经是浅色，
         // 紧贴着上一轮输出画，不再额外空一行。
         if value.starts_with("You:") {
@@ -1130,7 +1132,14 @@ pub(super) fn cache_hit_rate(usage: &willdeep_core::types::Usage) -> Option<f64>
     Some(cached as f64 / input as f64 * 100.0)
 }
 
-const WILLDEEP_BANNER: &str = "█   █ █████ █     █     ████  █████ █████ ████\n█   █   █   █     █     █   █ █     █     █   █\n█ █ █   █   █     █     █   █ ████  ████  ████\n██ ██   █   █     █     █   █ █     █     █\n█   █ █████ █████ █████ ████  █████ █████ █";
+/// 首屏：吉祥物 + 产品名与版本。版本取自 crate，跟着发版走。
+fn welcome_header() -> String {
+    let art = banner::art_rows().join("\n");
+    format!(
+        "{art}\n\n{}\n",
+        banner::name_line(concat!("v", env!("CARGO_PKG_VERSION")))
+    )
+}
 
 pub(super) fn welcome_message(
     workspace: &std::path::Path,
@@ -1142,15 +1151,16 @@ pub(super) fn welcome_message(
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or(language.text("当前工作区", "current workspace", "現在のワークスペース"));
+    let header = welcome_header();
     match language {
         Language::ZhCn => format!(
-            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
+            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
         ),
         Language::En => format!(
-            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
+            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
         ),
         Language::Ja => format!(
-            "{WILLDEEP_BANNER}\n\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
+            "{header}\nSession: {session_id}\nContinue: willdeep -s {session_id}\n\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
     }
 }

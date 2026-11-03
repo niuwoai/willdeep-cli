@@ -215,6 +215,118 @@ Dir.mktmpdir("willdeep-config-test") do |dir|
   ensure
     ENV.delete("WD_HOME")
   end
+
+  check(failures, "the config version only accepts the value the runtime knows") do
+    target = File.join(dir, "version.toml")
+    File.write(target, "version = 1\n")
+    snapshot = box.call("config.snapshot", { "path" => target })
+    version = snapshot["sections"].find { |item| item["name"] == "" }["fields"].find { |field| field["key"] == "version" }
+    assert_equal([1], version["options"], "version options")
+    %w[2 0 -1 999].each do |value|
+      result = box.call("config.apply", {
+        "path" => target, "confirm" => true,
+        "edits" => [{ "op" => "set", "section" => "", "key" => "version", "value" => value.to_i }]
+      })
+      raise "version = #{value} was accepted" if result["ok"]
+    end
+    raise "a refused edit was written" unless File.read(target) == "version = 1\n"
+    accepted = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "", "key" => "version", "value" => 1 }]
+    })
+    raise "version = 1 was refused: #{accepted['message']}" unless accepted["ok"]
+  end
+
+  check(failures, "intake is a known editable section") do
+    with_intake = File.join(dir, "intake.toml")
+    File.write(with_intake, SAMPLE + "\n[intake]\nenabled = true\nlisten = \"127.0.0.1:9857\"\n")
+    snapshot = box.call("config.snapshot", { "path" => with_intake })
+    assert_equal([], snapshot["unknownKeys"], "intake is not unknown")
+    section = snapshot["sections"].find { |item| item["name"] == "intake" }
+    raise "no intake section" unless section
+    assert_equal("static", section["kind"], "intake kind")
+    assert_equal(true, section["editable"], "intake editable")
+    assert_equal(%w[enabled listen public_url], section["fields"].map { |field| field["key"] }, "intake fields")
+    listen = section["fields"].find { |field| field["key"] == "listen" }
+    assert_equal("127.0.0.1:9857", listen["value"], "listen value")
+
+    absent = box.call("config.snapshot", args)
+    default_card = absent["sections"].find { |item| item["name"] == "intake" }
+    enabled = default_card["fields"].find { |field| field["key"] == "enabled" }
+    assert_equal(false, enabled["value"], "enabled default")
+  end
+
+  check(failures, "intake listen and public_url are validated before writing") do
+    target = File.join(dir, "intake-format.toml")
+    File.write(target, SAMPLE)
+    before = File.read(target)
+    [
+      ["listen", "localhost:9857"],
+      ["listen", "127.0.0.1"],
+      ["public_url", "example.com"],
+      ["public_url", "https://example.com/intake"],
+      ["public_url", "https://user@example.com"]
+    ].each do |key, value|
+      result = box.call("config.apply", {
+        "path" => target, "confirm" => true,
+        "edits" => [{ "op" => "set", "section" => "intake", "key" => key, "value" => value }]
+      })
+      raise "#{key}=#{value.inspect} was accepted" if result["ok"]
+    end
+    raise "a refused edit was written" unless File.read(target) == before
+
+    [["listen", "0.0.0.0:9857"], ["listen", "[::1]:9857"], ["public_url", ""],
+     ["public_url", "https://例子.测试"], ["public_url", "https://intake.example.com/"]].each do |key, value|
+      result = box.call("config.apply", {
+        "path" => target, "confirm" => true,
+        "edits" => [{ "op" => "set", "section" => "intake", "key" => key, "value" => value }]
+      })
+      raise "#{key}=#{value.inspect} was refused: #{result['message']}" unless result["ok"]
+    end
+  end
+
+  check(failures, "federation keeps intake enabled with a public URL") do
+    target = File.join(dir, "intake-federation.toml")
+    File.write(target, SAMPLE + "\n[federation]\nenabled = true\nworkspace = \"/tmp\"\n" \
+                                "\n[intake]\nenabled = true\npublic_url = \"https://intake.example.com\"\n")
+    before = File.read(target)
+    disabled = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "intake", "key" => "enabled", "value" => false }]
+    })
+    raise "disabling intake under federation was accepted" if disabled["ok"]
+    raise "the refused edit was written" unless File.read(target) == before
+
+    cleared = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "unset", "section" => "intake", "key" => "public_url" }]
+    })
+    raise "clearing public_url under federation was accepted" if cleared["ok"]
+
+    unrelated = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "notifications", "key" => "sound", "value" => "off" }]
+    })
+    raise "an unrelated edit was refused: #{unrelated['message']}" unless unrelated["ok"]
+  end
+
+  check(failures, "intake array tables stay read-only") do
+    target = File.join(dir, "intake-sites.toml")
+    File.write(target, SAMPLE + "\n[intake]\nenabled = true\n\n[[intake.sites]]\nslug = \"docs\"\nroot = \"/srv/docs\"\n")
+    snapshot = box.call("config.snapshot", { "path" => target })
+    sites = snapshot["sections"].find { |item| item["name"] == "intake.sites" }
+    raise "intake.sites should stay visible" unless sites
+    assert_equal("unknown", sites["kind"], "intake.sites kind")
+    assert_equal(false, sites["editable"], "intake.sites editable")
+
+    applied = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "intake", "key" => "public_url", "value" => "https://intake.example.com" }]
+    })
+    raise "apply failed: #{applied['message']}" unless applied["ok"]
+    text = File.read(target)
+    raise "sites were dropped" unless text.include?("[[intake.sites]]") && text.include?('slug = "docs"')
+  end
 end
 
 if failures.empty?

@@ -2380,6 +2380,75 @@ fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     assert!(app.chat_selection.is_none());
 }
 
+/// 首屏是一整条多行记录：只在「整条记录开头」认吉祥物会全部落空，
+/// 这里按行核对，顺带保证产品名那一行用的是强调色而不是默认黄色。
+#[test]
+fn the_welcome_banner_is_drawn_row_by_row_with_colour() {
+    let welcome = welcome_message(
+        std::path::Path::new("/tmp/willdeep-rs"),
+        uuid::Uuid::nil(),
+        Language::En,
+    );
+    let text = colored_transcript(&[welcome], None, 120, Language::En);
+    let rows = text_rows(&text);
+
+    for art_row in super::super::banner::art_rows() {
+        let index = rows
+            .iter()
+            .position(|row| row == art_row)
+            .unwrap_or_else(|| panic!("mascot row missing from the transcript: {art_row:?}"));
+        let colours: Vec<_> = text.lines[index]
+            .spans
+            .iter()
+            .filter_map(|span| span.style.fg)
+            .collect();
+        assert!(
+            !colours.is_empty(),
+            "mascot row {index} lost its colours and fell back to one style"
+        );
+    }
+
+    let name_index = rows
+        .iter()
+        .position(|row| row.starts_with(super::super::banner::NAME))
+        .expect("the product name line");
+    assert!(
+        text.lines[name_index]
+            .spans
+            .iter()
+            .any(|span| span.style.fg == Some(Color::Cyan)),
+        "the product name should keep its accent colour"
+    );
+}
+
+#[test]
+fn releasing_the_mouse_offers_the_selection_for_copy_when_enabled() {
+    let mut app = App::new(vec!["hello world".to_owned()], Language::En);
+    app.transcript_rows = vec!["hello world".to_owned()];
+    app.chat_selection = Some(ChatSelection {
+        anchor: ChatSelectionPoint { row: 0, column: 0 },
+        head: ChatSelectionPoint { row: 0, column: 5 },
+    });
+
+    // 默认开着：松手就该有东西可复制，不用再按一次键。
+    // 选区终点按列包含（见 ordered_range），所以拖到第 5 列会带上后面的空格。
+    assert!(app.ui.copy_on_select);
+    assert_eq!(app.selection_copy_text().as_deref(), Some("hello "));
+
+    // 有人拖选只是看看，不想顶掉剪贴板里的东西。
+    app.ui.copy_on_select = false;
+    assert!(app.selection_copy_text().is_none());
+
+    // 空选区不复制空串（比如拖在一行空白上）。
+    app.ui.copy_on_select = true;
+    app.transcript_rows.push(String::new());
+    app.chat_selection = Some(ChatSelection {
+        anchor: ChatSelectionPoint { row: 1, column: 0 },
+        head: ChatSelectionPoint { row: 1, column: 0 },
+    });
+    assert!(app.selection_copy_text().is_none());
+}
+
 #[test]
 fn typing_in_selection_mode_releases_it_and_moves_focus_to_the_prompt() {
     let mut app = App::new(Vec::new(), Language::En);

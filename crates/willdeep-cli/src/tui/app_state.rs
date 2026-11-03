@@ -2075,18 +2075,27 @@ impl App {
                 {
                     selection.head = point;
                 }
-                // 松手不再自动写剪贴板。拖一下看看就把刚复制好的网址顶掉，
-                // 之后贴进去的是上一条回复，谁也想不到——复制要人明确按键。
-                let chars = self.selected_chat_text().chars().count();
-                self.notice = Some(
-                    self.language
-                        .text(
-                            "已选中 {n} 字 · Ctrl+C 或 y 复制 · q 引用 · Esc 取消",
-                            "{n} chars selected · Ctrl+C or y copies · q quotes · Esc cancels",
-                            "{n} 文字を選択 · Ctrl+C か y でコピー · q で引用 · Esc で解除",
-                        )
-                        .replace("{n}", &chars.to_string()),
-                );
+                // 拖完松手就复制（Claude Code 的手感），不用再按键。有人只是拖一下
+                // 看看，不想把剪贴板里已经复制的网址顶掉——那是 `[ui] copy_on_select
+                // = false` 的事；默认开，是因为「选完还要记着按 Ctrl+C」更容易忘。
+                match self.selection_copy_text() {
+                    Some(value) => {
+                        let chars = value.chars().count();
+                        self.write_selection_to_clipboard(&value, chars);
+                    }
+                    None => {
+                        let chars = self.selected_chat_text().chars().count();
+                        self.notice = Some(
+                            self.language
+                                .text(
+                                    "已选中 {n} 字 · Ctrl+C 或 y 复制 · q 引用 · Esc 取消",
+                                    "{n} chars selected · Ctrl+C or y copies · q quotes · Esc cancels",
+                                    "{n} 文字を選択 · Ctrl+C か y でコピー · q で引用 · Esc で解除",
+                                )
+                                .replace("{n}", &chars.to_string()),
+                        );
+                    }
+                }
                 true
             }
             MouseEventKind::ScrollUp if self.selection_mode => {
@@ -2138,6 +2147,45 @@ impl App {
         selected_text(&self.transcript_rows, start, end)
     }
 
+    /// 松手时该不该自动复制、复制什么。关掉 `copy_on_select` 或选区为空都返回 `None`，
+    /// 调用方退回到「已选中 N 字」的提示，Ctrl+C / y 仍然可用。
+    pub(super) fn selection_copy_text(&self) -> Option<String> {
+        if !self.ui.copy_on_select {
+            return None;
+        }
+        let value = self.selected_chat_text();
+        (!value.is_empty()).then_some(value)
+    }
+
+    /// 写剪贴板并把结果说清楚：失败时保留错误原因，不假装复制成功。
+    fn write_selection_to_clipboard(&mut self, value: &str, chars: usize) {
+        match arboard::Clipboard::new()
+            .and_then(|mut clipboard| clipboard.set_text(value.to_owned()))
+        {
+            Ok(()) => {
+                self.notice = Some(
+                    self.language
+                        .text(
+                            "已复制 {n} 字到剪贴板 · q 引用 · Esc 取消",
+                            "Copied {n} chars to clipboard · q quotes · Esc cancels",
+                            "{n} 文字をクリップボードにコピー · q で引用 · Esc で解除",
+                        )
+                        .replace("{n}", &chars.to_string()),
+                );
+            }
+            Err(error) => {
+                self.notice = Some(format!(
+                    "{}: {error}",
+                    self.language.text(
+                        "复制到剪贴板失败",
+                        "Copy to clipboard failed",
+                        "クリップボードへのコピーに失敗"
+                    )
+                ));
+            }
+        }
+    }
+
     pub(super) fn copy_chat_selection(&mut self) {
         let value = self.selected_chat_text();
         if value.is_empty() {
@@ -2152,29 +2200,8 @@ impl App {
             );
             return;
         }
-        match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(value)) {
-            Ok(()) => {
-                self.notice = Some(
-                    self.language
-                        .text(
-                            "已复制所选文字",
-                            "Selected text copied",
-                            "選択した文字をコピーしました",
-                        )
-                        .to_owned(),
-                );
-            }
-            Err(error) => {
-                self.notice = Some(format!(
-                    "{}: {error}",
-                    self.language.text(
-                        "复制到剪贴板失败",
-                        "Copy to clipboard failed",
-                        "クリップボードへのコピーに失敗"
-                    )
-                ));
-            }
-        }
+        let chars = value.chars().count();
+        self.write_selection_to_clipboard(&value, chars);
     }
 
     pub(super) fn quote_chat_selection(&mut self) {

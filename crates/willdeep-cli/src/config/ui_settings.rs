@@ -68,6 +68,8 @@ pub struct UiSettings {
     pub input_suggestion_color: InputSuggestionColor,
     pub input_suggestion_italic: bool,
     pub input_suggestion_underline: bool,
+    /// 聊天气泡里拖完松手就写剪贴板。关掉之后仍可用 Ctrl+C / y 手动复制。
+    pub copy_on_select: bool,
 }
 
 impl Default for UiSettings {
@@ -80,6 +82,7 @@ impl Default for UiSettings {
             input_suggestion_color: InputSuggestionColor::Gray,
             input_suggestion_italic: false,
             input_suggestion_underline: false,
+            copy_on_select: true,
         }
     }
 }
