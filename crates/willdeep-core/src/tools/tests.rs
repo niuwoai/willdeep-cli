@@ -1638,9 +1638,11 @@ async fn verification_retains_start_revision_but_invalidates_changed_files() {
     let records = records.lock().unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].snapshot_id.as_deref(), Some("before"));
-    assert_eq!(records[0].status, VerificationStatus::Failed);
+    assert_eq!(records[0].observed_snapshot_id.as_deref(), Some("after"));
+    assert_eq!(records[0].status, VerificationStatus::Invalidated);
     assert_eq!(records[0].exit_code, Some(0));
     assert!(records[0].summary.contains("verification-invalidated"));
+    assert!(records[0].summary.contains("not a test failure"));
     std::fs::remove_dir_all(root).unwrap();
 }
 

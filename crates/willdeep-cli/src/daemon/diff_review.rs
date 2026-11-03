@@ -148,6 +148,8 @@ pub(crate) enum VerificationOutcome {
     Failed,
     TimedOut,
     LaunchFailed,
+    /// 退出码 0，但检查运行期间工作区变了：不是测试失败，只是不能当证据。
+    Invalidated,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -365,6 +367,7 @@ fn public_verification(
             VerificationOutcome::Failed => Target::Failed,
             VerificationOutcome::TimedOut => Target::TimedOut,
             VerificationOutcome::LaunchFailed => Target::LaunchFailed,
+            VerificationOutcome::Invalidated => Target::Invalidated,
         },
         summary: record.summary,
         created_at: record.created_at,
@@ -390,6 +393,7 @@ fn local_verification(
             Source::Failed => VerificationOutcome::Failed,
             Source::TimedOut => VerificationOutcome::TimedOut,
             Source::LaunchFailed => VerificationOutcome::LaunchFailed,
+            Source::Invalidated => VerificationOutcome::Invalidated,
         },
         summary: record.summary,
         created_at: record.created_at,
@@ -858,6 +862,7 @@ pub(crate) async fn remote_record_verification(
         willdeep_core::VerificationStatus::Failed => VerificationOutcome::Failed,
         willdeep_core::VerificationStatus::TimedOut => VerificationOutcome::TimedOut,
         willdeep_core::VerificationStatus::LaunchFailed => VerificationOutcome::LaunchFailed,
+        willdeep_core::VerificationStatus::Invalidated => VerificationOutcome::Invalidated,
     };
     let response = runtime_client(&state)?
         .record_diff_verification(
@@ -878,6 +883,9 @@ pub(crate) async fn remote_record_verification(
                     }
                     VerificationOutcome::LaunchFailed => {
                         willdeep_runtime_protocol::VerificationOutcome::LaunchFailed
+                    }
+                    VerificationOutcome::Invalidated => {
+                        willdeep_runtime_protocol::VerificationOutcome::Invalidated
                     }
                 },
                 summary: verification.summary,
@@ -1232,6 +1240,9 @@ pub(super) async fn unified_record_verification(
             }
             willdeep_runtime_protocol::VerificationOutcome::LaunchFailed => {
                 VerificationOutcome::LaunchFailed
+            }
+            willdeep_runtime_protocol::VerificationOutcome::Invalidated => {
+                VerificationOutcome::Invalidated
             }
         },
         summary: params.summary,

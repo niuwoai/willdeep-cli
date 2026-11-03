@@ -762,9 +762,9 @@ pub(crate) fn present_partial_outcome(
             "⚠ モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
         ),
         AgentStopReason::Unverified => language.text(
-            "⚠ 当前改动缺少有效的通过验证记录，任务仅部分完成。",
-            "⚠ Current changes lack valid passing verification; the task is only partially complete.",
-            "⚠ 現在の変更には有効な検証成功記録がなく、タスクは部分完了です。",
+            "⚠ 当前改动缺少有效的通过验证记录（检查未通过，或检查运行期间工作区被改动），任务仅部分完成。",
+            "⚠ Current changes lack valid passing verification (checks failed, or the workspace changed while they ran); the task is only partially complete.",
+            "⚠ 現在の変更には有効な検証成功記録がありません（チェック失敗、または実行中にワークスペースが変更）。タスクは部分完了です。",
         ),
         AgentStopReason::BudgetLimited => language.text(
             "⚠ 执行预算已用尽，目标尚未完成。以下为交接信息。",
@@ -1098,17 +1098,28 @@ pub(crate) async fn build(
         .with_verification_reporter(move |verification| {
             let home = verification_home.clone();
             let workspace = verification_workspace.clone();
-            let Some(snapshot_id) = verification.snapshot_id.clone() else {
+            let mut snapshots = Vec::new();
+            if let Some(snapshot_id) = verification.snapshot_id.clone() {
+                snapshots.push(snapshot_id);
+            }
+            // 运行期间变了快照的检查对两个快照都不是证据；结束快照那条记录让
+            // 审计面看到「这条命令是在它形成期间跑的」，而不是什么都没有。
+            if let Some(observed) = verification.observed_snapshot_id.clone() {
+                snapshots.push(observed);
+            }
+            if snapshots.is_empty() {
                 return;
-            };
+            }
             tokio::spawn(async move {
-                let _ = daemon::diff_review::remote_record_verification(
-                    &home,
-                    &workspace,
-                    snapshot_id,
-                    verification,
-                )
-                .await;
+                for snapshot_id in snapshots {
+                    let _ = daemon::diff_review::remote_record_verification(
+                        &home,
+                        &workspace,
+                        snapshot_id,
+                        verification.clone(),
+                    )
+                    .await;
+                }
             });
         })
         .with_web_tools(web_tools)

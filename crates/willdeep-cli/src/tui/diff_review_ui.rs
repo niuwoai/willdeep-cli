@@ -215,6 +215,8 @@ pub(super) fn diff_snapshot_lines(review: &DiffReviewState) -> Vec<Line<'static>
         .map(|verification| {
             let color = match verification.outcome {
                 crate::daemon::diff_review::VerificationOutcome::Passed => Color::Green,
+                // 退出码 0 但工作区在跑的过程中变了：不是失败，标黄提醒重跑。
+                crate::daemon::diff_review::VerificationOutcome::Invalidated => Color::Yellow,
                 _ => Color::Red,
             };
             Line::styled(

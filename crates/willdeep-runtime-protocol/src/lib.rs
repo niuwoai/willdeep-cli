@@ -955,6 +955,8 @@ pub enum VerificationOutcome {
     Failed,
     TimedOut,
     LaunchFailed,
+    /// 退出码 0，但检查运行期间工作区变了：结果不能当作证据，但不是测试失败。
+    Invalidated,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

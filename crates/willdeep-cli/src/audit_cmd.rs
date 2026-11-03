@@ -338,6 +338,8 @@ pub(crate) struct HumanDecisions {
 pub(crate) struct VerificationCounts {
     pub passed: usize,
     pub failed: usize,
+    /// 退出码 0，但检查运行期间工作区变了：不是失败，只是不能当证据。
+    pub invalidated: usize,
     /// 超时或没启动起来：既不是过也不是不过。
     pub other: usize,
 }
@@ -1149,6 +1151,7 @@ fn count_verification(counts: &mut VerificationCounts, status: &str) {
     match status {
         "passed" => counts.passed += 1,
         "failed" => counts.failed += 1,
+        "invalidated" => counts.invalidated += 1,
         _ => counts.other += 1,
     }
 }
@@ -1274,11 +1277,13 @@ pub(crate) fn render_markdown(report: &AuditReport, language: Language) -> Strin
         &mut out,
         t("验证命令", "Verification commands", "検証コマンド"),
         format!(
-            "{} {} · {} {} · {} {}",
+            "{} {} · {} {} · {} {} · {} {}",
             t("通过", "passed", "成功"),
             summary.verifications.passed,
             t("失败", "failed", "失敗"),
             summary.verifications.failed,
+            t("失效", "invalidated", "無効"),
+            summary.verifications.invalidated,
             t("其它", "other", "その他"),
             summary.verifications.other
         ),

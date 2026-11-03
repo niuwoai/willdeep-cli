@@ -48,6 +48,9 @@ const MAX_SUBAGENT_WRITE_TARGETS: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandVerification {
     pub snapshot_id: Option<String>,
+    /// 检查结束后复核到的快照：与起始快照不同说明这条命令运行期间工作区在变。
+    /// 证据对两个快照都不成立，但这不是测试失败。
+    pub observed_snapshot_id: Option<String>,
     pub command: String,
     pub exit_code: Option<i32>,
     pub status: VerificationStatus,
@@ -61,6 +64,10 @@ pub enum VerificationStatus {
     Failed,
     TimedOut,
     LaunchFailed,
+    /// 退出码 0，但检查运行期间工作区变了（或结束后快照读不到），因此结果不能
+    /// 当作原始文件的证据。这**不是**测试失败——另一个会话或进程可能正在写这
+    /// 个工作区，也可能是检查自己改了受版本控制的文件。
+    Invalidated,
 }
 
 type VerificationReporter = Arc<dyn Fn(CommandVerification) + Send + Sync>;
@@ -1794,7 +1801,7 @@ impl ToolRegistry {
                         let mut result =
                             run_background_shell(command.clone(), workspace, timeout, sandbox)
                                 .await;
-                        let status = verification::finish_verification(
+                        let finished = verification::finish_verification(
                             verification_snapshot.as_ref(),
                             &command,
                             &snapshot_id,
@@ -1807,9 +1814,10 @@ impl ToolRegistry {
                                 .filter(|_| accepted_verification),
                             &evidence_command,
                             result.exit_code,
-                            status,
+                            finished.status,
                             &result.output,
                             snapshot_id,
+                            finished.observed_snapshot_id,
                         );
                         result
                     }
@@ -1846,6 +1854,7 @@ impl ToolRegistry {
                     VerificationStatus::TimedOut,
                     &error.to_string(),
                     snapshot_id,
+                    None,
                 );
                 return Err(ToolError::CommandTimeout {
                     seconds: timeout,
@@ -1862,6 +1871,7 @@ impl ToolRegistry {
                     VerificationStatus::Failed,
                     &error.to_string(),
                     snapshot_id,
+                    None,
                 );
                 return Err(error.into());
             }
@@ -1872,7 +1882,7 @@ impl ToolRegistry {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let status = verification::finish_verification(
+        let finished = verification::finish_verification(
             self.verification_snapshot.as_ref(),
             &args.command,
             &snapshot_id,
@@ -1889,9 +1899,10 @@ impl ToolRegistry {
                 .filter(|_| accepted_verification),
             &evidence_command,
             output.status.code(),
-            status,
+            finished.status,
             &text,
             snapshot_id,
+            finished.observed_snapshot_id,
         );
         let mut text = truncate_bytes(text, self.command_output_limit());
         // 把「命令自己错了」和「命令被围栏拦了」分开说。不分开的话，用户看到的
