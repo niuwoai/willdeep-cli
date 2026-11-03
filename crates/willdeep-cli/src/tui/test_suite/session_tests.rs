@@ -1441,6 +1441,8 @@ fn styled_chat_wrap_and_selection_highlight_share_visual_rows() {
 fn dragging_chat_text_enters_internal_selection_mode() {
     let mut app = App::new(vec!["hello world".to_owned()], Language::En);
     app.transcript_rect = Rect::new(0, 0, 20, 6);
+    // 完整 UI 的正文矩形：边框往里一格，宽高各少两格。
+    app.transcript_content = Rect::new(1, 1, 18, 4);
     app.transcript_rows = vec!["hello world".to_owned()];
     app.transcript_render_offset = 0;
 
@@ -2352,6 +2354,8 @@ fn modal_colours_do_not_come_from_the_theme_palette() {
 fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     let mut app = App::new(vec!["hello world".to_owned()], Language::En);
     app.transcript_rect = Rect::new(0, 0, 20, 6);
+    // 完整 UI 的正文矩形：边框往里一格，宽高各少两格。
+    app.transcript_content = Rect::new(1, 1, 18, 4);
     app.transcript_rows = vec!["hello world".to_owned()];
     app.transcript_render_offset = 0;
     for (kind, column) in [

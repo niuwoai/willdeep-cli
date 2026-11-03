@@ -22,6 +22,8 @@ impl App {
             scroll_from_bottom: 0,
             follow_bottom: true,
             transcript_width: 78,
+            transcript_content: Rect::default(),
+            pending_chat_click: None,
             transcript_height: 0,
             viewport_height: 10,
             tools: ToolActivity::default(),
@@ -1998,16 +2000,24 @@ impl App {
         y: u16,
         clamp_to_viewport: bool,
     ) -> Option<ChatSelectionPoint> {
+        let content = self.transcript_content;
         if self.transcript_rows.is_empty()
+            || content.width < 1
+            || content.height < 1
             || self.transcript_rect.width < 3
             || self.transcript_rect.height < 3
         {
             return None;
         }
-        let left = self.transcript_rect.x.saturating_add(1);
-        let right = self.transcript_rect.right().saturating_sub(2);
-        let top = self.transcript_rect.y.saturating_add(1);
-        let bottom = self.transcript_rect.bottom().saturating_sub(2);
+        // 落点按「正文矩形」算，不按外框：完整 UI 有边框、简洁 UI 只有左右内边距，
+        // 两种布局正文的起点不同，拿外框加固定偏移会让整列偏一格、整行偏一行。
+        let left = content.x;
+        let right = content.right().saturating_sub(1);
+        let top = content.y;
+        let bottom = content.bottom().saturating_sub(1);
+        if top > bottom || left > right {
+            return None;
+        }
         if !clamp_to_viewport && (x < left || x > right || y < top || y > bottom) {
             return None;
         }
@@ -2042,6 +2052,7 @@ impl App {
                     anchor: point,
                     head: point,
                 });
+                self.pending_chat_click = None;
                 self.focus = FocusPane::Chat;
                 self.selection_mode
             }
@@ -2055,6 +2066,9 @@ impl App {
                 };
                 selection.head = point;
                 self.chat_selection = Some(selection);
+                // 真拖起来了：按下时记的「单击点开」作废，别在松手后又把那一行
+                // 展开一次——用户要的是选字，不是展开。
+                self.pending_chat_click = None;
                 self.selection_mode = true;
                 self.native_selection_mode = false;
                 self.focus = FocusPane::Chat;
@@ -2063,6 +2077,14 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) if self.chat_selection.is_some() => {
                 if !self.selection_mode {
                     self.chat_selection = None;
+                    // 没拖动就是一次单击：按下时先记下那一行，到松手才点开，
+                    // 这样从用户消息或工具行上起手拖选不会被点开动作打断。
+                    if let Some(y) = self.pending_chat_click.take()
+                        && !self.toggle_user_message_at(y)
+                        && !self.toggle_thought_at(y)
+                    {
+                        self.toggle_tool_row_at(y);
+                    }
                     return false;
                 }
                 if let Some(point) = self.transcript_selection_point(mouse.column, mouse.row, true)
@@ -2239,6 +2261,8 @@ impl App {
         registry: &BackgroundTaskRegistry,
         skills: &SkillCatalog,
     ) {
+        // 这一下按下还没松手：先清掉上一次的待点开，等真的没拖动再点开。
+        self.pending_chat_click = None;
         if self.search.is_some() && self.search_rect.contains((x, y).into()) {
             if let Some(search) = &mut self.search {
                 search.editor.set_cursor_visual(
@@ -2339,9 +2363,8 @@ impl App {
             }
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
-            if !self.toggle_user_message_at(y) && !self.toggle_thought_at(y) {
-                self.toggle_tool_row_at(y);
-            }
+            // 松手时才决定要不要点开：从这一行起手拖选不会被展开打断。
+            self.pending_chat_click = Some(y);
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains((x, y).into()) {

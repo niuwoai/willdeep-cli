@@ -299,6 +299,17 @@ struct App {
     transcript_width: usize,
     transcript_height: usize,
     viewport_height: usize,
+    /// 聊天区里**文字**真正占用的矩形，不含边框与内边距。
+    ///
+    /// 选区、点击都按它落点：完整 UI 有边框、简洁 UI 只有左右各一列内边距，
+    /// 两种布局的正文起点不同。以前用 `transcript_rect` 加固定的 ±1 去猜，
+    /// 简洁 UI 里每一行都会错开一行——拖选 AI 回复，复制到的是上一行。
+    transcript_content: Rect,
+    /// 聊天区按下时落在哪一行，等松手再决定要不要点开。
+    ///
+    /// 按下就展开会让「从这一行起手拖选」直接失效：展开会重排记录，选区坐标
+    /// 对不上，而用户本意只是选字。现在按下只记行号，拖了就作废，没拖才点开。
+    pending_chat_click: Option<u16>,
     tools: ToolActivity,
     tools_expanded: bool,
     activity_rect: Rect,
@@ -1451,6 +1462,13 @@ fn draw<B: ratatui::backend::Backend>(
         if lineage.is_some() {
             app.transcript_rect.height = app.transcript_rect.height.saturating_sub(1);
         }
+        // 完整 UI 的聊天区带一圈边框：正文从左上角往里一格开始，底边也少一格。
+        app.transcript_content = Rect {
+            x: app.transcript_rect.x.saturating_add(1),
+            y: app.transcript_rect.y.saturating_add(1),
+            width: app.transcript_rect.width.saturating_sub(2),
+            height: app.transcript_rect.height.saturating_sub(2),
+        };
         app.viewport_height = app.transcript_rect.height.saturating_sub(2).max(1) as usize;
         let (transient, notice) = app.prepare_transcript_frame();
         let max = app.max_scroll();

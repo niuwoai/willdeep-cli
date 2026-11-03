@@ -57,13 +57,27 @@ pub(super) fn render(
         ..areas[0]
     };
     app.transcript_width = app.transcript_rect.width.saturating_sub(2).max(1) as usize;
+    // 简洁 UI 没有边框，只有左右各一列内边距；正文从矩形左上角往里一列、第一行就
+    // 是内容。选区与点击都按这个矩形落点。
+    app.transcript_content = Rect {
+        x: app.transcript_rect.x.saturating_add(1),
+        y: app.transcript_rect.y,
+        width: app.transcript_rect.width.saturating_sub(2),
+        height: app.transcript_rect.height,
+    };
     app.viewport_height = app.transcript_rect.height.max(1) as usize;
     let (transient, notice) = app.prepare_transcript_frame();
     let max = app.max_scroll();
     app.scroll_from_bottom = app.scroll_from_bottom.min(max);
     let offset = max.saturating_sub(app.scroll_from_bottom);
-    let colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
+    let mut colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
     app.transcript_render_offset = offset;
+    // 简洁 UI 同样画出选区：拖选时没有高亮，用户根本看不出选中了哪几行，
+    // 只能靠松手后剪贴板里是不是真有字来猜。
+    if let Some(selection) = app.chat_selection {
+        let (start, end) = selection.ordered_range();
+        rendering::highlight_text_selection_at_offset(&mut colored, start, end, offset);
+    }
     app.update_user_message_hits(offset, app.transcript_rect.y);
     app.thought_hit_rows = colored
         .lines
@@ -191,6 +205,33 @@ mod tests {
         let mut app = App::new(vec!["WillDeep: retained answer".into()], Language::En);
         app.ui.mode = crate::config::UiMode::Compact;
         app
+    }
+
+    /// 模拟一次完整的单击：事件循环里按下与松手都会走选区处理，点开在松手时生效。
+    fn click_transcript(app: &mut App, x: u16, y: u16) {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            let mouse = MouseEvent {
+                kind,
+                column: x,
+                row: y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+            if app.handle_chat_selection_mouse(mouse) {
+                continue;
+            }
+            if matches!(kind, MouseEventKind::Down(_)) {
+                app.handle_mouse(
+                    x,
+                    y,
+                    &BackgroundTaskRegistry::default(),
+                    &SkillCatalog::default(),
+                );
+            }
+        }
     }
 
     fn screen(terminal: &Terminal<ratatui::backend::TestBackend>) -> String {
@@ -529,12 +570,9 @@ mod tests {
         assert_eq!(app.thought_hit_rows.len(), 1);
         let (thought_row, _) = app.thought_hit_rows[0];
 
-        app.handle_mouse(
-            app.transcript_rect.x + 2,
-            thought_row,
-            &BackgroundTaskRegistry::default(),
-            &SkillCatalog::default(),
-        );
+        // 真实的点开是「按下 → 松手」两步：按下只记下行号，松手才展开。
+        let x = app.transcript_rect.x + 2;
+        click_transcript(&mut app, x, thought_row);
         draw(
             &mut terminal,
             &mut app,
@@ -544,12 +582,9 @@ mod tests {
         .unwrap();
         assert!(screen(&terminal).contains("hidden chain of thought"));
 
-        app.handle_mouse(
-            app.transcript_rect.x + 2,
-            thought_row,
-            &BackgroundTaskRegistry::default(),
-            &SkillCatalog::default(),
-        );
+        // 真实的点开是「按下 → 松手」两步：按下只记下行号，松手才展开。
+        let x = app.transcript_rect.x + 2;
+        click_transcript(&mut app, x, thought_row);
         draw(
             &mut terminal,
             &mut app,

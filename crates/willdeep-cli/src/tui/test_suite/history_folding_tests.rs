@@ -1,5 +1,32 @@
 use super::*;
 
+/// 模拟一次真实的“按下 → 松手”：事件循环里先是选区逻辑记下落点，再交给
+/// `handle_mouse` 记下待点开的那一行，最后在松手时决定要不要点开。
+fn click(app: &mut App, x: u16, y: u16) {
+    for kind in [
+        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+    ] {
+        let mouse = crossterm::event::MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        if app.handle_chat_selection_mouse(mouse) {
+            continue;
+        }
+        if matches!(kind, crossterm::event::MouseEventKind::Down(_)) {
+            app.handle_mouse(
+                x,
+                y,
+                &BackgroundTaskRegistry::default(),
+                &SkillCatalog::default(),
+            );
+        }
+    }
+}
+
 #[test]
 fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom() {
     for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
@@ -15,12 +42,8 @@ fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom(
         )
         .unwrap();
         let row = app.user_message_hit_rows[0].0;
-        app.handle_mouse(
-            app.transcript_rect.x + 2,
-            row,
-            &BackgroundTaskRegistry::default(),
-            &SkillCatalog::default(),
-        );
+        let x = app.transcript_rect.x + 2;
+        click(&mut app, x, row);
         draw(
             &mut terminal,
             &mut app,
@@ -35,12 +58,8 @@ fn both_tui_layouts_expose_clickable_user_disclosures_without_jumping_to_bottom(
         );
         assert_eq!(app.transcript_render_offset, 0);
         let row = app.user_message_hit_rows[0].0;
-        app.handle_mouse(
-            app.transcript_rect.x + 2,
-            row,
-            &BackgroundTaskRegistry::default(),
-            &SkillCatalog::default(),
-        );
+        let x = app.transcript_rect.x + 2;
+        click(&mut app, x, row);
         draw(
             &mut terminal,
             &mut app,
@@ -284,4 +303,66 @@ fn loading_the_display_session_before_notices_keeps_both() {
             .iter()
             .any(|row| row.contains("no config file yet"))
     );
+}
+
+/// 拖选的落点必须落在**文字**所在的那一行，两种布局都要对得上。
+///
+/// 简洁 UI 没有边框（只有左右各一列内边距），完整 UI 有一圈边框。以前统一按
+/// 「外框 + 固定偏移」算，简洁 UI 里每一行都错开一行：拖选 AI 回复，松手复制到
+/// 的却是上一行（常常是空行），于是看起来像「选不中、也不复制」。
+#[test]
+fn dragging_maps_to_the_row_under_the_cursor_in_both_layouts() {
+    use ratatui::backend::TestBackend;
+    for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
+        let mut app = App::new(
+            vec![
+                "System: first line".to_owned(),
+                "System: second line".to_owned(),
+                "System: third line".to_owned(),
+            ],
+            Language::En,
+        );
+        app.ui.mode = mode;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
+
+        let content = app.transcript_content;
+        assert!(content.height >= 3, "{mode:?}: the chat area is too small");
+        assert!(
+            app.transcript_rows.len() >= 3,
+            "{mode:?}: transcript rows are missing"
+        );
+        // 画面上第 k 行正文，应该落在离可见起点第 k 行的记录上。错一行的老 bug
+        // 在这里会直接对不上。
+        let offset = app.transcript_render_offset;
+        for visible_row in 0..3u16 {
+            let point = app
+                .transcript_selection_point(content.x, content.y + visible_row, false)
+                .unwrap_or_else(|| panic!("{mode:?}: row {visible_row} is not selectable"));
+            assert_eq!(
+                point.row,
+                offset + visible_row as usize,
+                "{mode:?}: drawing row {visible_row} should map to transcript row {}",
+                offset + visible_row as usize
+            );
+        }
+        // 正文最后一列也必须可点：收紧到右边框会让最右侧一列选不中。
+        assert!(
+            app.transcript_selection_point(content.right() - 1, content.y, false)
+                .is_some(),
+            "{mode:?}: the last content column should be selectable"
+        );
+        // 正文末尾那一行同样可点：老实现把底部两行当边框排掉，最后一行选不中。
+        assert!(
+            app.transcript_selection_point(content.x, content.bottom() - 1, false)
+                .is_some(),
+            "{mode:?}: the bottom content row should be selectable"
+        );
+    }
 }
