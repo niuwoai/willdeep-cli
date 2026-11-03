@@ -250,9 +250,8 @@ impl App {
             .display_home
             .as_ref()
             .and_then(|home| crate::daemon::turn_queue::display_session(home, session).ok());
-        self.transcript = session_transcript(display.as_ref().unwrap_or(session), self.language);
+        self.load_transcript(display.as_ref().unwrap_or(session));
         self.session_id = Some(session.id);
-        self.ensure_welcome(&session.workspace, session.id, self.language);
         self.reload_message_times(session.id);
         self.archive_floor = 0;
         self.archive_old_rounds();

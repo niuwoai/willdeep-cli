@@ -100,6 +100,14 @@ impl App {
             workspace, session_id, language,
         ));
     }
+
+    /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
+    /// 只调 `session_transcript` 会漏掉首屏，daemon 的 display session 那条
+    /// 路径就是这样把欢迎语又覆盖掉的——列表非空、屏幕空白。
+    pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
+        self.transcript = super::plan_ui::session_transcript(session, self.language);
+        self.ensure_welcome(&session.workspace, session.id, self.language);
+    }
 }
 
 /// 这行是不是工具行；是的话给出它的状态标记。

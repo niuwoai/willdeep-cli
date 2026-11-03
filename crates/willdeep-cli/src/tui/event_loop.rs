@@ -437,8 +437,7 @@ pub(super) async fn event_loop(
         }
     }
 
-    let initial_transcript = session_transcript(session, language);
-    let mut app = App::new(initial_transcript, language);
+    let mut app = App::new(Vec::new(), language);
     app.load_message_times(&runtime.home, session.id);
     app.ui = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?
         .file
@@ -446,10 +445,12 @@ pub(super) async fn event_loop(
     if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
         app.ui.show_thinking = show_thinking;
     }
-    // 判断「要不要补欢迎语」看的是屏幕上有没有看得见的内容，不是列表空不空：
-    // 只有空白行、或思考行全被关掉时，列表非空但整屏空白。必须在读完 [ui] 之后
-    // 判断，否则 show_thinking 的默认值会让这个结论算错。
-    app.ensure_welcome(&session.workspace, session.id, language);
+    // 顺序有讲究：装载聊天记录是整体替换，必须排在 startup_notices 之前，
+    // 否则「首次使用 / 旧配置写法」那几条 System 提示会被覆盖掉。
+    // daemon 的 display session 带上了各代历史的正文，比磁盘上的会话更全，
+    // 有就用它。判断首屏要不要补欢迎语也在这条路径里，读 [ui] 之后才算得准。
+    let display = crate::daemon::turn_queue::display_session(&runtime.home, session).ok();
+    app.load_transcript(display.as_ref().unwrap_or(session));
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     app.transcript.extend(startup_notices(runtime, language));
     app.feedback = agent
@@ -470,9 +471,6 @@ pub(super) async fn event_loop(
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
     refresh_session_lineage(&mut app, session, store);
-    if let Ok(display) = crate::daemon::turn_queue::display_session(&runtime.home, session) {
-        app.transcript = session_transcript(&display, app.language);
-    }
     app.context_window = runtime.context_window.max(1);
     let (_update_worker, mut update_rx) =
         update_notice::spawn(runtime.home.clone(), app.ui.check_updates);

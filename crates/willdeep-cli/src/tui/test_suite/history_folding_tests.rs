@@ -263,3 +263,25 @@ fn the_welcome_screen_is_visible_in_both_layouts() {
         );
     }
 }
+
+/// 启动时装载聊天记录是整体替换，必须排在 startup notices 之前。
+/// 之前 daemon 的 display session 在 notices 之后装载，把「首次使用 / 旧配置写法」
+/// 那几条系统提示又抹掉了；这条测试把顺序钉住。
+#[test]
+fn loading_the_display_session_before_notices_keeps_both() {
+    let mut app = App::new(Vec::new(), Language::En);
+    let notices = vec!["System: no config file yet".to_owned()];
+    // 模拟 display session：只有空白行，属于「列表非空但屏幕空白」。
+    let mut display = quiet_test_session();
+    display.messages.clear();
+    app.load_transcript(&display);
+    app.transcript.extend(notices.clone());
+
+    assert!(app.has_visible_transcript());
+    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row.contains("no config file yet"))
+    );
+}
