@@ -24,6 +24,32 @@
 - Web（无头 Chrome + CDP，最终二进制）：Provider 下拉同时含 `native` 与 `magpie-cli` 且选中 `magpie-cli`，页面提交实际收到 `magpie-agent-ok`，刷新后无 console 错误；新会话固定 `magpie-cli` + `mock/model-a`，测试 TOML 无 `magpie-cli`。
 - 完整结果、Desktop 证据与未覆盖项见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
 
+## [0.141.0-rc6] - 2026-11-04
+
+### Fixed
+- Git 工作区回归不再要求损坏 gitfile 的错误包含特定英文描述；保留真实 Git 四种工作区状态、发现失败及 fatal 诊断断言，兼容新版 Git 的 `gitfile does not point to a valid repository` 提示。
+- 非仓库分类增加新版 gitfile 诊断负例，确保损坏元数据继续失败，不影响 rc4 的挂载边界修复。
+
+### Changed
+- Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm、安装清单及当前文档同步至 `0.141.0-rc6`。rc5 已由独立 HOME 隔离改动使用，本分支不包含该改动；本次不执行发行。
+- 失败 CI 的跨平台证据及本次验证范围见 [补充验收](docs/verification/0.141.0-rc6.md)。
+
+### Validation
+- macOS 工作区回归 3 项、手机实际轮次及版本契约各 1 项、workspace 全目标严格 Clippy 通过；Linux tmpfs 在 Git 2.39.5、2.55.0、CI 同版 2.56.0 下均通过工作区回归及版本契约，2.55.0 的完整手机模块 36 项通过，另外两版各通过手机实际轮次。fmt、npm 契约 6 tests / 37 assertions、源码规模、版本一致性和独立静态复核通过；未在本轮全量重跑 workspace，跨平台 CI 以新提交检查为准。
+
+## [0.141.0-rc4] - 2026-11-04
+
+### Fixed
+- Git 工作区发现在文件系统边界停止查找时，精确识别其“未找到仓库”诊断，使普通工作区仍可启动及完成轮次；损坏 gitfile、权限、所有权和进程启动等错误继续失败，不按退出码统一放行，也不扩大 Git 查找边界。
+- Git 发现失败保留退出状态和有界脱敏 stderr，先移除可能携带凭据的 URL，启动失败保留原生错误；手机真实轮次回归在失败时补充内部错误及是否捕获模型请求，保留全部原有断言。
+- 新增两种非仓库诊断与损坏元数据等负例回归，继续验证真实 Git 的普通目录、仓库、损坏 gitfile 和缺失目录状态。
+
+### Changed
+- Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm、安装清单及当前文档版本统一为 `0.141.0-rc4`；本次不执行发行。复现证据、原 CI 归因限制和平台覆盖见 [补充验收](docs/verification/0.141.0-rc4.md)。
+
+### Validation
+- macOS 完整 Rust workspace 2307 passed、0 failed，保留 11 项既有 ignored；最后的诊断脱敏补丁另行通过 3 项工作区回归、手机真实轮次和 workspace 全目标严格 Clippy。Linux tmpfs 的 36 项手机模块测试及版本契约通过，最终补丁的 3 项工作区回归及手机实际轮次也通过；原 CI 证据与平台覆盖边界见补充验收。
+
 ## [0.141.0-rc3] - 2026-11-04
 
 ### Fixed

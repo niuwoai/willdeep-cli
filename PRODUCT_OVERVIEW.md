@@ -4,6 +4,10 @@
 
 0.142.0-rc1 接入 Magpie 社区 Agent 插件的独立 JSON 配置源：WillDeep 与 WillDeep CLI 各自连接，CLI 通过临时 `magpie-cli` Provider 解析，无显式选择的新会话采用当前连接，已有会话保留自己的 Provider 与模型。原 TOML、桌面 Provider 库与钥匙串不作为插件写入目标。契约、实现状态与验收台账见 [Magpie 集成](docs/MAGPIE_AGENT_PLAN.md)。本地实现与组合验收已完成（隔离链 21/21、真实 Magpie 链 22/22、插件宿主 12/12、桌面原生测试 19/19），尚未公开发布或社区收录；Linux/Windows 原生执行与 Desktop 全量测试未覆盖，详见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
 
+0.141.0-rc6 修正 Git 工作区回归对特定英文诊断的依赖，使不同 Git 版本均可验证损坏 gitfile 仍然失败并保留诊断；补充新版 Git 错误不得降级为非仓库的负例。运行时发现逻辑与 rc4 相同；本次 CI 证据和验证边界见 [补充验收](docs/verification/0.141.0-rc6.md)。
+
+0.141.0-rc4 修复普通工作区位于独立文件系统时被误认为 Git 发现失败的问题：精确识别 Git 在挂载边界停止查找的非仓库提示，损坏元数据及其他发现错误仍会失败。发现错误保留退出状态和有界脱敏诊断，手机轮次回归失败时附上内部错误及请求是否发出。原 CI 的具体触发条件仍受日志证据限制；复现和验证范围见 [补充验收](docs/verification/0.141.0-rc4.md)。
+
 0.141.0-rc3 修复后台 supervisor 测试读取 PID 文件的竞态：在同一截止时间内等待完整非零 PID，重试 Windows 文件共享冲突及未完成写入，超时保留读取错误、进程输出和断连清理。此改动只调整测试握手，运行时与架构契约不变；验证范围见 [补充验收](docs/verification/0.141.0-rc3.md)。
 
 0.141.0-rc2 修复工作流持久目录创建中仅在 Windows 触发的 Clippy 可变绑定错误，保留 Unix 私有目录权限和各平台创建语义。0.141.0-rc1 的发行门禁因此失败，未生成公开发行包；功能验收快照仍保留在原报告中，rc2 的修复与发布准备结果见 [补充验收](docs/verification/0.141.0-rc2.md)。

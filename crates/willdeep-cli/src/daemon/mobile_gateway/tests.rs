@@ -8,6 +8,8 @@ use super::*;
 mod queue;
 mod queue_safety;
 
+const MAX_FAILURE_DIAGNOSTIC_CHARS: usize = 2_048;
+
 /// 一个真的 Runtime 控制面：命令一路走 `control_api::execute`，不打桩。调度通道的
 /// 接收端留着但没人消费，所以提交的轮次停在排队状态，不会真去调模型。
 struct Harness {
@@ -1401,12 +1403,19 @@ async fn mobile_configuration_catalog_persists_and_reaches_the_actual_turn() {
     .await
     .unwrap();
     let finished = harness.execute("task.get", json!({"id": task.id})).await;
-    assert_eq!(finished["status"], "completed", "{finished}");
-    let request = captured
-        .lock()
-        .unwrap()
-        .clone()
-        .expect("actual model HTTP request");
+    let internal = harness.state.tasks.get(task.id).await.unwrap();
+    let request = captured.lock().unwrap().clone();
+    assert_eq!(
+        finished["status"],
+        "completed",
+        "{finished}; error={}; model_request_captured={}",
+        clip(
+            internal.error.as_deref().unwrap_or("none"),
+            MAX_FAILURE_DIAGNOSTIC_CHARS
+        ),
+        request.is_some()
+    );
+    let request = request.expect("actual model HTTP request");
     assert_eq!(request["model"], "remote-model");
     assert!(
         request["messages"]
