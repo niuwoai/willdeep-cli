@@ -10,6 +10,7 @@ fn failure(path: &Path, action: &str, error: impl std::fmt::Display) -> Workflow
 
 fn directory(path: &Path) -> WorkflowResult<()> {
     let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
