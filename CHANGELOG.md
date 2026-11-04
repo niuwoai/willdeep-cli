@@ -6,6 +6,14 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc3] - 2026-11-05
+
+### Fixed
+- 修复 Windows CI 的 `provider::magpie::tests::integration_transport_has_no_proxy_or_redirects_and_pins_localhost` 超时（`Elapsed(())`）：测试用 `env_clear()` 启动子进程，Windows 缺少 `SYSTEMROOT` 等基础变量时加载器与 socket 初始化失败，子进程无法连接回环地址；现在仅在 Windows 上保留 `SYSTEMROOT`、`WINDIR`、`PATH`、`TEMP`、`TMP`，并在等待连接超时时输出子进程 stderr 或启动错误，避免只得到无上下文的 `Elapsed`。
+
+### Validation
+- macOS 上 `cargo test -p willdeep-core provider::magpie::tests::integration_transport -- --nocapture` 通过；`cargo test -p willdeep-core --lib -- --test-threads=1` 948 项通过、0 失败、6 忽略；`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --all -- --check` 通过。Windows 结论以 PR CI 的 `test (windows-latest)` 为准，详见 [0.143.0-rc3 验收记录](docs/verification/0.143.0-rc3.md)。
+
 ## [0.143.0-rc2] - 2026-11-04
 
 ### Fixed

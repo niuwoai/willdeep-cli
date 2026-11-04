@@ -49,6 +49,7 @@
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |
 | [完整子会话](CHILD_SESSIONS.md) | P0 fresh 只读对话、与 Worker 的区别、打开/续做/查询/停止及验收边界 |
+| [0.143.0-rc3 Windows Magpie 传输测试修复验收](verification/0.143.0-rc3.md) | Windows 子进程环境块与回环连接超时的根因、修复与诊断改进 |
 | [0.143.0-rc2 Windows 栈溢出修复验收](verification/0.143.0-rc2.md) | daemon/Web 默认 CLI 构造的栈开销根因、修复与阈值回归 |
 | [0.143.0-rc1 子会话 P1 验收](verification/0.143.0-rc1.md) | fork、worktree、模型覆盖、家族 Worker 与本机回归的实际结果及覆盖边界 |
 | [0.143.0-rc1 子会话 P0 阶段验收](verification/0.143.0-rc1-p0.md) | P0 的 Rust/Web、隔离 API/E2E、宽窄 PTY 与浏览器结果；后续已并入 0.143 最终回归 |
