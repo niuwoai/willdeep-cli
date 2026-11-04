@@ -2,7 +2,7 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.141.0-rc1
+> 当前实现版本：v0.141.0-rc2
 >
 > 最后更新：2026-11-04
 
@@ -327,7 +327,7 @@ Swift、Android 和第三方客户端应在 CI 中逐项解码 `responses`，并
 
 ## 11. Rust SDK
 
-`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.141.0-rc1`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
+`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.141.0-rc2`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
 
 ```bash
 willdeep daemon start
