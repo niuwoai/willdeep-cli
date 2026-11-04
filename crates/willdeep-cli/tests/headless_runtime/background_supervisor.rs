@@ -55,29 +55,32 @@ fn background_supervisor_completes_work_and_kills_it_when_parent_disconnects() {
             "timeout_seconds": 60
         }),
     );
-    // 等不到 PID 文件时带上 supervisor 的输出，分得清是慢还是命令本身出错。
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !child_pid_path.exists() {
-        if std::time::Instant::now() >= deadline {
+    // 文件存在时仍可能被 Windows 写入方锁住，或只写入了 PID 的一部分。
+    // 等完整 PID 就绪；失败仍先断连收拢子进程，再带上最后的读取错误和输出。
+    let pid_timeout = Duration::from_secs(5);
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    let child_pid = match wait_for_supervised_child_pid(&child_pid_path, pid_timeout) {
+        Ok(pid) => pid,
+        Err(error) => {
             drop(disconnected_liveness);
             let output = disconnected
                 .wait_with_output()
-                .expect("collect background supervisor output");
+                .unwrap_or_else(|wait_error| {
+                    panic!(
+                        "read supervised child PID {} within {pid_timeout:?}: {error:?}; collect background supervisor output: {wait_error}",
+                        child_pid_path.display()
+                    )
+                });
+            let cleanup = std::fs::remove_dir_all(&root);
             panic!(
-                "supervised command wrote no PID file within 5s; supervisor exited {:?}\nstdout:\n{}\nstderr:\n{}",
+                "supervised child PID {} was not ready within {pid_timeout:?}: {error:?}; supervisor exited {:?}\nstdout:\n{}\nstderr:\n{}\ncleanup: {cleanup:?}",
+                child_pid_path.display(),
                 output.status.code(),
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    // Windows 上照样读取并解析 PID（证明子进程确实起来了），只是不查它是否还活着。
-    #[cfg_attr(not(unix), allow(unused_variables))]
-    let child_pid = std::fs::read_to_string(&child_pid_path)
-        .expect("read supervised child PID")
-        .parse::<u32>()
-        .expect("parse supervised child PID");
+    };
     let started = std::time::Instant::now();
     drop(disconnected_liveness);
     let disconnected = disconnected
@@ -124,6 +127,175 @@ fn background_supervisor_applies_read_only_sandbox() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+fn wait_for_supervised_child_pid(path: &Path, timeout: Duration) -> std::io::Result<u32> {
+    read_supervised_child_pid_until_ready(timeout, || std::fs::read_to_string(path))
+}
+
+fn read_supervised_child_pid_until_ready(
+    timeout: Duration,
+    mut read: impl FnMut() -> std::io::Result<String>,
+) -> std::io::Result<u32> {
+    const POLL_INTERVAL: Duration = Duration::from_millis(25);
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let result = read().and_then(|contents| {
+            // 换行是夹具的完成标记，不能把尚未写完的数字前缀当成 PID。
+            let line = contents.strip_suffix('\n').ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("PID file has no complete line: {contents:?}"),
+                )
+            })?;
+            let digits = line.strip_suffix('\r').unwrap_or(line);
+            if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid child PID {contents:?}: expected ASCII digits"),
+                ));
+            }
+            digits
+                .parse::<std::num::NonZeroU32>()
+                .map(std::num::NonZeroU32::get)
+                .map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("invalid child PID {contents:?}: {error}"),
+                    )
+                })
+        });
+        let now = std::time::Instant::now();
+        match result {
+            Ok(pid) => return Ok(pid),
+            Err(error) if now >= deadline => return Err(error),
+            Err(_) => std::thread::sleep(POLL_INTERVAL.min(deadline - now)),
+        }
+    }
+}
+
+#[test]
+fn supervised_child_pid_requires_a_complete_nonzero_pid() {
+    let root = temporary_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("child.pid");
+    assert_eq!(
+        wait_for_supervised_child_pid(&path, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    for contents in [
+        "",
+        "123",
+        "123\r",
+        "\n",
+        "invalid\n",
+        "0\n",
+        "4294967296\n",
+        "+123\n",
+        " 123\n",
+        "123\n\n",
+    ] {
+        std::fs::write(&path, contents).unwrap();
+        let error = wait_for_supervised_child_pid(&path, Duration::ZERO).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains(&format!("{contents:?}")));
+    }
+    for contents in ["12345\n", "12345\r\n"] {
+        std::fs::write(&path, contents).unwrap();
+        assert_eq!(
+            wait_for_supervised_child_pid(&path, Duration::ZERO).unwrap(),
+            12345
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn supervised_child_pid_waits_for_the_rest_of_the_digits() {
+    let root = temporary_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("child.pid");
+    // 每次读取前推进写入状态，确定性覆盖不存在、空文件和可解析的数字前缀。
+    let mut attempts = 0;
+    let pid = read_supervised_child_pid_until_ready(Duration::from_secs(5), || {
+        attempts += 1;
+        match attempts {
+            1 => {}
+            2 => std::fs::write(&path, "").unwrap(),
+            3 => std::fs::write(&path, "123").unwrap(),
+            _ => std::fs::write(&path, "12345\n").unwrap(),
+        }
+        std::fs::read_to_string(&path)
+    })
+    .unwrap();
+    assert_eq!(pid, 12345);
+    assert_eq!(attempts, 4);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn supervised_child_pid_deadline_preserves_the_last_read_error() {
+    let timeout = Duration::from_millis(50);
+    let started = std::time::Instant::now();
+    let error = read_supervised_child_pid_until_ready(timeout, || {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "PID writer still owns the file",
+        ))
+    })
+    .unwrap_err();
+    assert!(started.elapsed() >= timeout);
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(error.to_string(), "PID writer still owns the file");
+}
+
+#[cfg(windows)]
+#[test]
+fn supervised_child_pid_retries_windows_sharing_violation() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let root = temporary_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("child.pid");
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .share_mode(0)
+        .open(&path)
+        .unwrap();
+    writer.write_all(b"12345\r\n").unwrap();
+    let error = wait_for_supervised_child_pid(&path, Duration::ZERO).unwrap_err();
+    assert_eq!(error.raw_os_error(), Some(32));
+    std::thread::scope(|scope| {
+        let (observed, locked) = std::sync::mpsc::channel();
+        let (released, unlocked) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            let locked = locked.recv_timeout(Duration::from_secs(5));
+            drop(writer);
+            released.send(()).unwrap();
+            locked.expect("reader must observe the sharing violation before unlocking");
+        });
+        let mut observed_lock = false;
+        let pid = read_supervised_child_pid_until_ready(Duration::from_secs(5), || {
+            let result = std::fs::read_to_string(&path);
+            if result
+                .as_ref()
+                .is_err_and(|error| error.raw_os_error() == Some(32))
+                && !observed_lock
+            {
+                observed_lock = true;
+                observed.send(()).unwrap();
+                unlocked.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            result
+        })
+        .unwrap();
+        assert!(observed_lock);
+        assert_eq!(pid, 12345);
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn spawn_background_supervisor(home: &Path) -> std::process::Child {
     willdeep(home)
         .args(["daemon", "background-supervisor"])
@@ -161,12 +333,12 @@ fn supervisor_print_command() -> &'static str {
 
 #[cfg(unix)]
 fn supervisor_wait_command() -> &'static str {
-    "sleep 30 & child=$!; printf '%s' \"$child\" > supervisor-child.pid; wait \"$child\""
+    "sleep 30 & child=$!; printf '%s\\n' \"$child\" > supervisor-child.pid; wait \"$child\""
 }
 
 #[cfg(windows)]
 fn supervisor_wait_command() -> &'static str {
-    "$child = Start-Process powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 30' -PassThru; Set-Content -Path supervisor-child.pid -Value $child.Id -NoNewline; Wait-Process -Id $child.Id"
+    "$child = Start-Process powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 30' -PassThru; Set-Content -Path supervisor-child.pid -Value $child.Id -Encoding Ascii; Wait-Process -Id $child.Id"
 }
 
 #[cfg(unix)]

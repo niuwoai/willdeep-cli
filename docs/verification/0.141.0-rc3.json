@@ -1,0 +1,41 @@
+{
+  "version": "0.141.0-rc3",
+  "date": "2026-11-04",
+  "baseline": "9960225b5a3989674f82651d26ace4955fe4b01e",
+  "default_branch": "develop",
+  "original_failure": {
+    "url": "https://github.com/niuwoai/willdeep-cli/actions/runs/41751631277/job/126317835581",
+    "platform": "windows-latest",
+    "test": "background_supervisor::background_supervisor_completes_work_and_kills_it_when_parent_disconnects",
+    "raw_os_error": 32,
+    "previous_file_commit": "f8aea922f4127dc9df53ea278e540f756471d9aa"
+  },
+  "checks": [
+    {"name": "supervisor_pid_regression", "platform": "macOS arm64", "status": "passed", "tests": 5, "failed": 0, "ignored": 0},
+    {"name": "workspace_version_contract", "status": "passed", "tests": 1},
+    {"name": "headless_runtime_full", "platform": "macOS arm64", "status": "passed", "tests": 44, "failed": 0, "ignored": 0, "elapsed_seconds": 190.3},
+    {"name": "workspace_all_targets_clippy", "status": "passed", "deny_warnings": true},
+    {"name": "windows_target_check", "target": "x86_64-pc-windows-gnu", "status": "passed", "elapsed_seconds": 49.15},
+    {"name": "windows_target_clippy", "target": "x86_64-pc-windows-gnu", "status": "passed", "deny_warnings": true, "elapsed_seconds": 27.2},
+    {"name": "web_locked_install_and_build", "status": "passed"},
+    {"name": "npm_package_contract", "status": "passed", "tests": 6, "assertions": 37},
+    {"name": "source_size", "status": "passed", "environment": "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8"},
+    {"name": "fmt", "status": "passed"},
+    {"name": "git_diff_check", "status": "passed"},
+    {"name": "cargo_web_npm_current_document_versions", "status": "passed"},
+    {"name": "independent_static_review", "status": "passed", "findings": 0}
+  ],
+  "windows_native_execution": "not_run",
+  "limitations": [
+    "Windows target check and Clippy do not execute Windows filesystem or PowerShell behavior.",
+    "Original wait_with_output behavior is preserved; the readiness deadline only bounds PID reading.",
+    "The existing Windows integration asserts a valid PID and supervisor killed status, without descendant liveness probing."
+  ],
+  "corrected_attempts": [
+    "Initial Rust build failed because the fresh worktree lacked embedded web/dist; resolved by the normal locked Web build.",
+    "Initial new helper regressions failed because temporary_root only returns a path; added directory creation.",
+    "Local Ruby US-ASCII caused encoding errors; UTF-8 environment reruns passed without source changes."
+  ],
+  "published": false,
+  "release_tags_changed": false
+}

@@ -6,6 +6,18 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.141.0-rc3] - 2026-11-04
+
+### Fixed
+- 后台 supervisor 测试在同一 5 秒截止时间内等待可读取的完整非零 PID，重试 Windows sharing violation、文件尚未出现和未完成写入；通过 LF/CRLF 完成标记避免将数字前缀误认成完整 PID。超时先断连并回收 supervisor，再报告 PID 路径、最后错误、退出状态及标准输出/错误，保留原有启动和断连退出断言。
+- 新增完整 PID 协议、分阶段写入和 Windows 独占写句柄回归，防止读取失败被跳过或最终错误被吞掉。
+
+### Changed
+- Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm、安装清单及当前文档版本统一为 `0.141.0-rc3`，保留已发布 tag；本次不执行发行。
+
+### Validation
+- macOS supervisor/PID 回归 5 项、完整 `headless_runtime` 44 项及内部版本契约 1 项通过；workspace 全目标严格 Clippy、fmt、Web 构建、npm 契约 6 项/37 个断言和源码规模检查通过。Windows 目标交叉编译及严格 Clippy 通过，尚未执行 Windows 原生回归；命令与覆盖边界见 [补充验收](docs/verification/0.141.0-rc3.md)。
+
 ## [0.141.0-rc2] - 2026-11-04
 
 ### Fixed
