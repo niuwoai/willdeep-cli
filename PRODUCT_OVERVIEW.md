@@ -1,6 +1,10 @@
 # Product Overview
 
-> 最后更新：2026-11-03 | 当前版本：v0.140.0-rc1
+> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc1
+
+0.141.0-rc1 本轮接入声明式多智能体工作流和对话内专业智能体管理。工作流由 `agent`、`switch`、`foreach`、`repeat` 四类节点组成，依赖 DAG 决定顺序与并行，阶段只用于展示；所有模型叶节点与普通 Worker 共用父会话 Scheduler（默认并发 8、排队 64）及原审批、预算、文件租约。运行持久保存派工意图和 request ID，重启先对账，复用已确认的成功结果；未知副作用记为中断，明确恢复后才可继续。重试和恢复创建关联的新运行，保留旧历史。Web 运行卡片与 TUI `/workflow` 提供查询和整组控制。契约、限制、使用及实际验收结果见 [工作流](docs/WORKFLOWS.md)。
+
+对话通过 `agent_library_read` / `agent_library_manage` 读取、创建、更新、fork、绑定及启停定义；写入按宿主 scope、request 收据和 `installation_revision` 原子检查。官方正文须先 fork，成功保存并刷新目录后，同一轮的后续新派工即可使用；在途和续做/恢复 Worker 保留原定义、模型与执行限制快照。智能体交换包 v1 保持不变，本机安装元数据不进入分享包。见 [智能体库](docs/AGENT_LIBRARY.md)。本轮已执行 Rust workspace 测试、Clippy、Web 测试与构建，以及隔离 Runtime/API/E2E 和宽窄 PTY 验收；实际结果与未覆盖的平台见 [验收报告](docs/verification/0.141.0-rc1.md)。
 
 0.140.0-rc1 汇总 Web 会话模型与审批档位预选、Provider 模型目录搜索、内嵌配置页模型选择和实例名设置。侧栏将配置与插件拆成并列一级入口，定时任务改用带数量的状态标签。TUI 欢迎屏更简洁，输入建议会说明 Tab 用法并淡化；实例名可使用中日文并随请求提供给模型，同时保留 WillDeep 的产品身份。聊天区拖选和上游错误原因反馈也得到修正。
 

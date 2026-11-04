@@ -1,5 +1,7 @@
 # CLI Harness 架构
 
+> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc1
+
 ## 分发
 
 npm 包 `@niuwoai/willdeep` 不携带 Rust 二进制。`npm install` 读取 `npm/willdeep/install-manifest.json` 中与包版本绑定的 GitHub Release，下载当前平台的一个发行包，校验 SHA256 并确认包内只有预期的可执行文件，然后写入 npm 包的 `bin/`。命令入口 `bin/willdeep.js` 只转发参数和标准流。macOS Universal 同时覆盖 x64 与 arm64；Linux 区分 amd64/arm64；Windows 目前只覆盖 x64。Homebrew 继续直接安装 macOS Universal 发行包，两条路径都消费同一个 GitHub Release。
@@ -148,13 +150,31 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 
 `BackgroundTaskRegistry` 统一跟踪 Shell Job 与后台 Subagent，保存有界输出、状态、耗时、退出码和取消通道。启动 Shell 的入口保持 crate 私有，且只能在 `run_command` 完成既有逐次审批后注册。任务终态会同时发布事件并形成 `<background-task-notification>` 或 `<subagent-report>`（格式由 `background_notice` 按后台任务合同 v1 渲染，脱离作业同一个渲染器）；TUI 把事件排队，主 Agent 空闲时立即续跑，繁忙时在当前 turn 结束后续跑。非交互 CLI 等待所有关联任务完成并逐个处理通知。
 
-`SubagentCatalog` 面向用户公开 reader、implementer、tester、ops_runner、judge、deep 六个工种；scout、editor、test_fixer、build_fixer、log_inspector、git_detective 等旧专门 ID 继续保留给自动路由、托管链和历史兼容。每个工种绑定 Provider、模型、工具白名单、上下文窗口、工具输出字节上限和最大轮数；子 Agent 创建的 `Agent` 不装载 Subagent Catalog，因此不能递归派生。
+`SubagentCatalog` 公开 `generalist`、`implementer`、`tester`、`reviewer`、`ops_runner` 五种职责，与 `standard` / `advanced` / `expert` 模型档位正交；reader、judge、deep、scout、editor 等旧 ID 保留历史兼容。职责限定工具、写范围、窗口与轮数，模型由既有 Provider/档位和本机专业绑定解析。子 Agent 不装载 Subagent Catalog 或父会话管理宿主，不能递归派生或修改专业目录。
 
-除 `deep` 外的工种运行在可私有部署的 32K / 48K / 64K / 256K 档位并各自限制工具输出字节数——**窗口纪律由客户端执行**，不依赖模型自觉。16K 已取消；`implementer` 是 256K 日常多文件编码主力，`deep` 只在任务确实无法有界拆分时跑父模型并继承会话窗口。
+窗口纪律由客户端执行，具体职责窗口、工具输出上限与模型档位见 [子 Agent](SUBAGENTS.md)。普通 Worker 与工作流 agent 叶节点共享父会话 Scheduler，默认并发 8、排队 64，可由 `[agent_team]` 调整；工作流 driver、switch、foreach、repeat 不占 Worker 槽。
 
 `spawn_agent` 的可选 `task` 参数是 Task Packet：目标、已知事实、约束、相关文件与 verifier 命令。Runtime 按窗口档位把相关文件内联进 Worker 首条消息，并在每次尝试后**由 Runtime 自己执行** verifier 命令来判定成败——退出码是唯一裁决，模型的自述不是。失败输出经纯 Rust 的确定性消化（失败聚焦段 + 尾部，断言原文逐字保留）后回灌下一次尝试；尝试打满即判运行失败并要求升档。命令型 Worker 共用三层门禁：静态安全命令直接放行；非破坏、非凭据敏感的模糊命令交 AI 判官；拒绝或不可用时精确返回父 Agent。父 Agent 仅能通过 `ops_runner + target_command` 请求人类对同一命令一次性确认，子 Agent 本身没有审批 UI，危险与凭据命令也绝不进入 AI。
 
 写通道是一条通路的两种规模：写入型工种的目标文件先由父 ToolRegistry canonicalize 并作为**一个集合**整体审批，子 ToolRegistry 再以 canonical 绝对路径做集合成员匹配，符号链接或路径别名不能扩大授权范围；editor 是集合大小为 1 的特例。同一 Catalog 内运行中 Worker 的文件集互斥，冲突时后来者被拒绝并点名冲突文件，锁在运行结束、超时、取消或 panic 时随 `Drop` 释放。详见 [小上下文 Skill Worker](SKILL_WORKERS.md)。
+
+### 声明式工作流（0.141.0-rc1）
+
+工作流定义与运行对象由 `willdeep-runtime-protocol::workflow` 唯一维护。`willdeep-core::workflow` 只负责有限 DSL、Schema/引用校验、状态转换和持久存储，不依赖 Provider、Agent、CLI 或事件实现。`agent` 是唯一调用模型的节点；`switch` 选择一个分支，`foreach` 为每项展开独立子图，`repeat` 按显式上限执行。每个作用域内部是 DAG；`phase` 仅分组展示，不产生调度屏障。有限 Schema 禁止 `$ref` 联网和未知关键字；模板引用单独使用 `input/item/previous/node:<id>#JSON-Pointer`，不能越过可见上游。完整字段、硬限与例子见 [工作流](WORKFLOWS.md)。
+
+CLI `harness/workflows.rs` 通过独立 `WorkflowHost` 注入父 Agent。会话持有执行权时直接激活同一 BuiltHarness 的 driver，父模型结束后继续推进；无头等待、目标完成和唤醒也计入尚无 Worker 的活动图。外部 `daemon/workflows` 只完成持久准入与会话控制 Turn 排队，幂等锁内不等待模型或审批；同一会话复用既有执行器和锁。driver 的叶节点调用 `Agent::dispatch_workflow_node_with_catalog`，与普通 `spawn_agent` 共用准入，保留审批、基础职责、写集合、expert 票据、团队预算、文件租约及单层团队边界。宿主在第一次派工前固定整条运行的目录与档位模型快照，重试/恢复沿用源快照；冻结目录仍共享父会话的 Scheduler、审批句柄和文件租约。
+
+`WorkflowStore` 按 `$WILLDEEP_HOME/workflows/<parent_session_id>/` 隔离定义与运行，一把文件锁保护运行状态与派工意图的原子替换。定义 ID 对应不可变正文，变更内容需新 ID；每个 run 固定 spec/input/limits。先持久化节点路径、展开位置、attempt/request ID，再向 AgentRun 派工；重启按 request ID 对账并复用已确认结果。无法确认的副作用保留 `interrupted`，等待明确恢复，不承诺跨进程 exactly-once。retry/resume 创建带 `source_run_id` 的新运行，旧成功节点带 `reused_from`，不重跑也不重复计费。
+
+AgentRun 使用归属区分普通父派工与工作流节点。工作流收集叶报告，普通 `await_agents` 和完成通知只处理父派工；节点的普通续做/重试/发指令/停止入口拒绝修改，控制通过所属运行完成。父会话每个工作流运行接收聚合报告，先保存会话再 ack。终态图仍对账叶收据，补齐图已落盘而叶尚未确认的崩溃窗口。执行宿主释放时持久停止已接管的活动图并取消全量所属 Worker，保留外部刚受理而尚未接管的运行供后续控制轮次执行；未激活的只读宿主不改变其他执行者的运行。恢复排队叶前由工作流宿主核验图状态与节点意图，已停止的图不得重启 Worker。状态更新复用 EventLog 的持久游标与订阅；`conversation::project` 从真实控制回执投影卡片，Web/TUI 以持久运行状态重连，不从模型正文推导完成。
+
+### 对话内专业智能体管理
+
+`AgentDefinitionHost` 是独立父会话宿主接口，与 `WorkflowHost` 一起注入 ToolRegistry，不占插件的 LazyToolSource。父 Agent 使用稳定的 `agent_library_read` / `agent_library_manage`；CLI `harness/agent_library` 复用 `agent_registry/management`，Web/CLI 写入也走同一安装事务。只读工具不写入；管理工具受现有审批与审计约束，只读策略拒绝修改，Worker 不获得这些宿主工具。
+
+定义正文 SHA（`definition_revision`）与本机安装代数（`installation_revision`）分离；更新、绑定、启停等写入以安装代数做 CAS。宿主捕获账号与库 scope，聊天宿主同时记录 list/get 观测到的 local/private 安装身份及修订，强制为后续写入补齐复合 CAS 的 target_scope；未观测旧目标先读，fork 固定源安装，同 request 重放保留首次目标。request ID 及参数指纹形成持久收据；scope 检查、创建不存在检查、CAS 与安装提交在同一锁内完成。同 ID 异参请求、过期修订和账号切换明确拒绝。官方正文先 fork 为 `user/`，本机绑定/启停不修改签名正文。旧安装状态兼容读取，首次成功写入迁移为带修订与收据的本机格式；可交换智能体包维持 v1。
+
+专业目录使用共享且原子替换的快照，只替换专业定义部分、保留基础职责。对话保存成功后返回前刷新目录，本轮后续新派工即可读取新 ID；刷新失败返回 `saved_not_applied`，同时清空旧专业目录、保留基础职责，防止继续使用过期定义；可用同 request ID 重取收据并重试刷新。已经派出的 Worker 与续做/恢复使用原完整定义、技能、Provider/model 及执行限制快照，凭据在宿主重新解析，当前权限和预算重新核验。此刷新不重写历史或稳定工具前缀，也不主动分享或上传。安装字段见 [智能体库](AGENT_LIBRARY.md)，实际测试与隔离 Runtime 验收结果见 [验收报告](verification/0.141.0-rc1.md)。
 
 ### 出站通知
 
