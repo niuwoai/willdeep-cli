@@ -1,0 +1,40 @@
+{
+  "version": "0.141.0-rc2",
+  "date": "2026-11-04",
+  "snapshot": "pre_release_supplement",
+  "local_toolchain": "rustc/cargo 1.94.1",
+  "local_debug_binary_sha256": "2bb8c5e78f278ceb302a16a3bed75ebd3d2d96b135e3cba620f13cbe388b8f8a",
+  "previous_release_run": "https://github.com/niuwoai/willdeep-cli/actions/runs/41745863265",
+  "previous_release_outcome": {
+    "windows_workspace_tests": "passed",
+    "windows_clippy": "failed_unused_mut",
+    "all_four_binary_builds": "passed",
+    "github_release": "skipped",
+    "npm_publish": "skipped",
+    "original_tag_preserved": true
+  },
+  "code_change": {
+    "path": "crates/willdeep-core/src/workflow/store/io.rs",
+    "added": "builder.recursive(false);",
+    "lint_exemptions_added": false,
+    "unix_private_directory_mode_preserved": true,
+    "recursive_creation": false,
+    "independent_review_blockers": []
+  },
+  "checks": {
+    "web_build": "passed",
+    "rustfmt": "passed",
+    "source_size": {"status": "passed", "files": 1287, "violations": 0},
+    "npm_package_contract": {"status": "passed", "tests": 6, "assertions": 37, "failures": 0, "errors": 0, "skipped": 0},
+    "version_sources": "passed",
+    "workflow_tests": {"status": "passed", "tests": 37, "failures": 0, "ignored": 0, "includes_snapshot_store_tests": 5},
+    "workspace_version_test": {"status": "passed", "tests": 1, "failures": 0},
+    "workspace_clippy_all_targets": "passed",
+    "rust_build_locked": "passed",
+    "diff_check": "passed"
+  },
+  "historical_feature_acceptance": "0.141.0-rc1.json",
+  "not_repeated_locally": ["full_workspace_tests", "browser_interactions", "isolated_runtime_e2e", "wide_and_narrow_pty", "real_remote_model_calls"],
+  "windows_native_clippy": "requires_rc2_ci",
+  "publication_status": "not_asserted_by_this_snapshot"
+}

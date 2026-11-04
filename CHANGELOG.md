@@ -6,6 +6,17 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.141.0-rc2] - 2026-11-04
+
+### Fixed
+- 工作流私有目录创建显式设置 `recursive(false)`，使 Windows 也实际使用可变构建器，消除 Clippy `unused_mut`；保留 Unix `0700` 权限、非递归创建和原有错误处理，不放宽 lint。
+
+### Changed
+- 同步 Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm、安装清单及当前文档版本为 `0.141.0-rc2`。`v0.141.0-rc1` 的发行因 Windows Clippy 失败而未发布 GitHub/npm 产物，保留原 tag，以 rc2 重新验证和发布。
+
+### Validation
+- rc2 本机 37 项工作流测试（包含 5 项快照存储测试）、1 项内部版本契约、workspace 全目标严格 Clippy、fmt 和构建通过；Web 构建、npm 包契约 6 项测试/37 个断言和源码规模检查通过。原 rc1 功能验收保留，Windows 原生 lint 由 rc2 CI 确认；具体范围见 [补充验收](docs/verification/0.141.0-rc2.md)。
+
 ## [0.141.0-rc1] - 2026-11-04
 
 ### Added
