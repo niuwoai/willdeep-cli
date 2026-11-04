@@ -1,10 +1,12 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-05 | 当前版本：v0.143.0-rc5
+> 最后更新：2026-11-05 | 当前版本：v0.143.0-rc6
 
 ## 分发
 
 npm 包 `@niuwoai/willdeep` 不携带 Rust 二进制。`npm install` 读取 `npm/willdeep/install-manifest.json` 中与包版本绑定的 GitHub Release，下载当前平台的一个发行包，校验 SHA256 并确认包内只有预期的可执行文件，然后写入 npm 包的 `bin/`。命令入口 `bin/willdeep.js` 只转发参数和标准流。macOS Universal 同时覆盖 x64 与 arm64；Linux 区分 amd64/arm64；Windows 目前只覆盖 x64。Homebrew 继续直接安装 macOS Universal 发行包，两条路径都消费同一个 GitHub Release。
+
+macOS 发行构建固定使用 `macos-26-intel`，以同一 macOS 主版本的 Intel runner 避开默认 arm64 池容量不足；分别构建两个 Apple Darwin 目标后用 `lipo` 合并。发行归档与运行平台支持范围不变。
 
 ## 边界
 

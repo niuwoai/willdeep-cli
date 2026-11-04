@@ -6,6 +6,13 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc6] - 2026-11-05
+
+### Fixed
+- macOS universal 发行构建改用显式 Intel runner，避开默认 Apple Silicon runner 连续无法分配导致的发行中断；继续分别编译 `x86_64-apple-darwin` 与 `aarch64-apple-darwin`，以 `lipo` 生成同一个 universal 归档。
+- 发行发布前校验 tag 与 Cargo、Web/npm、安装清单、产品/架构文档及 CHANGELOG 的版本一致，macOS 合包后验证两个架构齐全。
+- 保留 rc5 标签和失败流水线记录；rc5 两次尝试的九项构建/验证均成功，只有 macOS universal 在执行步骤前因托管 runner 容量不足被取消，未生成公开 Release 或 npm 包。后续发行与安装结果以 rc6 验收记录为准。
+
 ## [0.143.0-rc5] - 2026-11-05
 
 ### Fixed

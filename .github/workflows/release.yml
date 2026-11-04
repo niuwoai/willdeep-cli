@@ -72,7 +72,8 @@ jobs:
 
   macos:
     name: macOS universal
-    runs-on: macos-latest
+    # 固定 Intel 池，避开默认 arm64 runner 容量不足；仍编译并合并两个目标。
+    runs-on: macos-26-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -92,6 +93,7 @@ jobs:
       - name: Package universal binary
         run: |
           lipo -create target/x86_64-apple-darwin/release/willdeep target/aarch64-apple-darwin/release/willdeep -output willdeep
+          lipo -verify_arch x86_64 arm64 willdeep
           tar -czf willdeep-macos-universal.tar.gz willdeep
       - uses: actions/upload-artifact@v4
         with:
@@ -103,6 +105,9 @@ jobs:
     needs: [linux, windows, macos, verify]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Verify release version metadata
+        run: ruby scripts/check_release_version.rb "${GITHUB_REF_NAME#v}"
       - uses: actions/download-artifact@v4
         with:
           path: dist
