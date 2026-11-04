@@ -1,0 +1,57 @@
+{
+  "version": "0.141.0-rc6",
+  "date": "2026-11-04",
+  "change_base": "e05d3a151d7f9fc81b360d6c3b769e89d1969889",
+  "pull_request": "https://github.com/niuwoai/willdeep-cli/pull/110",
+  "failed_runs": [41772670413, 41772662632],
+  "confirmed_failure": {
+    "failed_checks": 10,
+    "failed_test": "harness::verification::tests::snapshots_distinguish_plain_workspaces_repositories_and_broken_git_metadata",
+    "cause": "Test assertion required an English diagnostic fragment that differs between Git versions.",
+    "observed_diagnostic": "fatal: gitfile does not point to a valid repository: .../.git",
+    "runtime_correctly_returned_error": true,
+    "unix_ci_git_version": "2.56.0",
+    "windows_ci_git_version": "2.56.0.windows.4"
+  },
+  "initial_diagnostic_probe": {
+    "git_version": "2.55.0",
+    "exit_code": 1,
+    "rust_tests_started": false,
+    "diagnostic": "fatal: not a git repository: (null)",
+    "cause": "The initial probe incorrectly required the CI-specific description; the unnecessary wording check was removed before rerunning."
+  },
+  "runtime_logic_changed": false,
+  "independent_home_isolation_included": false,
+  "checks": [
+    {"name": "macos_verification", "status": "passed", "tests": 3, "failed": 0},
+    {"name": "macos_mobile_actual_turn", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "macos_workspace_versions", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "macos_workspace_all_targets_clippy", "status": "passed", "warnings_denied": true},
+    {"name": "linux_git_2_39_verification", "status": "passed", "tests": 3, "failed": 0, "root_device": 53, "tmp_device": 103},
+    {"name": "linux_git_2_39_mobile_actual_turn", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "linux_git_2_39_workspace_versions", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "linux_git_2_55_diagnostic_probe", "status": "passed", "diagnostic": "fatal: not a git repository: (null)", "root_device": 49, "tmp_device": 86},
+    {"name": "linux_git_2_55_verification", "status": "passed", "tests": 3, "failed": 0},
+    {"name": "linux_git_2_55_mobile_module", "status": "passed", "tests": 36, "failed": 0},
+    {"name": "linux_git_2_55_workspace_versions", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "linux_git_2_56_diagnostic_probe", "status": "passed", "diagnostic": "fatal: gitfile does not point to a valid repository: /ci-test-tmp/.../.git", "root_device": 73, "tmp_device": 116},
+    {"name": "linux_git_2_56_verification", "status": "passed", "tests": 3, "failed": 0},
+    {"name": "linux_git_2_56_mobile_actual_turn", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "linux_git_2_56_workspace_versions", "status": "passed", "tests": 1, "failed": 0},
+    {"name": "fmt", "status": "passed"},
+    {"name": "source_size", "status": "passed", "max_lines": 3000},
+    {"name": "npm_contracts", "status": "passed", "tests": 6, "assertions": 37},
+    {"name": "version_consistency", "status": "passed", "version": "0.141.0-rc6"},
+    {"name": "independent_workflow_review", "status": "passed", "confirmed_findings": 0, "scope": "Static review of the two test changes and adjacent implementation."}
+  ],
+  "coverage_limits": [
+    "The complete Rust workspace was not rerun in this iteration.",
+    "Native GitHub Windows and Linux x86_64 execution remain CI coverage.",
+    "The original flaky CI runner did not retain sufficient evidence to establish its unique cause."
+  ],
+  "auto_fix_enabled": false,
+  "merged": false,
+  "tagged": false,
+  "released": false,
+  "local_installation_changed": false
+}

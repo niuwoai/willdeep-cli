@@ -6,6 +6,19 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.141.0-rc6] - 2026-11-04
+
+### Fixed
+- Git 工作区回归不再要求损坏 gitfile 的错误包含特定英文描述；保留真实 Git 四种工作区状态、发现失败及 fatal 诊断断言，兼容新版 Git 的 `gitfile does not point to a valid repository` 提示。
+- 非仓库分类增加新版 gitfile 诊断负例，确保损坏元数据继续失败，不影响 rc4 的挂载边界修复。
+
+### Changed
+- Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm、安装清单及当前文档同步至 `0.141.0-rc6`。rc5 已由独立 HOME 隔离改动使用，本分支不包含该改动；本次不执行发行。
+- 失败 CI 的跨平台证据及本次验证范围见 [补充验收](docs/verification/0.141.0-rc6.md)。
+
+### Validation
+- macOS 工作区回归 3 项、手机实际轮次及版本契约各 1 项、workspace 全目标严格 Clippy 通过；Linux tmpfs 在 Git 2.39.5、2.55.0、CI 同版 2.56.0 下均通过工作区回归及版本契约，2.55.0 的完整手机模块 36 项通过，另外两版各通过手机实际轮次。fmt、npm 契约 6 tests / 37 assertions、源码规模、版本一致性和独立静态复核通过；未在本轮全量重跑 workspace，跨平台 CI 以新提交检查为准。
+
 ## [0.141.0-rc4] - 2026-11-04
 
 ### Fixed

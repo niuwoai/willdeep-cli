@@ -85,6 +85,7 @@ mod tests {
         for stderr in [
             "fatal: not a git repository: '/tmp/project/missing-directory'\n",
             "fatal: invalid gitfile format: /tmp/project/.git\n",
+            "fatal: gitfile does not point to a valid repository: /tmp/project/.git\n",
             "fatal: detected dubious ownership in repository at '/tmp/project'\n",
             "fatal: failed to stat '/tmp/project/.git': Permission denied\n",
             "",
@@ -113,7 +114,7 @@ mod tests {
             broken.contains("Git workspace discovery failed"),
             "{broken}"
         );
-        assert!(broken.contains("not a git repository"), "{broken}");
+        assert!(broken.contains("fatal:"), "{broken}");
         std::fs::remove_dir_all(&root).unwrap();
         let missing = snapshot(&root).unwrap_err();
         assert!(
