@@ -1,4 +1,4 @@
-// 一级入口栏。对话和定时任务保留为常用入口，配置与插件目的地按需展开。
+// 一级入口栏。获准固定的插件排在定时任务下方，配置与其余插件按需展开。
 // 所有选中状态沿用宿主灰度，不使用插件自己的品牌色。
 
 import { Box, Flex, Portal, Text } from "@chakra-ui/react";
@@ -8,7 +8,7 @@ import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
-import { type PluginDestinationView, type PluginView } from "./plugins";
+import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
 
 export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "intake" } | { kind: "mcp" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
@@ -33,10 +33,13 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
   const configurationMenuRef = useRef<HTMLDivElement>(null);
   const pluginsTriggerRef = useRef<HTMLDivElement>(null);
   const pluginsMenuRef = useRef<HTMLDivElement>(null);
+  const pinned = entries.filter(({ destination }) => destination.default_pinned || destination.pinned_order !== null).slice(0, MAX_PINNED_DESTINATIONS);
+  const pinnedIds = new Set(pinned.map(({ destination }) => destination.qualified_id));
+  const menuEntries = entries.filter(({ destination }) => !pinnedIds.has(destination.qualified_id));
   const activeId = selection.kind === "plugin" ? selection.qualifiedId : null;
   const configurationActive = selection.kind === "configuration" || selection.kind === "intake" || selection.kind === "mcp"
     || selection.kind === "agents" || selection.kind === "agent-experiments";
-  const pluginsActive = selection.kind === "center" || selection.kind === "plugin";
+  const pluginsActive = selection.kind === "center" || (selection.kind === "plugin" && !pinnedIds.has(selection.qualifiedId));
 
   const closeMenus = useCallback(() => setOpenMenu(null), []);
 
@@ -110,6 +113,13 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
           () => onSelect({ kind: "conversation" })
         )}
         {button("schedules", schedulesLabel, <SfIcon name="sf:clock" size={20} />, selection.kind === "schedules", () => onSelect({ kind: "schedules" }))}
+        {pinned.map(({ plugin, destination }) => button(
+          destination.qualified_id,
+          destination.title,
+          <PluginIcon pluginId={plugin.id} icon={destination.icon} size={20} />,
+          activeId === destination.qualified_id,
+          () => { closeMenus(); onSelect({ kind: "plugin", qualifiedId: destination.qualified_id }); }
+        ))}
       </div>
       <Box className="rail-config-anchor" ref={configurationTriggerRef}>
         {button(
@@ -152,8 +162,8 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
           <Box id="rail-plugin-menu" ref={pluginsMenuRef} className="rail-plugin-menu" role="group" aria-label={messages.pluginSectionTitle}>
             <Text className="rail-configuration-heading">{messages.pluginSectionTitle}</Text>
             {menuItem("plugin-center", messages.pluginCenter, <SfIcon name="sf:gearshape" size={16} />, selection.kind === "center", () => onSelect({ kind: "center" }))}
-            {entries.length > 0 && <Box className="rail-menu-divider" />}
-            {entries.map(({ plugin, destination }) => menuItem(
+            {menuEntries.length > 0 && <Box className="rail-menu-divider" />}
+            {menuEntries.map(({ plugin, destination }) => menuItem(
               destination.qualified_id,
               destination.title,
               <PluginIcon pluginId={plugin.id} icon={destination.icon} size={14} />,
