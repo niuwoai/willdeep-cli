@@ -162,6 +162,9 @@ pub(super) fn projected_transcript(
     willdeep_core::conversation::project(messages, plan)
         .into_iter()
         .flat_map(|item| {
+            if let Some(workflow) = item.workflow {
+                return vec![workflow_ui::entry(workflow, false)];
+            }
             if let Some(plan) = item.plan {
                 return vec![plan_entry(&PlanTranscript {
                     plan,

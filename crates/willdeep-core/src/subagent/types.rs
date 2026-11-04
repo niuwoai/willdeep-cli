@@ -15,7 +15,7 @@ use crate::subagent_worktree::SubagentWorktreePolicy;
 ///
 /// A worker runs unattended: there is no approval card to show, so the shell
 /// it gets has to be decided at dispatch time and never widened at runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum SubagentShell {
     /// No shell at all.
     None,
@@ -110,7 +110,7 @@ pub fn public_profile_id(id: &str) -> Option<&'static str> {
 }
 
 /// How a profile is allowed to write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum SubagentWriteScope {
     /// Read-only worker.
     None,
@@ -260,8 +260,20 @@ impl TaskVerifier {
     }
 }
 
+/// Assigned by the trusted workflow host after the parent Agent's admission checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkflowDispatchIdentity {
+    pub workflow_run_id: uuid::Uuid,
+    pub node_instance_id: String,
+    pub request_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub(crate) struct SpawnAgentArgs {
+pub struct SpawnAgentArgs {
+    /// None keeps ordinary parent ownership; workflow workers still share the parent's team.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub workflow_owner: Option<willdeep_runtime_protocol::agent_team::WorkflowRunOwner>,
     pub prompt: String,
     pub label: Option<String>,
     pub profile: Option<String>,
@@ -276,6 +288,16 @@ pub(crate) struct SpawnAgentArgs {
     /// 模型档位，与职责正交（`standard` / `advanced` / `expert`）。缺省走最便宜
     /// 那档；`expert` 与旧名 `deep` 一样需要升级票据。
     pub worker_tier: Option<String>,
+    /// Host-only ceilings for a workflow leaf; ordinary model calls cannot set these.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub execution_limits: Option<WorkflowExecutionLimits>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct WorkflowExecutionLimits {
+    pub max_turns: Option<u64>,
+    pub token_budget: Option<u64>,
+    pub timeout_seconds: Option<u64>,
 }
 
 impl SpawnAgentArgs {

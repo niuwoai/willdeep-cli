@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Box, Button, NativeSelect, Textarea } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react";
 import type { Messages } from "./i18n";
@@ -99,6 +99,7 @@ export type AgentUsageSummary = {
 };
 export type AgentRun = {
   id: string; agent_id: string; sequence: number; status: string; reason: string;
+  workflow_owner?: { workflow_run_id: string; node_instance_id: string } | null;
   queued_at_ms: number; started_at_ms: number | null; finished_at_ms: number | null;
   current_turn: number; current_tool: string | null; usage: AgentUsageSummary;
   report: string | null;
@@ -115,6 +116,7 @@ export type AgentTeamSummary = {
 };
 
 type Props = {
+  workflowPanel?: ReactNode;
   onLoadRuns?: (id: string, after?: number) => Promise<AgentRunsPage>;
   activity: RuntimeActivity;
   events: RuntimeEvent[];
@@ -151,7 +153,7 @@ function failureDomain(domain: string | null, t: Messages) {
   return t.unknownValue;
 }
 
-export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns }: Props) {
+export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns, workflowPanel }: Props) {
   const [controlBusy, setControlBusy] = useState(false);
   const [spawnProfile, setSpawnProfile] = useState<AgentSpawnProfile>("generalist");
   const [spawnPrompt, setSpawnPrompt] = useState("");
@@ -165,6 +167,9 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
   const runningTools = activity.tools.filter((tool) => tool.status === "running").length;
   const sidebarAgents = showAgentHistory ? activity.agents : activity.agents.filter(isSidebarAgent);
   const hiddenAgents = activity.agents.length - sidebarAgents.length;
+  const workflowAgents = new Set((activity.teams ?? []).flatMap((team) => team.workers
+    .filter((worker) => worker.latest_run.workflow_owner)
+    .map((worker) => worker.agent_id)));
   async function runControl(action: () => Promise<void>) {
     if (controlBusy) return;
     setControlBusy(true);
@@ -240,7 +245,7 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
         <div className="runtime-list">{sidebarAgents.slice(0, showAllAgents ? sidebarAgents.length : AGENT_PREVIEW_LIMIT).map((agent) => <Box key={agent.id} className="runtime-agent" pl={agent.parent_id ? "3" : "0"}>
           <div className="runtime-row-main"><span className="runtime-row-title">{agent.label || agent.profile || t.agent}</span><span className="runtime-row-meta">{agent.retry_wait ? t.retryWaiting : runtimeStatus(agent.status, t)} · {t.turn} {agent.current_turn}</span><button type="button" className="runtime-link" onClick={() => setDetail({ kind: "agent", id: agent.id })}>{t.details}</button></div>
           <span className="runtime-card-note">{agent.model || t.unknownValue} · {agent.total_tokens ?? t.unknownValue} {t.tokenUnit} · {agentDuration(agent, t)}{agent.dedicated_worktree ? ` · ${agent.worktree_branch || t.worktree}` : ""}</span>
-          {agent.background && <div className="runtime-agent-actions">
+          {agent.background && !workflowAgents.has(agent.id) && <div className="runtime-agent-actions">
             {agent.status === "working" && <button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "prompt"))}>{t.instruct}</button>}
             {["working", "queued"].includes(agent.status) && <button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "stop"))}>{t.stop}</button>}
             {["blocked", "failed", "done", "completed", "partial", "cancelled", "interrupted"].includes(agent.status) && <><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "continue"))}>{t.continueAgent}</button><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry"))}>{t.retry}</button><button type="button" className="runtime-link" disabled={controlBusy} onClick={() => void runControl(() => onAgentAction(agent.id, "retry_model", agent.model))}>{t.changeModel}</button></>}
@@ -249,6 +254,7 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
         {sidebarAgents.length > AGENT_PREVIEW_LIMIT && <button type="button" className="runtime-link" onClick={() => setShowAllAgents(!showAllAgents)}>{showAllAgents ? t.showFewerAgents : t.showAllAgents}</button>}
         {(hiddenAgents > 0 || showAgentHistory) && <button type="button" className="runtime-link" onClick={() => { setShowAgentHistory(!showAgentHistory); setShowAllAgents(true); }}>{showAgentHistory ? t.showActiveAgents : t.showAgentHistory}</button>}
       </div>}
+      {workflowPanel}
       <div className="runtime-section">
         <button type="button" className="runtime-spawn-toggle" aria-expanded={spawnOpen} onClick={() => setSpawnOpen((current) => !current)}>
           <span className="runtime-spawn-label"><Plus size={13} aria-hidden="true" />{t.newReadOnlyAgent}</span>

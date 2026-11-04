@@ -207,6 +207,10 @@ pub(super) fn colored_transcript(
             }
             continue;
         }
+        if let Some(card) = workflow_ui::decode(value) {
+            lines.extend(workflow_ui::render(&card, width, language));
+            continue;
+        }
         if let Some(card) = decode_plan_entry(value) {
             lines.extend(render_plan(&card.plan, width, language));
             if card.expanded {

@@ -264,6 +264,7 @@ pub(super) async fn run_isolated_configured(
     let run = super::runner::SubagentRun {
         isolated_evaluation: true,
         offline_review_json,
+        structured_output: None,
         execution_deadline: None,
         workspace: workspace.into(),
         sandbox: crate::sandbox::SandboxSpec::new(crate::sandbox::SandboxPolicy::ReadOnly, []),

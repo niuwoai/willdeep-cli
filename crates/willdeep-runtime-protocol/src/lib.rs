@@ -17,6 +17,7 @@ pub mod screenplay;
 pub mod turn_queue;
 pub use turn_queue::{QueueAction, QueuedTurnMessage, UpdateTurnQueueParams};
 pub mod web_app;
+pub mod workflow;
 pub use agent_team::{
     AgentRun, AgentRunReason, AgentRunsPage, AgentUsageSummary, ContinueAgentParams,
 };
@@ -111,6 +112,8 @@ pub enum Capability {
     AttachmentImage,
     SkillDiscover,
     McpTools,
+    WorkflowObserve,
+    WorkflowControl,
     #[serde(other)]
     Unknown,
 }
@@ -1293,6 +1296,8 @@ impl RuntimeCapabilities {
                 Capability::AttachmentImage,
                 Capability::SkillDiscover,
                 Capability::McpTools,
+                Capability::WorkflowObserve,
+                Capability::WorkflowControl,
             ],
             operations: SUPPORTED_OPERATIONS
                 .iter()
@@ -1329,6 +1334,19 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "screenplay.resume",
     "screenplay.cancel",
     "screenplay.budget",
+    "workflow.schema",
+    "workflow.list",
+    "workflow.get",
+    "workflow.history",
+    "workflow.validate",
+    "workflow.save",
+    "workflow.run",
+    "workflow.stop",
+    "workflow.retry",
+    "workflow.resume",
+    "agent_library.get",
+    "agent_library.create",
+    "agent_library.update",
     "agent_library.list",
     "agent_library.save",
     "agent_library.import",

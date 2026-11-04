@@ -2,7 +2,9 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.129.0-rc1
+> 当前实现版本：v0.141.0-rc1
+>
+> 最后更新：2026-11-04
 
 ### 待发队列（0.115.0-rc3）
 
@@ -169,6 +171,60 @@ diff.revert
 
 `runtime.status` 返回类型化健康状态、版本、PID、运行时间和事件头；安全升级排空期间状态为 `draining`。`workspace.remove` 与 `session.delete` 返回 `{ id, status }` 结构化结果，其中状态分别为 `removed` 与 `deleted`，客户端无需解析任意 JSON 文本。
 
+### 工作流与专业智能体管理（0.141.0-rc1）
+
+Runtime 协议主版本仍为 1.0，新增操作通过 `operations` 能力列表协商。工作流 DTO 来自 `willdeep-runtime-protocol::workflow`；旧客户端可继续使用原会话操作，不要求其识别新节点类型。智能体包仍是 v1，本机安装状态/收据不属于包。
+
+所有 `workflow.*` 请求都携带 `parent_session_id`，服务端从父 Session 解析 Workspace 和存储范围，不接受调用方自定父子归属或文件目录。
+
+| 操作 | 附加 params | 结果 |
+| --- | --- | --- |
+| `workflow.schema` | 无 | `{schema, example}`，返回 DSL 格式与例子 |
+| `workflow.list` | 无 | `{definitions, runs}`，父会话定义与运行 |
+| `workflow.history` | 无 | `{runs}`，该父会话历史 |
+| `workflow.get` | `run_id` | `{workflow}`，持久完整运行 |
+| `workflow.validate` | `spec` | `{valid, definition_id}`，不保存 |
+| `workflow.save` | `spec` | `{valid, definition_id}`，同 ID 内容不可变 |
+| `workflow.run` | `definition_id`、`request_id`，可选 `input/limits` | `{workflow}`，立即返回持久句柄 |
+| `workflow.stop` | `run_id`、`request_id` | `{workflow}`，请求停止并收拢 Worker |
+| `workflow.retry` / `workflow.resume` | `run_id`、`request_id` | `{workflow}`，新运行关联源 run，保留旧终态 |
+
+run/stop/retry/resume 的 `params.request_id` 必须与统一 ApiRequest 的 `request_id` 一致。run 的 UUID 同时作为新 run ID；重放使用原参数与 UUID，不能换 UUID 试探第一次是否成功。示例请求信封如下；定义需先保存，父会话需已存在。
+
+```json
+{
+  "protocol_version": "1.0",
+  "request_id": "00000000-0000-4000-8000-000000000001",
+  "operation": "workflow.run",
+  "params": {
+    "parent_session_id": "00000000-0000-4000-8000-000000000000",
+    "definition_id": "review-v1",
+    "input": {},
+    "request_id": "00000000-0000-4000-8000-000000000001"
+  }
+}
+```
+
+save/run/stop/retry/resume 为变更类操作，run/retry/resume 同时是工作生产操作，受幂等及 Drain 闸门约束；draining 时仍可 stop 和只读查询。新工作还核验父 Session 的归档状态和 Workspace/会话只读策略。外部请求只做持久准入和控制 Turn 排队，不在全局幂等锁内等待模型或审批；同会话执行器取得执行权后 driver 才推进。对话内启动使用已持有执行权的当前宿主。
+
+停止回包可能仍为 `stopping`；客户端继续查询真实终态，不能把受理当成全部取消。重启按持久 request ID 对账 AgentRun，未知副作用为 `interrupted`，等待明确恢复。retry/resume 仅接受终态源运行，返回新 ID 和 `source_run_id`；成功节点保留 `reused_from`，不算新模型用量。节点、Schema/引用限制及恢复验收见 [WORKFLOWS.md](WORKFLOWS.md)。
+
+Web 同源适配端点 `POST /api/workflows/{operation}` 先验证父 Session 属于 Web 工作区 allowlist，再转交鉴权 Runtime。状态沿既有 EventLog 发布 `workflow.updated`，客户端按会话和 run ID 过滤，取持久快照后按游标恢复。模型、结果、报告与用量属于显式工作流查询的受授权数据，不能因新 DTO 而自动进入手机或公共分享白名单。
+
+专业管理复用 `agent_library.*` 命名空间，新增 `agent_library.get/create/update`，并沿用 list/history/fork/bind/enable 等入口。读取 get/history 传 `id`；create/update 传 `definition`（可用 definition_text），create 要求目标不存在，update 必须提供安装前置修订。写操作还需要 `request_id` 和 `expected_scope`；读取结果中的 `scope` 用于后续写入，CLI/聊天适配器由宿主捕获与绑定，原始 Runtime 客户端不得自造账号 scope。
+
+| 操作 | 管理 params 要点 |
+| --- | --- |
+| `agent_library.create` | `definition`，可选本机 `binding`，无 expected_revision |
+| `agent_library.update` | `definition`、`expected_revision` |
+| `agent_library.fork` | 源 `id`、`new_id`、源安装 `expected_revision` |
+| `agent_library.bind` | `id`、`binding`、`expected_revision` |
+| `agent_library.enable` | `id`、布尔 `value`、`expected_revision` |
+
+`expected_revision` 是刚读取的整数 `installation_revision`，不是正文 SHA。回执分别返回 `definition_revision`、`installation_revision`、`saved`、`replayed`、账户 scope 和 `target_scope`；list 每项携带 local/private 安装身份，get 与写回执用 `target_scope`。原始客户端应将目标库身份随 CAS 一起带回。聊天宿主自动记录、注入并校验已读目标，拒绝后来同修订号安装遮蔽旧目标造成的覆盖；同 ID 异参收据冲突、过期安装代数、账号/库切换及无前置版本的旧覆盖请求明确拒绝。创建检查、CAS、scope 与收据在同一存储锁内提交。本机绑定和启停推进安装代数，不改正文 hash；官方正文必须先 fork，回滚沿用显式历史 SHA。
+
+父会话工具 `agent_library_read` / `agent_library_manage` 和 `workflow_read` / `workflow_control` 保持稳定 Schema，写操作受既有授权与审计控制，不给 Worker。聊天管理成功后刷新当前专业目录，回执含 `applied/catalog_refreshed`；`saved_not_applied` 表示已保存但刷新失败，使用同 request ID 重试刷新。在途和续做/恢复 Worker 保留原快照。完整字段及兼容读取规则见 [AGENT_LIBRARY.md](AGENT_LIBRARY.md)。本机确定性假模型下的 API/E2E、崩溃恢复与共享背压已实际运行，环境、命令和覆盖边界见 [验收报告](verification/0.141.0-rc1.md)。
+
 ## 5. 响应信封
 
 成功响应：
@@ -271,7 +327,7 @@ Swift、Android 和第三方客户端应在 CI 中逐项解码 `responses`，并
 
 ## 11. Rust SDK
 
-`willdeep-runtime-client` 就是 CLI、TUI 与 Web 桥接内部使用的客户端，作为 crate 对外：每个稳定操作一个类型化方法，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传。两个 crate 的版本跟随 `willdeep` 发行版本，workspace 内以 `0.78.0-rc1` 为版本要求（整条 0.78 线都满足），`cargo publish --dry-run` 在 CI 里校验打包；实际发布到 crates.io 由持有 token 的维护者执行。
+`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.141.0-rc1`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
 
 ```bash
 willdeep daemon start

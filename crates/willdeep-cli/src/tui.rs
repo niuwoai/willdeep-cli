@@ -83,6 +83,7 @@ mod status_line;
 mod update_notice;
 mod user_message;
 mod webapp_commands;
+mod workflow_ui;
 mod workspace_attention;
 mod workspace_commands;
 mod workspace_picker_ui;
@@ -129,6 +130,11 @@ pub enum UiMessage {
         items: Vec<DraftAttachment>,
     },
     Agent(AgentEvent),
+    WorkflowResult {
+        session_id: uuid::Uuid,
+        operation: String,
+        result: std::result::Result<serde_json::Value, String>,
+    },
     Approval(String, bool, oneshot::Sender<ApprovalDecision>),
     Question(UserQuestion, oneshot::Sender<Option<String>>),
     Finished(
@@ -670,6 +676,8 @@ fn busy_input(prompt: &str) -> BusyInput {
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" => BusyInput::RunNow,
+        // Workflow controls only admit durable state; the session executor owns work.
+        "/workflow" => BusyInput::RunNow,
         "/session" => match value.split_whitespace().nth(1) {
             Some("search") => BusyInput::RunNow,
             _ => BusyInput::Refuse,

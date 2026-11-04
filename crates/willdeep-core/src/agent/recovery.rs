@@ -43,7 +43,14 @@ impl Agent {
             self.team_recovery
                 .get_or_try_init(|| async {
                     if let Some(catalog) = &self.subagents {
-                        catalog.restore_queued_runs().await?;
+                        catalog
+                            .restore_queued_runs_checked(|run| {
+                                self.tools
+                                    .allows_workflow_recovery(run)
+                                    .map(Some)
+                                    .map_err(|error| AgentError::Checkpoint(error.to_string()))
+                            })
+                            .await?;
                     }
                     Ok::<(), AgentError>(())
                 })

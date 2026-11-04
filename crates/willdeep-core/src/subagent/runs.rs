@@ -23,6 +23,8 @@ pub(crate) struct StoredRun {
     pub record: AgentRun,
     /// Private dispatch/permission snapshot; never returned by public queries.
     pub dispatch: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -45,6 +47,24 @@ pub(crate) struct RunRequest {
 }
 
 impl AgentRunStore {
+    /// Durable headroom, including accepted requests not yet reserved by a restarted host.
+    pub fn available_dispatch_capacity(&self) -> Result<usize, String> {
+        self.locked(|| {
+            let defaults = super::scheduler::AgentTeamSettings::default();
+            let capacity = self
+                .team_policy()?
+                .map_or(defaults.max_concurrent + defaults.max_queued, |policy| {
+                    policy.max_concurrent + policy.max_queued
+                });
+            let pending = self
+                .entries()?
+                .iter()
+                .filter(|entry| entry.record.is_pending())
+                .count();
+            Ok(capacity.saturating_sub(pending))
+        })
+    }
+
     pub fn needs_recovery(&self) -> Result<bool, String> {
         Ok(self.entries()?.iter().any(|entry| {
             entry.record.is_pending() || (!entry.record.delivered && entry.record.report.is_some())
@@ -143,7 +163,16 @@ impl AgentRunStore {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or("Agent run sequence exhausted")?;
+        let workflow_owner = request
+            .dispatch
+            .get("workflow_owner")
+            .filter(|owner| !owner.is_null())
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(storage_error)?;
         let record = AgentRun {
+            workflow_owner,
             id: request.request_id,
             request_id: request.request_id,
             agent_id: request.agent_id,
@@ -169,12 +198,35 @@ impl AgentRunStore {
             version: VERSION,
             record: record.clone(),
             dispatch: request.dispatch,
+            structured_output: None,
         })?;
         Ok((record, true))
     }
 
     pub fn get(&self, id: Uuid) -> Result<Option<AgentRun>, String> {
         Ok(self.load(id)?.map(|entry| entry.record))
+    }
+
+    /// A workflow leaf commits its result separately from the bounded human report.
+    pub(crate) fn record_structured_output(
+        &self,
+        id: Uuid,
+        output: serde_json::Value,
+    ) -> Result<(), String> {
+        crate::workflow::check_value(&output, crate::workflow::WORKFLOW_MAX_VALUE_BYTES)
+            .map_err(storage_error)?;
+        self.locked(|| {
+            let mut saved = self.load(id)?.ok_or("Agent run was not found")?;
+            if saved.record.workflow_owner.is_none() || !saved.record.is_pending() {
+                return Err("structured output requires an active workflow-owned run".into());
+            }
+            saved.structured_output = Some(output);
+            self.save(&saved)
+        })
+    }
+
+    pub fn structured_output(&self, id: Uuid) -> Result<Option<serde_json::Value>, String> {
+        Ok(self.load(id)?.and_then(|saved| saved.structured_output))
     }
 
     pub(crate) fn latest(&self, agent: Uuid) -> Result<Option<StoredRun>, String> {

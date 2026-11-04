@@ -14,6 +14,7 @@ use crate::tools::{ToolError, ToolRegistry};
 use crate::types::{Message, ToolCall, Usage, sanitize_tool_history};
 
 mod context;
+mod dispatch;
 mod guidance;
 mod instance_identity;
 mod messaging;
@@ -127,6 +128,8 @@ enum LeaseOutcome {
 pub enum AgentEvent {
     /// A durable runtime-derived plan update; no model/tool call is fabricated.
     PlanUpdated(crate::conversation::Plan),
+    /// Host-persisted graph state, emitted after the workflow ledger commits.
+    WorkflowUpdated(Box<willdeep_runtime_protocol::workflow::WorkflowRun>),
     /// Model loop returned while background work remains active.
     BackgroundWait {
         waiting: bool,
@@ -819,6 +822,7 @@ impl Agent {
             .as_ref()
             .map(|tasks| tasks.running_subagents())
             .unwrap_or(0)
+            .saturating_add(usize::from(self.workflows_pending()))
     }
 
     fn background_active(&self) -> bool {
@@ -826,6 +830,7 @@ impl Agent {
             .as_ref()
             .map(|tasks| tasks.has_pending_tasks())
             .unwrap_or(false)
+            || self.workflows_pending()
     }
 
     pub async fn run(&self, prompt: impl Into<String>) -> Result<AgentOutcome, AgentError> {
@@ -899,6 +904,9 @@ impl Agent {
                     .zip(deadline)
                     .map(|(budget, deadline)| deadline - budget / 5),
             );
+        }
+        if sink.is_some() {
+            self.tools.activate_workflows();
         }
         if deadline.is_some() {
             recorder.retain_for_deadline();
@@ -1059,18 +1067,6 @@ impl Agent {
         self.tools.set_task_context(&user_message.content);
         messages.push(user_message);
         let mut definitions = self.tools.definitions();
-        if let Some(catalog) = &self.subagents
-            && let Some(spawn) = definitions
-                .iter_mut()
-                .find(|tool| tool.name == "spawn_agent")
-        {
-            spawn.parameters["properties"]["profile"]["enum"] =
-                serde_json::json!(catalog.public_profile_ids());
-            spawn.description.push_str(&format!(
-                " Available specialist definitions: {}",
-                catalog.description()
-            ));
-        }
         if self.tools.allows_agent_tool("update_plan") {
             definitions.push(crate::tools::update_plan_definition());
         }
@@ -1149,8 +1145,12 @@ impl Agent {
                 }
             }
             self.append_pending_instructions(&mut messages);
+            let workflow_reports = self.append_workflow_reports(&mut messages)?;
             let (peer_message_ids, _) = self.tools.append_peer_context(&mut messages)?;
             checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
+            for run_id in workflow_reports {
+                self.tools.acknowledge_workflow_report(run_id)?;
+            }
             // 事件在这里进对话，而不是在工具与工具之间：一次 assistant 的
             // tool_calls 必须紧跟它那批 tool 结果，中间插一条用户消息会把这个
             // 配对拆散。turn 顶部就是「当前模型或工具步骤已经结束」那个边界。
@@ -1786,10 +1786,6 @@ impl Agent {
                 }
                 return result;
             }
-            let catalog = self
-                .subagents
-                .as_ref()
-                .ok_or_else(|| ToolError::UnknownTool(call.name.clone()))?;
             let args: SpawnAgentArgs =
                 serde_json::from_value(call.parsed_arguments().map_err(|source| {
                     ToolError::InvalidArguments {
@@ -1801,94 +1797,7 @@ impl Agent {
                     tool: call.name.clone(),
                     source,
                 })?;
-            let profile = args
-                .profile
-                .as_deref()
-                .unwrap_or("generalist")
-                .trim()
-                .to_ascii_lowercase();
-            if !catalog.has_profile(&profile) {
-                return Err(ToolError::Network(format!(
-                    "subagent profile not found: {profile}"
-                )));
-            }
-            let approved_command = match args.target_command.as_deref() {
-                Some(_) if !catalog.supports_target_command(&profile) => {
-                    return Err(ToolError::ApprovalDenied(
-                        "target_command may only be used with profile=\"ops_runner\"".to_owned(),
-                    ));
-                }
-                Some(command) => Some(self.tools.approve_subagent_command(command).await?),
-                None => None,
-            };
-            // 准入绑的是**档位**，不是工种名。`deep` 从工种正交化成
-            // WorkerTier::Expert 之后，这道闸必须跟着搬——否则 `profile="deep"`
-            // 只是换了个名字就绕过了票据。
-            let requested_tier = args
-                .worker_tier
-                .as_deref()
-                .and_then(crate::WorkerTier::parse)
-                .or_else(|| crate::WorkerTier::parse(&profile))
-                .unwrap_or_default();
-            // `profile="deep"` 按专家档收了票据，就得按专家档兑现：档位绑定只认
-            // `worker_tier`，不补上的话票据照扣、跑的却是 generalist 的基础模型。
-            let mut args = args;
-            if args.worker_tier.is_none() && requested_tier.requires_admission() {
-                args.worker_tier = Some(requested_tier.as_str().to_owned());
-            }
-            // 准入与 `small_model_routing` 无关：路由开关关掉的是自动分类与
-            // 下发，不是贵模型的票据。
-            let dispatch = catalog.dispatch_model(&profile, args.worker_tier.as_deref());
-            if requested_tier.requires_admission() {
-                self.admission
-                    .authorize_deep(args.escalation.as_ref())
-                    .map_err(ToolError::Network)?;
-                self.sink
-                    .emit(AgentEvent::RouteDecided {
-                        tier: RoutingTier::Deep,
-                        profile: Some(profile.clone()),
-                        confidence: 100,
-                        auto_dispatched: false,
-                        reason: "runtime-validated escalation ticket".to_owned(),
-                        model: dispatch.model.clone(),
-                        fallback: dispatch.fallback.clone(),
-                    })
-                    .await;
-            } else if let Some(reason) = &dispatch.fallback {
-                // 要了贵一档、这个 provider 上却没绑那一档：只放宽了预算，模型
-                // 没换。以前这里一声不吭，用户以为自己拿到了更强的模型。
-                self.sink
-                    .emit(AgentEvent::ModelFallback {
-                        purpose: "worker_tier".to_owned(),
-                        skipped: args.worker_tier.clone(),
-                        used: dispatch.model.clone(),
-                        reason: reason.clone(),
-                    })
-                    .await;
-            }
-            let scope = catalog.write_scope(Some(&profile));
-            let approved_targets = if scope.writes() {
-                let requested = args.requested_write_targets(scope);
-                if requested.is_empty() {
-                    return Err(ToolError::OutsideWorkspace(
-                        "a writing profile needs its files declared up front: target_file for legacy editor, task.write_files for implementer, test_fixer or build_fixer".to_owned(),
-                    ));
-                }
-                Some(self.tools.approve_subagent_write_set(&requested).await?)
-            } else {
-                None
-            };
-            // 专家档自己不算「低档尝试」，别让它给自己攒证据。
-            if !requested_tier.requires_admission() {
-                // Only count a lower-tier attempt after its task packet and
-                // write authority have passed validation. A rejected packet
-                // must not become evidence that unlocks Deep.
-                self.admission.record_profile_attempt(&profile);
-            }
-            catalog
-                .run_authorized(args, approved_targets, approved_command)
-                .await
-                .map_err(|error| ToolError::Network(error.to_string()))
+            self.execute_spawn_agent(args).await
         })
     }
 

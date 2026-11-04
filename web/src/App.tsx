@@ -58,6 +58,10 @@ import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
 import { RuntimeFailureDetails } from "./RuntimeFailureDetails";
+import { useQueryClient } from "@tanstack/react-query";
+import { WorkflowSidebar } from "./WorkflowSidebar";
+import { WorkflowCard } from "./WorkflowCard";
+import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
 
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; archived: boolean; active: boolean; active_turn_id: string | null };
@@ -80,7 +84,7 @@ function settleActiveSteps(steps: RunStep[], now: number): RunStep[] {
     ? { ...step, status: "done" as const, elapsedMs: step.elapsedMs ?? now - step.startedAt }
     : step);
 }
-type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider" | "status"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[]; concise?: ConciseLine };
+type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider" | "status"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[]; concise?: ConciseLine; workflow?: WorkflowRun };
 function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   const chat: ChatMessage[] = [];
   conciseHistory(detail.messages, detail.response_style).forEach((message, index) => {
@@ -96,9 +100,9 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
       })) });
     }
     // 只带工具调用、正文为空的助手消息不再单独占一个气泡。
-    if (!message.content && !message.plan && !message.details?.length) return;
+    if (!message.content && !message.plan && !message.workflow && !message.details?.length) return;
     chat.push({
-      id, role: message.role, attachmentReference: message.attachment_reference, plan: message.plan, details: message.details,
+      id, role: message.role, attachmentReference: message.attachment_reference, plan: message.plan, workflow: message.workflow, details: message.details,
       content: `${message.content}${message.attachment_count ? `\n[${message.attachment_count} ${t.attachmentCount}]` : ""}`,
     });
   });
@@ -124,6 +128,9 @@ type ComposerData = { commands: string[]; skills: ComposerSkill[] };
 type Health = { status: string; version: string };
 type RuntimeStreamEvent = {
   type: string;
+  kind?: string;
+  workflow?: WorkflowRun;
+  data?: { workflow?: WorkflowRun };
   cursor?: number;
   session_id?: string;
   turn_id?: string;
@@ -303,6 +310,7 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 }
 
 export function App() {
+  const workflowClient = useQueryClient();
   const [language, setLanguage] = useState<Language>(detectLanguage); const t = messages[language];
   const [theme, setTheme] = useState<ThemeMode>(storedThemeMode);
   // 主题写在根元素上，样式表按 data-theme 取变量；跟随系统那档不写属性，交给
@@ -777,6 +785,18 @@ export function App() {
   }
 
   async function applyStreamEvent(event: RuntimeStreamEvent, runId: string) {
+    const workflow = workflowFromEvent(event);
+    if (workflow) {
+      await cacheWorkflow(workflowClient, workflow);
+      if (workflow.parent_session_id === sessionIdRef.current || workflow.parent_session_id === activeSessionRef.current) {
+        setChat((current) => current.some((item) => item.workflow?.id === workflow.id)
+          ? current.map((item) => item.workflow?.id === workflow.id ? { ...item, workflow } : item)
+          : [...current, { id: `workflow-${workflow.id}`, role: "workflow", content: "", workflow }]);
+      }
+      const turnId = event.turn_id || activeTurnRef.current;
+      if (turnId) saveRuntimeCursor(workflow.parent_session_id, turnId, event.cursor);
+      return { terminal: false as const };
+    }
     if (event.type === "submitted" || event.type === "resumed") {
       const nextSessionId = event.session_id || activeSessionRef.current || "";
       const nextTurnId = event.turn_id || activeTurnRef.current;
@@ -1551,7 +1571,7 @@ export function App() {
         <Text fontSize="2xs" color="var(--text-faint)" mt="1">{t.addWorkspaceHint}</Text>
         {workspaceError && <Text fontSize="xs" color="var(--danger-text)" mt="1">{workspaceError}</Text>}
       </Box>}
-      <RuntimeSidebar onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
+      <RuntimeSidebar workflowPanel={<WorkflowSidebar key={sessionId} parentSessionId={sessionId} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} />} onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="4">
@@ -1668,7 +1688,7 @@ export function App() {
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {error && <Box className="request-error"><Text role="alert">{error}</Text>{runtimeFailure && <RuntimeFailureDetails key={`${runtimeFailure.sessionId}:${runtimeFailure.taskId}`} sessionId={runtimeFailure.sessionId} taskId={runtimeFailure.taskId} messages={t} />}</Box>}<div ref={endRef} />

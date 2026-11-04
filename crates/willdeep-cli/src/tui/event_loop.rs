@@ -782,6 +782,8 @@ pub(super) async fn event_loop(
                 // dead endpoint shows up as a notice instead of silence.
                 if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));}
                 app.background_tasks=runtime.background_tasks.snapshots();
+                workflow_ui::refresh(&mut app, &runtime.home, session.id);
+                if !app.running { dispatch::wake_for_workflows(&mut app, session, store, &agent, runtime)?; }
                 // 事件内核的用户侧投影跟着秒级刷新走：它是观察面，不需要自己
                 // 的通知通道。落盘也在这里收口——状态每变一次就写一次盘，
                 // 打字的时候会卡在磁盘上。
@@ -1716,6 +1718,11 @@ pub(super) async fn event_loop(
                             }
                             if app.handle_mobile_command(&prompt,&runtime.home,&runtime.tx){continue;}
                             if app.handle_federation_command(&prompt,&runtime.home,runtime.runtime_submit.config.as_deref(),&runtime.tx){continue;}
+                            match workflow_ui::handle_command(&prompt,&mut app,session,store,&agent,runtime) {
+                                Ok(true)=>continue,
+                                Ok(false)=>{},
+                                Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("工作流操作失败","Workflow action failed","ワークフロー操作に失敗しました")));continue;},
+                            }
                             match handle_agent_command(&prompt,&mut app,runtime,session.id).await {
                                 Ok(true)=>continue,
                                 Ok(false)=>{},
@@ -1894,12 +1901,19 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在思考 · 准备轮次","Thinking · preparing turn","思考中 · ターンを準備")));},
                 UiMessage::Agent(AgentEvent::TurnPreempted{turn})=>app.record_progress(format!("{} {turn}",language.text("已被运行时事件打断 · 轮次","Preempted by a runtime event · turn","ランタイムイベントで中断 · ターン"))),
                 UiMessage::Agent(AgentEvent::ToolRequested(v))=>{app.record_progress(format!("{} {}",language.text("正在使用","Using","使用中"),v.name));app.tools.requested(&v.name);app.note_tool_requested(&v.name,crate::tool_detail(&v.name,&v.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&v.name,&v.arguments));},
+                UiMessage::WorkflowResult { session_id, operation, result } => {
+                    if session_id == session.id { workflow_ui::receive(&mut app, &operation, result); }
+                },
+                UiMessage::Agent(AgentEvent::WorkflowUpdated(run))=>{
+                    if run.parent_session_id == session.id { workflow_ui::update(&mut app.transcript, *run, false); app.refresh_transcript_height(); }
+                },
                 UiMessage::Agent(AgentEvent::PlanUpdated(plan))=>{
                     // 计划卡片是这一轮的第一份可见输出，压缩状态行到此为止。
                     app.dismiss_compression_notice();
                     append_plan_result(&mut app.transcript,&serde_json::to_string(&willdeep_core::planning::Receipt::new(plan,false))?);
                 },
                 UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
+                    if !is_error && call.name=="workflow_control" && let Ok(value)=serde_json::from_str::<serde_json::Value>(&output) && let Some(run)=value.get("workflow").and_then(|run|serde_json::from_value(run.clone()).ok()) {workflow_ui::update(&mut app.transcript,run,false);}
                     if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&call.name,&call.arguments),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
                 UiMessage::Agent(AgentEvent::Usage(v))=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
                 UiMessage::Agent(AgentEvent::CompressionStarted{estimated_tokens})=>{app.context_tokens=estimated_tokens;app.record_progress(language.text("正在压缩上下文","Compressing context","コンテキストを圧縮中").to_owned());app.note_compression_started();},

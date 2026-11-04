@@ -50,4 +50,4 @@ pub use types::{
     TaskVerifier, public_profile_id, public_trade_contract,
 };
 
-pub(crate) use types::SpawnAgentArgs;
+pub use types::{SpawnAgentArgs, WorkflowDispatchIdentity, WorkflowExecutionLimits};

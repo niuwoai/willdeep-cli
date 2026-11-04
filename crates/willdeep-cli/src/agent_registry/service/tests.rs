@@ -356,7 +356,7 @@ async fn same_origin_rotation_keeps_old_key_for_offline_pinned_import() {
     let id = first.1.definition.definition_id.clone();
     let revision = first.1.sha256.clone();
     let original = service.official(&id, &revision, &home).await.unwrap();
-    super::super::operate(&home, "import", json!({"package":original}))
+    super::super::management::cli_write(&home, "import", json!({"package":original}))
         .await
         .unwrap();
     let library = AgentLibrary::new(&home);
@@ -368,7 +368,7 @@ async fn same_origin_rotation_keeps_old_key_for_offline_pinned_import() {
             .unwrap();
     assert_eq!(trust["keys"].as_object().unwrap().len(), 2);
     task.abort();
-    super::super::operate(&home, "import", json!({"package":original}))
+    super::super::management::cli_write(&home, "import", json!({"package":original}))
         .await
         .unwrap();
     let installation = &library.installations().unwrap()[&id];

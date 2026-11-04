@@ -4,6 +4,7 @@ use willdeep_runtime_protocol::{AgentRun, AgentRunReason, AgentStatus};
 fn seed_run(home: &Path, parent: uuid::Uuid, status: AgentStatus) -> (AgentRun, std::fs::File) {
     let id = uuid::Uuid::new_v4();
     let run = AgentRun {
+        workflow_owner: None,
         id,
         request_id: id,
         agent_id: uuid::Uuid::new_v4(),

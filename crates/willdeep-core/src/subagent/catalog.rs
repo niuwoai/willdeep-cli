@@ -32,7 +32,11 @@ use super::types::{
 };
 
 mod control;
+mod enqueue;
 mod run_control;
+pub(super) mod snapshot;
+#[cfg(test)]
+mod snapshot_tests;
 
 /// Hard ceiling on the attempt budget a task packet may ask for.
 const MAX_ATTEMPTS_CEILING: usize = 6;
@@ -40,7 +44,9 @@ const MAX_ATTEMPTS_CEILING: usize = 6;
 #[derive(Clone)]
 pub struct SubagentCatalog {
     workspace: PathBuf,
-    profiles: BTreeMap<String, SubagentProfile>,
+    profiles: Arc<std::sync::RwLock<Arc<BTreeMap<String, SubagentProfile>>>>,
+    definition_bindings: Option<Arc<snapshot::BindingResolver>>,
+    dispatch_admission: Arc<tokio::sync::Mutex<()>>,
     background: Arc<BackgroundTaskRegistry>,
     sink: Arc<dyn EventSink>,
     failures: Arc<Mutex<BTreeMap<String, CircuitState>>>,
@@ -125,10 +131,14 @@ impl SubagentCatalog {
     ) -> Self {
         Self {
             workspace: workspace.as_ref().to_path_buf(),
-            profiles: profiles
-                .into_iter()
-                .map(|profile| (profile.id.clone(), profile))
-                .collect(),
+            profiles: Arc::new(std::sync::RwLock::new(Arc::new(
+                profiles
+                    .into_iter()
+                    .map(|profile| (profile.id.clone(), profile))
+                    .collect(),
+            ))),
+            definition_bindings: None,
+            dispatch_admission: Arc::new(tokio::sync::Mutex::new(())),
             background,
             sink: Arc::new(SubagentNoopSink),
             failures: Arc::new(Mutex::new(BTreeMap::new())),
@@ -334,7 +344,7 @@ impl SubagentCatalog {
     }
 
     pub fn description(&self) -> String {
-        self.profiles
+        self.profile_snapshot()
             .values()
             .filter(|profile| {
                 PUBLIC_SUBAGENT_IDS.contains(&profile.id.as_str()) || profile.definition.is_some()
@@ -345,7 +355,7 @@ impl SubagentCatalog {
     }
 
     pub fn public_profile_ids(&self) -> Vec<String> {
-        self.profiles
+        self.profile_snapshot()
             .values()
             .filter(|profile| {
                 PUBLIC_SUBAGENT_IDS.contains(&profile.id.as_str()) || profile.definition.is_some()
@@ -366,11 +376,33 @@ impl SubagentCatalog {
         })
     }
 
+    fn ensure_manual_agent_control(&self, agent_id: uuid::Uuid) -> Result<(), AgentError> {
+        let workflow_owned = self
+            .background
+            .task_for_agent(agent_id)
+            .is_some_and(|task| self.background.is_workflow_task(&task.id))
+            || self
+                .background
+                .agent_run_store()
+                .map(|store| store.latest(agent_id))
+                .transpose()
+                .map_err(AgentError::Checkpoint)?
+                .flatten()
+                .is_some_and(|run| run.record.workflow_owner.is_some());
+        if workflow_owned {
+            return Err(AgentError::Subagent(
+                "workflow nodes must be controlled through their workflow run".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn retry_background_agent(
         &self,
         agent_id: uuid::Uuid,
         model: Option<&str>,
     ) -> Result<Option<String>, AgentError> {
+        self.ensure_manual_agent_control(agent_id)?;
         if let Some(id) = self.retry_in_memory(agent_id, model)? {
             return Ok(Some(id));
         }
@@ -409,22 +441,11 @@ impl SubagentCatalog {
                 "worker dispatch does not belong to this parent background session".into(),
             ));
         }
-        if record
-            .args
-            .profile
-            .as_deref()
-            .is_none_or(|id| !self.profiles.contains_key(id))
-        {
-            return Err(AgentError::Subagent(
-                "original worker profile is no longer configured".into(),
-            ));
-        }
         super::dispatch_store::validate_workspace(&record.prepared, &self.workspace).await?;
         let selected_model = model
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .or(record.model);
+            .map(str::to_owned);
         if let Some(model) = selected_model {
             self.model_overrides
                 .lock()
@@ -434,10 +455,10 @@ impl SubagentCatalog {
         let result = self
             .run_with_id(
                 agent_id,
-                record.args,
-                record.approved_targets,
-                record.approved_command,
-                Some(record.prepared),
+                record.args.clone(),
+                record.approved_targets.clone(),
+                record.approved_command.clone(),
+                Some(record),
                 Some((uuid::Uuid::new_v4(), AgentRunReason::Retry)),
             )
             .await;
@@ -500,29 +521,13 @@ impl SubagentCatalog {
                 "[Recovered completed child report; tools and verifier were not rerun.]\n{report}"
             ));
         }
-        if record
-            .args
-            .profile
-            .as_deref()
-            .is_none_or(|profile| !self.profiles.contains_key(profile))
-        {
-            return Err(AgentError::Subagent(
-                "original worker profile is no longer configured".into(),
-            ));
-        }
         super::dispatch_store::validate_workspace(&record.prepared, &self.workspace).await?;
-        if let Some(model) = record.model {
-            self.model_overrides
-                .lock()
-                .expect("subagent model overrides")
-                .insert(id, model);
-        }
         self.run_with_id(
             id,
-            record.args,
-            record.approved_targets,
-            record.approved_command,
-            Some(record.prepared),
+            record.args.clone(),
+            record.approved_targets.clone(),
+            record.approved_command.clone(),
+            Some(record),
             None,
         )
         .await
@@ -577,18 +582,17 @@ impl SubagentCatalog {
     /// 命不中再走公开名映射，让 `reader`、`judge`、`deep` 这些改名前的写法
     /// 继续可用。别人保存的流程不该因为我们换了个称呼就断掉。
     fn resolve_profile_id(&self, id: &str) -> Option<String> {
-        let id = id.trim().to_ascii_lowercase();
-        if self.profiles.contains_key(&id) {
-            return Some(id);
-        }
-        public_profile_id(&id)
-            .map(str::to_owned)
-            .filter(|resolved| self.profiles.contains_key(resolved))
+        self.profile(Some(id)).map(|profile| profile.id)
     }
 
-    fn profile(&self, id: Option<&str>) -> Option<&SubagentProfile> {
-        let resolved = self.resolve_profile_id(id.unwrap_or("generalist"))?;
-        self.profiles.get(&resolved)
+    /// An owned execution snapshot. The catalog lock is released before returning.
+    pub fn profile(&self, id: Option<&str>) -> Option<SubagentProfile> {
+        let snapshot = self.profile_snapshot();
+        let id = id.unwrap_or("generalist").trim().to_ascii_lowercase();
+        snapshot
+            .get(&id)
+            .or_else(|| public_profile_id(&id).and_then(|id| snapshot.get(id)))
+            .cloned()
     }
 
     pub(crate) async fn run(
@@ -647,7 +651,7 @@ impl SubagentCatalog {
                     .to_owned(),
             ));
         }
-        let selected = self.profiles.get(&profile_id).ok_or_else(|| {
+        let selected = self.profile(Some(&profile_id)).ok_or_else(|| {
             AgentError::Subagent(format!("subagent profile not found: {profile_id}"))
         })?;
         const READ_ONLY_TOOLS: &[&str] = &[
@@ -691,59 +695,53 @@ impl SubagentCatalog {
     async fn run_with_id(
         &self,
         agent_id: uuid::Uuid,
-        args: SpawnAgentArgs,
+        mut args: SpawnAgentArgs,
         approved_targets: Option<BTreeSet<PathBuf>>,
         approved_command: Option<String>,
-        restored_workspace: Option<PreparedSubagentWorkspace>,
+        restored_dispatch: Option<super::dispatch_store::DispatchRecord>,
         requested_run: Option<(uuid::Uuid, AgentRunReason)>,
     ) -> Result<String, AgentError> {
+        if let Some(record) = &restored_dispatch {
+            args.workflow_owner = record.workflow_owner.clone();
+        }
+        let intent = enqueue::dispatch_intent(&args, &approved_targets, &approved_command)?;
         let mut dispatch_args = args.clone();
         if let Some(store) = self.background.agent_run_store() {
             store
                 .ensure_agent_available(agent_id)
                 .map_err(AgentError::SubagentBlocked)?;
         }
-        let mut profile = self
-            .profile(args.profile.as_deref())
-            .ok_or_else(|| AgentError::Subagent("no subagent profiles configured".to_owned()))?
-            .clone();
-        if restored_workspace.is_some()
-            && let Some(home) = &self.state_home
-            && let Some(record) = super::dispatch_store::load(home, agent_id)?
-            && let Some(definition) = record.definition
-        {
-            let base = self.profiles.get(&definition.base_role).ok_or_else(|| {
-                AgentError::Subagent("original definition base role unavailable".into())
-            })?;
-            let local_binding = profile
-                .definition_model_bound
-                .then(|| (profile.provider.clone(), profile.model.clone()));
-            let execution_binding = profile.definition_binding.clone();
-            profile = definition
-                .project(base)
-                .map_err(|error| AgentError::Subagent(error.to_string()))?;
-            profile.definition_binding = execution_binding;
-            if let Some((provider, model)) = local_binding {
-                profile.provider = provider;
-                profile.model = model;
-                profile.definition_model_bound = true;
-            }
-        }
+        let recovering = restored_dispatch.is_some();
+        let frozen = restored_dispatch
+            .as_ref()
+            .is_some_and(|record| record.execution.is_some());
+        let mut profile = match &restored_dispatch {
+            Some(record) => self.restored_profile(record)?,
+            None => self.profile(args.profile.as_deref()).ok_or_else(|| {
+                AgentError::Subagent("no subagent profiles configured".to_owned())
+            })?,
+        };
+        let mut execution_tier = restored_dispatch
+            .as_ref()
+            .and_then(|record| record.execution.as_ref())
+            .and_then(|snapshot| snapshot.tier());
         dispatch_args.profile = Some(profile.id.clone());
         // 职责给提示词、工具和写入边界，档位给模型和上下文预算。
         //
         // 预算只放宽不收窄：工种自己声明的窗口是它完成职责的下限，implementer
         // 的 256K 不该因为跑在基础档上被砍掉。换模型则走档位绑定——专家档已经
         // 在 agent 层过了票据与预算，到这里只负责兑现。
-        if let Some(tier) = args
-            .worker_tier
-            .as_deref()
-            .and_then(crate::WorkerTier::parse)
+        if !recovering
+            && let Some(tier) = args
+                .worker_tier
+                .as_deref()
+                .and_then(crate::WorkerTier::parse)
         {
             profile.context_window = profile.context_window.max(tier.context_budget());
             if !profile.definition_model_bound
                 && let Some(binding) = self.tier_bindings.get(&tier)
             {
+                execution_tier = Some(tier);
                 profile.provider = binding.provider.clone();
                 profile.model = binding.model.clone();
                 profile.context_window = profile.context_window.max(binding.window);
@@ -773,11 +771,16 @@ impl SubagentCatalog {
         if profile.model.is_none()
             && let Some(model) = crate::provider::provider_model(profile.provider.as_ref())
         {
-            profile.hosted_job_prompt = crate::hosts_job_prompt(&model);
+            // Followers detach here so changing the parent's model cannot retarget an
+            // already queued/running worker midway through its execution.
+            profile.provider = profile.provider.with_model(&model)?;
+            profile.hosted_job_prompt =
+                profile.definition.is_none() && crate::hosts_job_prompt(&model);
             profile.model = Some(model);
         }
-        if let (Some(store), Some((request_id, _))) =
-            (self.background.agent_run_store(), requested_run)
+        if !frozen
+            && let (Some(store), Some((request_id, _))) =
+                (self.background.agent_run_store(), requested_run)
             && let Some(saved) = store.get(request_id).map_err(AgentError::Checkpoint)?
             && let Some(turns) = saved.max_turns
         {
@@ -786,15 +789,59 @@ impl SubagentCatalog {
             profile.timeout_seconds = saved.timeout_seconds;
         }
         // Explicit local limits win over tier defaults, including resumed runs.
-        if let Some(binding) = profile.definition_binding.clone() {
+        if !frozen && let Some(binding) = profile.definition_binding.clone() {
             binding.apply_limits(&mut profile);
+        }
+        if !frozen && let Some(limits) = &args.execution_limits {
+            if let Some(turns) = limits.max_turns {
+                if turns == 0 {
+                    return Err(AgentError::Subagent(
+                        "workflow max_turns must be positive".into(),
+                    ));
+                }
+                profile.max_turns = profile
+                    .max_turns
+                    .min(usize::try_from(turns).unwrap_or(usize::MAX));
+            }
+            if let Some(tokens) = limits.token_budget {
+                if tokens == 0 {
+                    return Err(AgentError::Subagent(
+                        "workflow token_budget must be positive".into(),
+                    ));
+                }
+                profile.token_budget = Some(
+                    profile
+                        .token_budget
+                        .map_or(tokens, |limit| limit.min(tokens)),
+                );
+            }
+            if let Some(seconds) = limits.timeout_seconds {
+                if seconds == 0 {
+                    return Err(AgentError::Subagent(
+                        "workflow timeout_seconds must be positive".into(),
+                    ));
+                }
+                profile.timeout_seconds = Some(
+                    profile
+                        .timeout_seconds
+                        .map_or(seconds, |limit| limit.min(seconds)),
+                );
+            }
         }
         let requested_command = args
             .target_command
             .as_deref()
             .map(str::trim)
             .filter(|command| !command.is_empty());
-        if requested_command.is_some() && !self.supports_target_command(&profile.id) {
+        if requested_command.is_some()
+            && !(profile
+                .definition
+                .as_ref()
+                .map(|d| d.base_role.as_str())
+                .unwrap_or(&profile.id)
+                == "ops_runner"
+                && profile.tool_names.iter().any(|name| name == "run_command"))
+        {
             return Err(AgentError::Subagent(
                 "target_command is only supported by the ops_runner profile".to_owned(),
             ));
@@ -885,8 +932,10 @@ impl SubagentCatalog {
         let prompt = args.prompt;
         let profile_id = profile.id.clone();
         let background = args.run_in_background.unwrap_or(false);
-        let recovering = restored_workspace.is_some();
-        let prepared = if let Some(prepared) = restored_workspace {
+        let prepared = if let Some(prepared) = restored_dispatch
+            .as_ref()
+            .map(|record| record.prepared.clone())
+        {
             if prepared.dedicated != (profile.worktree == SubagentWorktreePolicy::Dedicated) {
                 return Err(AgentError::Subagent(
                     "worker worktree policy changed since dispatch".into(),
@@ -907,13 +956,31 @@ impl SubagentCatalog {
             approved_command: approved_command.clone(),
             model: profile.model.clone(),
             definition: profile.definition.clone(),
+            execution: Some(snapshot::ExecutionSnapshot::capture(
+                &profile,
+                execution_tier,
+            )),
+            workflow_owner: args.workflow_owner.clone().or_else(|| {
+                restored_dispatch
+                    .as_ref()
+                    .and_then(|d| d.workflow_owner.clone())
+            }),
+            intent: restored_dispatch
+                .as_ref()
+                .and_then(|d| d.intent.clone())
+                .or(Some(intent)),
             prepared: prepared.clone(),
         };
         if !recovering && let Some(home) = &self.state_home {
             super::dispatch_store::save(home, &dispatch_record)?;
         }
         let approved_targets = remap_approved_targets(approved_targets, &prepared)?;
+        let structured_output = args
+            .workflow_owner
+            .as_ref()
+            .map(|_| Arc::new(Mutex::new(None)));
         let run = SubagentRun {
+            structured_output,
             isolated_evaluation: false,
             offline_review_json: false,
             execution_deadline: *self
@@ -950,6 +1017,19 @@ impl SubagentCatalog {
         if background {
             let (request_id, reason) =
                 requested_run.unwrap_or_else(|| (uuid::Uuid::new_v4(), AgentRunReason::Spawn));
+            // Re-enqueue the exact durable payload when resuming an accepted request,
+            // including old records that predate optional snapshot fields.
+            let saved_dispatch = if recovering {
+                self.background
+                    .agent_run_store()
+                    .map(|store| store.load(request_id))
+                    .transpose()
+                    .map_err(AgentError::Checkpoint)?
+                    .flatten()
+                    .map(|run| run.dispatch)
+            } else {
+                None
+            };
             let run_request = RunRequest {
                 request_id,
                 reason,
@@ -959,8 +1039,11 @@ impl SubagentCatalog {
                 max_turns: Some(profile.max_turns as u64),
                 token_budget: profile.token_budget,
                 timeout_seconds: profile.timeout_seconds,
-                dispatch: serde_json::to_value(&dispatch_record)
-                    .map_err(|error| AgentError::Checkpoint(error.to_string()))?,
+                dispatch: match saved_dispatch {
+                    Some(dispatch) => dispatch,
+                    None => serde_json::to_value(&dispatch_record)
+                        .map_err(|error| AgentError::Checkpoint(error.to_string()))?,
+                },
             };
             let runner_sink = self.sink.clone();
             let failures = self.failures.clone();
@@ -1083,16 +1166,26 @@ impl SubagentCatalog {
                                         };
                                 }
                                 run.profile.model = Some(model);
-                                run.profile.hosted_job_prompt = run
+                                run.profile.hosted_job_prompt = run.profile.definition.is_none() && run
                                     .profile
                                     .model
                                     .as_deref()
                                     .is_some_and(crate::hosts_job_prompt);
                             }
                             let budget_scope = run.usage_ledger.clone();
+                            let structured_output = run.structured_output.clone();
                             let mut result =
                                 run_subagent(run, sink.clone(), agent_id, Some(instruction_inbox))
                                     .await;
+                            if result.is_ok() && let Some(slot) = structured_output {
+                                let output = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+                                result = match (output, background.agent_run_store(), run_id) {
+                                    (Some(output), Some(store), Some(run_id)) => store.record_structured_output(run_id, output)
+                                        .map(|_| result.expect("successful result"))
+                                        .map_err(AgentError::Checkpoint),
+                                    _ => Err(AgentError::Subagent("workflow worker completed without a structured result".into())),
+                                };
+                            }
                             if result.is_err()
                                 && let Some(scope) = budget_scope
                                 && let Err(error) = scope.check_budget()

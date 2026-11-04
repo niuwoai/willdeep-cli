@@ -22,6 +22,14 @@ pub(super) struct DispatchRecord {
     pub model: Option<String>,
     #[serde(default)]
     pub definition: Option<crate::agent_definition::AgentDefinition>,
+    #[serde(default)]
+    pub execution: Option<super::catalog::snapshot::ExecutionSnapshot>,
+    /// Separate from tool arguments, which deliberately reject deserialized ownership.
+    #[serde(default)]
+    pub workflow_owner: Option<willdeep_runtime_protocol::agent_team::WorkflowRunOwner>,
+    /// Original caller intent for stable request replay across catalog refreshes.
+    #[serde(default)]
+    pub intent: Option<serde_json::Value>,
     pub prepared: PreparedSubagentWorkspace,
 }
 

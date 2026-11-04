@@ -3,9 +3,9 @@ import type { Language } from "./i18n";
 import { agentText } from "./agentLibraryMessages";
 import { convertForeignAgent, type ForeignFormat, type ImportDraft } from "./agentImportConversion";
 import { AgentModelBinding, type LocalAgentBinding } from "./AgentModelBinding";
-import { agentLibraryCall } from "./agentLibraryModel";
+import { agentLibraryCall, agentLibraryParams, agentRevisionConflict, type AgentLibraryScope } from "./agentLibraryModel";
 
-export function ForeignAgentImport({ language, onDone }: { language: Language; onDone: () => void }) {
+export function ForeignAgentImport({ language, scope, onDone }: { language: Language; scope?: AgentLibraryScope; onDone: () => void }) {
   const t = (key: Parameters<typeof agentText>[0]) => agentText(key, language);
   const [format, setFormat] = useState<ForeignFormat>("hermes");
   const [source, setSource] = useState("");
@@ -13,6 +13,7 @@ export function ForeignAgentImport({ language, onDone }: { language: Language; o
   const [name, setName] = useState("");
   const [id, setId] = useState("user/imported-agent");
   const [draft, setDraft] = useState<ImportDraft | null>(null);
+  const [draftScope, setDraftScope] = useState<AgentLibraryScope>();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const read = async (file: File | undefined, apply: (text: string) => void) => {
@@ -22,16 +23,16 @@ export function ForeignAgentImport({ language, onDone }: { language: Language; o
   };
   const preview = () => {
     setError("");
-    try { setDraft(convertForeignAgent(format, source, soul, id, name)); }
+    try { setDraftScope(scope); setDraft(convertForeignAgent(format, source, soul, id, name)); }
     catch { setError(t("invalidImport")); }
   };
   const save = async (binding: LocalAgentBinding) => {
     if (!draft) return;
     setPending(true); setError("");
     try {
-      await agentLibraryCall("import", {package_text: JSON.stringify(draft.definition), new_binding: binding});
+      await agentLibraryCall("import", agentLibraryParams("import", {package_text: JSON.stringify(draft.definition), new_binding: binding}, draftScope));
       setDraft(null); onDone();
-    } catch { setError(t("importSaveFailed")); }
+    } catch (error) { setError(t(agentRevisionConflict(error instanceof Error ? error : null) ? "revisionConflict" : "importSaveFailed")); }
     finally { setPending(false); }
   };
   return <details className="agent-library-editor"><summary>{t("foreignImport")}</summary>

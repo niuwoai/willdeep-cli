@@ -526,6 +526,15 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 );
             }
         }
+        Some("workflow_updated") => {
+            if let Some(run) = value
+                .get("workflow")
+                .and_then(|run| serde_json::from_value(run.clone()).ok())
+            {
+                workflow_ui::update(&mut app.transcript, run, false);
+                app.refresh_transcript_height();
+            }
+        }
         Some("plan_updated") => {
             if let Some(receipt) = value.get("plan_update") {
                 // 计划卡片是这一轮的第一份可见输出，压缩状态行到此为止。
@@ -545,6 +554,14 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     && let Some(receipt) = value.get("plan_update")
                 {
                     append_plan_result(&mut app.transcript, &receipt.to_string());
+                }
+                if !is_error
+                    && name == "workflow_control"
+                    && let Some(run) = value
+                        .get("workflow")
+                        .and_then(|run| serde_json::from_value(run.clone()).ok())
+                {
+                    workflow_ui::update(&mut app.transcript, run, false);
                 }
                 app.record_progress(format!(
                     "Runtime · {} {name}",

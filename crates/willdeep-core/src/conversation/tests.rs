@@ -1,5 +1,111 @@
 use super::*;
 
+fn workflow_fixture() -> crate::workflow::WorkflowRun {
+    crate::workflow::WorkflowRun {
+        id: uuid::Uuid::new_v4(),
+        revision: 1,
+        parent_session_id: uuid::Uuid::new_v4(),
+        definition_id: "review-v1".into(),
+        spec: crate::workflow::example_spec(),
+        input: serde_json::Value::Null,
+        limits: Default::default(),
+        status: crate::workflow::WorkflowRunStatus::Running,
+        nodes: Vec::new(),
+        output: None,
+        report: None,
+        error: None,
+        created_at_ms: 1,
+        finished_at_ms: None,
+        source_run_id: None,
+        acknowledged: false,
+    }
+}
+
+#[test]
+fn workflow_control_receipts_refresh_runs_and_keep_retry_cards() {
+    let call = crate::types::ToolCall {
+        id: "workflow-1".into(),
+        name: "workflow_control".into(),
+        arguments: "{}".into(),
+    };
+    let mut run = workflow_fixture();
+    let mut messages = vec![
+        Message::assistant("", vec![call.clone()]),
+        Message::tool(&call, serde_json::json!({"workflow":run}).to_string()),
+    ];
+    run.status = crate::workflow::WorkflowRunStatus::Failed;
+    run.revision += 1;
+    messages.push(Message::tool(
+        &call,
+        serde_json::json!({"workflow":run}).to_string(),
+    ));
+    let mut stale = run.clone();
+    stale.revision -= 1;
+    stale.status = crate::workflow::WorkflowRunStatus::Running;
+    messages.push(Message::tool(
+        &call,
+        serde_json::json!({"workflow":stale}).to_string(),
+    ));
+    let mut retry = run.clone();
+    retry.id = uuid::Uuid::new_v4();
+    retry.source_run_id = Some(run.id);
+    retry.status = crate::workflow::WorkflowRunStatus::Running;
+    messages.push(Message::tool(
+        &call,
+        serde_json::json!({"workflow":retry}).to_string(),
+    ));
+    let cards: Vec<_> = project(&messages, None)
+        .into_iter()
+        .filter(|item| item.role == "workflow")
+        .collect();
+    assert_eq!(cards.len(), 2);
+    assert_eq!(
+        cards[0].workflow.as_ref().unwrap().status,
+        crate::workflow::WorkflowRunStatus::Failed
+    );
+    assert_eq!(
+        cards[1].workflow.as_ref().unwrap().source_run_id,
+        Some(run.id)
+    );
+    assert!(
+        serde_json::to_value(&cards[0])
+            .unwrap()
+            .get("workflow")
+            .is_some()
+    );
+}
+
+#[test]
+fn workflow_projection_ignores_read_prose_errors_and_invalid_receipts() {
+    let run = workflow_fixture();
+    let content = serde_json::json!({"workflow":run}).to_string();
+    let read = crate::types::ToolCall {
+        id: "read".into(),
+        name: "workflow_read".into(),
+        arguments: "{}".into(),
+    };
+    let control = crate::types::ToolCall {
+        id: "control".into(),
+        name: "workflow_control".into(),
+        arguments: "{}".into(),
+    };
+    let messages = vec![
+        Message::user(&content),
+        Message::assistant(&content, vec![read.clone(), control.clone()]),
+        Message::tool(&read, &content),
+        Message::tool(&control, "{\"workflow\":{\"id\":\"bad\"}}"),
+        Message::tool(
+            &control,
+            serde_json::json!({"is_error":true,"workflow":run}).to_string(),
+        ),
+    ];
+    assert!(
+        project(&messages, None)
+            .iter()
+            .all(|item| item.workflow.is_none())
+    );
+}
+
 #[test]
 fn ask_user_tool_rows_keep_the_question() {
     // 对话框会因为交接而失效；工具行里留着问题，回放时还找得回来。

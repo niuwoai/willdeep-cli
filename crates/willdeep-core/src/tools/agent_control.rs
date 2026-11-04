@@ -16,6 +16,10 @@ pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &[
     "list_agent_recoveries",
     "update_plan",
     "await_agents",
+    "workflow_read",
+    "workflow_control",
+    "agent_library_read",
+    "agent_library_manage",
 ];
 
 /// `await_agents` 的默认与最长等待（秒）。

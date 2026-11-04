@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { agentLibraryCall, nextAgentVersion } from "./agentLibraryModel";
+import { agentLibraryCall, agentLibraryParams, agentRevisionConflict, nextAgentVersion, type AgentLibraryScope } from "./agentLibraryModel";
 import type { Language } from "./i18n";
 import { agentText, type AgentTextKey } from "./agentLibraryMessages";
 import "./agentLibrary.css";
@@ -13,8 +13,8 @@ import { ForeignAgentImport } from "./ForeignAgentImport";
 
 type Definition = { schema: string; definition_id: string; version: string; name: Record<string, string>; purpose: string; base_role: string; instructions: string; input_modalities: string[]; tools: string[]; skills: {id: string; content: string; sha256: string; required: boolean}[]; forked_from: string | null };
 type Package = { definition: Definition; sha256: string; signature: {key_id: string; value: string} | null };
-type Item = { package: Package; scope: string; compatible: boolean; incompatible_reason: string | null; optional_skills_missing: string[]; installation: {origin: string; enabled: boolean; pinned: boolean; dirty: boolean; binding: LocalAgentBinding} };
-type Library = { items: Item[]; account: {origin: string; user_id: string; tenant_id: string} | null };
+type Item = { package: Package; scope: string; installation_revision: number; definition_revision: string; compatible: boolean; incompatible_reason: string | null; optional_skills_missing: string[]; installation: {installation_revision: number; origin: string; enabled: boolean; pinned: boolean; dirty: boolean; binding: LocalAgentBinding} };
+type Library = { items: Item[]; scope: AgentLibraryScope; account: {origin: string; user_id: string; tenant_id: string} | null };
 type Index = Pick<Definition, "definition_id" | "version" | "name" | "purpose" | "base_role"> & {sha256: string; discovery?: {category: string; rank: number; summary: Record<string, string>; example: Record<string, string>} | null};
 
 export function AgentLibrary({language, onTrial, mode = "library", onNavigate, onDirty}: {language: Language; onTrial: (prompt: string) => void; mode?: "library" | "experiments"; onNavigate?: (mode: "library" | "experiments") => void; onDirty?: (dirty: boolean) => void}) {
@@ -32,8 +32,11 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     return value;
   }, enabled: mode === "library", staleTime: 60_000, retry: 1});
   const [editor, setEditor] = useState<string | null>(null);
+  const [editorBase, setEditorBase] = useState<Item | null>(null);
+  const [editorScope, setEditorScope] = useState<AgentLibraryScope>();
   const [preview, setPreview] = useState<Package | null>(null);
   const [history, setHistory] = useState<Package[]>([]);
+  const [historyBase, setHistoryBase] = useState<Item | null>(null);
   const [bindingItem,setBindingItem] = useState<Item|null>(null);
   const [result, setResult] = useState<string>("");
   const [conflicts, setConflicts] = useState<{account: string; items: SyncConflict[]} | null>(null);
@@ -51,7 +54,7 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   useEffect(() => {onDirty?.(candidateDirty || editor !== null); return () => onDirty?.(false);}, [candidateDirty, editor, onDirty]);
   const file = useRef<HTMLInputElement>(null);
   const mutation = useMutation({
-    mutationFn: ({operation, params}: {operation: string; params?: unknown}) => agentLibraryCall<unknown>(operation, params),
+    mutationFn: ({operation, params}: {operation: string; params?: Record<string, unknown>}) => agentLibraryCall<unknown>(operation, params),
     onMutate: () => ({account:accountKey}),
     onSuccess: async (value, {operation, params}, context) => {
       if (context?.account !== displayedAccount.current) {
@@ -67,11 +70,14 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
       if (operation === "logout") {setRsi(null); setConflicts(null); client.removeQueries({queryKey: ["agent-rsi"]});}
       await client.invalidateQueries({queryKey: ["agent-library"]});
     },
+    onError: async error => {if (agentRevisionConflict(error)) await client.invalidateQueries({queryKey: ["agent-library"]});},
   });
-  const act = (operation: string, params?: unknown) => mutation.mutate({operation, params});
+  const prepared = (operation: string, params: Record<string, unknown> = {}, scope = library.data?.scope) => ({operation, params: agentLibraryParams(operation, params, scope)});
+  const act = (operation: string, params?: Record<string, unknown>) => mutation.mutate(prepared(operation, params));
+  const precondition = (item: Item) => ({id: item.package.definition.definition_id, expected_revision: item.installation.installation_revision, target_scope: item.scope});
   const items = library.data?.items ?? [];
   const activeTab = tab ?? (items.length ? "installed" : "curated");
-  const accountKey = JSON.stringify(library.data?.account ?? null);
+  const accountKey = JSON.stringify(library.data?.scope ?? library.data?.account ?? null);
   const resetMutation = mutation.reset;
   useEffect(() => {resetMutation();}, [accountKey, resetMutation]);
   displayedAccount.current = accountKey;
@@ -86,22 +92,22 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   const catalogItems = catalog.isError ? [] : catalog.data?.items ?? [];
   const categories = Array.from(new Set(catalogItems.flatMap(item => item.discovery ? [item.discovery.category] : [])));
   const recommendations = catalogItems.filter(item => (!category || item.discovery?.category === category) && `${displayName(item)} ${item.purpose} ${item.discovery ? localized(item.discovery.summary) : ""} ${item.definition_id}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).sort((a, b) => (a.discovery?.rank ?? Number.MAX_SAFE_INTEGER) - (b.discovery?.rank ?? Number.MAX_SAFE_INTEGER));
-  const scopedMutation = async (operation: string, params: unknown, done: (value: unknown) => void) => {
+  const scopedMutation = async (operation: string, params: Record<string, unknown>, done: (value: unknown) => void, expectedScope = library.data?.scope) => {
     const scope = displayedAccount.current;
-    try {const value = await mutation.mutateAsync({operation, params}); if (scope === displayedAccount.current) done(value);}
-    catch {if (scope === displayedAccount.current) setResult(t("failed"));}
+    try {const value = await mutation.mutateAsync(prepared(operation, params, expectedScope)); if (scope === displayedAccount.current) done(value);}
+    catch (error) {if (scope === displayedAccount.current && !agentRevisionConflict(error instanceof Error ? error : null)) setResult(t("failed"));}
   };
   const filtered = items.filter(item => (source === "all" || item.installation.origin === source) && `${displayName(item.package.definition)} ${item.package.definition.purpose} ${item.package.definition.definition_id}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   const current = filtered.find(item => `${item.scope}/${item.package.definition.definition_id}` === selected) ?? filtered[0];
   const experimentBaseline = rsi?.account === accountKey ? items.find(item => item.package.sha256 === rsi.baseline?.sha256)?.package ?? null : null;
   const allowDiscard = () => allowAgentNavigation(candidateDirty || editor !== null, language);
   const openExperiment = (baseline: RsiPackage | null) => {if (!allowDiscard()) return; setEditor(null); setRsi({baseline, account: accountKey}); onNavigate?.("experiments");};
-  const create = () => {if (allowDiscard()) setEditor(JSON.stringify({schema: "willdeep.agent-definition.v1", definition_id: "user/my-agent", version: "1.0.0", name: {en: t("name"), [language === "zh-CN" ? "zh-Hans" : language]: t("name")}, purpose: t("purpose"), base_role: "reviewer", instructions: t("instructions"), input_modalities: ["text"], tools: ["workspace.read", "repository.inspect"], skills: [], forked_from: null}, null, 2));};
-  const edit = (definition: Definition) => {if (allowDiscard()) setEditor(JSON.stringify({...definition, version: nextAgentVersion(definition.version)}, null, 2));};
+  const create = () => {if (allowDiscard()) {setEditorScope(library.data?.scope); setEditorBase(null); setEditor(JSON.stringify({schema: "willdeep.agent-definition.v1", definition_id: "user/my-agent", version: "1.0.0", name: {en: t("name"), [language === "zh-CN" ? "zh-Hans" : language]: t("name")}, purpose: t("purpose"), base_role: "reviewer", instructions: t("instructions"), input_modalities: ["text"], tools: ["workspace.read", "repository.inspect"], skills: [], forked_from: null}, null, 2));}};
+  const edit = (item: Item) => {if (allowDiscard()) {setEditorScope(library.data?.scope); setEditorBase(item); setEditor(JSON.stringify({...item.package.definition, version: nextAgentVersion(item.package.definition.version)}, null, 2));}};
   const fork = (item: Item, experiment = false) => {
     if (experiment && !allowDiscard()) return;
     const newId = window.prompt(t("id"), `user/${item.package.definition.definition_id.split("/").at(-1)}-copy`);
-    if (newId) void scopedMutation("fork", {id: item.package.definition.definition_id, new_id: newId}, value => { if (experiment) openExperiment(value as Package); });
+    if (newId) void scopedMutation("fork", {...precondition(item), new_id: newId}, value => { if (experiment) openExperiment(value as Package); });
   };
   const exported = async (item: Item) => {
     const scope = displayedAccount.current;
@@ -114,7 +120,13 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
   };
   const importFile = async (selected: File) => {
     const scope = displayedAccount.current;
-    try {const packageText = await selected.text(); if (scope === displayedAccount.current) act("import", {package_text:packageText});}
+    try {const packageText = await selected.text(); if (scope === displayedAccount.current) {
+      const imported: unknown = JSON.parse(packageText);
+      const definition = typeof imported === "object" && imported !== null && "definition" in imported ? imported.definition : imported;
+      const id = typeof definition === "object" && definition !== null && "definition_id" in definition ? definition.definition_id : undefined;
+      const current = items.find(item => item.package.definition.definition_id === id);
+      act("import", {package_text: packageText, ...(current ? precondition(current) : {})});
+    }}
     catch {if (scope === displayedAccount.current) setResult(t("failed"));}
   };
   const button = (key: AgentTextKey, action: () => void, disabled = false) => <button type="button" disabled={disabled || mutation.isPending} onClick={action}>{t(key)}</button>;
@@ -127,19 +139,20 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     <header className="agent-page-header"><div><h1>{t("title")}</h1><p>{t("intro")}</p></div><div className="agent-header-controls agent-library-header-actions"><button className="agent-primary" type="button" disabled={mutation.isPending} onClick={create}>{t("create")}</button><details className="agent-overflow"><summary aria-label={t("libraryActions")}><MoreHorizontal size={20}/></summary><div>{button("import", () => file.current?.click())}{button("sync", () => act("sync"), !library.data?.account)}{library.data?.account && button("logout", () => act("logout"))}</div></details></div></header>
     <input ref={file} type="file" accept="application/json,.json" hidden onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void importFile(selected); event.target.value = ""; }} />
     <details className="agent-library-account"><summary>{t(library.data?.account ? "connected" : "localOnly")} · {t("accountDetails")}</summary><p>{library.data?.account ? `${library.data.account.origin} · ${library.data.account.user_id} / ${library.data.account.tenant_id}` : t("loginHelp")}</p></details>
-    {((mutation.error && !/loopback/i.test(mutation.error.message)) || (library.error && !/loopback/i.test(library.error.message)) || catalog.error) && <div role="alert">{t("failed")}: {(mutation.error || library.error || catalog.error)?.message}</div>}
+    {agentRevisionConflict(mutation.error) && <p role="alert">{t("revisionConflict")}</p>}
+    {((mutation.error && !agentRevisionConflict(mutation.error) && !/loopback/i.test(mutation.error.message)) || (library.error && !/loopback/i.test(library.error.message)) || catalog.error) && <div role="alert">{t("failed")}: {(mutation.error || library.error || catalog.error)?.message}</div>}
     {(library.error && /loopback/i.test(library.error.message) || mutation.error && /loopback/i.test(mutation.error.message)) && <p role="status">{t("catalogLoopback")}</p>}
     {(mutation.isPending || library.isLoading || catalog.isFetching) && <p role="status">{t("busy")}</p>}
     {syncSummary?.account === accountKey && <p role="status">{syncSummary.text}</p>}
     {conflicts?.account === accountKey && !!conflicts.items.length && <AgentSyncConflicts conflicts={conflicts.items} language={language} pending={mutation.isPending} onResolve={params=>act("resolve",{...params,expected_account:library.data?.account})} />}
-    <ForeignAgentImport key={accountKey} language={language} onDone={() => {void client.invalidateQueries({queryKey: ["agent-library"]});}} />
+    <ForeignAgentImport key={accountKey} language={language} scope={library.data?.scope} onDone={() => {void client.invalidateQueries({queryKey: ["agent-library"]});}} />
     {editor !== null && <section className="agent-library-editor">
       <h2>{t("advanced")}</h2><p>{t("editorHelp")}</p>
       <textarea aria-label={t("advanced")} value={editor} disabled={mutation.isPending} onChange={event => setEditor(event.target.value)} spellCheck={false} />
-      {button("save", () => { void scopedMutation("save", {definition_text: editor}, () => setEditor(null)); })}{button("cancel", () => setEditor(null))}
+      {button("save", () => { void scopedMutation("save", {definition_text: editor, ...(editorBase ? precondition(editorBase) : {})}, () => setEditor(null), editorScope); })}{button("cancel", () => setEditor(null))}
     </section>}
     {!onNavigate && rsi?.account === accountKey && <AgentRsiPanel key={`${accountKey}/${rsi.baseline?.sha256 ?? "list"}`} accountScope={accountKey} language={language} baseline={rsi.baseline} onClose={() => setRsi(null)} />}
-    {bindingItem && <AgentModelBinding key={`${accountKey}/${bindingItem.scope}/${bindingItem.package.definition.definition_id}`} language={language} binding={bindingItem.installation.binding ?? {provider_profile:null,model:null}} pending={mutation.isPending} onCancel={()=>setBindingItem(null)} onSave={binding=>{void scopedMutation("bind",{id:bindingItem.package.definition.definition_id,binding},()=>setBindingItem(null));}} />}
+    {bindingItem && <AgentModelBinding key={`${accountKey}/${bindingItem.scope}/${bindingItem.package.definition.definition_id}`} language={language} binding={bindingItem.installation.binding ?? {provider_profile:null,model:null}} pending={mutation.isPending} onCancel={()=>setBindingItem(null)} onSave={binding=>{void scopedMutation("bind",{...precondition(bindingItem),binding},()=>setBindingItem(null));}} />}
     <div className="agent-library-actions" aria-label={t("title")}><button type="button" aria-pressed={activeTab === "installed"} onClick={() => setTab("installed")}>{t("installed")} · {items.length}</button><button type="button" aria-pressed={activeTab === "curated"} onClick={() => setTab("curated")}>{t("curated")}</button></div>
     {activeTab === "installed" && <>
     {!items.length && !library.isLoading && <p>{t("empty")}</p>}
@@ -161,13 +174,13 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
           <div className="agent-library-actions agent-detail-actions">
             {official ? <button className="agent-primary" type="button" disabled={mutation.isPending} onClick={() => fork(item, true)}>{t("forkExperiment")}</button> : <button className="agent-primary" type="button" disabled={mutation.isPending || !item.compatible} onClick={() => openExperiment(item.package)}><FlaskConical size={18} />{t("rsiTitle")}</button>}
           <details className="agent-overflow agent-library-more"><summary><MoreHorizontal size={19} />{t("moreActions")}</summary><div className="agent-library-actions">
-            {!official && button("edit", () => edit(definition), item.installation.pinned)}
+            {!official && button("edit", () => edit(item), item.installation.pinned)}
             {button("fork", () => fork(item))}{button("export", () => { void exported(item); })}
             {button("modelBinding",()=>setBindingItem(item))}
-            {button(item.installation.pinned ? "unpin" : "pin", () => act("pin", {id: definition.definition_id, value: !item.installation.pinned}))}
-            {button(item.installation.enabled ? "disable" : "enable", () => act("enable", {id: definition.definition_id, value: !item.installation.enabled}))}
+            {button(item.installation.pinned ? "unpin" : "pin", () => act("pin", {...precondition(item), value: !item.installation.pinned}))}
+            {button(item.installation.enabled ? "disable" : "enable", () => act("enable", {...precondition(item), value: !item.installation.enabled}))}
             {item.installation.origin === "local" && button("share", () => act("share", {id: definition.definition_id}), !library.data?.account)}
-            {button("history", () => { void scopedMutation("history", {id: definition.definition_id}, value => setHistory(value as Package[])); })}
+            {button("history", () => { void scopedMutation("history", {id: definition.definition_id}, value => {setHistoryBase(item); setHistory(value as Package[]);}); })}
             {button("trial", () => { if (!allowDiscard()) return; const task = window.prompt(t("trialTask")); if (task) onTrial(t("trialPrompt").replace("{id}", definition.definition_id).replace("{task}", task)); }, !item.compatible || !item.installation.enabled)}
             {button("remove", () => { if (window.confirm(t("deleteConfirm"))) act("delete", {id: definition.definition_id}); })}
           </div></details></div>
@@ -189,8 +202,8 @@ export function AgentLibrary({language, onTrial, mode = "library", onNavigate, o
     {items.some(installed => installed.package.sha256 === item.sha256) ? <p>{t("installed")}</p> : button("preview", () => {void scopedMutation("preview", {id: item.definition_id, revision: item.sha256}, value => setPreview(value as Package));})}
   </article>)}</div>
 </section>}
-    {preview && <section className="agent-library-editor"><h2>{t("newRevision")}</h2><p>{displayName(preview.definition)} · {preview.definition.version}</p><p>{t("agentDetails")}: {preview.definition.tools.join(", ")}</p><details><summary>{t("preview")}</summary><pre>{JSON.stringify(preview.definition, null, 2)}</pre>{items.find(item => item.package.definition.definition_id === preview.definition.definition_id) && <><h3>{t("currentRevision")}</h3><pre>{JSON.stringify(items.find(item => item.package.definition.definition_id === preview.definition.definition_id)?.package.definition, null, 2)}</pre></>}</details>{button("install", () => {void scopedMutation("install", {id: preview.definition.definition_id, revision: preview.sha256}, () => {setPreview(null); setTab("installed"); setSelected(`local/${preview.definition.definition_id}`); setSearch(""); setSource("all");});})}{button("cancel", () => setPreview(null))}</section>}
-    {!!history.length && <section><h2>{t("history")}</h2>{history.map(item => <article className="agent-history-row" key={item.sha256}><span>{displayName(item.definition)} · {item.definition.version}</span>{button("rollback", () => act("rollback", {id: item.definition.definition_id, revision: item.sha256}))}<details><summary>{t("agentDetails")}</summary><code>{item.definition.definition_id} · {item.sha256}</code></details></article>)}</section>}
+    {preview && <section className="agent-library-editor"><h2>{t("newRevision")}</h2><p>{displayName(preview.definition)} · {preview.definition.version}</p><p>{t("agentDetails")}: {preview.definition.tools.join(", ")}</p><details><summary>{t("preview")}</summary><pre>{JSON.stringify(preview.definition, null, 2)}</pre>{items.find(item => item.package.definition.definition_id === preview.definition.definition_id) && <><h3>{t("currentRevision")}</h3><pre>{JSON.stringify(items.find(item => item.package.definition.definition_id === preview.definition.definition_id)?.package.definition, null, 2)}</pre></>}</details>{button("install", () => {void scopedMutation("install", {id: preview.definition.definition_id, revision: preview.sha256, ...(items.find(item => item.package.definition.definition_id === preview.definition.definition_id) ? precondition(items.find(item => item.package.definition.definition_id === preview.definition.definition_id)!) : {})}, () => {setPreview(null); setTab("installed"); setSelected(`local/${preview.definition.definition_id}`); setSearch(""); setSource("all");});})}{button("cancel", () => setPreview(null))}</section>}
+    {!!history.length && <section><h2>{t("history")}</h2>{history.map(item => <article className="agent-history-row" key={item.sha256}><span>{displayName(item.definition)} · {item.definition.version}</span>{button("rollback", () => {if (historyBase) act("rollback", {...precondition(historyBase), revision: item.sha256});}, !historyBase)}<details><summary>{t("agentDetails")}</summary><code>{item.definition.definition_id} · {item.sha256}</code></details></article>)}</section>}
     {result && <details><summary>{t("done")}</summary><pre>{result}</pre></details>}
   </main>;
 }

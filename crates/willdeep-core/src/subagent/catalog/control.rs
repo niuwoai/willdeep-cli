@@ -29,6 +29,8 @@ impl SubagentCatalog {
             return Err("message is empty".to_owned());
         }
         let agent_id = self.running_owned_agent(agent_ref)?;
+        self.ensure_manual_agent_control(agent_id)
+            .map_err(|error| error.to_string())?;
         if !self.background.instruct_agent(agent_id, message.to_owned()) {
             return Err(finished_error(agent_ref, None));
         }
@@ -38,6 +40,8 @@ impl SubagentCatalog {
     /// 停止运行中的后台子 Agent；它的报告照常以 `status: killed` 投回。
     pub(crate) fn stop_agent(&self, agent_ref: &str) -> Result<uuid::Uuid, String> {
         let agent_id = self.running_owned_agent(agent_ref)?;
+        self.ensure_manual_agent_control(agent_id)
+            .map_err(|error| error.to_string())?;
         if !self.background.kill_agent(agent_id) {
             return Err(finished_error(agent_ref, None));
         }
@@ -73,6 +77,14 @@ impl SubagentCatalog {
                 .map(|agent_ref| self.owned_agent(agent_ref))
                 .collect::<Result<Vec<_>, _>>()?
         };
+        let targets = targets
+            .into_iter()
+            .filter(|agent_id| {
+                self.background
+                    .task_for_agent(*agent_id)
+                    .is_some_and(|task| !self.background.is_workflow_task(&task.id))
+            })
+            .collect::<Vec<_>>();
         if targets.is_empty() {
             return Ok("No background subagents of this session are running; there is nothing to wait for.".to_owned());
         }
