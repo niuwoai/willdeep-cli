@@ -1,6 +1,9 @@
 use super::{Session, SessionError, TitleSource};
 use std::path::PathBuf;
 
+#[cfg(test)]
+mod delegation_tests;
+
 /// In-memory baseline only. It never becomes part of the persisted schema.
 #[derive(Clone, Debug)]
 pub(super) struct Metadata {
@@ -131,6 +134,15 @@ impl Metadata {
         // 分凉来源写下之后不再改，也不进执行指纹。后写的快照如果没带它（手上还是
         // 分凉之前加载的那份），不能把磁盘上已经记下的来源抹掉。
         proposed.started_by = proposed.started_by.or(latest.started_by);
+        // The durable host owns task ancestry. A stale execution snapshot must
+        // neither redirect the parent nor remove an established read-only cap.
+        proposed.parent_session_id = latest.parent_session_id.or(proposed.parent_session_id);
+        proposed.delegation_read_only |= latest.delegation_read_only;
+        // The resolved delegated window is durable metadata; a stale snapshot
+        // written without it must not fall back to the parent's window.
+        proposed.model_context_window = proposed
+            .model_context_window
+            .or(latest.model_context_window);
         Ok(())
     }
 }

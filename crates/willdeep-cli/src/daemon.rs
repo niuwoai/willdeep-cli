@@ -37,6 +37,7 @@ pub(crate) mod web_app;
 // 标成中断并落盘，一个只读命令不能有这种副作用。
 pub(crate) use agent_store::{RuntimeAgent as StoredAgent, load_agents};
 mod approval_modes;
+mod child_sessions;
 mod control_api;
 mod detached_spawn;
 pub(crate) mod diff_review;
@@ -54,6 +55,9 @@ mod peer_client;
 mod plugin_workflow;
 pub(crate) mod production;
 mod screenplay;
+pub(crate) use child_sessions::{
+    ASSIGNMENT_ORIGIN as CHILD_ASSIGNMENT_ORIGIN, WAKE_ORIGIN as CHILD_RESULT_WAKE_ORIGIN,
+};
 pub(crate) use control_api::peer_sessions::WAKE_ORIGIN as PEER_WAKE_ORIGIN;
 pub(crate) use peer_client::{PeerSessionClient, peer_operation};
 const PEER_WAKE_WINDOW_SECONDS: u64 = 600;
@@ -255,6 +259,8 @@ impl willdeep_core::EventSink for RuntimeEventSink {
 }
 
 mod commands;
+pub(crate) use commands::child_operation;
+pub(crate) use commands::runtime_operation;
 pub use commands::{DaemonAction, SessionAction, handle_session};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1744,6 +1750,7 @@ async fn run(home: &Path) -> Result<()> {
         .intake
         .watch_shutdown(shutdown_signal.subscribe());
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
+    child_sessions::spawn(server_state.clone());
     scheduler::spawn(server_state.clone());
     screenplay::recover(home);
     deferred_gates::spawn(server_state.clone());
@@ -1756,9 +1763,21 @@ async fn run(home: &Path) -> Result<()> {
                 continue;
             }
             let claimed = scheduler_state.sessions.claim_next(session_id);
-            let Ok(Some(claimed)) = claimed else {
+            let Ok(Some(mut claimed)) = claimed else {
                 continue;
             };
+            // A queued child owns no worktree. Only after the execution slot is
+            // admitted do we create or re-adopt its dedicated checkout.
+            if let Err(error) =
+                child_sessions::ensure_for_claim(&scheduler_state, &mut claimed.request).await
+            {
+                let _ = scheduler_state.sessions.complete_claim_failure(
+                    claimed.metadata.id,
+                    format!("prepare child worktree: {error:#}"),
+                );
+                let _ = scheduler_state.tasks.schedule_session(session_id);
+                continue;
+            }
             let turn_id = claimed.metadata.id;
             match scheduler_state.tasks.submit(claimed.request).await {
                 Ok(task) => {

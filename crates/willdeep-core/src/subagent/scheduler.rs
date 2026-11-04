@@ -1,6 +1,6 @@
 //! Atomic, session-scoped admission. All background worker attempts share it.
-use std::collections::{BTreeSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -72,6 +72,22 @@ pub(crate) struct Permit {
 }
 
 impl Scheduler {
+    /// One admission state per delegation family. Parent and child Harnesses in
+    /// the same daemon share the first frozen policy instead of each getting a
+    /// fresh 8/64 allowance. Separate daemon processes never share this state;
+    /// durable run queues and the frozen `.policy.json` still bound them.
+    pub(crate) fn family(family: Uuid, settings: AgentTeamSettings) -> Self {
+        static FAMILIES: OnceLock<Mutex<HashMap<Uuid, Scheduler>>> = OnceLock::new();
+        let mut families = FAMILIES
+            .get_or_init(Default::default)
+            .lock()
+            .expect("family scheduler registry");
+        families
+            .entry(family)
+            .or_insert_with(|| Scheduler::new(settings))
+            .clone()
+    }
+
     #[cfg(test)]
     pub fn state_is_idle_for_test(&self) -> bool {
         let state = self.state.lock().unwrap();
@@ -210,6 +226,39 @@ mod tests {
             .validate()
             .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn family_schedulers_share_one_admission_state_and_first_policy() {
+        let family = Uuid::new_v4();
+        let first = Scheduler::family(
+            family,
+            AgentTeamSettings {
+                max_concurrent: 2,
+                max_queued: 1,
+                token_budget: None,
+            },
+        );
+        // A later Harness cannot enlarge the family allowance.
+        let second = Scheduler::family(
+            family,
+            AgentTeamSettings {
+                max_concurrent: 64,
+                max_queued: 64,
+                token_budget: None,
+            },
+        );
+        let mut permits = Vec::new();
+        for _ in 0..2 {
+            permits.push(first.reserve(Uuid::new_v4()).unwrap().wait().await.unwrap());
+        }
+        let queued = second.reserve(Uuid::new_v4()).unwrap();
+        assert!(queued.queued);
+        assert!(second.reserve(Uuid::new_v4()).is_err());
+        drop(permits.pop());
+        let permit = queued.wait().await.unwrap();
+        drop(permit);
+        assert_eq!(second.remaining_capacity().unwrap(), 2);
     }
 
     #[tokio::test]

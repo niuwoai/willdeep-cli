@@ -3,6 +3,8 @@ export type SessionNode = {
   id: string;
   /** 直接分凉来源。缺失、空串或指向自己都当没有来源。 */
   started_by?: string | null;
+  /** 委派关系优先于历史来源；来源缺失时仍保留条目。 */
+  parent_session_id?: string | null;
 };
 
 export type SessionTreeRow<T extends SessionNode> = {
@@ -20,7 +22,7 @@ export type SessionTreeRow<T extends SessionNode> = {
 export function sessionTree<T extends SessionNode>(sessions: T[]): SessionTreeRow<T>[] {
   const present = new Set(sessions.map((session) => session.id));
   const parentOf = (session: T): string | null => {
-    const parent = session.started_by;
+    const parent = session.parent_session_id ?? session.started_by;
     if (!parent || parent === session.id || !present.has(parent)) return null;
     return parent;
   };

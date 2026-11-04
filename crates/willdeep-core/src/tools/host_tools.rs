@@ -76,12 +76,16 @@ fn host_definition(name: &str, description: &str, operations: &[&str]) -> ToolDe
 
 impl ToolRegistry {
     pub fn with_agent_definition_host(mut self, host: Arc<dyn AgentDefinitionHost>) -> Self {
-        self.agent_definition_host = Some(host);
+        if !self.delegation_read_only {
+            self.agent_definition_host = Some(host);
+        }
         self
     }
 
     pub fn with_workflow_host(mut self, host: Arc<dyn WorkflowHost>) -> Self {
-        self.workflow_host = Some(host);
+        if !self.delegation_read_only {
+            self.workflow_host = Some(host);
+        }
         self
     }
 

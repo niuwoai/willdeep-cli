@@ -1,5 +1,6 @@
 use super::*;
 
+mod child_sessions;
 mod deferred;
 mod mobile_context;
 mod turn_queue;
@@ -39,6 +40,14 @@ pub(crate) struct RuntimeSession {
     /// 没有来源的会话写回时也不带它。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub delegation_read_only: bool,
+    /// Context window resolved for a delegated model override; never inherited
+    /// from the parent's different model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_context_window: Option<u64>,
     pub workspace: PathBuf,
     pub profile: Option<String>,
     #[serde(default)]
@@ -285,6 +294,10 @@ pub(crate) struct RuntimeSessionSearchResult {
     pub(super) id: uuid::Uuid,
     /// 直接分凉来源。未登记的本地与 Xedit 会话没有它。
     pub(super) started_by: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub(super) parent_session_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub(super) delegation_read_only: bool,
     pub(super) title: String,
     pub(super) workspace: PathBuf,
     pub(super) status: RuntimeSessionStatus,
@@ -334,6 +347,7 @@ pub(super) struct CancelRuntimeTurn {
 }
 
 pub(super) struct RuntimeSessionStore {
+    pub(in crate::daemon) children: super::child_sessions::ChildStore,
     independent_core: willdeep_core::SessionStore,
     path: PathBuf,
     turns_path: PathBuf,
@@ -360,6 +374,8 @@ impl RuntimeSessionStore {
         home: &Path,
         tool_task_ids: &std::collections::HashSet<uuid::Uuid>,
     ) -> Result<Self> {
+        let children = super::child_sessions::ChildStore::new(home);
+        children.transaction(|_| Ok(()))?;
         let (mut sessions, migrated) = load_sessions(&path)?;
         if migrated {
             backup_sessions_before_migration(&path, 1)?;
@@ -398,8 +414,14 @@ impl RuntimeSessionStore {
                     .metadata
                     .active_task_id
                     .is_some_and(|task_id| tool_task_ids.contains(&task_id));
-                if turn.team_control.is_some()
-                    || (!has_tool_activity && prepare_core_for_turn_replay(&core, turn)?)
+                let child = sessions
+                    .get(&turn.metadata.session_id)
+                    .is_some_and(|session| {
+                        session.delegation_read_only || session.parent_session_id.is_some()
+                    });
+                if !child
+                    && (turn.team_control.is_some()
+                        || (!has_tool_activity && prepare_core_for_turn_replay(&core, turn)?))
                 {
                     turn.metadata.status = RuntimeTurnStatus::Queued;
                     turn.metadata.active_task_id = None;
@@ -452,6 +474,7 @@ impl RuntimeSessionStore {
             persist_sessions(&path, &sessions)?;
         }
         Ok(Self {
+            children,
             independent_core: willdeep_core::SessionStore::new(home.join("independent")),
             path,
             turns_path,
@@ -562,7 +585,10 @@ impl RuntimeSessionStore {
             schema: RUNTIME_SESSION_SCHEMA,
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
-            started_by: None,
+            started_by: core.started_by,
+            parent_session_id: core.parent_session_id,
+            delegation_read_only: core.delegation_read_only,
+            model_context_window: core.model_context_window,
             workspace,
             profile: core.profile.clone(),
             magpie_integration: core.magpie_integration,
@@ -654,6 +680,10 @@ impl RuntimeSessionStore {
         self.ensure_manageable(id)?;
         let provider_profile = normalized_optional("Provider profile", provider_profile)?;
         let source = self.get(id)?.context("Runtime Session not found")?;
+        anyhow::ensure!(
+            !source.delegation_read_only && source.parent_session_id.is_none(),
+            "read-only child Sessions cannot fork outside the delegation capability boundary"
+        );
         let target_profile = provider_profile.or_else(|| source.profile.clone());
         let model = normalized_model(model, target_profile.as_deref())?;
         let mut core = self
@@ -709,6 +739,10 @@ impl RuntimeSessionStore {
         }
         core.profile = target_profile.clone();
         core.model = model.clone().or_else(|| source.model.clone());
+        if model.is_some() {
+            // A model override invalidates the source model's resolved window.
+            core.model_context_window = None;
+        }
         // 来源由服务端按被分凉的那条绑定。请求里没有这个字段，客户端写不了。
         core.started_by = Some(id);
         self.core.save(&mut core)?;
@@ -718,6 +752,9 @@ impl RuntimeSessionStore {
             id: core.id,
             root_agent_id: uuid::Uuid::new_v4(),
             started_by: Some(id),
+            parent_session_id: core.parent_session_id,
+            delegation_read_only: core.delegation_read_only,
+            model_context_window: core.model_context_window,
             workspace: source.workspace,
             profile: target_profile,
             magpie_integration: core.magpie_integration,
@@ -1006,6 +1043,8 @@ impl RuntimeSessionStore {
             results.push(RuntimeSessionSearchResult {
                 id: session.id,
                 started_by: session.started_by.or(core.started_by),
+                parent_session_id: session.parent_session_id.or(core.parent_session_id),
+                delegation_read_only: session.delegation_read_only || core.delegation_read_only,
                 title: core.title,
                 workspace: session.workspace,
                 status: session.status,
@@ -1101,6 +1140,8 @@ impl RuntimeSessionStore {
             results.push(RuntimeSessionSearchResult {
                 id: digest.id,
                 started_by: digest.started_by,
+                parent_session_id: digest.parent_session_id,
+                delegation_read_only: digest.delegation_read_only,
                 title: digest.title,
                 workspace: digest_workspace,
                 status: RuntimeSessionStatus::Idle,
@@ -1177,6 +1218,16 @@ impl RuntimeSessionStore {
         session_id: uuid::Uuid,
         request: CreateRuntimeTurn,
     ) -> Result<(RuntimeTurn, bool, bool)> {
+        self.children
+            .transaction(|ledger| self.enqueue_turn_under_control(session_id, request, ledger))
+    }
+
+    pub(in crate::daemon) fn enqueue_turn_under_control(
+        &self,
+        session_id: uuid::Uuid,
+        request: CreateRuntimeTurn,
+        ledger: &mut super::child_sessions::Ledger,
+    ) -> Result<(RuntimeTurn, bool, bool)> {
         if request.team_control.is_none()
             && request.prompt.trim().is_empty()
             && request.attachments.is_empty()
@@ -1187,10 +1238,21 @@ impl RuntimeSessionStore {
         if session.status == RuntimeSessionStatus::Archived {
             bail!("Runtime Session is archived");
         }
+        self.check_child_enqueue(&session, &request, ledger)?;
+        let child_host = super::child_sessions::is_host_origin(request.origin_client.as_deref());
         let peer_wake = request.origin_client.as_deref().is_some_and(|origin| {
             origin.starts_with(super::control_api::peer_sessions::WAKE_ORIGIN)
         });
-        let title_changed = if request.team_control.is_none() && !peer_wake {
+        if (peer_wake
+            || request
+                .origin_client
+                .as_deref()
+                .is_some_and(|origin| origin.starts_with(super::goal_resume::ORIGIN_PREFIX)))
+            && ledger.control(session_id).suppressed
+        {
+            return Err(ScheduledSessionBusy.into());
+        }
+        let title_changed = if request.team_control.is_none() && !peer_wake && !child_host {
             self.apply_auto_title(session_id, &request.prompt, !request.attachments.is_empty())?
         } else {
             false
@@ -1319,6 +1381,7 @@ impl RuntimeSessionStore {
                 });
         }
         let operator_input = request.team_control.is_none()
+            && !child_host
             && !peer_wake
             && !request
                 .origin_client
@@ -1338,6 +1401,7 @@ impl RuntimeSessionStore {
         persist_turns(&self.turns_path, &turns)?;
         drop(turns);
         if operator_input {
+            ledger.operator_input(session_id);
             self.set_yield_suppressed(session_id, false)?;
         }
         Ok((metadata, true, title_changed))
@@ -1398,7 +1462,10 @@ impl RuntimeSessionStore {
         let turns = self.turns_lock()?;
         let mut candidates = Vec::new();
         for session in sessions.values() {
-            if session.active_turn_id.is_some() || session.status == RuntimeSessionStatus::Archived
+            if session.delegation_read_only
+                || session.parent_session_id.is_some()
+                || session.active_turn_id.is_some()
+                || session.status == RuntimeSessionStatus::Archived
             {
                 continue;
             }
@@ -1472,6 +1539,15 @@ impl RuntimeSessionStore {
     }
 
     pub fn claim_next(&self, session_id: uuid::Uuid) -> Result<Option<ClaimedRuntimeTurn>> {
+        self.children
+            .transaction(|ledger| self.claim_next_under_control(session_id, ledger))
+    }
+
+    fn claim_next_under_control(
+        &self,
+        session_id: uuid::Uuid,
+        ledger: &mut super::child_sessions::Ledger,
+    ) -> Result<Option<ClaimedRuntimeTurn>> {
         let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
@@ -1500,6 +1576,19 @@ impl RuntimeSessionStore {
         else {
             return Ok(None);
         };
+        if !self.check_child_claim(session, turn, ledger)? {
+            let stale_wake = turn
+                .origin_client
+                .as_deref()
+                .is_some_and(|origin| origin.starts_with(super::child_sessions::WAKE_ORIGIN));
+            if stale_wake {
+                turn.metadata.status = RuntimeTurnStatus::Cancelled;
+                turn.metadata.completed_at = Some(now());
+                persist_turns(&self.turns_path, &turns)?;
+            }
+            return Ok(None);
+        }
+        self.children.persist(ledger)?;
         turn.metadata.attempts = turn.metadata.attempts.saturating_add(1);
         let mut core = self
             .core
@@ -1588,6 +1677,16 @@ impl RuntimeSessionStore {
         task_id: uuid::Uuid,
         core: &willdeep_core::Session,
     ) -> Result<()> {
+        self.children
+            .transaction(|ledger| self.prepare_execution_under_control(task_id, core, ledger))
+    }
+
+    fn prepare_execution_under_control(
+        &self,
+        task_id: uuid::Uuid,
+        core: &willdeep_core::Session,
+        ledger: &super::child_sessions::Ledger,
+    ) -> Result<()> {
         let mut turns = self.turns_lock()?;
         let Some(turn) = turns
             .values_mut()
@@ -1603,6 +1702,23 @@ impl RuntimeSessionStore {
                 && turn.metadata.status == RuntimeTurnStatus::Running,
             "Runtime Turn is no longer eligible for execution"
         );
+        if turn
+            .origin_client
+            .as_deref()
+            .is_some_and(|origin| origin.starts_with(super::child_sessions::WAKE_ORIGIN))
+        {
+            let control = ledger.control(turn.metadata.session_id);
+            anyhow::ensure!(
+                !control.suppressed
+                    && ledger
+                        .wakes
+                        .values()
+                        .any(|batch| batch.turn_id == Some(turn.metadata.id)
+                            && !batch.invalidated
+                            && batch.generation == control.generation),
+                "child result wake was invalidated before execution"
+            );
+        }
         if turn.replay_existing_user_message {
             anyhow::ensure!(
                 turn.metadata.message_generation == core.compression_generation
@@ -1774,6 +1890,18 @@ impl RuntimeSessionStore {
     }
 
     pub fn request_cancel(&self, turn_id: uuid::Uuid) -> Result<CancelRuntimeTurn> {
+        self.children.transaction(|ledger| {
+            let turn = self.get_turn(turn_id)?.context("Runtime Turn not found")?;
+            ledger.stop(turn.session_id, turn_id);
+            self.children.persist(ledger)?;
+            self.request_cancel_under_control(turn_id)
+        })
+    }
+
+    pub(in crate::daemon) fn request_cancel_under_control(
+        &self,
+        turn_id: uuid::Uuid,
+    ) -> Result<CancelRuntimeTurn> {
         if let Some(turn) = self.get_turn(turn_id)?
             && !turn_status_is_terminal(turn.status)
         {
@@ -2165,6 +2293,9 @@ pub(super) async fn create_turn_handler(
     Json(request): Json<CreateRuntimeTurn>,
 ) -> Result<Response, StatusCode> {
     authorize(&state, &headers)?;
+    if super::child_sessions::is_host_origin(request.origin_client.as_deref()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let work_guard = state.work_gate.read().await;
     if *work_guard {
         return Err(StatusCode::SERVICE_UNAVAILABLE);

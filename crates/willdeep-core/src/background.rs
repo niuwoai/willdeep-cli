@@ -186,6 +186,23 @@ impl BackgroundTaskRegistry {
         self.scheduler = Scheduler::new(settings);
         Ok(self)
     }
+
+    /// Share one admission scheduler with every Harness of the same delegation
+    /// family. The first frozen settings win; later sessions cannot enlarge the
+    /// family's concurrency or queue by starting their own Harness.
+    pub fn with_family_team(
+        mut self,
+        family: uuid::Uuid,
+        settings: AgentTeamSettings,
+    ) -> Result<Self, String> {
+        settings.validate()?;
+        let settings = match &self.run_store {
+            Some(store) => store.configure_team(settings)?,
+            None => settings,
+        };
+        self.scheduler = Scheduler::family(family, settings);
+        Ok(self)
+    }
     pub fn with_lifecycle_observer<H, HFut>(mut self, lifecycle: H) -> Self
     where
         H: Fn(BackgroundTaskSnapshot) -> HFut + Send + Sync + 'static,

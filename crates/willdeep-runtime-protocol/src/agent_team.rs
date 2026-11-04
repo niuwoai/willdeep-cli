@@ -116,6 +116,9 @@ pub struct AgentTeamPolicy {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentTeamSummary {
     pub parent_session_id: Uuid,
+    /// Root Session whose family-wide budget and concurrency cover this team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_session_id: Option<Uuid>,
     pub policy: Option<AgentTeamPolicy>,
     pub running: usize,
     pub queued: usize,
@@ -127,6 +130,9 @@ pub struct AgentTeamSummary {
     pub child_usage: AgentUsageSummary,
     pub auxiliary_usage: AgentUsageSummary,
     pub compression_usage: AgentUsageSummary,
+    /// Deduplicated totals for the root Session and all its child conversations.
+    #[serde(default)]
+    pub family_usage: AgentUsageSummary,
     pub ledger_incomplete: bool,
 }
 

@@ -22,6 +22,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 
 mod agent_library;
+mod child_sessions;
 mod composer;
 mod configuration;
 mod federation;
@@ -31,10 +32,13 @@ mod mcp_tokens;
 mod peer_sessions;
 mod runtime_chat;
 mod schedules;
+mod session_access;
 mod setup;
 mod shares;
 mod turn_queue;
 mod workflows;
+
+use session_access::{authorized_event_session, session_workspace_allowed};
 
 const MAX_PROMPT_CHARS: usize = 100_000;
 const MAX_AGENT_LABEL_CHARS: usize = 128;
@@ -162,6 +166,9 @@ struct SessionSummary {
     /// 直接分凉来源的会话 id。没有来源时不下发，前端按普通会话画。
     #[serde(skip_serializing_if = "Option::is_none")]
     started_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_session_id: Option<String>,
+    delegation_read_only: bool,
     archived: bool,
     active: bool,
     active_turn_id: Option<uuid::Uuid>,
@@ -205,6 +212,8 @@ struct ForkSessionResponse {
 struct SessionDetail {
     id: String,
     workspace: String,
+    parent_session_id: Option<uuid::Uuid>,
+    delegation_read_only: bool,
     messages: Vec<willdeep_core::conversation::ConversationItem>,
     /// `/short` 与 `/verbose` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -270,36 +279,6 @@ struct WebKernelEvent {
     delivery_state: String,
 }
 
-/// 文件指纹没变时直接返回缓存的工作区。
-fn cached_session_workspace(
-    cache: &std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>,
-    session_id: uuid::Uuid,
-    stamp: FileStamp,
-) -> Option<PathBuf> {
-    cache
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&session_id)
-        .filter(|(cached, _)| *cached == stamp)
-        .map(|(_, workspace)| workspace.clone())
-}
-
-/// 指纹对不上（或还没有）时读会话、记下新的归属。`load` 失败返回 `None`，
-/// 不写缓存——下一次请求再试，而不是把一次瞬时的读失败记成永久拒绝。
-fn remember_session_workspace(
-    cache: &std::sync::Mutex<HashMap<uuid::Uuid, (FileStamp, PathBuf)>>,
-    session_id: uuid::Uuid,
-    stamp: FileStamp,
-    load: impl FnOnce() -> Option<PathBuf>,
-) -> Option<PathBuf> {
-    let workspace = load()?;
-    cache
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(session_id, (stamp, workspace.clone()));
-    Some(workspace)
-}
-
 fn web_kernel_event(event: &willdeep_runtime_protocol::KernelEvent) -> WebKernelEvent {
     let public = event.to_public(willdeep_core::judge::redact_credentials);
     WebKernelEvent {
@@ -313,49 +292,6 @@ fn web_kernel_event(event: &willdeep_runtime_protocol::KernelEvent) -> WebKernel
         created_at: public.created_at,
         delivery_state: format!("{:?}", public.delivery_state).to_lowercase(),
     }
-}
-
-/// 会话必须属于白名单里的工作区，否则一律拒绝。
-///
-/// 与会话详情同一条门：浏览器端没有应用层鉴权，能看到什么完全由这份白名单
-/// 决定，事件不该是例外。
-///
-/// 这条路径被前端每两秒轮询一次。归属只取决于会话的工作区，而工作区写进
-/// 会话文件后基本不变，所以按文件指纹缓存：文件没变就不再整读会话。
-async fn authorized_event_session(
-    state: &Arc<WebState>,
-    session_id: uuid::Uuid,
-) -> Result<(), WebError> {
-    let not_found = || WebError::bad_request("session was not found");
-    let path = SessionStore::new(&state.home).path(session_id);
-    let metadata = std::fs::metadata(&path).map_err(|_| not_found())?;
-    let stamp = FileStamp::of(&metadata);
-    let cached = cached_session_workspace(&state.session_workspaces, session_id, stamp);
-    let workspace = match cached {
-        Some(workspace) => workspace,
-        None => {
-            // 整读会话是贵的（长会话几 MB），别堵在 tokio worker 上。
-            let home = state.home.clone();
-            let cache = Arc::clone(&state.session_workspaces);
-            tokio::task::spawn_blocking(move || {
-                remember_session_workspace(&cache, session_id, stamp, || {
-                    SessionStore::new(&home)
-                        .load(session_id)
-                        .map(|session| session.workspace)
-                        .ok()
-                })
-            })
-            .await
-            .map_err(|error| WebError::internal(error.to_string()))?
-            .ok_or_else(not_found)?
-        }
-    };
-    if !workspace_allowed(state, &workspace).await? {
-        return Err(WebError::bad_request(
-            "session workspace is not in the server allowlist",
-        ));
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -544,6 +480,26 @@ async fn serve_internal(
         )
         .route("/api/chat/stream", post(chat_stream))
         .route("/api/sessions", get(sessions))
+        .route(
+            "/api/sessions/{id}/children",
+            get(child_sessions::list).post(child_sessions::start),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}",
+            get(child_sessions::get),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}/retry",
+            post(child_sessions::retry),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}/stop",
+            post(child_sessions::stop),
+        )
+        .route(
+            "/api/sessions/{id}/children/{child}/continue",
+            post(child_sessions::continue_task),
+        )
         .route("/api/sessions/{id}/peers", get(peer_sessions::peers))
         .route(
             "/api/sessions/{id}/peer-messages",
@@ -1386,7 +1342,7 @@ async fn authorize_runtime_turn(state: &WebState, id: uuid::Uuid) -> Result<(), 
     let session = SessionStore::new(&state.home)
         .load(session_id)
         .map_err(|_| not_found())?;
-    if workspace_allowed(state, &session.workspace).await? {
+    if session_workspace_allowed(state, &session).await? {
         Ok(())
     } else {
         Err(not_found())
@@ -1433,11 +1389,25 @@ async fn sessions(
     let digests = tokio::task::spawn_blocking(move || SessionStore::new(&home).digests())
         .await
         .map_err(|error| WebError::internal(error.to_string()))?;
+    // A delegated worktree child lives outside the project allowlist. Keep it
+    // in the sidebar under its parent's workspace; it never widens the allowlist
+    // by itself.
+    let session_workspaces = digests
+        .iter()
+        .map(|session| (session.id, session.workspace.clone()))
+        .collect::<HashMap<_, _>>();
     let values = digests
         .into_iter()
-        .filter(|session| allowed.contains(&session.workspace))
+        .filter(|session| {
+            allowed.contains(&session.workspace)
+                || session
+                    .parent_session_id
+                    .and_then(|parent| session_workspaces.get(&parent))
+                    .is_some_and(|workspace| allowed.contains(workspace))
+        })
         .filter(|session| {
             session.has_user_input
+                || session.parent_session_id.is_some()
                 || runtime_states
                     .get(&session.id)
                     .is_some_and(|(_, active, active_turn_id)| *active || active_turn_id.is_some())
@@ -1447,6 +1417,18 @@ async fn sessions(
                 .get(&session.id)
                 .copied()
                 .unwrap_or((false, false, None));
+            // The Web UI is organized by project workspace. A worktree child is
+            // displayed under the parent's project even though its files live in
+            // the dedicated worktree.
+            let workspace = if allowed.contains(&session.workspace) {
+                session.workspace.clone()
+            } else {
+                session
+                    .parent_session_id
+                    .and_then(|parent| session_workspaces.get(&parent))
+                    .cloned()
+                    .unwrap_or_else(|| session.workspace.clone())
+            };
             // 标题生成没跑成的会话在列表里长得一模一样。给它一段首条用户
             // 消息，比一排 `New session` 强，也比直接把它们藏起来诚实——
             // 那些会话是有内容的。
@@ -1457,10 +1439,12 @@ async fn sessions(
                 id: session.id.to_string(),
                 title: session.title,
                 preview,
-                workspace: session.workspace.display().to_string(),
+                workspace: workspace.display().to_string(),
                 created_at: session.created_at,
                 updated_at: session.updated_at,
                 started_by: session.started_by.map(|id| id.to_string()),
+                parent_session_id: session.parent_session_id.map(|id| id.to_string()),
+                delegation_read_only: session.delegation_read_only,
                 pinned_at: session.pinned_at,
                 archived,
                 active,
@@ -1479,10 +1463,25 @@ async fn session_detail(
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
     let allowed = registered_web_workspaces(&state).await?;
-    let Some(workspace) = allowed
+    let registration = allowed
         .iter()
-        .find(|workspace| workspace.root == session.workspace)
-    else {
+        .find(|workspace| workspace.root == session.workspace);
+    // A delegated worktree child is reachable through its parent's workspace
+    // and shown under that project; its own worktree is not registered.
+    let workspace = registration.cloned().or_else(|| {
+        session.parent_session_id.and_then(|parent| {
+            SessionStore::new(&state.home)
+                .load(parent)
+                .ok()
+                .and_then(|parent| {
+                    allowed
+                        .iter()
+                        .find(|workspace| workspace.root == parent.workspace)
+                        .cloned()
+                })
+        })
+    });
+    let Some(workspace) = workspace else {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -1495,14 +1494,24 @@ async fn session_detail(
         .and_then(|sessions| sessions.into_iter().find(|candidate| candidate.id == id));
     Ok(Json(SessionDetail {
         id: session.id.to_string(),
-        workspace: session.workspace.display().to_string(),
+        workspace: workspace.root.display().to_string(),
+        parent_session_id: session.parent_session_id,
+        delegation_read_only: session.delegation_read_only,
         messages,
         response_style: session.response_style,
         approval_mode: runtime_session
             .as_ref()
             .and_then(|candidate| candidate.approval_mode)
             .map(crate::daemon::WorkspaceAccess::wire_name),
-        workspace_access: workspace.access.wire_name(),
+        workspace_access: if session.delegation_read_only {
+            "read_only"
+        } else if session.parent_session_id.is_some() {
+            // Worktree children are capped at workspace-write even when the
+            // parent project allows more.
+            "workspace_write"
+        } else {
+            workspace.access.wire_name()
+        },
         model: runtime_session
             .as_ref()
             .and_then(|candidate| candidate.model.clone())
@@ -1644,12 +1653,29 @@ async fn set_session_approval_mode(
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
     ensure_web_runtime_session(&state, id).await?;
-    let allowed = registered_web_workspaces(&state).await?;
-    let workspace_access = allowed
-        .iter()
-        .find(|workspace| workspace.root == session.workspace)
-        .map(|workspace| workspace.access)
-        .ok_or_else(|| WebError::bad_request("session workspace is not in the server allowlist"))?;
+    let workspace_access = if session.delegation_read_only {
+        crate::daemon::WorkspaceAccess::ReadOnly
+    } else if session.parent_session_id.is_some() {
+        // A writable worktree child is capped at workspace-write regardless of
+        // the parent project's approval policy.
+        crate::daemon::WorkspaceAccess::WorkspaceWrite
+    } else {
+        let allowed = registered_web_workspaces(&state).await?;
+        allowed
+            .iter()
+            .find(|workspace| workspace.root == session.workspace)
+            .map(|workspace| workspace.access)
+            .ok_or_else(|| {
+                WebError::bad_request("session workspace is not in the server allowlist")
+            })?
+    };
+    if session.parent_session_id.is_some()
+        && request.approval_mode == crate::daemon::WorkspaceAccess::FullAccess
+    {
+        return Err(WebError::conflict(
+            "a delegated child cannot exceed the workspace-write approval mode",
+        ));
+    }
     check_session_approval_mode(workspace_access, request.approval_mode, request.confirm).map_err(
         |rejection| match rejection {
             ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
@@ -2050,7 +2076,7 @@ async fn set_session_pinned(
     let session = store
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
-    if !workspace_allowed(state, &session.workspace).await? {
+    if !session_workspace_allowed(state, &session).await? {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -2093,7 +2119,7 @@ async fn ensure_web_runtime_session(state: &WebState, id: uuid::Uuid) -> Result<
     let session = SessionStore::new(&state.home)
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
-    if !workspace_allowed(state, &session.workspace).await? {
+    if !session_workspace_allowed(state, &session).await? {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -2187,7 +2213,7 @@ async fn resume_session_stream(
     let session = SessionStore::new(&state.home)
         .load(id)
         .map_err(|_| WebError::bad_request("session was not found"))?;
-    if !workspace_allowed(&state, &session.workspace).await? {
+    if !session_workspace_allowed(&state, &session).await? {
         return Err(WebError::bad_request(
             "session workspace is not in the server allowlist",
         ));
@@ -2314,9 +2340,18 @@ async fn validate_chat(
             .load(id)
             .map_err(|_| WebError::bad_request("session_id was not found"))?;
         if session.workspace != workspace.root {
-            return Err(WebError::bad_request(
-                "session does not belong to the selected workspace",
-            ));
+            // A delegated worktree child runs in its own checkout but belongs to
+            // the parent's project in the Web UI. The parent relation already
+            // passed the allowlist in the Session detail/list endpoints.
+            let delegated = session
+                .parent_session_id
+                .and_then(|parent| SessionStore::new(&state.home).load(parent).ok())
+                .is_some_and(|parent| parent.workspace == workspace.root);
+            if !delegated {
+                return Err(WebError::bad_request(
+                    "session does not belong to the selected workspace",
+                ));
+            }
         }
     }
     Ok(workspace)
@@ -2550,7 +2585,7 @@ async fn predict_session_input(state: &WebState, id: uuid::Uuid) -> Option<Strin
         return None;
     }
     let session = SessionStore::new(&state.home).load(id).ok()?;
-    if !workspace_allowed(state, &session.workspace).await.ok()? {
+    if !session_workspace_allowed(state, &session).await.ok()? {
         return None;
     }
     // 查不到 Runtime 状态时按「在跑」处理：宁可少一句预测，也不在轮次中途冒出来。

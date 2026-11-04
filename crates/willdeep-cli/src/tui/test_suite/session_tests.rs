@@ -14,6 +14,8 @@ fn session_picker_result_includes_content_snippet_without_embedded_lines() {
         snippet: Some("RBAC\n数据权限".to_owned()),
         origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
         started_by: None,
+        parent_session_id: None,
+        delegation_read_only: false,
     };
 
     let line =

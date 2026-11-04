@@ -129,7 +129,10 @@ pub(super) async fn execute(state: &ServerState, request: ApiRequest) -> Unified
     } else {
         None
     };
-    let response = if is_mutating_operation(&request.operation) {
+    let response = if request.operation.starts_with("session.child.") {
+        // Child assignments own durable request identities and replay preparation after crashes.
+        dispatch(state, request).await
+    } else if is_mutating_operation(&request.operation) {
         dispatch_idempotent(state, request).await
     } else {
         dispatch(state, request).await
@@ -209,6 +212,15 @@ async fn dispatch_idempotent(state: &ServerState, request: ApiRequest) -> Unifie
 }
 
 async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
+    if let Err(error) = super::child_sessions::validate_side_effects(state, &request) {
+        return UnifiedResponse::failure(
+            error.status,
+            error.code,
+            error.message,
+            error.retryable,
+            request.request_id,
+        );
+    }
     let result = match request.operation.as_str() {
         // The nested workflow operation owns idempotency and the drain gate.
         // Do not hold the outer idempotency lock while the plugin calls back.
@@ -287,6 +299,14 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
             },
             Err(error) => Err(error),
         },
+        "session.child.task.stop" => super::child_sessions::stop(state, &request).await,
+        operation if operation.starts_with("session.child.") => {
+            super::child_sessions::preflight(state, &request)
+                .await
+                .and_then(|preflight| {
+                    super::child_sessions::dispatch(state, &request, preflight.as_ref())
+                })
+        }
         "session.peers" => peer_sessions::list(state, &request),
         "session.peer.send" => peer_sessions::send(state, &request),
         "session.peer.inbox" | "session.peer.read" => peer_sessions::inbox(state, &request),
@@ -799,6 +819,10 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "interaction.present",
     "session.peer.send",
     "session.peer.read",
+    "session.child.start",
+    "session.child.continue",
+    "session.child.retry",
+    "session.child.task.stop",
     "schedule.create",
     "schedule.update",
     "schedule.action",
@@ -855,6 +879,9 @@ fn is_work_producing_operation(operation: &str) -> bool {
     matches!(
         operation,
         "turn.submit"
+            | "session.child.start"
+            | "session.child.continue"
+            | "session.child.retry"
             | "production.start"
             | "production.resume"
             | "screenplay.start"
@@ -895,6 +922,9 @@ fn public_session(
         model: session.model,
         approval_mode: session.approval_mode.map(workspace_store::public_access),
         started_by: session.started_by,
+        parent_session_id: session.parent_session_id,
+        delegation_read_only: session.delegation_read_only,
+        model_context_window: session.model_context_window,
         status: public_session_status(session.status),
         active_turn_id: session.active_turn_id,
         created_at: session.created_at,
@@ -957,6 +987,8 @@ fn public_session_search_result(
             session_store::SessionOrigin::Xedit => willdeep_runtime_protocol::SessionOrigin::Xedit,
         },
         started_by: result.started_by,
+        parent_session_id: result.parent_session_id,
+        delegation_read_only: result.delegation_read_only,
     }
 }
 
@@ -1691,6 +1723,11 @@ async fn turn_submit(state: &ServerState, request: &ApiRequest) -> ApiResult {
 fn validate_turn_submission(
     params: &willdeep_runtime_protocol::SubmitTurnParams,
 ) -> Result<(), ApiFailure> {
+    if super::child_sessions::is_host_origin(params.origin_client.as_deref()) {
+        return Err(ApiFailure::invalid(
+            "child coordination origins are reserved for Runtime",
+        ));
+    }
     if params.prompt.len() > MAX_TURN_PROMPT_BYTES {
         return Err(ApiFailure::invalid("Turn prompt exceeds 1 MiB"));
     }
@@ -1819,6 +1856,14 @@ fn turn_steer(state: &ServerState, request: &ApiRequest) -> ApiResult {
         )));
     }
     let task_id = state.tasks.steer(params.session_id, message.to_owned());
+    state
+        .sessions
+        .children
+        .transaction(|ledger| {
+            ledger.operator_input(params.session_id);
+            Ok(())
+        })
+        .map_err(ApiFailure::internal)?;
     // 插话本身就是反馈：模型跑着跑着用户忍不住要纠正或补充。
     if let Some(recorder) = state.sessions.feedback() {
         recorder
@@ -1936,6 +1981,19 @@ async fn agent_command(
 
 async fn agent_retry(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let params = params::<willdeep_runtime_protocol::RetryAgentParams>(request)?;
+    if let Some(agent) = state.agents.get(params.id).map_err(ApiFailure::internal)?
+        && let Some(task) = state.tasks.get(agent.task_id).await
+        && let Some(turn_id) = task.turn_id
+        && state
+            .sessions
+            .children
+            .transaction(|ledger| Ok(ledger.owns_turn(turn_id)))
+            .map_err(ApiFailure::internal)?
+    {
+        return Err(ApiFailure::conflict(
+            "delegated task results are immutable; use session.child.retry with expected_result_revision",
+        ));
+    }
     let model = params.model.map(|model| model.trim().to_owned());
     if model
         .as_deref()
@@ -2095,6 +2153,7 @@ fn json_result(value: anyhow::Result<impl Serialize>) -> ApiResult {
 
 pub(super) type ApiResult = Result<serde_json::Value, ApiFailure>;
 
+#[derive(Debug)]
 pub(super) struct ApiFailure {
     status: StatusCode,
     code: ErrorCode,

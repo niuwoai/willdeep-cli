@@ -31,6 +31,9 @@ pub(crate) struct StoredRun {
 pub struct AgentRunStore {
     directory: PathBuf,
     parent: Uuid,
+    /// Root Session for family-wide budget aggregation. Ordinary session stores
+    /// are their own family root; child stores point at their parent.
+    family: Uuid,
 }
 
 #[derive(Clone)]
@@ -108,7 +111,32 @@ impl AgentRunStore {
         Self {
             directory: home.as_ref().join("team-runs").join(parent.to_string()),
             parent,
+            family: parent,
         }
+    }
+
+    /// Attribute budget and family totals to the root Session while keeping
+    /// this session's run records and owner lock separate.
+    pub fn with_family(mut self, family: Uuid) -> Self {
+        self.family = family;
+        self
+    }
+
+    pub fn family(&self) -> Uuid {
+        self.family
+    }
+
+    /// Frozen policy for this team, or the configured defaults when no team
+    /// policy has been written yet.
+    pub fn effective_settings(&self) -> Result<super::scheduler::AgentTeamSettings, String> {
+        Ok(self
+            .team_policy()?
+            .map(|policy| super::scheduler::AgentTeamSettings {
+                max_concurrent: policy.max_concurrent,
+                max_queued: policy.max_queued,
+                token_budget: policy.token_budget,
+            })
+            .unwrap_or_default())
     }
 
     pub(crate) fn create(&self, request: RunRequest) -> Result<(AgentRun, bool), String> {

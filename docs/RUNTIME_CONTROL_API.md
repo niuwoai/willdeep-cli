@@ -2,7 +2,7 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.142.0-rc1
+> 当前实现版本：v0.143.0-rc1
 >
 > 最后更新：2026-11-04
 
@@ -43,6 +43,27 @@ X-WillDeep-Request-Id: <optional UUID>
 服务端只声明当前进程实际启用的传输。Unix 客户端优先连接 Runtime 目录内权限为 `0600` 的 Socket；Windows 客户端优先连接拒绝远程连接的随机 Named Pipe。回环 TCP 作为旧状态兼容和诊断回退继续受随机 Token 保护。
 
 私有生命周期端点 `POST /v1/internal/drain` 自 rc54 起仅供 `willdeep daemon upgrade` 使用。它将健康状态切换为 `draining`，原子阻止新的工作生产请求，同时允许停止、审批、回答和只读观察继续；活跃任务归零后旧进程自行退出。替换进程使用新的本地 Token/传输身份接管，长时间观察客户端只有确认身份已更替后才能重连并沿原事件游标续传。rc54 客户端仅为 rc53 保留一次 `POST /v1/drain` 兼容桥；更早且不支持安全 Drain 的 Runtime 必须保持任务原样并要求首次手动迁移，不能悄悄退化为会取消任务的 Shutdown。普通 `POST /v1/internal/shutdown` 仍会取消活跃任务，不能用于版本交接。
+
+### 完整子会话 P1（0.143.0-rc1）
+
+能力声明 `session_children` 外加 `session_children_fork`、`session_children_worktree`、`session_children_model`、`session_children_workers`；客户端应先检查 capability 和 `operations`，旧 Runtime 不支持时保持普通会话可访问，不模拟两次请求创建任务。新增子会话仍为普通 Session/root Agent，Worker Agent/Run 的控制与配额保持独立。
+
+| 操作 | `params` | 结果与限制 |
+|---|---|---|
+| `session.child.start` | `parent_session_id`、可选 `created_from_turn_id`、`title`、`prompt`、可选 `context` / `through_turn_id` / `workspace_mode` / `worktree_base` / `model` / `notify` | 返回本次 `ChildSessionTask`，含 child/assignment/Turn 身份；支持 `fresh|fork`、`shared_read_only|worktree` |
+| `session.child.continue` | `parent_session_id`、可选 `created_from_turn_id`、`child_session_id`、`prompt`、可选 `notify` | 原子会话空闲时创建新 assignment/Turn；保留历史、工作区模式和模型 |
+| `session.child.retry` | `parent_session_id`、可选 `created_from_turn_id`、`assignment_id`、`expected_result_revision` | 仅重试 partial/failed/interrupted/blocked，创建带 `retry_of_assignment_id` 的新任务；原结果保留 |
+| `session.child.task.get` | `parent_session_id`、`assignment_id` | 本关系内任务状态及可选结果 |
+| `session.child.task.list` | `parent_session_id`、可选 `after` / `limit` | `tasks` 与 `next_cursor`；默认一页 50，分页不影响准入计数 |
+| `session.child.task.stop` | `parent_session_id`、`assignment_id` | 校验关系后停止对应 child Turn，不取得无关会话控制权 |
+
+参数的唯一类型定义在 `willdeep-runtime-protocol::child_session`。创建默认 `context=fresh`、`workspace_mode=shared_read_only`、`worktree_base=head`、`notify=on_task_terminal`，也可设 `notify=none`。`context=fork` 必须提供属于父会话且已完成的 `through_turn_id`；`worktree_base=snapshot` 只对 worktree 有效。`model` 必须是父 Session Provider 配置中可用的模型，创建前校验工具/图片能力并记录目标模型窗口；未知字段、未知枚举和非法组合拒绝。Prompt 上限 16,000 个 Unicode 字符，结果摘要上限 2,000 个字符。通知仅覆盖本次 assignment，用户在子会话直接继续聊天不会自动重新订阅旧委派。
+
+`fork` 只复制已完成 Turn 的不可变消息前缀与内联附件，要求压缩代次、消息边界和工具调用闭合；Goal、计划、队列、压缩检查点、执行检查点、通知已读与运行游标不复制。`worktree` 在取得执行槽后创建，默认从已提交 HEAD 建立，`snapshot` 基线冻结父目录已跟踪修改和未跟踪文件并记录补丁摘要；子空间权限最多为 `WorkspaceWrite`，不继承父 `FullAccess`。任务结束保留 worktree 和分支，不自动合并、提交、推送或删除。
+
+写请求携带统一信封 `request_id`；幂等受理以父关系与请求身份、参数指纹为依据，同键异参拒绝。模型工具由宿主绑定 parent、发起 Turn 与稳定请求身份，模型不能自行指定其他会话或私有配置。`parent_session_id` 表示树形归属，任务提出者/创建者与其独立；P1 仍只允许父会话派生一层，不提供兄弟任务提案入口。
+
+结果与 outbox 按 assignment 和最终 Task 形成，旧 assignment 不因 retry 被改写；worktree 结果附带 `workspace`、分支、基线 commit、未跟踪文件数和冻结补丁摘要。父 stop 不取消已受理子任务，但抑制父自动唤醒；宿主结果不解除该抑制。`session.create` / `session.fork` 保持原语义，不隐式启动委派。可写 worktree 子会话可派 Worker，父子共享家族并发/队列和按记录 ID 去重的家族用量；只读子会话仍禁止 Worker，所有子会话都不能创建下一层子会话。使用与限制见 [完整子会话](CHILD_SESSIONS.md)。
 
 ## 3. 稳定对象
 
@@ -327,7 +348,7 @@ Swift、Android 和第三方客户端应在 CI 中逐项解码 `responses`，并
 
 ## 11. Rust SDK
 
-`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.142.0-rc1`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
+`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.143.0-rc1`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
 
 ```bash
 willdeep daemon start

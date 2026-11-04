@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-04 | 当前版本：v0.142.0-rc1
+> 最后更新：2026-11-04 | 当前版本：v0.143.0-rc1
 
 ## 分发
 
@@ -165,6 +165,26 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 `spawn_agent` 的可选 `task` 参数是 Task Packet：目标、已知事实、约束、相关文件与 verifier 命令。Runtime 按窗口档位把相关文件内联进 Worker 首条消息，并在每次尝试后**由 Runtime 自己执行** verifier 命令来判定成败——退出码是唯一裁决，模型的自述不是。失败输出经纯 Rust 的确定性消化（失败聚焦段 + 尾部，断言原文逐字保留）后回灌下一次尝试；尝试打满即判运行失败并要求升档。命令型 Worker 共用三层门禁：静态安全命令直接放行；非破坏、非凭据敏感的模糊命令交 AI 判官；拒绝或不可用时精确返回父 Agent。父 Agent 仅能通过 `ops_runner + target_command` 请求人类对同一命令一次性确认，子 Agent 本身没有审批 UI，危险与凭据命令也绝不进入 AI。
 
 写通道是一条通路的两种规模：写入型工种的目标文件先由父 ToolRegistry canonicalize 并作为**一个集合**整体审批，子 ToolRegistry 再以 canonical 绝对路径做集合成员匹配，符号链接或路径别名不能扩大授权范围；editor 是集合大小为 1 的特例。同一 Catalog 内运行中 Worker 的文件集互斥，冲突时后来者被拒绝并点名冲突文件，锁在运行结束、超时、取消或 panic 时随 `Drop` 释放。详见 [小上下文 Skill Worker](SKILL_WORKERS.md)。
+
+### 完整子会话（0.143.0-rc1 P0/P1）
+
+完整子会话是独立 Runtime Session/root Agent，不使用 Worker Agent/Run 充当对话身份。`parent_session_id` 表达树形归属，`started_by` 继续仅表示历史分叉来源；任务提出者/创建者与树形 parent 是独立概念。P1 仍只允许有权父会话派生一层，不提供子再派生或兄弟任务提案入口。定义与分期见 [完整方案](decisions/2026-11-04-child-sessions.md)，使用见 [完整子会话](CHILD_SESSIONS.md)。
+
+协议由 `willdeep-runtime-protocol::child_session` 唯一维护，capability 为 `session_children`（另声明 `session_children_fork/worktree/model/workers`）；`session.child.start/continue/retry` 与 `session.child.task.get/list/stop` 共用 Daemon 协调器，CLI/TUI/Web 和模型宿主不分别拼接创建与首消息。每次委派有独立 `assignment_id`、固定请求身份及对应 child Turn，续做/显式重试创建新 assignment/Turn，保留原会话历史与旧结果。Turn/Task 是执行状态的权威来源，Idle 仅表示当前没有执行，不代表整条子会话永久完成。
+
+`$WILLDEEP_HOME/runtime/session-children.json` 是私有协调账本，记录关系、preparing/accepted 创建意图、assignment/Turn 关联、上下文来源、worktree 绑定、结果 outbox、通知身份与 `wake_batch_id`。协调锁内完成幂等、参数指纹与容量检查；受理点与父停止代数相互核验，崩溃后按固定身份补齐准备对象和已受理 Turn，不能凭多次文件 rename 宣称跨文件事务。Core `SessionStore` 仍是消息与附件的唯一事实来源，账本不复制聊天；结果正文引用或有界报告不另建消息历史。
+
+上下文支持 `fresh` 与 `fork`。fork 只读取父会话已完成 Turn 的不可变消息前缀，校验压缩代次、消息边界与工具调用闭合，复制内联附件并清空 Goal、计划、队列、执行检查点、压缩检查点和运行游标；不使用手动 fork 的 `ensure_manageable` 闸门，也不等待父会话空闲。工作区支持 `shared_read_only` 与 `worktree`。worktree 在子 Turn 取得执行槽后创建，默认从已提交 HEAD 建立；`snapshot` 基线通过受控 patch 与未跟踪文件复制冻结父目录修改，并记录补丁摘要、未跟踪文件数和基线 commit。子会话 workspace 固定为该 worktree，权限最多为 `WorkspaceWrite`，不继承父会话 `FullAccess`；任务结束保留 worktree 和分支，不自动合并、提交、推送或删除。
+
+可写 worktree 子会话可通过主 Harness 的 Worker 工具派工；父会话与其子会话共享一个进程内家族调度器和冻结的 `agent_team` 策略，Worker 排队/并发不因新 Session 重置。本机用量账本新增 `family_session_id`，主回合、Worker、压缩与辅助调用按记录 ID 去重后归入家族预算；每个子会话仍保留自己的 AgentRun 记录与所有权锁。只读子会话继续禁止 Worker、Shell、写入、MCP/插件副作用和继续派生；所有子会话都不安装完整子会话创建/续做工具，也不获得 peer 控制。
+
+模型可由创建请求在父 Session 的 Provider 配置内覆盖。控制层异步校验模型列表、工具能力、图片兼容性与真实上下文窗口，将窗口快照持久化到子 Core/Runtime Session；Harness 优先使用该快照，绝不继承父模型在 Profile 中的窗口数值。
+
+终态由对应 Turn 的最终 Task 投影为结果，先持久化 outbox，再通知父会话；报告是待核验内容，不是完成证据。父执行中在安全边界注入，Idle 时按固定 `wake_batch_id` 与 Turn request ID 续推；批次开始后冻结成员，确认消费依赖持久历史/回执，事件发布或客户端已读不能代替消费。重放按通知身份去重，保证至少一次投递并防止重复创建唤醒 Turn，不承诺模型或外部副作用 exactly-once。
+
+父普通 Turn 收尾或 stop 不取消已受理的 child assignment；主动 stop 持久抑制父自动唤醒，结果保留待处理，只有用户明确继续父会话才解除抑制。宿主委派与子结果使用独立来源，不冒充用户输入。子任务停止按 parent/assignment/Turn 验证，归档/删除父会话不级联删除子数据。准入同时限制家族与宿主的子任务容量，P0/P1 执行槽/队列为 4/16，等待审批/回答仍占执行槽，列表分页不参与计数。
+
+P1 已实现并通过本机 Rust/Web 回归、隔离 fork/worktree/模型/家族调度场景、宽窄 PTY 与浏览器验收；实际命令、二进制摘要和未覆盖的原生平台边界见 [验收记录](verification/0.143.0-rc1.md)。本次提交尚未发布。
 
 ### 声明式工作流（0.141.0-rc1）
 

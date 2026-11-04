@@ -333,6 +333,243 @@ pub enum SessionAction {
     Turns { id: uuid::Uuid },
     /// Stop the Session's active or queued Turn.
     Stop { id: uuid::Uuid },
+    /// Delegate a read-only investigation to an independent conversation.
+    Child {
+        #[command(subcommand)]
+        action: ChildSessionAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ChildContextArg {
+    Fresh,
+    Fork,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ChildWorkspaceArg {
+    SharedReadOnly,
+    Worktree,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ChildWorktreeBaseArg {
+    Head,
+    Snapshot,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum ChildSessionAction {
+    /// Start a fresh or forked child conversation, optionally in an isolated worktree.
+    Start {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        #[arg(long)]
+        title: String,
+        #[arg(long, value_enum, default_value = "fresh")]
+        context: ChildContextArg,
+        /// Completed parent Turn to inherit when --context fork is used.
+        #[arg(long)]
+        through_turn: Option<uuid::Uuid>,
+        #[arg(
+            long = "workspace-mode",
+            id = "child_workspace_mode",
+            value_name = "WORKSPACE_MODE",
+            value_enum,
+            default_value = "shared-read-only"
+        )]
+        workspace: ChildWorkspaceArg,
+        #[arg(long, value_enum, default_value = "head")]
+        worktree_base: ChildWorktreeBaseArg,
+        /// Optional model override from the parent Session's Provider profile.
+        #[arg(long = "child-model", id = "child_model", value_name = "MODEL")]
+        model: Option<String>,
+        /// Reuse this key after a lost response to avoid duplicate work.
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+        #[arg(value_name = "PROMPT", num_args = 1.., trailing_var_arg = true)]
+        prompt: Vec<String>,
+    },
+    /// List assignments, including waiting work and terminal results.
+    List {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        #[arg(long)]
+        after: Option<uuid::Uuid>,
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=100))]
+        limit: u32,
+    },
+    /// Read an assignment and its durable result.
+    Get {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        assignment: uuid::Uuid,
+    },
+    /// Continue the same child conversation with a new assignment.
+    Continue {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        child: uuid::Uuid,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+        #[arg(value_name = "PROMPT", num_args = 1.., trailing_var_arg = true)]
+        prompt: Vec<String>,
+    },
+    /// Retry a failed or interrupted assignment, preserving its old result.
+    Retry {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        assignment: uuid::Uuid,
+        #[arg(long)]
+        expected_result_revision: u64,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+    },
+    /// Stop only the Turn belonging to this assignment.
+    Stop {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        assignment: uuid::Uuid,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+    },
+}
+
+/// Client surfaces share the coordinator and its persisted request identity.
+pub(crate) async fn child_operation(
+    home: &Path,
+    operation: &str,
+    params: serde_json::Value,
+    request_id: Option<uuid::Uuid>,
+) -> Result<serde_json::Value> {
+    anyhow::ensure!(
+        matches!(
+            operation,
+            "session.child.start"
+                | "session.child.continue"
+                | "session.child.retry"
+                | "session.child.task.get"
+                | "session.child.task.list"
+                | "session.child.task.stop"
+        ),
+        "unsupported child session operation"
+    );
+    let state = state_for_operation(home, operation, &params).await?;
+    let client = runtime_client(&state)?;
+    let capabilities = client.capabilities(None).await?.into_result()?;
+    anyhow::ensure!(
+        capabilities
+            .capabilities
+            .contains(&willdeep_runtime_protocol::Capability::SessionChildren)
+            && capabilities
+                .operations
+                .iter()
+                .any(|candidate| candidate == operation),
+        "unsupported child sessions: update the local Runtime"
+    );
+    let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
+    // Retrying a transport failure retains the outer ApiRequest key. Application
+    // refusals are returned immediately, never replayed as a new assignment.
+    for attempt in 0..2 {
+        match client.call::<_, serde_json::Value>(operation, &params, Some(request_id)).await {
+            Ok(response) => return response.into_result().map_err(Into::into),
+            Err(_) if attempt == 0 => continue,
+            Err(error) => return Err(error).with_context(|| format!(
+                "child session response unconfirmed (request_id={request_id}); retry with the same key"
+            )),
+        }
+    }
+    unreachable!()
+}
+
+/// Shared Runtime call for surfaces that need a read-only capability query
+/// (for example the Web fork picker) without duplicating transport setup.
+pub(crate) async fn runtime_operation(
+    home: &Path,
+    operation: &str,
+    params: serde_json::Value,
+    request_id: Option<uuid::Uuid>,
+) -> Result<serde_json::Value> {
+    let state = state_for_operation(home, operation, &params).await?;
+    let client = runtime_client(&state)?;
+    let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
+    client
+        .call::<_, serde_json::Value>(operation, &params, Some(request_id))
+        .await?
+        .into_result()
+        .map_err(Into::into)
+}
+
+async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result<()> {
+    let (operation, params, request_id) = match action {
+        ChildSessionAction::Start {
+            parent,
+            title,
+            context,
+            through_turn,
+            workspace,
+            worktree_base,
+            model,
+            request_id,
+            prompt,
+        } => (
+            "session.child.start",
+            serde_json::json!({"parent_session_id":parent, "title":title,
+                "prompt":prompt.join(" "),
+                "context": match context { ChildContextArg::Fresh => "fresh", ChildContextArg::Fork => "fork" },
+                "through_turn_id": through_turn,
+                "workspace_mode": match workspace { ChildWorkspaceArg::SharedReadOnly => "shared_read_only", ChildWorkspaceArg::Worktree => "worktree" },
+                "worktree_base": match worktree_base { ChildWorktreeBaseArg::Head => "head", ChildWorktreeBaseArg::Snapshot => "snapshot" },
+                "model": model}),
+            request_id,
+        ),
+        ChildSessionAction::List {
+            parent,
+            after,
+            limit,
+        } => (
+            "session.child.task.list",
+            serde_json::json!({"parent_session_id":parent,"after":after,"limit":limit}),
+            None,
+        ),
+        ChildSessionAction::Get { parent, assignment } => (
+            "session.child.task.get",
+            serde_json::json!({"parent_session_id":parent,"assignment_id":assignment}),
+            None,
+        ),
+        ChildSessionAction::Continue {
+            parent,
+            child,
+            request_id,
+            prompt,
+        } => (
+            "session.child.continue",
+            serde_json::json!({"parent_session_id":parent,"child_session_id":child,"prompt":prompt.join(" ")}),
+            request_id,
+        ),
+        ChildSessionAction::Retry {
+            parent,
+            assignment,
+            expected_result_revision,
+            request_id,
+        } => (
+            "session.child.retry",
+            serde_json::json!({"parent_session_id":parent,"assignment_id":assignment,"expected_result_revision":expected_result_revision}),
+            request_id,
+        ),
+        ChildSessionAction::Stop {
+            parent,
+            assignment,
+            request_id,
+        } => (
+            "session.child.task.stop",
+            serde_json::json!({"parent_session_id":parent,"assignment_id":assignment}),
+            request_id,
+        ),
+    };
+    let value = child_operation(home, operation, params, request_id).await?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
 }
 
 pub async fn handle_session(action: SessionAction) -> Result<()> {
@@ -342,5 +579,6 @@ pub async fn handle_session(action: SessionAction) -> Result<()> {
         SessionAction::Get { id } => session_store::show_session_cli(&home, id).await,
         SessionAction::Turns { id } => session_store::list_turns_cli(&home, id).await,
         SessionAction::Stop { id } => session_store::stop_session_cli(&home, id).await,
+        SessionAction::Child { action } => handle_child_session(&home, action).await,
     }
 }

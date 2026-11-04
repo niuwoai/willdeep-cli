@@ -1,0 +1,30 @@
+{
+  "assignment_id": "00000000-0000-4000-8000-000000000101",
+  "link_id": "00000000-0000-4000-8000-000000000102",
+  "parent_session_id": "00000000-0000-4000-8000-000000000002",
+  "child_session_id": "00000000-0000-4000-8000-000000000103",
+  "created_from_turn_id": "00000000-0000-4000-8000-000000000004",
+  "request_id": "00000000-0000-4000-8000-000000000104",
+  "child_turn_id": "00000000-0000-4000-8000-000000000105",
+  "retry_of_assignment_id": null,
+  "title": "Inspect the supplied example",
+  "prompt": "Read the bounded example and report evidence without changing files.",
+  "notify": "on_task_terminal",
+  "status": "completed",
+  "created_at": 100,
+  "accepted_at": 101,
+  "updated_at": 120,
+  "result": {
+    "revision": 1,
+    "final_task_id": "00000000-0000-4000-8000-000000000106",
+    "completed_at": 120,
+    "model": "example-model",
+    "summary": "The example was inspected.",
+    "report": "The example was inspected. This fixture does not assert any real execution.",
+    "report_complete": true,
+    "notification_id": "00000000-0000-4000-8000-000000000107",
+    "consumed_at": null,
+    "superseded_by": null
+  },
+  "error": null
+}

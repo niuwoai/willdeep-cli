@@ -6,6 +6,33 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc1] - 2026-11-04
+
+### Added
+- 完整子会话 P0：`fresh` 创建独立 Session、root Agent、历史与首 Turn；父会话可查询、续做、显式重试及停止具体 assignment，Web/TUI 按父关系打开完整对话。任务结束只表示本次委派结束，会话仍可继续使用。
+- `runtime/session-children.json` 协调账本保存关系、创建意图、稳定请求身份、assignment/Turn、结果 outbox 与父唤醒批次；终态来自 Turn/Task，Core SessionStore 仍是聊天唯一事实来源。停止父会话不取消已受理子任务，持久抑制父自动续推并保留待处理结果。
+- 主 Harness 子会话工具与 `session.child.*` Runtime 操作，能力声明 `session_children`。P0 共享工作区只读上限独立于父 Workspace，重建与续做仍生效。
+- 完整子会话 P1：在 P0 的 `fresh`/共享只读之外，支持从父会话已完成的 Turn 精确 fork 历史，以及绑定独立 Git worktree 的可写子会话。fork 只复制不可变消息前缀、闭合的工具调用和附件，清空 Goal、计划、压缩检查点、执行检查点与运行游标；worktree 在取得执行槽后创建，可用 `head` 或冻结当前已跟踪修改与未跟踪文件的 `snapshot` 基线，父目录未提交修改不会被静默带入。
+- 子会话受限模型覆盖：`start_session` / `session.child.start` 可指定父 Provider 配置中可用的模型，创建前校验工具能力与图片兼容性，并按目标模型记录真实上下文窗口，不继承父模型的窗口数值。
+- 可写 worktree 子会话可派出 Worker；父会话与子会话共享家族级并发/排队调度和冻结策略，用量账本携带家族根并按记录 ID 去重，新增子会话不会重置并发或预算。只读子会话仍禁止 Worker、Shell、写入和继续派生；所有子会话都不能创建下一层子会话。
+- worktree 结果记录分支、基线 commit、未跟踪文件数与冻结补丁摘要；任务结束保留 worktree 和分支，不自动合并、提交、推送或删除。
+- [完整子会话指南](docs/CHILD_SESSIONS.md) 与 [完整分期方案](docs/decisions/2026-11-04-child-sessions.md)；澄清任务提出者/创建者与树形 parent 独立，P2 兄弟任务提案入口仍未开放。
+
+### Changed
+- 协议新增 `session_children` 及 `session_children_fork`、`session_children_worktree`、`session_children_model`、`session_children_workers` 能力声明；`ChildSessionLink`、`ChildSessionTask`、`ChildSessionResult` 增加上下文来源、worktree 绑定、模型与窗口字段，旧记录按默认值兼容。
+- CLI `session child start` 增加 `--context`、`--through-turn`、`--workspace-mode`、`--worktree-base`、`--child-model`；TUI `/session children start` 同步支持 `--fork`、`--worktree`、`--snapshot`、`--model`；Web 创建表单支持上下文、工作区、基线和模型选择。
+- TUI `/session children open` 与 `parent` 在 worktree 子会话下跨工作区切换 Runtime 工作区并重启事件跟随器；普通 `/session` 仍限制同一 Workspace；子会话来源行与选择器区分只读子会话和可写工作树。
+- 产品概览拆分为根概览、8 个模块台账和 1 份历史归档；根概览只保留定位、能力概要与索引，完整细节按专题文档读取。
+- 以 `origin/develop` 的 0.142.0-rc1（Magpie 社区 Agent）为基座整合；Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm 包、安装清单、产品/架构/CHANGELOG 版本头统一至 `0.143.0-rc1`。未生成发行资产，本轮不安装、不发布。
+- 子会话的 RuntimeSession 与 Core 继承父会话的 `magpie_integration` 来源，避免父会话使用临时 `magpie-cli` Provider 时子会话丢失集成身份或回退到同名 TOML 档案。
+
+### Validation
+- 整合到 0.142.0-rc1 后重新执行的 Rust/Web、隔离 Runtime/API/E2E、真实 PTY 与浏览器检查见 [P1 验收记录](docs/verification/0.143.0-rc1.md)；P0 阶段的原始证据见 [P0 验收记录](docs/verification/0.143.0-rc1-p0.md)。
+- Rust 串行全量回归 2,367 项通过、0 失败、11 忽略；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build -p willdeep` 与 `cargo fmt --all -- --check` 通过。Web 44 个测试文件、320 项通过（宿主高负载下以单 worker 串行执行），`yarn lint` 0 错误、1 条既有 Hook 依赖警告，`yarn build` 通过。
+- 最终二进制 `willdeep 0.143.0-rc1`（SHA-256 `48a2cddc…5c55e94`）完成 11 组隔离 E2E（98 次回环假模型请求）、110×34 / 42×22 真实 PTY 与 15 项浏览器检查，均通过；无远端付费调用。
+- 格式与文件规模：`cargo fmt --all -- --check`、`git diff --check`、`ruby -EUTF-8 scripts/check_source_size.rb` 通过；检查 1,360 个手写文件，均不超过 3,000 行。
+- 验收使用隔离的 `WILLDEEP_HOME`、合成 Git 项目与 mock Provider，无远端付费模型调用；未执行真实付费模型、Windows/Linux 原生运行、实体终端检查或 P2。本轮尚未推送、打 tag、发布或安装。
+
 ## [0.142.0-rc1] - 2026-11-04
 
 ### Added

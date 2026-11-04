@@ -172,6 +172,7 @@ impl App {
             search: None,
             workspace: None,
             session_lineage: None,
+            child_request_ids: std::collections::HashMap::new(),
             palette: None,
             palette_rect: Rect::default(),
             palette_hits: Vec::new(),

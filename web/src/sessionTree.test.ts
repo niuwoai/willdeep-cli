@@ -43,6 +43,17 @@ describe("会话谱系", () => {
     expect(layout([row("a", "b"), row("b", "a")])).toEqual(["0:a", "0:b"]);
   });
 
+  it("委派父级优先于历史分叉来源", () => {
+    expect(layout([{ id: "child", parent_session_id: "parent", started_by: "fork-source" }, row("fork-source"), row("parent")])).toEqual(["0:fork-source", "0:parent", "1:child"]);
+    expect(layout([{ id: "orphan", parent_session_id: "missing", started_by: "fork-source" }, row("fork-source")])).toEqual(["0:orphan", "0:fork-source"]);
+  });
+
+  it("只搜索到子会话或父级成环时仍能访问每条会话", () => {
+    expect(layout([{ id: "child", parent_session_id: "parent" }])).toEqual(["0:child"]);
+    const cycle = [{ id: "a", parent_session_id: "b" }, { id: "b", parent_session_id: "a" }];
+    expect(layout(cycle)).toEqual(["0:a", "0:b"]);
+  });
+
   it("没有来源的列表原样返回", () => {
     expect(layout([row("one"), row("two")])).toEqual(["0:one", "0:two"]);
   });

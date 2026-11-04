@@ -370,6 +370,8 @@ mod tests {
         let digest = SessionDigest {
             id: uuid::Uuid::new_v4(),
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
             title: "previous task".into(),
             workspace: "/project".into(),
             created_at: 1,

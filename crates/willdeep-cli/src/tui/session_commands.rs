@@ -134,10 +134,15 @@ pub(super) async fn handle_session_command(
     let arguments = value.strip_prefix("/session").unwrap_or_default().trim();
     let (action, rest) = arguments.split_once(' ').unwrap_or((arguments, ""));
     let usage = app.language.text(
-        "用法：/session new（开新会话，等同 /new） | switch <会话ID> | rename <名称> | retitle（让标题模型重算一次） | fork [--through 轮次ID] [--profile Provider] [--model 模型] [名称] | fork-turn <轮次ID> [名称] | archive | unarchive | search [关键词]（打开历史会话面板，等同 /history） | export <路径> | delete <其他会话ID>",
-        "Usage: /session new (start a fresh Session, same as /new) | switch <session-id> | rename <title> | retitle (recompute with the title model) | fork [--through turn-id] [--profile provider] [--model model] [title] | fork-turn <turn-id> [title] | archive | unarchive | search [query] (opens the Session history panel, same as /history) | export <path> | delete <other-session-id>",
-        "使用法：/session new（新しいセッション。/new と同じ） | switch <セッションID> | rename <名前> | retitle（タイトルモデルで再計算） | fork [--through ターンID] [--profile Provider] [--model モデル] [名前] | fork-turn <ターンID> [名前] | archive | unarchive | search [検索語]（履歴セッションパネルを開く。/history と同じ） | export <パス> | delete <別セッションID>",
+        "用法：/session new（开新会话，等同 /new） | children | switch <会话ID> | rename <名称> | retitle（让标题模型重算一次） | fork [--through 轮次ID] [--profile Provider] [--model 模型] [名称] | fork-turn <轮次ID> [名称] | archive | unarchive | search [关键词]（打开历史会话面板，等同 /history） | export <路径> | delete <其他会话ID>",
+        "Usage: /session new (start a fresh Session, same as /new) | children | switch <session-id> | rename <title> | retitle (recompute with the title model) | fork [--through turn-id] [--profile provider] [--model model] [title] | fork-turn <turn-id> [title] | archive | unarchive | search [query] (opens the Session history panel, same as /history) | export <path> | delete <other-session-id>",
+        "使用法：/session new（新しいセッション。/new と同じ） | children | switch <セッションID> | rename <名前> | retitle（タイトルモデルで再計算） | fork [--through ターンID] [--profile Provider] [--model モデル] [名前] | fork-turn <ターンID> [名前] | archive | unarchive | search [検索語]（履歴セッションパネルを開く。/history と同じ） | export <パス> | delete <別セッションID>",
     );
+    if action == "children" {
+        let result = child_session_commands::handle(rest, app, session, store, runtime).await?;
+        app.append_transcript(format!("System: {result}"));
+        return Ok(true);
+    }
     let result = match action {
         "new" if rest.trim().is_empty() => start_new(app, session, store, runtime).await?,
         "switch" if !rest.trim().is_empty() => switch(app, session, store, runtime, rest).await?,
@@ -280,6 +285,32 @@ pub(super) async fn switch(
     runtime: &mut TuiRuntime,
     id: &str,
 ) -> Result<String> {
+    switch_impl(app, session, store, runtime, id, false).await
+}
+
+/// 打开子会话或返回父会话时允许跨越 Workspace。
+///
+/// worktree 子会话的 workspace 是独立目录，不在全局 Workspace 列表里；只读子
+/// 会话通常与父会话同目录。普通 `/session` 仍保持同 Workspace 限制，避免一次
+/// 手滑把当前工作上下文换到另一棵树。
+pub(super) async fn switch_related(
+    app: &mut App,
+    session: &mut Session,
+    store: &SessionStore,
+    runtime: &mut TuiRuntime,
+    id: &str,
+) -> Result<String> {
+    switch_impl(app, session, store, runtime, id, true).await
+}
+
+async fn switch_impl(
+    app: &mut App,
+    session: &mut Session,
+    store: &SessionStore,
+    runtime: &mut TuiRuntime,
+    id: &str,
+    allow_workspace_change: bool,
+) -> Result<String> {
     if app.running {
         bail!("cannot switch Session while a local turn is running");
     }
@@ -299,19 +330,30 @@ pub(super) async fn switch(
     store.save(session)?;
     // 带基线加载：切过来之后这份快照会一直被写回，基线必须记着改动前的执行状态。
     let mut target = store.load_baselined(id).context("load target Session")?;
-    if target.workspace.canonicalize()? != session.workspace.canonicalize()? {
-        bail!("TUI in-place switching currently requires the same Workspace");
-    }
-    target.runtime_event_cursor = app.runtime_event_cursor;
+    let cross_workspace = target.workspace.canonicalize()? != session.workspace.canonicalize()?;
+    let resolved_profile = if cross_workspace {
+        if !allow_workspace_change {
+            bail!("TUI in-place switching currently requires the same Workspace");
+        }
+        activate_target_workspace(app, &mut target, runtime).await?
+    } else {
+        target.runtime_event_cursor = app.runtime_event_cursor;
+        target.profile.clone()
+    };
     target.runtime_managed = true;
     store.save(&mut target)?;
-    runtime.runtime_submit.profile = target.profile.clone();
+    runtime.runtime_submit.profile = resolved_profile;
     runtime.runtime_submit.model = target.model.clone();
     runtime.runtime_submit.config = target.config.clone();
     let _ = runtime.refresh_provider_config();
     app.load_session(&target);
     refresh_session_lineage(app, &target, store);
     *session = target;
+    if cross_workspace {
+        // `load_session` 会清空跟随点；换工作区后必须用目标会话自己的游标重开
+        // 事件流，否则子聊天收不到 Runtime 事件。
+        app.runtime_follow_after = Some(app.runtime_event_cursor);
+    }
     Ok(format!(
         "{}: {} · {}",
         app.language.text(
@@ -322,6 +364,54 @@ pub(super) async fn switch(
         session.id,
         session.title
     ))
+}
+
+async fn activate_target_workspace(
+    app: &mut App,
+    target: &mut Session,
+    runtime: &mut TuiRuntime,
+) -> Result<Option<String>> {
+    let workspace_root = target.workspace.canonicalize()?;
+    // worktree 子会话不是全局 Workspace，找不到注册项时仍以路径驱动 Runtime
+    // 事件流；父会话这类已注册工作区则顺带激活，保持 `/workspace` 面板一致。
+    let registration = crate::daemon::remote_workspaces(&runtime.home)
+        .await?
+        .into_iter()
+        .find(|workspace| {
+            workspace
+                .root
+                .canonicalize()
+                .is_ok_and(|root| root == workspace_root)
+        });
+    let profile = target.profile.clone().or_else(|| {
+        registration
+            .as_ref()
+            .and_then(|workspace| workspace.provider_profile.clone())
+    });
+    crate::daemon::ensure_runtime_session(
+        &runtime.home,
+        target.id,
+        &workspace_root,
+        profile.clone(),
+        target.model.clone(),
+    )
+    .await?;
+    if let Some(workspace) = &registration {
+        crate::daemon::activate_remote_workspace(&runtime.home, workspace.id).await?;
+    }
+    runtime.runtime_submit.workspace = workspace_root;
+    if target.runtime_event_cursor == 0 {
+        target.runtime_event_cursor = crate::daemon::runtime_event_head(&runtime.home)
+            .await
+            .unwrap_or_default();
+    }
+    app.runtime_event_cursor = target.runtime_event_cursor;
+    app.runtime_attention.clear();
+    app.runtime_gates.clear();
+    app.runtime_agents.clear();
+    app.runtime_tools.clear();
+    app.runtime_artifacts.clear();
+    Ok(profile)
 }
 
 async fn archive(

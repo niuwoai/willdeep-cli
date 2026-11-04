@@ -23,6 +23,8 @@ use crate::safety::CommandSafety;
 use crate::sandbox::{SandboxPolicy, SandboxSpec};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
+mod child_sessions;
+mod delegation;
 mod host_tools;
 mod peer_sessions;
 mod plan_jobs;
@@ -193,6 +195,7 @@ pub struct ToolRegistry {
     execution_deadline: Mutex<Option<tokio::time::Instant>>,
     workspace: PathBuf,
     approval_mode: SharedApprovalMode,
+    delegation_read_only: bool,
     /// 子 Agent 专用：父会话的档位句柄。父会话处于 `full-access` 时，本注册表也按
     /// `full-access` 判定（实时跟随，切回即失效）；其余档位用本工种自己的档位。
     parent_approval_mode: Option<SharedApprovalMode>,
@@ -336,6 +339,7 @@ impl ToolRegistry {
             agent_definition_host: None,
             workflow_host: None,
             session_collaboration: None,
+            delegation_read_only: false,
             completion_contract: None,
             execution_deadline: Mutex::new(None),
             output_store: crate::tool_output::ToolOutputStore::new(
@@ -382,7 +386,9 @@ impl ToolRegistry {
     /// 注册生命周期挂钩。与审批闸门是两回事：闸门问的是用户，hook 问的是
     /// 用户**事先配好的程序**——审计留痕和 CI 门禁要的是后者。
     pub fn with_hooks(mut self, hooks: HookRegistry) -> Self {
-        self.hooks = hooks;
+        if !self.delegation_read_only {
+            self.hooks = hooks;
+        }
         self
     }
 
@@ -929,6 +935,7 @@ impl ToolRegistry {
         tools.extend(self.host_definitions());
         if self.session_collaboration.is_some() {
             tools.extend(peer_sessions::definitions());
+            tools.extend(child_sessions::definitions());
         }
         if !self.mcp.is_empty() {
             tools.extend([
@@ -947,32 +954,23 @@ impl ToolRegistry {
         if let Some(allowed) = &self.allowed_tools {
             tools.retain(|tool| allowed.contains(&tool.name) || tool.name == "read_tool_output");
         }
+        tools.retain(|tool| self.policy_allows_tool(&tool.name));
         tools
     }
 
     pub(crate) fn allows_agent_tool(&self, name: &str) -> bool {
-        self.allowed_tools
-            .as_ref()
-            .is_none_or(|allowed| allowed.contains(name))
+        self.policy_allows_tool(name)
+            && self
+                .allowed_tools
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(name))
     }
 
     pub async fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
-        if self.approval_mode() == ApprovalMode::ReadOnly
-            && (matches!(
-                call.name.as_str(),
-                "run_command"
-                    | "monitor"
-                    | "create_file"
-                    | "edit_file"
-                    | "create_worktree"
-                    | "call_mcp_tool"
-            ) || self.mcp.handles(&call.name))
-        {
-            return Err(ToolError::ReadOnlyPolicy(call.name.clone()));
-        }
+        self.check_tool_policy(&call.name)?;
         // hook 在这里拦，是因为这是「工具即将执行」唯一的收口。放在各个工具
         // 内部就得逐个记得加，而漏掉的那个恰好会是出事的那个。
-        if !self.hooks.is_empty() {
+        if !self.delegation_read_only && !self.hooks.is_empty() {
             let outcome = self
                 .hooks
                 .fire(
@@ -985,7 +983,7 @@ impl ToolRegistry {
             }
         }
         let result = self.dispatch(call).await;
-        if !self.hooks.is_empty() {
+        if !self.delegation_read_only && !self.hooks.is_empty() {
             let payload = self
                 .hook_payload(HookEvent::PostTool, call)
                 .with_outcome(if result.is_ok() { "ok" } else { "error" });
@@ -1001,9 +999,13 @@ impl ToolRegistry {
             | "agent_library_manage"
             | "workflow_read"
             | "workflow_control" => self.host_tool(call).await,
-            "list_workspace_sessions" | "send_session_message" | "read_session_messages" => {
-                self.session_tool(call).await
-            }
+            "list_workspace_sessions"
+            | "send_session_message"
+            | "read_session_messages"
+            | "start_session"
+            | "continue_session"
+            | "retry_session_task"
+            | "get_session_task" => self.session_tool(call).await,
             "read_tool_output" => {
                 let args: OutputPageArgs = parse(call)?;
                 Ok(self.output_store.page(

@@ -73,6 +73,13 @@ pub(super) fn recover(
     }
     let mut resumed = 0;
     for candidate in state.sessions.goal_resume_candidates(ORIGIN_PREFIX)? {
+        if state
+            .sessions
+            .children
+            .transaction(|ledger| Ok(ledger.control(candidate.session_id).suppressed))?
+        {
+            continue;
+        }
         let Ok(Some(goal)) = state.sessions.core_goal_state(candidate.session_id) else {
             continue;
         };

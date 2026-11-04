@@ -355,9 +355,9 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
         (
             "/session",
             language.text(
-                "管理、搜索或导出会话",
-                "Manage, search, or export sessions",
-                "セッションの管理・検索・エクスポート",
+                "管理、搜索或导出会话；children 发起只读调查",
+                "Manage, search, or export sessions; children starts read-only investigations",
+                "セッションの管理・検索・エクスポート。children で読み取り専用の調査",
             ),
         ),
         (

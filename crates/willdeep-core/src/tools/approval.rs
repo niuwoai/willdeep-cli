@@ -174,6 +174,9 @@ impl SharedApprovalMode {
 
 impl ToolRegistry {
     pub fn approval_mode(&self) -> ApprovalMode {
+        if self.delegation_read_only {
+            return ApprovalMode::ReadOnly;
+        }
         if self.inherits_full_access() {
             return ApprovalMode::FullAccess;
         }

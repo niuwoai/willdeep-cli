@@ -781,6 +781,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2999,7 +3009,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "willdeep"
-version = "0.142.0-rc1"
+version = "0.143.0-rc1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3011,6 +3021,7 @@ dependencies = [
  "clap_mangen",
  "crc32fast",
  "crossterm 0.29.0",
+ "fs2",
  "futures-util",
  "hmac",
  "http",
@@ -3041,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "willdeep-core"
-version = "0.142.0-rc1"
+version = "0.143.0-rc1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3068,7 +3079,7 @@ dependencies = [
 
 [[package]]
 name = "willdeep-runtime-client"
-version = "0.142.0-rc1"
+version = "0.143.0-rc1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3083,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "willdeep-runtime-protocol"
-version = "0.142.0-rc1"
+version = "0.143.0-rc1"
 dependencies = [
  "chrono",
  "chrono-tz",

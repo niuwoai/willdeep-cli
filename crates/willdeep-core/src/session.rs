@@ -85,6 +85,16 @@ pub struct Session {
     /// 或是这个字段出现之前的会话。不进执行指纹：它是身份，不是对话内容。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<Uuid>,
+    /// Task origin, independent of the history-copy source in `started_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<Uuid>,
+    /// Persistent delegation ceiling, including after a manual history fork.
+    #[serde(default)]
+    pub delegation_read_only: bool,
+    /// Context window resolved for a delegated model override. `None` keeps the
+    /// normal Profile/gateway/default resolution at Harness build time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_context_window: Option<u64>,
     pub workspace: PathBuf,
     pub profile: Option<String>,
     /// Distinguishes an implicit default pinned at creation from a user choice
@@ -184,6 +194,9 @@ impl Session {
                 TitleSource::Derived
             },
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
+            model_context_window: None,
             workspace,
             provider_selection_explicit: profile.is_some(),
             profile,
@@ -266,6 +279,8 @@ pub struct SessionDigest {
     pub id: Uuid,
     /// 直接分凉来源。旧文件与 Xedit 桥接会话没有它。
     pub started_by: Option<Uuid>,
+    pub parent_session_id: Option<Uuid>,
+    pub delegation_read_only: bool,
     pub title: String,
     pub workspace: PathBuf,
     pub created_at: u64,
@@ -657,6 +672,10 @@ struct LocalDigestProbe {
     id: Uuid,
     #[serde(default)]
     started_by: Option<Uuid>,
+    #[serde(default)]
+    parent_session_id: Option<Uuid>,
+    #[serde(default)]
+    delegation_read_only: bool,
     title: String,
     workspace: PathBuf,
     created_at: u64,
@@ -769,6 +788,8 @@ fn local_digest(path: &Path, _metadata: &std::fs::Metadata) -> Option<SessionDig
     Some(SessionDigest {
         id: probe.id,
         started_by: probe.started_by,
+        parent_session_id: probe.parent_session_id,
+        delegation_read_only: probe.delegation_read_only,
         title: probe.title,
         workspace: probe.workspace,
         created_at: probe.created_at,
@@ -815,6 +836,8 @@ fn swift_digest(path: &Path, metadata: &std::fs::Metadata) -> Option<SessionDige
     Some(SessionDigest {
         id: probe.id,
         started_by: None,
+        parent_session_id: None,
+        delegation_read_only: false,
         title: probe.title.unwrap_or_else(|| "Swift session".to_owned()),
         workspace: PathBuf::from(workspace),
         created_at: updated,
@@ -930,6 +953,9 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         // Xedit 有自己的两级标题流程，桥接过来的标题按既成事实读，不重算。
         title_source: TitleSource::Legacy,
         started_by: None,
+        parent_session_id: None,
+        delegation_read_only: false,
+        model_context_window: None,
         workspace: PathBuf::from(workspace),
         profile: None,
         provider_selection_explicit: true,

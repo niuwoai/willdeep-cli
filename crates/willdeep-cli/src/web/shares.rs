@@ -79,6 +79,14 @@ async fn create(
     Json(request): Json<CreateRequest>,
 ) -> Result<Json<ShareResponse>, WebError> {
     authorize(&state, id).await?;
+    let session = SessionStore::new(&state.home)
+        .load(id)
+        .map_err(|_| WebError::not_found("session was not found"))?;
+    if session.parent_session_id.is_some() || session.delegation_read_only {
+        return Err(WebError::forbidden(
+            "delegated conversation briefs and results cannot be publicly shared",
+        ));
+    }
     shares::validate_mode(request.mode).map_err(WebError::from_anyhow)?;
     let (token, share) =
         shares::create(&state.home, id, request.mode).map_err(WebError::from_anyhow)?;

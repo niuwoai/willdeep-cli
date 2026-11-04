@@ -35,6 +35,7 @@ impl AgentRunStore {
         };
         let mut summary = AgentTeamSummary {
             parent_session_id: self.parent,
+            family_session_id: Some(self.family),
             policy: None,
             running: 0,
             queued: 0,
@@ -45,6 +46,7 @@ impl AgentRunStore {
             child_usage: Default::default(),
             auxiliary_usage: Default::default(),
             compression_usage: Default::default(),
+            family_usage: Default::default(),
             ledger_incomplete: false,
         };
         let recorded = read_ledger(ledger, &mut summary)?;
@@ -52,7 +54,7 @@ impl AgentRunStore {
         summary.ledger_incomplete |= entries.iter().any(|entry| {
             entry.record.usage.model_calls > recorded.get(&entry.record.id).copied().unwrap_or(0)
         });
-        if summary.ledger_incomplete || summary.usage.unknown_usage_calls > 0 {
+        if summary.ledger_incomplete || summary.family_usage.unknown_usage_calls > 0 {
             return Err("Agent team budget cannot be verified because model usage is unknown or the ledger is incomplete".into());
         }
         if entries
@@ -63,10 +65,10 @@ impl AgentRunStore {
                 "Agent team budget cannot be verified after an interrupted execution".into(),
             );
         }
-        if summary.usage.accounted_tokens >= budget {
+        if summary.family_usage.accounted_tokens >= budget {
             return Err(format!(
                 "Agent team token budget exhausted: used {}, limit {budget}",
-                summary.usage.accounted_tokens
+                summary.family_usage.accounted_tokens
             ));
         }
         Ok(())
@@ -155,6 +157,7 @@ impl AgentRunStore {
         records.sort_by_key(|run| run.sequence);
         let mut summary = AgentTeamSummary {
             parent_session_id: self.parent,
+            family_session_id: Some(self.family),
             policy: self.team_policy()?,
             running: 0,
             queued: 0,
@@ -165,6 +168,7 @@ impl AgentRunStore {
             child_usage: Default::default(),
             auxiliary_usage: Default::default(),
             compression_usage: Default::default(),
+            family_usage: Default::default(),
             ledger_incomplete: false,
         };
         let mut workers: BTreeMap<Uuid, AgentWorkerSummary> = BTreeMap::new();
