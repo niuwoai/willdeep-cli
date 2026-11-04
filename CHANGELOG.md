@@ -6,6 +6,12 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc7] - 2026-11-05
+
+### Fixed
+- 修复 macOS universal 合包后的架构校验：改为读取 `lipo -archs` 并比较两个预期架构，避免 `-verify_arch` 将文件名误解析为架构参数。以本机真实双架构、单架构 Mach-O 与缺失文件分别验证接受和拒绝行为。
+- Windows CI 将测试用例并行度限制为 2，减少真实 Python/MCP 进程启动与大量同步落盘之间的资源争用；保留全部工作区测试、用例内部任务并发及 Clippy，不改变产品超时。实际稳定性以本次 Windows CI 为准。
+
 ## [0.143.0-rc6] - 2026-11-05
 
 ### Fixed

@@ -54,7 +54,12 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - name: Test
+        if: runner.os != 'Windows'
         run: cargo test --workspace
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        # 保留用例内部并发；减少真实进程启动与同步落盘用例之间的资源争用。
+        run: cargo test --workspace -- --test-threads=2
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Model eval task set self-check
