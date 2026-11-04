@@ -1,0 +1,67 @@
+{
+  "version": "0.141.0-rc4",
+  "date": "2026-11-04",
+  "baseline": "b83372bef55f6526d5c32c916e6abf12595f134d",
+  "default_branch": "develop",
+  "original_ci": {
+    "head": "7c52db955a1fb2e56c0eadb14a022a6eac65b060",
+    "failure_url": "https://github.com/niuwoai/willdeep-cli/actions/runs/41767189287/job/126368178008",
+    "passing_url": "https://github.com/niuwoai/willdeep-cli/actions/runs/41767216515/job/126368268374",
+    "push_cli": {"passed": 1245, "failed": 2, "ignored": 4},
+    "pr_cli": {"passed": 1247, "failed": 0, "ignored": 4},
+    "windows_push": "success",
+    "windows_pr": "success",
+    "historical_root_cause_proven": false
+  },
+  "reproduction": {
+    "platform": "Linux arm64",
+    "image": "rust:1.94.1-bookworm",
+    "rust": "1.94.1",
+    "git": "2.39.5",
+    "cpus": 3,
+    "memory_gib": 5,
+    "tmpdir": "/fixture-tmp",
+    "filesystem": "tmpfs",
+    "root_device": 49,
+    "temporary_device": 83,
+    "git_discovery_exit_code": 128,
+    "original_snapshot": "failed_at_original_line_35",
+    "original_mobile": "failed_at_original_line_1404_with_harness_domain",
+    "mobile_internal_error": "cannot capture verification snapshot: Git workspace discovery failed",
+    "mobile_model_request_captured": false,
+    "original_binary_with_cross_filesystem_discovery": {"passed": 2, "failed": 0},
+    "requires_test_concurrency": false
+  },
+  "checks": [
+    {"name": "macos_original_target_tests", "status": "passed", "tests": 2},
+    {"name": "macos_original_cli_parallel", "status": "passed", "tests": 1249, "failed": 0, "ignored": 4, "threads": 8, "elapsed_seconds": 192.22},
+    {"name": "macos_fixed_target_tests_initial", "status": "passed", "tests": 4, "includes_version_contract": true},
+    {"name": "final_redaction_regressions", "platform": "macOS arm64", "status": "passed", "verification_tests": 3, "mobile_actual_turn_tests": 1, "failed": 0},
+    {"name": "linux_tmpfs_fixed_tests", "status": "passed", "verification_tests": 2, "mobile_module_tests": 36, "workspace_version_tests": 1, "failed": 0},
+    {"name": "linux_tmpfs_final_redaction_regressions", "platform": "Linux arm64", "status": "passed", "verification_tests": 3, "mobile_actual_turn_tests": 1, "failed": 0, "verification_elapsed_seconds": 0.10, "mobile_elapsed_seconds": 0.23},
+    {"name": "macos_workspace_full", "status": "passed", "passed": 2307, "failed": 0, "ignored": 11, "cli_passed": 1250, "core_passed": 933, "headless_runtime_passed": 44, "cli_elapsed_seconds": 170.96, "headless_runtime_elapsed_seconds": 246.05, "built_before_final_url_redaction_patch": true, "final_patch_rechecked_with_targeted_tests_and_clippy": true},
+    {"name": "workspace_all_targets_clippy", "status": "passed", "deny_warnings": true},
+    {"name": "version_lists_current_documents_and_report", "status": "passed"},
+    {"name": "npm_package_contract", "status": "passed", "tests": 6, "assertions": 37},
+    {"name": "source_size", "status": "passed", "environment": "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8"},
+    {"name": "fmt", "status": "passed"},
+    {"name": "git_diff_check", "status": "passed"},
+    {"name": "independent_static_review", "status": "passed", "initial_findings": 1, "fixed_findings": 1, "remaining_findings": 0}
+  ],
+  "limitations": [
+    "The original failing runner did not preserve Git stderr, mount topology or the mobile task internal error; the historical CI root cause remains unproven.",
+    "The deterministic native Linux reproduction uses arm64 / Rust 1.94.1 / Git 2.39.5 rather than the CI x86_64 / Rust 1.99.1 environment.",
+    "Original-head Windows jobs succeeded; Windows native execution of rc4 and rc4 Linux x86_64 CI have not run.",
+    "HOME mutation and generic provider endpoint environment overrides were inspected but not connected to the original failures."
+  ],
+  "corrected_attempts": [
+    "Colima could not bind the host worktree path (exit 125); copied the clean baseline into a dedicated Docker volume instead.",
+    "Initial fmt check requested multiline assertion formatting; corrected before verification.",
+    "The one-off version consistency checker inherited local US-ASCII; rerunning with Ruby -EUTF-8 passed."
+  ],
+  "pushed": false,
+  "pull_request_created": false,
+  "published": false,
+  "release_tags_changed": false,
+  "local_installation_changed": false
+}
