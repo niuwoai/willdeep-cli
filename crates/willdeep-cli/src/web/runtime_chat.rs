@@ -16,12 +16,7 @@ pub(super) async fn run_runtime_turn_inner(
     let store = SessionStore::new(&state.home);
     // 第一条消息之前选的模型与档案从这里带进来；会话已经存在时它们不生效，
     // 以 `/model` 那条路为准——那里改完会立刻告诉 Runtime。
-    let requested_model = input
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
+    let requested_model = input.model.clone();
     let requested_profile = input
         .provider_id
         .as_deref()
@@ -57,16 +52,28 @@ pub(super) async fn run_runtime_turn_inner(
             if let Some(id) = id {
                 session.id = id;
             }
-            // 没选就当场把默认模型写下来：不让「空模型」一路漂到 Provider 那一层
-            // 才变成一句「model is required」，界面上也能显示这一轮到底用谁。
-            session.model = requested_model.clone().or_else(|| {
-                crate::model_routing::load(&state.config_path, state.profile.as_deref())
-                    .ok()
-                    .and_then(|settings| {
-                        resolve_default_model(&settings, session_profile.as_deref())
-                    })
-                    .map(|(_, model)| model)
-            });
+            let loaded = crate::config::LoadedConfig::load(Some(&state.config_path))
+                .or_else(|error| {
+                    if state.config_path.exists() {
+                        Err(error)
+                    } else {
+                        Ok(crate::config::LoadedConfig {
+                            file: Default::default(),
+                        })
+                    }
+                })
+                .map_err(WebError::from_anyhow)?;
+            let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])
+                .map_err(|error| WebError::internal(error.to_string()))?;
+            cli.config = (!state.integration_default).then(|| state.config_path.clone());
+            cli.profile = session_profile;
+            cli.model = requested_model.clone();
+            let selection = crate::magpie_integration::resolve(&cli, &loaded, None)
+                .await
+                .map_err(WebError::from_anyhow)?;
+            session.profile = selection.name;
+            session.magpie_integration = selection.config.magpie_integration;
+            session.model = Some(selection.config.model);
             session
         }
     };

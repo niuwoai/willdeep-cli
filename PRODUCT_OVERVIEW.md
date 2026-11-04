@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc6
+> 最后更新：2026-11-04 | 当前版本：v0.142.0-rc1
+
+0.142.0-rc1 接入 Magpie 社区 Agent 插件的独立 JSON 配置源：WillDeep 与 WillDeep CLI 各自连接，CLI 通过临时 `magpie-cli` Provider 解析，无显式选择的新会话采用当前连接，已有会话保留自己的 Provider 与模型。原 TOML、桌面 Provider 库与钥匙串不作为插件写入目标。契约、实现状态与验收台账见 [Magpie 集成](docs/MAGPIE_AGENT_PLAN.md)。本地实现与组合验收已完成（隔离链 21/21、真实 Magpie 链 22/22、插件宿主 12/12、桌面原生测试 19/19），尚未公开发布或社区收录；Linux/Windows 原生执行与 Desktop 全量测试未覆盖，详见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
 
 0.141.0-rc6 修正 Git 工作区回归对特定英文诊断的依赖，使不同 Git 版本均可验证损坏 gitfile 仍然失败并保留诊断；补充新版 Git 错误不得降级为非仓库的负例。运行时发现逻辑与 rc4 相同；本次 CI 证据和验证边界见 [补充验收](docs/verification/0.141.0-rc6.md)。
 

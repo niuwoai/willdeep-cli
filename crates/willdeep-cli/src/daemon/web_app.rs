@@ -154,6 +154,7 @@ impl WebAppService {
         let status = self.status.clone();
         let config = crate::web::WebConfig {
             listen: request.listen,
+            integration_default: crate::magpie_integration::custom_config(&config_path).is_none(),
             config_path,
             profile: request.profile.clone(),
             workspaces: vec![request.workspace.clone()],

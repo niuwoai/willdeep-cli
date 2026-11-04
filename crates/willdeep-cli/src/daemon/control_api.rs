@@ -290,7 +290,7 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         "session.peers" => peer_sessions::list(state, &request),
         "session.peer.send" => peer_sessions::send(state, &request),
         "session.peer.inbox" | "session.peer.read" => peer_sessions::inbox(state, &request),
-        "session.create" => session_create(state, &request),
+        "session.create" => session_create(state, &request).await,
         "session.attachments" => attachments::get(state, &request),
         "session.rename" => session_rename(state, &request),
         "session.update_model" => session_update_model(state, &request),
@@ -1346,23 +1346,28 @@ fn workspace_remove(state: &ServerState, request: &ApiRequest) -> ApiResult {
     })
 }
 
-fn session_create(state: &ServerState, request: &ApiRequest) -> ApiResult {
+async fn session_create(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let params = params::<willdeep_runtime_protocol::CreateSessionParams>(request)?;
     let workspace = state
         .workspaces
         .ensure_registered(Path::new(&params.workspace))
         .map_err(|error| ApiFailure::invalid(format!("invalid Session Workspace: {error}")))?;
-    let profile = params.profile.or(workspace.provider_profile);
+    let profile = params.profile;
+    let mut create = session_store::CreateRuntimeSession {
+        id: params.id,
+        workspace: workspace.root,
+        profile,
+        model: params.model,
+        config: None,
+        title: params.title,
+    };
+    let integration =
+        crate::magpie_integration::pin_new(&state.home, &mut create, workspace.provider_profile)
+            .await
+            .map_err(|error| ApiFailure::invalid(error.to_string()))?;
     let (session, created) = state
         .sessions
-        .ensure(session_store::CreateRuntimeSession {
-            id: params.id,
-            workspace: workspace.root,
-            profile,
-            model: params.model,
-            config: None,
-            title: params.title,
-        })
+        .ensure_pinned(create, integration)
         .map_err(|error| ApiFailure::invalid(format!("cannot create Session: {error}")))?;
     if created {
         state

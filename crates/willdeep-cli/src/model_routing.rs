@@ -255,7 +255,7 @@ pub fn save(
     load(path, active_profile)
 }
 
-fn from_config(
+pub(crate) fn from_config(
     file: &ConfigFile,
     revision: String,
     active_profile: Option<&str>,

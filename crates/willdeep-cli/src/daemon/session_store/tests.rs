@@ -1,5 +1,63 @@
 use super::*;
 
+#[tokio::test]
+async fn runtime_new_uuid_is_created_and_adoption_keeps_its_route_and_provenance() {
+    use crate::magpie_integration::{PROFILE_ID, pin_new};
+    let root = std::env::temp_dir().join(format!("runtime-magpie-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let config = root.join("config.toml");
+    crate::model_routing::write_private_atomic(&config, b"default_provider = 'ordinary'\n[providers.ordinary]\nprovider = 'openai-compatible'\napi_base = 'http://127.0.0.1:1/v1'\napi_key = 'test-only'\nmodel = 'ordinary/model'\n").unwrap();
+    let store = RuntimeSessionStore::open(root.join("runtime-sessions.json"), &root).unwrap();
+    let id = uuid::Uuid::new_v4();
+    let mut new = CreateRuntimeSession {
+        id: Some(id),
+        workspace: root.clone(),
+        profile: None,
+        model: None,
+        config: Some(config),
+        title: None,
+    };
+    let integration = pin_new(&root, &mut new, None).await.unwrap();
+    assert!(!integration);
+    assert_eq!(new.profile.as_deref(), Some("ordinary"));
+    let (created, fresh) = store.ensure_pinned(new, integration).unwrap();
+    assert!(fresh);
+    assert_eq!(created.id, id);
+    assert_eq!(created.model.as_deref(), Some("ordinary/model"));
+
+    let core_store = willdeep_core::SessionStore::new(&root);
+    let mut existing = willdeep_core::Session::new(
+        root.canonicalize().unwrap(),
+        Some(PROFILE_ID.into()),
+        "existing",
+    );
+    existing.model = Some("  provider/model with spaces  ".into());
+    existing.magpie_integration = true;
+    core_store.save(&mut existing).unwrap();
+    let mut adoption = CreateRuntimeSession {
+        id: Some(existing.id),
+        workspace: root.clone(),
+        profile: None,
+        model: None,
+        config: Some(root.join("must-not-be-read")),
+        title: None,
+    };
+    assert!(
+        !pin_new(&root, &mut adoption, Some("worker".into()))
+            .await
+            .unwrap()
+    );
+    assert!(adoption.profile.is_none());
+    assert!(adoption.model.is_none());
+    let (adopted, fresh) = store.ensure_pinned(adoption, false).unwrap();
+    assert!(fresh);
+    assert_eq!(adopted.profile.as_deref(), Some(PROFILE_ID));
+    assert_eq!(adopted.model, existing.model);
+    assert!(adopted.magpie_integration);
+    assert!(core_store.load(existing.id).unwrap().magpie_integration);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn provider_configuration_rolls_back_metadata_if_core_cannot_be_saved() {
     let root = std::env::temp_dir().join(format!("provider-rollback-{}", uuid::Uuid::new_v4()));
@@ -23,7 +81,7 @@ fn provider_configuration_rolls_back_metadata_if_core_cannot_be_saved() {
         store
             .configure_mobile(
                 session.id,
-                Some("new".into()),
+                Some(("new".into(), false)),
                 Some("new-model".into()),
                 None,
                 None,

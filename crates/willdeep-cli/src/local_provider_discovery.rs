@@ -77,6 +77,9 @@ fn loopback_base(value: &str) -> Option<String> {
 }
 
 fn magpie_base() -> Option<String> {
+    if crate::magpie_integration::has_connection_file() {
+        return None;
+    }
     if let Ok(address) = std::env::var("MAGPIE_ADDR") {
         return loopback_base(&address);
     }

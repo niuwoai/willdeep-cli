@@ -30,7 +30,8 @@ async fn independent(
     if message.image_count > 0 || message.text_attachment_count > 0 || !message.can_edit {
         return Ok(false);
     }
-    let core = willdeep_core::SessionStore::new(&state.home).load(session.id)?;
+    let mut core = willdeep_core::SessionStore::new(&state.home).load(session.id)?;
+    core.magpie_integration = session.magpie_integration;
     let context = serde_json::to_string(&serde_json::json!({
         "history": core.messages,
         "independent_history": session_store::RuntimeSessionStore::independent_history(&state.home, session.id)?.into_iter().map(|history| serde_json::json!({"id":history.id,"messages":history.messages})).collect::<Vec<_>>(),
@@ -40,12 +41,12 @@ async fn independent(
         return Ok(false);
     }
     let loaded = crate::config::LoadedConfig::load(session.config.as_deref())?;
-    let profile = loaded.select_provider(session.profile.as_deref())?;
-    let mut config =
-        crate::provider_settings::ProviderEnvironment::read().resolve(profile, None)?;
-    if let Some(model) = session.model.as_ref() {
-        config.model = model.clone();
-    }
+    let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])?;
+    cli.profile = session.profile.clone();
+    cli.model = session.model.clone();
+    let mut config = crate::magpie_integration::resolve(&cli, &loaded, Some(&core))
+        .await?
+        .config;
     config.max_output_tokens = 256;
     config.request_timeout_secs = CLASSIFIER_TIMEOUT.as_secs();
     let provider = willdeep_core::build_provider(config)?;

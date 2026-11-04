@@ -1,0 +1,22 @@
+[
+  {
+    "package": "willdeep-magpie-agent-desktop",
+    "name": "WillDeep",
+    "kind": "agent",
+    "icon": "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%2319283d%22%2F%3E%3Cpath%20d%3D%22m12%2018%208%2028%2012-20%2012%2020%208-28%22%20fill%3D%22none%22%20stroke%3D%22%2377dfca%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E",
+    "summary": {
+      "en": "Use a local Magpie gateway for new WillDeep Desktop sessions. Expected minimum client 1.427.0-rc1; launch it once first.",
+      "zh": "让 WillDeep Desktop 新会话使用本机 Magpie 网关。预计最低客户端 1.427.0-rc1，需先启动一次。"
+    }
+  },
+  {
+    "package": "willdeep-magpie-agent-cli",
+    "name": "WillDeep CLI",
+    "kind": "agent",
+    "icon": "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%2319283d%22%2F%3E%3Cpath%20d%3D%22m14%2018%2014%2014-14%2014m20%200h16%22%20fill%3D%22none%22%20stroke%3D%22%2377dfca%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E",
+    "summary": {
+      "en": "Use a local Magpie gateway for new WillDeep CLI sessions. Expected minimum client 0.142.0-rc1, executable willdeep.",
+      "zh": "让 WillDeep CLI 新会话使用本机 Magpie 网关。预计最低客户端 0.142.0-rc1，命令为 willdeep。"
+    }
+  }
+]

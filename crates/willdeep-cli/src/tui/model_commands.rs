@@ -412,10 +412,20 @@ pub(super) async fn switch_model(
     runtime: &mut TuiRuntime,
     agent: &Arc<Agent>,
 ) -> Result<String> {
-    let model = model.trim();
-    if model.is_empty() || model.len() > MAX_MODEL_NAME_BYTES || model.chars().any(char::is_control)
-    {
-        bail!("model must contain 1 to {MAX_MODEL_NAME_BYTES} bytes");
+    let model = if runtime.provider_config.magpie_integration {
+        model
+    } else {
+        model.trim()
+    };
+    let valid = if runtime.provider_config.magpie_integration {
+        willdeep_core::provider::magpie::validate_model(model)
+    } else {
+        !model.is_empty()
+            && model.len() <= MAX_MODEL_NAME_BYTES
+            && !model.chars().any(char::is_control)
+    };
+    if !valid {
+        bail!("invalid model");
     }
     // 还没发过消息的新会话不在磁盘上，Runtime 领养它会报 not found——和
     // submit_turn 一样先落盘。
@@ -442,6 +452,7 @@ pub(super) async fn switch_model(
         return Err(error).with_context(|| format!("update Runtime Session model to `{model}`"));
     }
     session.model = Some(model.to_owned());
+    session.provider_selection_explicit = true;
     app.display_model = Some(model.to_owned());
     runtime.runtime_submit.model = Some(model.to_owned());
     runtime.provider_config.model = model.to_owned();

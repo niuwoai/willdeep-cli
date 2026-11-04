@@ -879,6 +879,7 @@ fn suggestion_state(tag: &str, config: &str) -> (Arc<WebState>, PathBuf) {
     std::fs::write(&config_path, config).unwrap();
     let state = Arc::new(WebState {
         config_path,
+        integration_default: false,
         profile: None,
         workspaces: Arc::new(std::sync::RwLock::new(Vec::new())),
         home,
@@ -1037,6 +1038,7 @@ async fn mcp_post(
 fn suggestion_state_at(home: &std::path::Path) -> Arc<WebState> {
     Arc::new(WebState {
         config_path: home.join("config.toml"),
+        integration_default: false,
         profile: None,
         workspaces: Arc::new(std::sync::RwLock::new(Vec::new())),
         home: home.to_path_buf(),
@@ -1139,6 +1141,56 @@ fn session_approval_mode_refuses_read_only_and_unconfirmed_full_access() {
         check_session_approval_mode(WorkspaceAccess::Smart, WorkspaceAccess::FullAccess, true),
         Ok(())
     );
+}
+
+#[test]
+fn model_picker_includes_external_provider_without_persisting_it() {
+    let contents = "version = 1\ndefault_provider = 'native'\n[providers.native]\nprovider = 'openai-compatible'\napi_base = 'http://127.0.0.1:1/v1'\napi_key = 'test-only'\nmodel = 'native/model'\n";
+    let file: crate::config::ConfigFile = toml::from_str(contents).unwrap();
+    let mut settings =
+        crate::model_routing::from_config(&file, crate::model_routing::revision(contents), None)
+            .unwrap();
+    let providers = std::collections::BTreeMap::from([(
+        crate::magpie_integration::PROFILE_ID.into(),
+        crate::config::ProviderProfile {
+            provider: Some("openai-compatible".into()),
+            model: Some("  mock/model-a  ".into()),
+            ..Default::default()
+        },
+    )]);
+    merge_provider_options(&mut settings, &providers);
+    merge_provider_options(&mut settings, &providers);
+    assert_eq!(settings.providers.len(), 2);
+    assert_eq!(settings.default_provider, "native");
+    assert_eq!(settings.root_model, "native/model");
+    assert_eq!(
+        settings
+            .providers
+            .iter()
+            .find(|p| p.id == crate::magpie_integration::PROFILE_ID)
+            .unwrap()
+            .model,
+        "  mock/model-a  "
+    );
+    assert!(
+        !file
+            .providers
+            .contains_key(crate::magpie_integration::PROFILE_ID)
+    );
+    let root = std::env::temp_dir().join(format!("picker-external-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    crate::model_routing::write_private_atomic(&path, contents.as_bytes()).unwrap();
+    let mut update = settings.to_update();
+    update.default_provider = crate::magpie_integration::PROFILE_ID.into();
+    let error = crate::model_routing::save(&path, None, &update).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unknown or unsupported default provider profile")
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// 新会话默认模型的取法与选择器列的是同一份配置：Web 服务指定了 Profile 就用它，

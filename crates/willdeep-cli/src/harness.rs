@@ -348,6 +348,7 @@ pub(crate) struct BuiltHarness {
     pub kernel_store: willdeep_core::kernel_store::KernelStore,
     pub context_window: u64,
     pub provider_config: ProviderConfig,
+    pub provider_profile: Option<String>,
     /// Built here so every frontend — TUI, headless run, runtime — shares one
     /// dispatcher and one set of `[notifications]` switches.
     pub notifier: crate::notify::Notifier,
@@ -472,8 +473,17 @@ pub(crate) async fn execute_runtime(
             &request.prompt,
         );
         session.id = built.session_id;
+        session.profile = built.provider_profile.clone();
+        session.model = Some(built.provider_config.model.clone());
         session
     });
+    // Persist the resolved model for new or explicitly reconfigured sessions.
+    // Old unbound sessions continue through the disk-only resolver above.
+    if session.profile.is_some() || request.profile.is_some() {
+        session.profile = built.provider_profile.clone();
+        session.model = Some(built.provider_config.model.clone());
+    }
+    session.magpie_integration = built.provider_config.magpie_integration;
     if session.config.is_none() {
         session.config = request.config.clone();
     }
@@ -841,9 +851,11 @@ pub(crate) async fn build(
     let session_id = resumed
         .map(|session| session.id)
         .unwrap_or_else(uuid::Uuid::new_v4);
-    let resumed_profile = resumed.and_then(|session| session.profile.as_deref());
-    let profile = loaded.select_provider(cli.profile.as_deref().or(resumed_profile))?;
-    let mut provider_config = resolve_parent_provider_config(cli, loaded, resumed_profile)?;
+    let selection = crate::magpie_integration::resolve(cli, loaded, resumed).await?;
+    let provider_profile = selection.name;
+    let selected_profile = selection.profile;
+    let profile = selected_profile.as_ref();
+    let mut provider_config = selection.config;
     let configured_dialect = provider_config.dialect;
     // 网关能力表（some.im / tokenhub 的 /v1/model-capabilities）：取不到时一切照旧。
     let gateway = gateway_adjustments(
@@ -1432,6 +1444,7 @@ pub(crate) async fn build(
         kernel_store,
         context_window,
         provider_config: parent_provider_config,
+        provider_profile,
         notifier,
         _command_watcher: command_watcher,
     })
@@ -1496,7 +1509,17 @@ pub(crate) fn resolve_parent_provider_config(
     loaded: &LoadedConfig,
     resumed_profile: Option<&str>,
 ) -> Result<ProviderConfig> {
-    let profile = loaded.select_provider(cli.profile.as_deref().or(resumed_profile))?;
+    let requested = cli.profile.as_deref().or(resumed_profile);
+    if requested == Some(crate::magpie_integration::PROFILE_ID) {
+        let mut config = crate::magpie_integration::EffectiveProviders::snapshot(&loaded.file)
+            .config(crate::magpie_integration::PROFILE_ID)?;
+        if let Some(model) = &cli.model {
+            config.model = model.clone();
+        }
+        config.validate()?;
+        return Ok(config);
+    }
+    let profile = loaded.select_provider(requested)?;
     crate::provider_settings::ProviderEnvironment::read().resolve(profile, Some(cli))
 }
 

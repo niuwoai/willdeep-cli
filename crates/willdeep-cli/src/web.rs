@@ -51,6 +51,7 @@ pub(crate) fn embedded_assets_available() -> bool {
 pub struct WebConfig {
     pub listen: SocketAddr,
     pub config_path: PathBuf,
+    pub integration_default: bool,
     pub profile: Option<String>,
     pub workspaces: Vec<PathBuf>,
     pub home: PathBuf,
@@ -64,6 +65,7 @@ pub struct WebConfig {
 
 pub(crate) struct WebState {
     pub(crate) config_path: PathBuf,
+    integration_default: bool,
     profile: Option<String>,
     /// 浏览器端能看到的工作区白名单。Web 模式没有应用层鉴权，所以这份名单
     /// 就是边界本身——不在名单里的目录，前端连列都列不出来。回环监听时允许
@@ -506,6 +508,7 @@ async fn serve_internal(
     }
     let state = Arc::new(WebState {
         config_path: config.config_path,
+        integration_default: config.integration_default,
         profile: config.profile,
         workspaces: Arc::new(std::sync::RwLock::new(config.workspaces.clone())),
         home: config.home,
@@ -738,9 +741,57 @@ pub(crate) fn setup_ready(path: &std::path::Path, profile: Option<&str>) -> bool
 async fn model_routing_settings(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<crate::model_routing::ModelRoutingSettings>, WebError> {
-    crate::model_routing::load(&state.config_path, state.profile.as_deref())
-        .map(Json)
-        .map_err(WebError::from_anyhow)
+    let file = if state.config_path.exists() {
+        crate::config::LoadedConfig::load(Some(&state.config_path))
+            .map_err(WebError::from_anyhow)?
+            .file
+    } else {
+        crate::config::ConfigFile::default()
+    };
+    let directory = crate::magpie_integration::EffectiveProviders::load(&file).await;
+    let mut settings = if file.providers.is_empty() && directory.connected {
+        // This view is only passed to the pure reader. PUT still reloads and
+        // validates the original disk document, so external profiles cannot leak into TOML.
+        let mut view = file.clone();
+        view.providers = directory.providers.clone();
+        view.default_provider = directory.default_provider.clone();
+        let contents = if state.config_path.exists() {
+            std::fs::read_to_string(&state.config_path)
+                .map_err(|error| WebError::internal(error.to_string()))?
+        } else {
+            String::new()
+        };
+        crate::model_routing::from_config(
+            &view,
+            crate::model_routing::revision(&contents),
+            state.profile.as_deref(),
+        )
+    } else {
+        crate::model_routing::load(&state.config_path, state.profile.as_deref())
+    }
+    .map_err(WebError::from_anyhow)?;
+    merge_provider_options(&mut settings, &directory.providers);
+    Ok(Json(settings))
+}
+
+fn merge_provider_options(
+    settings: &mut crate::model_routing::ModelRoutingSettings,
+    providers: &std::collections::BTreeMap<String, crate::config::ProviderProfile>,
+) {
+    for (id, profile) in providers {
+        if !settings.providers.iter().any(|option| &option.id == id) {
+            settings
+                .providers
+                .push(crate::model_routing::ModelProviderOption {
+                    id: id.clone(),
+                    provider: profile
+                        .provider
+                        .clone()
+                        .unwrap_or_else(|| "openai-compatible".into()),
+                    model: profile.model.clone().unwrap_or_default(),
+                });
+        }
+    }
 }
 
 async fn update_model_routing_settings(
@@ -1656,17 +1707,18 @@ struct ModelOption {
 async fn list_models(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<Vec<ModelOption>>, WebError> {
-    let settings = crate::model_routing::load(&state.config_path, state.profile.as_deref())
-        .map_err(WebError::from_anyhow)?;
+    let (directory, _) = effective_model_directory(&state).await?;
     Ok(Json(
-        settings
+        directory
             .providers
             .into_iter()
-            .filter(|option| !option.model.trim().is_empty())
-            .map(|option| ModelOption {
-                provider_id: option.id,
-                provider: option.provider,
-                model: option.model,
+            .filter_map(|(name, profile)| {
+                let model = profile.model.filter(|model| !model.trim().is_empty())?;
+                Some(ModelOption {
+                    provider_id: name,
+                    provider: profile.provider.unwrap_or_default(),
+                    model,
+                })
             })
             .collect(),
     ))
@@ -1701,29 +1753,55 @@ struct DefaultModel {
     writable: bool,
 }
 
+async fn effective_model_directory(
+    state: &WebState,
+) -> Result<
+    (
+        crate::magpie_integration::EffectiveProviders,
+        Option<String>,
+    ),
+    WebError,
+> {
+    let file = if state.config_path.exists() {
+        crate::config::LoadedConfig::load(Some(&state.config_path))
+            .map_err(WebError::from_anyhow)?
+            .file
+    } else {
+        crate::config::ConfigFile::default()
+    };
+    let directory = crate::magpie_integration::EffectiveProviders::load(&file).await;
+    let preferred = if let Some(profile) = &state.profile {
+        Some(profile.clone())
+    } else if state.integration_default
+        && !crate::provider_settings::ProviderEnvironment::read().has_overrides()
+    {
+        directory
+            .default_name(true)
+            .map_err(WebError::from_anyhow)?
+    } else {
+        file.default_provider.or_else(|| {
+            (file.providers.len() == 1)
+                .then(|| file.providers.keys().next().cloned())
+                .flatten()
+        })
+    };
+    Ok((directory, preferred))
+}
+
 async fn default_model(State(state): State<Arc<WebState>>) -> Result<Json<DefaultModel>, WebError> {
-    let settings = crate::model_routing::load(&state.config_path, state.profile.as_deref())
+    let (directory, preferred) = effective_model_directory(&state).await?;
+    let picked = preferred
+        .as_deref()
+        .map(|name| directory.profile(name).map(|profile| (name, profile)))
+        .transpose()
         .map_err(WebError::from_anyhow)?;
-    let preferred = state
-        .profile
-        .clone()
-        .or(settings.active_provider_override.clone())
-        .unwrap_or_else(|| settings.default_provider.clone());
-    let picked = settings
-        .providers
-        .iter()
-        .find(|option| option.id == preferred)
-        .or_else(|| {
-            settings
-                .providers
-                .iter()
-                .find(|option| option.id == settings.default_provider)
-        });
     Ok(Json(DefaultModel {
-        model: picked.map(|option| ModelOption {
-            provider_id: option.id.clone(),
-            provider: option.provider.clone(),
-            model: option.model.clone(),
+        model: picked.and_then(|(name, profile)| {
+            profile.model.as_ref().map(|model| ModelOption {
+                provider_id: name.to_owned(),
+                provider: profile.provider.clone().unwrap_or_default(),
+                model: model.clone(),
+            })
         }),
         writable: state.settings_writable,
     }))
@@ -1731,6 +1809,7 @@ async fn default_model(State(state): State<Arc<WebState>>) -> Result<Json<Defaul
 
 /// 新会话没选模型时该用哪个。与 [`default_model`] 同一套取法，只是这里要在
 /// 建会话之前把名字定下来，写进会话里。
+#[cfg(test)]
 pub(super) fn resolve_default_model(
     settings: &crate::model_routing::ModelRoutingSettings,
     profile: Option<&str>,
@@ -1773,8 +1852,22 @@ async fn set_session_model(
              listens on a loopback address; run `/model` in the TUI instead",
         ));
     }
-    let model = request.model.trim();
-    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+    let integrated = request.provider_id.as_deref() == Some(crate::magpie_integration::PROFILE_ID)
+        || (request.provider_id.is_none()
+            && SessionStore::new(&state.home)
+                .load(id)
+                .is_ok_and(|session| session.magpie_integration));
+    let model = if integrated {
+        request.model.as_str()
+    } else {
+        request.model.trim()
+    };
+    let valid = if integrated {
+        willdeep_core::provider::magpie::validate_model(model)
+    } else {
+        !model.is_empty() && model.len() <= 256 && !model.chars().any(char::is_control)
+    };
+    if !valid {
         return Err(WebError::bad_request("model name is not valid"));
     }
     ensure_web_runtime_session(&state, id).await?;
@@ -2045,7 +2138,13 @@ async fn chat_stream(
         ));
     }
     if let Some(model) = input.model.as_deref() {
-        validate_model_name(model)?;
+        if input.provider_id.as_deref() == Some(crate::magpie_integration::PROFILE_ID) {
+            if !willdeep_core::provider::magpie::validate_model(model) {
+                return Err(WebError::bad_request("model name is not valid"));
+            }
+        } else {
+            validate_model_name(model)?;
+        }
     }
     if let Some(provider) = input.provider_id.as_deref() {
         validate_provider_id(provider)?;
@@ -2463,6 +2562,13 @@ async fn predict_session_input(state: &WebState, id: uuid::Uuid) -> Option<Strin
                 .any(|entry| entry.id == id && entry.active_turn_id.is_some())
         })
         .unwrap_or(true);
+    if session.magpie_integration
+        && !crate::magpie_integration::EffectiveProviders::load(&loaded.file)
+            .await
+            .connected
+    {
+        return None;
+    }
     let profile = session.profile.clone().or_else(|| state.profile.clone());
     let model = session.model.clone();
     let ledger =

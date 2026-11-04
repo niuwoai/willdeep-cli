@@ -6,6 +6,24 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.142.0-rc1] - 2026-11-04
+
+### Added
+- Magpie 社区 Agent 集成 v1：双端各自的只读 JSON 入口、共享 Schema 与原始 JSON fixture、独立 WillDeep / WillDeep CLI 插件包。CLI 使用临时 `magpie-cli` Provider，不将插件连接保存进 TOML。
+- 无显式选择的新会话采用 Magpie 连接；固定已有会话 Provider 与模型，断开后显式集成会话返回不可用错误。回环校验、固定公开标记、有界读取与重读、无代理和无重定向限制覆盖配置和请求边界。
+- 新增隔离 CLI/Runtime 与真实宽窄 PTY 验收驱动，使用本机确定性模拟模型并输出 JSON + Markdown；本地安装、自定义目录与社区材料随插件源码交付。CI 增加插件契约测试，Rust 消费端测试沿既有 macOS/Linux/Windows workspace 流程执行。
+
+### Changed
+- Cargo workspace、内部 runtime 版本钉、Cargo.lock、Web/npm 和安装清单同步至 `0.142.0-rc1`；更新产品、架构与跨端契约文档。未执行公开发布或社区收录。
+
+### Validation
+- Rust：`cargo test --workspace --all-targets` 2320 项通过、11 项忽略、0 失败；`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --all -- --check` 通过；`ruby -EUTF-8 scripts/check_source_size.rb` 检查 1320 个文件、0 超限。
+- Windows：`cargo check` 与严格 `cargo clippy --target x86_64-pc-windows-gnu` 通过，仅证明交叉编译，未在 Windows 原生运行。
+- 最终二进制 `6eb920c5…9e1f0c`（`willdeep 0.142.0-rc1`）：隔离链 21/21、真实 Magpie `0.1.2891` 链 22/22，覆盖 Runtime 先启动后连接、A→B、两种断开恢复、同名 Profile 隔离、禁代理/重定向、TOML 字节不变，以及 110×34 / 42×22 真实 PTY；付费请求 0。
+- 插件：JS 19/19、两包归档内原生测试各 2/2、真实宿主 12/12，模型请求 0。
+- Web（无头 Chrome + CDP，最终二进制）：Provider 下拉同时含 `native` 与 `magpie-cli` 且选中 `magpie-cli`，页面提交实际收到 `magpie-agent-ok`，刷新后无 console 错误；新会话固定 `magpie-cli` + `mock/model-a`，测试 TOML 无 `magpie-cli`。
+- 完整结果、Desktop 证据与未覆盖项见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
+
 ## [0.141.0-rc6] - 2026-11-04
 
 ### Fixed

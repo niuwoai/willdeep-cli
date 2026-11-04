@@ -34,6 +34,9 @@ jobs:
         run: yarn lint
       - name: Configuration Web bridge regression
         run: node --test scripts/test/config_web_bridge_test.mjs
+      - name: Magpie Agent plugin contract
+        if: runner.os == 'Linux'
+        run: yarn --cwd integrations/magpie test
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.1

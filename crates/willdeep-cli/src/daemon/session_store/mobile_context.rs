@@ -5,7 +5,7 @@ impl RuntimeSessionStore {
     pub(in crate::daemon) fn configure_mobile(
         &self,
         id: uuid::Uuid,
-        profile: Option<String>,
+        profile: Option<(String, bool)>,
         model: Option<String>,
         mode: Option<super::super::WorkspaceAccess>,
         skills: Option<Vec<String>>,
@@ -31,8 +31,9 @@ impl RuntimeSessionStore {
             );
         let update_provider = profile.is_some();
         let update_model = model.is_some();
-        if let Some(profile) = profile {
+        if let Some((profile, integration)) = profile {
             candidate.profile = Some(profile);
+            candidate.magpie_integration = integration;
         }
         if let Some(model) = model {
             candidate.model = Some(model);
@@ -57,6 +58,7 @@ impl RuntimeSessionStore {
             && let Err(error) = self.core.update(id, |core| {
                 if update_provider {
                     core.profile = candidate.profile.clone();
+                    core.magpie_integration = candidate.magpie_integration;
                 }
                 if update_model {
                     core.model = candidate.model.clone();
