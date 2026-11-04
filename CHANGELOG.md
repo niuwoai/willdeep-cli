@@ -6,6 +6,14 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc4] - 2026-11-05
+
+### Fixed
+- 修复 Windows CI 的 Clippy 失败：`daemon::child_sessions::worktree::copy_untracked` 的 Windows（非 Unix）分支在 `anyhow::bail!` 之后仍有 `copied += 1;` 与 `continue;`，触发 `unreachable_code`；工作流以 `-D warnings` 运行 clippy，`willdeep` 二进制因此编译失败。现在计数与 `continue` 归入 `#[cfg(unix)]` 分支，Windows 分支只保留拒绝分支——快照工作树在 Windows 上仍不支持未跟踪符号链接，行为与限制不变。
+
+### Validation
+- 新增本地 Windows 目标交叉检查：`cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings` 通过，实际覆盖 `cfg(windows)` 分支；macOS 本机 `cargo clippy -p willdeep --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与源码规模检查通过。Windows 结论仍以 PR CI 的 `test (windows-latest)` 为准，详见 [0.143.0-rc4 验收记录](docs/verification/0.143.0-rc4.md)。
+
 ## [0.143.0-rc3] - 2026-11-05
 
 ### Fixed

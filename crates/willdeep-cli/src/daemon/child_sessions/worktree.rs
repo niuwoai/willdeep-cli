@@ -268,11 +268,11 @@ fn copy_untracked(root: &Path, worktree: &Path, listing: &[u8]) -> Result<usize>
                 }
                 let _ = std::fs::remove_file(&target);
                 std::os::unix::fs::symlink(&link, &target)?;
+                copied += 1;
+                continue;
             }
             #[cfg(not(unix))]
             anyhow::bail!("snapshot worktrees do not support untracked symlinks on this platform");
-            copied += 1;
-            continue;
         }
         anyhow::ensure!(
             metadata.is_file(),
