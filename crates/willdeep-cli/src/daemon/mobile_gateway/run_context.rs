@@ -109,16 +109,21 @@ pub(in crate::daemon) async fn configure_run_context(
     let mut params: ContextParams = serde_json::from_value(value.clone())?;
     let (session, config) = loaded(server, params.id)?;
     let workspace = workspace(server, &session)?;
+    let directory = crate::magpie_integration::EffectiveProviders::load(&config.file).await;
     if let Some(profile) = &params.provider_id {
-        anyhow::ensure!(
-            config.file.providers.contains_key(profile),
-            "Unknown provider"
-        );
-        crate::provider_config_from_profile(&config.file, profile)?;
+        directory.config(profile)?;
     }
     if let Some(model) = &params.model {
+        let integrated = params.provider_id.as_deref().or(session.profile.as_deref())
+            == Some(crate::magpie_integration::PROFILE_ID);
         anyhow::ensure!(
-            !model.trim().is_empty() && model.len() <= 256 && !model.chars().any(char::is_control),
+            if integrated {
+                willdeep_core::provider::magpie::validate_model(model)
+            } else {
+                !model.trim().is_empty()
+                    && model.len() <= 256
+                    && !model.chars().any(char::is_control)
+            },
             "Invalid model"
         );
     }
@@ -126,7 +131,7 @@ pub(in crate::daemon) async fn configure_run_context(
         params.model = params
             .provider_id
             .as_ref()
-            .and_then(|id| config.file.providers.get(id))
+            .and_then(|id| directory.providers.get(id))
             .and_then(|p| p.model.clone());
     }
     let mode = params
@@ -164,7 +169,11 @@ pub(in crate::daemon) async fn configure_run_context(
     }
     let configured = server.sessions.configure_mobile(
         params.id,
-        params.provider_id,
+        params.provider_id.map(|profile| {
+            let integrated =
+                profile == crate::magpie_integration::PROFILE_ID && directory.connected;
+            (profile, integrated)
+        }),
         params.model,
         mode,
         params.skills,
@@ -220,6 +229,7 @@ async fn build_capabilities(
         );
     };
     let (session, config) = loaded(server, id)?;
+    let directory = crate::magpie_integration::EffectiveProviders::load(&config.file).await;
     let workspace = workspace(server, &session)?;
     let active_profile = effective_profile(&session, &config, &workspace);
     let queried_profile = request
@@ -229,15 +239,14 @@ async fn build_capabilities(
         .or_else(|| active_profile.clone());
     let profile = queried_profile
         .as_ref()
-        .and_then(|id| config.file.providers.get(id));
+        .and_then(|id| directory.providers.get(id));
     let active_model = session.model.clone().or_else(|| {
         active_profile
             .as_ref()
-            .and_then(|id| config.file.providers.get(id))
+            .and_then(|id| directory.providers.get(id))
             .and_then(|p| p.model.clone())
     });
-    let providers = config
-        .file
+    let providers = directory
         .providers
         .keys()
         .map(|id| json!({"id": id, "title": id, "is_active": Some(id) == active_profile.as_ref()}))

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://some.im/willdeep/schemas/magpie-agent.v1.schema.json",
+  "title": "WillDeep Magpie Agent connection v1",
+  "description": "Per-client loopback-only integration. Consumers additionally reject duplicate keys, enforce a 65536-byte file limit, match the expected client, validate IP octets and port, and enforce output <= context. Missing files are disconnected. Model-only objects represent a restored native model and are disconnected.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "client_id": { "enum": ["willdeep", "willdeep-cli"] },
+    "enabled": { "type": "boolean" },
+    "base_url": {
+      "type": "string",
+      "pattern": "^https?://(?:localhost|127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|\\[::1\\])(?::[0-9]{1,5})?/v1$"
+    },
+    "client_marker": { "enum": ["magpie-willdeep", "magpie-willdeep-cli"] },
+    "model": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$", "description": "Nonblank model ID, at most 1024 UTF-8 bytes (the consumer additionally enforces the byte limit)." },
+    "context_window": { "type": ["integer", "null"], "minimum": 4000, "maximum": 1048576 },
+    "max_output_tokens": { "type": ["integer", "null"], "minimum": 1, "maximum": 1048576 }
+  },
+  "anyOf": [
+    { "maxProperties": 0 },
+    { "required": ["enabled"], "properties": { "enabled": { "const": false } } },
+    { "required": ["model"], "maxProperties": 1 },
+    {
+      "required": ["schema_version", "client_id", "enabled", "base_url", "client_marker", "model"],
+      "properties": { "enabled": { "const": true } },
+      "oneOf": [
+        { "properties": { "client_id": { "const": "willdeep" }, "client_marker": { "const": "magpie-willdeep" } } },
+        { "properties": { "client_id": { "const": "willdeep-cli" }, "client_marker": { "const": "magpie-willdeep-cli" } } }
+      ]
+    }
+  ]
+}

@@ -74,6 +74,9 @@ pub async fn run(explicit_path: Option<&Path>) -> Result<bool> {
 }
 
 pub(crate) fn needs_web_setup(cli: &crate::Cli) -> bool {
+    if crate::magpie_integration::claims_configuration(cli) {
+        return false;
+    }
     let path = cli
         .config
         .clone()
@@ -112,6 +115,7 @@ pub(crate) async fn configure_in_browser(cli: &crate::Cli) -> Result<SetupServer
     let server = SetupServer(tokio::spawn(crate::web::serve(crate::web::WebConfig {
         listen,
         config_path: config_path.clone(),
+        integration_default: cli.config.is_none(),
         profile: cli.profile.clone(),
         workspaces: vec![workspace],
         home: crate::willdeep_home()?,

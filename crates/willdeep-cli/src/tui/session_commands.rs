@@ -64,10 +64,29 @@ pub(super) async fn start_new(
     session.attention_read = app.attention_read.clone();
     session.runtime_event_cursor = app.runtime_event_cursor;
     store.save(session)?;
-    // Provider、模型与配置沿用当前会话：换的是上下文，不是设置。
-    let mut target = Session::new(session.workspace.clone(), session.profile.clone(), "");
-    target.model = session.model.clone();
+    // Explicit choices carry forward; an implicit new-session default is read
+    // again so a running TUI sees Magpie A -> B and disconnects immediately.
+    let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])?;
+    if session.provider_selection_explicit {
+        cli.profile = session.profile.clone();
+        cli.model = session.model.clone();
+        cli.config = session.config.clone();
+    } else {
+        cli.config = session
+            .config
+            .as_deref()
+            .and_then(crate::magpie_integration::custom_config);
+    }
+    let loaded = crate::config::LoadedConfig::load(cli.config.as_deref())?;
+    let selection = crate::magpie_integration::resolve(&cli, &loaded, None).await?;
+    let mut target = Session::new(session.workspace.clone(), selection.name, "");
+    target.provider_selection_explicit = session.provider_selection_explicit;
+    target.magpie_integration = selection.config.magpie_integration;
+    target.model = Some(selection.config.model.clone());
     target.config = session.config.clone();
+    runtime.provider_config = selection.config;
+    runtime.runtime_submit.profile = target.profile.clone();
+    runtime.runtime_submit.model = target.model.clone();
     target.runtime_managed = true;
     // 从事件流的当前位置起读，否则新会话一开就把上一条会话的事件重放一遍。
     target.runtime_event_cursor = crate::daemon::runtime_event_head(&runtime.home)

@@ -36,7 +36,7 @@ impl ProviderEnvironment {
         )
     }
 
-    fn from_values(variables: BTreeMap<String, String>) -> Self {
+    pub(super) fn from_values(variables: BTreeMap<String, String>) -> Self {
         let get = |name| nonempty(variables.get(name).map(String::as_str));
         Self {
             base: get("WILLDEEP_API_BASE"),
@@ -49,6 +49,24 @@ impl ProviderEnvironment {
             someim_key: get("SOMEIM_API_KEY"),
             variables,
         }
+    }
+
+    pub fn has_connection_overrides(&self) -> bool {
+        self.base.is_some()
+            || self.key.is_some()
+            || self.openai_base.is_some()
+            || self.anthropic_base.is_some()
+            || self.openai_key.is_some()
+            || self.anthropic_key.is_some()
+            || self.someim_key.is_some()
+    }
+
+    pub fn has_overrides(&self) -> bool {
+        self.has_connection_overrides() || self.model.is_some()
+    }
+
+    pub fn model_override(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     pub fn inferred_provider(&self) -> Option<ProviderArg> {

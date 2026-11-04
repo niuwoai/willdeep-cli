@@ -39,7 +39,12 @@ pub(super) fn receive_local(
                 && let Ok(loaded) =
                     crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())
             {
-                picker.profiles = loaded.file.providers.keys().cloned().collect();
+                picker.profiles =
+                    crate::magpie_integration::EffectiveProviders::snapshot(&loaded.file)
+                        .providers
+                        .keys()
+                        .cloned()
+                        .collect();
                 app.refresh_provider_matches();
             }
         }
@@ -144,7 +149,11 @@ pub(super) fn initialize(app: &mut App, runtime: &TuiRuntime) -> Result<()> {
     picker.provider_label =
         willdeep_core::provider::ProviderIdentity::from_config(&runtime.provider_config).provider;
     picker.profile = profile;
-    picker.profiles = loaded.file.providers.keys().cloned().collect();
+    picker.profiles = crate::magpie_integration::EffectiveProviders::snapshot(&loaded.file)
+        .providers
+        .keys()
+        .cloned()
+        .collect();
     picker.profiles.sort();
     app.refresh_provider_matches();
     load_models(app, runtime.provider_config.clone(), &runtime.tx);
@@ -251,9 +260,17 @@ pub(super) async fn switch(
 ) -> Result<String> {
     let loaded = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
     let mut config = crate::provider_config_from_profile(&loaded.file, profile)?;
-    let model = model.trim();
+    let model = if config.magpie_integration {
+        model
+    } else {
+        model.trim()
+    };
     anyhow::ensure!(
-        !model.is_empty() && model.len() <= 256 && !model.chars().any(char::is_control),
+        if config.magpie_integration {
+            willdeep_core::provider::magpie::validate_model(model)
+        } else {
+            !model.is_empty() && model.len() <= 256 && !model.chars().any(char::is_control)
+        },
         "Invalid model"
     );
     config.model = model.to_owned();
@@ -284,6 +301,9 @@ pub(super) async fn switch(
         .load(session.id)
         .context("reload configured Session")?;
     agent.main_model().set_provider(provider)?;
+    session.provider_selection_explicit = true;
+    session.magpie_integration = config.magpie_integration;
+    store.save(session)?;
     runtime.runtime_submit.profile = Some(profile.to_owned());
     runtime.runtime_submit.model = Some(model.to_owned());
     runtime.provider_config = config;

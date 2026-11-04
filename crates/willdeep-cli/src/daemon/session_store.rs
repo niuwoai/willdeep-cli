@@ -42,6 +42,8 @@ pub(crate) struct RuntimeSession {
     pub workspace: PathBuf,
     pub profile: Option<String>,
     #[serde(default)]
+    pub magpie_integration: bool,
+    #[serde(default)]
     pub model: Option<String>,
     /// 用户在这个会话里选的审批档位。`None` 表示跟随工作区策略。
     #[serde(default)]
@@ -476,9 +478,17 @@ impl RuntimeSessionStore {
         Ok(self.ensure(request)?.0)
     }
 
-    pub fn ensure(&self, mut request: CreateRuntimeSession) -> Result<(RuntimeSession, bool)> {
+    pub fn ensure(&self, request: CreateRuntimeSession) -> Result<(RuntimeSession, bool)> {
+        self.ensure_pinned(request, false)
+    }
+
+    pub fn ensure_pinned(
+        &self,
+        mut request: CreateRuntimeSession,
+        magpie_integration: bool,
+    ) -> Result<(RuntimeSession, bool)> {
         request.profile = normalized_optional("Provider profile", request.profile)?;
-        request.model = normalized_optional("Model", request.model)?;
+        request.model = normalized_model(request.model, request.profile.as_deref())?;
         let workspace = request
             .workspace
             .canonicalize()
@@ -491,15 +501,27 @@ impl RuntimeSessionStore {
             }
             return Ok((existing, false));
         }
-        let core = if let Some(id) = request.id {
-            let mut core = self
-                .core
-                .load(id)
-                .with_context(|| format!("adopt Core Session {id}"))?;
+        let existing_core = request
+            .id
+            .map(|id| match self.core.load(id) {
+                Ok(core) => Ok(Some(core)),
+                Err(willdeep_core::session::SessionError::Io(error))
+                    if error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    Ok(None)
+                }
+                Err(error) => Err(error).with_context(|| format!("adopt Core Session {id}")),
+            })
+            .transpose()?
+            .flatten();
+        let core = if let Some(mut core) = existing_core {
             if core.workspace.canonicalize()? != workspace {
                 bail!("Core Session workspace does not match Runtime Session request");
             }
             if let Some(profile) = request.profile.clone() {
+                if core.profile.as_ref() != Some(&profile) {
+                    core.magpie_integration = magpie_integration;
+                }
                 core.profile = Some(profile);
             }
             if let Some(model) = request.model.clone() {
@@ -525,6 +547,10 @@ impl RuntimeSessionStore {
                 core.title = normalized_title(title)?;
                 core.title_source = willdeep_core::TitleSource::User;
             }
+            if let Some(id) = request.id {
+                core.id = id;
+            }
+            core.magpie_integration = magpie_integration;
             core.model = request.model.clone();
             core.config = request.config.clone();
             self.core.save(&mut core)?;
@@ -539,6 +565,7 @@ impl RuntimeSessionStore {
             started_by: None,
             workspace,
             profile: core.profile.clone(),
+            magpie_integration: core.magpie_integration,
             model: core.model.clone(),
             approval_mode: None,
             mobile_skills: Vec::new(),
@@ -586,9 +613,10 @@ impl RuntimeSessionStore {
 
     pub fn update_model(&self, id: uuid::Uuid, model: String) -> Result<RuntimeSession> {
         self.ensure_manageable(id)?;
-        let model = normalized_optional("Model", Some(model))?.context("Model is required")?;
         let mut sessions = self.lock()?;
         let session = sessions.get_mut(&id).context("Runtime Session not found")?;
+        let model = normalized_model(Some(model), session.profile.as_deref())?
+            .context("Model is required")?;
         self.core.update(id, |core| {
             core.model = Some(model.clone());
         })?;
@@ -625,9 +653,9 @@ impl RuntimeSessionStore {
     ) -> Result<RuntimeSession> {
         self.ensure_manageable(id)?;
         let provider_profile = normalized_optional("Provider profile", provider_profile)?;
-        let model = normalized_optional("Model", model)?;
         let source = self.get(id)?.context("Runtime Session not found")?;
         let target_profile = provider_profile.or_else(|| source.profile.clone());
+        let model = normalized_model(model, target_profile.as_deref())?;
         let mut core = self
             .core
             .load(id)
@@ -668,6 +696,17 @@ impl RuntimeSessionStore {
         core.runtime_event_cursor = 0;
         core.runtime_managed = true;
         core.swift_source = None;
+        if target_profile != source.profile {
+            core.magpie_integration =
+                if target_profile.as_deref() == Some(crate::magpie_integration::PROFILE_ID) {
+                    let loaded = crate::config::LoadedConfig::load(core.config.as_deref())?;
+                    crate::magpie_integration::EffectiveProviders::snapshot(&loaded.file)
+                        .config(crate::magpie_integration::PROFILE_ID)?
+                        .magpie_integration
+                } else {
+                    false
+                };
+        }
         core.profile = target_profile.clone();
         core.model = model.clone().or_else(|| source.model.clone());
         // 来源由服务端按被分凉的那条绑定。请求里没有这个字段，客户端写不了。
@@ -681,6 +720,7 @@ impl RuntimeSessionStore {
             started_by: Some(id),
             workspace: source.workspace,
             profile: target_profile,
+            magpie_integration: core.magpie_integration,
             model: core.model.clone(),
             // 分叉出来的会话沿用原会话的档位：用户看到的是「同一个对话的另一支」。
             approval_mode: source.approval_mode,
@@ -1461,10 +1501,14 @@ impl RuntimeSessionStore {
             return Ok(None);
         };
         turn.metadata.attempts = turn.metadata.attempts.saturating_add(1);
-        let core = self
+        let mut core = self
             .core
-            .load(session_id)
+            .load_baselined(session_id)
             .with_context(|| format!("load Core Session {session_id}"))?;
+        if core.magpie_integration != session.magpie_integration {
+            core.magpie_integration = session.magpie_integration;
+            self.core.save(&mut core)?;
+        }
         let core_message_count = core.messages.len();
         turn.metadata.message_generation = core.compression_generation;
         turn.metadata.message_start = Some(if turn.replay_existing_user_message {
@@ -1851,6 +1895,20 @@ fn normalized_title(title: String) -> Result<String> {
     Ok(title)
 }
 
+fn normalized_model(value: Option<String>, profile: Option<&str>) -> Result<Option<String>> {
+    if profile == Some(crate::magpie_integration::PROFILE_ID) {
+        if let Some(model) = &value {
+            anyhow::ensure!(
+                willdeep_core::provider::magpie::validate_model(model),
+                "Invalid Magpie model"
+            );
+        }
+        Ok(value)
+    } else {
+        normalized_optional("Model", value)
+    }
+}
+
 fn normalized_optional(label: &str, value: Option<String>) -> Result<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
@@ -1911,13 +1969,21 @@ pub(super) async fn create_session_handler(
             StatusCode::BAD_REQUEST
         })?;
     request.workspace = workspace.root;
-    if request.profile.is_none() {
-        request.profile = workspace.provider_profile;
-    }
-    let (session, created) = state.sessions.ensure(request).map_err(|error| {
-        eprintln!("create Runtime Session: {error:#}");
-        StatusCode::BAD_REQUEST
-    })?;
+    let integration =
+        crate::magpie_integration::pin_new(&state.home, &mut request, workspace.provider_profile)
+            .await
+            .map_err(|error| {
+                eprintln!("resolve new Runtime Session Provider: {error:#}");
+                StatusCode::BAD_REQUEST
+            })?;
+    let (session, created) =
+        state
+            .sessions
+            .ensure_pinned(request, integration)
+            .map_err(|error| {
+                eprintln!("create Runtime Session: {error:#}");
+                StatusCode::BAD_REQUEST
+            })?;
     if created {
         state
             .events

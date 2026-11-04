@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc3
+> 最后更新：2026-11-04 | 当前版本：v0.142.0-rc1
 
 ## 分发
 
@@ -36,6 +36,14 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 默认读取 `~/.willdeep/config.toml`，`WILLDEEP_HOME` 可替换配置目录，`--config` 可指定任意 TOML 文件。命令行与 `WILLDEEP_*` 环境变量覆盖 Profile；Profile 覆盖 Provider 专属环境变量和内置默认值。
 
 配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。内联密钥（Provider 的 `api_key`、通知渠道的 `secret` / `password` / `api_key`）在 Unix 上要求配置文件权限为 `0600`；也可以改用对应的 `*_env` 字段引用环境变量。`willdeep config show` 对内联密钥统一脱敏。
+
+### Magpie 社区 Agent 集成
+
+Magpie 通过独立 Agent 插件管理 `$WILLDEEP_HOME/integrations/magpie/cli/connection.json`；Desktop 使用自己的 `~/.willdeep/integrations/magpie/desktop/connection.json`。两端共享 v1 契约与测试样例，独立读取、校验和控制状态。配置只允许回环地址、完整模型 ID 和固定公开归因标记。
+
+CLI 的磁盘 `ConfigFile` 与临时有效 Provider 目录分离；`magpie-cli` 不写入 TOML。隐式新会话解析当前连接并固定 Provider、模型与集成来源；来源区分临时集成与用户原有的同名档案，避免断开后把会话转给同名档案。旧会话恢复不重新采用外部默认值。Runtime 每次执行读取连接，无须重启；断开后显式引用集成的会话返回不可用错误。实际请求禁止代理与重定向，`localhost` 固定到回环地址。原工具审批、沙箱与显式 Worker Profile 继续由现有执行链控制。
+
+详见 [需求契约](MAGPIE_AGENT_REQUIREMENTS.md)、[跨端设计](MAGPIE_AGENT_DESIGN.md) 与 [实施及验收台账](MAGPIE_AGENT_PLAN.md)。
 
 ### Provider 身份与 API Dialect 分离
 

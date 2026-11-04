@@ -8,6 +8,8 @@ pub(super) struct Metadata {
     pinned_at: Option<u64>,
     model: Option<String>,
     profile: Option<String>,
+    provider_selection_explicit: bool,
+    magpie_integration: bool,
     config: Option<PathBuf>,
     goal: Option<String>,
     response_style: Option<super::ResponseStyle>,
@@ -33,6 +35,8 @@ impl Metadata {
             pinned_at: session.pinned_at,
             model: session.model.clone(),
             profile: session.profile.clone(),
+            provider_selection_explicit: session.provider_selection_explicit,
+            magpie_integration: session.magpie_integration,
             config: session.config.clone(),
             goal: session.goal.clone(),
             response_style: session.response_style,
@@ -86,6 +90,8 @@ impl Metadata {
         reconcile!(pinned_at);
         reconcile!(model);
         reconcile!(profile);
+        reconcile!(provider_selection_explicit);
+        reconcile!(magpie_integration);
         reconcile!(config);
         reconcile!(goal);
         reconcile!(response_style);
@@ -96,6 +102,8 @@ impl Metadata {
         proposed.pinned_at = merged.pinned_at;
         proposed.model = merged.model;
         proposed.profile = merged.profile;
+        proposed.provider_selection_explicit = merged.provider_selection_explicit;
+        proposed.magpie_integration = merged.magpie_integration;
         proposed.config = merged.config;
         proposed.goal = merged.goal;
         proposed.response_style = merged.response_style;

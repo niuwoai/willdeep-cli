@@ -52,9 +52,27 @@ pub fn pasted_text_block(name: &str, content: &str) -> String {
 }
 
 pub fn client(config: &ProviderConfig) -> Result<Client, ProviderError> {
-    Client::builder()
+    let mut builder = Client::builder()
         .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
-        .user_agent(CLIENT_USER_AGENT)
+        .user_agent(CLIENT_USER_AGENT);
+    if config.magpie_integration {
+        config.validate()?;
+        builder = builder
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none());
+        let url = super::magpie::integration_url(&config.base_url)?;
+        if url.host_str() == Some("localhost") {
+            // Never consult DNS/hosts for this externally supplied hostname.
+            builder = builder.resolve(
+                "localhost",
+                std::net::SocketAddr::from((
+                    [127, 0, 0, 1],
+                    url.port_or_known_default().unwrap_or(80),
+                )),
+            );
+        }
+    }
+    builder
         .build()
         .map_err(|error| ProviderError::Client(error.to_string()))
 }

@@ -65,7 +65,7 @@ pub(crate) use schedule_client::{
     read_session_attachments, schedule_operation, schedule_policy, schedule_response,
 };
 mod deferred_gates;
-mod session_store;
+pub(crate) mod session_store;
 mod steering;
 mod tool_store;
 pub(crate) mod tui_bridge;

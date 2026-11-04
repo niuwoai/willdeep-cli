@@ -1,0 +1,11 @@
+{
+  "name": "willdeep-magpie-agent-cli",
+  "version": "0.1.0-rc2",
+  "private": true,
+  "description": "Connect WillDeep CLI's new sessions to a local Magpie gateway.",
+  "type": "module",
+  "files": ["willdeep-cli.agent.js", "contract.js", "messages.js", "icon.js", "icon.svg", "README.md", "CHANGELOG.md", "test/agent.test.js"],
+  "scripts": { "test": "node --test test/*.test.js" },
+  "magpie": { "agent": "./willdeep-cli.agent.js" },
+  "willdeepCompatibility": { "client": "willdeep-cli", "minimumVersion": "0.142.0-rc1", "status": "planned", "contract": "willdeep.magpie-agent.v1" }
+}

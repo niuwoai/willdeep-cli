@@ -2,6 +2,7 @@ mod anthropic;
 pub mod capabilities;
 mod chat_completions;
 mod common;
+pub mod magpie;
 mod main_model;
 mod responses;
 pub mod sse;
@@ -70,6 +71,9 @@ pub struct ProviderConfig {
     /// key. This is set only for the user-configured auxiliary model; normal
     /// Provider profiles continue to fail closed when credentials are absent.
     pub allow_unauthenticated: bool,
+    /// Externally managed Magpie Agent connection. Only this source receives
+    /// loopback pinning and the stricter no-proxy/no-redirect transport.
+    pub magpie_integration: bool,
 }
 
 impl ProviderConfig {
@@ -93,10 +97,23 @@ impl ProviderConfig {
             non_thinking: false,
             allow_request_replay: true,
             allow_unauthenticated: false,
+            magpie_integration: false,
         }
     }
 
     pub fn validate(&self) -> Result<(), ProviderError> {
+        if self.magpie_integration {
+            magpie::integration_url(&self.base_url)?;
+            if self.api_key != magpie::CLI_MARKER
+                || self.kind != ProviderKind::OpenAiCompatible
+                || self.dialect != ApiDialect::ChatCompletions
+                || !magpie::validate_model(&self.model)
+            {
+                return Err(ProviderError::InvalidBaseUrl(
+                    "invalid Magpie integration connection".into(),
+                ));
+            }
+        }
         let parsed = Url::parse(self.base_url.trim())
             .map_err(|error| ProviderError::InvalidBaseUrl(error.to_string()))?;
         if !matches!(parsed.scheme(), "http" | "https") {
@@ -133,8 +150,9 @@ pub fn is_loopback_base_url(url: &Url) -> bool {
 /// A local Magpie transport forwards requests to remote model services.
 pub fn is_magpie_gateway(base_url: &str, api_key: &str) -> bool {
     Url::parse(base_url.trim()).is_ok_and(|url| {
-        is_loopback_base_url(&url)
-            && (url.port() == Some(3425) || matches!(api_key, "magpie" | "magpie-willdeep"))
+        (is_loopback_base_url(&url) || url.host_str() == Some("[::1]"))
+            && (url.port() == Some(3425)
+                || matches!(api_key, "magpie" | "magpie-willdeep" | magpie::CLI_MARKER))
     })
 }
 

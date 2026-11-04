@@ -1,6 +1,19 @@
 # Magpie 本地网关
 
-WillDeep 可通过 Magpie 的 OpenAI Chat Completions 或 Anthropic Messages 接口运行。Magpie 作为单独的 Provider Profile，不替换已有供应商。本文不涉及 Magpie Agents 页的适配器或发布。
+WillDeep 可通过 Magpie 的 OpenAI Chat Completions 或 Anthropic Messages 接口运行。Magpie 作为单独的 Provider Profile，不替换已有供应商。下文保留现有手动网关接入方法；Magpie Agents 页的社区插件接入状态见下一节。
+
+## 社区 Agent 插件（已实现，本地验收完成）
+
+2026-11-04 用户确认“按设计实现”：通过两个独立社区 Agent 插件提供 **WillDeep**（`willdeep`）和 **WillDeep CLI**（`willdeep-cli`）。首版使用本机回环网关、OpenAI Chat Completions 和固定公开客户端标记；真实 Gateway Key、远程/共享网关不在首版范围。
+
+- [需求与 JSON v1 契约](MAGPIE_AGENT_REQUIREMENTS.md)：字段、严格回环 URL、状态、选择优先级及验收标准。
+- [设计与已确认决策 D1–D5](MAGPIE_AGENT_DESIGN.md)：两端独立临时 Provider、文件所有权、实际请求和会话恢复约束。
+- [执行台账](MAGPIE_AGENT_PLAN.md)：T0–T6 完成；[schema](schemas/magpie-agent.v1.schema.json) / [原始 fixture](fixtures/magpie-agent-v1/cases.json) 冻结；T7 发布与社区提交未授权。
+- [验收报告](verification/0.142.0-rc1/magpie-agents/README.md)：隔离链 21/21、真实 Magpie 链 22/22、插件宿主 12/12、桌面原生测试 19/19，含未覆盖项。
+
+连接仅为没有显式 Provider/模型选择的新会话提供默认值；已有会话固定自己的 Provider 和模型，外部模型 A→B 后旧会话仍用 A，新会话用 B。旧无固定选择会话恢复跳过集成默认值；断开后明确引用集成的会话报错，不静默转到其他供应商。显式其他 Provider、模型或连接覆盖不受无关集成配置错误阻断。集成不写原 TOML、Desktop Provider 库或钥匙串，不改变审批、沙箱和显式 Worker 设置。
+
+本版本交付 CLI **0.142.0-rc1** / Desktop **1.427.0-rc1**（Build 941）与两个 `0.1.0-rc2` 本地可安装插件。组合验收在 macOS 完成，Linux/Windows 仅做 Windows GNU 目标交叉编译；未发布、未社区收录，正式发布和社区提交另行授权。
 
 ## 临时前台连接
 

@@ -888,7 +888,8 @@ async fn ai_providers(
     let config = crate::config::LoadedConfig::load(Some(&state.config_path))
         .map_err(|error| PluginWebError::Internal(error.to_string()))?;
     let file = &config.file;
-    let providers: Vec<ProviderView> = file
+    let directory = crate::magpie_integration::EffectiveProviders::load(file).await;
+    let providers: Vec<ProviderView> = directory
         .providers
         .iter()
         .map(|(name, profile)| {
@@ -904,7 +905,7 @@ async fn ai_providers(
             ProviderView {
                 provider_id: name.clone(),
                 display_name: name.clone(),
-                is_active: file.default_provider.as_deref() == Some(name.as_str()),
+                is_active: directory.default_provider.as_deref() == Some(name.as_str()),
                 is_local: !name.eq_ignore_ascii_case("magpie")
                     && !willdeep_core::provider::is_magpie_gateway(
                         &base,
@@ -1101,25 +1102,27 @@ pub(crate) async fn complete(
     let config = crate::config::LoadedConfig::load(Some(host.config_path))
         .map_err(|error| PluginWebError::Internal(error.to_string()))?;
     let file = &config.file;
+    let directory = crate::magpie_integration::EffectiveProviders::load(file).await;
     let profile_name = match &request.provider {
         Some(name) => {
-            if !file.providers.contains_key(name) {
+            if directory.profile(name).is_err() {
                 return Err(PluginWebError::BadRequest("unknownProvider".to_owned()));
             }
             name.clone()
         }
-        None => file
-            .default_provider
-            .clone()
-            .or_else(|| file.providers.keys().next().cloned())
+        None => directory
+            .default_name(true)
+            .map_err(|error| PluginWebError::BadRequest(error.to_string()))?
+            .or_else(|| directory.providers.keys().next().cloned())
             .ok_or_else(|| PluginWebError::BadRequest("unavailable".to_owned()))?,
     };
-    let mut provider_config = crate::provider_config_from_profile(file, &profile_name)
+    let mut provider_config = directory
+        .config(&profile_name)
         .map_err(|_| PluginWebError::BadRequest("unavailable".to_owned()))?;
     if let Some(model) = &request.model {
         // 模型必须是这个 profile 自己列出来的：否则插件就能借用户的
         // 凭据去点一个更贵、或者根本不该被这条凭据访问的模型。
-        let profile = file.providers.get(&profile_name);
+        let profile = directory.providers.get(&profile_name);
         let allowed = profile.is_some_and(|profile| {
             profile.model.as_deref() == Some(model.as_str())
                 || profile.vision_model.as_deref() == Some(model.as_str())

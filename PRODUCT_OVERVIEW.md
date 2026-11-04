@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc3
+> 最后更新：2026-11-04 | 当前版本：v0.142.0-rc1
+
+0.142.0-rc1 接入 Magpie 社区 Agent 插件的独立 JSON 配置源：WillDeep 与 WillDeep CLI 各自连接，CLI 通过临时 `magpie-cli` Provider 解析，无显式选择的新会话采用当前连接，已有会话保留自己的 Provider 与模型。原 TOML、桌面 Provider 库与钥匙串不作为插件写入目标。契约、实现状态与验收台账见 [Magpie 集成](docs/MAGPIE_AGENT_PLAN.md)。本地实现与组合验收已完成（隔离链 21/21、真实 Magpie 链 22/22、插件宿主 12/12、桌面原生测试 19/19），尚未公开发布或社区收录；Linux/Windows 原生执行与 Desktop 全量测试未覆盖，详见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
 
 0.141.0-rc3 修复后台 supervisor 测试读取 PID 文件的竞态：在同一截止时间内等待完整非零 PID，重试 Windows 文件共享冲突及未完成写入，超时保留读取错误、进程输出和断连清理。此改动只调整测试握手，运行时与架构契约不变；验证范围见 [补充验收](docs/verification/0.141.0-rc3.md)。
 

@@ -87,6 +87,14 @@ pub struct Session {
     pub started_by: Option<Uuid>,
     pub workspace: PathBuf,
     pub profile: Option<String>,
+    /// Distinguishes an implicit default pinned at creation from a user choice
+    /// when the TUI starts a *new* session. Restoring never reapplies defaults.
+    #[serde(default = "legacy_explicit_provider_selection")]
+    pub provider_selection_explicit: bool,
+    /// External connection provenance survives disconnects and user profile
+    /// name reuse; such sessions must never fall back to a disk profile.
+    #[serde(default)]
+    pub magpie_integration: bool,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -139,6 +147,10 @@ pub struct Session {
     pub swift_source: Option<PathBuf>,
 }
 
+fn legacy_explicit_provider_selection() -> bool {
+    true
+}
+
 impl Session {
     /// Fork the current history under a fresh identity. The source's optimistic
     /// save baseline cannot authorize writes to this new session.
@@ -173,7 +185,9 @@ impl Session {
             },
             started_by: None,
             workspace,
+            provider_selection_explicit: profile.is_some(),
             profile,
+            magpie_integration: false,
             model: None,
             config: None,
             created_at: now,
@@ -918,6 +932,8 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         started_by: None,
         workspace: PathBuf::from(workspace),
         profile: None,
+        provider_selection_explicit: true,
+        magpie_integration: false,
         model: None,
         config: None,
         created_at: updated,
@@ -1144,6 +1160,8 @@ mod tests {
                 session.title = "user renamed".into();
                 session.title_source = TitleSource::User;
                 session.model = Some("new model".into());
+                session.provider_selection_explicit = false;
+                session.magpie_integration = true;
             })
             .unwrap();
         store.set_pinned(original.id, true).unwrap();
@@ -1155,6 +1173,8 @@ mod tests {
         assert_eq!(saved.title, "user renamed");
         assert_eq!(saved.title_source, TitleSource::User);
         assert_eq!(saved.model.as_deref(), Some("new model"));
+        assert!(!saved.provider_selection_explicit);
+        assert!(saved.magpie_integration);
         assert!(saved.pinned_at.is_some());
         assert_eq!(
             saved.messages.last().unwrap().content,

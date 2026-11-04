@@ -38,6 +38,7 @@ mod identity_cmd;
 mod integrations;
 mod job_cmd;
 mod local_provider_discovery;
+mod magpie_integration;
 mod mcp_cmd;
 mod mobile;
 mod model_defaults;
@@ -757,6 +758,7 @@ async fn run() -> Result<()> {
         cli.list_projects || cli.list_sessions || cli.list_approvals || cli.clear_approvals;
     if !administrative
         && !cli.onboarding
+        && !magpie_integration::claims_configuration(&cli)
         && let Err(error) = local_provider_discovery::discover(cli.config.as_deref()).await
     {
         eprintln!("Local Provider discovery: {error}");
@@ -826,6 +828,7 @@ async fn run() -> Result<()> {
             config_path: std::path::absolute(
                 cli.config.clone().unwrap_or(config::default_config_path()?),
             )?,
+            integration_default: cli.config.is_none(),
             profile: cli.profile.clone(),
             workspaces,
             home,
@@ -986,10 +989,27 @@ async fn run() -> Result<()> {
             cli.profile.clone(),
             prompt.as_deref().unwrap_or_default(),
         );
-        session.model = cli.model.clone();
+        session.profile = built.provider_profile.clone();
+        session.provider_selection_explicit = cli.profile.is_some()
+            || cli.model.is_some()
+            || cli.config.is_some()
+            || cli.provider.is_some()
+            || cli.api.is_some()
+            || cli.api_base.is_some()
+            || cli.api_key.is_some()
+            || provider_settings::ProviderEnvironment::read().has_overrides();
+        session.model = Some(built.provider_config.model.clone());
         session.id = built.session_id;
         session
     });
+    if cli.profile.is_some() {
+        session.profile = built.provider_profile.clone();
+    }
+    if cli.profile.is_some() || cli.model.is_some() {
+        session.model = Some(built.provider_config.model.clone());
+        session.provider_selection_explicit = true;
+    }
+    session.magpie_integration = built.provider_config.magpie_integration;
     if session.config.is_none() {
         session.config = Some(cli.config.clone().unwrap_or(config::default_config_path()?));
     }
@@ -1000,6 +1020,7 @@ async fn run() -> Result<()> {
     }
     if interactive_tui {
         let runtime_profile = session.profile.clone().or_else(|| cli.profile.clone());
+        let runtime_model = session.model.clone();
         return tui::run(
             agent,
             session,
@@ -1016,7 +1037,7 @@ async fn run() -> Result<()> {
                 daemon::RuntimeSubmitOptions {
                     workspace,
                     profile: runtime_profile,
-                    model: cli.model.clone(),
+                    model: runtime_model,
                     config: Some(cli.config.clone().unwrap_or(config::default_config_path()?)),
                 },
                 built.provider_config.clone(),
@@ -1103,9 +1124,9 @@ fn should_use_headless_runtime(
     if interactive_tui || web_bridge || run_args.is_some_and(|args| args.local) {
         return false;
     }
-    // These process-local overrides are intentionally not serialized into the
-    // Runtime task store. Use TOML profiles for persistent Runtime execution,
-    // or --local when an ephemeral override is required.
+    // These process-local CLI overrides are intentionally not serialized into
+    // the Runtime task store. Provider-specific environment aliases remain
+    // available to TOML profiles inherited by the Runtime process.
     cli.api_base.is_none()
         && cli.api_key.is_none()
         && cli.provider.is_none()
@@ -1126,14 +1147,47 @@ async fn run_with_runtime(
     run_args: Option<&RunArgs>,
 ) -> Result<()> {
     let workspace = harness::resolve_workspace(cli, resumed.as_ref())?;
+    let loaded = LoadedConfig::load(cli.config.as_deref())?;
+    let selection = magpie_integration::resolve(cli, &loaded, resumed.as_ref()).await?;
     let mut session = resumed.unwrap_or_else(|| {
-        willdeep_core::Session::new(workspace.clone(), cli.profile.clone(), &prompt)
+        let mut session =
+            willdeep_core::Session::new(workspace.clone(), selection.name.clone(), &prompt);
+        session.model = Some(selection.config.model.clone());
+        session
     });
+    if cli.profile.is_some() {
+        session.profile = selection.name;
+    }
+    if cli.profile.is_some() || cli.model.is_some() {
+        session.model = Some(selection.config.model);
+        session.provider_selection_explicit = true;
+    }
+    session.magpie_integration = selection.config.magpie_integration;
     if session.config.is_none() {
         session.config = Some(cli.config.clone().unwrap_or(config::default_config_path()?));
     }
     session.runtime_managed = true;
     store.save(&mut session)?;
+    if cli.profile.is_some() || cli.model.is_some() {
+        daemon::ensure_runtime_session(
+            home,
+            session.id,
+            &workspace,
+            session.profile.clone(),
+            session.model.clone(),
+        )
+        .await?;
+        if let Some(model) = session.model.as_deref() {
+            if let Some(profile) = session.profile.as_deref() {
+                daemon::tui_bridge::update_remote_session_provider(
+                    home, session.id, profile, model,
+                )
+                .await?;
+            } else {
+                daemon::update_remote_session_model(home, session.id, model.to_owned()).await?;
+            }
+        }
+    }
 
     let quiet = run_args.is_some_and(|args| args.quiet || args.output == RunOutput::Json);
     let machine_events = cli.json || run_args.is_some_and(|args| args.output == RunOutput::Ndjson);
@@ -1143,7 +1197,7 @@ async fn run_with_runtime(
             session_id: session.id,
             workspace,
             profile: session.profile.clone().or_else(|| cli.profile.clone()),
-            model: cli.model.clone(),
+            model: session.model.clone(),
             prompt,
             attachments,
         },
@@ -1362,6 +1416,9 @@ pub(crate) fn provider_config_from_profile(
     file: &config::ConfigFile,
     name: &str,
 ) -> Result<ProviderConfig> {
+    if name == magpie_integration::PROFILE_ID {
+        return magpie_integration::EffectiveProviders::snapshot(file).config(name);
+    }
     let profile = file
         .providers
         .get(name)
@@ -2276,6 +2333,10 @@ fn compact_output(output: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "main_tests.rs"]
+mod main_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2566,44 +2627,6 @@ mod tests {
         assert!(
             Cli::try_parse_from(["willdeep", "daemon", "upgrade", "--timeout", "86401"]).is_err()
         );
-    }
-
-    #[test]
-    fn headless_run_defaults_to_runtime_and_keeps_secret_overrides_local() {
-        let runtime = Cli::try_parse_from(["willdeep", "run", "inspect"]).unwrap();
-        let Some(CliCommand::Run(runtime_args)) = runtime.command.as_ref() else {
-            panic!("run command");
-        };
-        assert!(should_use_headless_runtime(
-            &runtime,
-            Some(runtime_args),
-            false,
-            false
-        ));
-
-        let local = Cli::try_parse_from(["willdeep", "run", "--local", "inspect"]).unwrap();
-        let Some(CliCommand::Run(local_args)) = local.command.as_ref() else {
-            panic!("run command");
-        };
-        assert!(!should_use_headless_runtime(
-            &local,
-            Some(local_args),
-            false,
-            false
-        ));
-
-        let secret =
-            Cli::try_parse_from(["willdeep", "run", "--api-key", "not-serialized", "inspect"])
-                .unwrap();
-        let Some(CliCommand::Run(secret_args)) = secret.command.as_ref() else {
-            panic!("run command");
-        };
-        assert!(!should_use_headless_runtime(
-            &secret,
-            Some(secret_args),
-            false,
-            false
-        ));
     }
 
     #[test]

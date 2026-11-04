@@ -1,0 +1,11 @@
+{
+  "name": "willdeep-magpie-local-agents",
+  "version": "0.1.0-rc2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test agent-willdeep/test/*.test.js agent-willdeep-cli/test/*.test.js test/*.test.js",
+    "test:host": "node tools/check-host.js",
+    "test:packages": "ruby tools/check-packages.rb"
+  }
+}
