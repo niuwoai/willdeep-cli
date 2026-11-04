@@ -93,7 +93,7 @@ jobs:
       - name: Package universal binary
         run: |
           lipo -create target/x86_64-apple-darwin/release/willdeep target/aarch64-apple-darwin/release/willdeep -output willdeep
-          lipo -verify_arch x86_64 arm64 willdeep
+          ruby scripts/check_macos_universal.rb willdeep
           tar -czf willdeep-macos-universal.tar.gz willdeep
       - uses: actions/upload-artifact@v4
         with:
