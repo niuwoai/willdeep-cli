@@ -158,6 +158,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
     usages.push(
         "/peers [list|send <session> <text>|reply <message> <text>|read <message>|open <session>]",
     );
+    usages.push("/workflow [list|history|get <id>|stop <id>|retry <id>|resume <id>]");
     debug_assert!(
         usages
             .iter()
@@ -481,6 +482,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "独立会话协作：查看、发送、回复、已读与跳转",
                 "Independent session coordination: list, send, reply, read and open",
                 "独立セッションの一覧・送信・返信・既読・切替",
+            ),
+        ),
+        (
+            "/workflow",
+            language.text(
+                "查看工作流列表、阶段和节点；停止、重试或恢复运行",
+                "List workflows, inspect phases and nodes; stop, retry or resume runs",
+                "ワークフロー・段階・ノードを表示。停止・再試行・再開",
             ),
         ),
     ]

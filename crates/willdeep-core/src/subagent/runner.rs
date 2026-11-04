@@ -317,6 +317,8 @@ pub(super) struct SubagentRun {
     pub(super) isolated_evaluation: bool,
     /// Only the sealed deterministic free-review adapter selects this format.
     pub(super) offline_review_json: bool,
+    /// Workflow result channel, independent of the bounded human-readable report.
+    pub(super) structured_output: Option<Arc<Mutex<Option<serde_json::Value>>>>,
     pub(super) execution_deadline: Option<tokio::time::Instant>,
     pub(super) workspace: PathBuf,
     pub(super) sandbox: crate::sandbox::SandboxSpec,
@@ -388,6 +390,7 @@ async fn run_subagent_inner(
     let SubagentRun {
         isolated_evaluation,
         offline_review_json,
+        structured_output,
         execution_deadline,
         workspace,
         sandbox,
@@ -521,6 +524,7 @@ async fn run_subagent_inner(
             attempt,
             isolated_evaluation,
             offline_review_json,
+            structured_output.as_ref(),
             global_rules.as_deref(),
         )
         .await?;
@@ -652,6 +656,7 @@ async fn run_once(
     attempt: usize,
     isolated_evaluation: bool,
     offline_review_json: bool,
+    structured_output: Option<&Arc<Mutex<Option<serde_json::Value>>>>,
     global_rules: Option<&[String]>,
 ) -> Result<(String, WorkerFacts, Option<crate::rsi::ExecutionContext>), AgentError> {
     let approval = if profile.shell.uses_intelligent_review() {
@@ -735,7 +740,12 @@ async fn run_once(
     // A relay-hosted trade already carries its job prompt server-side. Sending
     // the client's copy too would put two descriptions of the same trade in
     // one context — and when they drift, the worker gets to pick.
-    let mut system_prompt = if offline_review_json && isolated_evaluation {
+    let mut system_prompt = if structured_output.is_some() {
+        let mut sections = vec![BOUNDARY_TEMPLATE, &profile.capability_prompt];
+        if has_board { sections.push(BOARD_GUIDANCE); }
+        sections.push("Workflow result contract: return exactly one JSON value as the final response, with evidence inside the value. Do not use Markdown fences or append prose. This replaces any ordinary CONCLUSION/EVIDENCE/OPEN QUESTIONS report format. The runtime stores this JSON separately and adds its own human-readable evidence trailer; do not write a worker-facts block yourself.");
+        sections.join("\n\n")
+    } else if offline_review_json && isolated_evaluation {
         [
             BOUNDARY_TEMPLATE,
             &profile.capability_prompt,
@@ -834,6 +844,20 @@ async fn run_once(
             turns: outcome.turns,
             report: format!("{}\n\n{trailer}", outcome.final_text),
         });
+    }
+    if let Some(slot) = structured_output {
+        let output: serde_json::Value =
+            serde_json::from_str(&outcome.final_text).map_err(|error| {
+                AgentError::Subagent(format!(
+                    "workflow worker {agent_id} returned invalid JSON: {error}"
+                ))
+            })?;
+        crate::workflow::check_value(&output, crate::workflow::WORKFLOW_MAX_VALUE_BYTES)
+            .map_err(|error| AgentError::Subagent(error.to_string()))?;
+        *slot
+            .lock()
+            .map_err(|_| AgentError::Checkpoint("workflow result channel unavailable".into()))? =
+            Some(output);
     }
     Ok((outcome.final_text, facts, context))
 }
@@ -1010,6 +1034,7 @@ mod tests {
         let run = SubagentRun {
             isolated_evaluation: true,
             offline_review_json: false,
+            structured_output: None,
             execution_deadline: None,
             workspace: root.clone(),
             sandbox: crate::sandbox::SandboxSpec::new(crate::sandbox::SandboxPolicy::Off, []),

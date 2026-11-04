@@ -52,6 +52,7 @@ pub mod tools;
 pub mod types;
 pub mod usage_ledger;
 pub mod worker_tier;
+pub mod workflow;
 
 pub use agent::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInstruction, AgentInstructionInbox,

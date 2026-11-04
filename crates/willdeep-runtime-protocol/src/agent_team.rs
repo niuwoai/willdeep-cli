@@ -25,12 +25,22 @@ pub struct AgentUsageSummary {
     pub accounted_tokens: u64,
 }
 
+/// A worker remains in its parent's team and scheduler, with optional workflow attribution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRunOwner {
+    pub workflow_run_id: Uuid,
+    pub node_instance_id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRun {
     pub id: Uuid,
     pub request_id: Uuid,
     pub agent_id: Uuid,
     pub parent_session_id: Uuid,
+    /// Absent for ordinary parent-owned workers and records written before workflows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_owner: Option<WorkflowRunOwner>,
     pub sequence: u64,
     pub reason: AgentRunReason,
     pub status: AgentStatus,
@@ -127,4 +137,39 @@ pub struct AgentWorkerSummary {
     pub run_count: usize,
     pub queue_position: Option<usize>,
     pub cumulative_usage: AgentUsageSummary,
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn old_runs_default_to_parent_and_workflow_owner_round_trips() {
+        let mut json = serde_json::json!({
+            "id": Uuid::new_v4(), "request_id": Uuid::new_v4(), "agent_id": Uuid::new_v4(),
+            "parent_session_id": Uuid::new_v4(), "sequence": 1, "reason": "spawn",
+            "status": "queued", "label": "inspect", "model": null, "queued_at_ms": 1,
+            "started_at_ms": null, "finished_at_ms": null, "max_turns": null,
+            "token_budget": null, "timeout_seconds": null, "current_turn": 0,
+            "current_tool": null, "report": null
+        });
+        let ordinary: AgentRun = serde_json::from_value(json.clone()).unwrap();
+        assert!(ordinary.workflow_owner.is_none());
+        assert!(
+            serde_json::to_value(ordinary)
+                .unwrap()
+                .get("workflow_owner")
+                .is_none()
+        );
+        let owner = WorkflowRunOwner {
+            workflow_run_id: Uuid::new_v4(),
+            node_instance_id: "node:0".into(),
+        };
+        json["workflow_owner"] = serde_json::to_value(&owner).unwrap();
+        let workflow: AgentRun = serde_json::from_value(json).unwrap();
+        assert_eq!(workflow.workflow_owner.as_ref(), Some(&owner));
+        let reread: AgentRun =
+            serde_json::from_value(serde_json::to_value(&workflow).unwrap()).unwrap();
+        assert_eq!(reread, workflow);
+    }
 }

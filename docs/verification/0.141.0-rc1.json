@@ -1,0 +1,118 @@
+{
+  "version": "0.141.0-rc1",
+  "date": "2026-11-04",
+  "snapshot": "pre_release_acceptance",
+  "status": "passed_with_documented_limits",
+  "environment": {
+    "platform": "macOS",
+    "isolated_worktree": true,
+    "isolated_runtime_home": true,
+    "loopback_fake_model": true,
+    "paid_remote_model_calls": false,
+    "daily_credentials_read": false
+  },
+  "rust": {
+    "workspace_test_exit_code": 0,
+    "workspace_counts": {
+      "cli": { "passed": 1248, "ignored": 4 },
+      "core": { "passed": 933, "ignored": 6 },
+      "headless": { "passed": 41 },
+      "runtime_protocol": { "passed": 48 },
+      "runtime_client": { "passed": 7 },
+      "provider_contracts": { "passed": 5 },
+      "workspace_versions": { "passed": 1 }
+    },
+    "additional_workspace_suites": ["detached_job", "doc_tests"],
+    "detached_ignored": 1,
+    "final_sse_fix_related_tests_passed": 55,
+    "clippy_after_final_fix_exit_code": 0,
+    "build_after_final_fix_exit_code": 0,
+    "full_workspace_repeated_after_final_sse_fix": false,
+    "final_binary_sha256": "0dd5ebd6c38d74d3c9f279596db491a46a1202b025f78b8b40c093fd3bd0cbb6"
+  },
+  "web": {
+    "test_files_passed": 43,
+    "tests_passed": 310,
+    "lint_exit_code": 0,
+    "build_exit_code": 0,
+    "existing_warnings": ["ModelPicker useEffect 依赖提示", "Vite chunk 大小提示"]
+  },
+  "other_checks": {
+    "npm_tests_passed": 6,
+    "npm_assertions_passed": 37,
+    "fmt_passed": true,
+    "diff_whitespace_passed": true,
+    "source_size_passed": true,
+    "version_consistency_passed": true
+  },
+  "runtime_e2e": {
+    "passed": true,
+    "coverage_complete": true,
+    "fake_model_requests": 59,
+    "checks_passed": 10,
+    "checks": [
+      "chat_create_update_bind_same_turn_and_old_worker_snapshot",
+      "durable_api_admission_pipeline_and_idempotency",
+      "json_rejection_retry_and_immutable_history",
+      "stop_cancels_real_worker_and_blocks_successor",
+      "terminal_aggregates_acknowledged_after_parent_commit",
+      "chat_schema_save_run_final_background_phases_and_persisted_projection_card",
+      "parallel_items_verify_independently_before_summary",
+      "same_home_crash_interrupted_explicit_resume_reuses_success_and_frozen_catalog",
+      "same_turn_worker_two_workflows_shared_backpressure_19_unique_completions",
+      "real_pty_workflow_commands_wide_and_narrow"
+    ],
+    "raw_reports": [
+      "build/verification/workflow-runtime/report.json",
+      "build/verification/workflow-runtime/report.md"
+    ]
+  },
+  "tui": {
+    "passed": true,
+    "checks_passed": 6,
+    "sizes": ["110x34", "42x22"],
+    "commands": ["list", "get", "history"],
+    "keys": ["Left", "Delete", "Enter", "PageUp", "PageDown", "Ctrl-C"],
+    "real_pty": true,
+    "physical_terminal_gui": false,
+    "read_only_commands_added_model_turns": false
+  },
+  "browser": {
+    "running_card_before_parent_completion": true,
+    "stop_reached_cancelled": true,
+    "resume_completed_and_preserved_source": true,
+    "resumed_success_nodes_reused": 1,
+    "retry_completed_and_preserved_source": true,
+    "history_selectable": true,
+    "workflow_leaf_individual_controls_hidden": true,
+    "phase_model_usage_duration_visible": true,
+    "stable_read_http_statuses": [200, 200, 200, 200, 200, 200],
+    "current_error_alerts": 0,
+    "new_javascript_exception_observed": false,
+    "mobile": {
+      "viewport": [375, 812],
+      "document_scroll_width": 375,
+      "body_scroll_width": 375,
+      "card_css_width": 281,
+      "card_elements_outside_viewport": 0
+    },
+    "desktop_viewport_restored": true,
+    "screenshots_delivered": 2,
+    "expected_network_failures": "崩溃恢复验收故意终止隔离 daemon 期间，累计控制台日志保留 HTTP 500；恢复后目标读取均为 HTTP 200。"
+  },
+  "limits": [
+    "Windows/Linux 原生执行未覆盖。",
+    "使用确定性假模型，未评估真实远端模型质量、费用和延迟。",
+    "浏览器以中文为主，未逐语言逐屏验收。",
+    "ignored 测试未计为通过。",
+    "不承诺跨进程 exactly-once；副作用未知时保留 interrupted 并要求明确恢复。"
+  ],
+  "delivery": {
+    "markdown_report": "docs/verification/0.141.0-rc1.md",
+    "committed": false,
+    "pushed": false,
+    "tagged": false,
+    "installed": false,
+    "released": false
+  }
+}

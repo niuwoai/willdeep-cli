@@ -16,6 +16,7 @@ impl SubagentCatalog {
         message: &str,
         request_id: uuid::Uuid,
     ) -> Result<AgentRun, AgentError> {
+        self.ensure_manual_agent_control(agent_id)?;
         let message = message.trim();
         if message.is_empty() || message.len() > 16 * 1024 {
             return Err(AgentError::Subagent(
@@ -53,10 +54,10 @@ impl SubagentCatalog {
                 if let Err(error) = self
                     .run_with_id(
                         agent_id,
-                        dispatch.args,
-                        dispatch.approved_targets,
-                        dispatch.approved_command,
-                        Some(dispatch.prepared),
+                        dispatch.args.clone(),
+                        dispatch.approved_targets.clone(),
+                        dispatch.approved_command.clone(),
+                        Some(dispatch),
                         Some((request_id, AgentRunReason::Continue)),
                     )
                     .await
@@ -115,10 +116,10 @@ impl SubagentCatalog {
         }
         self.run_with_id(
             agent_id,
-            dispatch.args,
-            dispatch.approved_targets,
-            dispatch.approved_command,
-            Some(dispatch.prepared),
+            dispatch.args.clone(),
+            dispatch.approved_targets.clone(),
+            dispatch.approved_command.clone(),
+            Some(dispatch),
             Some((request_id, AgentRunReason::Continue)),
         )
         .await?;
@@ -131,6 +132,13 @@ impl SubagentCatalog {
     /// Called once after the Harness owns its parent session. Read-only clients
     /// never invoke this: running tools become Interrupted, only Queued resumes.
     pub async fn restore_queued_runs(&self) -> Result<usize, AgentError> {
+        self.restore_queued_runs_checked(|_| Ok(None)).await
+    }
+
+    pub(crate) async fn restore_queued_runs_checked(
+        &self,
+        allows_workflow: impl Fn(&AgentRun) -> Result<Option<bool>, AgentError> + Send + Sync,
+    ) -> Result<usize, AgentError> {
         let Some(store) = self.background.agent_run_store() else {
             return Ok(0);
         };
@@ -147,28 +155,48 @@ impl SubagentCatalog {
         let mut restored = 0;
         for entry in store.pending().map_err(run_error)? {
             let result = async {
+                if entry.record.workflow_owner.is_some() {
+                    match allows_workflow(&entry.record)? {
+                        // Ordinary team collection leaves new workflow admissions
+                        // to their owning driver rather than cancelling them.
+                        None => return Ok(false),
+                        Some(false) => {
+                            store
+                                .finish(
+                                    entry.record.id,
+                                    AgentStatus::Cancelled,
+                                    "owning workflow no longer authorizes queued recovery",
+                                )
+                                .map_err(run_error)?;
+                            return Ok(false);
+                        }
+                        Some(true) => {}
+                    }
+                }
                 let dispatch: super::super::dispatch_store::DispatchRecord =
                     serde_json::from_value(entry.dispatch).map_err(run_error)?;
                 self.validate_run_owner(&dispatch, entry.record.agent_id)?;
-                if let Some(model) = dispatch.model {
+                if let Some(model) = &dispatch.model {
                     self.model_overrides
                         .lock()
                         .expect("subagent model overrides")
-                        .insert(entry.record.agent_id, model);
+                        .insert(entry.record.agent_id, model.clone());
                 }
                 self.run_with_id(
                     entry.record.agent_id,
-                    dispatch.args,
-                    dispatch.approved_targets,
-                    dispatch.approved_command,
-                    Some(dispatch.prepared),
+                    dispatch.args.clone(),
+                    dispatch.approved_targets.clone(),
+                    dispatch.approved_command.clone(),
+                    Some(dispatch),
                     Some((entry.record.id, entry.record.reason)),
                 )
-                .await
+                .await?;
+                Ok::<_, AgentError>(true)
             }
             .await;
             match result {
-                Ok(_) => restored += 1,
+                Ok(true) => restored += 1,
+                Ok(false) => {}
                 Err(error) => {
                     store
                         .finish(entry.record.id, AgentStatus::Blocked, &error.to_string())
@@ -202,16 +230,6 @@ impl SubagentCatalog {
         {
             return Err(AgentError::Subagent(
                 "Agent run is not a background child of this parent session".into(),
-            ));
-        }
-        if dispatch
-            .args
-            .profile
-            .as_ref()
-            .is_none_or(|profile| !self.profiles.contains_key(profile))
-        {
-            return Err(AgentError::Subagent(
-                "original Agent profile is no longer configured".into(),
             ));
         }
         if dispatch

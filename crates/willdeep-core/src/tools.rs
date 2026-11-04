@@ -23,8 +23,10 @@ use crate::safety::CommandSafety;
 use crate::sandbox::{SandboxPolicy, SandboxSpec};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
+mod host_tools;
 mod peer_sessions;
 mod plan_jobs;
+pub use host_tools::{AgentDefinitionHost, WorkflowHost, WorkflowNotice};
 pub use peer_sessions::SessionCollaboration;
 
 const DEFAULT_MAX_RESULTS: usize = 60;
@@ -184,6 +186,8 @@ impl ToolError {
 }
 
 pub struct ToolRegistry {
+    agent_definition_host: Option<Arc<dyn AgentDefinitionHost>>,
+    workflow_host: Option<Arc<dyn WorkflowHost>>,
     session_collaboration: Option<Arc<dyn SessionCollaboration>>,
     completion_contract: Option<CompletionContract>,
     execution_deadline: Mutex<Option<tokio::time::Instant>>,
@@ -329,6 +333,8 @@ impl ToolRegistry {
             )));
         }
         Ok(Self {
+            agent_definition_host: None,
+            workflow_host: None,
             session_collaboration: None,
             completion_contract: None,
             execution_deadline: Mutex::new(None),
@@ -825,13 +831,13 @@ impl ToolRegistry {
             definition(
                 "spawn_agent",
                 format!(
-                    "Delegate a self-contained task to an isolated child. {} Expert requires a runtime-validated escalation ticket after smaller tiers were attempted. Children cannot spawn agents or show approval UI. Commands use static safety rules, then AI review for non-sensitive ambiguity; declined commands can be returned to the parent for exact target_command approval. Pass task with known facts, read/write files and a verifier. To run independent tasks in parallel, start each with run_in_background=true (disjoint write files, at most 5 at once) and join them with await_agents. Parallel workers share findings through the session's board (board_post / board_read). Every report ends with a runtime <worker-facts> block (verdict, files actually written, tool failures); trust it over the worker's own claims.",
+                    "Delegate a self-contained task to an isolated child. {} Expert requires a runtime-validated escalation ticket after smaller tiers were attempted. Children cannot spawn agents or show approval UI. Commands use static safety rules, then AI review for non-sensitive ambiguity; declined commands can be returned to the parent for exact target_command approval. Pass task with known facts, read/write files and a verifier. To run independent tasks in parallel, start each with run_in_background=true (disjoint write files; the shared team scheduler defaults to 8 concurrent workers) and join them with await_agents. Parallel workers share findings through the session's board (board_post / board_read). Every report ends with a runtime <worker-facts> block (verdict, files actually written, tool failures); trust it over the worker's own claims.",
                     crate::subagent::public_trade_contract()
                 ),
                 json!({"type":"object","properties":{
                     "prompt":{"type":"string","description":"Free-text instruction. Still required when `task` is present; keep it to what the packet does not already say."},
                     "label":{"type":"string"},
-                    "profile":{"type":"string","enum":crate::subagent::PUBLIC_SUBAGENT_IDS,"description":"The responsibility. Independent of worker_tier."},
+                    "profile":{"type":"string","description":"Built-in responsibility or installed specialist definition_id. Use agent_library_read to discover current user/ or official/ ids. Independent of worker_tier; runtime validates the current catalog."},
                     "worker_tier":{"type":"string","enum":["standard","advanced","expert"],"description":"Model tier. Defaults to standard; expert requires the escalation ticket."},
                     "run_in_background":{"type":"boolean"},
                     "target_file":{"type":"string","description":"Single write target for the editor profile."},
@@ -920,6 +926,7 @@ impl ToolRegistry {
             tools.extend(board_tools::definitions());
         }
         tools.extend(agent_control::definitions());
+        tools.extend(self.host_definitions());
         if self.session_collaboration.is_some() {
             tools.extend(peer_sessions::definitions());
         }
@@ -990,6 +997,10 @@ impl ToolRegistry {
 
     async fn dispatch(&self, call: &ToolCall) -> Result<String, ToolError> {
         match call.name.as_str() {
+            "agent_library_read"
+            | "agent_library_manage"
+            | "workflow_read"
+            | "workflow_control" => self.host_tool(call).await,
             "list_workspace_sessions" | "send_session_message" | "read_session_messages" => {
                 self.session_tool(call).await
             }

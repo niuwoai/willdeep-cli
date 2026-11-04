@@ -301,6 +301,48 @@ impl BackgroundTaskRegistry {
             .contains(id)
     }
 
+    /// Workflow leaves are collected by their graph driver, never a parent-worker notice.
+    pub fn is_workflow_task(&self, id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .find(|task| task.snapshot.id == id)
+            .is_some_and(|task| {
+                task.run_request.as_ref().is_some_and(|request| {
+                    request
+                        .dispatch
+                        .get("workflow_owner")
+                        .is_some_and(|owner| !owner.is_null())
+                })
+            })
+    }
+
+    /// Cancel every workflow-owned task, including entries outside the UI snapshot window.
+    pub fn cancel_workflow_tasks(&self) {
+        let agents: Vec<_> = self
+            .inner
+            .lock()
+            .expect("background registry")
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.snapshot.status.is_pending()
+                    && task.run_request.as_ref().is_some_and(|request| {
+                        request
+                            .dispatch
+                            .get("workflow_owner")
+                            .is_some_and(|owner| !owner.is_null())
+                    })
+            })
+            .filter_map(|task| task.snapshot.agent_id)
+            .collect();
+        for agent in agents {
+            self.kill_agent(agent);
+        }
+    }
+
     /// 子 Agent 最近一次运行对应的后台任务句柄与快照。
     pub fn task_for_agent(&self, agent_id: uuid::Uuid) -> Option<BackgroundTaskSnapshot> {
         self.inner
@@ -433,6 +475,14 @@ impl BackgroundTaskRegistry {
                 request.model = Some(model.to_owned());
                 if let Some(dispatch) = request.dispatch.as_object_mut() {
                     dispatch.insert("model".into(), serde_json::Value::String(model.to_owned()));
+                    // Only an explicit retry model selection replaces the frozen model.
+                    if let Some(binding) = dispatch
+                        .get_mut("execution")
+                        .and_then(|execution| execution.get_mut("binding"))
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        binding.insert("model".into(), serde_json::Value::String(model.to_owned()));
+                    }
                 }
             }
         }
@@ -646,6 +696,10 @@ impl BackgroundTaskRegistry {
             instruction_inbox: Some(instruction_inbox),
             cancel_aware: None,
         })
+    }
+
+    pub(crate) fn available_agent_capacity(&self) -> Result<usize, String> {
+        self.scheduler.remaining_capacity()
     }
 
     fn launch(&self, spec: LaunchSpec) -> Result<String, String> {
@@ -908,6 +962,9 @@ impl BackgroundTaskRegistry {
                 snapshot,
             }
         };
+        if self.is_workflow_task(id) {
+            return Some(event);
+        }
         self.inner
             .lock()
             .expect("background registry")

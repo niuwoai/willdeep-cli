@@ -34,6 +34,7 @@ mod schedules;
 mod setup;
 mod shares;
 mod turn_queue;
+mod workflows;
 
 const MAX_PROMPT_CHARS: usize = 100_000;
 const MAX_AGENT_LABEL_CHARS: usize = 128;
@@ -635,6 +636,7 @@ async fn serve_internal(
         .merge(federation::routes())
         .merge(shares::routes())
         .merge(agent_library::routes())
+        .merge(workflows::routes())
         .route("/", get(index))
         // 单页应用的 catch-all。插件的 /plugin-host/... 比它更具体，
         // 路由树按具体度匹配，所以不会被这一条吞掉。
@@ -2623,6 +2625,9 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
             .text("正在整理结果", "Preparing result", "結果を整理中")
             .to_owned(),
         "completed" => return Some(value),
+        "workflow_updated" => {
+            return Some(serde_json::json!({"type":kind, "workflow":value.get("workflow")}));
+        }
         "assistant_text" => {
             let thought = value
                 .get("text")

@@ -1702,7 +1702,7 @@ impl EventSink for TerminalSink {
         }
         let event = event.into_unscoped();
         match event {
-            AgentEvent::PlanUpdated(_) => {}
+            AgentEvent::PlanUpdated(_) | AgentEvent::WorkflowUpdated(_) => {}
             AgentEvent::RouteDecided {
                 tier,
                 profile,
@@ -1918,8 +1918,33 @@ pub(crate) fn client_identity(surface: Surface) -> &'static str {
 // JSON 与进程内 TUI 照旧调用，测试也留在这里。
 pub(crate) use willdeep_core::conversation::tool_detail;
 
+/// Preserve structured values and line breaks while redacting every display string.
+fn public_workflow_value(workflow: &willdeep_core::workflow::WorkflowRun) -> serde_json::Value {
+    fn redact(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::String(text) => {
+                *text = text
+                    .lines()
+                    .map(willdeep_core::judge::redact_credentials)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(redact),
+            serde_json::Value::Object(fields) => fields.values_mut().for_each(redact),
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(workflow).expect("workflow serializes");
+    redact(&mut value);
+    value
+}
+
 pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
     match event {
+        AgentEvent::WorkflowUpdated(workflow) => serde_json::json!({
+            "type": "workflow_updated",
+            "workflow": public_workflow_value(&workflow),
+        }),
         AgentEvent::PlanUpdated(mut plan) => {
             for step in &mut plan.steps {
                 step.text = willdeep_core::judge::redact_credentials(&step.text);
@@ -2045,6 +2070,14 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
                         .map(willdeep_core::judge::redact_credentials);
                 }
                 value["plan_update"] = serde_json::to_value(receipt).expect("plan serializes");
+            }
+            if !is_error
+                && call.name == "workflow_control"
+                && let Ok(receipt) = serde_json::from_str::<serde_json::Value>(&output)
+                && let Some(run) = receipt.get("workflow")
+                && let Ok(run) = serde_json::from_value(run.clone())
+            {
+                value["workflow"] = public_workflow_value(&run);
             }
             if !is_error
                 && call.name == "run_command"
@@ -2245,6 +2278,37 @@ fn compact_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_events_and_control_receipts_preserve_structure_and_redact_display_strings() {
+        let mut value = serde_json::json!({
+            "id":uuid::Uuid::new_v4(), "parent_session_id":uuid::Uuid::new_v4(),
+            "definition_id":"review-v1", "spec":willdeep_core::workflow::example_spec(),
+            "input":null, "limits":willdeep_core::workflow::WorkflowLimits::default(),
+            "status":"running", "nodes":[], "output":null,
+            "report":"first line\n--password fixture-secret", "error":null,
+            "created_at_ms":1, "finished_at_ms":null, "source_run_id":null, "acknowledged":false,
+            "revision":1
+        });
+        let run = serde_json::from_value(value.clone()).unwrap();
+        let event = agent_event_json(AgentEvent::WorkflowUpdated(Box::new(run)));
+        assert_eq!(event["type"], "workflow_updated");
+        assert!(event["workflow"]["report"].as_str().unwrap().contains('\n'));
+        assert!(!event.to_string().contains("fixture-secret"));
+        assert!(event["workflow"]["limits"].is_object());
+        value["report"] = serde_json::Value::Null;
+        let call = willdeep_core::ToolCall {
+            id: "workflow-call".into(),
+            name: "workflow_control".into(),
+            arguments: "{}".into(),
+        };
+        let receipt = agent_event_json(AgentEvent::ToolCompleted {
+            call,
+            output: serde_json::json!({"workflow":value}).to_string(),
+            is_error: false,
+        });
+        assert_eq!(receipt["workflow"]["id"], value["id"]);
+    }
 
     /// 成功的工具只报名字；失败的才带上参数和输出，否则事后排查只剩一个 task_id。
     /// 参数里的凭据按命令审批的同一套规则打码，长输出留首尾。

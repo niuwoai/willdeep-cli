@@ -39,6 +39,7 @@ impl CustomerSession {
             !self.token.trim().is_empty() && !self.user_id.is_empty() && !self.tenant_id.is_empty(),
             "incomplete customer identity"
         );
+        let _lock = AgentLibrary::new(home).lock_scope()?;
         private_write(&home.join("agent-session.json"), &serde_json::to_vec(self)?)
     }
     pub fn ensure_current(&self, home: &Path) -> Result<()> {

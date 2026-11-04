@@ -910,12 +910,12 @@ async fn the_expert_tier_swaps_the_model_without_changing_the_responsibility() {
     assert!(catalog.has_profile("reader"));
     assert!(catalog.has_profile("judge"));
     assert_eq!(
-        catalog.profile(Some("deep")).map(|p| p.id.as_str()),
-        Some("generalist")
+        catalog.profile(Some("deep")).map(|p| p.id),
+        Some("generalist".into())
     );
     assert_eq!(
-        catalog.profile(Some("judge")).map(|p| p.id.as_str()),
-        Some("reviewer")
+        catalog.profile(Some("judge")).map(|p| p.id),
+        Some("reviewer".into())
     );
 }
 

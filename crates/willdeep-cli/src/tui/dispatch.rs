@@ -144,6 +144,44 @@ pub(super) fn wake_for_kernel_events(
     )
 }
 
+/// Workflow nodes do not broadcast ordinary background completion events. Poll
+/// their durable pending/report state so the gap between phases also wakes us.
+pub(super) fn wake_for_workflows(
+    app: &mut App,
+    session: &mut Session,
+    store: &SessionStore,
+    agent: &Arc<Agent>,
+    runtime: &super::TuiRuntime,
+) -> Result<()> {
+    if app.running || session.runtime_managed {
+        return Ok(());
+    }
+    if !agent.workflows_pending() && !agent.workflow_reports_pending()? {
+        return Ok(());
+    }
+    match dispatch_notification(
+        app,
+        session,
+        store,
+        agent,
+        &runtime.tx,
+        "Collect pending workflow results and continue the workflow if necessary.".to_owned(),
+    ) {
+        // Another surface owns this session; its harness will collect results.
+        Err(error)
+            if matches!(
+                error.downcast_ref::<willdeep_core::session::SessionError>(),
+                Some(willdeep_core::session::SessionError::ConcurrentUpdate(
+                    "active execution"
+                ))
+            ) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
+}
+
 pub(super) fn dispatch_notification(
     app: &mut App,
     session: &mut Session,

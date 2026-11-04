@@ -84,6 +84,15 @@ impl Scheduler {
         }
     }
 
+    pub fn remaining_capacity(&self) -> Result<usize, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "agent scheduler unavailable")?;
+        Ok((self.settings.max_concurrent + self.settings.max_queued)
+            .saturating_sub(state.running.len() + state.waiting.len()))
+    }
+
     pub fn reserve(&self, agent: Uuid) -> Result<Ticket, String> {
         let (sender, receiver) = oneshot::channel();
         let mut state = self

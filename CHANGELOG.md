@@ -6,6 +6,26 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.141.0-rc1] - 2026-11-04
+
+### Added
+- 声明式工作流 v1：`agent` / `switch` / `foreach` / `repeat`、依赖 DAG、逐项流水线、结构化输出、有限 Schema 与 JSON Pointer；阶段只用于展示，不增加调度屏障。定义按 ID 不可变，输入、图和展开硬限在宿主校验。
+- 工作流运行、节点实例和派工意图持久化；在派工前保存 attempt/request ID，重启按 AgentRun 对账。停止收拢所属 Worker；未知副作用记为 `interrupted`，不自动重放；retry/resume 创建关联的新运行并记录旧成功结果来源，复用不计作新模型调用。
+- 父会话工作流宿主与 `workflow_read` / `workflow_control` 工具、鉴权 `workflow.*` Runtime 操作、Web 工作流卡片和 TUI `/workflow` 查询/控制入口。driver 在父模型回答后继续推进，agent 叶节点复用普通派工安全链、默认 8 并发及 64 排队的共享 Scheduler。
+- 对话专业智能体工具 `agent_library_read` / `agent_library_manage`，支持 list/get/history 与 create/update/fork/bind/enable。CLI、Web 与对话写入共用宿主 scope、`installation_revision` CAS 及 request 收据，拒绝过期更新、账号切换和同 request ID 异参重放；官方正文须先 fork。
+- 新增 [工作流契约与验收说明](docs/WORKFLOWS.md)，同步产品、架构、智能体库、子 Agent 与 Runtime API 文档。
+
+### Changed
+- 保存并刷新专业目录后，本轮后续新派工使用新快照；在途、续做和恢复 Worker 使用原定义、原模型绑定与执行限制快照，当前权限与预算重新核验。刷新失败返回 `saved_not_applied`，保留已保存事实。
+- 智能体本机安装状态新增递增修订和幂等收据，旧安装记录兼容读取、首次成功写入迁移；聊天写入固定读取时的 local/private 安装身份及修订，拒绝同名同修订安装遮蔽。完全相同包的重复 import 保留原设置，普通 update 仍须严格递增正文版本；可交换智能体包仍为 v1。
+- 工作流宿主取消覆盖全部 Worker，不受最近 50 条展示窗口限制，并持久停止已接管的图，保留尚未接管的新受理运行；只读宿主退出不影响其他执行者。恢复排队叶前再次核验图意图，终态图补齐尚未确认的叶报告；工作流节点只能经所属运行控制，普通 Agent 控制入口及 Web 动作会拒绝或隐藏。
+- Web SSE 保留工作流状态载荷，使父会话仍运行时即可展示和控制工作流卡片；不转发工具原始参数或输出。
+- Cargo workspace、内部 runtime-protocol/client 依赖版本钉、Cargo.lock、Web/npm 包版本和安装清单统一至 `0.141.0-rc1`；未发布产物的安装清单仍为空 `assets`。
+
+### Validation
+- Rust workspace 全量测试、fmt、Clippy 和构建通过；Web 43 个测试文件、310 个测试及 lint/build 通过；npm 包契约 6 个测试、37 个断言通过。浏览器实测后补齐 SSE 转发，相关 55 项 Rust 测试、Clippy 和最终构建再次通过。
+- Ruby 隔离 Runtime/API/E2E 的 10 组场景通过，包含逐项流水线、父回复后的后台推进、同目录崩溃恢复、共享背压和真实宽窄 PTY；JSON + Markdown 报告及复现命令见 [验收报告](docs/verification/0.141.0-rc1.md)。未使用真实远端模型，未执行 Windows/Linux 原生验收，未发布。
+
 ## [0.140.0-rc1] - 2026-11-03
 
 ### Added

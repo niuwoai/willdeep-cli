@@ -7,6 +7,10 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::{AgentPackage, digest, valid_hash};
+mod transaction;
+pub use transaction::{Mutation, MutationReceipt, MutationRequest};
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -16,10 +20,13 @@ pub enum Origin {
     Private,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Installation {
     pub definition_id: String,
     pub sha256: String,
+    /// Local state generation, independent of the immutable portable package hash.
+    #[serde(default = "initial_revision")]
+    pub installation_revision: u64,
     pub origin: Origin,
     pub enabled: bool,
     pub pinned: bool,
@@ -56,23 +63,26 @@ impl ModelBinding {
 #[derive(Clone, Debug)]
 pub struct AgentLibrary {
     root: PathBuf,
+    // Account libraries share the local library lock, including cross-scope forks.
+    lock_root: PathBuf,
+}
+
+fn initial_revision() -> u64 {
+    1
 }
 
 impl AgentLibrary {
     pub fn new(home: &Path) -> Self {
         Self {
             root: home.join("agents"),
+            lock_root: home.join("agents"),
         }
     }
     pub fn root(&self) -> &Path {
         &self.root
     }
     pub fn installations(&self) -> Result<BTreeMap<String, Installation>> {
-        match fs::read(self.root.join("installations.json")) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-            Err(e) => Err(e.into()),
-        }
+        Ok(self.state()?.installations)
     }
     pub fn package(&self, revision: &str) -> Result<AgentPackage> {
         ensure!(valid_hash(revision), "invalid revision");
@@ -194,6 +204,7 @@ impl AgentLibrary {
             Installation {
                 definition_id: id.clone(),
                 sha256: package.sha256.clone(),
+                installation_revision: items.get(id).map_or(0, |item| item.installation_revision),
                 origin,
                 enabled,
                 pinned,
@@ -379,13 +390,26 @@ impl AgentLibrary {
         self.save(&items)
     }
     fn save(&self, items: &BTreeMap<String, Installation>) -> Result<()> {
-        private_write(
-            &self.root.join("installations.json"),
-            &serde_json::to_vec_pretty(items)?,
-        )
+        // Legacy synchronization helpers also advance the same installation clock.
+        // Keep receipts in the authoritative state rather than a separate commit.
+        let mut state = self.state()?;
+        let mut next = items.clone();
+        for (id, item) in &mut next {
+            if state.installations.get(id) != Some(item) {
+                item.installation_revision = state.next_revision()?;
+            }
+        }
+        state.installations = next;
+        self.save_state(&state)
     }
+    /// Serialize host identity changes with all local/account transactions.
+    pub fn lock_scope(&self) -> Result<File> {
+        self.lock()
+    }
+
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(self.root.join("revisions"))?;
+        fs::create_dir_all(&self.lock_root)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -396,7 +420,7 @@ impl AgentLibrary {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.root.join(".lock"))?;
+            .open(self.lock_root.join(".lock"))?;
         file.lock()?;
         Ok(file)
     }
@@ -420,6 +444,7 @@ impl AgentLibrary {
     pub fn account_scope(&self, identity: &str) -> Self {
         Self {
             root: self.root.join("accounts").join(digest(identity.as_bytes())),
+            lock_root: self.lock_root.clone(),
         }
     }
 }

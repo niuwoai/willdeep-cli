@@ -237,6 +237,9 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         operation if operation.starts_with("schedule.") => {
             schedules::dispatch(state, &request).await
         }
+        operation if operation.starts_with("workflow.") => {
+            super::workflows::dispatch(state, &request)
+        }
         "runtime.capabilities" => json(runtime_capabilities(state)),
         // Keep the optional RSI/Worker state machine out of every Runtime operation.
         operation if operation.starts_with("agent_library.") => {
@@ -788,6 +791,11 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "screenplay.resume",
     "screenplay.cancel",
     "screenplay.budget",
+    "workflow.save",
+    "workflow.run",
+    "workflow.stop",
+    "workflow.retry",
+    "workflow.resume",
     "interaction.present",
     "session.peer.send",
     "session.peer.read",
@@ -836,6 +844,7 @@ pub(super) fn is_mutating_operation(operation: &str) -> bool {
             && !matches!(
                 operation,
                 "agent_library.list"
+                    | "agent_library.get"
                     | "agent_library.catalog"
                     | "agent_library.export"
                     | "agent_library.history"
@@ -857,6 +866,9 @@ fn is_work_producing_operation(operation: &str) -> bool {
             | "agent.prompt"
             | "agent.retry"
             | "schedule.run"
+            | "workflow.run"
+            | "workflow.retry"
+            | "workflow.resume"
             | "webapp.start"
     )
 }
@@ -2076,9 +2088,9 @@ fn json_result(value: anyhow::Result<impl Serialize>) -> ApiResult {
     value.map_err(ApiFailure::internal).and_then(json)
 }
 
-type ApiResult = Result<serde_json::Value, ApiFailure>;
+pub(super) type ApiResult = Result<serde_json::Value, ApiFailure>;
 
-struct ApiFailure {
+pub(super) struct ApiFailure {
     status: StatusCode,
     code: ErrorCode,
     message: String,
@@ -2086,7 +2098,7 @@ struct ApiFailure {
 }
 
 impl ApiFailure {
-    fn invalid(message: impl Into<String>) -> Self {
+    pub(super) fn invalid(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             code: ErrorCode::InvalidRequest,
@@ -2095,7 +2107,7 @@ impl ApiFailure {
         }
     }
 
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(super) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             code: ErrorCode::NotFound,
@@ -2104,7 +2116,7 @@ impl ApiFailure {
         }
     }
 
-    fn conflict(message: impl Into<String>) -> Self {
+    pub(super) fn conflict(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::CONFLICT,
             code: ErrorCode::Conflict,
@@ -2124,7 +2136,7 @@ impl ApiFailure {
         }
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
+    pub(super) fn internal(error: impl std::fmt::Display) -> Self {
         eprintln!("Runtime control API internal error: {error}");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -2134,7 +2146,7 @@ impl ApiFailure {
         }
     }
 
-    fn from_status(status: StatusCode) -> Self {
+    pub(super) fn from_status(status: StatusCode) -> Self {
         match status {
             StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE => {
                 Self::invalid("Runtime rejected invalid or oversized operation parameters")

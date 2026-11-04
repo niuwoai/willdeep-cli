@@ -1,5 +1,7 @@
 # 子 Agent 与后台任务
 
+> 最后更新：2026-11-04 | 当前版本：v0.141.0-rc1
+
 主 Agent 不必什么都自己干。长文件阅读、跨文件调查、批量定位这类活儿交给隔离上下文的子 Agent，主上下文才不会被撑爆。
 
 ## 后台 Shell Job
@@ -95,18 +97,32 @@
 
 后台 Worker 与父会话**共享已批准的精确动作**（`~/.willdeep/always-allow.json`）。共享的是精确项不是命令族：父会话批过 `cargo test` 才等于 Worker 也能跑 `cargo test`，不等于它能跑任意 `cargo`。没有这条，一个后台 Worker 会在人刚刚批过的同一条命令上再卡一次，而它自己没有审批 UI，只能失败回来。
 
-一个会话最多同时挂 **5** 个后台 Worker（与 macOS 版一致）。这个数不管文件冲突：两个 Worker 同时写一个文件由逐路径认领挡下，写不同文件的两个 Worker 可以并行。
+一个父会话的 Scheduler 默认同时运行 **8** 个 Worker，另有 **64** 个排队位置；通过 `[agent_team]` 调整。普通派工与多个工作流的 agent 叶节点共用此额度，工作流 driver 不占 Worker 槽。并发额度与文件冲突分别检查：两个 Worker 同时写一个文件由逐路径认领挡下，写不同文件的 Worker 可以并行。
 
 ### 并行派工与汇合（`await_agents`）
 
-并行执行走后台派工：几件互不依赖的活各用 `run_in_background=true` 派出（写集不相交，最多 5 个同时跑），然后调 `await_agents` 汇合。
+并行执行走后台派工：几件互不依赖的活各用 `run_in_background=true` 派出（写集不相交，默认最多 8 个同时跑，其余进入有界队列），然后调 `await_agents` 汇合。
 
-- `agent_ids` 省略时，等本会话所有还在跑的后台 Worker；也可以只列几个（`agent_id` 或 `agent_xxxxxx` 句柄都认）。只认本会话起过的 Worker，别处的 id 一律报找不到。
+- `agent_ids` 省略时，等本会话普通父派工中所有还在跑的后台 Worker；也可以只列几个（`agent_id` 或 `agent_xxxxxx` 句柄都认）。只认本会话归属匹配的普通 Worker，别处的 id 一律报找不到；workflow 叶报告由工作流收集。
 - `timeout_seconds` 默认 600、最长 1800。超时就如实返回哪些已经完成、哪些还在跑，可以再调一次、先干别的，或者 `stop_agent`。
 - 每份报告截到保头保尾（约 4000 + 2500 字节），结论与运行时的 `<worker-facts>` 尾注一定在。
 - 经 `await_agents` 交回的报告标记为已交付，**不会**再作为完成通知投第二遍：headless 循环、TUI 与 Agent 注入事件的地方都会跳过它。
 - 写集冲突在派工这一刻就拒绝，点名冲突文件：不会先派出一个注定在认领时失败的后台任务。
 - 前台 `spawn_agent` 仍然串行：每次派工都可能要人批准写集或命令，审批没法并发。
+
+### 声明式工作流与报告归属（0.141.0-rc1）
+
+需要可恢复的多阶段编排时，父 Agent 使用 `workflow_read`（`schema/list/get/history/validate`）和 `workflow_control`（`save/run/stop/retry/resume`）。`run` 立即返回持久运行句柄；会话 driver 在父模型回答结束后继续推进。工作流只提供 agent/switch/foreach/repeat 四种节点，每个作用域是依赖 DAG，phase 仅展示，不隐含阶段屏障；foreach 每项可独立推进后继，输出仍按冻结输入顺序汇总，repeat 有明确轮次上限。完整格式与验收见 [WORKFLOWS.md](WORKFLOWS.md)。
+
+agent 叶节点走普通派工同一审批、写集合、基础职责、expert 票据、预算及文件租约链。driver 与控制节点不调用模型、不占 Worker 槽；多个工作流与普通派工共享默认 8 并发、64 排队，不能通过多开图扩大额度。
+
+AgentRun 记录普通父派工或 workflow 节点归属。`await_agents` 与普通报告回流只收普通父派工；工作流独立收集叶报告，父会话只接收该运行的聚合终态，先保存父会话再确认收据。节点实际模型、用量、报告与结构化结果仍可查询；缺失用量保持未知，不填为 0。
+
+派工前落盘意图和稳定 request ID，重启先与 AgentRun 对账；已确认成功的结果可复用，不再调用模型。未知副作用标为 `interrupted`，不会盲目重放。整组停止先取消并收拢真实 Worker，停止请求不等于所有任务已经终结。retry/resume 在原 run 进入终态后创建新 run，保留原终态、`source_run_id` 和节点 `reused_from` 来源；复用结果不计作新执行用量。
+
+### 专业目录更新与执行快照
+
+父会话通过 `agent_library_read` / `agent_library_manage` 管理专业定义，写操作使用宿主 scope、request 收据和安装代数 CAS。保存并刷新目录成功后，同轮后续新派工使用新目录；在途、排队及续做/恢复仍使用派工时完整定义、技能、Provider/model 绑定及执行限制快照，当前权限、基础职责与预算另行核验。稳定 `profile` 字符串 Schema 配合按需读取目录，新增 ID 不需要重写本轮历史。官方正文先 fork，包 v1 不变，细节见 [AGENT_LIBRARY.md](AGENT_LIBRARY.md)。
 
 ### 共享黑板（`board_post` / `board_read`）
 

@@ -23,6 +23,7 @@ fn startup_recovers_an_undelivered_team_report_once_without_a_new_parent_prompt(
         request_id: id,
         agent_id: uuid::Uuid::new_v4(),
         parent_session_id: session.id,
+        workflow_owner: None,
         sequence: 1,
         reason: AgentRunReason::Spawn,
         status: AgentStatus::Completed,

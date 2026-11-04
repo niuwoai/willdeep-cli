@@ -36,6 +36,9 @@ fn agent_library_forbidden(settings_writable: bool, operation: &str) -> Option<&
     const PUBLIC_READ: &[&str] = &["catalog", "preview"];
     const ALLOWED: &[&str] = &[
         "list",
+        "get",
+        "create",
+        "update",
         "save",
         "import",
         "export",
@@ -99,5 +102,12 @@ mod tests {
         );
         assert_eq!(agent_library_forbidden(true, "list"), None);
         assert_eq!(agent_library_forbidden(true, "install"), None);
+        for operation in ["get", "create", "update"] {
+            assert_eq!(agent_library_forbidden(true, operation), None);
+            assert_eq!(
+                agent_library_forbidden(false, operation),
+                Some("agent library requires a loopback Web server")
+            );
+        }
     }
 }

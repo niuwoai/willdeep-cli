@@ -158,6 +158,8 @@ pub struct ConversationItem {
     pub attachment_reference: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<Plan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::workflow::WorkflowRun>,
     pub details: Vec<String>,
     /// 这条 assistant 消息发起的工具调用，按发起顺序；回放时逐条落成工具行。
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -182,7 +184,44 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         .filter(|message| message.role == Role::Tool)
         .filter_map(|message| message.tool_call_id.as_deref())
         .collect();
+    let workflow_calls: HashSet<&str> = messages
+        .iter()
+        .filter(|message| message.role == Role::Assistant)
+        .flat_map(|message| &message.tool_calls)
+        .filter(|call| call.name == "workflow_control")
+        .map(|call| call.id.as_str())
+        .collect();
     for message in messages {
+        if message.role == Role::Tool
+            && message
+                .tool_call_id
+                .as_deref()
+                .is_some_and(|id| workflow_calls.contains(id))
+            && let Some(workflow) = workflow_receipt(&message.content)
+        {
+            // Refresh one run in place; a retry has a new ID and keeps its own history.
+            let index = items.iter().position(|entry| {
+                entry
+                    .workflow
+                    .as_ref()
+                    .is_some_and(|run| run.id == workflow.id)
+            });
+            let entry = if let Some(index) = index {
+                &mut items[index]
+            } else {
+                items.push(item("workflow", String::new(), 0));
+                items.last_mut().expect("workflow item was just pushed")
+            };
+            if entry
+                .workflow
+                .as_ref()
+                .is_none_or(|previous| previous.revision <= workflow.revision)
+            {
+                entry.content = workflow.spec.name.clone();
+                entry.workflow = Some(workflow);
+            }
+            continue;
+        }
         if message.role == Role::Tool
             && message
                 .tool_call_id
@@ -385,6 +424,16 @@ fn strip_goal_envelope(text: &str) -> &str {
     }
 }
 
+/// A successful host control receipt contains a complete typed run snapshot.
+/// Read tool output and arbitrary model prose never create workflow cards.
+fn workflow_receipt(content: &str) -> Option<crate::workflow::WorkflowRun> {
+    let value: serde_json::Value = serde_json::from_str(content).ok()?;
+    if value.get("is_error").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    serde_json::from_value(value.get("workflow")?.clone()).ok()
+}
+
 fn item(role: &'static str, content: String, attachment_count: usize) -> ConversationItem {
     ConversationItem {
         role,
@@ -392,6 +441,7 @@ fn item(role: &'static str, content: String, attachment_count: usize) -> Convers
         attachment_count,
         attachment_reference: None,
         plan: None,
+        workflow: None,
         details: Vec::new(),
         tools: Vec::new(),
     }

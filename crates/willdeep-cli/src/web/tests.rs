@@ -276,6 +276,33 @@ fn runtime_plan_updates_reach_sse_without_waiting_for_a_tool_result() {
     assert!(public.get("arguments").is_none());
 }
 #[test]
+fn workflow_updates_reach_web_sse_before_the_parent_turn_finishes() {
+    let spec = serde_json::json!({
+        "version":1,"id":"live-workflow","name":"Live workflow",
+        "nodes":[{"id":"inspect","kind":"agent","profile":"generalist","prompt":"Inspect"}]
+    });
+    let id = uuid::Uuid::new_v4();
+    let run = serde_json::from_value(serde_json::json!({
+        "id":id,"parent_session_id":uuid::Uuid::new_v4(),"definition_id":"live-workflow",
+        "spec":spec,"input":null,"limits":willdeep_core::workflow::WorkflowLimits::default(),
+        "status":"running","nodes":[],"output":null,"report":null,"error":null,
+        "created_at_ms":1,"finished_at_ms":null,"source_run_id":null,"acknowledged":false,"revision":1
+    }))
+    .unwrap();
+    let mut event =
+        crate::agent_event_json(willdeep_core::AgentEvent::WorkflowUpdated(Box::new(run)));
+    event["arguments"] = serde_json::json!("private tool arguments");
+    event["output"] = serde_json::json!("private tool output");
+    let public = client_event(event, Language::En).unwrap();
+    assert_eq!(public["type"], "workflow_updated");
+    assert_eq!(public["workflow"]["id"], id.to_string());
+    assert_eq!(public["workflow"]["status"], "running");
+    assert_eq!(public["workflow"]["spec"]["nodes"][0]["id"], "inspect");
+    assert!(public.get("output").is_none());
+    assert!(public.get("arguments").is_none());
+}
+
+#[test]
 fn thought_events_are_compact_and_tool_arguments_stay_private() {
     let event = client_event(
         serde_json::json!({"type":"assistant_text","text":"x".repeat(500)}),

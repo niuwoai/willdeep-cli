@@ -19,9 +19,11 @@ use crate::{
     provider_config_from_profile,
 };
 
+mod agent_library;
 mod agent_team;
 mod verification;
 mod worker_profiles;
+pub(crate) mod workflows;
 
 #[cfg(test)]
 mod ownership_tests;
@@ -329,6 +331,8 @@ pub(crate) struct BuiltHarness {
     peer_wake: bool,
     event_sink: Arc<dyn EventSink>,
     pub subagents: Arc<SubagentCatalog>,
+    pub workflows: Arc<workflows::WorkflowService>,
+    _workflow_driver: workflows::WorkflowDriverGuard,
     pub goal: Arc<willdeep_core::GoalContinuation>,
     pub session_id: uuid::Uuid,
     pub agent: Arc<Agent>,
@@ -628,6 +632,7 @@ pub(crate) async fn execute_noninteractive(
         // 结束事件、再改状态），反过来看会在两步之间读到「没在跑、也没结果」，
         // 于是提前退出，最后那条结论永远到不了模型。
         let running = built.background_tasks.has_pending_tasks()
+            || built.agent.workflows_pending()
             || crate::detached_delivery::has_running_jobs(&built.detached_jobs, session.id);
         let events = built.background_tasks.drain_pending();
         // run_in_background 的命令是脱离作业，不在进程内注册表里：两边都要看，
@@ -657,7 +662,13 @@ pub(crate) async fn execute_noninteractive(
             .agent
             .instruction_inbox()
             .is_some_and(|inbox| inbox.has_pending());
-        if events.is_empty() && finished_jobs == 0 && !monitor_wake && !instruction_wake {
+        let workflow_wake = built.agent.workflow_reports_pending()?;
+        if events.is_empty()
+            && finished_jobs == 0
+            && !monitor_wake
+            && !instruction_wake
+            && !workflow_wake
+        {
             if !running {
                 break;
             }
@@ -1188,6 +1199,7 @@ pub(crate) async fn build(
         &follow_main,
         kind,
     )?;
+    let base_profiles = subagent_profiles.clone();
     subagent_profiles.extend(crate::agent_registry::runtime_profiles(
         home,
         &subagent_profiles,
@@ -1248,7 +1260,40 @@ pub(crate) async fn build(
     if let Some(judge) = safety_judge {
         catalog = catalog.with_safety_judge(judge);
     }
+    let binding_home = home.to_path_buf();
+    let binding_file = loaded.file.clone();
+    let binding_parent = parent_provider_config.clone();
+    catalog = catalog.with_definition_bindings(move |binding, fallback| {
+        crate::agent_registry::resolve_binding_provider(
+            &binding_home,
+            binding,
+            &binding_file,
+            &binding_parent,
+            fallback,
+        )
+        .map_err(|error| {
+            willdeep_core::AgentError::SubagentBlocked(format!(
+                "restore specialist model binding: {error:#}"
+            ))
+        })
+    });
     let subagents = Arc::new(catalog);
+    let workflows = workflows::WorkflowService::new(
+        home,
+        session_id,
+        subagents.clone(),
+        background_tasks.clone(),
+        sink.clone(),
+    );
+    let tools = tools
+        .with_agent_definition_host(Arc::new(agent_library::LibraryHost::new(
+            home,
+            subagents.clone(),
+            base_profiles,
+            loaded.file.clone(),
+            parent_provider_config.clone(),
+        )?))
+        .with_workflow_host(workflows.clone());
     // 构建界面只读取团队状态；恢复由取得会话执行权后的执行入口负责。
     let command_watcher = daemon::start_agent_command_watcher(
         runtime_connection.as_ref(),
@@ -1367,13 +1412,18 @@ pub(crate) async fn build(
         }
     }
     let notifier = crate::notify::Notifier::new(&loaded.file.notifications, language);
+    let agent = Arc::new(agent);
+    workflows.bind_agent(&agent);
+    let workflow_driver = workflows::WorkflowDriverGuard::new(workflows.clone());
     Ok(BuiltHarness {
+        workflows,
+        _workflow_driver: workflow_driver,
         peer_wake,
         event_sink: sink,
         subagents,
         goal: goal_continuation,
         session_id,
-        agent: Arc::new(agent),
+        agent,
         workspace,
         skills,
         background_tasks,

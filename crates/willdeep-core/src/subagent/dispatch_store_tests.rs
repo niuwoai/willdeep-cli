@@ -271,6 +271,9 @@ fn recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports() {
                 approved_command: None,
                 model: None,
                 definition: None,
+                execution: None,
+                workflow_owner: None,
+                intent: None,
                 prepared: PreparedSubagentWorkspace {
                     workspace: root.clone(),
                     root_workspace: root.clone(),

@@ -1,4 +1,5 @@
 import type { Messages } from "./i18n";
+import type { WorkflowRun } from "./workflowApi";
 import { Markdown } from "./Markdown";
 import { markdownCopy } from "./markdownCopy";
 import "./conversation.css";
@@ -12,11 +13,12 @@ const STATUS_ICONS: Record<StepStatus, LucideIcon> = {
   skipped: MinusCircle, failed: XCircle, blocked: Ban,
 };
 export type ConversationItem = {
-  role: "user" | "assistant" | "system" | "plan";
+  role: "user" | "assistant" | "system" | "plan" | "workflow";
   content: string;
   attachment_count: number;
   attachment_reference?: string;
   plan?: Plan;
+  workflow?: WorkflowRun;
   details?: string[];
   /// 这条助手消息发起的工具调用：名字、脱敏摘要、有无结果。原始参数不下发。
   tools?: { name: string; detail?: string; completed: boolean }[];

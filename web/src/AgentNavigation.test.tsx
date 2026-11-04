@@ -27,12 +27,14 @@ it("connects candidate dirty state to the real rail gate, then clears it after s
   await screen.findByRole("option",{name:"Reviewer · 1.0.0"});
   fireEvent.change(screen.getByRole("combobox",{name:"选择一个已安装智能体"}),{target:{value:item.package.sha256}});
   fireEvent.change(screen.getByRole("textbox",{name:"候选专业指令"}),{target:{value:"Unsaved change"}});
+  fireEvent.click(screen.getByRole("button",{name:"配置"}));
   fireEvent.click(screen.getByRole("button",{name:"智能体库"}));
   expect(window.confirm).toHaveBeenCalledOnce();
   expect(screen.getByRole("textbox",{name:"候选专业指令"})).toBeTruthy();
   fireEvent.click(screen.getByRole("button",{name:"保存候选"}));
   await screen.findByText("候选已独立保存。");
   await waitFor(()=>expect((screen.getByRole("button",{name:"保存候选"}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button",{name:"配置"}));
   fireEvent.click(screen.getByRole("button",{name:"智能体库"}));
   await screen.findByRole("heading",{name:"智能体库"});
   expect(window.confirm).toHaveBeenCalledOnce();

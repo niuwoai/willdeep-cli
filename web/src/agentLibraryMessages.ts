@@ -17,6 +17,7 @@ const text = {
   invalidImport: ["文件格式、大小、名称或定义 ID 无效；Hermes 需要配置文件和 SOUL.md。", "Invalid format, size, name or definition ID. Hermes requires config and SOUL.md.", "形式・サイズ・名前・ID が無効です。Hermes は設定と SOUL.md が必要です。"],
   importExists: ["此定义 ID 已存在，请换一个 ID。", "This definition ID exists; choose another.", "この ID は使用済みです。別の ID を選択してください。"],
   importSaveFailed: ["导入或模型绑定失败；定义可能已保存，可重试或前往智能体库检查。", "Import or model binding failed. The definition may be saved; retry or inspect the library.", "インポートまたはモデル設定に失敗しました。定義が保存済みの可能性があります。再試行またはライブラリを確認してください。"],
+  revisionConflict: ["保存前提已变化，或此请求编号已用于其他内容。请重新打开最新版本后再保存；当前草稿已保留。", "The agent or account changed, or this request ID was used for different content. Reopen the latest version before saving; your draft is preserved.", "エージェント・アカウントが変更されたか、同じリクエスト ID が別の内容に使用されました。最新版を開き直してください。下書きは保持されています。"],
   catalogUnavailable: ["目录响应不可用，请刷新重试。", "The catalog response is unavailable. Refresh to retry.", "カタログを取得できません。更新して再試行してください。"],
   catalogLoopback: ["当前站点不能安装智能体。精选目录仍可浏览；安装请在本机 WillDeep 中操作。", "This hosted site can browse the official catalog but cannot install agents. Install them in local WillDeep.", "このサイトでは公式カタログの閲覧のみ可能です。導入はローカルの WillDeep で行ってください。"],
   category: ["分类", "Category", "カテゴリ"],

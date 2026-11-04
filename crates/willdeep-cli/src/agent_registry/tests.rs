@@ -1,5 +1,15 @@
 use super::*;
 
+// Existing command-level tests exercise the CLI adapter, which captures the
+// same scope/revision/request preconditions a user command now submits.
+async fn operate(home: &Path, operation: &str, params: Value) -> Result<Value> {
+    if management::handles(operation) {
+        management::cli_write(home, operation, params).await
+    } else {
+        super::operate(home, operation, params).await
+    }
+}
+
 fn fixture() -> AgentDefinition {
     AgentDefinition::parse(include_bytes!(
         "../../../../docs/examples/agent-definition.v1.json"

@@ -1,7 +1,9 @@
 //! Shared implementation for CLI, TUI and authenticated Runtime management.
+mod management;
 pub mod service;
 use anyhow::{Context, Result, bail, ensure};
 use clap::Subcommand;
+pub use management::capture_scope;
 use serde_json::{Value, json};
 use service::{CustomerSession, Service};
 use std::{
@@ -118,25 +120,25 @@ pub async fn run(action: AgentAction, home: &Path) -> Result<()> {
         return crate::agent_rsi::run(action, home).await;
     }
     let value = match action {
-        AgentAction::Create { id, name, purpose, role, instructions_file, tools } => operate(home, "save", json!({"definition": {
+        AgentAction::Create { id, name, purpose, role, instructions_file, tools } => management::cli_write(home, "create", json!({"definition": {
             "schema":SCHEMA,"definition_id":id,"version":"1.0.0","name":{"zh-Hans":name},"purpose":purpose,"base_role":role,
             "instructions":std::fs::read_to_string(instructions_file)?,"input_modalities":["text"],"tools":if tools.is_empty() {vec!["workspace.read".to_owned(),"repository.inspect".to_owned()]} else {tools},"skills":[],"forked_from":null
         }})).await?,
         AgentAction::Check { file } => { let package = read_package(&std::fs::read(file)?)?; json!({"valid":true,"revision":package.sha256,"definition":package.definition}) }
-        AgentAction::Import { file } => operate(home, "import", json!({"package":read_package(&std::fs::read(file)?)?})).await?,
+        AgentAction::Import { file } => management::cli_write(home, "import", json!({"package":read_package(&std::fs::read(file)?)?})).await?,
         AgentAction::Export { id, file } => { let package = installed(home, &id)?.1; private_write(&file, &serde_json::to_vec_pretty(&package)?)?; json!({"exported":id,"revision":package.sha256}) }
         AgentAction::List => operate(home,"list",json!({})).await?,
-        AgentAction::Fork { id, new_id } => operate(home,"fork",json!({"id":id,"new_id":new_id})).await?,
-        AgentAction::Pin { id } => operate(home,"pin",json!({"id":id,"value":true})).await?,
-        AgentAction::Unpin { id } => operate(home,"pin",json!({"id":id,"value":false})).await?,
-        AgentAction::Rollback { id, revision } => operate(home,"rollback",json!({"id":id,"revision":revision})).await?,
-        AgentAction::Enable { id } => operate(home,"enable",json!({"id":id,"value":true})).await?,
-        AgentAction::Disable { id } => operate(home,"enable",json!({"id":id,"value":false})).await?,
-        AgentAction::Bind { id, provider_profile, model, context_window, max_turns } => operate(home,"bind",json!({"id":id,"binding":{"provider_profile":provider_profile,"model":model,"context_window":context_window,"max_turns":max_turns}})).await?,
-        AgentAction::Unbind { id } => operate(home,"bind",json!({"id":id,"binding":{"provider_profile":null,"model":null}})).await?,
+        AgentAction::Fork { id, new_id } => management::cli_write(home,"fork",json!({"id":id,"new_id":new_id})).await?,
+        AgentAction::Pin { id } => management::cli_write(home,"pin",json!({"id":id,"value":true})).await?,
+        AgentAction::Unpin { id } => management::cli_write(home,"pin",json!({"id":id,"value":false})).await?,
+        AgentAction::Rollback { id, revision } => management::cli_write(home,"rollback",json!({"id":id,"revision":revision})).await?,
+        AgentAction::Enable { id } => management::cli_write(home,"enable",json!({"id":id,"value":true})).await?,
+        AgentAction::Disable { id } => management::cli_write(home,"enable",json!({"id":id,"value":false})).await?,
+        AgentAction::Bind { id, provider_profile, model, context_window, max_turns } => management::cli_write(home,"bind",json!({"id":id,"binding":{"provider_profile":provider_profile,"model":model,"context_window":context_window,"max_turns":max_turns}})).await?,
+        AgentAction::Unbind { id } => management::cli_write(home,"bind",json!({"id":id,"binding":{"provider_profile":null,"model":null}})).await?,
         AgentAction::History { id } => operate(home,"history",json!({"id":id})).await?,
         AgentAction::Catalog { origin } => operate(home,"catalog",json!({"origin":origin})).await?,
-        AgentAction::Install { id, revision, origin } => operate(home,"install",json!({"id":id,"revision":revision,"origin":origin})).await?,
+        AgentAction::Install { id, revision, origin } => management::cli_write(home,"install",json!({"id":id,"revision":revision,"origin":origin})).await?,
         AgentAction::Login => { crate::onboarding::agent_customer_login(home).await?; operate(home,"list",json!({})).await? }
         AgentAction::Logout => operate(home,"logout",json!({})).await?,
         AgentAction::Share { id } => operate(home,"share",json!({"id":id})).await?,
@@ -170,23 +172,40 @@ fn id(params: &Value) -> Result<&str> {
         .context("agent id required")
 }
 fn installed(home: &Path, id: &str) -> Result<(AgentLibrary, AgentPackage)> {
+    find_installed(home, id)?.context("agent not installed")
+}
+fn find_installed(home: &Path, id: &str) -> Result<Option<(AgentLibrary, AgentPackage)>> {
     let mut libraries = vec![AgentLibrary::new(home)];
-    if let Ok(session) = CustomerSession::load(home) {
-        libraries.insert(0, session.library(home));
+    match CustomerSession::load(home) {
+        Ok(session) => libraries.insert(0, session.library(home)),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+        Err(_) => bail!("agent_scope_conflict: customer identity unavailable; sign in again"),
     }
     for library in libraries {
         if let Some(item) = library.installations()?.get(id) {
-            return Ok((library.clone(), library.package(&item.sha256)?));
+            return Ok(Some((library.clone(), library.package(&item.sha256)?)));
         }
     }
-    bail!("agent not installed")
+    Ok(None)
 }
 
 pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Value> {
     if let Some(operation) = operation.strip_prefix("rsi.") {
         return crate::agent_rsi::operate(home, operation, params).await;
     }
+    if management::handles(operation) {
+        return management::operate(home, operation, params).await;
+    }
     let local = AgentLibrary::new(home);
+    // Return an installation and its account scope from one consistent snapshot.
+    let _read_lock = if matches!(operation, "list" | "get" | "history" | "export") {
+        Some(local.lock_scope()?)
+    } else {
+        None
+    };
     match operation {
         "list" => {
             let mut items = views(&local, "local")?;
@@ -207,158 +226,23 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
                 Err(_) => None,
             };
             Ok(
-                json!({"items":items,"account":account,"builtin_roles":willdeep_core::subagent::PUBLIC_SUBAGENT_IDS}),
+                json!({"items":items,"account":account,"scope":capture_scope(home)?,"builtin_roles":willdeep_core::subagent::PUBLIC_SUBAGENT_IDS}),
             )
         }
-        "save" => {
-            let bytes = match params.get("definition_text").and_then(Value::as_str) {
-                Some(text) => text.as_bytes().to_vec(),
-                None => serde_json::to_vec(
-                    params
-                        .get("definition")
-                        .context("agent definition required")?,
-                )?,
-            };
-            let definition = AgentDefinition::parse(&bytes)?;
-            ensure!(
-                definition.definition_id.starts_with("user/"),
-                "official edits require a fork"
-            );
-            let package = AgentPackage::local(definition)?;
-            let library = installed(home, &package.definition.definition_id)
-                .map(|v| v.0)
-                .unwrap_or(local);
-            let origin = if library
-                .root()
-                .components()
-                .any(|c| c.as_os_str() == "accounts")
-            {
-                Origin::Private
-            } else {
-                Origin::Local
-            };
-            let etag = library
+        "get" => {
+            let (library, package) = installed(home, id(&params)?)?;
+            let installation = library
                 .installations()?
-                .get(&package.definition.definition_id)
-                .and_then(|v| v.remote_etag.clone());
-            library.install(&package, origin, &BTreeMap::new())?;
-            disable_incompatible(&library, &package)?;
-            if let Some(etag) = etag {
-                library.set_remote_base(&package.definition.definition_id, etag)?;
-            }
-            Ok(json!(package))
-        }
-        "import" => {
-            let package = match params.get("package_text").and_then(Value::as_str) {
-                Some(text) => read_package(text.as_bytes())?,
-                None => AgentPackage::parse(&serde_json::to_vec(
-                    params.get("package").context("agent package required")?,
-                )?)?,
-            };
-            if let Some(binding) = params.get("new_binding") {
-                compatibility(&package.definition)?;
-                ensure!(
-                    installed(home, &package.definition.definition_id).is_err(),
-                    "agent id already installed"
-                );
-                local.create_bound(&package, serde_json::from_value(binding.clone())?)?;
-                return Ok(json!(package));
-            }
-            if package.definition.definition_id.starts_with("official/") {
-                let trust: Value = serde_json::from_slice(&std::fs::read(local.root().join("trusted-keys.json"))?).context("official imports require trusted service signing keys; install from catalog first")?;
-                let keys = serde_json::from_value(
-                    trust
-                        .get("keys")
-                        .cloned()
-                        .context("trusted signing keys missing")?,
-                )?;
-                install_official(&local, &package, &keys)?;
-            } else {
-                let library = installed(home, &package.definition.definition_id)
-                    .map(|value| value.0)
-                    .unwrap_or(local);
-                let old = library
-                    .installations()?
-                    .get(&package.definition.definition_id)
-                    .cloned();
-                let origin = old
-                    .as_ref()
-                    .map(|item| item.origin.clone())
-                    .unwrap_or(Origin::Local);
-                library.install(&package, origin, &BTreeMap::new())?;
-                if let Some(etag) = old.and_then(|item| item.remote_etag) {
-                    library.set_remote_base(&package.definition.definition_id, etag)?;
-                }
-                disable_incompatible(&library, &package)?;
-            }
-            Ok(json!(package))
+                .remove(id(&params)?)
+                .context("agent not installed")?;
+            Ok(
+                json!({"installation_revision":installation.installation_revision,"definition_revision":installation.sha256,"installation":installation,"package":package,"scope":capture_scope(home)?}),
+            )
         }
         "export" => Ok(json!(installed(home, id(&params)?)?.1)),
-        "fork" => {
-            let mut definition = installed(home, id(&params)?)?.1.definition;
-            let original = definition.revision()?;
-            definition.definition_id = params
-                .get("new_id")
-                .and_then(Value::as_str)
-                .context("new agent id required")?
-                .into();
-            ensure!(
-                definition.definition_id.starts_with("user/"),
-                "fork requires user namespace"
-            );
-            ensure!(
-                !local
-                    .installations()?
-                    .contains_key(&definition.definition_id),
-                "fork id already installed"
-            );
-            definition.version = "1.0.0".into();
-            definition.forked_from = Some(original);
-            let package = AgentPackage::local(definition)?;
-            local.install(&package, Origin::Local, &BTreeMap::new())?;
-            Ok(json!(package))
-        }
         "history" => {
             let (library, _) = installed(home, id(&params)?)?;
             Ok(json!(library.history(id(&params)?)?))
-        }
-        "bind" => {
-            let (library, _) = installed(home, id(&params)?)?;
-            let binding = serde_json::from_value(
-                params
-                    .get("binding")
-                    .cloned()
-                    .context("local model binding required")?,
-            )?;
-            library.set_binding(id(&params)?, binding)?;
-            Ok(json!({"updated":true,"local_only":true}))
-        }
-        "pin" | "enable" => {
-            let (library, _) = installed(home, id(&params)?)?;
-            let value = params
-                .get("value")
-                .and_then(Value::as_bool)
-                .context("agent state required")?;
-            if operation == "enable" && value {
-                compatibility(&installed(home, id(&params)?)?.1.definition)?;
-            }
-            if operation == "pin" {
-                library.set_pinned(id(&params)?, value)?;
-            } else {
-                library.set_enabled(id(&params)?, value)?;
-            }
-            Ok(json!({"updated":true}))
-        }
-        "rollback" => {
-            let (library, _) = installed(home, id(&params)?)?;
-            library.select(
-                id(&params)?,
-                params
-                    .get("revision")
-                    .and_then(Value::as_str)
-                    .context("fixed revision required")?,
-            )?;
-            Ok(json!({"updated":true}))
         }
         "catalog" => {
             Service::new(
@@ -388,16 +272,9 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
                 )
                 .await?;
             if operation == "install" {
-                let trust: Value = serde_json::from_slice(&std::fs::read(
-                    local.root().join("trusted-keys.json"),
-                )?)?;
-                let keys = serde_json::from_value(
-                    trust
-                        .get("keys")
-                        .cloned()
-                        .context("trusted signing keys missing")?,
-                )?;
-                install_official(&local, &package, &keys)?;
+                let mut params = params;
+                params["package"] = serde_json::to_value(package)?;
+                return management::operate(home, "import", params).await;
             }
             Ok(json!(package))
         }
@@ -488,6 +365,7 @@ pub async fn operate(home: &Path, operation: &str, params: Value) -> Result<Valu
             Ok(json!({"deleted":true}))
         }
         "logout" => {
+            let _lock = local.lock_scope()?;
             match std::fs::remove_file(home.join("agent-session.json")) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -503,7 +381,7 @@ fn views(library: &AgentLibrary, scope: &str) -> Result<Vec<Value>> {
     library.installations()?.values().map(|item| {
         let package = library.package(&item.sha256)?;
         let incompatible_reason = compatibility(&package.definition).err().map(|error|error.to_string());
-        Ok(json!({"installation":item,"package":package,"scope":scope,"compatible":incompatible_reason.is_none(),"incompatible_reason":incompatible_reason,"optional_skills_missing":package.definition.skills.iter().filter(|skill|!skill.required && skill.content.is_empty()).map(|s|s.id.clone()).collect::<Vec<_>>()}))
+        Ok(json!({"installation":item,"package":package,"scope":scope,"installation_revision":item.installation_revision,"definition_revision":item.sha256,"compatible":incompatible_reason.is_none(),"incompatible_reason":incompatible_reason,"optional_skills_missing":package.definition.skills.iter().filter(|skill|!skill.required && skill.content.is_empty()).map(|s|s.id.clone()).collect::<Vec<_>>()}))
     }).collect()
 }
 
@@ -563,13 +441,7 @@ fn apply_binding(
     file: &crate::config::ConfigFile,
     parent: &willdeep_core::provider::ProviderConfig,
 ) -> Result<()> {
-    let mut configured = match binding.provider_profile.as_deref() {
-        Some(name) => crate::provider_config_from_profile(file, name)?,
-        None => parent.clone(),
-    };
-    if let Some(model) = &binding.model {
-        configured.model = model.clone();
-    }
+    let configured = binding_config(binding, file, parent)?;
     profile.model = Some(configured.model.clone());
     profile.provider = willdeep_core::build_provider(configured)?;
     profile.definition_model_bound = true;
@@ -577,22 +449,41 @@ fn apply_binding(
     Ok(())
 }
 
+fn binding_config(
+    binding: &willdeep_core::agent_definition::store::ModelBinding,
+    file: &crate::config::ConfigFile,
+    parent: &willdeep_core::provider::ProviderConfig,
+) -> Result<willdeep_core::provider::ProviderConfig> {
+    let mut configured = match binding.provider_profile.as_deref() {
+        Some(name) => crate::provider_config_from_profile(file, name)?,
+        None => parent.clone(),
+    };
+    if let Some(model) = &binding.model {
+        configured.model = model.clone();
+    }
+    Ok(configured)
+}
+
+pub(crate) fn resolve_binding_provider(
+    _home: &Path,
+    binding: &willdeep_core::agent_definition::store::ModelBinding,
+    file: &crate::config::ConfigFile,
+    parent: &willdeep_core::provider::ProviderConfig,
+    fallback: std::sync::Arc<dyn willdeep_core::provider::Provider>,
+) -> Result<std::sync::Arc<dyn willdeep_core::provider::Provider>> {
+    if binding.provider_profile.is_none() && binding.model.is_none() {
+        return Ok(fallback);
+    }
+    Ok(willdeep_core::build_provider(binding_config(
+        binding, file, parent,
+    )?)?)
+}
+
 pub(super) fn disable_incompatible(library: &AgentLibrary, package: &AgentPackage) -> Result<()> {
     if compatibility(&package.definition).is_err() {
         library.set_enabled(&package.definition.definition_id, false)?;
     }
     Ok(())
-}
-
-fn install_official(
-    library: &AgentLibrary,
-    package: &AgentPackage,
-    keys: &BTreeMap<String, String>,
-) -> Result<()> {
-    compatibility(&package.definition).map_err(|error| {
-        anyhow::anyhow!("official candidate incompatible; current installation preserved: {error}")
-    })?;
-    library.install(package, Origin::Official, keys)
 }
 
 pub fn compatibility(definition: &AgentDefinition) -> Result<()> {
@@ -619,6 +510,9 @@ pub fn compatibility(definition: &AgentDefinition) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "agent_registry/management_tests.rs"]
+mod management_tests;
 #[cfg(test)]
 #[path = "agent_registry/tests.rs"]
 mod tests;

@@ -265,6 +265,72 @@ async fn the_final_answer_at_the_budget_limit_is_kept_and_the_next_run_is_blocke
 }
 
 #[tokio::test]
+async fn queued_workflow_recovery_requires_its_graphs_current_authorization() {
+    let (catalog, background, provider, root) = fixture();
+    let mut events = background.subscribe();
+    catalog
+        .run(
+            SpawnAgentArgs {
+                profile: Some("scout".into()),
+                prompt: "initial".into(),
+                run_in_background: Some(true),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    completion(&mut events).await;
+    let store = background.agent_run_store().unwrap();
+    let original = store
+        .latest(background.snapshots()[0].agent_id.unwrap())
+        .unwrap()
+        .unwrap();
+    let mut dispatch = original.dispatch;
+    let agent_id = uuid::Uuid::new_v4();
+    dispatch["id"] = serde_json::json!(agent_id);
+    dispatch["workflow_owner"] = serde_json::json!({
+        "workflow_run_id":uuid::Uuid::new_v4(),
+        "node_instance_id":uuid::Uuid::new_v4().to_string()
+    });
+    let (queued, _) = store
+        .create(RunRequest {
+            request_id: uuid::Uuid::new_v4(),
+            agent_id,
+            reason: AgentRunReason::Spawn,
+            label: "stopped graph leaf".into(),
+            model: original.record.model,
+            max_turns: original.record.max_turns,
+            token_budget: original.record.token_budget,
+            timeout_seconds: original.record.timeout_seconds,
+            dispatch,
+        })
+        .unwrap();
+    assert!(queued.workflow_owner.is_some());
+    assert_eq!(catalog.restore_queued_runs().await.unwrap(), 0);
+    assert_eq!(
+        store.get(queued.id).unwrap().unwrap().status,
+        AgentStatus::Queued
+    );
+    assert_eq!(
+        catalog
+            .restore_queued_runs_checked(|run| {
+                assert_eq!(run.id, queued.id);
+                Ok(Some(false))
+            })
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.get(queued.id).unwrap().unwrap().status,
+        AgentStatus::Cancelled
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn continuation_rejects_unknown_or_foreign_agents_and_empty_requests() {
     let (catalog, _, provider, root) = fixture();
     assert!(
@@ -415,7 +481,7 @@ async fn new_execution_host_restores_queue_ids_in_order_and_does_not_replay_runn
         seeded.push(run);
     }
     store.start(seeded[0].id).unwrap();
-    let profiles = catalog.profiles.values().cloned().collect();
+    let profiles = catalog.profile_snapshot().values().cloned().collect();
     let scope = catalog.usage_ledger.clone().unwrap();
     let workspace = catalog.workspace.clone();
     let home = catalog.state_home.clone().unwrap();

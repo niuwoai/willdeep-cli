@@ -70,6 +70,7 @@ mod steering;
 mod tool_store;
 pub(crate) mod tui_bridge;
 pub(crate) mod turn_queue;
+mod workflows;
 mod workspace_checkpoint;
 mod workspace_store;
 mod worktree_maintenance;
