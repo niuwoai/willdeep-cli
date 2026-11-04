@@ -299,7 +299,7 @@ export function pageUrl(plugin: PluginView, destination: PluginDestinationView):
 
 /**
  * 目的地排序：声明了 defaultPinned 的排在前面，其余按用户钉的顺序，
- * 最后按标题。与 macOS 宿主一样最多固定 5 个，超出的进「更多插件」。
+ * 最后按标题。入口栏最多展示 5 个默认或用户固定的目的地，其余留在插件菜单。
  */
 export const MAX_PINNED_DESTINATIONS = 5;
 
