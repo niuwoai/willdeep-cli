@@ -157,9 +157,14 @@ pub fn ensure_session(
     home: &Path,
     session_id: uuid::Uuid,
 ) -> Result<willdeep_core::session::Session> {
-    willdeep_core::session::SessionStore::new(home)
+    let session = willdeep_core::session::SessionStore::new(home)
         .load(session_id)
-        .map_err(|_| anyhow::anyhow!("session was not found"))
+        .map_err(|_| anyhow::anyhow!("session was not found"))?;
+    anyhow::ensure!(
+        session.parent_session_id.is_none() && !session.delegation_read_only,
+        "delegated sessions are private"
+    );
+    Ok(session)
 }
 
 #[cfg(test)]

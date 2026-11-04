@@ -1,6 +1,5 @@
 //! Web is a workspace-scoped view of Runtime schedules, never a second scheduler.
 use super::*;
-use clap::Parser;
 use willdeep_runtime_protocol::schedule::{
     ScheduleDraft, ScheduleHistoryQuery, SchedulePreview, ScheduleRunRef, ScheduleUpdate,
     ScheduledTaskView,
@@ -91,8 +90,7 @@ async fn models(
 ) -> Result<Json<serde_json::Value>, WebError> {
     let loaded = crate::config::LoadedConfig::load(Some(&state.config_path))
         .map_err(WebError::from_anyhow)?;
-    let mut cli = crate::Cli::try_parse_from(["willdeep"])
-        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    let mut cli = crate::Cli::bare();
     cli.profile = query
         .profile
         .filter(|profile| !profile.is_empty())

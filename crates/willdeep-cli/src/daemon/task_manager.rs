@@ -411,13 +411,94 @@ impl TaskManager {
         {
             bail!("task prompt and attachments must not both be empty");
         }
-        let workspace = self.workspaces.ensure_registered(&request.workspace)?;
-        request.workspace = workspace.root;
-        request.workspace_access = Some(workspace.access);
-        request.workspace_skills = Some(workspace.skills);
-        request.workspace_mcp_servers = Some(workspace.mcp_servers);
-        if request.profile.is_none() {
-            request.profile = workspace.provider_profile;
+        let delegated_session = request
+            .session_id
+            .map(|id| self.sessions.get(id))
+            .transpose()?
+            .flatten()
+            .filter(|session| session.delegation_read_only || session.parent_session_id.is_some());
+        let delegated = delegated_session.is_some();
+        anyhow::ensure!(
+            !delegated
+                || (request.team_control.is_none() && request.execution_session_id.is_none()),
+            "delegated child Sessions cannot dispatch independent execution lanes"
+        );
+        if delegated {
+            let turn = request
+                .turn_id
+                .and_then(|id| self.sessions.get_turn(id).ok().flatten())
+                .context("child Session tasks must be claimed through the Runtime Turn queue")?;
+            anyhow::ensure!(
+                request.session_id == Some(turn.session_id)
+                    && self
+                        .sessions
+                        .get(turn.session_id)?
+                        .is_some_and(|session| session.active_turn_id == Some(turn.id)),
+                "child Session task has no admitted execution slot"
+            );
+        }
+        if super::child_sessions::is_host_origin(request.origin_client.as_deref()) {
+            let origin = request
+                .turn_id
+                .map(|id| self.sessions.turn_origin(id))
+                .transpose()?
+                .flatten();
+            anyhow::ensure!(
+                origin == request.origin_client,
+                "child coordination origin is bound by Runtime"
+            );
+        }
+        if let Some(child) = &delegated_session {
+            // The child workspace is already the prepared shared directory or
+            // dedicated worktree. Registering it would create a new global
+            // Workspace entry and could broaden the original project's policy.
+            request.workspace = child.workspace.clone();
+            request.workspace_access = Some(if child.delegation_read_only {
+                WorkspaceAccess::ReadOnly
+            } else {
+                WorkspaceAccess::WorkspaceWrite
+            });
+            if child.delegation_read_only {
+                request.workspace_skills = Some(Vec::new());
+                request.workspace_mcp_servers = Some(Vec::new());
+            } else if let Some(parent_id) = child.parent_session_id {
+                // A writable child inherits the parent's workspace allowlists,
+                // but the service-side access mode never widens past the child.
+                let parent_workspace = self
+                    .sessions
+                    .get(parent_id)?
+                    .map(|session| session.workspace)
+                    .unwrap_or_else(|| child.workspace.clone());
+                let parent_policy = self
+                    .workspaces
+                    .list()?
+                    .into_iter()
+                    .find(|workspace| workspace.root == parent_workspace);
+                request.workspace_skills = Some(
+                    parent_policy
+                        .as_ref()
+                        .map(|item| item.skills.clone())
+                        .unwrap_or_default(),
+                );
+                request.workspace_mcp_servers = Some(
+                    parent_policy
+                        .as_ref()
+                        .map(|item| item.mcp_servers.clone())
+                        .unwrap_or_default(),
+                );
+            }
+            if request.profile.is_none() {
+                request.profile = child.profile.clone();
+            }
+        } else {
+            let workspace = self.workspaces.ensure_registered(&request.workspace)?;
+            request.workspace = workspace.root;
+            request.workspace_access = Some(workspace.access);
+            request.workspace_skills = Some(workspace.skills);
+            request.workspace_mcp_servers = Some(workspace.mcp_servers);
+            if request.profile.is_none() {
+                request.profile = workspace.provider_profile;
+            }
         }
         if let Some(config) = request.config.as_mut() {
             *config = config
@@ -558,10 +639,24 @@ impl TaskManager {
                 .and_then(|session| session.approval_mode),
             None => None,
         };
-        let workspace_access = request
-            .workspace_access
-            .unwrap_or(WorkspaceAccess::WorkspaceWrite);
-        let effective_access = workspace_access.with_session_override(session_mode);
+        let workspace_access = if let Some(child) = &delegated_session {
+            // Delegated access is fixed by the child's own ceiling: read-only or
+            // its isolated worktree. A parent's full-access mode never escalates it.
+            if child.delegation_read_only {
+                WorkspaceAccess::ReadOnly
+            } else {
+                WorkspaceAccess::WorkspaceWrite
+            }
+        } else {
+            request
+                .workspace_access
+                .unwrap_or(WorkspaceAccess::WorkspaceWrite)
+        };
+        let effective_access = if delegated {
+            workspace_access
+        } else {
+            workspace_access.with_session_override(session_mode)
+        };
         request.workspace_access = Some(effective_access);
         request.approval_handle = Some(self.approval_modes.register(
             id,
@@ -585,6 +680,7 @@ impl TaskManager {
             // 模型动手之前给工作树拍一张：「回到第 N 步」恢复文件靠的就是这一张。
             // 拍不成不拦这一轮——回退时会说这一步没有文件检查点。
             if let Some((session_id, turn_id)) = checkpoint_target
+                && !delegated
                 && super::workspace_checkpoint::enabled()
             {
                 match super::workspace_checkpoint::capture_blocking(
@@ -728,6 +824,11 @@ impl TaskManager {
             .ok()
             .and_then(|items| items.get(&id).cloned());
         if let Some(cancellation) = cancellation {
+            if let Some(task) = self.get(id).await
+                && let Some(turn_id) = task.turn_id
+            {
+                self.sessions.request_cancel(turn_id)?;
+            }
             let _persistence = self.persistence.lock().await;
             let task = {
                 let mut tasks = self.tasks.write().await;

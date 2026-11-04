@@ -32,6 +32,10 @@ pub struct UsageLedgerContext {
     pub client_instance: Option<String>,
     pub execution: Execution,
     pub session_id: Option<Uuid>,
+    /// Root Session of the delegation family. Every call made by a child
+    /// conversation or its Workers carries it so family budgets can deduplicate
+    /// without adding already-aggregated Worker usage together.
+    pub family_session_id: Option<Uuid>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub workspace: Option<PathBuf>,
@@ -44,6 +48,7 @@ impl UsageLedgerContext {
             client_instance: None,
             execution,
             session_id: None,
+            family_session_id: None,
             turn_id: None,
             task_id: None,
             workspace: None,
@@ -185,6 +190,7 @@ impl UsageLedgerScope {
         record.client = self.context.client;
         record.client_instance = self.context.client_instance.clone();
         record.session_id = self.context.session_id;
+        record.family_session_id = self.context.family_session_id;
         record.turn_id = self.context.turn_id.clone();
         record.task_id = self.context.task_id.clone();
         record.agent_id = self.agent_id.clone();

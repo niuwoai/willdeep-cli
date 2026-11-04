@@ -20,6 +20,10 @@ pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &[
     "workflow_control",
     "agent_library_read",
     "agent_library_manage",
+    "start_session",
+    "continue_session",
+    "retry_session_task",
+    "get_session_task",
 ];
 
 /// `await_agents` 的默认与最长等待（秒）。

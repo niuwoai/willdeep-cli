@@ -331,9 +331,23 @@ pub(super) fn session_picker_result_line(
         String::new()
     };
     let title = result.title.replace(['\r', '\n'], " ");
-    let origin = session_origin_label(result.origin, language)
+    let mut origin = session_origin_label(result.origin, language)
         .map(|label| format!(" [{label}]"))
         .unwrap_or_default();
+    if result.parent_session_id.is_some() {
+        let label = if result.delegation_read_only {
+            language.text(
+                "只读子会话",
+                "read-only child",
+                "読み取り専用の子セッション",
+            )
+        } else {
+            language.text("可写子会话", "writable child", "書き込み可能な子セッション")
+        };
+        origin.push_str(&format!(" [{label}]"));
+    } else if result.started_by.is_some() {
+        origin.push_str(&format!(" [{}]", language.text("分叉", "fork", "フォーク")));
+    }
     let snippet = result
         .snippet
         .as_deref()
@@ -382,7 +396,8 @@ fn nest_forked_sessions(
         .enumerate()
         .filter_map(|(index, result)| {
             let parent = result
-                .started_by
+                .parent_session_id
+                .or(result.started_by)
                 .filter(|parent| *parent != result.id && present.contains(parent))?;
             Some((index, parent))
         })
@@ -421,16 +436,17 @@ fn session_picker_depths(results: &[willdeep_runtime_protocol::SessionSearchResu
         .iter()
         .enumerate()
         .map(|(index, result)| {
-            let Some(parent) = result.started_by else {
+            let Some(parent) = result.parent_session_id.or(result.started_by) else {
                 return 0;
             };
             let parent_at = results.iter().position(|candidate| candidate.id == parent);
             let Some(parent_at) = parent_at.filter(|parent_at| *parent_at < index) else {
                 return 0;
             };
-            let attached = results[parent_at + 1..=index]
-                .iter()
-                .all(|candidate| candidate.started_by == Some(parent) || candidate.id == parent);
+            let attached = results[parent_at + 1..=index].iter().all(|candidate| {
+                candidate.parent_session_id.or(candidate.started_by) == Some(parent)
+                    || candidate.id == parent
+            });
             usize::from(attached)
         })
         .collect()
@@ -474,6 +490,8 @@ mod tests {
             snippet: None,
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
             started_by,
+            parent_session_id: None,
+            delegation_read_only: false,
         }
     }
 

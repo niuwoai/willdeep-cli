@@ -18,6 +18,22 @@
 | [Web 端使用指南](WEB_GUIDE.md) | 启动参数、界面功能、断线重连、安全模型、JSON API、前端开发 |
 | [CLI 参考](CLI_REFERENCE.md) | 完整命令树、`run` 自动化入口、退出码 |
 
+## 产品模块台账
+
+模块台账说明“当前有哪些能力、边界在哪里”，操作参数和协议仍以专题文档为准。
+
+| 模块 | 内容 |
+|---|---|
+| [Web](product/web.md) | 聊天、项目与会话导航、Composer、配置工作台、活动面板与重连 |
+| [CLI 与 TUI](product/cli-tui.md) | 自动化入口、终端输入与显示、附件、历史、快捷键、启动与诊断 |
+| [Runtime 与会话](product/runtime-sessions.md) | Daemon、工作区、Session/Turn、队列、计划、定时任务、事件与恢复 |
+| [智能体与协作](product/agents-collaboration.md) | 完整子会话、Worker、工作流、智能体库、会话协作与 Worktree |
+| [工具与模型](product/tools-models.md) | Provider、模型档位、压缩、工具、Skills、规则与 MCP |
+| [插件与外部集成](product/integrations.md) | 插件、公网入口、分享、联邦、手机、通知、交接、SDK 与 CI |
+| [安全与验证](product/security-verification.md) | 审批、只读上限、沙箱、未知副作用、Diff、验证与审计 |
+| [评测与 RSI](product/evaluation-rsi.md) | RSI、模型/可靠性评测、用量与反馈账本、派工指标 |
+| [拆分前历史快照](product/history/overview-through-0.142.0-rc1.md) | 版本流水、旧状态与完整待办；仅代表归档时语境 |
+
 ## 能力专题
 
 | 文档 | 内容 |
@@ -29,8 +45,15 @@
 |---|---|
 | [some.im 集成](SOMEIM_INTEGRATION.md) | 登录、自动识别、请求头、视觉回退、web_search |
 | [Magpie 本地网关](MAGPIE.md) | 标准地址变量、共享 Profile、Runtime 环境与隔离联调 |
+| [Magpie 社区 Agent](MAGPIE_AGENT_PLAN.md) | 独立 JSON 连接、临时 `magpie-cli` Provider、双端插件与验收边界 |
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |
+| [完整子会话](CHILD_SESSIONS.md) | P0 fresh 只读对话、与 Worker 的区别、打开/续做/查询/停止及验收边界 |
+| [0.143.0-rc4 Windows Clippy 修复验收](verification/0.143.0-rc4.md) | 非 Unix 分支 `bail!` 后不可达语句的根因、修复与 Windows 目标交叉 clippy |
+| [0.143.0-rc3 Windows Magpie 传输测试修复验收](verification/0.143.0-rc3.md) | Windows 子进程环境块与回环连接超时的根因、修复与诊断改进 |
+| [0.143.0-rc2 Windows 栈溢出修复验收](verification/0.143.0-rc2.md) | daemon/Web 默认 CLI 构造的栈开销根因、修复与阈值回归 |
+| [0.143.0-rc1 子会话 P1 验收](verification/0.143.0-rc1.md) | fork、worktree、模型覆盖、家族 Worker 与本机回归的实际结果及覆盖边界 |
+| [0.143.0-rc1 子会话 P0 阶段验收](verification/0.143.0-rc1-p0.md) | P0 的 Rust/Web、隔离 API/E2E、宽窄 PTY 与浏览器结果；后续已并入 0.143 最终回归 |
 | [Agent Runtime Kernel（任务书）](AGENT_RUNTIME_KERNEL.md) | 统一事件信封、三档中断、lease 与外部事件的移植计划 |
 | [小上下文 Skill Worker](SKILL_WORKERS.md) | 工种分档、Task Packet、Verifier 闭环、文件集锁 |
 | [检查点回退](CHECKPOINT_REWIND.md) | `/rewind` 回到第 N 步：每轮开始前的工作树快照存哪、回退时发生什么 |
@@ -74,6 +97,7 @@
 | 文档 | 内容 |
 |---|---|
 | [CLI / TUI / Runtime 路线图](CLI_TUI_RUNTIME_ROADMAP.md) | 分阶段实施记录与验收 |
+| [完整子会话补齐方案](decisions/2026-11-04-child-sessions.md) | P0/P1 已实现并有本机验收记录；P2 提案、身份边界与故障恢复契约 |
 | [Goal Teams 引用与落地映射](GOAL_TEAMS.md) | 执行期角色 / 版本锚定里程碑 / 归档规范（canonical 在 Xedit 仓库） |
 | [长程自主执行引用与落地映射](LONG_HORIZON_AUTONOMY.md) | 续推契约 / 预算与软停 / 计划工具化 / 重启可续（canonical 在 Xedit 仓库） |
 | [Xedit 工具能力对照](XEDIT_TOOL_PARITY.md) | 工具覆盖度与 Computer Use 路线 |
@@ -84,8 +108,9 @@
 
 ## 文档约定
 
-- 根目录 [README](../README.md) 面向"这是什么、值不值得用"，保持简短；
-- 本目录面向"怎么用、为什么这么设计"，是唯一的详细事实来源；
-- 根目录 [PRODUCT_OVERVIEW.md](../PRODUCT_OVERVIEW.md) 是产品功能台账，最多 20,000 个 Unicode 字符；超限后保留摘要和子文档索引，WillDeep 按需读取详情；
-- 涉及安全边界的描述必须与实现一致。宁可写"当前不支持"，也不写模糊的承诺。
+- 根目录 [README](../README.md) 面向“这是什么、值不值得用”，保持简短；
+- 根目录 [PRODUCT_OVERVIEW.md](../PRODUCT_OVERVIEW.md) 保留产品定位、能力概要与模块索引，最多 20,000 个 Unicode 字符；预算内可作为 Agent 项目参考资料直接加载；
+- `docs/product/` 是当前产品能力台账，说明模块范围、状态与限制；操作参数、协议、架构和验收仍由本目录对应专题维护，不在模块页复制另一套指南；
+- 拆分前概览只作为历史快照，旧“当前”、勾选状态、版本号和实验授权不代表最新事实；
+- 涉及安全边界的描述必须与实现一致。宁可写“当前不支持”，也不写模糊的承诺。
 - README 首屏的 GIF 由 [`media/readme-demo.tape`](media/readme-demo.tape) 经 `ruby scripts/record_readme_demo.rb` 生成（真跑模型、临时演示仓库、≤ 3 MB）。改了 TUI 手感就重录。

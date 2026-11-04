@@ -134,6 +134,9 @@ pub struct UsageLedgerRecord {
     pub execution: Execution,
     pub kind: UsageKind,
     pub session_id: Option<Uuid>,
+    /// Delegation family root. Optional for records written before P1.
+    #[serde(default)]
+    pub family_session_id: Option<Uuid>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub agent_id: Option<String>,
@@ -165,6 +168,7 @@ impl UsageLedgerRecord {
             execution,
             kind,
             session_id: None,
+            family_session_id: None,
             turn_id: None,
             task_id: None,
             agent_id: None,

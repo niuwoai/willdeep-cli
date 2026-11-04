@@ -1551,8 +1551,8 @@ async fn share_view(
     };
     let running =
         session.runtime_managed && session_is_active(&state.service.home, session.id).await;
-    let items =
-        willdeep_core::conversation::project(&session.messages, session.current_plan.as_ref());
+    let messages = public_share_messages(&session);
+    let items = willdeep_core::conversation::project(&messages, session.current_plan.as_ref());
     let messages = items
         .into_iter()
         .filter(|item| matches!(item.role, "user" | "assistant"))
@@ -1590,6 +1590,17 @@ async fn session_is_active(home: &Path, id: uuid::Uuid) -> bool {
         .unwrap_or(false)
 }
 
+fn public_share_messages(session: &willdeep_core::Session) -> Vec<willdeep_core::Message> {
+    session
+        .messages
+        .iter()
+        .filter(|message| {
+            message.source != Some(willdeep_core::types::MessageSource::HostInstruction)
+        })
+        .cloned()
+        .collect()
+}
+
 async fn share_send(
     State(state): State<Arc<IntakeState>>,
     AxumPath(token): AxumPath<String>,
@@ -1598,6 +1609,14 @@ async fn share_send(
     let Some((token, share)) = share_target(&state, &token) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let home = state.service.home.clone();
+    let session_id = share.session_id;
+    if !matches!(
+        tokio::task::spawn_blocking(move || crate::shares::ensure_session(&home, session_id)).await,
+        Ok(Ok(_))
+    ) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if share.mode != crate::shares::ShareMode::Chat {
         return (
             StatusCode::FORBIDDEN,
@@ -1688,6 +1707,63 @@ fn constant_eq(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_share_projection_excludes_private_host_context() {
+        let mut session = willdeep_core::Session::new("/tmp".into(), None, "Parent");
+        session.messages = vec![
+            willdeep_core::Message::user("Public question"),
+            willdeep_core::Message::host_instruction("child-assignment: private task brief"),
+            willdeep_core::Message::host_instruction(
+                "<host-context id=\"private-result\">private child report</host-context>",
+            ),
+            willdeep_core::Message::assistant("Public answer", Vec::new()),
+        ];
+        let messages = public_share_messages(&session);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Public question");
+        assert_eq!(messages[1].content, "Public answer");
+    }
+
+    #[tokio::test]
+    async fn legacy_child_share_tokens_cannot_read_or_send() {
+        let root =
+            std::env::temp_dir().join(format!("private-child-share-{}", uuid::Uuid::new_v4()));
+        let core = willdeep_core::SessionStore::new(&root);
+        let mut child = willdeep_core::Session::new(root.clone(), None, "Child");
+        core.save(&mut child).unwrap();
+        let (token, _) =
+            crate::shares::create(&root, child.id, crate::shares::ShareMode::Chat).unwrap();
+        child.parent_session_id = Some(uuid::Uuid::new_v4());
+        child.delegation_read_only = true;
+        core.save(&mut child).unwrap();
+        let state = Arc::new(IntakeState {
+            service: Arc::new(IntakeService::new(&root)),
+            settings: IntakeSettings::default(),
+            federation: FederationSettings::default(),
+            form_signing_key: [0; 32],
+            consumed_form_nonces: std::sync::Mutex::new(HashMap::new()),
+        });
+        assert_eq!(
+            share_view(State(state.clone()), AxumPath(token.clone()))
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            share_send(
+                State(state),
+                AxumPath(token),
+                Json(ShareSendRequest {
+                    message: "Continue".into()
+                })
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn federation_settings(reply: &str, max_auto_turns: u32) -> FederationSettings {
         FederationSettings {

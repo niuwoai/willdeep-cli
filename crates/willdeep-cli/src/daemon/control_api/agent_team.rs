@@ -25,8 +25,10 @@ pub(super) fn parent_session(
 pub(super) fn runs(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let params = params::<AgentRunsParams>(request)?;
     let session = parent_session(state, params.id)?;
+    let family = session.parent_session_id.unwrap_or(session.id);
     let filter = (session.root_agent_id != params.id).then_some(params.id);
-    let store = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id);
+    let store = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id)
+        .with_family(family);
     let mut page = store
         .list(filter, params.after_sequence, params.limit.unwrap_or(32))
         .map_err(|error| ApiFailure::internal(anyhow::anyhow!(error)))?;
@@ -42,7 +44,9 @@ pub(super) fn runs(state: &ServerState, request: &ApiRequest) -> ApiResult {
 pub(super) fn team(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let id = params::<IdParams>(request)?.id;
     let session = parent_session(state, id)?;
-    let store = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id);
+    let family = session.parent_session_id.unwrap_or(session.id);
+    let store = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id)
+        .with_family(family);
     let summary = store
         .team_summary(&willdeep_core::usage_ledger::ledger_dir(&state.home))
         .map_err(|error| ApiFailure::internal(anyhow::anyhow!(error)))?;
@@ -68,7 +72,9 @@ pub(super) async fn continue_agent(state: &ServerState, request: &ApiRequest) ->
         ));
     }
     let session = parent_session(state, params.id)?;
-    let runs = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id);
+    let family = session.parent_session_id.unwrap_or(session.id);
+    let runs = willdeep_core::subagent::AgentRunStore::new(state.home.join("workers"), session.id)
+        .with_family(family);
     let existing = runs
         .get(params.request_id)
         .map_err(|error| ApiFailure::internal(anyhow::anyhow!(error)))?;

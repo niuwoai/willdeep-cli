@@ -42,6 +42,14 @@ pub(super) async fn update(state: &ServerState, request: &ApiRequest) -> ApiResu
     ) {
         state
             .sessions
+            .children
+            .transaction(|ledger| {
+                ledger.operator_input(params.session_id);
+                Ok(())
+            })
+            .map_err(ApiFailure::internal)?;
+        state
+            .sessions
             .set_yield_suppressed(params.session_id, false)
             .map_err(ApiFailure::internal)?;
     }

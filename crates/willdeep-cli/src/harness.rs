@@ -21,6 +21,7 @@ use crate::{
 
 mod agent_library;
 mod agent_team;
+mod delegation;
 mod verification;
 mod worker_profiles;
 pub(crate) mod workflows;
@@ -287,6 +288,7 @@ pub(crate) fn feedback_recorder(
 fn usage_ledger_context(
     frontend: &HarnessFrontend,
     session_id: uuid::Uuid,
+    family_session_id: uuid::Uuid,
     workspace: &Path,
 ) -> willdeep_core::usage_ledger::UsageLedgerContext {
     use willdeep_core::usage_ledger::{ClientKind, Execution, UsageLedgerContext};
@@ -312,6 +314,7 @@ fn usage_ledger_context(
         }
     };
     context.session_id = Some(session_id);
+    context.family_session_id = Some(family_session_id);
     context.workspace = Some(workspace.to_path_buf());
     context
 }
@@ -328,11 +331,11 @@ const INSTRUCTION_WAKE_PROMPT: &str = "Additional instructions arrived while bac
 const HEADLESS_BACKGROUND_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct BuiltHarness {
-    peer_wake: bool,
+    host_input: bool,
     event_sink: Arc<dyn EventSink>,
     pub subagents: Arc<SubagentCatalog>,
     pub workflows: Arc<workflows::WorkflowService>,
-    _workflow_driver: workflows::WorkflowDriverGuard,
+    _workflow_driver: Option<workflows::WorkflowDriverGuard>,
     pub goal: Arc<willdeep_core::GoalContinuation>,
     pub session_id: uuid::Uuid,
     pub agent: Arc<Agent>,
@@ -488,6 +491,9 @@ pub(crate) async fn execute_runtime(
         session.config = request.config.clone();
     }
     if let Some(control) = request.team_control {
+        if session.delegation_read_only {
+            bail!("delegated read-only sessions cannot execute team control");
+        }
         let _ownership = ownership;
         return agent_team::execute(&built, &store, &mut session, control, language).await;
     }
@@ -595,7 +601,7 @@ pub(crate) async fn execute_noninteractive(
         {
             history.push(notice);
         }
-        let user_message = if built.peer_wake {
+        let user_message = if built.host_input {
             willdeep_core::Message::host_instruction(&prompt)
         } else {
             willdeep_core::Message::user_with_attachments(&prompt, attachments)
@@ -872,18 +878,41 @@ pub(crate) async fn build(
     let model = provider_config.model.clone();
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
     let workspace = resolve_workspace(cli, resumed)?;
-    let team_store = willdeep_core::subagent::AgentRunStore::new(home.join("workers"), session_id);
-    team_store
-        .configure_team(loaded.file.agent_team.clone())
-        .map_err(anyhow::Error::msg)?;
+    let delegation_read_only = resumed.is_some_and(|session| session.delegation_read_only);
+    // A child may be read-only or a writable isolated worktree, but it never
+    // gains the parent's full access and never creates further child sessions.
+    let delegation_child = resumed.is_some_and(|session| session.parent_session_id.is_some());
+    let family_root = resumed
+        .and_then(|session| session.parent_session_id)
+        .unwrap_or(session_id);
+    let team_store = willdeep_core::subagent::AgentRunStore::new(home.join("workers"), session_id)
+        .with_family(family_root);
+    // A child freezes the root's already-persisted policy instead of each new
+    // Session getting a fresh concurrency, queue and budget allowance.
+    let team_settings = if delegation_child {
+        willdeep_core::subagent::AgentRunStore::new(home.join("workers"), family_root)
+            .effective_settings()
+            .map_err(anyhow::Error::msg)?
+    } else {
+        loaded.file.agent_team.clone()
+    };
+    if !delegation_read_only {
+        team_store
+            .configure_team(team_settings.clone())
+            .map_err(anyhow::Error::msg)?;
+    }
     // 本机用量账本（docs/USAGE_LEDGER.md）。主回合、子 Agent、压缩由 Agent 在
     // 主循环里记；这里只把辅助用途的 Provider 包上按调用记账——被主循环用的
     // Provider 不能再包，否则同一次调用会记两行。
     let usage_ledger = willdeep_core::usage_ledger::UsageLedgerScope::new(
         willdeep_core::usage_ledger::shared_sink(&willdeep_core::usage_ledger::ledger_dir(home)),
-        usage_ledger_context(&frontend, session_id, &workspace),
-    )
-    .with_agent_team(team_store);
+        usage_ledger_context(&frontend, session_id, family_root, &workspace),
+    );
+    let usage_ledger = if delegation_read_only {
+        usage_ledger
+    } else {
+        usage_ledger.with_agent_team(team_store.clone())
+    };
     let feedback = feedback_recorder(home, &loaded.file.feedback, usage_ledger.context())
         .with_runtime_parameters(parameters);
     let web_tools = (kind == ProviderKind::SomeIm).then(|| WebToolConfig {
@@ -919,8 +948,12 @@ pub(crate) async fn build(
     let main_model = willdeep_core::provider::MainModelHandle::new(provider.clone());
     let follow_main = main_model.follower();
     let local_auxiliary_config = local_auxiliary_provider_config(&loaded.file.local_model);
-    let peer_wake = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
-        if usage_origin.origin_client.as_deref().is_some_and(|origin| origin.starts_with(crate::daemon::PEER_WAKE_ORIGIN)));
+    let host_input = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
+        if delegation::is_host_input(usage_origin.origin_client.as_deref()));
+    let turn_id = match &frontend {
+        HarnessFrontend::Runtime { usage_origin, .. } => usage_origin.turn_id,
+        _ => None,
+    };
     let independent_execution = matches!(
         &frontend,
         HarnessFrontend::Runtime {
@@ -966,13 +999,18 @@ pub(crate) async fn build(
     if !allowed_mcp_servers.is_empty() {
         mcp_servers.retain(|name, _| allowed_mcp_servers.contains(name));
     }
-    let mut mcp_registry = willdeep_core::McpRegistry::connect_in(Some(home), &mcp_servers)
-        .await
-        .context("initialize MCP servers")?;
+    let mut mcp_registry = if delegation_read_only {
+        // Connecting a stdio MCP server already executes an external program.
+        willdeep_core::McpRegistry::default()
+    } else {
+        willdeep_core::McpRegistry::connect_in(Some(home), &mcp_servers)
+            .await
+            .context("initialize MCP servers")?
+    };
     // 已启用插件的 MCP 工具（docs/PLUGINS.md「聊天里的插件工具」）：定义读持久化
     // 目录，调用时才拉起插件，优先经 Web 进程的插件网关。显式限定了 MCP 服务
     // 白名单的 Runtime 任务不带插件工具——白名单里写的是配置里的服务名。
-    if allowed_mcp_servers.is_empty() {
+    if !delegation_child && allowed_mcp_servers.is_empty() {
         let config_path = cli
             .config
             .clone()
@@ -991,7 +1029,7 @@ pub(crate) async fn build(
                 .with_host_requests(host_requests),
         ));
     }
-    let screenplay_plugins_allowed = allowed_mcp_servers.is_empty();
+    let screenplay_plugins_allowed = !delegation_child && allowed_mcp_servers.is_empty();
     let mcp = Arc::new(mcp_registry);
     let (approver, sink, runtime_connection): (
         Arc<dyn Approver>,
@@ -1017,45 +1055,46 @@ pub(crate) async fn build(
         ),
     };
     let background_lifecycle_sink = sink.clone();
-    let background_tasks = Arc::new(
-        BackgroundTaskRegistry::default()
-            .with_agent_run_store(willdeep_core::subagent::AgentRunStore::new(
-                home.join("workers"),
-                session_id,
-            ))
-            .with_agent_team_settings(loaded.file.agent_team.clone())
-            .map_err(anyhow::Error::msg)?
-            .with_lifecycle_observer(move |snapshot| {
-                let sink = background_lifecycle_sink.clone();
-                async move {
-                    if snapshot.kind != BackgroundTaskKind::Shell {
-                        return;
+    let background_tasks = if delegation_read_only {
+        Arc::new(BackgroundTaskRegistry::default())
+    } else {
+        Arc::new(
+            BackgroundTaskRegistry::default()
+                .with_agent_run_store(team_store)
+                .with_family_team(family_root, team_settings)
+                .map_err(anyhow::Error::msg)?
+                .with_lifecycle_observer(move |snapshot| {
+                    let sink = background_lifecycle_sink.clone();
+                    async move {
+                        if snapshot.kind != BackgroundTaskKind::Shell {
+                            return;
+                        }
+                        if snapshot.status == BackgroundTaskStatus::Running {
+                            sink.emit(willdeep_core::AgentEvent::BackgroundShellStarted {
+                                id: snapshot.id,
+                            })
+                            .await;
+                        } else {
+                            sink.emit(willdeep_core::AgentEvent::BackgroundShellCompleted {
+                                id: snapshot.id,
+                                status: snapshot.status,
+                                exit_code: snapshot.exit_code,
+                                elapsed_millis: snapshot.elapsed_millis,
+                                output_bytes: snapshot.output_bytes,
+                            })
+                            .await;
+                        }
                     }
-                    if snapshot.status == BackgroundTaskStatus::Running {
-                        sink.emit(willdeep_core::AgentEvent::BackgroundShellStarted {
-                            id: snapshot.id,
-                        })
-                        .await;
-                    } else {
-                        sink.emit(willdeep_core::AgentEvent::BackgroundShellCompleted {
-                            id: snapshot.id,
-                            status: snapshot.status,
-                            exit_code: snapshot.exit_code,
-                            elapsed_millis: snapshot.elapsed_millis,
-                            output_bytes: snapshot.output_bytes,
-                        })
-                        .await;
-                    }
-                }
-            }),
-    );
+                }),
+        )
+    };
     let verification_home = home.to_path_buf();
     let verification_workspace = workspace.clone();
     let verification_snapshot_workspace = workspace.clone();
     // The judge answers one YES/NO per ambiguous command: on some.im that is
     // the gateway's managed `someim-security-guard` policy, elsewhere the
     // session's own model. `[agent] judge_model` overrides both.
-    let safety_judge = if loaded.file.agent.safety_judge.unwrap_or(true) {
+    let safety_judge = if !delegation_read_only && loaded.file.agent.safety_judge.unwrap_or(true) {
         let configured_judge = loaded.file.agent.judge_model.clone();
         let judge_model = configured_judge
             .clone()
@@ -1084,7 +1123,13 @@ pub(crate) async fn build(
     // 目录遍历，放在启动时做一次足够。
     detached_jobs.prune();
     let sandbox = resolve_sandbox(&loaded.file.agent, approval_mode, &workspace);
-    let hooks = build_hooks(&loaded.file.hooks).context("read [[hooks]]")?;
+    let hooks = if delegation_child {
+        // Hooks can execute host programs; a delegated conversation does not
+        // inherit that side-effect chain in either workspace mode.
+        HookRegistry::default()
+    } else {
+        build_hooks(&loaded.file.hooks).context("read [[hooks]]")?
+    };
     let kernel = willdeep_core::EventKernel::new();
     let approval_handle = runtime_approval_handle
         .unwrap_or_else(|| willdeep_core::SharedApprovalMode::new(approval_mode));
@@ -1151,10 +1196,14 @@ pub(crate) async fn build(
         // no way to act on.
         .with_delegation_hints(true)
         .with_always_allow_store(home.join("always-allow.json"))?;
-    if !independent_execution {
+    if delegation_read_only {
+        tools = tools.with_delegation_read_only();
+    }
+    if !delegation_child && !independent_execution {
         tools = tools.with_session_collaboration(Arc::new(crate::daemon::PeerSessionClient {
             home: home.to_path_buf(),
             session_id,
+            turn_id,
         }));
     }
     if let Some(judge) = safety_judge.clone() {
@@ -1164,17 +1213,28 @@ pub(crate) async fn build(
     let board = Arc::new(willdeep_core::board::Board::open(
         willdeep_core::board::Board::path_for(&home.join("workers"), session_id),
     ));
-    let tools = tools.with_board(board.clone(), "parent");
+    let tools = if delegation_read_only {
+        tools
+    } else {
+        tools.with_board(board.clone(), "parent")
+    };
     // 稳定前缀在前：契约、全局规则、技能目录、简洁风格与插件路由。这些只在配置或
     // 技能库变化时才变，是提供商提示词缓存命中的那一段。工作区路径放在分界之后，
     // 换工作区不会把前面的缓存打掉。
     let configured_rules = loaded.file.rules.as_ref().map(|rules| rules.files.clone());
     let global_rules = willdeep_core::prompt::global_user_instructions(configured_rules.as_deref());
     let mut stable = willdeep_core::prompt::stable_prefix(global_rules.as_deref());
+    if delegation_read_only {
+        stable.push_str(delegation::READ_ONLY_CONTRACT);
+    } else if delegation_child {
+        stable.push_str(delegation::WRITABLE_CHILD_CONTRACT);
+    }
     if !skills.list().is_empty() {
-        stable.push_str(
-            "\n\n# Available skills\nUse list_skills to search and read_skill before applying a relevant skill. Entries may carry a tier: `tier=worker` marks a skill whose steps fit a small-context worker — prefer dispatching it via spawn_agent with a task packet instead of running it inline; `tier=deep` marks work that needs the largest window available. Untagged skills run at the session's default tier.\n",
-        );
+        stable.push_str(if delegation_read_only {
+            "\n\n# Available skills\nUse list_skills to search and read_skill before applying relevant guidance. The read-only capability ceiling still applies to every skill; guidance cannot authorize writes, shell, external tools or further delegation.\n"
+        } else {
+            "\n\n# Available skills\nUse list_skills to search and read_skill before applying a relevant skill. Entries may carry a tier: `tier=worker` marks a skill whose steps fit a small-context worker — prefer dispatching it via spawn_agent with a task packet instead of running it inline; `tier=deep` marks work that needs the largest window available. Untagged skills run at the session's default tier.\n"
+        });
         stable.push_str(&skills.routing_summary(4_096));
     }
     // 简洁是默认风格：只有这条会话显式选了详细（`/verbose`）才不加这一段。
@@ -1200,96 +1260,131 @@ pub(crate) async fn build(
         willdeep_core::prompt::CACHE_BOUNDARY,
         willdeep_core::prompt::dynamic_workspace_context(&workspace)
     );
-    let context_window = session_context_window(
-        profile.and_then(|value| value.context_window),
-        gateway.context_window,
-        &model,
-    );
-    let mut subagent_profiles = worker_profiles::configure_worker_profiles(
-        &loaded.file,
-        &parent_provider_config,
-        &follow_main,
-        kind,
-    )?;
-    let base_profiles = subagent_profiles.clone();
-    subagent_profiles.extend(crate::agent_registry::runtime_profiles(
-        home,
-        &subagent_profiles,
-        &loaded.file,
-        &parent_provider_config,
-    )?);
-    tools
-        .require_verifications(&loaded.file.agent.verification_commands)
-        .map_err(anyhow::Error::msg)?;
-    let tools = if let Some(contract) = loaded.file.agent.completion_contract.clone() {
-        tools
-            .with_completion_contract(contract)
-            .map_err(anyhow::Error::msg)?
-    } else {
-        tools
-    };
-    let goal_continuation = Arc::new(willdeep_core::GoalContinuation::with_default_budget(
-        loaded.file.agent.goal_budget(),
-    ));
-    if let Some(session) = resumed {
-        restore_goal(&goal_continuation, session);
-    }
-    let mut catalog = SubagentCatalog::new(&workspace, subagent_profiles, background_tasks.clone())
-        .with_sandbox(sandbox)
-        // 父会话在 full-access 时 Worker 跟着免审（rocky 2026-09-21 决定）。
-        .with_parent_approval_mode(parent_approval_handle)
-        .with_worktree_root(home.join("worktrees").join("subagents"))
-        // Task packets may name a skill; the runtime inlines its body so the
-        // worker never spends turns fetching its own instructions.
-        .with_skills(skills.clone())
-        // Worker 没有自己的项目规则，继承用户配置的全局规则。
-        .with_global_rules(configured_rules.unwrap_or_default())
-        // 兜底工种能查已连接的 MCP 服务。窄工种拿不到：它们的价值就是范围窄。
-        .with_mcp(mcp)
-        // Worker 与父会话共享已批准的精确动作。没有这条，后台 Worker 会在人
-        // 刚刚批过的同一条命令上再卡一次，而它自己没有审批 UI。
-        .with_state_home(home.join("workers"))
-        .with_parent_session(session_id)
-        .with_always_allow_store(home.join("always-allow.json"))
-        .with_event_sink(sink.clone())
-        .with_usage_ledger(usage_ledger.clone())
-        .with_feedback(feedback.clone())
-        .with_board(board)
-        // Worker 的用量同样计入目标的 token 预算。
-        .with_goal(goal_continuation.clone());
-    // 档位兑现成哪个模型。准入在 agent 层，这里只负责兑现。
-    for (tier, binding) in resolve_tier_bindings(
-        &loaded.file,
-        &parent_provider_config,
-        &follow_main,
-        kind,
-        context_window,
-    )? {
-        catalog = catalog.with_tier_binding(tier, binding);
-    }
-    // Verifier commands run unattended, with no approval card to fall back
-    // on. They go through the same judge the main agent's shell does.
-    if let Some(judge) = safety_judge {
-        catalog = catalog.with_safety_judge(judge);
-    }
-    let binding_home = home.to_path_buf();
-    let binding_file = loaded.file.clone();
-    let binding_parent = parent_provider_config.clone();
-    catalog = catalog.with_definition_bindings(move |binding, fallback| {
-        crate::agent_registry::resolve_binding_provider(
-            &binding_home,
-            binding,
-            &binding_file,
-            &binding_parent,
-            fallback,
+    let context_window = resumed
+        .and_then(|session| session.model_context_window)
+        .unwrap_or_else(|| {
+            session_context_window(
+                profile.and_then(|value| value.context_window),
+                gateway.context_window,
+                &model,
+            )
+        });
+    // These inert values support frontend projections without restoring or installing a team.
+    let (tools, subagents, goal_continuation, base_profiles) = if delegation_read_only {
+        (
+            tools,
+            Arc::new(SubagentCatalog::new(
+                &workspace,
+                Vec::new(),
+                background_tasks.clone(),
+            )),
+            Arc::new(willdeep_core::GoalContinuation::new()),
+            Vec::new(),
         )
-        .map_err(|error| {
-            willdeep_core::AgentError::SubagentBlocked(format!(
-                "restore specialist model binding: {error:#}"
-            ))
-        })
-    });
-    let subagents = Arc::new(catalog);
+    } else {
+        let mut subagent_profiles = worker_profiles::configure_worker_profiles(
+            &loaded.file,
+            &parent_provider_config,
+            &follow_main,
+            kind,
+        )?;
+        let base_profiles = subagent_profiles.clone();
+        subagent_profiles.extend(crate::agent_registry::runtime_profiles(
+            home,
+            &subagent_profiles,
+            &loaded.file,
+            &parent_provider_config,
+        )?);
+        tools
+            .require_verifications(&loaded.file.agent.verification_commands)
+            .map_err(anyhow::Error::msg)?;
+        let tools = if let Some(contract) = loaded.file.agent.completion_contract.clone() {
+            tools
+                .with_completion_contract(contract)
+                .map_err(anyhow::Error::msg)?
+        } else {
+            tools
+        };
+        let goal_continuation = Arc::new(willdeep_core::GoalContinuation::with_default_budget(
+            loaded.file.agent.goal_budget(),
+        ));
+        if let Some(session) = resumed
+            && !delegation_child
+        {
+            restore_goal(&goal_continuation, session);
+        }
+        // Child conversations cannot own a persistent Goal; an inherited one
+        // would keep executing after the assignment terminal.
+        let catalog_goal = if delegation_child {
+            Arc::new(willdeep_core::GoalContinuation::new())
+        } else {
+            goal_continuation.clone()
+        };
+        let worktree_root = if delegation_child {
+            home.join("worktrees")
+                .join("child-subagents")
+                .join(session_id.to_string())
+        } else {
+            home.join("worktrees").join("subagents")
+        };
+        let mut catalog =
+            SubagentCatalog::new(&workspace, subagent_profiles, background_tasks.clone())
+                .with_sandbox(sandbox)
+                // 父会话在 full-access 时 Worker 跟着免审（rocky 2026-09-21 决定）。
+                .with_parent_approval_mode(parent_approval_handle)
+                .with_worktree_root(worktree_root)
+                // Task packets may name a skill; the runtime inlines its body so the
+                // worker never spends turns fetching its own instructions.
+                .with_skills(skills.clone())
+                // Worker 没有自己的项目规则，继承用户配置的全局规则。
+                .with_global_rules(configured_rules.unwrap_or_default())
+                // 兜底工种能查已连接的 MCP 服务。窄工种拿不到：它们的价值就是范围窄。
+                .with_mcp(mcp)
+                // Worker 与父会话共享已批准的精确动作。没有这条，后台 Worker 会在人
+                // 刚刚批过的同一条命令上再卡一次，而它自己没有审批 UI。
+                .with_state_home(home.join("workers"))
+                .with_parent_session(session_id)
+                .with_always_allow_store(home.join("always-allow.json"))
+                .with_event_sink(sink.clone())
+                .with_usage_ledger(usage_ledger.clone())
+                .with_feedback(feedback.clone())
+                .with_board(board)
+                // Worker 的用量同样计入目标的 token 预算。
+                .with_goal(catalog_goal);
+        // 档位兑现成哪个模型。准入在 agent 层，这里只负责兑现。
+        for (tier, binding) in resolve_tier_bindings(
+            &loaded.file,
+            &parent_provider_config,
+            &follow_main,
+            kind,
+            context_window,
+        )? {
+            catalog = catalog.with_tier_binding(tier, binding);
+        }
+        // Verifier commands run unattended, with no approval card to fall back
+        // on. They go through the same judge the main agent's shell does.
+        if let Some(judge) = safety_judge {
+            catalog = catalog.with_safety_judge(judge);
+        }
+        let binding_home = home.to_path_buf();
+        let binding_file = loaded.file.clone();
+        let binding_parent = parent_provider_config.clone();
+        catalog = catalog.with_definition_bindings(move |binding, fallback| {
+            crate::agent_registry::resolve_binding_provider(
+                &binding_home,
+                binding,
+                &binding_file,
+                &binding_parent,
+                fallback,
+            )
+            .map_err(|error| {
+                willdeep_core::AgentError::SubagentBlocked(format!(
+                    "restore specialist model binding: {error:#}"
+                ))
+            })
+        });
+        (tools, Arc::new(catalog), goal_continuation, base_profiles)
+    };
     let workflows = workflows::WorkflowService::new(
         home,
         session_id,
@@ -1297,21 +1392,29 @@ pub(crate) async fn build(
         background_tasks.clone(),
         sink.clone(),
     );
-    let tools = tools
-        .with_agent_definition_host(Arc::new(agent_library::LibraryHost::new(
-            home,
-            subagents.clone(),
-            base_profiles,
-            loaded.file.clone(),
-            parent_provider_config.clone(),
-        )?))
-        .with_workflow_host(workflows.clone());
+    let tools = if delegation_child {
+        tools
+    } else {
+        tools
+            .with_agent_definition_host(Arc::new(agent_library::LibraryHost::new(
+                home,
+                subagents.clone(),
+                base_profiles,
+                loaded.file.clone(),
+                parent_provider_config.clone(),
+            )?))
+            .with_workflow_host(workflows.clone())
+    };
     // 构建界面只读取团队状态；恢复由取得会话执行权后的执行入口负责。
-    let command_watcher = daemon::start_agent_command_watcher(
-        runtime_connection.as_ref(),
-        background_tasks.clone(),
-        subagents.clone(),
-    )?;
+    let command_watcher = if delegation_child {
+        None
+    } else {
+        daemon::start_agent_command_watcher(
+            runtime_connection.as_ref(),
+            background_tasks.clone(),
+            subagents.clone(),
+        )?
+    };
     // 事件内核先于 Agent 建起来，并立刻把上一次运行没投递完的事件读回来。
     // 读不出来不挡启动：事件是通知不是账本，为一份坏日志让整个 Runtime 起不
     // 来才是真的坏。（内核本身在工具注册表之前就建好了：monitor 要往里发事件。）
@@ -1342,12 +1445,20 @@ pub(crate) async fn build(
     })
     .with_main_model(main_model)
     .with_event_sink(sink.clone())
-    .with_subagents(subagents.clone())
-    .with_goal_continuation(goal_continuation.clone())
     .with_background_tasks(background_tasks.clone())
     .with_event_kernel(kernel.clone())
     .with_usage_ledger(usage_ledger.clone())
     .with_feedback(feedback);
+    let goal_continuation = if delegation_child {
+        Arc::new(willdeep_core::GoalContinuation::new())
+    } else {
+        goal_continuation
+    };
+    if !delegation_read_only {
+        agent = agent
+            .with_subagents(subagents.clone())
+            .with_goal_continuation(goal_continuation.clone());
+    }
     if let Some(seconds) = loaded.file.agent.time_budget_seconds {
         if seconds == 0 {
             anyhow::bail!("agent.time_budget_seconds must be greater than zero");
@@ -1362,7 +1473,7 @@ pub(crate) async fn build(
         auto_dispatch_read_only: loaded.file.agent.auto_dispatch_read_only.unwrap_or(true),
         max_deep_calls: loaded.file.agent.max_deep_calls_per_harness.unwrap_or(1),
     };
-    if loaded.file.agent.small_model_routing.unwrap_or(true) {
+    if !delegation_child && loaded.file.agent.small_model_routing.unwrap_or(true) {
         let mut routing = RoutingGuard::new(routing_policy);
         if loaded.file.local_model.enabled
             && loaded.file.local_model.prefer_for_worker_routing
@@ -1425,12 +1536,16 @@ pub(crate) async fn build(
     }
     let notifier = crate::notify::Notifier::new(&loaded.file.notifications, language);
     let agent = Arc::new(agent);
-    workflows.bind_agent(&agent);
-    let workflow_driver = workflows::WorkflowDriverGuard::new(workflows.clone());
+    let workflow_driver = if delegation_child {
+        None
+    } else {
+        workflows.bind_agent(&agent);
+        Some(workflows::WorkflowDriverGuard::new(workflows.clone()))
+    };
     Ok(BuiltHarness {
         workflows,
         _workflow_driver: workflow_driver,
-        peer_wake,
+        host_input,
         event_sink: sink,
         subagents,
         goal: goal_continuation,

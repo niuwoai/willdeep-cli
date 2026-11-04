@@ -81,9 +81,9 @@ resend = { api_key_env = "RESEND_API_KEY" }
 | `url` | 必须是 http/https |
 | `secret` / `secret_env` | 可选，二选一：签名密钥原文，或它的环境变量名。设置后每个请求带 `X-Willdeep-Signature: sha256=<hex>`，签名对象是**原始请求体**，与 [`[intake]` 验签](PUBLIC_INTAKE.md)同一套算法 |
 
-报文与桌面端一致，见 [共享 Schema](../PRODUCT_OVERVIEW.md)。请求头包括
-`X-App-Version`、`X-Agent-Source`、`X-Agent-Executor`、`X-Webhook-Schema`、
-`X-Agent-Event`。
+通用 Webhook 使用 `willdeep.webhook.v1` 报文。请求头包括 `X-App-Version`、
+`X-Agent-Source`、`X-Agent-Executor`、`X-Webhook-Schema`、`X-Agent-Event`；
+产品概览不承担报文 Schema 的协议定义。
 
 ### lark（飞书自定义机器人）
 

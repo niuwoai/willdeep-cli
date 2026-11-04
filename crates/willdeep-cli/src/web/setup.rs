@@ -29,11 +29,10 @@ pub(super) async fn setup_status(State(state): State<Arc<WebState>>) -> Json<Set
 }
 
 pub(super) fn setup_ready(path: &std::path::Path, profile: Option<&str>) -> bool {
-    use clap::Parser;
     let Ok(loaded) = crate::config::LoadedConfig::load(Some(path)) else {
         return false;
     };
-    let mut cli = crate::Cli::parse_from(["willdeep"]);
+    let mut cli = crate::Cli::bare();
     cli.profile = profile.map(str::to_owned);
     let Ok(provider) = crate::harness::resolve_parent_provider_config(&cli, &loaded, None) else {
         return false;

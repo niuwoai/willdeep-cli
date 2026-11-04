@@ -49,6 +49,7 @@ mod agent_commands;
 mod agent_worktree_ui;
 mod attachment_panel;
 mod banner;
+mod child_session_commands;
 mod command_catalog;
 mod composer_attention;
 mod confirmation_example;
@@ -524,6 +525,7 @@ struct App {
     workspace: Option<PathBuf>,
     /// 打开的会话是从哪条分凉出来的，以及来源的标题。`None` 表示没有来源。
     session_lineage: Option<(uuid::Uuid, String)>,
+    child_request_ids: std::collections::HashMap<String, uuid::Uuid>,
     palette: Option<PaletteState>,
     palette_rect: Rect,
     palette_hits: Vec<(u16, usize)>,
@@ -2424,7 +2426,11 @@ fn workspace_status(workspace: &std::path::Path, language: Language) -> String {
 /// 标题从会话摘要里取；摘要没有（来源被删了，或还没写过）就用 id 的前八位，
 /// 行里不能空着。没有来源的会话清掉上一行。
 fn refresh_session_lineage(app: &mut App, session: &Session, store: &SessionStore) {
-    let Some(parent) = session.started_by.filter(|parent| *parent != session.id) else {
+    let Some(parent) = session
+        .parent_session_id
+        .or(session.started_by)
+        .filter(|parent| *parent != session.id)
+    else {
         app.session_lineage = None;
         return;
     };
@@ -2441,7 +2447,7 @@ fn refresh_session_lineage(app: &mut App, session: &Session, store: &SessionStor
 /// 聊天区标题下的那一行：`分凉自「<来源>」 · <多久前>`。时间按子会话的创建时间算。
 fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
     let (parent, title) = app.session_lineage.as_ref()?;
-    if session.started_by != Some(*parent) {
+    if session.parent_session_id.or(session.started_by) != Some(*parent) {
         return None;
     }
     let title = if title.chars().count() > 32 {
@@ -2475,6 +2481,22 @@ fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
             app.language.text("天前", "days ago", "日前")
         )
     };
+    if session.parent_session_id.is_some() {
+        let kind = if session.delegation_read_only {
+            app.language
+                .text("只读调查", "read-only investigation", "読み取り専用の調査")
+        } else {
+            app.language.text(
+                "可写工作树",
+                "writable worktree",
+                "書き込み可能ワークツリー",
+            )
+        };
+        return Some(format!(
+            "{}「{title}」· {kind} · /session children parent",
+            app.language.text("任务来自", "Task from ", "依頼元 ")
+        ));
+    }
     Some(format!(
         "{}「{title}」· {when}",
         app.language.text("分凉自", "Forked from ", "フォーク元 ")

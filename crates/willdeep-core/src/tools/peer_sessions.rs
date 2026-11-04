@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
+const MAX_HOST_CONTEXT_BATCH: usize = 4;
+
 /// A host-bound client. The model cannot choose its sender session or grant itself permissions.
 #[async_trait]
 pub trait SessionCollaboration: Send + Sync {
@@ -9,7 +14,16 @@ pub trait SessionCollaboration: Send + Sync {
     fn consumed(&self, _ids: &[uuid::Uuid]) -> Result<(), ToolError> {
         Ok(())
     }
+    /// Durable host notifications. The host acknowledges them only after inspecting saved history.
+    fn host_context(&self) -> Result<Vec<(uuid::Uuid, String)>, ToolError> {
+        Ok(Vec::new())
+    }
     async fn execute(&self, name: &str, arguments: serde_json::Value) -> Result<String, ToolError>;
+    /// Keep the tool call identity available for host-bound idempotency keys.
+    async fn execute_call(&self, call: &ToolCall) -> Result<String, ToolError> {
+        self.execute(&call.name, parse::<serde_json::Value>(call)?)
+            .await
+    }
 }
 
 pub(super) fn definitions() -> Vec<ToolDefinition> {
@@ -50,6 +64,23 @@ impl ToolRegistry {
             }
             ids.push(note.id);
         }
+        // These IDs are not peer delivery receipts. The coordinator inspects durable history
+        // before acknowledging the outbox; a successful provider call alone is insufficient.
+        for (id, context) in client
+            .host_context()?
+            .into_iter()
+            .take(MAX_HOST_CONTEXT_BATCH)
+        {
+            let marker = format!("<host-context id=\"{id}\">\n");
+            let wrapped = format!("{marker}{context}\n</host-context>");
+            if !messages.iter().any(|message| {
+                message.source == Some(crate::types::MessageSource::HostInstruction)
+                    && message.content.starts_with(&marker)
+            }) {
+                messages.push(crate::types::Message::host_instruction(wrapped));
+                appended = true;
+            }
+        }
         Ok((ids, appended))
     }
 
@@ -84,8 +115,7 @@ impl ToolRegistry {
             .session_collaboration
             .as_ref()
             .ok_or_else(|| ToolError::UnknownTool(call.name.clone()))?;
-        client
-            .execute(&call.name, parse::<serde_json::Value>(call)?)
-            .await
+        child_sessions::validate_call(call)?;
+        client.execute_call(call).await
     }
 }

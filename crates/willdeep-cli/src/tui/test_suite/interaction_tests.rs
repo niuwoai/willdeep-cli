@@ -1234,6 +1234,8 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             snippet: None,
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
         },
         willdeep_runtime_protocol::SessionSearchResult {
             id: target_id,
@@ -1247,6 +1249,8 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             snippet: Some("讨论 OAuth 登录".to_owned()),
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
         },
     ]);
     assert!(matches!(
@@ -1345,6 +1349,8 @@ fn recent_session_results(count: u64) -> Vec<willdeep_runtime_protocol::SessionS
             snippet: None,
             origin: willdeep_runtime_protocol::SessionOrigin::Runtime,
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
         })
         .collect()
 }
@@ -1456,6 +1462,8 @@ fn session_picker_line_leads_with_the_title_and_flags_bridged_sessions() {
         snippet: None,
         origin: willdeep_runtime_protocol::SessionOrigin::Xedit,
         started_by: None,
+        parent_session_id: None,
+        delegation_read_only: false,
     };
     let line =
         session_picker_ui::session_picker_result_line(&bridged, false, Language::ZhCn, false, 0);

@@ -718,7 +718,9 @@ impl Agent {
     }
 
     pub fn with_subagents(mut self, catalog: Arc<SubagentCatalog>) -> Self {
-        self.subagents = Some(catalog);
+        if !self.tools.delegation_read_only() {
+            self.subagents = Some(catalog);
+        }
         self
     }
 
@@ -765,7 +767,9 @@ impl Agent {
     ///
     /// 不挂等于关闭长程续推，`run_*` 的行为与本改动前完全一致。
     pub fn with_goal_continuation(mut self, continuation: Arc<GoalContinuation>) -> Self {
-        self.goal_continuation = Some(continuation);
+        if !self.tools.delegation_read_only() {
+            self.goal_continuation = Some(continuation);
+        }
         self
     }
 
@@ -1770,6 +1774,7 @@ impl Agent {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send + 'a>>
     {
         Box::pin(async move {
+            self.tools.check_tool_policy(&call.name)?;
             if let Some(result) = self.execute_recovery_tool(call).await {
                 return result;
             }
@@ -1931,6 +1936,8 @@ fn routing_request_from_message(content: &str) -> &str {
     if tail.is_empty() { content } else { tail }
 }
 
+#[cfg(test)]
+mod delegation_tests;
 #[cfg(test)]
 mod peer_session_tests;
 #[cfg(test)]

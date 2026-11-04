@@ -11,7 +11,16 @@ pub(crate) async fn peer_operation(
     anyhow::ensure!(
         matches!(
             operation,
-            "session.peers" | "session.peer.send" | "session.peer.inbox" | "session.peer.read"
+            "session.peers"
+                | "session.peer.send"
+                | "session.peer.inbox"
+                | "session.peer.read"
+                | "session.child.start"
+                | "session.child.continue"
+                | "session.child.retry"
+                | "session.child.task.get"
+                | "session.child.task.list"
+                | "session.child.task.stop"
         ),
         "unsupported coordination operation"
     );
@@ -58,6 +67,7 @@ where
 pub(crate) struct PeerSessionClient {
     pub home: PathBuf,
     pub session_id: uuid::Uuid,
+    pub turn_id: Option<uuid::Uuid>,
 }
 
 #[async_trait]
@@ -99,6 +109,41 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
         }
         Ok(())
     }
+    fn host_context(
+        &self,
+    ) -> std::result::Result<Vec<(uuid::Uuid, String)>, willdeep_core::tools::ToolError> {
+        child_sessions::ChildStore::new(&self.home)
+            .host_context(self.session_id)
+            .map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()))
+    }
+
+    async fn execute_call(
+        &self,
+        call: &willdeep_core::ToolCall,
+    ) -> std::result::Result<String, willdeep_core::tools::ToolError> {
+        let arguments = serde_json::from_str(&call.arguments).map_err(|error| {
+            willdeep_core::tools::ToolError::Network(format!(
+                "invalid collaboration arguments: {error}"
+            ))
+        })?;
+        if matches!(
+            call.name.as_str(),
+            "start_session" | "continue_session" | "retry_session_task" | "get_session_task"
+        ) {
+            let turn = self.turn_id.ok_or_else(|| {
+                willdeep_core::tools::ToolError::Network(
+                    "child tasks require a Runtime Turn".into(),
+                )
+            })?;
+            let request_id = uuid::Uuid::new_v5(&turn, call.id.as_bytes());
+            return self
+                .execute_child(&call.name, arguments, request_id)
+                .await
+                .map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()));
+        }
+        self.execute(&call.name, arguments).await
+    }
+
     async fn execute(
         &self,
         name: &str,
@@ -122,6 +167,44 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
             Ok::<_, anyhow::Error>(serde_json::to_string(&value)?)
         }.await;
         result.map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()))
+    }
+}
+
+impl PeerSessionClient {
+    async fn execute_child(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        request_id: uuid::Uuid,
+    ) -> Result<String> {
+        let operation = match name {
+            "start_session" => "session.child.start",
+            "continue_session" => "session.child.continue",
+            "retry_session_task" => "session.child.retry",
+            "get_session_task" => "session.child.task.get",
+            _ => bail!("unknown child session tool"),
+        };
+        let mut params = arguments
+            .as_object()
+            .cloned()
+            .context("child tool arguments must be an object")?;
+        anyhow::ensure!(
+            !params.contains_key("parent_session_id")
+                && !params.contains_key("created_from_turn_id"),
+            "child task source is bound by the host"
+        );
+        params.insert(
+            "parent_session_id".into(),
+            serde_json::to_value(self.session_id)?,
+        );
+        if name != "get_session_task" {
+            params.insert(
+                "created_from_turn_id".into(),
+                serde_json::to_value(self.turn_id.context("child tool requires a Runtime Turn")?)?,
+            );
+        }
+        let value = peer_operation(&self.home, operation, params.into(), Some(request_id)).await?;
+        Ok(serde_json::to_string(&value)?)
     }
 }
 

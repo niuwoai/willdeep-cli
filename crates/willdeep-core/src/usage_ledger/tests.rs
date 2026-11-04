@@ -23,6 +23,8 @@ const SPEC_KEYS: &[&str] = &[
     "execution",
     "kind",
     "session_id",
+    // P1 家族预算：子会话与其 Worker 用家族根归组，旧记录按缺省读出。
+    "family_session_id",
     "turn_id",
     "task_id",
     "agent_id",

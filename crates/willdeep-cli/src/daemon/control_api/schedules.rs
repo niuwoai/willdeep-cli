@@ -275,6 +275,11 @@ fn validate_session_binding(state: &ServerState, draft: &ScheduleDraft) -> Resul
         .get(id)
         .map_err(ApiFailure::internal)?
         .ok_or_else(|| ApiFailure::invalid("source session not found"))?;
+    if session.delegation_read_only || session.parent_session_id.is_some() {
+        return Err(ApiFailure::conflict(
+            "read-only child Sessions cannot create scheduled work",
+        ));
+    }
     if session.workspace != draft.workspace {
         return Err(ApiFailure::invalid(
             "schedule workspace must match its source session",

@@ -49,6 +49,37 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn family_totals_include_child_calls_once_and_never_double_count() {
+    let fixture = Fixture::new();
+    let child = Uuid::new_v4();
+    let parent_record = fixture.record(10);
+    let mut child_record = fixture.record(5);
+    child_record.session_id = Some(child);
+    child_record.family_session_id = Some(fixture.parent);
+    let mut other_family = fixture.record(100);
+    other_family.session_id = Some(Uuid::new_v4());
+    other_family.family_session_id = Some(Uuid::new_v4());
+    for record in [
+        &parent_record,
+        &child_record,
+        &child_record,
+        &other_family,
+        &other_family,
+    ] {
+        append_record(&fixture.directory, record).unwrap();
+    }
+    let parent_summary = fixture.summary(fixture.parent);
+    assert_eq!(parent_summary.usage.total_tokens, Some(10));
+    assert_eq!(parent_summary.family_usage.total_tokens, Some(15));
+    let child_summary = AgentRunStore::new(fixture.directory.join("workers"), child)
+        .with_family(fixture.parent)
+        .team_summary(&fixture.directory)
+        .unwrap();
+    assert_eq!(child_summary.usage.total_tokens, Some(5));
+    assert_eq!(child_summary.family_usage.total_tokens, Some(15));
+}
+
+#[test]
 fn turn_usage_excludes_other_turns_and_sessions_and_deduplicates_records() {
     let fixture = Fixture::new();
     let turn = Uuid::new_v4();

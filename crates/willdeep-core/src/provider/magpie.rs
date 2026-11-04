@@ -115,6 +115,15 @@ mod tests {
                         "WILLDEEP_MAGPIE_TEST_URL",
                         format!("http://localhost:{upstream_port}/v1"),
                     );
+                // Windows resolves %SystemRoot% from the environment for loader
+                // and socket initialization; with an empty block the child
+                // fails before it can connect, so the essentials survive.
+                #[cfg(windows)]
+                for name in ["SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP"] {
+                    if let Some(value) = std::env::var_os(name) {
+                        command.env(name, value);
+                    }
+                }
                 for name in [
                     "HTTP_PROXY",
                     "http_proxy",
@@ -129,13 +138,22 @@ mod tests {
                 if redirect {
                     command.env("WILLDEEP_MAGPIE_TEST_REDIRECT", "1");
                 }
-                command.output().unwrap()
+                command.output()
             });
-            let (mut stream, _) =
-                tokio::time::timeout(std::time::Duration::from_secs(10), upstream.accept())
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let launched =
+                tokio::time::timeout(std::time::Duration::from_secs(10), upstream.accept()).await;
+            let (mut stream, _) = match launched {
+                Ok(Ok(value)) => value,
+                Ok(Err(error)) => panic!("upstream accept failed: {error}"),
+                Err(_) => match child.await {
+                    Ok(Ok(output)) => panic!(
+                        "child did not connect to localhost:{upstream_port}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ),
+                    Ok(Err(error)) => panic!("child did not start: {error}"),
+                    Err(error) => panic!("child task failed: {error}"),
+                },
+            };
             let mut request = vec![0; 8192];
             let n = stream.read(&mut request).await.unwrap();
             let request = String::from_utf8_lossy(&request[..n]).to_ascii_lowercase();
@@ -154,7 +172,7 @@ mod tests {
             };
             stream.write_all(response.as_bytes()).await.unwrap();
             drop(stream);
-            let output = child.await.unwrap();
+            let output = child.await.unwrap().unwrap();
             assert!(
                 output.status.success(),
                 "{}",

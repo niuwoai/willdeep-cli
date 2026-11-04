@@ -41,7 +41,7 @@ async fn independent(
         return Ok(false);
     }
     let loaded = crate::config::LoadedConfig::load(session.config.as_deref())?;
-    let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])?;
+    let mut cli = crate::Cli::bare();
     cli.profile = session.profile.clone();
     cli.model = session.model.clone();
     let mut config = crate::magpie_integration::resolve(&cli, &loaded, Some(&core))

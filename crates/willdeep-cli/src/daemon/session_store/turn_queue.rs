@@ -57,6 +57,11 @@ impl RuntimeSessionStore {
         if session.status == RuntimeSessionStatus::Archived {
             bail!("Runtime Session is archived");
         }
+        anyhow::ensure!(
+            !(session.delegation_read_only || session.parent_session_id.is_some())
+                || params.action != QueueAction::RunIndependently,
+            "read-only child Sessions cannot run independent execution lanes"
+        );
         let mut turns = self.turns_lock()?;
         let mut updated = turns.clone();
         let mut pending = updated
@@ -162,6 +167,7 @@ fn is_pending(turn: &StoredRuntimeTurn, session: &RuntimeSession) -> bool {
         && !turn.origin_client.as_deref().is_some_and(|origin| {
             origin.starts_with(super::super::control_api::peer_sessions::WAKE_ORIGIN)
                 || origin.starts_with(super::super::goal_resume::ORIGIN_PREFIX)
+                || super::super::child_sessions::is_host_origin(Some(origin))
         })
 }
 

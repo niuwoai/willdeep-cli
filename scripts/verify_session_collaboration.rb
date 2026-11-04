@@ -42,7 +42,7 @@ class ModelFixture
     end
     body = socket.read(headers.fetch('content-length', '0').to_i)
     if first.start_with?('GET ', 'HEAD ') || body.empty?
-      data = { object: 'list', data: [{ id: 'fixture-model', object: 'model', owned_by: 'fixture' }] }
+      data = fixture_list(first)
     else
       request = JSON.parse(body)
       @requests << request
@@ -54,6 +54,10 @@ class ModelFixture
     warn "fixture: #{error.class}: #{error.message}"
   ensure
     socket.close
+  end
+
+  def fixture_list(_first)
+    { object: 'list', data: [{ id: 'fixture-model', object: 'model', owned_by: 'fixture' }] }
   end
 
   def completion(request)

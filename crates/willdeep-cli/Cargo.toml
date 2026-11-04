@@ -22,6 +22,7 @@ clap_mangen.workspace = true
 crossterm.workspace = true
 crc32fast.workspace = true
 futures-util.workspace = true
+fs2 = "0.4"
 image.workspace = true
 http.workspace = true
 lettre.workspace = true

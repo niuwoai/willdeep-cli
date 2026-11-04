@@ -83,6 +83,9 @@ impl RuntimeSessionStore {
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
+        if session.delegation_read_only || session.parent_session_id.is_some() {
+            return Ok(None);
+        }
         if session.human_wait_yield_suppressed
             || session.active_turn_id.is_none()
             || !matches!(

@@ -1,3 +1,4 @@
+use super::session_access::{cached_session_workspace, remember_session_workspace};
 use super::*;
 
 #[test]

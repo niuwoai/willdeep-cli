@@ -10,6 +10,7 @@ pub use kernel_event::{
 };
 
 pub mod agent_team;
+pub mod child_session;
 pub mod model_catalog;
 pub mod production;
 pub mod schedule;
@@ -99,6 +100,11 @@ pub enum Capability {
     WorkspaceManage,
     SessionManage,
     SessionFork,
+    SessionChildren,
+    SessionChildrenFork,
+    SessionChildrenWorktree,
+    SessionChildrenModel,
+    SessionChildrenWorkers,
     AgentObserve,
     AgentControl,
     AgentWorktree,
@@ -153,6 +159,15 @@ pub struct RuntimeSession {
     /// 没有来源时也不发出去，线上保持原来的形状。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<uuid::Uuid>,
+    /// Task parent, independent of the historical fork source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub delegation_read_only: bool,
+    /// Context window resolved for this Session's effective model. Child model
+    /// overrides set it at creation so they never inherit the parent's window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_context_window: Option<u64>,
     pub status: SessionStatus,
     pub active_turn_id: Option<uuid::Uuid>,
     pub created_at: u64,
@@ -459,6 +474,10 @@ pub struct SessionSearchResult {
     /// 直接分凉来源。旧版 Runtime 不发这个字段。
     #[serde(default)]
     pub started_by: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub delegation_read_only: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1283,6 +1302,11 @@ impl RuntimeCapabilities {
                 Capability::WorkspaceManage,
                 Capability::SessionManage,
                 Capability::SessionFork,
+                Capability::SessionChildren,
+                Capability::SessionChildrenFork,
+                Capability::SessionChildrenWorktree,
+                Capability::SessionChildrenModel,
+                Capability::SessionChildrenWorkers,
                 Capability::AgentObserve,
                 Capability::AgentControl,
                 Capability::AgentWorktree,
@@ -1392,6 +1416,12 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "session.peer.send",
     "session.peer.inbox",
     "session.peer.read",
+    "session.child.start",
+    "session.child.continue",
+    "session.child.retry",
+    "session.child.task.get",
+    "session.child.task.list",
+    "session.child.task.stop",
     "session.search",
     "session.get",
     "session.attachments",
@@ -1846,6 +1876,9 @@ mod tests {
             model: Some("model".to_owned()),
             approval_mode: Some(WorkspaceAccess::WorkspaceWrite),
             started_by: None,
+            parent_session_id: None,
+            delegation_read_only: false,
+            model_context_window: None,
             status: SessionStatus::Idle,
             active_turn_id: None,
             created_at: 1,

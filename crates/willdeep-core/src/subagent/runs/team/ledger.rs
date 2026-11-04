@@ -46,6 +46,12 @@ pub(super) fn read(
         return Err(error);
     }
     summary.ledger_incomplete |= cache.shards.values().any(|shard| shard.incomplete());
+    let family = summary
+        .family_session_id
+        .unwrap_or(summary.parent_session_id);
+    if let Some(usage) = cache.families.get(&family) {
+        summary.family_usage = usage.total.clone();
+    }
     let Some(usage) = cache.sessions.get(&summary.parent_session_id) else {
         return Ok(BTreeMap::new());
     };
@@ -184,6 +190,7 @@ fn open_shard(path: &Path) -> Result<File, String> {
 struct LedgerCache {
     shards: BTreeMap<PathBuf, Shard>,
     sessions: HashMap<Uuid, SessionUsage>,
+    families: HashMap<Uuid, SessionUsage>,
     #[cfg(test)]
     bytes_read: u64,
 }
@@ -271,10 +278,18 @@ impl LedgerCache {
                     continue;
                 }
             };
-            if record.schema == SCHEMA
-                && let Some(parent) = record.session_id
-            {
-                self.sessions.entry(parent).or_default().include(record);
+            if record.schema == SCHEMA {
+                if let Some(session) = record.session_id {
+                    self.sessions
+                        .entry(session)
+                        .or_default()
+                        .include(record.clone());
+                }
+                // P1 records carry the family root explicitly. Legacy records
+                // have no family field, so a root's own calls still count.
+                if let Some(family) = record.family_session_id.or(record.session_id) {
+                    self.families.entry(family).or_default().include(record);
+                }
             }
         }
         shard.stamp = stamp;
