@@ -545,7 +545,7 @@ pub async fn pin_new(
         request.profile = workspace_profile;
     }
     let loaded = LoadedConfig::load(request.config.as_deref())?;
-    let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])?;
+    let mut cli = crate::Cli::bare();
     cli.config = request.config.clone();
     cli.profile = request.profile.clone();
     cli.model = request.model.clone();

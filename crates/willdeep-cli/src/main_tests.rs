@@ -36,3 +36,9 @@ fn headless_run_defaults_to_runtime_and_keeps_cli_secret_overrides_local() {
         false,
     ));
 }
+
+#[test]
+fn bare_cli_matches_clap_defaults() {
+    let parsed = Cli::try_parse_from(["willdeep"]).expect("bare invocation");
+    assert_eq!(format!("{:?}", Cli::bare()), format!("{parsed:?}"));
+}

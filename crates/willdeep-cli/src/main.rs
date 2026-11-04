@@ -18,6 +18,7 @@ mod agent_registry;
 mod agent_rsi;
 mod audit_cmd;
 mod builtin_plugins;
+mod cli_defaults;
 mod composer_references;
 mod config;
 mod config_plugin;

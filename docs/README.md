@@ -49,6 +49,7 @@
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |
 | [完整子会话](CHILD_SESSIONS.md) | P0 fresh 只读对话、与 Worker 的区别、打开/续做/查询/停止及验收边界 |
+| [0.143.0-rc2 Windows 栈溢出修复验收](verification/0.143.0-rc2.md) | daemon/Web 默认 CLI 构造的栈开销根因、修复与阈值回归 |
 | [0.143.0-rc1 子会话 P1 验收](verification/0.143.0-rc1.md) | fork、worktree、模型覆盖、家族 Worker 与本机回归的实际结果及覆盖边界 |
 | [0.143.0-rc1 子会话 P0 阶段验收](verification/0.143.0-rc1-p0.md) | P0 的 Rust/Web、隔离 API/E2E、宽窄 PTY 与浏览器结果；后续已并入 0.143 最终回归 |
 | [Agent Runtime Kernel（任务书）](AGENT_RUNTIME_KERNEL.md) | 统一事件信封、三档中断、lease 与外部事件的移植计划 |

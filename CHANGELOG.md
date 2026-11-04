@@ -6,6 +6,14 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.143.0-rc2] - 2026-11-04
+
+### Fixed
+- 修复 Windows CI 在 `daemon::mobile_gateway::tests::message_send_with_a_workspace_path_opens_a_session_there` 上的栈溢出（`STATUS_STACK_OVERFLOW`）：daemon、Web 与 Magpie 新会话路径不再为取得默认选项解析完整 argv 命令树（debug 构建约需 1.25–1.5 MiB 栈，Windows 帧更大时超过测试线程的 2 MiB），改用 `Cli::bare()` 构造与裸 `willdeep` 调用一致的值；新增 `bare_cli_matches_clap_defaults` 防止 clap 默认值漂移。
+
+### Validation
+- 修复后原失败测试在 `RUST_MIN_STACK=786432`（768 KiB）下通过，512 KiB 下仍会溢出，栈需求约减半；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build -p willdeep`、`cargo fmt --all -- --check`、`git diff --check` 与 `ruby -EUTF-8 scripts/check_source_size.rb`（1,362 个文件）通过；全工作区串行回归 2,368 项通过、0 失败、11 忽略。详见 [0.143.0-rc2 验收记录](docs/verification/0.143.0-rc2.md)。
+
 ## [0.143.0-rc1] - 2026-11-04
 
 ### Added

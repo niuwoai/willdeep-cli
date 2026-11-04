@@ -63,8 +63,7 @@ pub(super) async fn run_runtime_turn_inner(
                     }
                 })
                 .map_err(WebError::from_anyhow)?;
-            let mut cli = <crate::Cli as clap::Parser>::try_parse_from(["willdeep"])
-                .map_err(|error| WebError::internal(error.to_string()))?;
+            let mut cli = crate::Cli::bare();
             cli.config = (!state.integration_default).then(|| state.config_path.clone());
             cli.profile = session_profile;
             cli.model = requested_model.clone();
