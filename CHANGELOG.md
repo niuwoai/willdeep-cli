@@ -6,6 +6,18 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.145.0-rc2] - 2026-11-05
+
+### Fixed
+- 修复 Windows CI 上两个测试假设，产品代码与 rc1 相同：配置宿主审批描述按 `canonicalize` 后的规范路径比较（Windows 会加 `\\?\` 前缀并展开短名）；子会话账本迁移重试前释放测试持有的文件句柄（Windows 在账本仍有打开句柄时拒绝原子替换）。
+- rc1 的 Windows 测试作业因上述两个断言失败，`Publish GitHub Release` 与 npm 发布未执行；rc2 以修复后的测试重新走完整 CI 与发布。
+
+### Changed
+- 工作区版本、两个 runtime 依赖钉、四个锁定包、Web/npm、安装清单与产品/架构版本统一为 `0.145.0-rc2`。
+
+### Validation
+- 本机定向复跑 `configuration_host::tests::custom_path_preview_save_and_receipt_replay_preserve_default_and_backup` 与 `daemon::child_sessions::store::tests::rejected_schema_one_transaction_leaves_the_original_retryable` 均通过；rc1 的静态、Runtime、客户端与浏览器证据对应同一产品代码，Windows 全套以 rc2 CI 结果为准。
+
 ## [0.145.0-rc1] - 2026-11-05
 
 ### Added
