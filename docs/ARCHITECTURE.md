@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-05 | 当前版本：v0.143.0-rc7
+> 最后更新：2026-11-05 | 当前版本：v0.145.0-rc1
 
 ## 分发
 
@@ -33,11 +33,29 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 
 ## 核心设计
 
+### 准备链路与持久化诊断
+
+`WILLDEEP_TRACE_PREPARATION=1` 在 stderr 输出 `willdeep.preparation.v1` JSON：固定 component/stage 名、阶段耗时 `elapsed_ms` 和组件累计 `total_ms`，默认关闭，不携带任务正文、工作区、配置或凭据。Runtime 调度与文件回退内容快照、Harness、会话认领、首条用户消息落盘、Core 验证基线和首次模型轮次前的上下文准备分别计时；嵌套组件的累计耗时不可直接相加。诊断写入失败后停用本次 tracing，不让 stderr 故障在析构路径影响任务。
+
+子会话账本仍由独立控制锁串行保护。`persist` 在锁内比较当前持久字节与拟提交内容；内容相同且本实例已经为该内容成功完成文件/目录同步，才跳过后续同步，不递增 revision 或替换文件。新实例及同步失败后的重试须先重新建立持久性，避免将页缓存中的相同字节当作成功提交。内容变化仍原子写入并同步文件/父目录，显式结果、唤醒和调度屏障保持原位置。任务状态与错误未变时不修改 `updated_at`，避免轮询本身制造变化。TUI 首答在首个正文增量到达时记录，并用提交时事件头屏蔽旧输出；该值包含准备与传输，不能与服务端 prefill 混用。
+
 ### 配置优先级
 
 默认读取 `~/.willdeep/config.toml`，`WILLDEEP_HOME` 可替换配置目录，`--config` 可指定任意 TOML 文件。命令行与 `WILLDEEP_*` 环境变量覆盖 Profile；Profile 覆盖 Provider 专属环境变量和内置默认值。
 
 配置 Schema 使用 `version = 1`，未知字段直接报错，避免拼写错误被静默忽略。内联密钥（Provider 的 `api_key`、通知渠道的 `secret` / `password` / `api_key`）在 Unix 上要求配置文件权限为 `0600`；也可以改用对应的 `*_env` 字段引用环境变量。`willdeep config show` 对内联密钥统一脱敏。
+
+### 聊天配置与压缩快照
+
+默认父 Harness 在全局配置能力允许时挂载 `ChatConfigurationHost`，Core 通过 `ConfigurationHost` trait 暴露 `configuration_read`（schema/snapshot/plan）与 `configuration_write`（apply）。该能力独立于用户插件目录、普通 MCP 服务和 Web 网关；Worker、委派子会话及受限 MCP 任务不会继承它。写操作沿用全局写审批和共享审批句柄，`workspace-write` 不会将其当成工作区内编辑放行；只读保持硬拒绝，未知结果的写操作进入现有副作用恢复门禁。配置写重放先检查计划身份、参数和当前权限，再请求一次性审批；失效或只读计划不弹审批。
+
+CLI 适配器绑定实际配置绝对路径，现有符号链接解析到目标。首次调用才展开内嵌配置资产并用已有 MCP stdio 客户端启动私有 Ruby 服务，显式注入 `WD_CONFIG_FILE`、`WD_HOME`、`WD_CONFIG_BACKUP_DIR`；不安装/启用/批准插件。首版只编辑三个 `[agent] compressor_*` 字段，结构化查看仅返回这些字段及 Provider 的名称、模型、窗口；原文、注释、未知节和密钥预览不进入模型上下文。
+
+`plan` 复用 Ruby schema/渲染，私有传输将候选文档交给 Rust `ConfigFile` 解析、`config::validate` 与 `build_compression_settings` 校验，随后仅返回结构化变更和宿主 plan_id。每个宿主保留最新成功计划，绑定本实例、目标、edits 及文件 SHA256 revision；`apply` 只收 plan_id，在审批后注入保存参数。共享 Ruby 保存路径在文件锁内重新检查 revision、备份、原子替换及写后校验。不同目标共用备份目录时，再以目录级锁覆盖备份名称分配和写入，避免同名配置覆盖彼此备份。回执丢失不自动重放；已收到的成功回执可幂等返回。文件锁协调使用同一配置服务协议的保存，普通外部编辑器不参与该协议。
+
+Runtime 在新 Turn 开始执行时读取配置并构建独立 Agent；已运行 Turn 不被热替换。Core `CompressionSettings` 以一把锁整体保存候选和窗口，压缩入口复制快照贯穿分块、合并、候选回退，网络等待期间不持锁。TUI 手动 `/compress` 先从当前提交来源加载配置并构建设置，再 claim/refresh 会话、整体应用并派发；配置加载或构建错误只显示安全本地化提示与目标路径，不展开可能含凭据源行的底层异常；失败在界面反馈后继续事件循环，执行权持有至结果消费。设置成功刷新后也供后续 `/local` 压缩使用，即使之后摘要请求失败或取消仍保留新设置；其余 `/local` 配置仍为启动快照。配置语义验证不等于端点连通性验证，预览不发送模型请求。
+
+契约与生效时机见[配置指南](CONFIGURATION.md#在聊天中修改压缩配置)，隔离测试与限制见[聊天配置验收](verification/0.143.0-rc9/chat-config/README.md)。完整子会话 P2 的控制、订阅、依赖和检查点保护继续保留；测试夹具回收仅作用于测试私有进程。组合边界见[整合决策](decisions/2026-11-05-p2-configuration-native-integration.md)，本版组合测试状态见[验收记录](verification/0.145.0-rc1.md)。
 
 ### Magpie 社区 Agent 集成
 
@@ -168,9 +186,9 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 
 写通道是一条通路的两种规模：写入型工种的目标文件先由父 ToolRegistry canonicalize 并作为**一个集合**整体审批，子 ToolRegistry 再以 canonical 绝对路径做集合成员匹配，符号链接或路径别名不能扩大授权范围；editor 是集合大小为 1 的特例。同一 Catalog 内运行中 Worker 的文件集互斥，冲突时后来者被拒绝并点名冲突文件，锁在运行结束、超时、取消或 panic 时随 `Drop` 释放。详见 [小上下文 Skill Worker](SKILL_WORKERS.md)。
 
-### 完整子会话（0.143.0-rc1 P0/P1）
+### 完整子会话（0.144.0-rc1 P0/P1/P2）
 
-完整子会话是独立 Runtime Session/root Agent，不使用 Worker Agent/Run 充当对话身份。`parent_session_id` 表达树形归属，`started_by` 继续仅表示历史分叉来源；任务提出者/创建者与树形 parent 是独立概念。P1 仍只允许有权父会话派生一层，不提供子再派生或兄弟任务提案入口。定义与分期见 [完整方案](decisions/2026-11-04-child-sessions.md)，使用见 [完整子会话](CHILD_SESSIONS.md)。
+完整子会话是独立 Runtime Session/root Agent，不使用 Worker Agent/Run 充当对话身份。`parent_session_id` 保存委派来源与家族归属，活动树形展示还需检查 `delegation_detached`；`started_by` 继续仅表示历史分叉来源，不能重新挂回已脱离会话。任务提出者/创建者与活动树形 parent 是独立概念。当前仍只允许有权父会话派生一层，不提供子再派生或兄弟任务提案入口。定义与分期见 [完整方案](decisions/2026-11-04-child-sessions.md)，使用见 [完整子会话](CHILD_SESSIONS.md)。
 
 协议由 `willdeep-runtime-protocol::child_session` 唯一维护，capability 为 `session_children`（另声明 `session_children_fork/worktree/model/workers`）；`session.child.start/continue/retry` 与 `session.child.task.get/list/stop` 共用 Daemon 协调器，CLI/TUI/Web 和模型宿主不分别拼接创建与首消息。每次委派有独立 `assignment_id`、固定请求身份及对应 child Turn，续做/显式重试创建新 assignment/Turn，保留原会话历史与旧结果。Turn/Task 是执行状态的权威来源，Idle 仅表示当前没有执行，不代表整条子会话永久完成。
 
@@ -186,7 +204,9 @@ TUI /mobile、willdeep daemon mobile ──本机控制面──▶ mobile.enabl
 
 父普通 Turn 收尾或 stop 不取消已受理的 child assignment；主动 stop 持久抑制父自动唤醒，结果保留待处理，只有用户明确继续父会话才解除抑制。宿主委派与子结果使用独立来源，不冒充用户输入。子任务停止按 parent/assignment/Turn 验证，归档/删除父会话不级联删除子数据。准入同时限制家族与宿主的子任务容量，P0/P1 执行槽/队列为 4/16，等待审批/回答仍占执行槽，列表分页不参与计数。
 
-P1 已实现并通过本机 Rust/Web 回归、隔离 fork/worktree/模型/家族调度场景、宽窄 PTY 与浏览器验收；实际命令、二进制摘要和未覆盖的原生平台边界见 [验收记录](verification/0.143.0-rc1.md)。本次提交尚未发布。
+P2 在同一协调器上新增控制权与通知版本、稳定控制请求回执及不可变 assignment 依赖。账本 schema 2 保存用户接管/脱离的权威 Link；Core/Runtime 的 `delegation_detached` 只投影树形关系，父来源、能力、家族用量归属继续保存。执行中的旧 Session 保存必须单调保留脱离标记，控制锁内不等待 Core 执行租约。订阅 `none/inbox/auto_wake` 分离客户端待处理与模型自动续推，pending/唤醒 claim 按当前控制权和策略逐项过滤；宿主同步提交 hook 将最终资格复核与父历史 checkpoint 写入放在同一控制锁边界，成功后才替换模型内存，不持锁跨 await 或模型请求。撤销后的空唤醒通过专用正常收尾恢复父 Idle，保留真实停止抑制；终态执行结果保持原身份。依赖等待计入队列但不占槽，无 Turn、worktree 或模型调用，全部前置成功后按固定请求身份启动，失败/控制撤销形成 blocked。周期扫描与重启按会话最早未暂缓 queued Turn 的 `queue_sequence` 排序；实际子槽准入在同一控制锁、会话和 Turn 状态快照内再次选择最早可领用队首，避免较晚提示抢占新释放的槽。已有有效预留可恢复，暂缓、活动/等待人类、归档和无效唤醒不阻塞其他候选；有效唤醒只因公平性等待时不取消。领取前的 Core 加载、集成设置同步或恢复消息边界校验失败，先持久化带 Session/Turn/原因的 failed 终态，再释放预留槽，避免损坏队首扩大为跨父饥饿；协调器据真实终态生成失败结果并阻塞后继，不伪造 Task/成功报告、不覆盖损坏 Core，状态落盘失败仍传播。普通无父会话绕过子槽排队。周期调度跳过错过的 tick，消费者按通道长度快照合并同会话重复提示，保留不同会话的首次入队顺序及后续新提示。协调账本按最近成功落盘的完整内容比较，空事务和重复显式屏障不再次写入，首次创建、真实变更和迁移仍原子提交；普通收尾没有新增协作上下文时不额外保存 checkpoint，但仍复核空唤醒资格。保存成功后先更新 Recorder 的可恢复快照和流状态，再确认 Worker 报告；保存结果不确定时禁止错误收尾、Drop、流刷新和计划更新推测性回写，直到完整 record 成功，避免历史通知被旧快照覆盖。旧 schema 1 升级前备份，旧 Runtime 拒绝 schema 2，防止降级丢失控制约束。详见 [P2 决策](decisions/2026-11-05-child-sessions-p2.md)。
+
+P0/P1 的历史本机验收见 [记录](verification/0.143.0-rc1.md)。P2 实现完成，专项与真实 Runtime 验收通过；原生前置超时与取消稳定性仍有未解决项，实际通过、失败和覆盖边界见 [P2 验收](verification/0.144.0-rc1.md)，不表示公开发布。
 
 ### 声明式工作流（0.141.0-rc1）
 

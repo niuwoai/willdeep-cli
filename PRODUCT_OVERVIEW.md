@@ -1,8 +1,12 @@
 # Product Overview
 
-> 最后更新：2026-11-05 | 当前开发版本：v0.143.0-rc7（工作树基线，不代表已公开发布）
+> 最后更新：2026-11-05 | 当前版本：v0.145.0-rc1
 
-0.143.0-rc7 修复 macOS universal 发行包的架构检查，并限制 Windows CI 的测试用例并行度；继续同时覆盖 Intel 与 Apple Silicon。继承 rc5 的 Web 插件固定入口修复，固定目的地紧接「定时任务」下方，普通和超出五个上限的目的地继续通过底部「插件」菜单访问。
+0.145.0-rc1 在完整子会话 P2 工作树整合聊天压缩配置、原生 Runtime 测试进程回收，以及 0.143.0-rc8 的首答计时与无变化账本写入修复。配置入口只编辑 `[agent]` 的三个 `compressor_*` 字段，绑定当前配置文件，经现有审批保存；下一次新 Runtime Turn 读取新配置，当前 Turn 保持原快照，TUI 手动 `/compress` 刷新压缩设置。范围与时机见[配置指南](docs/CONFIGURATION.md#在聊天中修改压缩配置)。
+
+`--web` 启动已改为惰性插件宿主：内置插件安装、包发现与 MCP 网关移出端口绑定路径，`/health` 秒级可达，首个插件请求才完成准备；headless 一次性调用不再预装只服务交互面板的包。最终源码的静态九项、Windows 交叉、Runtime 八组、客户端与浏览器复测通过；`headless_runtime` 完整目标在高负载下 5 项超时用同一二进制隔离重跑全部通过，64 Worker 宿主取消用例在负载下仍可能超原期限。来源与证据边界见[本版整合验收](docs/verification/0.145.0-rc1.md)。
+
+0.143.0-rc8 的首答显示包含准备与传输耗时，子会话账本只在内容真实变化时写入；历史证据见[首答延迟验收](docs/verification/0.143.0-rc8/README.md)。原 macOS universal 架构检查、Windows CI 测试并行度限制与 Web 插件固定入口修复继续保留。
 
 本文件只保留产品定位、能力概要和文档入口，并控制在 20,000 个 Unicode 字符以内，以便项目参考资料可直接注入 Agent 提示。能力细节按需读取模块台账；操作参数、协议和验收结果以所链接的专题文档为准。
 
@@ -11,7 +15,7 @@
 
 WillDeep CLI 是跨平台 AI Coding Agent 客户端。用户通过自有 Provider、API Base、凭据与模型，在受限工作区内完成对话、工具执行、协作派工和结果验证。CLI 自动化、Ratatui TUI 与内嵌 Web 共用 Runtime、Session/Turn、审批和持久事件，不各自维护一套执行事实。
 
-当前工作树在完整子会话 P0 上补齐 P1：除 `fresh` + 共享只读外，子会话可从父会话已完成的 Turn 精确继承历史，或绑定独立可写 Git worktree；支持在父 Provider 配置内做受限模型覆盖，并按目标模型重算上下文窗口。可写 worktree 子会话可派出 Worker，父会话与子会话共享家族级并发/排队和预算，用量账本按家族根去重；只读子会话仍禁止 Worker、写入与继续派生，所有子会话都不能创建下一层子会话。worktree 在取得执行槽后创建，父目录未提交修改不会被静默带入；任务结束保留分支和工作树，不自动合并、提交、推送或删除。P1 已实现并通过本机回归与验收（Rust/Web、隔离 E2E、宽窄 PTY 与浏览器），本次提交尚未发布。详情见[完整子会话](docs/CHILD_SESSIONS.md)、[分期方案](docs/decisions/2026-11-04-child-sessions.md)与[验收记录](docs/verification/0.143.0-rc1.md)。
+完整子会话 P0/P1 支持 `fresh/fork`、共享只读或独立可写 Git worktree、受限模型覆盖及家族 Worker 配额。P2 支持用户接管、脱离父关系、三档结果订阅和 assignment 依赖；接管不取消已有执行，脱离保留历史、能力上限和家族用量归属；依赖等待不占执行槽，全部前置成功后启动，失败明确阻塞。所有子会话仍禁止递归派生，worktree 不自动合并、提交、推送或删除。功能与验收边界见[完整子会话](docs/CHILD_SESSIONS.md)、[P2 决策](docs/decisions/2026-11-05-child-sessions-p2.md)；P2 来源检查与限制见[原阶段验收记录](docs/verification/0.144.0-rc1.md)，组合版结果另记于[本版整合验收](docs/verification/0.145.0-rc1.md)，P0/P1 历史结果见[阶段记录](docs/verification/0.143.0-rc1.md)。
 
 0.142.0-rc1 接入 Magpie 社区 Agent 插件的独立 JSON 配置源：WillDeep 与 WillDeep CLI 各自连接，CLI 通过临时 `magpie-cli` Provider 解析，无显式选择的新会话采用当前连接，已有会话保留自己的 Provider 与模型。原 TOML、桌面 Provider 库与钥匙串不作为插件写入目标。契约、实现状态与验收台账见 [Magpie 集成](docs/MAGPIE_AGENT_PLAN.md)；本地实现与组合验收已完成，尚未公开发布或社区收录，Linux/Windows 原生执行与 Desktop 全量测试未覆盖，详见 [验收报告](docs/verification/0.142.0-rc1/magpie-agents/README.md)。
 
