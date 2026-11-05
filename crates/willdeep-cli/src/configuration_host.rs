@@ -17,6 +17,15 @@ const COMPRESSOR_KEYS: &[&str] = &[
 ];
 const SERVER: &str = "willdeep-config";
 
+/// The bundled config service is a local Ruby process. On Windows the first
+/// spawn pays the on-access scan of `ruby.exe` and the freshly written package,
+/// which can exceed the interactive 10 second budget; every later call reuses
+/// the connected service. Keep the stricter budget on the other platforms.
+#[cfg(windows)]
+const CONFIG_SERVICE_STARTUP_TIMEOUT_SECONDS: u64 = 30;
+#[cfg(not(windows))]
+const CONFIG_SERVICE_STARTUP_TIMEOUT_SECONDS: u64 = 10;
+
 pub(crate) struct ChatConfigurationHost {
     home: PathBuf,
     path: PathBuf,
@@ -111,7 +120,7 @@ impl ChatConfigurationHost {
                     ]
                     .into_iter()
                     .collect(),
-                    startup_timeout_seconds: 10,
+                    startup_timeout_seconds: CONFIG_SERVICE_STARTUP_TIMEOUT_SECONDS,
                     enabled: true,
                     ..McpServerConfig::default()
                 };
