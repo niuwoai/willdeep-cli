@@ -1,0 +1,126 @@
+{
+  "schema": "willdeep.first-response-verification.v1",
+  "date": "2026-11-05",
+  "version": "0.143.0-rc8",
+  "base_commit": "ca44885b",
+  "platform": "macOS arm64",
+  "status": "code_verified_original_session_latency_unverified",
+  "committed": false,
+  "published": false,
+  "daily_install_replaced": false,
+  "q4_configuration_changed": false,
+  "confirmed_defects": [
+    "Unchanged child-session ledgers were repeatedly committed and synchronized during idle reconciliation and read-only queries.",
+    "Runtime TUI first-response timing was recorded at complete usage rather than first nonempty body text."
+  ],
+  "durability": {
+    "control_lock_preserved": true,
+    "explicit_commit_barriers_preserved": true,
+    "unchanged_content_requires_successful_barrier_proof": true,
+    "new_store_and_failed_barrier_retries_resynchronize": true,
+    "unchanged_content_does_not_advance_revision": true
+  },
+  "pty_comparison": {
+    "provider": "synthetic loopback SSE",
+    "history_entries": 20,
+    "body_chunks": 20,
+    "interval_ms": 100,
+    "before_report": "pty-before-usage.json",
+    "initial_after_report": "pty-after.json",
+    "before_idle_commits": 9,
+    "initial_after_idle_commits": 0,
+    "final_after_report": "pty-after-final.json",
+    "final_after": {
+      "events": 20,
+      "displayed": 20,
+      "idle_child_ledger_commits": 0,
+      "first_reply_seconds": 5.88,
+      "submit_to_first_body_seconds": 5.880288999993354,
+      "stream_duration_seconds": 1.9005209999741055,
+      "display_median_ms": 138.3219999843277,
+      "display_p95_ms": 510.31099999090657,
+      "first_reply_gate_passed": true,
+      "graceful_exit": true,
+      "saved_answer_complete": true,
+      "cursor_flushed_on_exit": true
+    },
+    "comparison_is_a_controlled_speedup_benchmark": false,
+    "note": "The initial after sample predates the submission-start clock and final event-ownership fixes. The final TUI clock includes submission waiting; baseline and final timings must not be used as a controlled speedup comparison."
+  },
+  "actual_configuration_local_samples": {
+    "before": {
+      "input_tokens": 15088,
+      "cache_read_tokens": 14848,
+      "output_tokens": 29,
+      "process_to_core_turn_seconds": 4.93052,
+      "process_to_first_body_seconds": 7.043332,
+      "peer_context_ms": 438.549542,
+      "verification_baseline_ms": 680.020833
+    },
+    "after": {
+      "input_tokens": 15088,
+      "cache_read_tokens": 14848,
+      "output_tokens": 25,
+      "process_to_core_turn_seconds": 3.167338,
+      "process_to_first_body_seconds": 4.835274,
+      "peer_context_ms": 91.131958,
+      "verification_baseline_ms": 693.878584
+    },
+    "note": "Single observations under changing host load; the before build already included diagnostics. These are local executions and do not establish Runtime latency or a stable speedup."
+  },
+  "actual_configuration_isolated_runtime": {
+    "verified_runtime_execution_route": true,
+    "isolated_daemon_stopped": true,
+    "process_to_queued_user_message_seconds": 14.755916,
+    "process_to_core_turn_seconds": 22.841928,
+    "process_to_first_body_seconds": 25.100032,
+    "nonoverlapping_preparation_components_ms": {
+      "runtime_dispatch": 5322.647375,
+      "runtime_execution": 1577.391541,
+      "turn_persistence": 266.656875,
+      "agent_preflight": 492.773375,
+      "agent_context": 185.449333
+    },
+    "workspace_checkpoint_nested_ms": {
+      "total": 5183.391375,
+      "open_repository": 1088.434333,
+      "write_snapshot": 3902.199083,
+      "reference_and_retention": 166.881542
+    },
+    "note": "Cold isolated data directory; CLI initialization is separate from a running TUI turn. Workspace content checkpoint is included in runtime_dispatch, and Harness is included in runtime_execution."
+  },
+  "read_only_process_audit": {
+    "willdeep_processes_snapshot": 142,
+    "io_wait_state_processes_snapshot": 40,
+    "evaluation_daemons_identified": 52,
+    "verified_without_runtime_tasks_or_child_assignments": 39,
+    "excluded_due_to_missing_metadata": 13,
+    "observed_revision_increments": 90,
+    "observation_note": "One second plus sequential metadata reads; not an exact commits-per-second rate.",
+    "existing_processes_stopped": 0,
+    "review_manifest": "idle-evaluation-daemons.md"
+  },
+  "validation": {
+    "child_sessions": { "passed": 29, "failed": 0, "ignored": 0 },
+    "preparation_broken_pipe": { "passed": 1, "failed": 0 },
+    "core_agent_and_worker": { "passed": 216, "failed": 0, "ignored": 2 },
+    "workspace_checkpoint": { "passed": 5, "failed": 0 },
+    "tui_before_final_edge_fixes": { "passed": 398, "failed": 0, "ignored": 2 },
+    "final_tui": { "passed": 402, "failed": 0, "ignored": 2 },
+    "final_runtime_streaming": { "passed": 19, "failed": 0 },
+    "final_clippy": "passed",
+    "final_rust_build": "passed",
+    "built_binary_version": "0.143.0-rc8",
+    "final_pty_gates": "passed",
+    "web_build_after_version_update": "passed",
+    "release_version_metadata": "passed",
+    "source_size_limit": "passed"
+  },
+  "limitations": [
+    "The user's original installed CLI and daemon have not been replaced, so the original screenshot session has no post-install end-to-end result.",
+    "Content checkpoint hashing and durability semantics are preserved; the measured checkpoint cost has not been eliminated.",
+    "The identified idle evaluation daemons have not been stopped; a before/after contention comparison requires confirmation of the existing-process scope.",
+    "No Windows or Linux runtime result is claimed from macOS validation.",
+    "No stable latency guarantee is inferred from single actual-provider samples."
+  ]
+}

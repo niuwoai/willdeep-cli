@@ -1,0 +1,116 @@
+{
+  "events": 20,
+  "displayed": 20,
+  "median_ms": 59.05500001972541,
+  "p95_ms": 146.67699998244643,
+  "max_ms": 146.67699998244643,
+  "max_display_gap_ms": 197.08999997237697,
+  "display_updates": 20,
+  "first_reply_seconds": null,
+  "samples": [
+    {
+      "marker": "FLOW0000",
+      "delay_ms": 73.62500001909211
+    },
+    {
+      "marker": "FLOW0001",
+      "delay_ms": 49.85000001033768
+    },
+    {
+      "marker": "FLOW0002",
+      "delay_ms": 49.09400001633912
+    },
+    {
+      "marker": "FLOW0003",
+      "delay_ms": 45.15900003025308
+    },
+    {
+      "marker": "FLOW0004",
+      "delay_ms": 51.32600001525134
+    },
+    {
+      "marker": "FLOW0005",
+      "delay_ms": 53.90200001420453
+    },
+    {
+      "marker": "FLOW0006",
+      "delay_ms": 36.25600005034357
+    },
+    {
+      "marker": "FLOW0007",
+      "delay_ms": 67.66400003107265
+    },
+    {
+      "marker": "FLOW0008",
+      "delay_ms": 83.1319999997504
+    },
+    {
+      "marker": "FLOW0009",
+      "delay_ms": 47.55200003273785
+    },
+    {
+      "marker": "FLOW0010",
+      "delay_ms": 59.05500001972541
+    },
+    {
+      "marker": "FLOW0011",
+      "delay_ms": 91.71199996490031
+    },
+    {
+      "marker": "FLOW0012",
+      "delay_ms": 52.10100003750995
+    },
+    {
+      "marker": "FLOW0013",
+      "delay_ms": 37.96799998963252
+    },
+    {
+      "marker": "FLOW0014",
+      "delay_ms": 62.71500000730157
+    },
+    {
+      "marker": "FLOW0015",
+      "delay_ms": 79.16700001806021
+    },
+    {
+      "marker": "FLOW0016",
+      "delay_ms": 109.46299997158349
+    },
+    {
+      "marker": "FLOW0017",
+      "delay_ms": 50.7420000503771
+    },
+    {
+      "marker": "FLOW0018",
+      "delay_ms": 146.67699998244643
+    },
+    {
+      "marker": "FLOW0019",
+      "delay_ms": 103.32699998980388
+    }
+  ],
+  "binary": "/Users/rocky/.cargo/bin/willdeep",
+  "root": "/private/tmp/wd-stream-20261105-84754-5bblb6",
+  "history_entries": 20,
+  "historical_runtime_events": 0,
+  "execution": "runtime",
+  "ui_mode": "compact",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "model": "fixture",
+      "stream": true
+    }
+  ],
+  "input_interval_ms": 100.0,
+  "runtime_stream_http_status": 200,
+  "observed_session_rewrites": 8,
+  "graceful_exit": true,
+  "saved_answer_complete": true,
+  "cursor_flushed_on_exit": true,
+  "runtime_event_median_ms": 51.81900004390627,
+  "runtime_event_p95_ms": 140.52899996750057,
+  "submit_to_first_body_seconds": 3.0450790000031702,
+  "stream_duration_seconds": 1.8999950000434183,
+  "idle_child_ledger_commits": 7
+}

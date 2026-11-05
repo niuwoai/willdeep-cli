@@ -5,6 +5,7 @@ const { Terminal } = require('@xterm/headless');
 const { frames, sent } = JSON.parse(await readFile(process.argv[2], 'utf8'));
 const terminal = new Terminal({ cols: 120, rows: 35, allowProposedApi: true });
 const firstSeen = new Map();
+let firstReplySeconds = null;
 for (const frame of frames) {
   const bytes = Buffer.from(frame.data, 'base64');
   if (bytes.includes(Buffer.from('\x1b[?1049l'))) break;
@@ -13,6 +14,8 @@ for (const frame of frames) {
   for (let i = 0; i < terminal.buffer.active.length; i++) {
     text += terminal.buffer.active.getLine(i)?.translateToString(true) + '\n';
   }
+  const firstReply = text.match(/first reply ([\d.]+)([smh])/);
+  if (firstReply) firstReplySeconds = Number(firstReply[1]) * ({ s: 1, m: 60, h: 3600 }[firstReply[2]]);
   for (const match of text.matchAll(/FLOW\d{4}/g)) {
     if (!firstSeen.has(match[0])) firstSeen.set(match[0], frame.at);
   }
@@ -24,5 +27,5 @@ const gaps = displayTimes.slice(1).map((time, i) => (time - displayTimes[i]) * 1
 process.stdout.write(JSON.stringify({ events: sent.length, displayed: delays.length,
   median_ms: delays[Math.floor(delays.length * .5)], p95_ms: delays[Math.floor(delays.length * .95)],
   max_ms: delays.at(-1), max_display_gap_ms: Math.max(0, ...gaps),
-  display_updates: displayTimes.length, samples }));
+  display_updates: displayTimes.length, first_reply_seconds: firstReplySeconds, samples }));
 terminal.dispose();

@@ -1,0 +1,29 @@
+# Paced stream display measurement
+
+- events: 20
+- displayed: 20
+- median_ms: 138.3219999843277
+- p95_ms: 510.31099999090657
+- max_ms: 510.31099999090657
+- max_display_gap_ms: 563.9789999695495
+- display_updates: 13
+- first_reply_seconds: 5.88
+- binary: /Users/rocky/Sites/willdeep-rs/.claude/worktrees/agent-first-response-latency/target/debug/willdeep
+- root: /private/tmp/wd-stream-20261105-37438-1ymt78
+- history_entries: 20
+- historical_runtime_events: 0
+- execution: runtime
+- ui_mode: compact
+- requests: [{:path=>"/v1/chat/completions", :model=>"fixture", :stream=>true}]
+- input_interval_ms: 100.0
+- runtime_stream_http_status: 200
+- observed_session_rewrites: 5
+- graceful_exit: true
+- saved_answer_complete: true
+- cursor_flushed_on_exit: true
+- runtime_event_median_ms: 133.8349999859929
+- runtime_event_p95_ms: 507.6450000051409
+- submit_to_first_body_seconds: 5.880288999993354
+- stream_duration_seconds: 1.9005209999741055
+- idle_child_ledger_commits: 0
+- first_reply_passed: true

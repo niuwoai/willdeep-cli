@@ -26,6 +26,7 @@ CLI、TUI 与 Web 共用持久 Runtime Session/Turn、主 Harness 和 Runtime Cl
 - 支持 Rename、完整消息快照 Fork、Archive/Unarchive、精确确认 Delete、安全 JSON Export、标题/消息 Search。活跃/排队会话禁止破坏性管理；Fork 不复制 Turn/Task/Interaction、游标及已读，Export 不包含队列私密正文与凭据。
 - 分叉基于已完成 Turn 的持久消息边界，可覆盖 Provider/模型；手工压缩持久记录代次与消息计数，Runtime Fork 仅接受当前压缩代次的精确边界。历史来源与完整子会话树形 parent 分开，见[协作模块](agents-collaboration.md)。
 - Provider、模型和配置按 Session 恢复；Skills/MCP 每轮按当前工作区策略重绑，撤权立即生效。`/goal` 保存持续目标并启动首轮，`/goal off` 关闭，各客户端共用目标信封与续推判定；运行中排队的新目标到执行时才生效。
+- 子会话协调账本仅在内容变化时提交；空闲轮询与只读通知查询不递增 revision 或重写文件。真实状态变化、结果与唤醒身份仍在原控制锁下同步持久化后才触发调度。
 - 完整子会话 P1 复用上述 Session/Turn 与主 Harness；fork 的上下文来源、worktree 绑定、模型窗口、assignment、协调账本和父唤醒另见[完整子会话指南](../CHILD_SESSIONS.md)，不在此另写一套对象协议。
 
 ## 持久队列与人工等待

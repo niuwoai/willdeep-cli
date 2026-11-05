@@ -75,12 +75,16 @@ pub(in crate::daemon) fn tick(state: &ServerState) -> Result<()> {
                 continue;
             }
             let task = &mut ledger.assignments.get_mut(&id).unwrap().task;
-            task.status = task_status(turn.status);
-            task.updated_at = now();
-            task.error = turn
+            let status = task_status(turn.status);
+            let error = turn
                 .error
                 .as_deref()
                 .map(willdeep_core::judge::redact_credentials);
+            if task.status != status || task.error != error {
+                task.status = status;
+                task.updated_at = now();
+                task.error = error;
+            }
             if task.status.is_terminal() {
                 record_result(&state.sessions, ledger, id, final_task)?;
             }

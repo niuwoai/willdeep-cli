@@ -43,6 +43,7 @@ pub(super) async fn submit_turn(
     runtime: &TuiRuntime,
     prompt: String,
 ) -> Result<()> {
+    let submitted_at = Instant::now();
     let attachments: Vec<MessageAttachment> = std::mem::take(&mut app.attachments)
         .into_iter()
         .map(|value| value.message)
@@ -68,7 +69,7 @@ pub(super) async fn submit_turn(
     // Persist ownership before scheduling the Turn. A very fast Harness must
     // never be overwritten by this client's stale history.
     store.save(session)?;
-    crate::daemon::submit_runtime_turn(
+    let turn = crate::daemon::submit_runtime_turn(
         &runtime.home,
         remote_session.id,
         prompt,
@@ -76,6 +77,17 @@ pub(super) async fn submit_turn(
         crate::Surface::Tui,
     )
     .await?;
+    begin_submitted_turn(app, submitted_at, event_head, turn.id, turn.active_task_id);
+    Ok(())
+}
+
+pub(super) fn begin_submitted_turn(
+    app: &mut App,
+    submitted_at: Instant,
+    event_head: u64,
+    turn_id: uuid::Uuid,
+    task_id: Option<uuid::Uuid>,
+) {
     app.tools.reset();
     app.begin_turn(
         true,
@@ -87,7 +99,12 @@ pub(super) async fn submit_turn(
             )
             .to_owned(),
     );
-    Ok(())
+    // The event loop cannot consume output while submission is awaiting its
+    // receipt. Keep the original monotonic clock, including that whole wait.
+    app.turn_started = Some(submitted_at);
+    app.runtime_first_reply_after = event_head;
+    app.runtime_submitted_turn = Some(turn_id);
+    app.runtime_submitted_task = task_id;
 }
 
 pub(super) fn initialize_submission_cursor(app: &mut App, session: &mut Session, head: u64) {
@@ -253,10 +270,72 @@ pub(super) fn sync_runtime_session(
     Ok(())
 }
 
+/// A submission can be queued behind another client's turn. The event head
+/// rejects already queued replay; the durable turn identity rejects later
+/// traffic from that other turn. queued_user_message precedes Harness output,
+/// so it can bind the Task even when the submit receipt had no active_task_id.
+fn belongs_to_submission(app: &mut App, event: &crate::daemon::RemoteRuntimeEvent) -> bool {
+    if event.sequence <= app.runtime_first_reply_after {
+        return false;
+    }
+    let Some(turn_id) = app.runtime_submitted_turn else {
+        return true;
+    };
+    let task_id = event
+        .message
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("task_id="))
+        .and_then(|id| id.parse::<uuid::Uuid>().ok());
+    if task_id.is_some() && task_id == app.runtime_submitted_task {
+        return true;
+    }
+    let event_turn = if event.kind == "task.output" {
+        event
+            .message
+            .split_once(' ')
+            .and_then(|(_, payload)| serde_json::from_str::<serde_json::Value>(payload).ok())
+            .and_then(|value| {
+                if value.get("type").and_then(|value| value.as_str()) != Some("queued_user_message")
+                {
+                    return None;
+                }
+                value
+                    .get("turn_id")
+                    .and_then(|value| value.as_str())
+                    .and_then(|id| id.parse::<uuid::Uuid>().ok())
+            })
+    } else {
+        event
+            .message
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix("turn_id="))
+            .and_then(|id| id.parse::<uuid::Uuid>().ok())
+    };
+    if let Some(event_turn) = event_turn {
+        if event_turn != turn_id {
+            return false;
+        }
+        if task_id.is_some() {
+            app.runtime_submitted_task = task_id;
+        }
+        return true;
+    }
+    false
+}
+
 fn apply_runtime_event(
     app: &mut App,
     event: &crate::daemon::RemoteRuntimeEvent,
 ) -> Option<Message> {
+    // An older completion must not finish the newly submitted turn, clear its
+    // clock, or let subsequent replay lower the submission's event boundary.
+    if app.running
+        && app.runtime_turn
+        && app.runtime_first_reply_eligible
+        && !belongs_to_submission(app, event)
+    {
+        return None;
+    }
     match event.kind.as_str() {
         "task.output" => return apply_runtime_output(app, &event.message),
         "task.queued" | "task.started" => {
@@ -441,12 +520,34 @@ fn event_details(message: &str) -> String {
     }
 }
 
+/// Only an explicit submission owns a first-reply clock. Replayed output and
+/// task snapshots may restore the running UI, but never start a new measurement.
+fn is_current_turn_output(app: &App) -> bool {
+    app.running && app.runtime_turn && app.runtime_first_reply_eligible
+}
+
 pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Message> {
     let (_task, payload) = message.split_once(' ')?;
     let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
         return None;
     };
     let output_type = value.get("type").and_then(|value| value.as_str());
+    // 必须先于 ensure_runtime_turn：回放会恢复界面运行态，但不能从回放时刻
+    // 捏造首答。tool_requested 只在完整模型响应后发出，也为不报 usage 的纯工具
+    // 响应兜底。与 /local 一致，空字符串不算正文，非空空白增量仍属于正文流。
+    if app.turn_first_reply.is_none()
+        && (matches!(output_type, Some("usage" | "tool_requested"))
+            || (matches!(
+                output_type,
+                Some("assistant_text_delta" | "assistant_text" | "completed" | "partial")
+            ) && value
+                .get("text")
+                .and_then(|text| text.as_str())
+                .is_some_and(|text| !text.is_empty())))
+        && is_current_turn_output(app)
+    {
+        app.record_turn_first_reply();
+    }
     if !matches!(output_type, Some("completed" | "partial")) {
         app.ensure_runtime_turn();
     }
@@ -600,7 +701,8 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     .and_then(|value| value.as_u64()),
             };
             // 本轮账目要累计，状态栏要最后一次，两者不能互相顶替。
-            app.record_turn_usage(&usage);
+            // 首答已在恢复运行态前处理，回放 usage 只累计用量。
+            app.accumulate_turn_usage(&usage);
             app.latest_usage = usage;
             app.context_tokens = app.latest_usage.input_tokens.unwrap_or(app.context_tokens);
         }

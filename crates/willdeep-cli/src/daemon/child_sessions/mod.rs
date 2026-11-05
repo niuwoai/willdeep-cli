@@ -7,6 +7,8 @@ use willdeep_runtime_protocol::child_session::*;
 mod reconcile;
 mod store;
 #[cfg(test)]
+mod store_tests;
+#[cfg(test)]
 mod tests;
 mod worktree;
 pub(in crate::daemon) use store::ChildStore;

@@ -391,6 +391,12 @@ struct App {
     turn_input_tokens: u64,
     turn_output_tokens: u64,
     turn_first_reply: Option<Duration>,
+    /// Event head at submission; older events cannot affect the submitted turn.
+    runtime_first_reply_after: u64,
+    /// Restoring a running UI never grants a new first-reply clock.
+    runtime_first_reply_eligible: bool,
+    runtime_submitted_turn: Option<uuid::Uuid>,
+    runtime_submitted_task: Option<uuid::Uuid>,
     turn_started: Option<Instant>,
     last_progress_at: Option<Instant>,
     runtime_turn: bool,

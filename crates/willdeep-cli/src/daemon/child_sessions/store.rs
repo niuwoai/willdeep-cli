@@ -115,6 +115,8 @@ pub(in crate::daemon) struct ChildStore {
     pub(in crate::daemon) home: PathBuf,
     path: PathBuf,
     lock_path: PathBuf,
+    /// Only successful file + directory barriers establish this process-local proof.
+    durable_digest: std::sync::Mutex<Option<[u8; 32]>>,
 }
 
 impl ChildStore {
@@ -123,6 +125,7 @@ impl ChildStore {
             home: home.to_path_buf(),
             path: home.join("runtime/session-children.json"),
             lock_path: home.join("runtime/session-children.lock"),
+            durable_digest: std::sync::Mutex::new(None),
         }
     }
 
@@ -157,13 +160,56 @@ impl ChildStore {
     }
 
     pub(in crate::daemon) fn persist(&self, ledger: &mut Ledger) -> Result<()> {
+        self.persist_with_barrier(ledger, || {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path)
+                .context("open child ledger durability barrier")?
+                .sync_all()
+                .context("sync child session ledger")?;
+            #[cfg(unix)]
+            File::open(self.path.parent().context("child ledger directory")?)?
+                .sync_all()
+                .context("sync child ledger directory")?;
+            Ok(())
+        })
+    }
+
+    // Called under the control lock. Matching bytes alone do not prove durability:
+    // rename may have succeeded while its directory barrier failed in another call
+    // or process. Each store establishes its own successful barrier before eliding it.
+    pub(super) fn persist_with_barrier(
+        &self,
+        ledger: &mut Ledger,
+        barrier: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let mut durable = self
+            .durable_digest
+            .lock()
+            .map_err(|_| anyhow::anyhow!("child ledger durability lock poisoned"))?;
+        let current = serde_json::to_vec_pretty(ledger)?;
+        let digest: [u8; 32] = Sha256::digest(&current).into();
+        match std::fs::read(&self.path) {
+            Ok(previous) if previous == current => {
+                if *durable != Some(digest) {
+                    barrier()?;
+                    *durable = Some(digest);
+                }
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("read child ledger before commit"),
+        }
+        *durable = None;
         ledger.revision = ledger.revision.saturating_add(1);
         let data = serde_json::to_vec_pretty(ledger)?;
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         write_private(&temporary, &data)?;
         replace(&temporary, &self.path).context("replace child session ledger")?;
-        #[cfg(unix)]
-        File::open(self.path.parent().context("child ledger directory")?)?.sync_all()?;
+        barrier()?;
+        *durable = Some(Sha256::digest(&data).into());
         Ok(())
     }
 

@@ -28,6 +28,7 @@ pub mod monitor_notice;
 pub mod peer_sessions;
 pub mod planning;
 pub mod plugin;
+pub mod preparation;
 mod project_rules;
 pub mod prompt;
 pub mod prompt_bundle;
