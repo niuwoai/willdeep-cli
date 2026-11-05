@@ -880,6 +880,7 @@ impl Agent {
         sink: Option<&dyn crate::checkpoint::CheckpointSink>,
         summary: Option<crate::context_summary::ContextSummary>,
     ) -> Result<AgentOutcome, AgentError> {
+        let mut preparation = crate::preparation::PreparationTrace::new("agent_preflight");
         let _execution_guard = sink
             .map(|sink| sink.acquire_run())
             .transpose()
@@ -887,6 +888,7 @@ impl Agent {
         if sink.is_some() {
             self.restore_team_for_execution().await?;
         }
+        preparation.mark("restore_team");
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
         let deadline = self
             .time_budget
@@ -919,12 +921,15 @@ impl Agent {
             routing.begin_run();
         }
         recorder.initialize_evidence(&self.tools)?;
+        preparation.mark("evidence");
         recorder.initialize_patch_contract(&self.tools)?;
+        preparation.mark("patch_contract");
         recorder.initialize_verification(
             self.tools
                 .try_verification_baseline()
                 .map_err(AgentError::VerificationSnapshot)?,
         )?;
+        preparation.mark("verification_baseline");
         recorder.watch_goal(self.goal_continuation.as_deref());
         recorder.watch_background(self.background_tasks.as_deref());
         // 目标的计时只在跑的时候走：轮次之间、进程不在的时候都不算。
@@ -955,6 +960,8 @@ impl Agent {
         // 重摘。它只在 run_inner 里被替换成更新的一份。
         let previous_summary = summary.clone();
         let mut summary_cache = summary.map(context::SummaryCache::restore);
+        preparation.mark("feedback_and_summary");
+        drop(preparation);
         let mut result = if let Some(deadline) = deadline {
             match tokio::time::timeout_at(
                 deadline,
@@ -1031,6 +1038,7 @@ impl Agent {
         feedback: Option<&crate::feedback::FeedbackRecorder>,
         compressed: &mut Option<context::SummaryCache>,
     ) -> Result<AgentOutcome, AgentError> {
+        let mut preparation = crate::preparation::PreparationTrace::new("agent_context");
         let patch_baseline = checkpoint.patch_baseline().cloned();
         // Persisted history can come from older desktop bridges that retained
         // `role=tool` while losing the protocol IDs. Never let one malformed
@@ -1060,7 +1068,9 @@ impl Agent {
         {
             continuation.activate(goal, continuation.default_budget());
         }
+        preparation.mark("history_and_images");
         self.apply_runtime_route(&mut user_message).await;
+        preparation.mark("routing");
         messages.retain(|message| message.role != crate::types::Role::System);
         messages.insert(0, Message::system(&self.config.system_prompt));
         let mut rules = crate::project_rules::ProjectRules::new(self.tools.workspace())
@@ -1097,6 +1107,8 @@ impl Agent {
         // 流式文本在增量到达时计时；无文本增量的响应在完整返回时计时。
         let mut first_response_millis: Option<u64> = None;
         let run_started = std::time::Instant::now();
+        preparation.mark("rules_and_definitions");
+        let mut preparation = Some(preparation);
         for turn in 1..=self.config.max_turns {
             let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
             checkpoint.plan = plan.clone();
@@ -1150,7 +1162,13 @@ impl Agent {
             }
             self.append_pending_instructions(&mut messages);
             let workflow_reports = self.append_workflow_reports(&mut messages)?;
+            if let Some(preparation) = preparation.as_mut() {
+                preparation.mark("rules_and_reports");
+            }
             let (peer_message_ids, _) = self.tools.append_peer_context(&mut messages)?;
+            if let Some(preparation) = preparation.as_mut() {
+                preparation.mark("peer_context");
+            }
             checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             for run_id in workflow_reports {
                 self.tools.acknowledge_workflow_report(run_id)?;
@@ -1167,6 +1185,9 @@ impl Agent {
             {
                 self.settle_leases(&leases, LeaseOutcome::Failed);
                 return Err(error);
+            }
+            if let Some(mut preparation) = preparation.take() {
+                preparation.mark("first_checkpoint");
             }
             self.sink.emit(AgentEvent::TurnStarted { turn }).await;
             if let Some(scope) = &self.usage_ledger {

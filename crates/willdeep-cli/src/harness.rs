@@ -388,6 +388,7 @@ pub(crate) async fn execute_runtime(
     sink: Arc<dyn EventSink>,
     prepare_execution: impl FnOnce(&willdeep_core::Session) -> Result<()>,
 ) -> Result<RuntimeHarnessOutcome> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("runtime_execution");
     let loaded = LoadedConfig::load(request.config.as_deref())?;
     let language = Language::parse(loaded.file.agent.language.as_deref())?;
     let cli = Cli {
@@ -446,6 +447,7 @@ pub(crate) async fn execute_runtime(
     if let Some(session) = &resumed {
         prepare_execution(session)?;
     }
+    preparation.mark("session_load_and_claim");
     let built = build(
         &cli,
         &loaded,
@@ -469,6 +471,7 @@ pub(crate) async fn execute_runtime(
         },
     )
     .await?;
+    preparation.mark("build_harness");
     let mut session = resumed.unwrap_or_else(|| {
         let mut session = willdeep_core::Session::new(
             built.workspace.clone(),
@@ -497,6 +500,8 @@ pub(crate) async fn execute_runtime(
         let _ownership = ownership;
         return agent_team::execute(&built, &store, &mut session, control, language).await;
     }
+    preparation.mark("session_binding");
+    drop(preparation);
     let outcome = execute_noninteractive(
         &built,
         &store,
@@ -530,6 +535,7 @@ pub(crate) async fn execute_noninteractive(
     language: Language,
     options: ExecutionOptions,
 ) -> Result<HarnessOutcome> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("turn_persistence");
     let checkpointer = match options.ownership {
         Some(ownership) => ownership,
         None => willdeep_core::checkpoint::SessionCheckpointSink {
@@ -539,6 +545,7 @@ pub(crate) async fn execute_noninteractive(
         .claim()?,
     };
     store.refresh_execution(session)?;
+    preparation.mark("claim_and_refresh");
     if options.allow_compress_command && prompt.trim() == "/compress" {
         let result = built
             .agent
@@ -582,6 +589,7 @@ pub(crate) async fn execute_noninteractive(
     if crate::titling::apply_derived_title(session, &prompt, !attachments.is_empty()) {
         store.save(session)?;
     }
+    preparation.mark("derived_title");
     let (history, user_message) = if options.replay_existing_user_message {
         let user_message = session
             .messages
@@ -618,6 +626,8 @@ pub(crate) async fn execute_noninteractive(
         &built.provider_config.model,
         !built.provider_config.api_key.is_empty(),
     );
+    preparation.mark("user_message");
+    drop(preparation);
     let run_result = built
         .agent
         .run_checkpointed_with_summary(
@@ -817,6 +827,7 @@ pub(crate) async fn build(
     resumed: Option<&willdeep_core::Session>,
     frontend: HarnessFrontend,
 ) -> Result<BuiltHarness> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("harness");
     // Resolve before gateway/provider requests. Invalid explicit profiles never
     // silently run with legacy defaults.
     let mut effective = LoadedConfig {
@@ -857,7 +868,9 @@ pub(crate) async fn build(
     let session_id = resumed
         .map(|session| session.id)
         .unwrap_or_else(uuid::Uuid::new_v4);
+    preparation.mark("runtime_parameters");
     let selection = crate::magpie_integration::resolve(cli, loaded, resumed).await?;
+    preparation.mark("provider_selection");
     let provider_profile = selection.name;
     let selected_profile = selection.profile;
     let profile = selected_profile.as_ref();
@@ -871,6 +884,7 @@ pub(crate) async fn build(
         configured_dialect,
         api_pinned(cli, profile),
     );
+    preparation.mark("gateway_capabilities");
     if let Some(dialect) = gateway.dialect {
         provider_config.dialect = dialect;
     }
@@ -991,10 +1005,12 @@ pub(crate) async fn build(
         } => (allowed_skills.as_slice(), allowed_mcp_servers.as_slice()),
         _ => (&[][..], &[][..]),
     };
+    preparation.mark("providers_and_team");
     let skills = Arc::new(
         willdeep_core::SkillCatalog::discover(&workspace, &loaded.file.skills.roots)
             .allow_only(allowed_skills),
     );
+    preparation.mark("skills");
     let mut mcp_servers = loaded.file.mcp_servers.clone();
     if !allowed_mcp_servers.is_empty() {
         mcp_servers.retain(|name, _| allowed_mcp_servers.contains(name));
@@ -1007,6 +1023,7 @@ pub(crate) async fn build(
             .await
             .context("initialize MCP servers")?
     };
+    preparation.mark("mcp");
     // 已启用插件的 MCP 工具（docs/PLUGINS.md「聊天里的插件工具」）：定义读持久化
     // 目录，调用时才拉起插件，优先经 Web 进程的插件网关。显式限定了 MCP 服务
     // 白名单的 Runtime 任务不带插件工具——白名单里写的是配置里的服务名。
@@ -1385,6 +1402,7 @@ pub(crate) async fn build(
         });
         (tools, Arc::new(catalog), goal_continuation, base_profiles)
     };
+    preparation.mark("tools_and_workers");
     let workflows = workflows::WorkflowService::new(
         home,
         session_id,
@@ -1418,8 +1436,10 @@ pub(crate) async fn build(
     // 事件内核先于 Agent 建起来，并立刻把上一次运行没投递完的事件读回来。
     // 读不出来不挡启动：事件是通知不是账本，为一份坏日志让整个 Runtime 起不
     // 来才是真的坏。（内核本身在工具注册表之前就建好了：monitor 要往里发事件。）
+    preparation.mark("workflow_and_watchers");
     let kernel_store = willdeep_core::kernel_store::KernelStore::new(home);
     let restored = willdeep_core::kernel_store::restore_into(&kernel, &kernel_store);
+    preparation.mark("kernel_restore");
     for (path, reason) in &restored.quarantined {
         eprintln!(
             "willdeep: quarantined a damaged event log ({reason}); kept at {}",
@@ -1542,6 +1562,8 @@ pub(crate) async fn build(
         workflows.bind_agent(&agent);
         Some(workflows::WorkflowDriverGuard::new(workflows.clone()))
     };
+    preparation.mark("agent_and_auxiliaries");
+    drop(preparation);
     Ok(BuiltHarness {
         workflows,
         _workflow_driver: workflow_driver,

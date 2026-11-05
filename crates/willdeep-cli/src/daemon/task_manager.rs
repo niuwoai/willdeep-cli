@@ -677,6 +677,8 @@ impl TaskManager {
         let checkpoint_target = task.session_id.zip(task.turn_id);
         let checkpoint_workspace = request.workspace.clone();
         tokio::spawn(async move {
+            let mut preparation =
+                willdeep_core::preparation::PreparationTrace::new("runtime_dispatch");
             // 模型动手之前给工作树拍一张：「回到第 N 步」恢复文件靠的就是这一张。
             // 拍不成不拦这一轮——回退时会说这一步没有文件检查点。
             if let Some((session_id, turn_id)) = checkpoint_target
@@ -705,6 +707,8 @@ impl TaskManager {
                     }
                 }
             }
+            preparation.mark("workspace_checkpoint");
+            drop(preparation);
             let execution =
                 crate::harness::execute_runtime(&home, request, connection, sink, |core| {
                     manager.sessions.prepare_execution(id, core)

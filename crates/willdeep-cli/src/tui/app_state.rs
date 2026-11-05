@@ -67,6 +67,10 @@ impl App {
             turn_input_tokens: 0,
             turn_output_tokens: 0,
             turn_first_reply: None,
+            runtime_first_reply_after: 0,
+            runtime_first_reply_eligible: false,
+            runtime_submitted_turn: None,
+            runtime_submitted_task: None,
             turn_started: None,
             last_progress_at: None,
             runtime_turn: false,
@@ -1032,22 +1036,30 @@ impl App {
             _ => false,
         }
     }
-    /// 收下一次请求的用量：累进本轮账目，并记住第一次响应的时刻。
-    ///
-    /// 这里接收完整响应的累计用量事件，以其到达时间作为首答的兜底值。
-    /// 本地执行结束后优先使用 Core 记录的首个流式文本时间。
-    pub(super) fn record_turn_usage(&mut self, usage: &Usage) {
+    /// 首个正文增量或完整响应到达，只记一次；恢复历史不能凭空开计时。
+    pub(super) fn record_turn_first_reply(&mut self) {
+        if self.running
+            && self.turn_first_reply.is_none()
+            && let Some(started) = self.turn_started
+        {
+            self.turn_first_reply = Some(started.elapsed());
+        }
+    }
+
+    /// 只累进账目。Runtime 要在恢复运行态之前另行判断响应是否属于本轮。
+    pub(super) fn accumulate_turn_usage(&mut self, usage: &Usage) {
         self.turn_input_tokens = self
             .turn_input_tokens
             .saturating_add(usage.input_tokens.unwrap_or(0));
         self.turn_output_tokens = self
             .turn_output_tokens
             .saturating_add(usage.output_tokens.unwrap_or(0));
-        if self.turn_first_reply.is_none()
-            && let Some(started) = self.turn_started
-        {
-            self.turn_first_reply = Some(started.elapsed());
-        }
+    }
+
+    /// 完整响应的用量为无正文/非流式响应兜底；本地结束后优先用 Core 的计时。
+    pub(super) fn record_turn_usage(&mut self, usage: &Usage) {
+        self.accumulate_turn_usage(usage);
+        self.record_turn_first_reply();
     }
 
     /// 目标模式跑完的收束行。完成与否由 `AgentStopReason::GoalComplete` 判定，
@@ -1074,7 +1086,7 @@ impl App {
     /// 是这一轮从头到尾，两者的差包含后续生成、工具与后续轮次；输入含系统
     /// 提示词与整段历史，所以它比「你打的那句话」大得多是正常的。
     ///
-    /// 本地流式文本以首个非空增量计时，非流式或纯工具响应以完整返回计时。
+    /// 本地与 Runtime 流式文本均以首个非空增量计时，非流式或纯工具响应以完整返回计时。
     /// 传 `Some(outcome)` 用本地轮次自己报的数（更权威，Provider 不报用量时
     /// 也仍有首答耗时）；Runtime 轮次没有 `AgentOutcome`，传 `None` 走本轮
     /// 累计。
@@ -1172,6 +1184,9 @@ impl App {
         self.running = false;
         self.last_progress_at = None;
         self.runtime_turn = false;
+        self.runtime_first_reply_eligible = false;
+        self.runtime_submitted_turn = None;
+        self.runtime_submitted_task = None;
         self.stale_runtime_turn_snapshots = 0;
         // 轮次结束，句柄就作废了；留着会让下一次 Esc 对着一个已完成的 Task 空掐。
         self.local_turn = None;
@@ -1342,6 +1357,10 @@ impl App {
         self.turn_input_tokens = 0;
         self.turn_output_tokens = 0;
         self.turn_first_reply = None;
+        self.runtime_first_reply_after = self.runtime_event_cursor;
+        self.runtime_first_reply_eligible = runtime_turn;
+        self.runtime_submitted_turn = None;
+        self.runtime_submitted_task = None;
         self.turn_narration = None;
         self.held_narration = None;
         // 上一轮没收尾的压缩行不许跨轮残留：新一轮的压缩会重新开始计时。
@@ -1366,6 +1385,7 @@ impl App {
                 )
                 .to_owned(),
         );
+        self.runtime_first_reply_eligible = false;
     }
 
     /// 用一份 Runtime 快照校准「工作中」状态。返回 `true` 表示界面上的 Runtime

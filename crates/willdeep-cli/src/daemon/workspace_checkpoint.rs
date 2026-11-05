@@ -341,12 +341,15 @@ pub(crate) fn capture(
     session_id: uuid::Uuid,
     turn_id: uuid::Uuid,
 ) -> Result<WorkspaceCheckpoint> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("workspace_checkpoint");
     let shadow = shadow_repo(home, workspace)?;
+    preparation.mark("open_repository");
     let (commit, files, untracked_skipped) = commit_worktree(
         &shadow,
         workspace,
         &format!("willdeep checkpoint session={session_id} turn={turn_id}"),
     )?;
+    preparation.mark("write_snapshot");
     shadow_git(
         &shadow,
         workspace,
@@ -360,6 +363,7 @@ pub(crate) fn capture(
     {
         let _ = shadow_git(&shadow, workspace, None, &["update-ref", "-d", stale]);
     }
+    preparation.mark("reference_and_retention");
     Ok(WorkspaceCheckpoint {
         commit,
         files,
