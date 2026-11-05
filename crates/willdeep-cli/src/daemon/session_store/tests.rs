@@ -1542,6 +1542,67 @@ fn a_deferred_turn_waits_on_an_idle_session_until_released() {
 }
 
 #[test]
+fn schedulable_sessions_keep_oldest_unheld_turn_order_after_restart() {
+    let root =
+        std::env::temp_dir().join(format!("runtime-schedule-order-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let sessions = (0..8)
+        .map(|_| {
+            store
+                .create(CreateRuntimeSession {
+                    id: None,
+                    workspace: workspace.clone(),
+                    profile: None,
+                    model: None,
+                    config: None,
+                    title: None,
+                })
+                .unwrap()
+                .id
+        })
+        .collect::<Vec<_>>();
+    let enqueue = |session, held| {
+        store
+            .enqueue_turn(
+                session,
+                CreateRuntimeTurn {
+                    team_control: None,
+                    request_id: uuid::Uuid::new_v4(),
+                    prompt: "Independent queued work".into(),
+                    attachments: Vec::new(),
+                    origin_client: None,
+                    defer_until_released: held,
+                },
+            )
+            .unwrap();
+    };
+    // A held message is older than every runnable one, but must not move its
+    // session ahead. Later messages must neither duplicate nor postpone it.
+    enqueue(sessions[0], true);
+    let expected = [3, 0, 7, 4, 1, 6, 2, 5]
+        .map(|index| sessions[index])
+        .to_vec();
+    for session in &expected {
+        enqueue(*session, false);
+    }
+    enqueue(expected[0], false);
+    enqueue(expected[1], false);
+    assert_eq!(store.schedulable_sessions().unwrap(), expected);
+    drop(store);
+
+    let restored = RuntimeSessionStore::open(path, &root).unwrap();
+    assert_eq!(restored.schedulable_sessions().unwrap(), expected);
+    for session in expected.iter().take(3) {
+        assert!(restored.claim_next(*session).unwrap().is_some());
+    }
+    assert_eq!(restored.schedulable_sessions().unwrap(), expected[3..]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cancelling_a_claimed_turn_releases_the_session_and_next_turn() {
     let root = std::env::temp_dir().join(format!(
         "willdeep-runtime-turn-cancel-{}",
@@ -1604,6 +1665,7 @@ fn session_stop_targets_only_its_declared_active_turn() {
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
         model_context_window: None,
         status: willdeep_runtime_protocol::SessionStatus::Running,
         active_turn_id: Some(active_turn_id),

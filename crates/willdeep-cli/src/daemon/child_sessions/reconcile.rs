@@ -6,6 +6,7 @@ const RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 pub(in crate::daemon) fn spawn(state: Arc<ServerState>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(RECONCILE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
             let guard = state.work_gate.read().await;
@@ -31,6 +32,7 @@ pub(in crate::daemon) fn spawn(state: Arc<ServerState>) {
 pub(in crate::daemon) fn tick(state: &ServerState) -> Result<()> {
     let tasks = load_tasks(&state.tasks.path)?;
     state.sessions.children.transaction(|ledger| {
+        control::sync_detachments(&state.sessions, ledger)?;
         let preparing = ledger
             .assignments
             .iter()
@@ -75,12 +77,16 @@ pub(in crate::daemon) fn tick(state: &ServerState) -> Result<()> {
                 continue;
             }
             let task = &mut ledger.assignments.get_mut(&id).unwrap().task;
-            task.status = task_status(turn.status);
-            task.updated_at = now();
-            task.error = turn
+            let status = task_status(turn.status);
+            let error = turn
                 .error
                 .as_deref()
                 .map(willdeep_core::judge::redact_credentials);
+            if task.status != status || task.error != error {
+                task.status = status;
+                task.updated_at = now();
+                task.error = error;
+            }
             if task.status.is_terminal() {
                 record_result(&state.sessions, ledger, id, final_task)?;
             }
@@ -122,7 +128,7 @@ pub(in crate::daemon) fn tick(state: &ServerState) -> Result<()> {
     Ok(())
 }
 
-fn task_status(status: RuntimeTurnStatus) -> ChildSessionTaskStatus {
+pub(super) fn task_status(status: RuntimeTurnStatus) -> ChildSessionTaskStatus {
     match status {
         RuntimeTurnStatus::Queued => ChildSessionTaskStatus::Queued,
         RuntimeTurnStatus::Running => ChildSessionTaskStatus::Running,
@@ -200,6 +206,7 @@ pub(super) fn record_result(
         .chars()
         .take(CHILD_SESSION_SUMMARY_MAX_CHARS)
         .collect::<String>();
+    task.waiting_on_dependencies = false;
     task.result = Some(ChildSessionResult {
         revision: 1,
         final_task_id: turn.as_ref().and_then(|turn| turn.active_task_id),

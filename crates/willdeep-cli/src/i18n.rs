@@ -29,6 +29,14 @@ impl Language {
         }
     }
 
+    pub fn compression_configuration_error(self) -> &'static str {
+        self.text(
+            "压缩配置无法加载，请检查配置文件后重试",
+            "Cannot load compression settings; check the configuration file and retry",
+            "圧縮設定を読み込めません。設定ファイルを確認して再試行してください",
+        )
+    }
+
     /// 规范语言标签，与桌面端遥测上报的 `locale` 口径一致（`zh-Hans` 而非 `zh-CN`），
     /// 否则同一个中文用户在两端会被聚合成两条曲线。
     pub fn telemetry_tag(self) -> &'static str {

@@ -100,6 +100,9 @@ pub(crate) struct CheckpointRecorder<'a> {
     stream_saved: bool,
     stream_dirty: bool,
     pending_stream_bytes: usize,
+    // A failed save may have replaced disk history before reporting an error.
+    // Only a successful record establishes a boundary safe for later rewrites.
+    save_uncertain: bool,
     evidence_source: Option<&'a crate::tools::ToolRegistry>,
     goal_source: Option<&'a crate::goal::GoalContinuation>,
     runtime_parameters: Option<crate::runtime_parameters::RuntimeParameters>,
@@ -123,6 +126,7 @@ impl<'a> CheckpointRecorder<'a> {
             stream_saved: false,
             stream_dirty: false,
             pending_stream_bytes: 0,
+            save_uncertain: false,
             evidence_source: None,
             goal_source: None,
             runtime_parameters: None,
@@ -150,8 +154,12 @@ impl<'a> CheckpointRecorder<'a> {
         }
         if let Some(checkpoint) = &mut self.latest {
             checkpoint.plan = self.plan.clone();
-            if let Some(sink) = self.sink {
+            if !self.save_uncertain
+                && let Some(sink) = self.sink
+            {
+                self.save_uncertain = true;
                 sink.save(checkpoint).map_err(AgentError::Checkpoint)?;
+                self.save_uncertain = false;
             }
         }
         Ok(self.plan.clone())
@@ -327,18 +335,22 @@ impl<'a> CheckpointRecorder<'a> {
             goal: self.goal_snapshot(),
         };
         if let Some(sink) = self.sink {
+            self.save_uncertain = true;
             sink.save(&checkpoint).map_err(AgentError::Checkpoint)?;
+            self.save_uncertain = false;
         }
+        // Saving commits this history even if a later Worker receipt fails.
+        // Error cleanup and streaming must never restore the previous checkpoint.
+        let checkpoint = self.latest.insert(checkpoint);
+        self.stream_prefix = None;
+        self.stream_saved = false;
+        self.stream_dirty = false;
+        self.pending_stream_bytes = 0;
         if let Some(background) = self.background {
             background
                 .acknowledge_committed(&checkpoint.metadata.agent_reports_received)
                 .map_err(AgentError::Checkpoint)?;
         }
-        self.latest = Some(checkpoint);
-        self.stream_prefix = None;
-        self.stream_saved = false;
-        self.stream_dirty = false;
-        self.pending_stream_bytes = 0;
         Ok(())
     }
 
@@ -380,9 +392,11 @@ impl<'a> CheckpointRecorder<'a> {
     }
 
     pub fn flush_stream(&mut self) -> Result<(), AgentError> {
-        if self.stream_dirty {
+        if self.stream_dirty && !self.save_uncertain {
             if let (Some(sink), Some(checkpoint)) = (self.sink, self.latest.as_ref()) {
+                self.save_uncertain = true;
                 sink.save(checkpoint).map_err(AgentError::Checkpoint)?;
+                self.save_uncertain = false;
             }
             self.stream_dirty = false;
             self.pending_stream_bytes = 0;
@@ -400,6 +414,11 @@ impl<'a> CheckpointRecorder<'a> {
                 outcome.input_tokens,
                 outcome.output_tokens,
             )?;
+        }
+        if self.save_uncertain {
+            // Disk may contain the old or new history. Do not guess by saving
+            // either snapshot after the host notification control lock is gone.
+            return Ok(());
         }
         let goal = self.goal_snapshot();
         if let (Some(sink), Some(checkpoint)) = (self.sink, self.latest.as_mut()) {
@@ -423,7 +442,9 @@ impl<'a> CheckpointRecorder<'a> {
                 ) => CheckpointStatus::Partial,
                 Err(_) => CheckpointStatus::Failed,
             };
+            self.save_uncertain = true;
             sink.save(checkpoint).map_err(AgentError::Checkpoint)?;
+            self.save_uncertain = false;
             self.stream_dirty = false;
         }
         Ok(())

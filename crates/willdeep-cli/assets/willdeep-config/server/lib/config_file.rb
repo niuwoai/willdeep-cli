@@ -31,9 +31,18 @@ module ConfigFile
       return nil unless File.file?(path)
       ensure_dir(backup_dir)
       data = File.binread(path)
-      dest = next_backup_path(path, backup_dir)
-      write_atomic(dest, data, mode: DEFAULT_MODE)
-      dest
+      # Different config targets may share a backup directory and basename.
+      # Protect name allocation and publication together, across processes.
+      File.open(File.join(backup_dir, ".backup.lock"), File::RDWR | File::CREAT, DEFAULT_MODE) do |lock|
+        lock.flock(File::LOCK_EX)
+        begin
+          dest = next_backup_path(path, backup_dir)
+          write_atomic(dest, data, mode: DEFAULT_MODE)
+          dest
+        ensure
+          lock.flock(File::LOCK_UN)
+        end
+      end
     end
 
     def list_backups(backup_dir)

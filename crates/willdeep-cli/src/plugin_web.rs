@@ -25,7 +25,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use willdeep_core::plugin::{
     ApprovalGap, CommandOutcome, HostError, PluginHost, PluginPermission, PluginSource,
     qualified_destination,
@@ -45,7 +45,10 @@ const MAX_AI_OUTPUT_TOKENS: u32 = 4_096;
 const BRIDGE_SCRIPT: &str = include_str!("plugin_bridge.js");
 
 pub(crate) struct PluginWebState {
-    pub host: Arc<PluginHost>,
+    /// 惰性插件宿主。Web 启动时不再抢在 `TcpListener::bind` 之前安装内置插件、
+    /// 扫描插件包或启动网关；这些工作在首个真正用到插件的请求里由
+    /// [`Self::host`] 一次性完成，`/health` 因此可以先随服务可达。
+    host: OnceCell<Arc<PluginHost>>,
     pub config_path: PathBuf,
     pub home: PathBuf,
     /// 与聊天端**同一份**工作区白名单（同一个 Arc，不是副本）。
@@ -56,12 +59,40 @@ pub(crate) struct PluginWebState {
     /// 请求停不了——页面手上没有别的把手，这一点与 macOS 宿主一致。
     ai_streams: Mutex<BTreeMap<String, tokio::sync::oneshot::Sender<()>>>,
     /// 插件 MCP 网关。启用、停用、卸载后重写它的发现文件。
-    gateway: Option<Arc<crate::plugin_gateway::PluginGateway>>,
+    ///
+    /// 与宿主在同一次惰性初始化里填充：`Some` 是起来的网关，`None` 是本进程
+    /// 没有网关（起不来不影响 Web 本身）。外层的 `OnceCell` 用来区分「还没
+    /// 试过」和「试过但起不来」，避免每次请求都重试一个注定失败的服务。
+    gateway: OnceCell<Option<Arc<crate::plugin_gateway::PluginGateway>>>,
 }
 
 impl PluginWebState {
+    /// 已经拿到宿主的调用方（单元测试、旧入口）使用。宿主直接放进 OnceCell，
+    /// [`Self::host`] 不会再触发发现、安装或网关启动。
+    #[cfg(test)]
     pub fn new(
         host: Arc<PluginHost>,
+        config_path: PathBuf,
+        home: PathBuf,
+        workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+    ) -> Self {
+        let cell = OnceCell::new();
+        let _ = cell.set(host);
+        Self::with_host_cell(cell, config_path, home, workspaces)
+    }
+
+    /// Web 启动路径：构造时**不做**任何插件工作。端口可以先绑、`/health`
+    /// 可以先答；内置插件安装、包发现与网关启动都推迟到首个插件请求。
+    pub(crate) fn lazy(
+        config_path: PathBuf,
+        home: PathBuf,
+        workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+    ) -> Self {
+        Self::with_host_cell(OnceCell::new(), config_path, home, workspaces)
+    }
+
+    fn with_host_cell(
+        host: OnceCell<Arc<PluginHost>>,
         config_path: PathBuf,
         home: PathBuf,
         workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
@@ -73,21 +104,94 @@ impl PluginWebState {
             workspaces,
             storage_lock: Mutex::new(()),
             ai_streams: Mutex::new(BTreeMap::new()),
-            gateway: None,
+            gateway: OnceCell::new(),
         }
     }
 
-    pub fn with_gateway(
-        mut self,
-        gateway: Option<Arc<crate::plugin_gateway::PluginGateway>>,
-    ) -> Self {
-        self.gateway = gateway;
-        self
+    /// 插件宿主的惰性访问器。第一次调用依次完成：
+    /// 1. 安装随包分发的 favorites / video-studio（已装时是快速路径）；
+    /// 2. `PluginHost::discover` 扫描共享、草案与 Codex 缓存；
+    /// 3. 启动插件 MCP 网关。
+    ///
+    /// `OnceCell::get_or_try_init` 保证同一时刻只有一个任务执行初始化，其余
+    /// 请求等待同一个结果；**初始化失败不会缓存**，下一次请求会重试——这既
+    /// 保留了原先「插件不可用不至于拖垮整个 Web」的可恢复性，又把失败从
+    /// 静默缺失路由改成明确的 500 错误。
+    pub(crate) async fn host(&self) -> Result<Arc<PluginHost>, PluginWebError> {
+        self.host
+            .get_or_try_init(|| async {
+                crate::favorites_plugin::ensure_installed(&self.home)
+                    .await
+                    .map_err(|error| {
+                        PluginWebError::Internal(format!(
+                            "favorites plugin installation failed: {error}"
+                        ))
+                    })?;
+                crate::video_studio_plugin::ensure_installed(&self.home)
+                    .await
+                    .map_err(|error| {
+                        PluginWebError::Internal(format!(
+                            "video studio plugin installation failed: {error}"
+                        ))
+                    })?;
+                let host = PluginHost::discover(&self.home).map_err(|error| {
+                    PluginWebError::Internal(format!("plugin host unavailable: {error}"))
+                })?;
+                let host = Arc::new(host);
+                host.set_config_path(self.config_path.clone());
+                // 插件 MCP 进程可以反向请求出图、问模型；凭据留在宿主。
+                host.set_host_requests(Arc::new(crate::plugin_host_requests::HostRequests::new(
+                    self.home.clone(),
+                    self.config_path.clone(),
+                    self.workspaces.clone(),
+                )));
+                // 插件 MCP 网关：只绑 127.0.0.1，端口与 token 持久化在发现文件里。
+                // 起不来不影响 Web 本身。
+                let gateway =
+                    match crate::plugin_gateway::PluginGateway::start(&self.home, host.clone())
+                        .await
+                    {
+                        Ok(gateway) => {
+                            println!(
+                                "Plugin MCP gateway: {} ({})",
+                                gateway.url(),
+                                willdeep_core::plugin::gateway::discovery_path(&self.home)
+                                    .display()
+                            );
+                            Some(Arc::new(gateway))
+                        }
+                        Err(error) => {
+                            eprintln!("warning: plugin MCP gateway unavailable: {error}");
+                            None
+                        }
+                    };
+                let _ = self.gateway.set(gateway);
+                Ok(host)
+            })
+            .await
+            .cloned()
+    }
+
+    /// 惰性网关访问器：先确保宿主已完成初始化（网关就在那一步里启动），
+    /// 再取句柄。`Ok(None)` 表示本进程没有可用的网关，与原先
+    /// `with_gateway(None)` 的语义一致。
+    pub(crate) async fn gateway(
+        &self,
+    ) -> Result<Option<Arc<crate::plugin_gateway::PluginGateway>>, PluginWebError> {
+        self.host().await?;
+        Ok(self.gateway.get().cloned().flatten())
     }
 
     /// 插件集合变了：重写网关发现文件里的 `servers`。失败只记一行，不影响本次操作。
     async fn publish_gateway(&self) {
-        if let Some(gateway) = &self.gateway
+        let gateway = match self.gateway().await {
+            Ok(gateway) => gateway,
+            Err(error) => {
+                eprintln!("warning: plugin_gateway_publish_failed error={error}");
+                return;
+            }
+        };
+        if let Some(gateway) = gateway
             && let Err(error) = gateway.publish().await
         {
             eprintln!("warning: plugin_gateway_publish_failed error={error}");
@@ -310,12 +414,13 @@ async fn list_plugins(
     Query(query): Query<LocaleQuery>,
 ) -> Result<Json<PluginsResponse>, PluginWebError> {
     let locale = query.locale.as_deref().unwrap_or("en");
+    let host = state.host().await?;
     let mut plugins = Vec::new();
-    for package in state.host.packages() {
-        let enabled = state.host.is_enabled(&package.id).await;
-        let gap = state.host.approval_gap(&package.id).await?;
+    for package in host.packages() {
+        let enabled = host.is_enabled(&package.id).await;
+        let gap = host.approval_gap(&package.id).await?;
         let never_approved = matches!(gap, Some(ApprovalGap::NeverApproved));
-        let stored_settings = package_settings(&state, package).await;
+        let stored_settings = package_settings(&host, package).await;
         let manifest = package.manifest.as_ref();
 
         let commands: Vec<PluginCommandView> = manifest
@@ -394,7 +499,7 @@ async fn list_plugins(
                     })
                     .collect(),
                 default_pinned: destination.default_pinned,
-                pinned_order: state.host.pinned_order(&package.id).await,
+                pinned_order: host.pinned_order(&package.id).await,
             });
         }
 
@@ -502,8 +607,7 @@ async fn list_plugins(
     }
     Ok(Json(PluginsResponse {
         plugins,
-        failures: state
-            .host
+        failures: host
             .failures()
             .iter()
             .map(|failure| PluginFailureView {
@@ -515,7 +619,7 @@ async fn list_plugins(
 }
 
 async fn package_settings(
-    state: &Arc<PluginWebState>,
+    host: &PluginHost,
     package: &willdeep_core::plugin::PluginPackage,
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -523,7 +627,7 @@ async fn package_settings(
         return out;
     };
     for setting in &manifest.settings {
-        if let Some(value) = state.host.setting(&package.id, &setting.id).await {
+        if let Some(value) = host.setting(&package.id, &setting.id).await {
             out.insert(setting.id.clone(), value);
         }
     }
@@ -547,7 +651,8 @@ async fn approve_plugin(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.approve(&plugin, now_seconds()).await?;
+    let host = state.host().await?;
+    host.approve(&plugin, now_seconds()).await?;
     Ok(Json(json!({"approved": true})))
 }
 
@@ -556,7 +661,8 @@ async fn set_plugin_enabled(
     Path(plugin): Path<String>,
     Json(request): Json<EnabledRequest>,
 ) -> Result<Json<EnabledResponse>, PluginWebError> {
-    match state.host.set_enabled(&plugin, request.enabled).await? {
+    let host = state.host().await?;
+    match host.set_enabled(&plugin, request.enabled).await? {
         Ok(()) => {
             state.publish_gateway().await;
             Ok(Json(EnabledResponse {
@@ -581,7 +687,8 @@ async fn pin_plugin(
     Path(plugin): Path<String>,
     Json(request): Json<PinRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.set_pinned_order(&plugin, request.order).await?;
+    let host = state.host().await?;
+    host.set_pinned_order(&plugin, request.order).await?;
     Ok(Json(json!({"order": request.order})))
 }
 
@@ -595,7 +702,8 @@ async fn update_plugin_setting(
     Path((plugin, key)): Path<(String, String)>,
     Json(request): Json<SettingRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let package = host.package(&plugin)?;
     let declared = package
         .manifest
         .as_ref()
@@ -605,9 +713,7 @@ async fn update_plugin_setting(
             "plugin `{plugin}` does not declare a setting named `{key}`"
         )));
     }
-    state
-        .host
-        .set_setting(&plugin, &key, request.value.as_deref())
+    host.set_setting(&plugin, &key, request.value.as_deref())
         .await?;
     Ok(Json(json!({"saved": true})))
 }
@@ -618,7 +724,8 @@ async fn uninstall_plugin(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let package = host.package(&plugin)?;
     if package.source != PluginSource::Shared {
         return Err(PluginWebError::BadRequest(format!(
             "plugin `{plugin}` comes from {} and is not managed here",
@@ -641,7 +748,7 @@ async fn uninstall_plugin(
     }
     std::fs::remove_dir_all(&canonical_root)
         .map_err(|error| PluginWebError::Internal(error.to_string()))?;
-    state.host.forget(&plugin).await?;
+    host.forget(&plugin).await?;
     state.publish_gateway().await;
     Ok(Json(json!({"removed": true})))
 }
@@ -652,10 +759,11 @@ async fn refresh_plugin_tools(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.package(&plugin)?;
     let mut servers = Vec::new();
-    for server in state.host.runnable_servers(&plugin) {
-        servers.push(match state.host.refresh_tools(&plugin, &server).await {
+    for server in host.runnable_servers(&plugin) {
+        servers.push(match host.refresh_tools(&plugin, &server).await {
             Ok(listed) => json!({
                 "server": server,
                 "tools": listed.get("tools").and_then(Value::as_array).map_or(0, Vec::len),
@@ -683,8 +791,9 @@ async fn sidebar_document(
     Path((plugin, sidebar)): Path<(String, String)>,
     Query(query): Query<LocaleQuery>,
 ) -> Result<Json<SidebarResponse>, PluginWebError> {
-    let (document, degraded) = state.host.sidebar_document(&plugin, &sidebar).await?;
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let (document, degraded) = host.sidebar_document(&plugin, &sidebar).await?;
+    let package = host.package(&plugin)?;
     let locale = query.locale.as_deref().unwrap_or("en");
     Ok(Json(SidebarResponse {
         strings: collect_strings(&document.to_value(), package, locale),
@@ -760,18 +869,14 @@ async fn execute_command(
     // 没人看得见的原生框（界面在浏览器里，服务可能在另一台机器上），
     // 然后一直等到超时。浏览器选好、上传落地之后，宿主要么直接合成那个
     // 工具本该返回的结果，要么带着 `path` 把调用转给它（见 `PickerDelivery`）。
-    let picker = command_file_picker(state.host.package(&plugin)?, &plugin, &command);
+    let host = state.host().await?;
+    let picker = command_file_picker(host.package(&plugin)?, &plugin, &command);
     let outcome = match picker {
         Some(picker) if picker.delivery == PickerDelivery::Synthesize => {
             return Ok(Json(file_picker_response(&state, &plugin, &arguments)?));
         }
         Some(picker) => forward_picked_file(&state, &plugin, &command, arguments, picker).await?,
-        None => {
-            state
-                .host
-                .execute_command(&plugin, &command, arguments)
-                .await?
-        }
+        None => host.execute_command(&plugin, &command, arguments).await?,
     };
     Ok(Json(match outcome {
         CommandOutcome::Host(action) => CommandResponse {
@@ -813,14 +918,15 @@ async fn call_plugin_tool(
     Path(plugin): Path<String>,
     Json(request): Json<ToolCallRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let package = host.package(&plugin)?;
     if !package.mcp_servers.contains_key(&request.server) {
         return Err(PluginWebError::Host(HostError::UnknownServer {
             plugin: plugin.clone(),
             server: request.server.clone(),
         }));
     }
-    let mcp = state.host.mcp(&plugin).await?;
+    let mcp = host.mcp(&plugin).await?;
     let arguments = if request.arguments.is_null() {
         json!({})
     } else {
@@ -844,14 +950,15 @@ async fn read_plugin_resource(
     Path(plugin): Path<String>,
     Json(request): Json<ResourceRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let package = host.package(&plugin)?;
     if !package.mcp_servers.contains_key(&request.server) {
         return Err(PluginWebError::Host(HostError::UnknownServer {
             plugin: plugin.clone(),
             server: request.server.clone(),
         }));
     }
-    let mcp = state.host.mcp(&plugin).await?;
+    let mcp = host.mcp(&plugin).await?;
     Ok(Json(
         mcp.read_resource(&request.server, &request.uri)
             .await
@@ -878,12 +985,12 @@ async fn ai_providers(
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
     // ai.chat 隐含这项能力；只想展示模型选择器的插件单独声明 providers.read。
-    if state
-        .host
+    let host = state.host().await?;
+    if host
         .permits(&plugin, PluginPermission::ProvidersRead)
         .is_err()
     {
-        state.host.permits(&plugin, PluginPermission::AiChat)?;
+        host.permits(&plugin, PluginPermission::AiChat)?;
     }
     let config = crate::config::LoadedConfig::load(Some(&state.config_path))
         .map_err(|error| PluginWebError::Internal(error.to_string()))?;
@@ -975,7 +1082,8 @@ async fn ai_cancel(
     Path(plugin): Path<String>,
     Json(request): Json<AiCancelRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.permits(&plugin, PluginPermission::AiChat)?;
+    let host = state.host().await?;
+    host.permits(&plugin, PluginPermission::AiChat)?;
     let key = stream_key(&plugin, request.stream_id.trim());
     let sender = state.ai_streams.lock().await.remove(&key);
     let cancelled = sender.is_some_and(|sender| sender.send(()).is_ok());
@@ -1035,7 +1143,8 @@ async fn ai_complete(
     Path(plugin): Path<String>,
     Json(request): Json<AiCompleteRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.permits(&plugin, PluginPermission::AiChat)?;
+    let plugin_host = state.host().await?;
+    plugin_host.permits(&plugin, PluginPermission::AiChat)?;
     let host = crate::plugin_capabilities::PluginAiHost {
         home: &state.home,
         config_path: &state.config_path,
@@ -1048,7 +1157,7 @@ async fn ai_complete(
             .clone(),
     };
     let permits = |permission: PluginPermission| -> Result<(), PluginWebError> {
-        state.host.permits(&plugin, permission).map_err(Into::into)
+        plugin_host.permits(&plugin, permission).map_err(Into::into)
     };
     complete(&host, &plugin, request, &permits, Some(&state.ai_streams))
         .await
@@ -1360,7 +1469,8 @@ async fn read_plugin_storage(
     Path(plugin): Path<String>,
     Query(query): Query<StorageQuery>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.package(&plugin)?;
     let data = read_storage(&state.home, &plugin);
     match query.key {
         Some(key) => {
@@ -1385,7 +1495,8 @@ async fn write_plugin_storage(
     Path(plugin): Path<String>,
     Json(request): Json<StorageWrite>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.package(&plugin)?;
     let _guard = state.storage_lock.lock().await;
     let mut data = read_storage(&state.home, &plugin);
     let structured = request.scope.as_deref() == Some("store");
@@ -1420,7 +1531,8 @@ async fn clear_plugin_storage(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.package(&plugin)?;
     let _guard = state.storage_lock.lock().await;
     write_storage(&state.home, &plugin, &BTreeMap::new())?;
     Ok(Json(json!({"cleared": true})))
@@ -1586,7 +1698,11 @@ async fn forward_picked_file(
         .as_object_mut()
         .ok_or_else(|| PluginWebError::BadRequest("invalidArguments".to_owned()))?
         .insert("path".to_owned(), json!(upload.display().to_string()));
-    let outcome = state.host.execute_command(plugin, command, arguments).await;
+    let outcome = state
+        .host()
+        .await?
+        .execute_command(plugin, command, arguments)
+        .await;
     if let Err(error) = tokio::fs::remove_file(&upload).await {
         eprintln!(
             "warning: plugin_upload_cleanup_failed plugin={plugin} command={command} path={} error={error}",
@@ -1636,7 +1752,8 @@ async fn upload_plugin_file(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Json<Value>, PluginWebError> {
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    let package = host.package(&plugin)?;
     let picker = command_file_picker(package, &plugin, &query.command)
         .ok_or_else(|| PluginWebError::BadRequest("notFilePicker".to_owned()))?;
     let extension = upload_extension(&query.name, picker)
@@ -1722,7 +1839,8 @@ async fn serve_plugin_media(
     Path((plugin, file)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, PluginWebError> {
-    state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.package(&plugin)?;
     if file.contains('/') || file.contains('\\') || file.contains("..") {
         return Err(PluginWebError::BadRequest("invalidPath".to_owned()));
     }
@@ -1863,7 +1981,11 @@ async fn serve_plugin_page(
     Path((plugin, page)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, PluginWebError> {
-    let source = state.host.read_page_resource(&plugin, &page).await?;
+    let source = state
+        .host()
+        .await?
+        .read_page_resource(&plugin, &page)
+        .await?;
     let storage = read_storage(&state.home, &plugin);
     Ok(html_response(compose_page(&source, &storage), &headers))
 }
@@ -1874,11 +1996,12 @@ async fn serve_plugin_asset(
     Path((plugin, path)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, PluginWebError> {
+    let host = state.host().await?;
     // 停用的插件连静态资源都不给：一个被停掉的插件不该还能在页面里活着。
-    if !state.host.is_enabled(&plugin).await {
+    if !host.is_enabled(&plugin).await {
         return Err(PluginWebError::Host(HostError::NotEnabled(plugin)));
     }
-    let package = state.host.package(&plugin)?;
+    let package = host.package(&plugin)?;
     let bytes = package
         .read_resource(&path, willdeep_core::plugin::package::MAX_PAGE_BYTES)
         .map_err(|error| PluginWebError::Host(HostError::Package(error)))?;
@@ -1971,6 +2094,20 @@ pub(crate) enum PluginWebError {
 impl From<HostError> for PluginWebError {
     fn from(error: HostError) -> Self {
         Self::Host(error)
+    }
+}
+
+/// 与 [`IntoResponse`] 回给页面的 `error` 文字保持一致，供日志使用。
+impl std::fmt::Display for PluginWebError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Host(HostError::UnknownPlugin(id)) => write!(formatter, "unknown plugin: {id}"),
+            Self::Host(HostError::UnknownContribution { .. }) => {
+                formatter.write_str("unknown contribution")
+            }
+            Self::Host(error) => write!(formatter, "{error}"),
+            Self::BadRequest(message) | Self::Internal(message) => formatter.write_str(message),
+        }
     }
 }
 

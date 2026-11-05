@@ -174,7 +174,8 @@ async fn connect_config_tools(state: &WebState) -> anyhow::Result<willdeep_core:
         server_path.is_file(),
         "bundled configuration service is missing"
     );
-    let ruby = find_ruby().context("Ruby is required by the bundled configuration service")?;
+    let ruby = crate::config_plugin::find_ruby()
+        .context("Ruby is required by the bundled configuration service")?;
     let backup_dir = state.home.join("plugin-data/willdeep-config/backups");
     let server = willdeep_core::McpServerConfig {
         command: Some(ruby.display().to_string()),
@@ -204,24 +205,6 @@ async fn connect_config_tools(state: &WebState) -> anyhow::Result<willdeep_core:
     willdeep_core::McpRegistry::connect_in(Some(&state.home), &servers)
         .await
         .map_err(anyhow::Error::new)
-}
-
-fn find_ruby() -> Option<std::path::PathBuf> {
-    [
-        "/usr/bin/ruby",
-        "/usr/local/bin/ruby",
-        "/opt/homebrew/bin/ruby",
-    ]
-    .into_iter()
-    .map(std::path::PathBuf::from)
-    .find(|path| path.is_file())
-    .or_else(|| {
-        std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|directory| directory.join("ruby"))
-                .find(|path| path.is_file())
-        })
-    })
 }
 
 #[derive(Serialize)]

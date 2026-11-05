@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
 
@@ -430,6 +430,15 @@ pub enum AgentError {
     ContextCapacity { estimated: u64, capacity: u64 },
 }
 
+/// Compression candidates and their input window are replaced as one snapshot.
+#[derive(Clone, Default)]
+pub struct CompressionSettings {
+    /// Preference order; `true` means the provider hosts the summary prompt.
+    pub candidates: Vec<(Arc<dyn Provider>, bool)>,
+    /// `None` clears an earlier limit and uses the session window.
+    pub context_window: Option<u64>,
+}
+
 pub struct Agent {
     /// 主模型。与「跟主模型一样」的那些兜底共用一格，`/model` 一换全跟着换。
     provider: crate::provider::MainModelHandle,
@@ -438,14 +447,8 @@ pub struct Agent {
     instance_name_source: Option<Arc<instance_identity::InstanceNameSource>>,
     sink: Arc<dyn EventSink>,
     image_fallback: Option<(Arc<dyn Provider>, String)>,
-    /// 上下文压缩的专用 Provider。bool 为真表示压缩指令由网关托管
-    /// （some.im 的 someim-32b-compressor，服务端 replace 注入），
-    /// 摘要请求只发裸转录；为假时仍携带行内压缩指令。
-    compressors: Vec<(Arc<dyn Provider>, bool)>,
-    /// 压缩器自己的上下文窗口。不绑就沿用会话窗口：两者通常是同一个 Provider，
-    /// 分开算只会把原料切碎。绑了之后摘要请求按它封顶，本地压缩器窗口远小于
-    /// 云端会话时不至于发出一个对方收不下的请求。
-    compressor_window: Option<u64>,
+    /// 每次压缩先复制完整设置；分块和候选回退共用这一份，不跨 await 持锁。
+    compression: RwLock<CompressionSettings>,
     /// 会话标题摘要的专用 Provider。没绑就没有 L2 润色，列表停在 L1 派生标题。
     titlers: Vec<Arc<dyn Provider>>,
     /// 轮次结束后预测用户下一句的 Provider，与标题同一档。没绑就不预测。
@@ -487,8 +490,7 @@ impl Agent {
             instance_name_source: None,
             sink: Arc::new(NoopSink),
             image_fallback: None,
-            compressors: Vec::new(),
-            compressor_window: None,
+            compression: RwLock::new(CompressionSettings::default()),
             titlers: Vec::new(),
             input_suggesters: Vec::new(),
             subagents: None,
@@ -610,14 +612,21 @@ impl Agent {
     /// client sends only the bare transcript; without it the inline
     /// instruction is kept so a custom model never loses its task description.
     pub fn with_compressor(mut self, provider: Arc<dyn Provider>, hosted_prompt: bool) -> Self {
-        self.compressors.push((provider, hosted_prompt));
+        self.compression
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .candidates
+            .push((provider, hosted_prompt));
         self
     }
 
     /// Bind context-compression candidates in preference order. A failed or
     /// empty local summary falls through to the hosted/session candidate.
     pub fn with_compressors(mut self, providers: Vec<(Arc<dyn Provider>, bool)>) -> Self {
-        self.compressors = providers;
+        self.compression
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .candidates = providers;
         self
     }
 
@@ -627,8 +636,42 @@ impl Agent {
     /// it the session window is used, which is correct when both are the same
     /// endpoint.
     pub fn with_compressor_window(mut self, window: u64) -> Self {
-        self.compressor_window = Some(window);
+        self.compression
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .context_window = Some(window);
         self
+    }
+
+    pub fn with_compression_settings(mut self, settings: CompressionSettings) -> Self {
+        self.compression = RwLock::new(settings);
+        self
+    }
+
+    /// Replace both candidates and window for future compressions. In-flight
+    /// compression keeps its original snapshot, including across chunk requests.
+    pub fn set_compression_settings(
+        &self,
+        settings: CompressionSettings,
+    ) -> Result<(), AgentError> {
+        *self.compression.write().map_err(|_| {
+            AgentError::Checkpoint("replace compression settings: lock poisoned".to_owned())
+        })? = settings;
+        Ok(())
+    }
+
+    fn compression_settings(&self) -> Result<CompressionSettings, AgentError> {
+        let mut settings = self
+            .compression
+            .read()
+            .map_err(|_| {
+                AgentError::Checkpoint("read compression settings: lock poisoned".to_owned())
+            })?
+            .clone();
+        if settings.candidates.is_empty() {
+            settings.candidates.push((self.provider()?, false));
+        }
+        Ok(settings)
     }
 
     /// Bind the provider used for the one-shot session-title summary. Left
@@ -880,6 +923,7 @@ impl Agent {
         sink: Option<&dyn crate::checkpoint::CheckpointSink>,
         summary: Option<crate::context_summary::ContextSummary>,
     ) -> Result<AgentOutcome, AgentError> {
+        let mut preparation = crate::preparation::PreparationTrace::new("agent_preflight");
         let _execution_guard = sink
             .map(|sink| sink.acquire_run())
             .transpose()
@@ -887,6 +931,7 @@ impl Agent {
         if sink.is_some() {
             self.restore_team_for_execution().await?;
         }
+        preparation.mark("restore_team");
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
         let deadline = self
             .time_budget
@@ -919,12 +964,15 @@ impl Agent {
             routing.begin_run();
         }
         recorder.initialize_evidence(&self.tools)?;
+        preparation.mark("evidence");
         recorder.initialize_patch_contract(&self.tools)?;
+        preparation.mark("patch_contract");
         recorder.initialize_verification(
             self.tools
                 .try_verification_baseline()
                 .map_err(AgentError::VerificationSnapshot)?,
         )?;
+        preparation.mark("verification_baseline");
         recorder.watch_goal(self.goal_continuation.as_deref());
         recorder.watch_background(self.background_tasks.as_deref());
         // 目标的计时只在跑的时候走：轮次之间、进程不在的时候都不算。
@@ -955,6 +1003,8 @@ impl Agent {
         // 重摘。它只在 run_inner 里被替换成更新的一份。
         let previous_summary = summary.clone();
         let mut summary_cache = summary.map(context::SummaryCache::restore);
+        preparation.mark("feedback_and_summary");
+        drop(preparation);
         let mut result = if let Some(deadline) = deadline {
             match tokio::time::timeout_at(
                 deadline,
@@ -1031,6 +1081,7 @@ impl Agent {
         feedback: Option<&crate::feedback::FeedbackRecorder>,
         compressed: &mut Option<context::SummaryCache>,
     ) -> Result<AgentOutcome, AgentError> {
+        let mut preparation = crate::preparation::PreparationTrace::new("agent_context");
         let patch_baseline = checkpoint.patch_baseline().cloned();
         // Persisted history can come from older desktop bridges that retained
         // `role=tool` while losing the protocol IDs. Never let one malformed
@@ -1060,7 +1111,9 @@ impl Agent {
         {
             continuation.activate(goal, continuation.default_budget());
         }
+        preparation.mark("history_and_images");
         self.apply_runtime_route(&mut user_message).await;
+        preparation.mark("routing");
         messages.retain(|message| message.role != crate::types::Role::System);
         messages.insert(0, Message::system(&self.config.system_prompt));
         let mut rules = crate::project_rules::ProjectRules::new(self.tools.workspace())
@@ -1097,6 +1150,8 @@ impl Agent {
         // 流式文本在增量到达时计时；无文本增量的响应在完整返回时计时。
         let mut first_response_millis: Option<u64> = None;
         let run_started = std::time::Instant::now();
+        preparation.mark("rules_and_definitions");
+        let mut preparation = Some(preparation);
         for turn in 1..=self.config.max_turns {
             let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
             checkpoint.plan = plan.clone();
@@ -1150,8 +1205,17 @@ impl Agent {
             }
             self.append_pending_instructions(&mut messages);
             let workflow_reports = self.append_workflow_reports(&mut messages)?;
-            let (peer_message_ids, _) = self.tools.append_peer_context(&mut messages)?;
-            checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
+            if let Some(preparation) = preparation.as_mut() {
+                preparation.mark("rules_and_reports");
+            }
+            let (peer_message_ids, _) = self
+                .tools
+                .commit_peer_context(&mut messages, &mut |candidate| {
+                    checkpoint.record(candidate, turn, input_tokens, output_tokens)
+                })?;
+            if let Some(preparation) = preparation.as_mut() {
+                preparation.mark("peer_context");
+            }
             for run_id in workflow_reports {
                 self.tools.acknowledge_workflow_report(run_id)?;
             }
@@ -1167,6 +1231,9 @@ impl Agent {
             {
                 self.settle_leases(&leases, LeaseOutcome::Failed);
                 return Err(error);
+            }
+            if let Some(mut preparation) = preparation.take() {
+                preparation.mark("first_checkpoint");
             }
             self.sink.emit(AgentEvent::TurnStarted { turn }).await;
             if let Some(scope) = &self.usage_ledger {
@@ -1404,7 +1471,12 @@ impl Agent {
                 }
                 messages.push(Message::assistant(&content, Vec::new()));
                 if self.append_pending_instructions(&mut messages)
-                    || self.tools.append_peer_context(&mut messages)?.1
+                    || self
+                        .tools
+                        .commit_new_peer_context(&mut messages, &mut |candidate| {
+                            checkpoint.record(candidate, turn, input_tokens, output_tokens)
+                        })?
+                        .1
                 {
                     continue;
                 }

@@ -44,7 +44,8 @@ pub(super) async fn serve(
     {
         return Err(invalid());
     }
-    if state.host.approval_gap(PLUGIN).await?.is_some() {
+    let host = state.host().await?;
+    if host.approval_gap(PLUGIN).await?.is_some() {
         return Err(invalid());
     }
     let workspaces = state.workspaces.read().map_err(|_| invalid())?.clone();
@@ -62,7 +63,7 @@ pub(super) async fn serve(
     }
     // mcp() enforces enabled state. The plugin's file tool obtains a
     // fresh workspace-scoped Runtime snapshot and revalidates domain acceptance.
-    let mcp = state.host.mcp(PLUGIN).await?;
+    let mcp = host.mcp(PLUGIN).await?;
     let raw = mcp
         .call_tool_on(
             "video-studio",

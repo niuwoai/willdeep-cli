@@ -5,6 +5,10 @@ mod tests;
 
 const MAX_HOST_CONTEXT_BATCH: usize = 4;
 
+/// Synchronous checkpoint callback used inside the host's notification control lock.
+pub type HostContextCommit<'a> =
+    dyn FnMut(&[(uuid::Uuid, String)]) -> Result<(), crate::AgentError> + 'a;
+
 /// A host-bound client. The model cannot choose its sender session or grant itself permissions.
 #[async_trait]
 pub trait SessionCollaboration: Send + Sync {
@@ -17,6 +21,16 @@ pub trait SessionCollaboration: Send + Sync {
     /// Durable host notifications. The host acknowledges them only after inspecting saved history.
     fn host_context(&self) -> Result<Vec<(uuid::Uuid, String)>, ToolError> {
         Ok(Vec::new())
+    }
+    /// Revalidate host notifications and synchronously persist their history under
+    /// the host's control lock. The callback must run exactly once on success;
+    /// implementations must never keep the lock across model requests or await.
+    fn commit_host_context(
+        &self,
+        candidates: &[(uuid::Uuid, String)],
+        commit: &mut HostContextCommit<'_>,
+    ) -> Result<(), crate::AgentError> {
+        commit(candidates)
     }
     async fn execute(&self, name: &str, arguments: serde_json::Value) -> Result<String, ToolError>;
     /// Keep the tool call identity available for host-bound idempotency keys.
@@ -47,41 +61,81 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
 }
 
 impl ToolRegistry {
-    pub(crate) fn append_peer_context(
+    pub(crate) fn commit_peer_context(
         &self,
         messages: &mut Vec<crate::types::Message>,
-    ) -> Result<(Vec<uuid::Uuid>, bool), ToolError> {
+        persist: &mut dyn FnMut(&[crate::types::Message]) -> Result<(), crate::AgentError>,
+    ) -> Result<(Vec<uuid::Uuid>, bool), crate::AgentError> {
         let Some(client) = &self.session_collaboration else {
+            persist(messages)?;
             return Ok((Vec::new(), false));
         };
+        let mut staged = messages.clone();
         let mut ids = Vec::new();
-        let mut appended = false;
-        for note in client.pending()?.into_iter().take(4) {
+        for note in client.pending()?.into_iter().take(MAX_HOST_CONTEXT_BATCH) {
             let context = note.model_context();
-            if !messages.iter().any(|message| message.content == context) {
-                messages.push(crate::types::Message::host_instruction(context));
-                appended = true;
+            if !staged.iter().any(|message| message.content == context) {
+                staged.push(crate::types::Message::host_instruction(context));
             }
             ids.push(note.id);
         }
-        // These IDs are not peer delivery receipts. The coordinator inspects durable history
-        // before acknowledging the outbox; a successful provider call alone is insufficient.
-        for (id, context) in client
-            .host_context()?
-            .into_iter()
-            .take(MAX_HOST_CONTEXT_BATCH)
-        {
-            let marker = format!("<host-context id=\"{id}\">\n");
-            let wrapped = format!("{marker}{context}\n</host-context>");
-            if !messages.iter().any(|message| {
-                message.source == Some(crate::types::MessageSource::HostInstruction)
-                    && message.content.starts_with(&marker)
-            }) {
-                messages.push(crate::types::Message::host_instruction(wrapped));
-                appended = true;
+        let candidates = client.host_context()?;
+        let mut committed = None;
+        client.commit_host_context(&candidates, &mut |eligible| {
+            let mut candidate = staged.clone();
+            // Host IDs are not peer receipts. Only the saved history can prove
+            // delivery; snapshots returned before the control lock are advisory.
+            for (id, context) in eligible.iter().take(MAX_HOST_CONTEXT_BATCH) {
+                let marker = format!("<host-context id=\"{id}\">\n");
+                if !candidate.iter().any(|message| {
+                    message.source == Some(crate::types::MessageSource::HostInstruction)
+                        && message.content.starts_with(&marker)
+                }) {
+                    candidate.push(crate::types::Message::host_instruction(format!(
+                        "{marker}{context}\n</host-context>"
+                    )));
+                }
             }
-        }
+            persist(&candidate)?;
+            committed = Some(candidate);
+            Ok(())
+        })?;
+        let committed = committed.ok_or_else(|| {
+            crate::AgentError::Checkpoint(
+                "host notification commit did not persist its history".into(),
+            )
+        })?;
+        let appended = committed.len() != messages.len();
+        // A failed host transaction or checkpoint never leaves uncommitted
+        // notices in the model's in-memory history or a later checkpoint.
+        *messages = committed;
         Ok((ids, appended))
+    }
+
+    /// The completion boundary only needs an extra checkpoint if it appends
+    /// context. Still run the host hook even for an empty snapshot, so a revoked
+    /// automatic wake cannot bypass its final eligibility check.
+    pub(crate) fn commit_new_peer_context(
+        &self,
+        messages: &mut Vec<crate::types::Message>,
+        persist: &mut dyn FnMut(&[crate::types::Message]) -> Result<(), crate::AgentError>,
+    ) -> Result<(Vec<uuid::Uuid>, bool), crate::AgentError> {
+        let original_len = messages.len();
+        self.commit_peer_context(messages, &mut |candidate| {
+            // Context construction is append-only, as used by the returned flag.
+            if candidate.len() != original_len {
+                persist(candidate)?;
+            }
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn append_peer_context(
+        &self,
+        messages: &mut Vec<crate::types::Message>,
+    ) -> Result<(Vec<uuid::Uuid>, bool), crate::AgentError> {
+        self.commit_peer_context(messages, &mut |_| Ok(()))
     }
 
     pub(crate) fn peer_context_consumed(

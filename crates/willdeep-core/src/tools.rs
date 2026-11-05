@@ -28,8 +28,8 @@ mod delegation;
 mod host_tools;
 mod peer_sessions;
 mod plan_jobs;
-pub use host_tools::{AgentDefinitionHost, WorkflowHost, WorkflowNotice};
-pub use peer_sessions::SessionCollaboration;
+pub use host_tools::{AgentDefinitionHost, ConfigurationHost, WorkflowHost, WorkflowNotice};
+pub use peer_sessions::{HostContextCommit, SessionCollaboration};
 
 const DEFAULT_MAX_RESULTS: usize = 60;
 const MAX_RESULTS: usize = 200;
@@ -120,6 +120,10 @@ impl Approver for DenyApprover {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
+    /// The host withdrew an uncommitted result wake. This is a skipped turn,
+    /// not a provider/tool failure or an operator stop request.
+    #[error("host result wake no longer has an eligible notification")]
+    HostContextRevoked,
     #[error("unknown tool: {0}")]
     UnknownTool(String),
     #[error("invalid arguments for {tool}: {source}")]
@@ -166,6 +170,7 @@ impl ToolError {
     /// 稳定的错误类别，给反馈账本用：只说是哪一类错，不带路径、参数或输出。
     pub fn class(&self) -> &'static str {
         match self {
+            Self::HostContextRevoked => "host_context_revoked",
             Self::UnknownTool(_) => "unknown_tool",
             Self::InvalidArguments { .. } => "invalid_arguments",
             Self::OutsideWorkspace(_) => "outside_workspace",
@@ -189,6 +194,7 @@ impl ToolError {
 
 pub struct ToolRegistry {
     agent_definition_host: Option<Arc<dyn AgentDefinitionHost>>,
+    configuration_host: Option<Arc<dyn ConfigurationHost>>,
     workflow_host: Option<Arc<dyn WorkflowHost>>,
     session_collaboration: Option<Arc<dyn SessionCollaboration>>,
     completion_contract: Option<CompletionContract>,
@@ -337,6 +343,7 @@ impl ToolRegistry {
         }
         Ok(Self {
             agent_definition_host: None,
+            configuration_host: None,
             workflow_host: None,
             session_collaboration: None,
             delegation_read_only: false,
@@ -998,7 +1005,9 @@ impl ToolRegistry {
             "agent_library_read"
             | "agent_library_manage"
             | "workflow_read"
-            | "workflow_control" => self.host_tool(call).await,
+            | "workflow_control"
+            | "configuration_read"
+            | "configuration_write" => self.host_tool(call).await,
             "list_workspace_sessions"
             | "send_session_message"
             | "read_session_messages"
@@ -2247,10 +2256,11 @@ mod board_tools;
 pub mod command_wait;
 mod monitor;
 mod verification;
+pub(crate) use agent_control::update_plan_definition;
 pub use agent_control::{DEFAULT_AWAIT_SECONDS, MAX_AGENT_MESSAGE_CHARS, MAX_AWAIT_SECONDS};
-pub(crate) use agent_control::{PARENT_ONLY_TOOLS, update_plan_definition};
 use background_shell::run_background_shell;
 pub use background_shell::run_background_supervisor;
+pub(crate) use delegation::PARENT_ONLY_TOOLS;
 pub use verification::RunVerification;
 mod patch_contract;
 pub use patch_contract::CompletionContract;

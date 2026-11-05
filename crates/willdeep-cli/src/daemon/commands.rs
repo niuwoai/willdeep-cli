@@ -358,6 +358,39 @@ pub enum ChildWorktreeBaseArg {
     Snapshot,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ChildSubscriptionArg {
+    None,
+    Inbox,
+    #[value(name = "auto_wake", alias = "auto-wake")]
+    AutoWake,
+}
+
+impl ChildSubscriptionArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Inbox => "inbox",
+            Self::AutoWake => "auto_wake",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum ChildSubscriptionAction {
+    Set {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        assignment: uuid::Uuid,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        expected_subscription_revision: u64,
+        #[arg(long, value_enum)]
+        subscription: ChildSubscriptionArg,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+    },
+}
+
 #[derive(Clone, Debug, Subcommand)]
 pub enum ChildSessionAction {
     /// Start a fresh or forked child conversation, optionally in an isolated worktree.
@@ -384,6 +417,10 @@ pub enum ChildSessionAction {
         /// Optional model override from the parent Session's Provider profile.
         #[arg(long = "child-model", id = "child_model", value_name = "MODEL")]
         model: Option<String>,
+        #[arg(long, value_enum)]
+        subscription: Option<ChildSubscriptionArg>,
+        #[arg(long = "depends-on", value_name = "ASSIGNMENT_UUID", action = clap::ArgAction::Append)]
+        depends_on: Vec<uuid::Uuid>,
         /// Reuse this key after a lost response to avoid duplicate work.
         #[arg(long)]
         request_id: Option<uuid::Uuid>,
@@ -405,11 +442,46 @@ pub enum ChildSessionAction {
         parent: uuid::Uuid,
         assignment: uuid::Uuid,
     },
+    Link {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        child: uuid::Uuid,
+    },
+    Takeover {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        child: uuid::Uuid,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        expected_control_revision: u64,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+        #[arg(long)]
+        yes: bool,
+    },
+    Detach {
+        #[arg(long)]
+        parent: uuid::Uuid,
+        child: uuid::Uuid,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        expected_control_revision: u64,
+        #[arg(long)]
+        request_id: Option<uuid::Uuid>,
+        #[arg(long)]
+        yes: bool,
+    },
+    Subscription {
+        #[command(subcommand)]
+        action: ChildSubscriptionAction,
+    },
     /// Continue the same child conversation with a new assignment.
     Continue {
         #[arg(long)]
         parent: uuid::Uuid,
         child: uuid::Uuid,
+        #[arg(long, value_enum)]
+        subscription: Option<ChildSubscriptionArg>,
+        #[arg(long = "depends-on", value_name = "ASSIGNMENT_UUID", action = clap::ArgAction::Append)]
+        depends_on: Vec<uuid::Uuid>,
         #[arg(long)]
         request_id: Option<uuid::Uuid>,
         #[arg(value_name = "PROMPT", num_args = 1.., trailing_var_arg = true)]
@@ -442,6 +514,23 @@ pub(crate) async fn child_operation(
     params: serde_json::Value,
     request_id: Option<uuid::Uuid>,
 ) -> Result<serde_json::Value> {
+    child_operation_in_language(
+        home,
+        operation,
+        params,
+        request_id,
+        crate::i18n::Language::default(),
+    )
+    .await
+}
+
+pub(crate) async fn child_operation_in_language(
+    home: &Path,
+    operation: &str,
+    params: serde_json::Value,
+    request_id: Option<uuid::Uuid>,
+    language: crate::i18n::Language,
+) -> Result<serde_json::Value> {
     anyhow::ensure!(
         matches!(
             operation,
@@ -451,28 +540,32 @@ pub(crate) async fn child_operation(
                 | "session.child.task.get"
                 | "session.child.task.list"
                 | "session.child.task.stop"
+                | "session.child.link.get"
+                | "session.child.takeover"
+                | "session.child.detach"
+                | "session.child.task.subscription.set"
         ),
         "unsupported child session operation"
     );
-    let state = state_for_operation(home, operation, &params).await?;
-    let client = runtime_client(&state)?;
-    let capabilities = client.capabilities(None).await?.into_result()?;
-    anyhow::ensure!(
-        capabilities
-            .capabilities
-            .contains(&willdeep_runtime_protocol::Capability::SessionChildren)
-            && capabilities
-                .operations
-                .iter()
-                .any(|candidate| candidate == operation),
-        "unsupported child sessions: update the local Runtime"
-    );
     let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
+    let context = || format!("request_id={request_id}");
+    let state = state_for_operation(home, operation, &params)
+        .await
+        .with_context(context)?;
+    let client = runtime_client(&state).with_context(context)?;
+    let capabilities = client
+        .capabilities(None)
+        .await
+        .with_context(context)?
+        .into_result()
+        .with_context(context)?;
+    validate_child_capabilities(&capabilities, operation, &params, language)
+        .with_context(context)?;
     // Retrying a transport failure retains the outer ApiRequest key. Application
     // refusals are returned immediately, never replayed as a new assignment.
     for attempt in 0..2 {
         match client.call::<_, serde_json::Value>(operation, &params, Some(request_id)).await {
-            Ok(response) => return response.into_result().map_err(Into::into),
+            Ok(response) => return response.into_result().map_err(anyhow::Error::from).with_context(context),
             Err(_) if attempt == 0 => continue,
             Err(error) => return Err(error).with_context(|| format!(
                 "child session response unconfirmed (request_id={request_id}); retry with the same key"
@@ -480,6 +573,105 @@ pub(crate) async fn child_operation(
         }
     }
     unreachable!()
+}
+
+fn child_message(zh: &'static str, en: &'static str, ja: &'static str) -> &'static str {
+    crate::i18n::Language::default().text(zh, en, ja)
+}
+
+fn validate_child_capabilities(
+    capabilities: &willdeep_runtime_protocol::RuntimeCapabilities,
+    operation: &str,
+    params: &serde_json::Value,
+    language: crate::i18n::Language,
+) -> Result<()> {
+    let child_message = |zh, en, ja| language.text(zh, en, ja);
+    use willdeep_runtime_protocol::Capability;
+    let supports = |capability| capabilities.capabilities.contains(&capability);
+    anyhow::ensure!(
+        supports(Capability::SessionChildren)
+            && capabilities
+                .operations
+                .iter()
+                .any(|candidate| candidate == operation),
+        "{}",
+        child_message(
+            "当前 Runtime 不支持此子会话操作，请更新 Runtime",
+            "The Runtime does not support this child operation; update it",
+            "Runtime がこの子セッション操作をサポートしていません。更新してください"
+        )
+    );
+    if matches!(
+        operation,
+        "session.child.link.get" | "session.child.takeover" | "session.child.detach"
+    ) {
+        anyhow::ensure!(
+            supports(Capability::SessionChildrenControl),
+            "{}",
+            child_message(
+                "当前 Runtime 不支持接管或脱离，请更新 Runtime",
+                "The Runtime does not support child control; update it",
+                "Runtime が子セッションの制御をサポートしていません。更新してください"
+            )
+        );
+    }
+    if operation == "session.child.task.subscription.set" || params.get("subscription").is_some() {
+        anyhow::ensure!(
+            supports(Capability::SessionChildrenSubscriptions),
+            "{}",
+            child_message(
+                "当前 Runtime 不支持通知策略，请更新 Runtime",
+                "The Runtime does not support result subscriptions; update it",
+                "Runtime が通知設定をサポートしていません。更新してください"
+            )
+        );
+    }
+    if params.get("depends_on").is_some() {
+        anyhow::ensure!(
+            supports(Capability::SessionChildrenDependencies),
+            "{}",
+            child_message(
+                "当前 Runtime 不支持前置任务，请更新 Runtime",
+                "The Runtime does not support task dependencies; update it",
+                "Runtime が前提タスクをサポートしていません。更新してください"
+            )
+        );
+    }
+    Ok(())
+}
+
+fn add_assignment_options(
+    params: &mut serde_json::Value,
+    subscription: Option<ChildSubscriptionArg>,
+    depends_on: Vec<uuid::Uuid>,
+) -> Result<()> {
+    let limit = willdeep_runtime_protocol::child_session::CHILD_SESSION_DEPENDENCY_LIMIT;
+    anyhow::ensure!(
+        depends_on.len() <= limit,
+        "{} ({limit})",
+        child_message(
+            "前置任务数量超过上限",
+            "Too many prerequisites",
+            "前提タスクが上限を超えています"
+        )
+    );
+    let unique: HashSet<_> = depends_on.iter().collect();
+    anyhow::ensure!(
+        unique.len() == depends_on.len(),
+        "{}",
+        child_message(
+            "前置任务不能重复",
+            "Prerequisites must be unique",
+            "前提タスクを重複指定できません"
+        )
+    );
+    if let Some(subscription) = subscription {
+        params["subscription"] = subscription.as_str().into();
+    }
+    if !depends_on.is_empty() {
+        params["depends_on"] = serde_json::to_value(depends_on)?;
+    }
+    Ok(())
 }
 
 /// Shared Runtime call for surfaces that need a read-only capability query
@@ -500,8 +692,10 @@ pub(crate) async fn runtime_operation(
         .map_err(Into::into)
 }
 
-async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result<()> {
-    let (operation, params, request_id) = match action {
+fn child_request(
+    action: ChildSessionAction,
+) -> Result<(&'static str, serde_json::Value, Option<uuid::Uuid>)> {
+    Ok(match action {
         ChildSessionAction::Start {
             parent,
             title,
@@ -510,19 +704,21 @@ async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result
             workspace,
             worktree_base,
             model,
+            subscription,
+            depends_on,
             request_id,
             prompt,
-        } => (
-            "session.child.start",
-            serde_json::json!({"parent_session_id":parent, "title":title,
+        } => {
+            let mut params = serde_json::json!({"parent_session_id":parent, "title":title,
                 "prompt":prompt.join(" "),
                 "context": match context { ChildContextArg::Fresh => "fresh", ChildContextArg::Fork => "fork" },
                 "through_turn_id": through_turn,
                 "workspace_mode": match workspace { ChildWorkspaceArg::SharedReadOnly => "shared_read_only", ChildWorkspaceArg::Worktree => "worktree" },
                 "worktree_base": match worktree_base { ChildWorktreeBaseArg::Head => "head", ChildWorktreeBaseArg::Snapshot => "snapshot" },
-                "model": model}),
-            request_id,
-        ),
+                "model": model});
+            add_assignment_options(&mut params, subscription, depends_on)?;
+            ("session.child.start", params, request_id)
+        }
         ChildSessionAction::List {
             parent,
             after,
@@ -537,16 +733,80 @@ async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result
             serde_json::json!({"parent_session_id":parent,"assignment_id":assignment}),
             None,
         ),
+        ChildSessionAction::Link { parent, child } => (
+            "session.child.link.get",
+            serde_json::json!({"parent_session_id":parent,"child_session_id":child}),
+            None,
+        ),
+        ChildSessionAction::Takeover {
+            parent,
+            child,
+            expected_control_revision,
+            request_id,
+            yes,
+        }
+        | ChildSessionAction::Detach {
+            parent,
+            child,
+            expected_control_revision,
+            request_id,
+            yes,
+        } => {
+            let operation = if matches!(action, ChildSessionAction::Takeover { .. }) {
+                "session.child.takeover"
+            } else {
+                "session.child.detach"
+            };
+            anyhow::ensure!(
+                yes,
+                "{}",
+                child_message(
+                    "请确认：父会话将失去控制权和自动通知，当前任务继续运行；接管后可继续脱离，但不能恢复委派控制。重试时添加 --yes",
+                    "Confirm: the parent loses control and automatic results; current work keeps running. Takeover can proceed to detach, but delegation cannot be restored. Repeat with --yes",
+                    "確認：親は制御権と自動通知を失い、現在のタスクは続行します。引継ぎ後の切り離しは可能ですが、委任制御には戻せません。--yes を追加してください"
+                )
+            );
+            anyhow::ensure!(
+                expected_control_revision > 0,
+                "{}",
+                child_message(
+                    "控制版本必须大于零",
+                    "Control revision must be positive",
+                    "制御バージョンは正の値が必要です"
+                )
+            );
+            (
+                operation,
+                serde_json::json!({"parent_session_id":parent,"child_session_id":child,"expected_control_revision":expected_control_revision}),
+                request_id,
+            )
+        }
+        ChildSessionAction::Subscription {
+            action:
+                ChildSubscriptionAction::Set {
+                    parent,
+                    assignment,
+                    expected_subscription_revision,
+                    subscription,
+                    request_id,
+                },
+        } => (
+            "session.child.task.subscription.set",
+            serde_json::json!({"parent_session_id":parent,"assignment_id":assignment,"expected_subscription_revision":expected_subscription_revision,"subscription":subscription.as_str()}),
+            request_id,
+        ),
         ChildSessionAction::Continue {
             parent,
             child,
+            subscription,
+            depends_on,
             request_id,
             prompt,
-        } => (
-            "session.child.continue",
-            serde_json::json!({"parent_session_id":parent,"child_session_id":child,"prompt":prompt.join(" ")}),
-            request_id,
-        ),
+        } => {
+            let mut params = serde_json::json!({"parent_session_id":parent,"child_session_id":child,"prompt":prompt.join(" ")});
+            add_assignment_options(&mut params, subscription, depends_on)?;
+            ("session.child.continue", params, request_id)
+        }
         ChildSessionAction::Retry {
             parent,
             assignment,
@@ -566,11 +826,19 @@ async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result
             serde_json::json!({"parent_session_id":parent,"assignment_id":assignment}),
             request_id,
         ),
-    };
+    })
+}
+
+async fn handle_child_session(home: &Path, action: ChildSessionAction) -> Result<()> {
+    let (operation, params, request_id) = child_request(action)?;
     let value = child_operation(home, operation, params, request_id).await?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "commands_child_tests.rs"]
+mod child_tests;
 
 pub async fn handle_session(action: SessionAction) -> Result<()> {
     let home = crate::config::willdeep_home()?;

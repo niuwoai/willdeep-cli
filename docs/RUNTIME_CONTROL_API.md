@@ -2,9 +2,9 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.143.0-rc4
+> 当前实现版本：v0.144.0-rc1
 >
-> 最后更新：2026-11-04
+> 最后更新：2026-11-05
 
 ### 待发队列（0.115.0-rc3）
 
@@ -44,14 +44,14 @@ X-WillDeep-Request-Id: <optional UUID>
 
 私有生命周期端点 `POST /v1/internal/drain` 自 rc54 起仅供 `willdeep daemon upgrade` 使用。它将健康状态切换为 `draining`，原子阻止新的工作生产请求，同时允许停止、审批、回答和只读观察继续；活跃任务归零后旧进程自行退出。替换进程使用新的本地 Token/传输身份接管，长时间观察客户端只有确认身份已更替后才能重连并沿原事件游标续传。rc54 客户端仅为 rc53 保留一次 `POST /v1/drain` 兼容桥；更早且不支持安全 Drain 的 Runtime 必须保持任务原样并要求首次手动迁移，不能悄悄退化为会取消任务的 Shutdown。普通 `POST /v1/internal/shutdown` 仍会取消活跃任务，不能用于版本交接。
 
-### 完整子会话 P1（0.143.0-rc1）
+### 完整子会话 P0/P1 与 P2（0.144.0-rc1）
 
 能力声明 `session_children` 外加 `session_children_fork`、`session_children_worktree`、`session_children_model`、`session_children_workers`；客户端应先检查 capability 和 `operations`，旧 Runtime 不支持时保持普通会话可访问，不模拟两次请求创建任务。新增子会话仍为普通 Session/root Agent，Worker Agent/Run 的控制与配额保持独立。
 
 | 操作 | `params` | 结果与限制 |
 |---|---|---|
-| `session.child.start` | `parent_session_id`、可选 `created_from_turn_id`、`title`、`prompt`、可选 `context` / `through_turn_id` / `workspace_mode` / `worktree_base` / `model` / `notify` | 返回本次 `ChildSessionTask`，含 child/assignment/Turn 身份；支持 `fresh|fork`、`shared_read_only|worktree` |
-| `session.child.continue` | `parent_session_id`、可选 `created_from_turn_id`、`child_session_id`、`prompt`、可选 `notify` | 原子会话空闲时创建新 assignment/Turn；保留历史、工作区模式和模型 |
+| `session.child.start` | `parent_session_id`、可选 `created_from_turn_id`、`title`、`prompt`、可选 `context` / `through_turn_id` / `workspace_mode` / `worktree_base` / `model` / `notify` / `subscription` / `depends_on` | 返回本次 `ChildSessionTask`，含 child/assignment/Turn 身份；支持 `fresh|fork`、`shared_read_only|worktree`；P2 字段需先探测对应能力 |
+| `session.child.continue` | `parent_session_id`、可选 `created_from_turn_id`、`child_session_id`、`prompt`、可选 `notify` / `subscription` / `depends_on` | 原子会话空闲时创建新 assignment/Turn；保留历史、工作区模式和模型；依赖等待时尚无 Turn |
 | `session.child.retry` | `parent_session_id`、可选 `created_from_turn_id`、`assignment_id`、`expected_result_revision` | 仅重试 partial/failed/interrupted/blocked，创建带 `retry_of_assignment_id` 的新任务；原结果保留 |
 | `session.child.task.get` | `parent_session_id`、`assignment_id` | 本关系内任务状态及可选结果 |
 | `session.child.task.list` | `parent_session_id`、可选 `after` / `limit` | `tasks` 与 `next_cursor`；默认一页 50，分页不影响准入计数 |
@@ -64,6 +64,19 @@ X-WillDeep-Request-Id: <optional UUID>
 写请求携带统一信封 `request_id`；幂等受理以父关系与请求身份、参数指纹为依据，同键异参拒绝。模型工具由宿主绑定 parent、发起 Turn 与稳定请求身份，模型不能自行指定其他会话或私有配置。`parent_session_id` 表示树形归属，任务提出者/创建者与其独立；P1 仍只允许父会话派生一层，不提供兄弟任务提案入口。
 
 结果与 outbox 按 assignment 和最终 Task 形成，旧 assignment 不因 retry 被改写；worktree 结果附带 `workspace`、分支、基线 commit、未跟踪文件数和冻结补丁摘要。父 stop 不取消已受理子任务，但抑制父自动唤醒；宿主结果不解除该抑制。`session.create` / `session.fork` 保持原语义，不隐式启动委派。可写 worktree 子会话可派 Worker，父子共享家族并发/队列和按记录 ID 去重的家族用量；只读子会话仍禁止 Worker，所有子会话都不能创建下一层子会话。使用与限制见 [完整子会话](CHILD_SESSIONS.md)。
+
+P2 增量能力为 `session_children_control`、`session_children_subscriptions`、`session_children_dependencies`，新参数只能发给支持相应能力的 Runtime。
+
+| P2 操作 | `params` | 结果与限制 |
+|---|---|---|
+| `session.child.link.get` | `parent_session_id`、`child_session_id` | 当前 Link，含控制状态和 `control_revision` |
+| `session.child.takeover` | 同上及 `expected_control_revision` | 仅用户入口；收回父控制与自动投递，不取消已有 Turn |
+| `session.child.detach` | 同上及 `expected_control_revision` | 仅用户入口；在接管效果上解除活动树形关系，保留审计、能力和家族归属 |
+| `session.child.task.subscription.set` | `parent_session_id`、`assignment_id`、`expected_subscription_revision`、`subscription` | 仅用户入口；修改未消费结果策略，返回 Task；三档为 `none/inbox/auto_wake` |
+
+`start/continue` 增加可选 `subscription` 和 `depends_on`，依赖最多 16 项、只引用已存在的同父 assignment，创建后固定；retry 继续引用旧依赖。Task 返回当前 `control_state/control_revision`、有效 `subscription/subscription_revision`、`depends_on/waiting_on_dependencies`。等待依赖保持 `preparing` 且无 child Turn；所有前置成功后启动，非成功终态使后继 blocked。接管/脱离后父变更操作拒绝，历史查询仍可用。
+
+私有协调账本 schema 升为 2，新 Runtime 读取 schema 1 时先保存迁移备份，旧 Runtime 拒绝 schema 2。API 信封仍为 1.0，通过能力协商增量扩展。`parent_session_id` 保留来源和家族身份，`delegation_detached` 只改变当前会话树投影，不能据此放宽权限或重置预算。具体行为与恢复边界见 [P2 决策](decisions/2026-11-05-child-sessions-p2.md)。
 
 ## 3. 稳定对象
 

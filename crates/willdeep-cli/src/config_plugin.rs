@@ -8,7 +8,7 @@ use willdeep_core::plugin::{PluginHost, installed_versions};
 
 #[cfg(test)]
 pub(crate) const ID: &str = "willdeep-config";
-pub(crate) const VERSION: &str = "0.6.0-rc6";
+pub(crate) const VERSION: &str = "0.6.0-rc7";
 
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-config"]
@@ -43,6 +43,24 @@ pub(crate) fn prepare_builtin_runtime(home: &Path) -> Result<PathBuf> {
         .join(VERSION);
     write_package(&root)?;
     Ok(root)
+}
+
+pub(crate) fn find_ruby() -> Option<PathBuf> {
+    [
+        "/usr/bin/ruby",
+        "/usr/local/bin/ruby",
+        "/opt/homebrew/bin/ruby",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+    .or_else(|| {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|directory| directory.join(if cfg!(windows) { "ruby.exe" } else { "ruby" }))
+                .find(|path| path.is_file())
+        })
+    })
 }
 
 fn write_package(directory: &Path) -> Result<()> {

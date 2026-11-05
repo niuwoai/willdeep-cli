@@ -1,0 +1,83 @@
+{
+  "suite": "config-compressor",
+  "checks": [
+    {
+      "name": "plan previews all three compressor fields without writing",
+      "status": "passed"
+    },
+    {
+      "name": "apply requires confirmation",
+      "status": "passed"
+    },
+    {
+      "name": "apply saves three fields with an exact backup",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window 3999 is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window 1048577 is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window -1 is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window 0 is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window 1.5 is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor window \"32768\" is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor profile \"\" is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor profile \"  \" is refused",
+      "status": "passed"
+    },
+    {
+      "name": "invalid compressor profile \"missing\" is refused",
+      "status": "passed"
+    },
+    {
+      "name": "deleting a referenced provider is refused",
+      "status": "passed"
+    },
+    {
+      "name": "creating and referencing a provider in the same batch is valid",
+      "status": "passed"
+    },
+    {
+      "name": "clearing the reference and removing its provider is valid",
+      "status": "passed"
+    },
+    {
+      "name": "concurrent saves with the same revision have one winner",
+      "status": "passed"
+    },
+    {
+      "name": "same-basename targets share a backup lock without overwriting originals",
+      "status": "passed"
+    },
+    {
+      "name": "private stdio supports a Unicode config path under the C locale",
+      "status": "passed"
+    },
+    {
+      "name": "validate catches compressor dependency and range errors",
+      "status": "passed"
+    }
+  ],
+  "passed": 19,
+  "failed": 0
+}

@@ -212,6 +212,7 @@ fn the_summary_line_reports_dropped_turns_and_file_changes() {
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
         model_context_window: None,
         status: willdeep_runtime_protocol::SessionStatus::Idle,
         active_turn_id: None,

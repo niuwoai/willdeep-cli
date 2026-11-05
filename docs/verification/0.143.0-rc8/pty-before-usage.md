@@ -1,0 +1,28 @@
+# Paced stream display measurement
+
+- events: 20
+- displayed: 20
+- median_ms: 89.55999999307096
+- p95_ms: 404.49200000148267
+- max_ms: 404.49200000148267
+- max_display_gap_ms: 381.34600000921637
+- display_updates: 15
+- first_reply_seconds: 5.33
+- binary: /Users/rocky/.cargo/bin/willdeep
+- root: /private/tmp/wd-stream-20261105-85219-s4kaop
+- history_entries: 20
+- historical_runtime_events: 0
+- execution: runtime
+- ui_mode: compact
+- requests: [{:path=>"/v1/chat/completions", :model=>"fixture", :stream=>true}]
+- input_interval_ms: 100.0
+- runtime_stream_http_status: 200
+- observed_session_rewrites: 8
+- graceful_exit: true
+- saved_answer_complete: true
+- cursor_flushed_on_exit: true
+- runtime_event_median_ms: 89.16699996916577
+- runtime_event_p95_ms: 396.6350000118837
+- submit_to_first_body_seconds: 4.652093000011519
+- stream_duration_seconds: 1.910009999992326
+- idle_child_ledger_commits: 9

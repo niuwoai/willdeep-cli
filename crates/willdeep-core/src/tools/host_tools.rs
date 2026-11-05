@@ -10,6 +10,20 @@ pub trait AgentDefinitionHost: Send + Sync {
     ) -> Result<serde_json::Value, ToolError>;
 }
 
+/// Parent-bound configuration service. The host owns plan identity, scope and redaction.
+#[async_trait]
+pub trait ConfigurationHost: Send + Sync {
+    async fn execute(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError>;
+
+    /// Validate a saved plan and return its redacted target and change preview.
+    /// Applying the plan must use the same host-owned target and edits.
+    fn approval_description(&self, plan_id: &str) -> Result<String, ToolError>;
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkflowNotice {
     pub run_id: uuid::Uuid,
@@ -62,6 +76,14 @@ const LIBRARY_READ: &[&str] = &["list", "get", "history"];
 const LIBRARY_MANAGE: &[&str] = &["create", "update", "fork", "bind", "enable"];
 const WORKFLOW_READ: &[&str] = &["list", "get", "history", "validate", "schema"];
 const WORKFLOW_CONTROL: &[&str] = &["save", "run", "stop", "retry", "resume"];
+const CONFIGURATION_READ: &[&str] = &["schema", "snapshot", "plan"];
+const CONFIGURATION_WRITE: &[&str] = &["apply"];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigurationApplyParams {
+    plan_id: String,
+}
 
 fn host_definition(name: &str, description: &str, operations: &[&str]) -> ToolDefinition {
     definition(
@@ -75,6 +97,13 @@ fn host_definition(name: &str, description: &str, operations: &[&str]) -> ToolDe
 }
 
 impl ToolRegistry {
+    pub fn with_configuration_host(mut self, host: Arc<dyn ConfigurationHost>) -> Self {
+        if !self.delegation_read_only && self.parent_approval_mode.is_none() {
+            self.configuration_host = Some(host);
+        }
+        self
+    }
+
     pub fn with_agent_definition_host(mut self, host: Arc<dyn AgentDefinitionHost>) -> Self {
         if !self.delegation_read_only {
             self.agent_definition_host = Some(host);
@@ -170,6 +199,26 @@ impl ToolRegistry {
                 WORKFLOW_CONTROL,
             ));
         }
+        if self.configuration_host.is_some() {
+            definitions.push(definition(
+                "configuration_read",
+                "Inspect the host's configuration schema or redacted snapshot, or prepare a change plan. Read schema for supported targets and plan parameters. plan validates edits without applying them and returns a host-owned plan_id and redacted preview. Use configuration_write apply with that plan_id to commit the saved plan. Available only to the parent session.",
+                json!({"type":"object","properties":{
+                    "operation":{"type":"string","enum":CONFIGURATION_READ},
+                    "params":{"type":"object","description":"schema/snapshot use {}. plan uses {edits:[{op:'set'|'unset',section:'agent',key:'compressor_model'|'compressor_profile'|'compressor_context_window',value:...}]}; omit value for unset. Inspect schema/snapshot first. Identity and configuration path are supplied by the host; no path or request_id parameter is accepted."}
+                },"required":["operation"],"additionalProperties":false}),
+            ));
+            if self.approval_mode() != ApprovalMode::ReadOnly {
+                definitions.push(definition(
+                    "configuration_write",
+                    "Apply a previously saved configuration plan by plan_id. The host supplies the saved target and redacted change preview for approval. Only full-access skips approval; workspace-write does not. Read-only sessions cannot apply plans. Available only to the parent session.",
+                    json!({"type":"object","properties":{
+                        "operation":{"type":"string","enum":CONFIGURATION_WRITE},
+                        "params":{"type":"object","properties":{"plan_id":{"type":"string","minLength":1}},"required":["plan_id"],"additionalProperties":false}
+                    },"required":["operation","params"],"additionalProperties":false}),
+                ));
+            }
+        }
         definitions
     }
 
@@ -183,10 +232,18 @@ impl ToolRegistry {
             "agent_library_manage" => LIBRARY_MANAGE,
             "workflow_read" => WORKFLOW_READ,
             "workflow_control" => WORKFLOW_CONTROL,
+            "configuration_read" => CONFIGURATION_READ,
+            "configuration_write" => CONFIGURATION_WRITE,
             _ => return Err(ToolError::UnknownTool(call.name.clone())),
         };
         if !operations.contains(&args.operation.as_str()) {
             return Err(invalid_host_args(call, "unsupported host operation"));
+        }
+        if matches!(
+            call.name.as_str(),
+            "configuration_read" | "configuration_write"
+        ) {
+            return self.configuration_tool(call, args).await;
         }
         let Some(params) = args.params.as_object_mut() else {
             return Err(invalid_host_args(call, "params must be an object"));
@@ -246,6 +303,78 @@ impl ToolRegistry {
             }
         };
         Ok(result.to_string())
+    }
+
+    pub(super) fn configuration_write_description(
+        &self,
+        call: &ToolCall,
+    ) -> Result<String, ToolError> {
+        if call.name != "configuration_write" || !self.allows_agent_tool(&call.name) {
+            return Err(ToolError::UnknownTool(call.name.clone()));
+        }
+        let args: HostArgs = parse(call)?;
+        if args.operation != "apply" {
+            return Err(invalid_host_args(
+                call,
+                "unsupported configuration operation",
+            ));
+        }
+        let params: ConfigurationApplyParams =
+            serde_json::from_value(args.params).map_err(|_| {
+                invalid_host_args(call, "apply params must contain only a plan_id string")
+            })?;
+        if params.plan_id.trim().is_empty() {
+            return Err(invalid_host_args(call, "plan_id must not be empty"));
+        }
+        let description = self
+            .configuration_host
+            .as_ref()
+            .ok_or_else(|| ToolError::UnknownTool(call.name.clone()))?
+            .approval_description(&params.plan_id)?;
+        if self.approval_mode() == ApprovalMode::ReadOnly {
+            return Err(ToolError::ReadOnlyPolicy(call.name.clone()));
+        }
+        Ok(description)
+    }
+
+    async fn configuration_tool(
+        &self,
+        call: &ToolCall,
+        args: HostArgs,
+    ) -> Result<String, ToolError> {
+        if !args.params.is_object() {
+            return Err(invalid_host_args(call, "params must be an object"));
+        }
+        let host = self
+            .configuration_host
+            .as_ref()
+            .ok_or_else(|| ToolError::UnknownTool(call.name.clone()))?;
+        if call.name == "configuration_write" {
+            // Validate plan identity and current policy before any approval path.
+            let description = self.configuration_write_description(call)?;
+            if !self.allowed_by_full_access(&description) {
+                let approval = self.require_approval(&description, false).await;
+                self.report_approval(
+                    &description,
+                    ApprovalSource::User,
+                    if approval.is_ok() {
+                        "configuration plan authorized"
+                    } else {
+                        "configuration plan denied"
+                    }
+                    .into(),
+                );
+                approval?;
+            }
+            // A shared mode may change while the approval card is open.
+            if self.approval_mode() == ApprovalMode::ReadOnly {
+                return Err(ToolError::ReadOnlyPolicy(call.name.clone()));
+            }
+        }
+        Ok(host
+            .execute(&args.operation, args.params)
+            .await?
+            .to_string())
     }
 }
 

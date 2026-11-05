@@ -32,6 +32,7 @@ impl Agent {
         mut messages: Vec<Message>,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
+        let settings = self.compression_settings()?;
         // Manual compression can precede the next Agent run after a crash.
         uncertain::UncertainCalls::recover(&mut messages);
         let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
@@ -56,13 +57,15 @@ impl Agent {
             })
             .await;
         let summary = self
-            .summarize_history(&messages[..split], record_usage)
+            .summarize_history_with_settings(&messages[..split], &settings, record_usage)
             .await?;
         let mut result = compact_prefix(&messages, split, &summary);
         // A summary alone is not success: the recent tail may still contain a
         // window-sized tool batch (including reasoning). Fold that tail too.
         if estimate_tokens(&result) > target && split < messages.len() {
-            let summary = self.summarize_history(&messages, record_usage).await?;
+            let summary = self
+                .summarize_history_with_settings(&messages, &settings, record_usage)
+                .await?;
             result = compact_prefix(&messages, messages.len(), &summary);
         }
         let dropped = self.archive_old_batches(&mut result, target)?;
@@ -98,6 +101,7 @@ impl Agent {
         cache: &mut Option<SummaryCache>,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
+        let settings = self.compression_settings()?;
         let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
         let paged = self.page_tool_outputs(messages, capacity)?;
         let watermark = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
@@ -167,13 +171,15 @@ impl Agent {
                     .any(Message::requires_reasoning_replay);
                 let mut source = vec![summary_message(&entry.summary, requires_reasoning_replay)];
                 source.extend_from_slice(&result[through..split]);
-                let summary = self.summarize_history(&source, record_usage).await?;
+                let summary = self
+                    .summarize_history_with_settings(&source, &settings, record_usage)
+                    .await?;
                 result = compact_prefix(&result, split, &summary);
                 *cache = Some(SummaryCache::new(messages, split_through, summary));
             }
         } else if split > 0 && replaceable(&result[..split]) {
             let summary = self
-                .summarize_history(&result[..split], record_usage)
+                .summarize_history_with_settings(&result[..split], &settings, record_usage)
                 .await?;
             result = compact_prefix(&result, split, &summary);
             *cache = Some(SummaryCache::new(messages, split_through, summary));
@@ -181,7 +187,9 @@ impl Agent {
         // The usual recent tail is a preference, not a licence to exceed the
         // window. A single thinking response can be larger than that whole tail.
         if estimate_tokens(&result) > capacity && replaceable(&result) {
-            let summary = self.summarize_history(&result, record_usage).await?;
+            let summary = self
+                .summarize_history_with_settings(&result, &settings, record_usage)
+                .await?;
             let full = self.page_tool_outputs(messages, capacity)?;
             result = compact_prefix(&full.messages, full.messages.len(), &summary);
             *cache = Some(SummaryCache::new(messages, messages.len(), summary));
@@ -312,9 +320,14 @@ impl Agent {
     /// 主模型在云端、压缩跑在本机时，两边的窗口可以差一个数量级，按会话窗口
     /// 切出来的原料本地端点根本收不下；反过来压缩窗口比会话大时也没必要把
     /// 一整段会话历史塞给摘要器。
+    #[cfg(test)]
     fn summary_input_budget(&self) -> u64 {
-        let window = self
-            .compressor_window
+        self.summary_input_budget_for(&self.compression_settings().unwrap())
+    }
+
+    fn summary_input_budget_for(&self, settings: &CompressionSettings) -> u64 {
+        let window = settings
+            .context_window
             .map_or(self.config.context_window, |window| {
                 window.min(self.config.context_window)
             });
@@ -334,17 +347,29 @@ impl Agent {
     /// 症结在于：送给模型的**投影**一直是小的（最后一次成功只有 4.6 万 token），
     /// 但喂给摘要器的**原料**跟着 durable 历史无限长。所以原料必须自己封顶：超了
     /// 就分块各摘一遍，再把分块摘要合并成一份，必要时多合并几轮。
+    #[cfg(test)]
     async fn summarize_history(
         &self,
         messages: &[Message],
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
-        let budget = self.summary_input_budget();
+        self.summarize_history_with_settings(messages, &self.compression_settings()?, record_usage)
+            .await
+    }
+
+    async fn summarize_history_with_settings(
+        &self,
+        messages: &[Message],
+        settings: &CompressionSettings,
+        record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
+    ) -> Result<String, AgentError> {
+        let budget = self.summary_input_budget_for(settings);
         let chunks = chunk_for_summary(messages, budget);
         if chunks.len() <= 1 {
             return self
                 .summarize_once(
                     summary_source(chunks.first().map(Vec::as_slice).unwrap_or(&[]))?,
+                    settings,
                     record_usage,
                 )
                 .await;
@@ -354,7 +379,7 @@ impl Agent {
         let mut parts = Vec::with_capacity(chunks.len());
         for chunk in &chunks {
             let summary = self
-                .summarize_once(summary_source(chunk)?, record_usage)
+                .summarize_once(summary_source(chunk)?, settings, record_usage)
                 .await?;
             parts.push(clamp_text(&summary, part_budget));
         }
@@ -363,7 +388,7 @@ impl Agent {
                 break;
             }
             parts = self
-                .reduce_summaries(parts, budget, part_budget, record_usage)
+                .reduce_summaries(parts, budget, part_budget, settings, record_usage)
                 .await?;
         }
         parts
@@ -377,6 +402,7 @@ impl Agent {
         parts: Vec<String>,
         budget: u64,
         part_budget: u64,
+        settings: &CompressionSettings,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<String>, AgentError> {
         let mut round: Vec<String> = Vec::new();
@@ -386,7 +412,7 @@ impl Agent {
             let cost = text_tokens(&part);
             if group.len() > 1 && used.saturating_add(cost) > budget {
                 let merged = self
-                    .summarize_once(group.join("\n\n"), record_usage)
+                    .summarize_once(group.join("\n\n"), settings, record_usage)
                     .await?;
                 round.push(clamp_text(&merged, part_budget));
                 group.clear();
@@ -401,7 +427,7 @@ impl Agent {
             1 => round.push(group.remove(0)),
             _ => {
                 let merged = self
-                    .summarize_once(group.join("\n\n"), record_usage)
+                    .summarize_once(group.join("\n\n"), settings, record_usage)
                     .await?;
                 round.push(clamp_text(&merged, part_budget));
             }
@@ -412,16 +438,12 @@ impl Agent {
     async fn summarize_once(
         &self,
         source: String,
+        settings: &CompressionSettings,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
         // JSON escaping and multiple fields can exceed a message-level estimate.
         // Bound the actual serialized transcript supplied to every compressor.
-        let source = clamp_text(&source, self.summary_input_budget());
-        let candidates = if self.compressors.is_empty() {
-            vec![(self.provider()?, false)]
-        } else {
-            self.compressors.clone()
-        };
+        let source = clamp_text(&source, self.summary_input_budget_for(settings));
         let mut last_error = None;
         // 前面几家为什么没压成。换到下一家时要把这件事报出来：压缩兜底落到
         // 会话模型上是按会话模型计价的，静默换过去等于静默涨价。
@@ -434,7 +456,7 @@ impl Agent {
             .and_then(|goal| goal.pin(0))
             .map(|pin| format!("\n\nThe host tracks the active goal separately and re-injects it every turn; do not restate its checklist, and never contradict it:\n{pin}"))
             .unwrap_or_default();
-        for (index, (provider, hosted_prompt)) in candidates.into_iter().enumerate() {
+        for (index, (provider, hosted_prompt)) in settings.candidates.iter().enumerate() {
             if let Some(scope) = &self.usage_ledger {
                 scope
                     .check_budget()
@@ -442,7 +464,7 @@ impl Agent {
             }
             let model = crate::provider::provider_model(provider.as_ref())
                 .unwrap_or_else(|| format!("candidate #{}", index + 1));
-            let request = if hosted_prompt {
+            let request = if *hosted_prompt {
                 Message::user(source.clone())
             } else {
                 Message::user(format!(

@@ -504,6 +504,11 @@ impl ToolRegistry {
     }
 
     pub(crate) async fn approve_uncertain_replay(&self, call: &ToolCall) -> Result<(), ToolError> {
+        if call.name == "configuration_write" {
+            // A recovered Runtime has no in-memory plan from the old host. Do
+            // not ask for a retry that the target/policy already forbids.
+            self.configuration_write_description(call)?;
+        }
         let description = format!(
             "Retry {} with the same arguments as an interrupted call whose effects are unknown? This may repeat an external or file side effect. Approval applies only to this attempt.",
             call.name

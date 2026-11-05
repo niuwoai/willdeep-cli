@@ -2,6 +2,9 @@ use super::*;
 
 use willdeep_runtime_protocol::ApiRequest;
 
+#[path = "p2_tests.rs"]
+mod p2;
+
 struct Fixture {
     root: PathBuf,
     state: ServerState,
@@ -103,6 +106,42 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+#[test]
+fn idle_reconciliation_does_not_advance_the_ledger_revision() {
+    let fixture = Fixture::new();
+    reconcile::tick(&fixture.state).unwrap();
+    let path = fixture.root.join("runtime/session-children.json");
+    let before = std::fs::read(&path).unwrap();
+    for _ in 0..4 {
+        reconcile::tick(&fixture.state).unwrap();
+    }
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn unchanged_queued_task_reconciliation_preserves_its_update_time() {
+    let fixture = Fixture::new();
+    let task = fixture.start();
+    fixture
+        .state
+        .sessions
+        .children
+        .transaction(|ledger| {
+            ledger
+                .assignments
+                .get_mut(&task.assignment_id)
+                .unwrap()
+                .task
+                .updated_at = 1;
+            Ok(())
+        })
+        .unwrap();
+    reconcile::tick(&fixture.state).unwrap();
+    let updated = fixture.get(task.assignment_id);
+    assert_eq!(updated.status, ChildSessionTaskStatus::Queued);
+    assert_eq!(updated.updated_at, 1, "polling is not a state change");
 }
 
 #[test]

@@ -57,6 +57,7 @@ pub(crate) mod production;
 mod screenplay;
 pub(crate) use child_sessions::{
     ASSIGNMENT_ORIGIN as CHILD_ASSIGNMENT_ORIGIN, WAKE_ORIGIN as CHILD_RESULT_WAKE_ORIGIN,
+    prepare_child_workspace_for_user_open,
 };
 pub(crate) use control_api::peer_sessions::WAKE_ORIGIN as PEER_WAKE_ORIGIN;
 pub(crate) use peer_client::{PeerSessionClient, peer_operation};
@@ -74,6 +75,7 @@ mod steering;
 mod tool_store;
 pub(crate) mod tui_bridge;
 pub(crate) mod turn_queue;
+mod turn_scheduler;
 mod workflows;
 mod workspace_checkpoint;
 mod workspace_store;
@@ -259,9 +261,9 @@ impl willdeep_core::EventSink for RuntimeEventSink {
 }
 
 mod commands;
-pub(crate) use commands::child_operation;
 pub(crate) use commands::runtime_operation;
 pub use commands::{DaemonAction, SessionAction, handle_session};
+pub(crate) use commands::{child_operation, child_operation_in_language};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct DaemonState {
@@ -1757,51 +1759,53 @@ async fn run(home: &Path) -> Result<()> {
     production::recover(home);
     let scheduler_state = server_state.clone();
     tokio::spawn(async move {
-        while let Some(session_id) = scheduled_sessions.recv().await {
-            let work_guard = scheduler_state.work_gate.read().await;
-            if *work_guard {
-                continue;
-            }
-            let claimed = scheduler_state.sessions.claim_next(session_id);
-            let Ok(Some(mut claimed)) = claimed else {
-                continue;
-            };
-            // A queued child owns no worktree. Only after the execution slot is
-            // admitted do we create or re-adopt its dedicated checkout.
-            if let Err(error) =
-                child_sessions::ensure_for_claim(&scheduler_state, &mut claimed.request).await
-            {
-                let _ = scheduler_state.sessions.complete_claim_failure(
-                    claimed.metadata.id,
-                    format!("prepare child worktree: {error:#}"),
-                );
-                let _ = scheduler_state.tasks.schedule_session(session_id);
-                continue;
-            }
-            let turn_id = claimed.metadata.id;
-            match scheduler_state.tasks.submit(claimed.request).await {
-                Ok(task) => {
-                    if task.status == RuntimeTaskStatus::Cancelled {
-                        let _ = scheduler_state.tasks.schedule_session(session_id);
-                        continue;
-                    }
-                    let _ = scheduler_state.events.append(
-                        "turn.started",
-                        format!(
-                            "session_id={session_id} turn_id={turn_id} task_id={}",
-                            task.id
-                        ),
-                    );
+        while let Some(first) = scheduled_sessions.recv().await {
+            for session_id in turn_scheduler::ready_batch(first, &mut scheduled_sessions) {
+                let work_guard = scheduler_state.work_gate.read().await;
+                if *work_guard {
+                    continue;
                 }
-                Err(error) => {
+                let claimed = scheduler_state.sessions.claim_next(session_id);
+                let Ok(Some(mut claimed)) = claimed else {
+                    continue;
+                };
+                // A queued child owns no worktree. Only after the execution slot is
+                // admitted do we create or re-adopt its dedicated checkout.
+                if let Err(error) =
+                    child_sessions::ensure_for_claim(&scheduler_state, &mut claimed.request).await
+                {
                     let _ = scheduler_state.sessions.complete_claim_failure(
-                        turn_id,
-                        format!("start queued Turn task: {error:#}"),
+                        claimed.metadata.id,
+                        format!("prepare child worktree: {error:#}"),
                     );
                     let _ = scheduler_state.tasks.schedule_session(session_id);
+                    continue;
                 }
+                let turn_id = claimed.metadata.id;
+                match scheduler_state.tasks.submit(claimed.request).await {
+                    Ok(task) => {
+                        if task.status == RuntimeTaskStatus::Cancelled {
+                            let _ = scheduler_state.tasks.schedule_session(session_id);
+                            continue;
+                        }
+                        let _ = scheduler_state.events.append(
+                            "turn.started",
+                            format!(
+                                "session_id={session_id} turn_id={turn_id} task_id={}",
+                                task.id
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        let _ = scheduler_state.sessions.complete_claim_failure(
+                            turn_id,
+                            format!("start queued Turn task: {error:#}"),
+                        );
+                        let _ = scheduler_state.tasks.schedule_session(session_id);
+                    }
+                }
+                drop(work_guard);
             }
-            drop(work_guard);
         }
     });
     // 重启打断了还在进行的目标：各排一轮续推（RA4）。排进去的轮次由下面的

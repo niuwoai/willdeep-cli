@@ -1,8 +1,8 @@
 # 完整子会话
 
-> 当前版本：0.143.0-rc4
+> 当前版本：0.144.0-rc1
 >
-> 状态：P1 已实现并通过本机回归与验收（Rust/Web、隔离 E2E、宽窄 PTY 与浏览器），本次提交尚未发布。P2 保持提案；实际检查与覆盖边界见 [验收记录](verification/0.143.0-rc1.md)。
+> 状态：P0/P1/P2 已实现。P2 的具体约定见[控制权、通知与依赖设计](decisions/2026-11-05-child-sessions-p2.md)，实际执行结果与平台限制见[本版验收记录](verification/0.144.0-rc1.md)。
 
 完整子会话适合把一项调查、阅读或分析交给另一条完整对话。它有独立的 Session、root Agent、聊天历史与执行轮次；你可以打开它、补充信息、回答问题，并在之后继续使用。父会话收到的是具体委派的结果，不是“这条会话以后所有工作的完成通知”。
 
@@ -28,7 +28,7 @@
 | 专业 Worker | 当前会话内有边界的专业派工 | Agent/Run、职责、工具时间线与报告 | 原有 Worker 调度与报告链 |
 | 手动 fork | 从既有完成边界继续另一条对话 | 原有分叉入口 | `started_by` 记录历史来源，不自动订阅委派结果 |
 
-树形 `parent_session_id`、任务提出者/创建者和历史来源是独立概念。例如子会话发现的新工作，未来可以作为父会话下的同级任务提出，不必递归派生成孙会话。P1 仍不开放子再派生，也暂不提供兄弟任务提案入口。
+活动树形关系、任务提出者/创建者和历史来源是独立概念。`parent_session_id` 保留原父来源，脱离状态决定是否继续树形展示。例如子会话发现的新工作，未来可以作为父会话下的同级任务提出，不必递归派生成孙会话。当前仍不开放子再派生，也暂不提供兄弟任务提案入口。
 
 ## 创建与打开
 
@@ -121,9 +121,61 @@ willdeep daemon stop-turn <child-turn-id>
 
 Daemon 重启按协调账本中的固定请求、assignment、Turn、通知与批次身份对账；不能证明安全的在途执行显示中断并等待明确继续。已有结果和聊天保留，不因断线或无报告宣称成功。子任务容量同时受家族与宿主限制，执行槽 4、等待队列 16，等待审批/回答仍占执行槽；分页页数不改变容量。
 
+## 用户接管与脱离父关系
+
+用户接管后，原父会话保留任务历史与打开聊天入口，但不能继续委派、重试或停止该关系的任务，也不再自动接收它的新结果。已经存在的 child Turn 继续执行，接管本身不发停止、不代替你处理审批；尚未派发的依赖等待任务收敛为阻塞。
+
+脱离在接管基础上让会话独立显示；原父来源、fork 来源、聊天、assignment 和 worktree 都保留。只读上限、原项目授权及家族预算不变。内部 `parent_session_id` 仍保存来源与额度归属，`delegation_detached=true` 解除当前树形关系；客户端不能再按 `started_by` 把它重新缩进。
+
+如果 worktree 任务还在等待依赖，接管或脱离不会替它执行原委派。用户在 TUI 中明确打开该会话时，宿主会按原持久绑定与授权准备真实 Git worktree，再切换聊天；该操作不创建模型轮次、不恢复父控制，原阻塞任务仍保留。共享只读会话不会因此创建工作树或获得写权限。
+
+Web 在任务卡或子聊天来源处提供明确确认的接管/脱离入口。控制请求携带 `expected_control_revision` 和稳定 request ID；旧页面与并发请求发生冲突时，应先重新读取关系。模型工具不能发起这两项用户控制操作。
+
+CLI 先读取当前关系版本，再按该版本确认操作；`--yes` 只确认这次控制权变化，不扩大工具权限：
+
+```bash
+willdeep session child link --parent <parent-session-id> <child-session-id>
+```
+
+```bash
+willdeep session child takeover --parent <parent-session-id> --expected-control-revision <revision> --yes <child-session-id>
+```
+
+```bash
+willdeep session child detach --parent <parent-session-id> --expected-control-revision <revision> --yes <child-session-id>
+```
+
+TUI 对应 `/session children link <child-id>`、`takeover <child-id> --expected-control-revision <revision> --yes` 和 `detach <child-id> --expected-control-revision <revision> --yes`。未确认时只显示说明，不变更控制权、不发起模型轮次。
+
+## 通知订阅与前置任务
+
+每次 assignment 可选择三档 `subscription`：
+
+| 策略 | 结果可查询 | 自动送入父模型 | 空闲自动续推 |
+|---|---|---|---|
+| `none` | 是 | 否 | 否 |
+| `inbox` | 是，保留待处理提示 | 否 | 否 |
+| `auto_wake` | 是 | 在安全边界投递 | 服从停止抑制与限流 |
+
+未指定时兼容旧 `notify`：`on_task_terminal` 对应 `auto_wake`，`none` 对应 `none`。用户修改订阅时携带 `expected_subscription_revision`，策略作用于该任务尚未消费的结果；可补投已有结果，但不会更换通知身份、重写报告或撤回已经消费的历史。切换订阅不解除父会话的停止抑制，接管/脱离后也不能重新启用原父控制。
+
+CLI 的订阅值使用 `none | inbox | auto-wake`；API 与 TUI 使用 `auto_wake`。先读取任务中的 `subscription_revision`，再修改该次委派的策略：
+
+```bash
+willdeep session child subscription set --parent <parent-session-id> --expected-subscription-revision <revision> --subscription auto-wake <assignment-id>
+```
+
+创建或续做可提供 `depends_on`，引用同一父会话已经存在的 assignment，最多 16 项。支持串行、扇出与多前置汇合，依赖集创建后固定。只有全部前置任务成功，当前任务才会启动；前置失败、取消、中断、部分完成、阻塞或控制权被撤销时，后继明确阻塞，不自动改用重试产生的新 assignment。
+
+```bash
+willdeep session child start --parent <parent-session-id> --title "汇总调查结果" --subscription inbox --depends-on <first-assignment-id> --depends-on <second-assignment-id> "等待两项调查成功后汇总证据。"
+```
+
+等待依赖时状态保持兼容的 `preparing`，并返回 `waiting_on_dependencies=true`；界面显示“等待前置任务”。此时无 child Turn，不调用模型、不创建 worktree，计入等待队列但不占执行槽；可以直接停止等待中的 assignment。重启恢复沿用固定请求与任务身份。
+
 ## Runtime API
 
-先从 `GET /v1/capabilities` 检查 `session_children`、`session_children_fork`、`session_children_worktree`、`session_children_model`、`session_children_workers` 与具体 `operations`。调用走带本机 Runtime Token 的 `POST /v1/api`；不要把 Token 写进脚本、日志或示例文件。旧 Runtime 不支持时按普通会话访问历史，不应自行拼接 `session.create` 与首条消息模拟委派。
+先从 `GET /v1/capabilities` 检查 `session_children`、`session_children_fork`、`session_children_worktree`、`session_children_model`、`session_children_workers` 与具体 `operations`。P2 操作分别检查 `session_children_control`、`session_children_subscriptions`、`session_children_dependencies`；能力查询失败时保留依赖与通知草稿，确认能力后再提交。调用走带本机 Runtime Token 的 `POST /v1/api`；不要把 Token 写进脚本、日志或示例文件。旧 Runtime 不支持时按普通会话访问历史，不应自行拼接 `session.create` 与首条消息模拟委派。
 
 创建示例采用统一信封，以下 UUID 是占位值；实际调用需使用已存在的父 Session ID 和本次请求的新 UUID。`context=fork` 时必须提供 `through_turn_id`；`worktree_base` 只对 `workspace_mode=worktree` 有意义；`model` 可省略：
 
@@ -150,8 +202,8 @@ Daemon 重启按协调账本中的固定请求、assignment、Turn、通知与�
 
 ## 验收与当前边界
 
-本轮验收使用临时 `WILLDEEP_HOME`、合成 Git 项目与 mock Provider，无远端付费模型调用，不沿用个人配置发起真实请求。Rust 全工作区、严格 Clippy 与构建、Web 测试与构建、P1 fork/worktree/模型/家族调度单测、隔离 Runtime/API/CLI 场景、宽窄真实 PTY 及浏览器检查结果见 [验收记录](verification/0.143.0-rc1.md)。未执行的检查不会被写成通过。
+本轮验收使用临时 `WILLDEEP_HOME`、合成 Git 项目与 mock Provider，无远端付费模型调用，不沿用个人配置发起真实请求。Rust、严格 Clippy 与构建、Web 测试与构建、隔离 Runtime/API/CLI、宽窄真实 PTY 及浏览器的实际结果见 [0.144.0-rc1 验收记录](verification/0.144.0-rc1.md)，P0/P1 历史验收见 [0.143.0-rc1](verification/0.143.0-rc1.md)。首次失败、重跑和未覆盖项目分别记录，不将尚未通过的检查计为通过。
 
-正常使用子会话会产生所配置模型的调用与用量；只读、容量限制或 mock 验收不表示真实使用免费，也不承诺严格费用封顶。worktree 子会话的 Worker 与父会话共享家族并发、排队和预算，新增子会话不会重置额度；只读子会话仍然禁止 Worker。所有子会话都不能创建下一层子会话。真实模型表现、付费调用、P2、Android/Xedit 新控制入口及未执行的原生平台检查不在本轮已验证范围。
+正常使用子会话会产生所配置模型的调用与用量；只读、容量限制或 mock 验收不表示真实使用免费，也不承诺严格费用封顶。worktree 子会话的 Worker 与父会话共享家族并发、排队和预算，新增子会话不会重置额度；只读子会话仍然禁止 Worker。所有子会话都不能创建下一层子会话。真实模型表现、付费调用、Android/Xedit 新控制入口及 Linux/Windows 原生执行不在本轮已验证范围。
 
 完整方案、恢复竞态与后续阶段见 [设计决策](decisions/2026-11-04-child-sessions.md)。

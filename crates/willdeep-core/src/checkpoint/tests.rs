@@ -160,6 +160,270 @@ async fn report_ack_waits_for_the_parent_checkpoint_commit() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn failed_worker_ack_keeps_committed_host_context_through_error_finish() {
+    use crate::background::{
+        AgentRunSpec, BackgroundTaskKind, BackgroundTaskRegistry, BackgroundTaskStatus, TaskResult,
+    };
+    use crate::subagent::runs::RunRequest;
+    use willdeep_runtime_protocol::AgentRunReason;
+
+    for claimed in [false, true] {
+        let root =
+            std::env::temp_dir().join(format!("report-ack-failure-{}", uuid::Uuid::new_v4()));
+        let parent = uuid::Uuid::new_v4();
+        let runs = crate::subagent::AgentRunStore::new(&root, parent);
+        let background = BackgroundTaskRegistry::default().with_agent_run_store(runs.clone());
+        let mut events = background.subscribe();
+        let agent_id = uuid::Uuid::new_v4();
+        let request_id = uuid::Uuid::new_v4();
+        let task = background
+            .start_agent_run(
+                AgentRunSpec {
+                    request: Some(RunRequest {
+                        request_id,
+                        agent_id,
+                        reason: AgentRunReason::Spawn,
+                        label: "fixture".into(),
+                        model: None,
+                        max_turns: Some(1),
+                        token_budget: None,
+                        timeout_seconds: None,
+                        dispatch: serde_json::Value::Null,
+                    }),
+                    agent_id,
+                    kind: BackgroundTaskKind::Subagent,
+                    label: "fixture".into(),
+                    instruction_inbox: Arc::new(crate::AgentInstructionInbox::default()),
+                },
+                || async {
+                    TaskResult {
+                        status: BackgroundTaskStatus::Completed,
+                        exit_code: Some(0),
+                        output: "report".into(),
+                    }
+                },
+                |_| async {},
+            )
+            .unwrap();
+        events.recv().await.unwrap();
+        background.mark_delivered(&task);
+        assert!(background.received_runs().contains(&request_id));
+
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "fixture");
+        session.id = parent;
+        store.save(&mut session).unwrap();
+        let session_sink = SessionCheckpointSink {
+            store: store.clone(),
+            session_id: parent,
+        };
+        let sink: Box<dyn CheckpointSink> = if claimed {
+            Box::new(session_sink.claim().unwrap())
+        } else {
+            Box::new(session_sink)
+        };
+        let mut recorder = CheckpointRecorder::new(Some(sink.as_ref()));
+        recorder
+            .record(&[Message::user("existing task")], 1, 1, 0)
+            .unwrap();
+        recorder.record_stream(Some("reply"), 1, 3, 1).unwrap();
+        recorder
+            .record_stream(Some(" buffered delta"), 1, 3, 2)
+            .unwrap();
+        assert!(recorder.stream_dirty && recorder.stream_prefix.is_some());
+        let mut messages = recorder.latest.as_ref().unwrap().messages.clone();
+        let notification = uuid::Uuid::new_v4();
+        let marker = format!("<host-context id=\"{notification}\">\n");
+        messages.push(Message::host_instruction(format!(
+            "{marker}child result\n</host-context>"
+        )));
+        recorder.watch_background(Some(&background));
+
+        // Reading the finished run still succeeds, but its delivery receipt
+        // cannot open the lock for writing. This fails independently of chmod/root.
+        let lock = root
+            .join("team-runs")
+            .join(parent.to_string())
+            .join(".lock");
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        let error = recorder.record(&messages, 2, 13, 5).unwrap_err();
+        assert!(matches!(&error, AgentError::Checkpoint(_)));
+        assert!(!runs.get(request_id).unwrap().unwrap().delivered);
+        assert!(
+            store
+                .load(parent)
+                .unwrap()
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .starts_with(&marker)
+        );
+        assert!(recorder.stream_prefix.is_none());
+        assert!(!recorder.stream_saved && !recorder.stream_dirty);
+        assert_eq!(recorder.pending_stream_bytes, 0);
+
+        recorder.finish(&Err(error)).unwrap();
+        let saved = store.load(parent).unwrap();
+        let notice = saved.messages.last().unwrap();
+        assert_eq!(
+            notice.source,
+            Some(crate::types::MessageSource::HostInstruction)
+        );
+        assert!(notice.content.starts_with(&marker));
+        assert!(saved.agent_reports_received.contains(&request_id));
+        let checkpoint = saved.execution_checkpoint.unwrap();
+        assert_eq!(checkpoint.status, CheckpointStatus::Failed);
+        assert_eq!(
+            (
+                checkpoint.turns,
+                checkpoint.input_tokens,
+                checkpoint.output_tokens
+            ),
+            (2, 13, 5)
+        );
+        assert!(!runs.get(request_id).unwrap().unwrap().delivered);
+
+        // Receipt recovery remains possible without resaving or discarding history.
+        std::fs::remove_dir(&lock).unwrap();
+        background
+            .acknowledge_committed(&background.received_runs())
+            .unwrap();
+        assert!(runs.get(request_id).unwrap().unwrap().delivered);
+        // Windows cannot remove the execution lease or Worker owner lock while
+        // their handles are still open, even though the tasks have completed.
+        drop(recorder);
+        drop(sink);
+        drop(events);
+        drop(background);
+        drop(runs);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn uncertain_host_context_save_is_not_rewritten_by_finish_or_drop() {
+    struct UncertainSave {
+        inner: SessionCheckpointSink,
+        fail_next: std::sync::atomic::AtomicBool,
+        save_before_error: bool,
+        calls: AtomicUsize,
+    }
+    impl CheckpointSink for UncertainSave {
+        fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let fail = self.fail_next.swap(false, Ordering::SeqCst);
+            if !fail || self.save_before_error {
+                self.inner.save(checkpoint)?;
+            }
+            if fail {
+                return Err("fixture save outcome is uncertain".into());
+            }
+            Ok(())
+        }
+    }
+
+    for save_before_error in [false, true] {
+        for recover in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "host-context-save-failure-{}",
+                uuid::Uuid::new_v4()
+            ));
+            let store = SessionStore::new(&root);
+            let mut session = Session::new(root.clone(), None, "fixture");
+            store.save(&mut session).unwrap();
+            let sink = UncertainSave {
+                inner: SessionCheckpointSink {
+                    store: store.clone(),
+                    session_id: session.id,
+                },
+                fail_next: std::sync::atomic::AtomicBool::new(false),
+                save_before_error,
+                calls: AtomicUsize::new(0),
+            };
+            let mut recorder = CheckpointRecorder::new(Some(&sink));
+            recorder
+                .record(&[Message::user("existing task")], 1, 3, 0)
+                .unwrap();
+            recorder
+                .record_stream(Some("saved reply"), 1, 3, 1)
+                .unwrap();
+            recorder
+                .record_stream(Some(" buffered delta"), 1, 3, 2)
+                .unwrap();
+            assert!(recorder.stream_dirty);
+            let mut messages = recorder.latest.as_ref().unwrap().messages.clone();
+            let marker = format!("<host-context id=\"{}\">\n", uuid::Uuid::new_v4());
+            messages.push(Message::host_instruction(format!(
+                "{marker}child result\n</host-context>"
+            )));
+            sink.fail_next.store(true, Ordering::SeqCst);
+            let error = recorder.record(&messages, 2, 13, 5).unwrap_err();
+            assert!(matches!(&error, AgentError::Checkpoint(_)));
+            assert!(recorder.save_uncertain);
+            // A save failure does not promote the candidate in memory, even
+            // when the sink replaced disk history before reporting the error.
+            assert!(
+                !recorder
+                    .latest
+                    .as_ref()
+                    .unwrap()
+                    .messages
+                    .iter()
+                    .any(|message| message.content.starts_with(&marker))
+            );
+            let saved = store.load(session.id).unwrap();
+            assert_eq!(
+                saved
+                    .messages
+                    .iter()
+                    .any(|message| message.content.starts_with(&marker)),
+                save_before_error
+            );
+            assert_eq!(
+                saved.execution_checkpoint.unwrap().status,
+                CheckpointStatus::Running
+            );
+            let bytes = std::fs::read(store.path(session.id)).unwrap();
+            let calls = sink.calls.load(Ordering::SeqCst);
+
+            recorder.finish(&Err(error)).unwrap();
+            assert_eq!(sink.calls.load(Ordering::SeqCst), calls);
+            assert_eq!(std::fs::read(store.path(session.id)).unwrap(), bytes);
+            if recover {
+                // A later explicit successful record establishes the sole safe
+                // boundary from which finish/stream writes may resume.
+                recorder.record(&messages, 3, 21, 8).unwrap();
+                assert!(!recorder.save_uncertain);
+                assert!(!recorder.stream_dirty && recorder.stream_prefix.is_none());
+                recorder
+                    .finish(&Err(AgentError::Checkpoint("later failure".into())))
+                    .unwrap();
+                let saved = store.load(session.id).unwrap();
+                assert!(saved.messages.last().unwrap().content.starts_with(&marker));
+                let checkpoint = saved.execution_checkpoint.unwrap();
+                assert_eq!(checkpoint.status, CheckpointStatus::Failed);
+                assert_eq!(
+                    (
+                        checkpoint.turns,
+                        checkpoint.input_tokens,
+                        checkpoint.output_tokens
+                    ),
+                    (3, 21, 8)
+                );
+            }
+            let before_drop = std::fs::read(store.path(session.id)).unwrap();
+            let calls_before_drop = sink.calls.load(Ordering::SeqCst);
+            drop(recorder);
+            assert_eq!(sink.calls.load(Ordering::SeqCst), calls_before_drop);
+            assert_eq!(std::fs::read(store.path(session.id)).unwrap(), before_drop);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+
 #[test]
 fn streaming_reuses_history_and_appends_only_the_current_assistant_message() {
     #[derive(Default)]

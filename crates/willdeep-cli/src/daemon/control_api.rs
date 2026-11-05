@@ -823,6 +823,9 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "session.child.continue",
     "session.child.retry",
     "session.child.task.stop",
+    "session.child.takeover",
+    "session.child.detach",
+    "session.child.task.subscription.set",
     "schedule.create",
     "schedule.update",
     "schedule.action",
@@ -924,6 +927,7 @@ fn public_session(
         started_by: session.started_by,
         parent_session_id: session.parent_session_id,
         delegation_read_only: session.delegation_read_only,
+        delegation_detached: session.delegation_detached,
         model_context_window: session.model_context_window,
         status: public_session_status(session.status),
         active_turn_id: session.active_turn_id,
@@ -989,6 +993,7 @@ fn public_session_search_result(
         started_by: result.started_by,
         parent_session_id: result.parent_session_id,
         delegation_read_only: result.delegation_read_only,
+        delegation_detached: result.delegation_detached,
     }
 }
 

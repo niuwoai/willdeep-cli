@@ -70,6 +70,7 @@ impl RuntimeSessionStore {
             started_by: None,
             parent_session_id: Some(source.id),
             delegation_read_only: read_only,
+            delegation_detached: false,
             model_context_window: link.model_context_window,
             human_wait_yield_suppressed: false,
             workspace,
@@ -177,6 +178,28 @@ impl RuntimeSessionStore {
             .exists()
     }
 
+    /// Called under ChildStore before sessions/turns locks. This changes only
+    /// the tree projection; immutable parent and capability limits survive.
+    pub(in crate::daemon) fn detach_child_projection(&self, id: uuid::Uuid) -> Result<()> {
+        let Some(session) = self.get(id)? else {
+            return Ok(());
+        };
+        if !session.delegation_detached {
+            self.core
+                .update(id, |core| core.delegation_detached = true)
+                .context("detach child Core tree projection")?;
+            let mut sessions = self.lock()?;
+            let mut updated = sessions.clone();
+            if let Some(child) = updated.get_mut(&id) {
+                child.delegation_detached = true;
+                child.updated_at = now();
+            }
+            persist_sessions(&self.path, &updated)?;
+            *sessions = updated;
+        }
+        Ok(())
+    }
+
     /// Bind a reclaimed child to the worktree path resolved at execution time.
     pub(in crate::daemon) fn set_child_workspace(
         &self,
@@ -220,42 +243,57 @@ impl RuntimeSessionStore {
         Ok(())
     }
 
+    /// Read-only eligibility shared by fair admission and the actual claim.
+    /// A stale wake must not hold up unrelated child queue heads.
+    pub(super) fn child_wake_is_eligible(
+        session: &RuntimeSession,
+        turn: &StoredRuntimeTurn,
+        ledger: &Ledger,
+    ) -> bool {
+        let Some(batch) = ledger.wakes.values().find(|batch| {
+            batch.turn_id == Some(turn.metadata.id)
+                || (batch.parent == session.id && batch.request_id == turn.metadata.request_id)
+        }) else {
+            return !turn.origin_client.as_deref().is_some_and(|origin| {
+                origin.starts_with(super::super::child_sessions::WAKE_ORIGIN)
+            });
+        };
+        let control = ledger.control(session.id);
+        if batch.invalidated || control.suppressed || batch.generation != control.generation {
+            return false;
+        }
+        let pending = ledger
+            .pending(session.id)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<HashSet<_>>();
+        batch.members.iter().any(|id| pending.contains(id))
+    }
+
     pub(super) fn check_child_claim(
         &self,
         session: &RuntimeSession,
         turn: &StoredRuntimeTurn,
         ledger: &mut Ledger,
     ) -> Result<bool> {
-        if let Some(batch) = ledger
+        let eligible = Self::child_wake_is_eligible(session, turn, ledger);
+        if let Some(id) = ledger
             .wakes
             .values()
             .find(|batch| {
                 batch.turn_id == Some(turn.metadata.id)
                     || (batch.parent == session.id && batch.request_id == turn.metadata.request_id)
             })
-            .cloned()
+            .map(|batch| batch.id)
         {
-            ledger.wakes.get_mut(&batch.id).unwrap().turn_id = Some(turn.metadata.id);
-            let control = ledger.control(session.id);
-            let pending = ledger
-                .pending(session.id)
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect::<HashSet<_>>();
-            if batch.invalidated
-                || control.suppressed
-                || batch.generation != control.generation
-                || !batch.members.iter().any(|id| pending.contains(id))
-            {
-                ledger.wakes.get_mut(&batch.id).unwrap().invalidated = true;
+            let batch = ledger.wakes.get_mut(&id).unwrap();
+            batch.turn_id = Some(turn.metadata.id);
+            if !eligible {
+                batch.invalidated = true;
                 return Ok(false);
             }
-            ledger.wakes.get_mut(&batch.id).unwrap().started = true;
-        } else if turn
-            .origin_client
-            .as_deref()
-            .is_some_and(|origin| origin.starts_with(super::super::child_sessions::WAKE_ORIGIN))
-        {
+            batch.started = true;
+        } else if !eligible {
             return Ok(false);
         }
         if let Some(parent) = session.parent_session_id {

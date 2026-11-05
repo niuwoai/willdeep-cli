@@ -677,6 +677,8 @@ impl TaskManager {
         let checkpoint_target = task.session_id.zip(task.turn_id);
         let checkpoint_workspace = request.workspace.clone();
         tokio::spawn(async move {
+            let mut preparation =
+                willdeep_core::preparation::PreparationTrace::new("runtime_dispatch");
             // 模型动手之前给工作树拍一张：「回到第 N 步」恢复文件靠的就是这一张。
             // 拍不成不拦这一轮——回退时会说这一步没有文件检查点。
             if let Some((session_id, turn_id)) = checkpoint_target
@@ -705,6 +707,8 @@ impl TaskManager {
                     }
                 }
             }
+            preparation.mark("workspace_checkpoint");
+            drop(preparation);
             let execution =
                 crate::harness::execute_runtime(&home, request, connection, sink, |core| {
                     manager.sessions.prepare_execution(id, core)
@@ -800,11 +804,12 @@ impl TaskManager {
                         None,
                     )
                 }
-                Some(Err(error)) => (
-                    RuntimeTaskStatus::Failed,
-                    Some(format!("{error:#}")),
-                    Some(crate::runtime_failure_domain(&error)),
-                ),
+                Some(Err(error)) => {
+                    if let Err(error) = manager.finish_runtime_error(id, error).await {
+                        eprintln!("persist Runtime task {id} completion: {error:#}");
+                    }
+                    return;
+                }
                 None => (RuntimeTaskStatus::Cancelled, None, None),
             };
             if let Err(error) = manager
@@ -921,6 +926,36 @@ impl TaskManager {
         Ok(())
     }
 
+    pub(super) async fn finish_runtime_error(
+        self: &Arc<Self>,
+        id: uuid::Uuid,
+        error: anyhow::Error,
+    ) -> Result<()> {
+        let skipped = matches!(
+            error.downcast_ref::<willdeep_core::tools::ToolError>(),
+            Some(willdeep_core::tools::ToolError::HostContextRevoked)
+        ) || matches!(
+            error.downcast_ref::<willdeep_core::AgentError>(),
+            Some(willdeep_core::AgentError::Tool(
+                willdeep_core::tools::ToolError::HostContextRevoked
+            ))
+        );
+        if skipped {
+            self.finish_with_outcome(id, RuntimeTaskStatus::Cancelled, None, None, None, true)
+                .await
+        } else {
+            let domain = crate::runtime_failure_domain(&error);
+            self.finish(
+                id,
+                RuntimeTaskStatus::Failed,
+                None,
+                Some(format!("{error:#}")),
+                Some(domain),
+            )
+            .await
+        }
+    }
+
     pub(super) async fn finish(
         self: &Arc<Self>,
         id: uuid::Uuid,
@@ -928,6 +963,19 @@ impl TaskManager {
         exit_code: Option<i32>,
         error: Option<String>,
         failure_domain: Option<willdeep_runtime_protocol::FailureDomain>,
+    ) -> Result<()> {
+        self.finish_with_outcome(id, status, exit_code, error, failure_domain, false)
+            .await
+    }
+
+    async fn finish_with_outcome(
+        self: &Arc<Self>,
+        id: uuid::Uuid,
+        status: RuntimeTaskStatus,
+        exit_code: Option<i32>,
+        error: Option<String>,
+        failure_domain: Option<willdeep_runtime_protocol::FailureDomain>,
+        skipped_host_context: bool,
     ) -> Result<()> {
         let _persistence = self.persistence.lock().await;
         let (finished_task, snapshot) = {
@@ -971,7 +1019,11 @@ impl TaskManager {
                 error.clone().unwrap_or_default()
             ),
         )?;
-        let runtime_session = self.sessions.complete_task(id, status, error.clone())?;
+        let runtime_session = if skipped_host_context {
+            self.sessions.complete_skipped_host_context(id)?
+        } else {
+            self.sessions.complete_task(id, status, error.clone())?
+        };
         if let (Some(session_id), Some(turn_id)) = (finished_task.session_id, finished_task.turn_id)
         {
             self.events.append(

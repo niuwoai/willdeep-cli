@@ -54,6 +54,15 @@ describe("会话谱系", () => {
     expect(layout(cycle)).toEqual(["0:a", "0:b"]);
   });
 
+  it("已脱离会话忽略委派父级和历史分叉，按独立条目原序展示", () => {
+    expect(layout([{ id: "detached", parent_session_id: "parent", started_by: "fork-source", delegation_detached: true }, row("other"), row("fork-source"), row("parent")])).toEqual(["0:detached", "0:other", "0:fork-source", "0:parent"]);
+    expect(layout([row("parent"), row("other"), { id: "detached", parent_session_id: "parent", started_by: "parent", delegation_detached: true }])).toEqual(["0:parent", "0:other", "0:detached"]);
+  });
+
+  it("脱离只解除自身的树形父级，仍能展示自己的后续分叉", () => {
+    expect(layout([row("fork", "detached"), row("parent"), { id: "detached", parent_session_id: "parent", delegation_detached: true }])).toEqual(["0:parent", "0:detached", "1:fork"]);
+  });
+
   it("没有来源的列表原样返回", () => {
     expect(layout([row("one"), row("two")])).toEqual(["0:one", "0:two"]);
   });

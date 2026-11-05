@@ -5,6 +5,8 @@ export type SessionNode = {
   started_by?: string | null;
   /** 委派关系优先于历史来源；来源缺失时仍保留条目。 */
   parent_session_id?: string | null;
+  /** 脱离活动委派后独立显示，历史父级与 fork 来源不再影响排序。 */
+  delegation_detached?: boolean;
 };
 
 export type SessionTreeRow<T extends SessionNode> = {
@@ -22,6 +24,7 @@ export type SessionTreeRow<T extends SessionNode> = {
 export function sessionTree<T extends SessionNode>(sessions: T[]): SessionTreeRow<T>[] {
   const present = new Set(sessions.map((session) => session.id));
   const parentOf = (session: T): string | null => {
+    if (session.delegation_detached) return null;
     const parent = session.parent_session_id ?? session.started_by;
     if (!parent || parent === session.id || !present.has(parent)) return null;
     return parent;

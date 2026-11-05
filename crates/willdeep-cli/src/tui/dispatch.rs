@@ -75,14 +75,45 @@ pub(super) fn dispatch_compress(
     store: &SessionStore,
     agent: &Arc<Agent>,
     tx: &mpsc::UnboundedSender<UiMessage>,
+    config_path: Option<&std::path::Path>,
+    parent: &willdeep_core::provider::ProviderConfig,
 ) -> Result<()> {
+    anyhow::ensure!(
+        !app.running,
+        "cannot refresh compression during an active turn"
+    );
+    // TOML and provider errors may quote credential source lines or URLs.
+    // Never attach their error chain to the user-visible TUI transcript.
+    let config_error = || {
+        anyhow::anyhow!(
+            "{}{}",
+            app.language.compression_configuration_error(),
+            config_path
+                .map(|path| format!(" ({})", path.display()))
+                .unwrap_or_default()
+        )
+    };
+    let loaded = crate::config::LoadedConfig::load(config_path).map_err(|_| config_error())?;
+    let settings =
+        crate::harness::build_compression_settings(&loaded, parent, agent.main_model().follower())
+            .map_err(|_| config_error())?;
     let ownership = willdeep_core::checkpoint::SessionCheckpointSink {
         store: store.clone(),
         session_id: session.id,
     }
     .claim()?;
     store.refresh_execution(session)?;
-    app.begin_turn(false, "Compressing context".to_owned());
+    agent.set_compression_settings(settings)?;
+    app.begin_turn(
+        false,
+        app.language
+            .text(
+                "正在压缩上下文",
+                "Compressing context",
+                "コンテキストを圧縮中",
+            )
+            .to_owned(),
+    );
     let history = session.messages.clone();
     let agent = agent.clone();
     let tx = tx.clone();
@@ -293,21 +324,55 @@ mod tests {
         }
     }
 
+    fn parent_config() -> willdeep_core::provider::ProviderConfig {
+        willdeep_core::provider::ProviderConfig::new(
+            willdeep_core::provider::ProviderKind::OpenAiCompatible,
+            willdeep_core::provider::ApiDialect::ChatCompletions,
+            "https://compressor.invalid/v1",
+            "fixture",
+            "main-model",
+        )
+    }
+
+    struct OriginalCompressor;
+
+    #[async_trait::async_trait]
+    impl willdeep_core::provider::Provider for OriginalCompressor {
+        async fn complete(
+            &self,
+            _: &[Message],
+            _: &[willdeep_core::types::ToolDefinition],
+        ) -> std::result::Result<
+            willdeep_core::types::Completion,
+            willdeep_core::provider::ProviderError,
+        > {
+            Ok(willdeep_core::types::Completion {
+                content: "original compression settings".to_owned(),
+                reasoning: None,
+                tool_calls: Vec::new(),
+                finish_reason: Some("stop".to_owned()),
+                usage: None,
+            })
+        }
+    }
+
     #[tokio::test]
-    async fn manual_compression_claims_before_dispatch_and_holds_until_result_consumed() {
-        use willdeep_core::checkpoint::SessionCheckpointSink;
+    async fn manual_compression_rejects_invalid_refresh_without_dispatching_old_settings() {
         let root =
-            std::env::temp_dir().join(format!("tui-compression-lock-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("tui-compression-refresh-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("explicit-config.toml");
         let store = SessionStore::new(&root);
-        let mut session = Session::new(root.clone(), None, "short history");
+        let mut session = Session::new(root.clone(), None, "refresh");
         store.save(&mut session).unwrap();
-        let claimant = || SessionCheckpointSink {
-            store: store.clone(),
-            session_id: session.id,
-        };
-        let id = session.id;
-        let competitor = claimant().claim().unwrap();
+        // Enough history to force a provider request if a failed refresh were
+        // ever allowed to fall back to the old Agent configuration.
+        for _ in 0..10 {
+            session
+                .messages
+                .push(Message::assistant("old evidence", Vec::new()));
+        }
+        store.save(&mut session).unwrap();
         let agent = Arc::new(Agent::new(
             Arc::new(UnusedProvider),
             willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::ReadOnly).unwrap(),
@@ -318,12 +383,213 @@ mod tests {
                 token_budget: None,
             },
         ));
+        let parent = parent_config();
         let mut app = App::new(Vec::new(), Language::En);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        assert!(dispatch_compress(&mut app, &mut session, &store, &agent, &tx).is_err());
+        let missing = dispatch_compress(
+            &mut app,
+            &mut session,
+            &store,
+            &agent,
+            &tx,
+            Some(&config),
+            &parent,
+        )
+        .unwrap_err();
+        assert!(missing.to_string().contains("explicit-config.toml"));
+        assert!(!app.running);
         assert!(app.local_turn.is_none());
+        for invalid in [
+            "version = [",
+            "version = 1\n[providers.synthetic]\napi_key = \"CREDENTIAL_CANARY\"x\n",
+            "version = 1\n[agent]\ncompressor_profile = 'missing'\n",
+            "version = 1\n[agent]\ncompressor_context_window = 1024\n",
+            // Parses and passes LoadedConfig validation, but Provider construction rejects it.
+            "version = 1\n[agent]\ncompressor_model = ''\n",
+            "version = 1\n[agent]\ncompressor_profile = 'broken'\n[providers.broken]\nprovider = 'openai-compatible'\napi_base = 'not-a-url'\nmodel = 'summary'\n",
+        ] {
+            std::fs::write(&config, invalid).unwrap();
+            let error = dispatch_compress(
+                &mut app,
+                &mut session,
+                &store,
+                &agent,
+                &tx,
+                Some(&config),
+                &parent,
+            )
+            .unwrap_err();
+            let displayed = format!("{error:#}");
+            assert!(!displayed.contains("CREDENTIAL_CANARY"));
+            assert!(!displayed.contains("api_key"));
+            assert!(displayed.contains("explicit-config.toml"));
+            assert!(!app.running);
+            assert!(app.local_turn.is_none());
+            assert!(rx.try_recv().is_err());
+            assert!(
+                willdeep_core::checkpoint::SessionCheckpointSink {
+                    store: store.clone(),
+                    session_id: session.id,
+                }
+                .claim()
+                .is_ok()
+            );
+        }
+        // The same TUI remains usable with a corrected explicit config path.
+        std::fs::write(&config, "version = 1\n").unwrap();
+        session.messages.clear();
+        store.save(&mut session).unwrap();
+        dispatch_compress(
+            &mut app,
+            &mut session,
+            &store,
+            &agent,
+            &tx,
+            Some(&config),
+            &parent,
+        )
+        .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, UiMessage::Compressed(Ok(_), _)));
+        drop(result);
+        app.local_turn.take().unwrap().await.unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manual_compression_does_not_refresh_during_a_running_turn() {
+        let root =
+            std::env::temp_dir().join(format!("tui-compression-busy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "busy");
+        let agent = Arc::new(Agent::new(
+            Arc::new(UnusedProvider),
+            willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::ReadOnly).unwrap(),
+            willdeep_core::AgentConfig {
+                max_turns: 1,
+                system_prompt: String::new(),
+                context_window: 32000,
+                token_budget: None,
+            },
+        ));
+        let parent = willdeep_core::provider::ProviderConfig::new(
+            willdeep_core::provider::ProviderKind::OpenAiCompatible,
+            willdeep_core::provider::ApiDialect::ChatCompletions,
+            "https://compression-fixture.invalid/v1",
+            "fixture",
+            "main",
+        );
+        let mut app = App::new(Vec::new(), Language::En);
+        app.running = true;
+        let (tx, _) = mpsc::unbounded_channel();
+        let error = dispatch_compress(
+            &mut app,
+            &mut session,
+            &store,
+            &agent,
+            &tx,
+            Some(&root.join("missing.toml")),
+            &parent,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("active turn"));
+        assert!(app.running);
+        assert!(app.local_turn.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_compression_claims_before_dispatch_and_holds_until_result_consumed() {
+        use willdeep_core::checkpoint::SessionCheckpointSink;
+        let root =
+            std::env::temp_dir().join(format!("tui-compression-lock-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("custom-compression.toml");
+        std::fs::write(
+            &config,
+            "version = 1\n[agent]\ncompressor_model = 'custom-summary'\n",
+        )
+        .unwrap();
+        let parent = parent_config();
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "short history");
+        store.save(&mut session).unwrap();
+        let claimant = || SessionCheckpointSink {
+            store: store.clone(),
+            session_id: session.id,
+        };
+        let id = session.id;
+        let competitor = claimant().claim().unwrap();
+        let agent = Arc::new(
+            Agent::new(
+                Arc::new(UnusedProvider),
+                willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::ReadOnly)
+                    .unwrap(),
+                willdeep_core::AgentConfig {
+                    max_turns: 1,
+                    system_prompt: String::new(),
+                    context_window: 32000,
+                    token_budget: None,
+                },
+            )
+            .with_compressor(Arc::new(OriginalCompressor), false),
+        );
+        let mut app = App::new(Vec::new(), Language::En);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        assert!(
+            dispatch_compress(
+                &mut app,
+                &mut session,
+                &store,
+                &agent,
+                &tx,
+                Some(&config),
+                &parent
+            )
+            .is_err()
+        );
+        assert!(app.local_turn.is_none());
+        assert!(!app.running);
+        // A failed ownership claim must not apply the newly built candidates.
+        let old_settings = agent
+            .compress_history(
+                (0..10)
+                    .map(|_| Message::assistant("old evidence", Vec::new()))
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            old_settings
+                .iter()
+                .any(|message| message.content.contains("original compression settings"))
+        );
         drop(competitor);
-        dispatch_compress(&mut app, &mut session, &store, &agent, &tx).unwrap();
+        // A completed Runtime turn has an execution checkpoint. Use a write
+        // baseline so save persists the new execution state, like a real writer.
+        let mut saved = store.load_baselined(id).unwrap();
+        saved
+            .messages
+            .push(Message::user("persisted after TUI snapshot"));
+        saved.execution_checkpoint = Some(willdeep_core::checkpoint::CheckpointMetadata {
+            status: willdeep_core::checkpoint::CheckpointStatus::Completed,
+            ..Default::default()
+        });
+        store.save(&mut saved).unwrap();
+        dispatch_compress(
+            &mut app,
+            &mut session,
+            &store,
+            &agent,
+            &tx,
+            Some(&config),
+            &parent,
+        )
+        .unwrap();
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
             .await
             .unwrap()
@@ -339,6 +605,11 @@ mod tests {
         let UiMessage::Compressed(Ok(messages), ownership) = result else {
             panic!("expected compressed history")
         };
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.content == "persisted after TUI snapshot")
+        );
         session.replace_with_compressed_messages(messages);
         store.save(&mut session).unwrap();
         drop(ownership);

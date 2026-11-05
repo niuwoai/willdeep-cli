@@ -372,6 +372,7 @@ mod tests {
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
             title: "previous task".into(),
             workspace: "/project".into(),
             created_at: 1,

@@ -166,7 +166,8 @@ pub(crate) async fn fs_endpoint(
     Json(request): Json<FsRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
     let write = matches!(action.as_str(), "write" | "patch");
-    state.host.permits(
+    let host = state.host().await?;
+    host.permits(
         &plugin,
         if write {
             PluginPermission::WorkspaceWrite
@@ -464,9 +465,8 @@ pub(crate) async fn process_run(
     AxumPath(plugin): AxumPath<String>,
     Json(request): Json<ProcessRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state
-        .host
-        .permits(&plugin, PluginPermission::ProcessExecute)?;
+    let host = state.host().await?;
+    host.permits(&plugin, PluginPermission::ProcessExecute)?;
     let command = request.command.trim().to_owned();
     if command.is_empty() || command.chars().count() > MAX_COMMAND_CHARS {
         return Err(PluginWebError::BadRequest("invalidCommand".to_owned()));
@@ -589,10 +589,9 @@ pub(crate) async fn net_fetch(
     AxumPath(plugin): AxumPath<String>,
     Json(request): Json<FetchRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state
-        .host
-        .permits(&plugin, PluginPermission::NetworkAccess)?;
-    let package = state.host.package(&plugin)?;
+    let host = state.host().await?;
+    host.permits(&plugin, PluginPermission::NetworkAccess)?;
+    let package = host.package(&plugin)?;
     // 权限只是开关，真正的门是清单里的这份名单。没写就等于没开。
     let domains = package
         .manifest
@@ -680,7 +679,8 @@ pub(crate) async fn skills_list(
     State(state): State<Arc<PluginWebState>>,
     AxumPath(plugin): AxumPath<String>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.permits(&plugin, PluginPermission::SkillsRead)?;
+    let host = state.host().await?;
+    host.permits(&plugin, PluginPermission::SkillsRead)?;
     let roots = workspace_roots(&state);
     let root = roots
         .first()
@@ -740,20 +740,17 @@ pub(crate) async fn host_action(
     AxumPath((plugin, action)): AxumPath<(String, String)>,
     Json(request): Json<HostActionRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
+    let host = state.host().await?;
     match action.as_str() {
         "clipboardWrite" => {
-            state
-                .host
-                .permits(&plugin, PluginPermission::ClipboardWrite)?;
+            host.permits(&plugin, PluginPermission::ClipboardWrite)?;
             if request.text.is_empty() || request.text.chars().count() > 100_000 {
                 return Err(PluginWebError::BadRequest("invalidText".to_owned()));
             }
             Ok(Json(json!({"ok": true, "text": request.text})))
         }
         "notify" => {
-            state
-                .host
-                .permits(&plugin, PluginPermission::Notifications)?;
+            host.permits(&plugin, PluginPermission::Notifications)?;
             if request.title.trim().is_empty() {
                 return Err(PluginWebError::BadRequest("invalidTitle".to_owned()));
             }
@@ -764,9 +761,7 @@ pub(crate) async fn host_action(
             })))
         }
         "chatInsert" | "chatSend" => {
-            state
-                .host
-                .permits(&plugin, PluginPermission::ConversationWrite)?;
+            host.permits(&plugin, PluginPermission::ConversationWrite)?;
             let text = request.text.trim();
             if text.is_empty() || text.chars().count() > 100_000 {
                 return Err(PluginWebError::BadRequest("invalidText".to_owned()));
@@ -778,13 +773,11 @@ pub(crate) async fn host_action(
         "eventsSubscribe" => {
             let permission = event_permission(&request.name)
                 .ok_or_else(|| PluginWebError::BadRequest("unknownEvent".to_owned()))?;
-            state.host.permits(&plugin, permission)?;
+            host.permits(&plugin, permission)?;
             Ok(Json(json!({"subscribed": request.name})))
         }
         "openConversation" => {
-            state
-                .host
-                .permits(&plugin, PluginPermission::ConversationRead)?;
+            host.permits(&plugin, PluginPermission::ConversationRead)?;
             if request.session_id.trim().is_empty() {
                 return Err(PluginWebError::BadRequest("invalidSessionID".to_owned()));
             }
@@ -854,7 +847,8 @@ pub(crate) async fn ai_generate_image(
     AxumPath(plugin): AxumPath<String>,
     Json(request): Json<ImageRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
-    state.host.permits(&plugin, PluginPermission::AiImage)?;
+    let plugin_host = state.host().await?;
+    plugin_host.permits(&plugin, PluginPermission::AiImage)?;
     let host = PluginAiHost {
         home: &state.home,
         config_path: &state.config_path,

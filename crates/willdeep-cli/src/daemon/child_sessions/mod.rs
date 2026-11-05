@@ -4,8 +4,12 @@ use session_store::{RuntimeSession, RuntimeSessionStatus, RuntimeSessionStore, R
 use uuid::Uuid;
 use willdeep_runtime_protocol::child_session::*;
 
+mod control;
+mod dependencies;
 mod reconcile;
 mod store;
+#[cfg(test)]
+mod store_tests;
 #[cfg(test)]
 mod tests;
 mod worktree;
@@ -14,6 +18,7 @@ pub(in crate::daemon) use store::Ledger;
 pub(in crate::daemon) use store::stable_id;
 use store::{Assignment, WakeBatch};
 pub(in crate::daemon) use worktree::ensure_for_claim;
+pub(crate) use worktree::prepare_child_workspace_for_user_open;
 
 pub(crate) const ASSIGNMENT_ORIGIN: &str = "child-assignment:";
 pub(crate) const WAKE_ORIGIN: &str = "child-result-wake:";
@@ -40,6 +45,10 @@ pub(in crate::daemon) fn dispatch(
                         .context("parent_session_id is required")?
                         .parse::<Uuid>()?;
                     let fingerprint = store::fingerprint(&request.operation, &request.params)?;
+                    anyhow::ensure!(
+                        !ledger.mutations.contains_key(&request.request_id),
+                        "child request_id already belongs to a control mutation"
+                    );
                     let existing = ledger
                         .assignments
                         .values()
@@ -53,17 +62,18 @@ pub(in crate::daemon) fn dispatch(
                             existing.fingerprint == fingerprint,
                             "child request_id conflicts with different parameters"
                         );
+                        control::require_delegated(ledger, &existing.task)?;
                         existing.task.assignment_id
                     } else {
                         prepare(state, ledger, request, fingerprint, preflight)?
                     };
                     advance_preparation(&state.sessions, ledger, id)?;
-                    let task = ledger
-                        .assignments
-                        .get(&id)
-                        .context("prepared assignment missing")?
-                        .task
-                        .clone();
+                    let task = ledger.project(
+                        ledger
+                            .assignments
+                            .get(&id)
+                            .context("prepared assignment missing")?,
+                    );
                     // Persist before scheduling. A lost signal is repaired by periodic reconciliation.
                     state.sessions.children.persist(ledger)?;
                     if task.accepted_at.is_some() && !task.status.is_terminal() {
@@ -75,7 +85,7 @@ pub(in crate::daemon) fn dispatch(
                     let params: GetChildSessionTaskParams =
                         serde_json::from_value(request.params.clone())?;
                     let entry = owned(ledger, params.parent_session_id, params.assignment_id)?;
-                    Ok(serde_json::to_value(&entry.task)?)
+                    Ok(serde_json::to_value(ledger.project(entry))?)
                 }
                 "session.child.task.list" => {
                     let params: ListChildSessionTasksParams =
@@ -84,7 +94,7 @@ pub(in crate::daemon) fn dispatch(
                         .assignments
                         .values()
                         .filter(|entry| entry.task.parent_session_id == params.parent_session_id)
-                        .map(|entry| entry.task.clone())
+                        .map(|entry| ledger.project(entry))
                         .collect::<Vec<_>>();
                     tasks.sort_by_key(|task| task.assignment_id);
                     tasks
@@ -97,6 +107,19 @@ pub(in crate::daemon) fn dispatch(
                         next_cursor,
                     })?)
                 }
+                "session.child.link.get" => {
+                    let params: GetChildSessionLinkParams =
+                        serde_json::from_value(request.params.clone())?;
+                    control::sync_detachments(&state.sessions, ledger)?;
+                    Ok(serde_json::to_value(control::link(
+                        ledger,
+                        params.parent_session_id,
+                        params.child_session_id,
+                    )?)?)
+                }
+                "session.child.takeover"
+                | "session.child.detach"
+                | "session.child.task.subscription.set" => control::mutate(state, ledger, request),
                 _ => bail!("unsupported child session operation"),
             }
         })
@@ -289,7 +312,10 @@ fn prepare(
     fingerprint: String,
     preflight: Option<&ChildModelPreflight>,
 ) -> Result<Uuid> {
-    let (source, link, title, prompt, notify, retry_of) = match request.operation.as_str() {
+    let (source, link, title, prompt, _notify, subscription, depends_on, retry_of) = match request
+        .operation
+        .as_str()
+    {
         "session.child.start" => {
             let params: StartChildSessionParams = serde_json::from_value(request.params.clone())?;
             params.validate().map_err(|error| anyhow::anyhow!(error))?;
@@ -385,6 +411,9 @@ fn prepare(
             };
             let link = ChildSessionLink {
                 link_id: Uuid::new_v4(),
+                control_state: ChildSessionControlState::Delegated,
+                control_revision: 1,
+                control_updated_at: now(),
                 parent_session_id: source.id,
                 child_session_id: child_id,
                 created_from_turn_id: params.created_from_turn_id,
@@ -403,6 +432,10 @@ fn prepare(
                 params.title,
                 params.prompt,
                 params.notify,
+                params
+                    .subscription
+                    .unwrap_or_else(|| ChildSessionSubscription::from_notify(params.notify)),
+                params.depends_on,
                 None,
             )
         }
@@ -424,6 +457,10 @@ fn prepare(
                 })
                 .cloned()
                 .context("child Session does not belong to this parent")?;
+            anyhow::ensure!(
+                link.control_state == ChildSessionControlState::Delegated,
+                "child relation is no longer delegated"
+            );
             idle(&state.sessions, ledger, params.child_session_id)?;
             link.created_from_turn_id = params.created_from_turn_id;
             let title = ledger
@@ -432,7 +469,18 @@ fn prepare(
                 .find(|entry| entry.task.link_id == link.link_id)
                 .map(|entry| entry.task.title.clone())
                 .unwrap_or_default();
-            (source, link, title, params.prompt, params.notify, None)
+            (
+                source,
+                link,
+                title,
+                params.prompt,
+                params.notify,
+                params
+                    .subscription
+                    .unwrap_or_else(|| ChildSessionSubscription::from_notify(params.notify)),
+                params.depends_on,
+                None,
+            )
         }
         "session.child.retry" => {
             let params: RetryChildSessionTaskParams =
@@ -444,6 +492,7 @@ fn prepare(
                 params.created_from_turn_id,
             )?;
             let old = owned(ledger, source.id, params.assignment_id)?.task.clone();
+            control::require_delegated(ledger, &old)?;
             let result = old
                 .result
                 .as_ref()
@@ -470,6 +519,8 @@ fn prepare(
                 old.title,
                 old.prompt,
                 old.notify,
+                old.subscription,
+                old.depends_on,
                 Some(old.assignment_id),
             )
         }
@@ -483,6 +534,7 @@ fn prepare(
         !title.trim().is_empty() && title.chars().count() <= 200,
         "child title must contain 1 to 200 characters"
     );
+    dependencies::validate(ledger, source.id, &depends_on)?;
     ensure_queue_capacity(&state.sessions, ledger, source.id)?;
     let timestamp = now();
     let id = Uuid::new_v4();
@@ -505,7 +557,13 @@ fn prepare(
         through_turn_id,
         workspace_mode: link.workspace_mode,
         model: link.model.clone(),
-        notify,
+        notify: subscription.legacy_notify(),
+        subscription,
+        subscription_revision: 1,
+        control_state: link.control_state,
+        control_revision: link.control_revision,
+        waiting_on_dependencies: !depends_on.is_empty(),
+        depends_on,
         status: ChildSessionTaskStatus::Preparing,
         created_at: timestamp,
         accepted_at: None,
@@ -559,6 +617,17 @@ pub(super) fn advance_preparation(
         .context("assignment not found")?;
     if entry.task.status != ChildSessionTaskStatus::Preparing {
         return Ok(());
+    }
+    if dependencies::restore_turn(sessions, ledger, id)? {
+        return Ok(());
+    }
+    if !ledger.is_delegated(&entry.task) {
+        return dependencies::block(
+            sessions,
+            ledger,
+            id,
+            "child control was revoked before a Turn existed".into(),
+        );
     }
     if entry.task.accepted_at.is_none() {
         let source = sessions.get(entry.task.parent_session_id)?;
@@ -617,6 +686,28 @@ pub(super) fn advance_preparation(
             result.superseded_by = Some(id);
         }
         sessions.children.persist(ledger)?;
+    }
+    match dependencies::readiness(ledger, &entry.task) {
+        dependencies::Readiness::Waiting => {
+            ledger
+                .assignments
+                .get_mut(&id)
+                .unwrap()
+                .task
+                .waiting_on_dependencies = true;
+            return Ok(());
+        }
+        dependencies::Readiness::Blocked(reason) => {
+            return dependencies::block(sessions, ledger, id, reason);
+        }
+        dependencies::Readiness::Ready => {
+            ledger
+                .assignments
+                .get_mut(&id)
+                .unwrap()
+                .task
+                .waiting_on_dependencies = false;
+        }
     }
     let link = ledger
         .links
@@ -767,17 +858,19 @@ pub(in crate::daemon) async fn stop(
             let task = owned(ledger, params.parent_session_id, params.assignment_id)?
                 .task
                 .clone();
+            control::require_delegated(ledger, &task)?;
             if task.status.is_terminal() {
                 return Ok(None);
             }
             if task.status == ChildSessionTaskStatus::Preparing {
-                if task.accepted_at.is_none() {
+                if !dependencies::restore_turn(&state.sessions, ledger, params.assignment_id)? {
                     let task = &mut ledger
                         .assignments
                         .get_mut(&params.assignment_id)
                         .unwrap()
                         .task;
                     task.status = ChildSessionTaskStatus::Cancelled;
+                    task.waiting_on_dependencies = false;
                     task.updated_at = now();
                     reconcile::record_result(&state.sessions, ledger, params.assignment_id, None)?;
                     return Ok(None);
@@ -817,9 +910,11 @@ pub(in crate::daemon) async fn stop(
         .sessions
         .children
         .transaction(|ledger| {
-            Ok(serde_json::to_value(
-                &owned(ledger, params.parent_session_id, params.assignment_id)?.task,
-            )?)
+            Ok(serde_json::to_value(ledger.project(owned(
+                ledger,
+                params.parent_session_id,
+                params.assignment_id,
+            )?))?)
         })
         .map_err(control_api::ApiFailure::internal)
 }

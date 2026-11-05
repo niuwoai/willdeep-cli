@@ -16,6 +16,7 @@ fn session_picker_result_includes_content_snippet_without_embedded_lines() {
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
     };
 
     let line =

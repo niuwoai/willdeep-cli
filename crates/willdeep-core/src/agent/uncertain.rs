@@ -62,6 +62,7 @@ impl UncertainCalls {
                 | "edit_file"
                 | "create_worktree"
                 | "call_mcp_tool"
+                | "configuration_write"
                 | "spawn_agent"
         ) && self.0.contains(&key(call))
     }
@@ -72,6 +73,7 @@ mod tests {
     use super::*;
     use crate::types::{Completion, ToolDefinition};
     use crate::{ApprovalDecision, ApprovalMode, Approver};
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn call(id: &str) -> ToolCall {
@@ -97,7 +99,38 @@ mod tests {
         assert!(again.needs_approval(&reordered));
     }
 
-    struct Repeats(AtomicUsize);
+    #[test]
+    fn interrupted_configuration_apply_needs_approval_but_reads_do_not() {
+        for name in ["configuration_write", "configuration_read"] {
+            let original = ToolCall {
+                id: "interrupted".into(),
+                name: name.into(),
+                arguments: if name == "configuration_write" {
+                    json!({"operation":"apply","params":{"plan_id":"saved-plan"}})
+                } else {
+                    json!({"operation":"snapshot","params":{}})
+                }
+                .to_string(),
+            };
+            let mut history = vec![Message::assistant("working", vec![original.clone()])];
+            UncertainCalls::recover(&mut history);
+            sanitize_tool_history(&mut history);
+            let recovered = UncertainCalls::recover(&mut history);
+            let retry = ToolCall {
+                id: "retry".into(),
+                ..original
+            };
+            assert_eq!(
+                recovered.needs_approval(&retry),
+                name == "configuration_write"
+            );
+        }
+    }
+
+    struct Repeats {
+        calls: AtomicUsize,
+        call: ToolCall,
+    }
     #[async_trait]
     impl Provider for Repeats {
         async fn complete(
@@ -105,7 +138,7 @@ mod tests {
             messages: &[Message],
             _: &[ToolDefinition],
         ) -> Result<Completion, ProviderError> {
-            let first = self.0.fetch_add(1, Ordering::SeqCst) == 0;
+            let first = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
             if first {
                 assert!(
                     messages
@@ -116,7 +149,11 @@ mod tests {
             Ok(Completion {
                 reasoning: None,
                 content: "reported".into(),
-                tool_calls: if first { vec![call("new")] } else { Vec::new() },
+                tool_calls: if first {
+                    vec![self.call.clone()]
+                } else {
+                    Vec::new()
+                },
                 usage: None,
                 finish_reason: Some("stop".into()),
             })
@@ -154,7 +191,10 @@ mod tests {
                 .unwrap()
                 .with_approver(approval.clone());
             let agent = Agent::new(
-                Arc::new(Repeats(AtomicUsize::new(0))),
+                Arc::new(Repeats {
+                    calls: AtomicUsize::new(0),
+                    call: call("new"),
+                }),
                 tools,
                 AgentConfig {
                     max_turns: 2,
@@ -179,6 +219,113 @@ mod tests {
                 );
             }
             std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    struct ConfigurationWrites(AtomicUsize);
+
+    #[async_trait]
+    impl crate::ConfigurationHost for ConfigurationWrites {
+        async fn execute(
+            &self,
+            operation: &str,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value, crate::tools::ToolError> {
+            assert_eq!(operation, "apply");
+            assert_eq!(params, json!({"plan_id":"saved-plan"}));
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"applied":true}))
+        }
+
+        fn approval_description(&self, plan_id: &str) -> Result<String, crate::tools::ToolError> {
+            if plan_id != "saved-plan" {
+                return Err(crate::tools::ToolError::UnknownTool(
+                    "expired configuration plan".into(),
+                ));
+            }
+            Ok("Apply saved configuration plan".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_or_read_only_configuration_replays_never_request_approval() {
+        for mode in [
+            ApprovalMode::ReadOnly,
+            ApprovalMode::Strict,
+            ApprovalMode::Smart,
+            ApprovalMode::WorkspaceAccess,
+            ApprovalMode::FullAccess,
+        ] {
+            let approval = Arc::new(Decision {
+                allow: true,
+                calls: AtomicUsize::new(0),
+            });
+            let host = Arc::new(ConfigurationWrites(AtomicUsize::new(0)));
+            let tools = ToolRegistry::new(std::env::temp_dir(), mode)
+                .unwrap()
+                .with_approver(approval.clone())
+                .with_configuration_host(host.clone());
+            for plan_id in if mode == ApprovalMode::ReadOnly {
+                vec!["expired", "saved-plan"]
+            } else {
+                vec!["expired"]
+            } {
+                let call = ToolCall {
+                    id: "retry".into(),
+                    name: "configuration_write".into(),
+                    arguments: json!({"operation":"apply","params":{"plan_id":plan_id}})
+                        .to_string(),
+                };
+                assert!(tools.approve_uncertain_replay(&call).await.is_err());
+            }
+            assert_eq!(approval.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(host.0.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn uncertain_configuration_apply_requires_one_time_approval_even_in_full_access() {
+        for allow in [false, true] {
+            let approval = Arc::new(Decision {
+                allow,
+                calls: AtomicUsize::new(0),
+            });
+            let host = Arc::new(ConfigurationWrites(AtomicUsize::new(0)));
+            let tools = ToolRegistry::new(std::env::temp_dir(), ApprovalMode::FullAccess)
+                .unwrap()
+                .with_approver(approval.clone())
+                .with_configuration_host(host.clone());
+            let previous = ToolCall {
+                id: "interrupted".into(),
+                name: "configuration_write".into(),
+                arguments: json!({"operation":"apply","params":{"plan_id":"saved-plan"}})
+                    .to_string(),
+            };
+            let agent = Agent::new(
+                Arc::new(Repeats {
+                    calls: AtomicUsize::new(0),
+                    call: ToolCall {
+                        id: "retry".into(),
+                        ..previous.clone()
+                    },
+                }),
+                tools,
+                AgentConfig {
+                    max_turns: 2,
+                    system_prompt: "test".into(),
+                    context_window: 32000,
+                    token_budget: None,
+                },
+            );
+            agent
+                .run_with_history(
+                    vec![Message::assistant("working", vec![previous])],
+                    "continue",
+                )
+                .await
+                .unwrap();
+            assert_eq!(approval.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(host.0.load(Ordering::SeqCst), usize::from(allow));
         }
     }
 }

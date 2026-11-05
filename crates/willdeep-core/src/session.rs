@@ -91,6 +91,9 @@ pub struct Session {
     /// Persistent delegation ceiling, including after a manual history fork.
     #[serde(default)]
     pub delegation_read_only: bool,
+    /// Hide the active delegation edge while retaining immutable ancestry and capabilities.
+    #[serde(default)]
+    pub delegation_detached: bool,
     /// Context window resolved for a delegated model override. `None` keeps the
     /// normal Profile/gateway/default resolution at Harness build time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,6 +199,7 @@ impl Session {
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
             model_context_window: None,
             workspace,
             provider_selection_explicit: profile.is_some(),
@@ -281,6 +285,8 @@ pub struct SessionDigest {
     pub started_by: Option<Uuid>,
     pub parent_session_id: Option<Uuid>,
     pub delegation_read_only: bool,
+    /// Hide the active delegation edge while retaining immutable ancestry and capabilities.
+    pub delegation_detached: bool,
     pub title: String,
     pub workspace: PathBuf,
     pub created_at: u64,
@@ -676,6 +682,8 @@ struct LocalDigestProbe {
     parent_session_id: Option<Uuid>,
     #[serde(default)]
     delegation_read_only: bool,
+    #[serde(default)]
+    delegation_detached: bool,
     title: String,
     workspace: PathBuf,
     created_at: u64,
@@ -790,6 +798,7 @@ fn local_digest(path: &Path, _metadata: &std::fs::Metadata) -> Option<SessionDig
         started_by: probe.started_by,
         parent_session_id: probe.parent_session_id,
         delegation_read_only: probe.delegation_read_only,
+        delegation_detached: probe.delegation_detached,
         title: probe.title,
         workspace: probe.workspace,
         created_at: probe.created_at,
@@ -838,6 +847,7 @@ fn swift_digest(path: &Path, metadata: &std::fs::Metadata) -> Option<SessionDige
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
         title: probe.title.unwrap_or_else(|| "Swift session".to_owned()),
         workspace: PathBuf::from(workspace),
         created_at: updated,
@@ -955,6 +965,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
         model_context_window: None,
         workspace: PathBuf::from(workspace),
         profile: None,

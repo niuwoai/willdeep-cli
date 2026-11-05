@@ -22,6 +22,7 @@ import { McpPage } from "./McpAccess";
 import { ConversationSchedules } from "./ConversationSchedules";
 import { SessionCollaboration } from "./SessionCollaboration";
 import { ChildSessions, ChildSessionOrigin } from "./ChildSessions";
+import type { ChildLink } from "./childSessionsApi";
 import { childSessionsText } from "./childSessionsMessages";
 import { PermissionsPanel } from "./PermissionsPanel";
 import { ModelPicker } from "./ModelPicker";
@@ -66,7 +67,7 @@ import { WorkflowCard } from "./WorkflowCard";
 import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
 
 type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
-type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
+type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
 
 /** 谱系行的时间按子会话的创建时间算，不用最后更新时间。 */
 function lineageTime(createdAt: number, t: Messages): string {
@@ -76,7 +77,7 @@ function lineageTime(createdAt: number, t: Messages): string {
   if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
   return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
 }
-type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null };
+type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -322,7 +323,7 @@ export function App() {
   const colorScheme = useResolvedColorScheme(theme);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [workspace, setWorkspace] = useState("");
   const [sessions, setSessions] = useState<Session[]>([]); const [sessionId, setSessionId] = useState("");
-  const [sessionRelation, setSessionRelation] = useState<{ id: string; parent: string | null; readOnly: boolean } | null>(null);
+  const [sessionRelation, setSessionRelation] = useState<{ id: string; parent: string | null; readOnly: boolean; detached: boolean } | null>(null);
   const deepLinkSession = useRef(new URLSearchParams(window.location.search).get("session"));
   // 项目树的展开与每个项目已加载的条数。默认只展开最近更新的项目，其余收起。
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -729,6 +730,7 @@ export function App() {
   const selectedSession = useMemo(() => sessions.find((item) => item.id === sessionId), [sessions, sessionId]);
   const childParentId = selectedSession?.parent_session_id ?? (sessionRelation?.id === sessionId ? sessionRelation.parent : null);
   const childReadOnly = selectedSession?.delegation_read_only ?? (sessionRelation?.id === sessionId && sessionRelation.readOnly);
+  const childDetached = selectedSession?.delegation_detached ?? (sessionRelation?.id === sessionId && sessionRelation.detached);
   const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
   const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
   const commandMatches = useMemo(() => prompt.startsWith("/") ? composer.commands.filter((item) => item.startsWith(prompt.split(/\s/)[0])).slice(0, 6) : [], [prompt, composer.commands]);
@@ -770,7 +772,7 @@ export function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
-    setSessionRelation({ id: detail.id, parent: detail.parent_session_id ?? null, readOnly: detail.delegation_read_only ?? false });
+    setSessionRelation({ id: detail.id, parent: detail.parent_session_id ?? null, readOnly: detail.delegation_read_only ?? false, detached: detail.delegation_detached ?? false });
     replyStyleRef.current = detail.response_style ?? null;
     setApprovalMode(detail.approval_mode ?? null);
     setWorkspacePolicy(detail.workspace_access);
@@ -1109,6 +1111,15 @@ export function App() {
     setSessions(await json<Session[]>("/api/sessions"));
   }
 
+  function childRelationshipChanged(link: ChildLink) {
+    // Relationship changes refresh navigation without reloading chat or clearing drafts.
+    if (link.control_state === "detached") {
+      setSessions((current) => current.map((item) => item.id === link.child_session_id ? { ...item, delegation_detached: true } : item));
+      setSessionRelation((current) => current?.id === link.child_session_id ? { ...current, detached: true } : current);
+    }
+    void refreshSessions().catch((reason: unknown) => setError(`${t.loadFailed}: ${reason instanceof Error ? reason.message : String(reason)}`));
+  }
+
   /// 面板摊开时再读一次档位：TUI 那边也能切，页面上的旧值会骗人。
   async function refreshApprovalMode(id: string) {
     try {
@@ -1225,7 +1236,7 @@ export function App() {
         setPopup({ entries: sessionContextEntries, x: event.clientX, y: event.clientY, args: { session: item.id } });
       }}>
       <button type="button" className="session-title" disabled={busy} onClick={() => void loadSession(item.id, item.active_turn_id)}>
-        {item.parent_session_id && <span className="session-pin" title={childSessionsText(language).title} aria-label={childSessionsText(language).title}><GitFork size={12} /></span>}{item.active && <span className="session-active-dot" aria-hidden="true" />}{item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
+        {item.parent_session_id && !item.delegation_detached && <span className="session-pin" title={childSessionsText(language).title} aria-label={childSessionsText(language).title}><GitFork size={12} /></span>}{item.active && <span className="session-active-dot" aria-hidden="true" />}{item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
         {/* 标题没生成时后端会带回首条用户消息。显示它而不是一排
             一模一样的 New session——那些会话是有内容的。 */}
         {item.preview ? <span className="session-untitled">{item.preview}</span> : item.title}
@@ -1719,12 +1730,12 @@ export function App() {
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
-      {sessionId && childParentId && <ChildSessionOrigin key={`origin-${sessionId}`} parentId={childParentId} parentTitle={sessions.find((item) => item.id === childParentId)?.title} readOnly={childReadOnly} language={language} onOpenSession={openRelatedSession} />}
+      {sessionId && childParentId && <ChildSessionOrigin key={`origin-${sessionId}`} parentId={childParentId} parentTitle={sessions.find((item) => item.id === childParentId)?.title} childId={sessionId} readOnly={childReadOnly} detached={childDetached} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
         <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
-        {sessionId && !childParentId && !childReadOnly && <ChildSessions key={`children-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={openRelatedSession} />}
+        {sessionId && !childParentId && !childReadOnly && <ChildSessions key={`children-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
         {error && <Box className="request-error"><Text role="alert">{error}</Text>{runtimeFailure && <RuntimeFailureDetails key={`${runtimeFailure.sessionId}:${runtimeFailure.taskId}`} sessionId={runtimeFailure.sessionId} taskId={runtimeFailure.taskId} messages={t} />}</Box>}<div ref={endRef} />
       </Box>
       {/* 聊天正文选中气泡。插件拿到的 `text` 是用户真正看到的那段字，

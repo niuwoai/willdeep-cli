@@ -169,6 +169,7 @@ struct SessionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_session_id: Option<String>,
     delegation_read_only: bool,
+    delegation_detached: bool,
     archived: bool,
     active: bool,
     active_turn_id: Option<uuid::Uuid>,
@@ -214,6 +215,7 @@ struct SessionDetail {
     workspace: String,
     parent_session_id: Option<uuid::Uuid>,
     delegation_read_only: bool,
+    delegation_detached: bool,
     messages: Vec<willdeep_core::conversation::ConversationItem>,
     /// `/short` 与 `/verbose` 的会话级开关。刷新页面后前端靠它恢复，不靠自己的内存。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -429,8 +431,9 @@ async fn serve_internal(
     config: WebConfig,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<()> {
-    crate::favorites_plugin::ensure_installed(&config.home).await?;
-    crate::video_studio_plugin::ensure_installed(&config.home).await?;
+    // 内置插件安装、插件包发现与 MCP 网关启动都不在启动路径上：它们由
+    // `PluginWebState` 的惰性访问器在首个插件请求里完成。端口绑定与
+    // `/health` 因此不必等这些准备工作。
     if config.listen.ip().is_loopback() {
         if let Some(parent) = config.config_path.parent() {
             std::fs::create_dir_all(parent).context("create Web configuration directory")?;
@@ -480,26 +483,7 @@ async fn serve_internal(
         )
         .route("/api/chat/stream", post(chat_stream))
         .route("/api/sessions", get(sessions))
-        .route(
-            "/api/sessions/{id}/children",
-            get(child_sessions::list).post(child_sessions::start),
-        )
-        .route(
-            "/api/sessions/{id}/children/{assignment}",
-            get(child_sessions::get),
-        )
-        .route(
-            "/api/sessions/{id}/children/{assignment}/retry",
-            post(child_sessions::retry),
-        )
-        .route(
-            "/api/sessions/{id}/children/{assignment}/stop",
-            post(child_sessions::stop),
-        )
-        .route(
-            "/api/sessions/{id}/children/{child}/continue",
-            post(child_sessions::continue_task),
-        )
+        .merge(child_sessions::router())
         .route("/api/sessions/{id}/peers", get(peer_sessions::peers))
         .route(
             "/api/sessions/{id}/peer-messages",
@@ -601,54 +585,17 @@ async fn serve_internal(
         // 路由树按具体度匹配，所以不会被这一条吞掉。
         .route("/{*path}", get(asset))
         .with_state(state.clone());
-    // 插件宿主自带一套路由与状态。发现失败不该让整个 Web 起不来——
-    // 一个装坏的插件包不能变成"聊天也用不了"。
-    let app = match willdeep_core::plugin::PluginHost::discover(&state.home) {
-        Ok(host) => {
-            let host = Arc::new(host);
-            host.set_config_path(state.config_path.clone());
-            // 插件 MCP 进程可以反向请求出图、问模型；凭据留在宿主。
-            host.set_host_requests(Arc::new(crate::plugin_host_requests::HostRequests::new(
-                state.home.clone(),
-                state.config_path.clone(),
-                state.workspaces.clone(),
-            )));
-            // 插件 MCP 网关：只绑 127.0.0.1，端口与 token 持久化在发现文件里。
-            // 起不来不影响 Web 本身。
-            let gateway = match crate::plugin_gateway::PluginGateway::start(
-                &state.home,
-                host.clone(),
-            )
-            .await
-            {
-                Ok(gateway) => {
-                    println!(
-                        "Plugin MCP gateway: {} ({})",
-                        gateway.url(),
-                        willdeep_core::plugin::gateway::discovery_path(&state.home).display()
-                    );
-                    Some(Arc::new(gateway))
-                }
-                Err(error) => {
-                    eprintln!("warning: plugin MCP gateway unavailable: {error}");
-                    None
-                }
-            };
-            app.merge(crate::plugin_web::router(Arc::new(
-                crate::plugin_web::PluginWebState::new(
-                    host,
-                    state.config_path.clone(),
-                    state.home.clone(),
-                    state.workspaces.clone(),
-                )
-                .with_gateway(gateway),
-            )))
-        }
-        Err(error) => {
-            eprintln!("warning: plugin host unavailable: {error}");
-            app
-        }
-    };
+    // 插件宿主自带一套路由与状态。业务路由**始终**挂上：宿主本身是惰性的，
+    // 首个插件请求才安装内置插件、发现包并启动网关。这样端口绑定与 /health
+    // 不受插件准备时间影响；宿主没准备好时，插件接口会给出明确的 500，
+    // 而不是像以前那样整个路由树缺失、看起来像 404。
+    let app = app.merge(crate::plugin_web::router(Arc::new(
+        crate::plugin_web::PluginWebState::lazy(
+            state.config_path.clone(),
+            state.home.clone(),
+            state.workspaces.clone(),
+        ),
+    )));
     let app = app
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(middleware::from_fn(server_version_header));
@@ -1445,6 +1392,7 @@ async fn sessions(
                 started_by: session.started_by.map(|id| id.to_string()),
                 parent_session_id: session.parent_session_id.map(|id| id.to_string()),
                 delegation_read_only: session.delegation_read_only,
+                delegation_detached: session.delegation_detached,
                 pinned_at: session.pinned_at,
                 archived,
                 active,
@@ -1497,6 +1445,7 @@ async fn session_detail(
         workspace: workspace.root.display().to_string(),
         parent_session_id: session.parent_session_id,
         delegation_read_only: session.delegation_read_only,
+        delegation_detached: session.delegation_detached,
         messages,
         response_style: session.response_style,
         approval_mode: runtime_session

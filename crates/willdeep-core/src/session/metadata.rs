@@ -138,6 +138,8 @@ impl Metadata {
         // neither redirect the parent nor remove an established read-only cap.
         proposed.parent_session_id = latest.parent_session_id.or(proposed.parent_session_id);
         proposed.delegation_read_only |= latest.delegation_read_only;
+        // Detachment is monotonic and cannot be undone by an in-flight Turn snapshot.
+        proposed.delegation_detached |= latest.delegation_detached;
         // The resolved delegated window is durable metadata; a stale snapshot
         // written without it must not fall back to the parent's window.
         proposed.model_context_window = proposed

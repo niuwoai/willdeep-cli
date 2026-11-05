@@ -1236,6 +1236,7 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
         },
         willdeep_runtime_protocol::SessionSearchResult {
             id: target_id,
@@ -1251,6 +1252,7 @@ fn session_picker_edits_query_navigates_and_selects_archived_session() {
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
         },
     ]);
     assert!(matches!(
@@ -1351,6 +1353,7 @@ fn recent_session_results(count: u64) -> Vec<willdeep_runtime_protocol::SessionS
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
         })
         .collect()
 }
@@ -1464,6 +1467,7 @@ fn session_picker_line_leads_with_the_title_and_flags_bridged_sessions() {
         started_by: None,
         parent_session_id: None,
         delegation_read_only: false,
+        delegation_detached: false,
     };
     let line =
         session_picker_ui::session_picker_result_line(&bridged, false, Language::ZhCn, false, 0);

@@ -3,6 +3,8 @@
 # Uses only synthetic history, isolated WILLDEEP_HOME and a loopback provider.
 # ruby scripts/stream_latency_tui_verify.rb BINARY REPORT_PREFIX [HISTORY_COUNT] [runtime|local]
 # STREAM_UI_MODE=full selects the full layout; STREAM_MAX_P95_MS sets an acceptance gate.
+# STREAM_MEASURE_IDLE=1 also measures one second of idle child-ledger commits.
+# STREAM_ASSERT_IDLE=1 and STREAM_ASSERT_FIRST_REPLY=1 enable the corresponding gates.
 require 'base64'
 require 'fileutils'
 require 'io/console'
@@ -79,7 +81,7 @@ listener = Thread.new do
           sent << {marker: marker, at: clock.call, content: content}
           socket.write("data: #{JSON.generate({choices: [{index: 0, delta: {content: content}}]})}\n\n")
         end
-        socket.write("data: #{JSON.generate({choices: [{index: 0, delta: {}, finish_reason: 'stop'}]})}\n\ndata: [DONE]\n\n")
+        socket.write("data: #{JSON.generate({choices: [{index: 0, delta: {}, finish_reason: 'stop'}], usage: {prompt_tokens: 1000, completion_tokens: count, total_tokens: 1000 + count}})}\n\ndata: [DONE]\n\n")
       rescue IOError, Errno::EPIPE, Errno::ECONNRESET
       ensure
         socket.close unless socket.closed?
@@ -102,6 +104,8 @@ env = {'WILLDEEP_HOME' => home, 'TERM' => 'xterm-256color', 'COLORTERM' => 'true
 %w[WILLDEEP_API_BASE WILLDEEP_API_KEY WILLDEEP_MODEL WILLDEEP_CONFIG OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY].each { |key| env[key] = nil }
 bytes = ''.b
 graceful_exit = false
+submitted_at = idle_started = idle_revision = idle_commits = nil
+child_ledger = File.join(home, 'runtime', 'session-children.json')
 begin
   PTY.spawn(env, binary, '--config', config, '--workspace', workspace, '--language', 'en', '--resume', session_id) do |reader, writer, pid|
     reader.winsize = [35, 120]
@@ -123,6 +127,7 @@ begin
           end
         end
         if !submitted && bytes.include?('Enter') && clock.call - started > 1
+          submitted_at = clock.call
           writer.write("#{execution == 'local' ? '/local ' : ''}Produce the paced stream fixture without tools\r")
           submitted = true
         end
@@ -165,7 +170,16 @@ begin
           end
         end
         painted_completion_at ||= clock.call if bytes.include?('turn finished')
-        break if completed_at && painted_completion_at && clock.call - [completed_at, painted_completion_at].max > 1
+        if completed_at && painted_completion_at && clock.call - [completed_at, painted_completion_at].max > 1
+          break unless ENV['STREAM_MEASURE_IDLE'] == '1'
+          if idle_started.nil?
+            idle_started = clock.call
+            idle_revision = JSON.parse(File.read(child_ledger)).fetch('revision')
+          elsif clock.call - idle_started >= 1
+            idle_commits = JSON.parse(File.read(child_ledger)).fetch('revision') - idle_revision
+            break
+          end
+        end
         raise "stream timeout: requests=#{requests.size}, sent=#{sent.size}, root=#{root}" if clock.call - started > 100
       end
       writer.write("\x03")
@@ -212,6 +226,13 @@ begin
     report['runtime_event_median_ms'] = runtime_delays[runtime_delays.size / 2]
     report['runtime_event_p95_ms'] = runtime_delays[(runtime_delays.size * 0.95).floor]
   end
+  report['submit_to_first_body_seconds'] = sent.first[:at] - submitted_at
+  report['stream_duration_seconds'] = sent.last[:at] - sent.first[:at]
+  report['idle_child_ledger_commits'] = idle_commits unless idle_commits.nil?
+  if ENV['STREAM_ASSERT_FIRST_REPLY'] == '1'
+    first_reply = report.fetch('first_reply_seconds')
+    report['first_reply_passed'] = first_reply && first_reply <= report['submit_to_first_body_seconds'] + 0.5
+  end
   if ENV['STREAM_MAX_P95_MS']
     report['passed'] = report['displayed'] == count && report['p95_ms'] <= Float(ENV['STREAM_MAX_P95_MS'])
     report['acceptance_p95_ms'] = Float(ENV['STREAM_MAX_P95_MS'])
@@ -220,6 +241,10 @@ begin
   File.write(report_prefix + '.md', "# Paced stream display measurement\n\n" + report.reject { |k, _| k == 'samples' }.map { |k, v| "- #{k}: #{v}" }.join("\n") + "\n")
   puts JSON.generate(report.reject { |k, _| k == 'samples' })
   raise 'stream display acceptance failed; see saved measurement report' if report['passed'] == false
+  raise 'first reply was delayed until response completion' if report['first_reply_passed'] == false
+  raise 'idle child ledger was rewritten' if ENV['STREAM_ASSERT_IDLE'] == '1' && idle_commits != 0
+  raise 'first reply was delayed until response completion' if report['first_reply_passed'] == false
+  raise 'idle child ledger was rewritten' if ENV['STREAM_ASSERT_IDLE'] == '1' && idle_commits != 0
 ensure
   File.binwrite(File.join(root, 'terminal.ansi'), bytes)
   File.write(File.join(root, 'frames.json'), JSON.generate({frames: frames, sent: sent}))

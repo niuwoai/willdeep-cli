@@ -4,7 +4,85 @@ require_relative 'verify_session_collaboration'
 require_relative 'verify_workflow_tui'
 require 'optparse'
 
+module ChildSessionDiagnostics
+  COMMAND_TIMEOUT_SECONDS = 60
+  @mutex = Mutex.new
+  class << self
+    attr_accessor :output
+
+    def record(event, **details)
+      return unless output
+      @mutex.synchronize do
+        File.open(File.join(output, 'trace.jsonl'), 'a') do |file|
+          file.puts(JSON.generate(event: event, monotonic: Process.clock_gettime(Process::CLOCK_MONOTONIC), **details))
+        end
+      end
+    end
+  end
+end
+
+# Poll between bounded commands; Timeout.timeout used to interrupt Open3's reader
+# threads and hide which single Runtime request had stopped making progress.
+def wait_for(description, seconds = 60)
+  ChildSessionDiagnostics.record('wait.begin', description: description)
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+  loop do
+    value = yield
+    # A bounded command may finish after this wait's deadline; late success must
+    # still fail the original criterion without interrupting Open3 reader threads.
+    raise "Timed out waiting for #{description}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    if value
+      ChildSessionDiagnostics.record('wait.end', description: description)
+      return value
+    end
+    sleep 0.2
+  end
+end
+
+def child_capture(env, *arguments, stdin_data: '', seconds: ChildSessionDiagnostics::COMMAND_TIMEOUT_SECONDS)
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  label = arguments.drop(1).join(' ')
+  ChildSessionDiagnostics.record('command.begin', command: label, input: stdin_data)
+  Open3.popen3(env, *arguments) do |input, output, error, process|
+    readers = [output, error].map { |stream| Thread.new { stream.read } }
+    begin
+      input.write(stdin_data)
+      input.close
+      deadline = started + seconds
+      finished = process.join([deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max)
+      drained = finished && readers.all? do |reader|
+        reader.join([deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max)
+      end
+      unless drained
+        ChildSessionDiagnostics.record('command.timeout', command: label, pid: process.pid, seconds: seconds)
+        raise "Runtime command timed out after #{seconds}s: #{label} (CLI pid=#{process.pid})"
+      end
+      result = [*readers.map(&:value), process.value]
+      ChildSessionDiagnostics.record('command.end', command: label, pid: process.pid,
+        seconds: Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, exitstatus: result.last.exitstatus)
+      result
+    ensure
+      # Only the CLI subprocess created above is signalled, never a Daemon or
+      # another session's test process. Always reap it before Open3 closes pipes.
+      if process.alive?
+        begin
+          Process.kill('TERM', process.pid)
+          Process.kill('KILL', process.pid) unless process.join(2)
+        rescue Errno::ESRCH
+          # The owned CLI exited between checking and signalling it.
+        end
+        process.join
+      end
+      readers.each { |reader| reader.kill if reader.alive? }
+      readers.each(&:join)
+    end
+  end
+end
+
 class ChildSessionModelFixture < ModelFixture
+  # Capacity checks enqueue twenty tasks before explicitly releasing the first four.
+  GATE_TIMEOUT_SECONDS = 180
+
   def initialize
     @mutex, @condition = Mutex.new, ConditionVariable.new
     @observed, @released = [], {}
@@ -14,18 +92,21 @@ class ChildSessionModelFixture < ModelFixture
   def observations = @mutex.synchronize { @observed.map(&:dup) }
 
   def release(gate)
+    ChildSessionDiagnostics.record('gate.release', gate: gate)
     @mutex.synchronize { @released[gate] = true; @condition.broadcast }
   end
 
   def gate(name)
+    ChildSessionDiagnostics.record('gate.enter', gate: name)
     @mutex.synchronize do
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 50
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + GATE_TIMEOUT_SECONDS
       until @released[name]
         remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
         raise "local fixture gate timed out: #{name}" if remaining <= 0
         @condition.wait(@mutex, [remaining, 0.2].min)
       end
     end
+    ChildSessionDiagnostics.record('gate.exit', gate: name)
   end
 
   def completion(request)
@@ -36,6 +117,8 @@ class ChildSessionModelFixture < ModelFixture
     called = calls.map { |call| call.dig('function', 'name') }
     child = (text.include?('CHILD_P0_READ') || text.include?('CHILD_P1_WRITE')) && !names.include?('start_session')
     writable = child && text.include?('CHILD_P1_WRITE')
+    ChildSessionDiagnostics.record('model.request', child: child, writable: writable, model: request['model'],
+      markers: text.scan(/\b(?:CHILD_[A-Z0-9_]+|STOP_SCENARIO|STOP_CHILD|HOLD_CHILD|CAP_CHILD)\b/).uniq, called: called)
     @mutex.synchronize { @observed << { child: child, writable: writable, text: text, tools: names, model: request['model'] } }
     call, content = nil, 'FIXTURE_COMPLETE: local evidence verified.'
     if child
@@ -100,6 +183,7 @@ class ChildSessionModelFixture < ModelFixture
     elsif text.include?('<host-context')
       content = 'PARENT_RESULT_RECEIVED: the child report is available for review.'
     end
+    ChildSessionDiagnostics.record('model.response', child: child, tool: call&.first, content: call ? nil : content)
     message = { role: 'assistant', content: call ? nil : content }
     if call
       message[:tool_calls] = [{ id: "call_#{SecureRandom.hex(8)}", type: 'function',
@@ -135,7 +219,7 @@ end
 def child_api_response(env, operation, params = {}, request_id: nil)
   arguments = [BIN, 'api', operation, '--params-file', '-', '--ndjson']
   arguments.concat(['--request-id', request_id]) if request_id
-  output, error, status = Open3.capture3(env, *arguments, stdin_data: JSON.generate(params))
+  output, error, status = child_capture(env, *arguments, stdin_data: JSON.generate(params))
   output = output.dup.force_encoding(Encoding::UTF_8)
   response = JSON.parse(output)
   raise "#{operation}: #{error} #{output}" unless response.is_a?(Hash) && response.key?('status')
@@ -157,9 +241,25 @@ def child_refused(env, operation, params = {}, request_id: nil, **keywords)
 end
 
 def child_cli(env, *arguments)
-  output, error, status = Open3.capture3(env, BIN, 'session', 'child', *arguments)
+  output, error, status = child_capture(env, BIN, 'session', 'child', *arguments)
   raise "child CLI #{arguments.first}: #{error} #{output}" unless status.success?
   JSON.parse(output.dup.force_encoding(Encoding::UTF_8))
+end
+
+def child_stop_daemon(env, binary = BIN)
+  state, = child_capture(env, binary, 'daemon', 'status')
+  pid = state[/\bpid=(\d+)/, 1]&.to_i
+  output, error, status = child_capture(env, binary, 'daemon', 'stop')
+  raise "stop isolated daemon: #{error} #{output}" unless status.success?
+  return unless pid
+  wait_for('isolated daemon exits before temporary directory cleanup') do
+    begin
+      Process.kill(0, pid)
+      false
+    rescue Errno::ESRCH
+      true
+    end
+  end
 end
 
 def child_tasks(env, parent)
@@ -194,11 +294,65 @@ def child_git(directory, *arguments)
   output
 end
 
+def child_failure_evidence(output, home, fixture, daemon_pid)
+  evidence = File.join(output, "failure-evidence-#{Time.now.utc.strftime('%Y%m%dT%H%M%S')}")
+  FileUtils.mkdir_p(evidence)
+  # Explicit allowlist: never copy daemon.json (Runtime credentials), config, or
+  # anything outside this run's newly created synthetic home.
+  %w[daemon.log events.ndjson sessions.json turns.json tasks.json session-children.json].each do |name|
+    source = File.join(home, 'runtime', name)
+    FileUtils.cp(source, File.join(evidence, name)) if File.file?(source)
+  end
+  File.write(File.join(evidence, 'model-observations.json'), JSON.pretty_generate(fixture.observations) + "\n")
+  if daemon_pid
+    sample, error, status = child_capture({}, '/usr/bin/sample', daemon_pid.to_s, '2', '1', seconds: 15)
+    File.write(File.join(evidence, 'daemon-sample.txt'), sample + error)
+    ChildSessionDiagnostics.record('diagnostic.sample', pid: daemon_pid, exitstatus: status.exitstatus)
+  end
+  trace = File.join(output, 'trace.jsonl')
+  FileUtils.cp(trace, File.join(evidence, 'trace.jsonl')) if File.file?(trace)
+  evidence
+end
+
+def child_failure_summary(evidence, trace_path)
+  load_json = ->(name) { JSON.parse(File.read(File.join(evidence, name), encoding: Encoding::UTF_8)) }
+  ledger = load_json.call('session-children.json')
+  turns = load_json.call('turns.json').map { |turn| turn.fetch('metadata') }
+  observations = load_json.call('model-observations.json')
+  trace = File.readlines(trace_path, encoding: Encoding::UTF_8).map { |line| JSON.parse(line) }
+  waiting = trace.reverse.find { |event| event['event'] == 'wait.begin' && event['description'] == 'child accepted before parent stop' }
+  sampled = trace.find do |event|
+    waiting && event['event'] == 'diagnostic.sample' && event['monotonic'] >= waiting['monotonic']
+  end
+  calls = trace.select do |event|
+    waiting && event['event'] == 'command.end' && event['command'].start_with?('api session.child.task.list') &&
+      event['monotonic'] >= waiting['monotonic'] && (!sampled || event['monotonic'] <= sampled['monotonic'])
+  end
+  {
+    assignment_statuses: ledger.fetch('assignments').values.map { |entry| entry.dig('task', 'status') }.tally,
+    occupied_child_slots: ledger.fetch('slots').size,
+    queued_unstarted_turns: turns.select { |turn| turn['status'] == 'queued' && turn['active_task_id'].nil? }
+      .map { |turn| turn.slice('id', 'session_id', 'status', 'held', 'attempts', 'active_task_id', 'started_at') },
+    model_requests: observations.size,
+    stop_parent_model_requests: observations.count { |entry| entry['text'].include?('STOP_SCENARIO') },
+    stop_child_model_requests: observations.count { |entry| entry['text'].include?('STOP_CHILD') },
+    task_list_returns_during_failed_wait: calls.size,
+    task_list_max_seconds_during_failed_wait: calls.map { |event| event['seconds'] }.max
+  }
+end
+
 def child_report(output, report)
   FileUtils.mkdir_p(output)
   File.write(File.join(output, 'report.json'), JSON.pretty_generate(report) + "\n")
   lines = report.fetch(:checks).map { |check| "- #{check[:name]}：#{check[:passed] ? '通过' : '失败'}" }
-  File.write(File.join(output, 'report.md'), "# 完整子会话 P0/P1 隔离验收\n\n版本：#{report[:version]}\n\n结果：#{report[:passed] ? '通过' : '失败'}。真实 Runtime、临时 WILLDEEP_HOME、回环假模型，无远端付费调用。\n\n#{lines.join("\n")}\n\n#{report[:error]}\n")
+  title = report[:diagnostic_only] ? '容量后调度隔离诊断' : '完整子会话 P0/P1 隔离验收'
+  text = "# #{title}\n\n版本：#{report[:version]}\n\n结果：#{report[:passed] ? '通过' : '失败'}。真实 Runtime、临时 WILLDEEP_HOME、回环假模型，无远端付费调用。\n\n#{lines.join("\n")}\n\n#{report[:error]}\n"
+  text += "\n未执行：#{report[:not_run].join('；')}。\n" if report[:not_run]
+  text += "\n失败状态快照：\n\n```json\n#{JSON.pretty_generate(report[:failure_summary])}\n```\n" if report[:failure_summary]
+  text += "\n诊断：#{report[:diagnosis]}\n" if report[:diagnosis]
+  text += "\n证据目录：#{report[:failure_evidence]}\n" if report[:failure_evidence]
+  text += "\n清理错误：#{report[:cleanup_error]}\n" if report[:cleanup_error]
+  File.write(File.join(output, 'report.md'), text)
 end
 
 if $PROGRAM_NAME == __FILE__
@@ -211,6 +365,9 @@ if $PROGRAM_NAME == __FILE__
   fixture, checks = ChildSessionModelFixture.new, []
   report = { passed: false, checks: checks, loopback_only: true }
   output = options[:output]
+  FileUtils.mkdir_p(output)
+  ChildSessionDiagnostics.output = output
+  File.write(File.join(output, 'trace.jsonl'), '')
   Dir.mktmpdir('wd-child-sessions-', '/private/tmp') do |root|
     home, workspace = File.join(root, 'home'), File.join(root, 'workspace')
     FileUtils.mkdir_p([home, workspace], mode: 0o700)
@@ -218,13 +375,17 @@ if $PROGRAM_NAME == __FILE__
     config = "version=1\ndefault_provider=\"fixture\"\n[agent]\nmax_turns=12\nsafety_judge=false\nauto_title=false\ninput_suggestions=false\nsmall_model_routing=false\nauto_dispatch_read_only=false\n[local_model]\nenabled=false\n[providers.fixture]\nprovider=\"openai-compatible\"\napi=\"chat-completions\"\napi_base=\"http://127.0.0.1:#{fixture.port}/v1\"\napi_key=\"fixture-only\"\nmodel=\"fixture-model\"\n"
     File.write(File.join(home, 'config.toml'), config, perm: 0o600)
     env = workflow_fixture_env(home).merge('WILLDEEP_WORKSPACE_CHECKPOINTS' => '0')
-    web_pid = nil
+    web_pid = daemon_pid = nil
+    report[:fixture] = { root: root, home: home, workspace: workspace, model_port: fixture.port }
     begin
       version, error, status = Open3.capture3(BIN, '--version')
       raise error unless status.success?
       report[:version] = version.strip
       report[:binary] = { path: File.realpath(BIN), sha256: Digest::SHA256.file(BIN).hexdigest }
       child_api(env, 'workspace.register', root: workspace, name: '完整子会话验收', access: 'full_access', provider_profile: 'fixture')
+      daemon_status, = child_capture(env, BIN, 'daemon', 'status')
+      daemon_pid = daemon_status[/\bpid=(\d+)/, 1]&.to_i
+      report[:fixture][:daemon_pid] = daemon_pid
       capabilities = child_api(env, 'runtime.capabilities')
       raise 'child capabilities missing' unless capabilities.fetch('operations').include?('session.child.start')
       parent = child_api(env, 'session.create', workspace: workspace, title: '调查与证据核验', profile: 'fixture').fetch('id')
@@ -348,10 +509,12 @@ if $PROGRAM_NAME == __FILE__
       checks << { name: '主动停止父会话不取消已受理子任务、结果待处理且不自动拉起', passed: true }
       stopped_snapshot = child_api(env, 'session.child.task.get', parent_session_id: stopped_parent, assignment_id: stopped_task['assignment_id'])
       requests_before_restart = fixture.requests.size
-      %w[stop start].each do |action|
-        out, err, ok = Open3.capture3(env, BIN, 'daemon', action)
-        raise "isolated daemon #{action} failed: #{err} #{out}" unless ok.success?
-      end
+      child_stop_daemon(env)
+      out, err, ok = child_capture(env, BIN, 'daemon', 'start')
+      raise "isolated daemon start failed: #{err} #{out}" unless ok.success?
+      daemon_status, = child_capture(env, BIN, 'daemon', 'status')
+      daemon_pid = daemon_status[/\bpid=(\d+)/, 1]&.to_i
+      report[:fixture][:daemon_pid] = daemon_pid
       recovered = child_api(env, 'session.child.task.get', parent_session_id: stopped_parent, assignment_id: stopped_task['assignment_id'])
       raise 'restart changed durable result identity' unless recovered['result'] == stopped_snapshot['result']
       sleep 2
@@ -511,9 +674,7 @@ if $PROGRAM_NAME == __FILE__
       checks << { name: '模型覆盖只接受父 Profile 可用模型、按目标模型能力写入真实窗口并拒绝未知模型', passed: true,
         child: override_done['child_session_id'], model: 'child-override', context_window: override_session['model_context_window'] }
 
-      report.merge!(passed: true, model_requests: fixture.requests.size, observations: fixture.observations.map { |entry| entry.reject { |key, _| key == :text } })
-      child_report(output, report)
-      puts JSON.pretty_generate(report.reject { |key, _| key == :observations })
+      report.merge!(model_requests: fixture.requests.size, observations: fixture.observations.map { |entry| entry.reject { |key, _| key == :text } })
       if options[:serve]
         log = File.open(File.join(root, 'web.log'), 'w')
         web_pid = Process.spawn(env, BIN, '--web', '--listen', "127.0.0.1:#{options[:port]}", '-w', workspace,
@@ -529,13 +690,31 @@ if $PROGRAM_NAME == __FILE__
       end
     rescue StandardError => error
       report.merge!(passed: false, error: "#{error.class}: #{error.message}")
+      begin
+        report[:failure_evidence] = child_failure_evidence(output, home, fixture, daemon_pid)
+        report[:failure_summary] = child_failure_summary(report[:failure_evidence], File.join(output, 'trace.jsonl'))
+      rescue StandardError => diagnostic_error
+        report[:diagnostic_error] = "#{diagnostic_error.class}: #{diagnostic_error.message}"
+      end
       child_report(output, report)
       raise
     ensure
       fixture.release(:child); fixture.release(:stopped_child); fixture.release(:parent); fixture.release(:capacity)
       workflow_finish_child(web_pid)
-      Open3.capture3(env, BIN, 'daemon', 'stop')
-      fixture.close
+      begin
+        child_stop_daemon(env)
+      rescue StandardError => error
+        report[:passed] = false
+        report[:cleanup_error] = "#{error.class}: #{error.message}"
+        report[:error] ||= "cleanup: #{report[:cleanup_error]}"
+        child_report(output, report)
+        raise
+      ensure
+        fixture.close
+      end
     end
   end
+  report[:passed] = true
+  child_report(output, report)
+  puts JSON.pretty_generate(report.reject { |key, _| key == :observations })
 end

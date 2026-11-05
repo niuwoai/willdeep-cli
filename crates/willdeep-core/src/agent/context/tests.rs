@@ -8,6 +8,7 @@ use std::sync::Mutex;
 pub(super) const WINDOW: u64 = 12_288;
 
 mod recovery_tests;
+mod settings_tests;
 mod usage_tests;
 
 #[tokio::test]

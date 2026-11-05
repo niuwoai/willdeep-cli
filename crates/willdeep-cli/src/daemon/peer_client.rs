@@ -24,6 +24,9 @@ pub(crate) async fn peer_operation(
         ),
         "unsupported coordination operation"
     );
+    if operation.starts_with("session.child.") {
+        return child_operation(home, operation, params, request_id).await;
+    }
     let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
     let params = &params;
     request_with_retry(request_id, |id| async move {
@@ -113,8 +116,33 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
         &self,
     ) -> std::result::Result<Vec<(uuid::Uuid, String)>, willdeep_core::tools::ToolError> {
         child_sessions::ChildStore::new(&self.home)
-            .host_context(self.session_id)
-            .map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()))
+            .host_context_for_turn(self.session_id, self.turn_id)
+            .map_err(
+                |error| match error.downcast::<willdeep_core::tools::ToolError>() {
+                    Ok(error) => error,
+                    Err(error) => willdeep_core::tools::ToolError::Network(error.to_string()),
+                },
+            )
+    }
+
+    fn commit_host_context(
+        &self,
+        candidates: &[(uuid::Uuid, String)],
+        commit: &mut willdeep_core::tools::HostContextCommit<'_>,
+    ) -> std::result::Result<(), willdeep_core::AgentError> {
+        child_sessions::ChildStore::new(&self.home)
+            .commit_host_context_for_turn(self.session_id, self.turn_id, candidates, commit)
+            .map_err(
+                |error| match error.downcast::<willdeep_core::AgentError>() {
+                    Ok(error) => error,
+                    Err(error) => match error.downcast::<willdeep_core::tools::ToolError>() {
+                        Ok(error) => error.into(),
+                        Err(error) => {
+                            willdeep_core::tools::ToolError::Network(error.to_string()).into()
+                        }
+                    },
+                },
+            )
     }
 
     async fn execute_call(
@@ -139,7 +167,7 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
             return self
                 .execute_child(&call.name, arguments, request_id)
                 .await
-                .map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()));
+                .map_err(|error| willdeep_core::tools::ToolError::Network(format!("{error:#}")));
         }
         self.execute(&call.name, arguments).await
     }
@@ -170,6 +198,54 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
     }
 }
 
+fn model_child_params(
+    name: &str,
+    arguments: serde_json::Value,
+) -> Result<(&'static str, serde_json::Map<String, serde_json::Value>)> {
+    let (operation, allowed): (_, &[&str]) = match name {
+        "start_session" => (
+            "session.child.start",
+            &[
+                "title",
+                "prompt",
+                "context",
+                "through_turn_id",
+                "workspace_mode",
+                "worktree_base",
+                "model",
+                "notify",
+                "subscription",
+                "depends_on",
+            ],
+        ),
+        "continue_session" => (
+            "session.child.continue",
+            &[
+                "child_session_id",
+                "prompt",
+                "notify",
+                "subscription",
+                "depends_on",
+            ],
+        ),
+        "retry_session_task" => (
+            "session.child.retry",
+            &["assignment_id", "expected_result_revision"],
+        ),
+        "get_session_task" => ("session.child.task.get", &["assignment_id"]),
+        _ => bail!("unknown child session tool"),
+    };
+    let params = arguments
+        .as_object()
+        .cloned()
+        .context("child tool arguments must be an object")?;
+    anyhow::ensure!(
+        params.keys().all(|key| allowed.contains(&key.as_str())),
+        "child tool parameters cannot override host identity or user controls"
+    );
+    Ok((operation, params))
+}
+
 impl PeerSessionClient {
     async fn execute_child(
         &self,
@@ -177,22 +253,7 @@ impl PeerSessionClient {
         arguments: serde_json::Value,
         request_id: uuid::Uuid,
     ) -> Result<String> {
-        let operation = match name {
-            "start_session" => "session.child.start",
-            "continue_session" => "session.child.continue",
-            "retry_session_task" => "session.child.retry",
-            "get_session_task" => "session.child.task.get",
-            _ => bail!("unknown child session tool"),
-        };
-        let mut params = arguments
-            .as_object()
-            .cloned()
-            .context("child tool arguments must be an object")?;
-        anyhow::ensure!(
-            !params.contains_key("parent_session_id")
-                && !params.contains_key("created_from_turn_id"),
-            "child task source is bound by the host"
-        );
+        let (operation, mut params) = model_child_params(name, arguments)?;
         params.insert(
             "parent_session_id".into(),
             serde_json::to_value(self.session_id)?,
@@ -213,6 +274,39 @@ mod tests {
     use super::*;
     use willdeep_core::peer_sessions::{PeerMessage, PeerMessageStore, PeerOrigin};
     use willdeep_runtime_protocol::{ApiResponse, ErrorCode};
+
+    #[test]
+    fn model_child_calls_cannot_select_user_controls_or_override_host_identity() {
+        for name in [
+            "takeover_session",
+            "detach_session",
+            "set_session_subscription",
+            "session.child.takeover",
+            "session.child.detach",
+            "session.child.task.subscription.set",
+        ] {
+            assert!(model_child_params(name, serde_json::json!({})).is_err());
+        }
+        for key in [
+            "parent_session_id",
+            "created_from_turn_id",
+            "request_id",
+            "operation",
+            "control_state",
+            "expected_control_revision",
+            "expected_subscription_revision",
+        ] {
+            let mut params = serde_json::json!({"title":"Read", "prompt":"Inspect files"});
+            params[key] = serde_json::json!(uuid::Uuid::new_v4());
+            assert!(
+                model_child_params("start_session", params).is_err(),
+                "accepted {key}"
+            );
+        }
+        let (operation, params) = model_child_params("start_session", serde_json::json!({"title":"Read", "prompt":"Inspect files", "subscription":"inbox", "depends_on":[uuid::Uuid::new_v4()]})).unwrap();
+        assert_eq!(operation, "session.child.start");
+        assert_eq!(params["subscription"], "inbox");
+    }
 
     #[tokio::test]
     async fn lost_ack_retry_uses_one_durable_message_identity() {

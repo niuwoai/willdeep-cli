@@ -391,6 +391,12 @@ struct App {
     turn_input_tokens: u64,
     turn_output_tokens: u64,
     turn_first_reply: Option<Duration>,
+    /// Event head at submission; older events cannot affect the submitted turn.
+    runtime_first_reply_after: u64,
+    /// Restoring a running UI never grants a new first-reply clock.
+    runtime_first_reply_eligible: bool,
+    runtime_submitted_turn: Option<uuid::Uuid>,
+    runtime_submitted_task: Option<uuid::Uuid>,
     turn_started: Option<Instant>,
     last_progress_at: Option<Instant>,
     runtime_turn: bool,
@@ -682,6 +688,11 @@ fn busy_input(prompt: &str) -> BusyInput {
         "/workflow" => BusyInput::RunNow,
         "/session" => match value.split_whitespace().nth(1) {
             Some("search") => BusyInput::RunNow,
+            Some("children")
+                if !matches!(value.split_whitespace().nth(2), Some("open" | "parent")) =>
+            {
+                BusyInput::RunNow
+            }
             _ => BusyInput::Refuse,
         },
         "/local" | "/runtime" => BusyInput::Queue,
@@ -2481,6 +2492,15 @@ fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
             app.language.text("天前", "days ago", "日前")
         )
     };
+    if session.delegation_detached {
+        return Some(format!(
+            "{}「{title}」· {}",
+            app.language
+                .text("原始来源", "Original source ", "元の依頼元 "),
+            app.language
+                .text("已脱离父会话", "Detached from parent", "親から切り離し済み")
+        ));
+    }
     if session.parent_session_id.is_some() {
         let kind = if session.delegation_read_only {
             app.language

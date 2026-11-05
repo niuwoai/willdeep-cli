@@ -388,6 +388,7 @@ pub(crate) async fn execute_runtime(
     sink: Arc<dyn EventSink>,
     prepare_execution: impl FnOnce(&willdeep_core::Session) -> Result<()>,
 ) -> Result<RuntimeHarnessOutcome> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("runtime_execution");
     let loaded = LoadedConfig::load(request.config.as_deref())?;
     let language = Language::parse(loaded.file.agent.language.as_deref())?;
     let cli = Cli {
@@ -446,6 +447,7 @@ pub(crate) async fn execute_runtime(
     if let Some(session) = &resumed {
         prepare_execution(session)?;
     }
+    preparation.mark("session_load_and_claim");
     let built = build(
         &cli,
         &loaded,
@@ -469,6 +471,7 @@ pub(crate) async fn execute_runtime(
         },
     )
     .await?;
+    preparation.mark("build_harness");
     let mut session = resumed.unwrap_or_else(|| {
         let mut session = willdeep_core::Session::new(
             built.workspace.clone(),
@@ -497,6 +500,8 @@ pub(crate) async fn execute_runtime(
         let _ownership = ownership;
         return agent_team::execute(&built, &store, &mut session, control, language).await;
     }
+    preparation.mark("session_binding");
+    drop(preparation);
     let outcome = execute_noninteractive(
         &built,
         &store,
@@ -530,6 +535,7 @@ pub(crate) async fn execute_noninteractive(
     language: Language,
     options: ExecutionOptions,
 ) -> Result<HarnessOutcome> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("turn_persistence");
     let checkpointer = match options.ownership {
         Some(ownership) => ownership,
         None => willdeep_core::checkpoint::SessionCheckpointSink {
@@ -539,6 +545,7 @@ pub(crate) async fn execute_noninteractive(
         .claim()?,
     };
     store.refresh_execution(session)?;
+    preparation.mark("claim_and_refresh");
     if options.allow_compress_command && prompt.trim() == "/compress" {
         let result = built
             .agent
@@ -582,6 +589,7 @@ pub(crate) async fn execute_noninteractive(
     if crate::titling::apply_derived_title(session, &prompt, !attachments.is_empty()) {
         store.save(session)?;
     }
+    preparation.mark("derived_title");
     let (history, user_message) = if options.replay_existing_user_message {
         let user_message = session
             .messages
@@ -618,6 +626,8 @@ pub(crate) async fn execute_noninteractive(
         &built.provider_config.model,
         !built.provider_config.api_key.is_empty(),
     );
+    preparation.mark("user_message");
+    drop(preparation);
     let run_result = built
         .agent
         .run_checkpointed_with_summary(
@@ -817,6 +827,7 @@ pub(crate) async fn build(
     resumed: Option<&willdeep_core::Session>,
     frontend: HarnessFrontend,
 ) -> Result<BuiltHarness> {
+    let mut preparation = willdeep_core::preparation::PreparationTrace::new("harness");
     // Resolve before gateway/provider requests. Invalid explicit profiles never
     // silently run with legacy defaults.
     let mut effective = LoadedConfig {
@@ -857,7 +868,9 @@ pub(crate) async fn build(
     let session_id = resumed
         .map(|session| session.id)
         .unwrap_or_else(uuid::Uuid::new_v4);
+    preparation.mark("runtime_parameters");
     let selection = crate::magpie_integration::resolve(cli, loaded, resumed).await?;
+    preparation.mark("provider_selection");
     let provider_profile = selection.name;
     let selected_profile = selection.profile;
     let profile = selected_profile.as_ref();
@@ -871,6 +884,7 @@ pub(crate) async fn build(
         configured_dialect,
         api_pinned(cli, profile),
     );
+    preparation.mark("gateway_capabilities");
     if let Some(dialect) = gateway.dialect {
         provider_config.dialect = dialect;
     }
@@ -991,10 +1005,12 @@ pub(crate) async fn build(
         } => (allowed_skills.as_slice(), allowed_mcp_servers.as_slice()),
         _ => (&[][..], &[][..]),
     };
+    preparation.mark("providers_and_team");
     let skills = Arc::new(
         willdeep_core::SkillCatalog::discover(&workspace, &loaded.file.skills.roots)
             .allow_only(allowed_skills),
     );
+    preparation.mark("skills");
     let mut mcp_servers = loaded.file.mcp_servers.clone();
     if !allowed_mcp_servers.is_empty() {
         mcp_servers.retain(|name, _| allowed_mcp_servers.contains(name));
@@ -1007,6 +1023,7 @@ pub(crate) async fn build(
             .await
             .context("initialize MCP servers")?
     };
+    preparation.mark("mcp");
     // 已启用插件的 MCP 工具（docs/PLUGINS.md「聊天里的插件工具」）：定义读持久化
     // 目录，调用时才拉起插件，优先经 Web 进程的插件网关。显式限定了 MCP 服务
     // 白名单的 Runtime 任务不带插件工具——白名单里写的是配置里的服务名。
@@ -1385,6 +1402,7 @@ pub(crate) async fn build(
         });
         (tools, Arc::new(catalog), goal_continuation, base_profiles)
     };
+    preparation.mark("tools_and_workers");
     let workflows = workflows::WorkflowService::new(
         home,
         session_id,
@@ -1405,6 +1423,23 @@ pub(crate) async fn build(
             )?))
             .with_workflow_host(workflows.clone())
     };
+    let tools = if screenplay_plugins_allowed {
+        let config_path = cli
+            .config
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(crate::config::default_config_path)?;
+        tools.with_configuration_host(Arc::new(
+            crate::configuration_host::ChatConfigurationHost::new(
+                home.to_path_buf(),
+                config_path,
+                parent_provider_config.clone(),
+                follow_main.clone(),
+            )?,
+        ))
+    } else {
+        tools
+    };
     // 构建界面只读取团队状态；恢复由取得会话执行权后的执行入口负责。
     let command_watcher = if delegation_child {
         None
@@ -1418,8 +1453,10 @@ pub(crate) async fn build(
     // 事件内核先于 Agent 建起来，并立刻把上一次运行没投递完的事件读回来。
     // 读不出来不挡启动：事件是通知不是账本，为一份坏日志让整个 Runtime 起不
     // 来才是真的坏。（内核本身在工具注册表之前就建好了：monitor 要往里发事件。）
+    preparation.mark("workflow_and_watchers");
     let kernel_store = willdeep_core::kernel_store::KernelStore::new(home);
     let restored = willdeep_core::kernel_store::restore_into(&kernel, &kernel_store);
+    preparation.mark("kernel_restore");
     for (path, reason) in &restored.quarantined {
         eprintln!(
             "willdeep: quarantined a damaged event log ({reason}); kept at {}",
@@ -1494,28 +1531,11 @@ pub(crate) async fn build(
     if let Some((vision_provider, vision_model)) = image_fallback {
         agent = agent.with_image_fallback(vision_provider, format!("some.im / {vision_model}"));
     }
-    // 与 Swift App 同一候选顺序：显式压缩档案 / 显式 compressor_model /
-    // some.im 托管压缩器（仅在没有显式配置时）→ 会话模型兜底。
-    let mut compressors = Vec::new();
-    for (compressor_config, hosted_prompt) in
-        compressor_candidate_configs(loaded, &parent_provider_config, kind)?
-    {
-        let context = if hosted_prompt {
-            "initialize hosted context compressor"
-        } else {
-            "initialize context compressor provider"
-        };
-        compressors.push((
-            build_provider(compressor_config).context(context)?,
-            hosted_prompt,
-        ));
-    }
-    // 会话模型兜底跟着 `/model` 走。
-    compressors.push((follow_main.clone(), false));
-    agent = agent.with_compressors(compressors);
-    if let Some(window) = compressor_context_window(&loaded.file) {
-        agent = agent.with_compressor_window(window);
-    }
+    agent = agent.with_compression_settings(build_compression_settings(
+        loaded,
+        &parent_provider_config,
+        follow_main.clone(),
+    )?);
 
     // 标题同样本地优先、会话 Provider 兜底；请求仍只带一问一答各 800 字。
     // 轮次结束后的「下一句预测」用同一档模型候选，但开关各管各的：关掉自动标题
@@ -1542,6 +1562,8 @@ pub(crate) async fn build(
         workflows.bind_agent(&agent);
         Some(workflows::WorkflowDriverGuard::new(workflows.clone()))
     };
+    preparation.mark("agent_and_auxiliaries");
+    drop(preparation);
     Ok(BuiltHarness {
         workflows,
         _workflow_driver: workflow_driver,
@@ -1636,6 +1658,30 @@ pub(crate) fn resolve_parent_provider_config(
     }
     let profile = loaded.select_provider(requested)?;
     crate::provider_settings::ProviderEnvironment::read().resolve(profile, Some(cli))
+}
+
+/// 启动与 TUI 手动刷新共用：全部候选成功构建后才交给 Agent 一次替换，
+/// `None` 窗口也必须保留，才能清除上一次刷新设置的限制。
+pub(crate) fn build_compression_settings(
+    loaded: &LoadedConfig,
+    parent: &ProviderConfig,
+    follow_main: Arc<dyn willdeep_core::provider::Provider>,
+) -> Result<willdeep_core::agent::CompressionSettings> {
+    let mut candidates = Vec::new();
+    for (config, hosted_prompt) in compressor_candidate_configs(loaded, parent, parent.kind)? {
+        let context = if hosted_prompt {
+            "initialize hosted context compressor"
+        } else {
+            "initialize context compressor provider"
+        };
+        candidates.push((build_provider(config).context(context)?, hosted_prompt));
+    }
+    // 主模型句柄保持原样；兜底继续跟随 `/model`。
+    candidates.push((follow_main, false));
+    Ok(willdeep_core::agent::CompressionSettings {
+        candidates,
+        context_window: compressor_context_window(&loaded.file),
+    })
 }
 
 /// 上下文压缩在会话模型兜底之前的候选。
@@ -2766,6 +2812,80 @@ api_key = "local"
         )
         .expect_err("an unknown profile must not silently fall back to the session model");
         assert!(error.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn complete_compression_settings_preserve_fallback_and_clear_removed_window() {
+        let parent = parent_config(ProviderKind::SomeIm, "main-a");
+        let main =
+            willdeep_core::provider::MainModelHandle::new(build_provider(parent.clone()).unwrap());
+        let loaded = LoadedConfig {
+            file: toml::from_str(
+                r#"version = 1
+[agent]
+compressor_model = "summary-a"
+compressor_context_window = 32768
+"#,
+            )
+            .unwrap(),
+        };
+        let explicit = build_compression_settings(&loaded, &parent, main.follower()).unwrap();
+        assert_eq!(explicit.context_window, Some(32_768));
+        assert_eq!(explicit.candidates.len(), 2);
+        assert!(!explicit.candidates[0].1);
+        assert_eq!(
+            explicit.candidates[0].0.ledger_identity().unwrap().model,
+            "summary-a"
+        );
+        main.set_model("main-b").unwrap();
+        assert_eq!(
+            explicit.candidates[1].0.ledger_identity().unwrap().model,
+            "main-b"
+        );
+        assert_eq!(
+            explicit.candidates[0].0.ledger_identity().unwrap().model,
+            "summary-a"
+        );
+
+        let reset = build_compression_settings(
+            &LoadedConfig {
+                file: crate::config::ConfigFile::default(),
+            },
+            &parent,
+            main.follower(),
+        )
+        .unwrap();
+        assert_eq!(reset.context_window, None);
+        assert_eq!(reset.candidates.len(), 2);
+        assert!(reset.candidates[0].1);
+        assert_eq!(
+            reset.candidates[0].0.ledger_identity().unwrap().model,
+            SOMEIM_CONTEXT_COMPRESSOR_MODEL
+        );
+        assert_eq!(
+            reset.candidates[1].0.ledger_identity().unwrap().model,
+            "main-b"
+        );
+        assert_eq!(parent.model, "main-a");
+    }
+
+    #[test]
+    fn compression_settings_reject_an_unusable_selected_profile() {
+        let parent = parent_config(ProviderKind::SomeIm, "main");
+        let main =
+            willdeep_core::provider::MainModelHandle::new(build_provider(parent.clone()).unwrap());
+        for profile in [
+            "api_base = 'http://localhost:1/v1'\napi_key = 'fixture'",
+            "api_base = 'not-a-url'\napi_key = 'fixture'\nmodel = 'summary'",
+            "api_base_env = 'WILLDEEP_TEST_MISSING_COMPRESSOR_ENDPOINT'\napi_key = 'fixture'\nmodel = 'summary'",
+        ] {
+            let loaded = LoadedConfig {
+                file: toml::from_str(&format!(
+                    "version = 1\n[agent]\ncompressor_profile = 'summary'\n[providers.summary]\nprovider = 'openai-compatible'\n{profile}\n",
+                )).unwrap(),
+            };
+            assert!(build_compression_settings(&loaded, &parent, main.follower()).is_err());
+        }
     }
 
     /// 摘要预算跟着压缩器走：显式窗口 > 档案的 `context_window` > 会话窗口。

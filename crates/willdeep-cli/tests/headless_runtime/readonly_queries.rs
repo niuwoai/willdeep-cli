@@ -111,7 +111,7 @@ fn readonly_queries_preserve_stale_runtime_and_pending_records() {
     std::fs::write(runtime.join("sessions.json"), b"[]").unwrap();
     // No daemon was started by this test; cleanup must not operate on the fake lease.
     let mut guard = TestGuard::new(root, home.clone());
-    guard.daemon_stopped = true;
+    guard.skip_daemon_cleanup = true;
     assert_queries_do_not_start(&home, "Runtime");
     std::fs::write(runtime.join("daemon.json"), b"invalid state").unwrap();
     assert_queries_do_not_start(&home, "Runtime");

@@ -48,7 +48,7 @@
 | [Magpie 社区 Agent](MAGPIE_AGENT_PLAN.md) | 独立 JSON 连接、临时 `magpie-cli` Provider、双端插件与验收边界 |
 | [Runtime Daemon 与工作区](RUNTIME_DAEMON.md) | 常驻控制面、工作区策略、Session/Turn、事件流、Diff |
 | [子 Agent 与后台任务](SUBAGENTS.md) | 八种 Profile、模型绑定、Worktree 审查与合并 |
-| [完整子会话](CHILD_SESSIONS.md) | P0 fresh 只读对话、与 Worker 的区别、打开/续做/查询/停止及验收边界 |
+| [完整子会话](CHILD_SESSIONS.md) | fresh/fork、只读/worktree、接管/脱离、结果订阅、任务依赖及验收边界 |
 | [0.143.0-rc4 Windows Clippy 修复验收](verification/0.143.0-rc4.md) | 非 Unix 分支 `bail!` 后不可达语句的根因、修复与 Windows 目标交叉 clippy |
 | [0.143.0-rc3 Windows Magpie 传输测试修复验收](verification/0.143.0-rc3.md) | Windows 子进程环境块与回环连接超时的根因、修复与诊断改进 |
 | [0.143.0-rc2 Windows 栈溢出修复验收](verification/0.143.0-rc2.md) | daemon/Web 默认 CLI 构造的栈开销根因、修复与阈值回归 |
@@ -97,7 +97,8 @@
 | 文档 | 内容 |
 |---|---|
 | [CLI / TUI / Runtime 路线图](CLI_TUI_RUNTIME_ROADMAP.md) | 分阶段实施记录与验收 |
-| [完整子会话补齐方案](decisions/2026-11-04-child-sessions.md) | P0/P1 已实现并有本机验收记录；P2 提案、身份边界与故障恢复契约 |
+| [完整子会话补齐方案](decisions/2026-11-04-child-sessions.md) | P0/P1 历史分期、身份边界与故障恢复契约 |
+| [完整子会话 P2](decisions/2026-11-05-child-sessions-p2.md) | 用户控制权、脱离投影、三档通知与不可变任务依赖 |
 | [Goal Teams 引用与落地映射](GOAL_TEAMS.md) | 执行期角色 / 版本锚定里程碑 / 归档规范（canonical 在 Xedit 仓库） |
 | [长程自主执行引用与落地映射](LONG_HORIZON_AUTONOMY.md) | 续推契约 / 预算与软停 / 计划工具化 / 重启可续（canonical 在 Xedit 仓库） |
 | [Xedit 工具能力对照](XEDIT_TOOL_PARITY.md) | 工具覆盖度与 Computer Use 路线 |

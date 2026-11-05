@@ -4,6 +4,64 @@ use willdeep_runtime_protocol::child_session::{ChildSessionTask, ChildSessionTas
 
 type Id = uuid::Uuid;
 
+pub(super) fn router() -> axum::Router<Arc<WebState>> {
+    axum::Router::new()
+        .route(
+            "/api/sessions/{id}/children",
+            axum::routing::get(list).post(start),
+        )
+        .route(
+            "/api/sessions/{id}/children/capabilities",
+            axum::routing::get(capabilities),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}",
+            axum::routing::get(get),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}/retry",
+            axum::routing::post(retry),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}/stop",
+            axum::routing::post(stop),
+        )
+        .route(
+            "/api/sessions/{id}/children/{child}/continue",
+            axum::routing::post(continue_task),
+        )
+        .route(
+            "/api/sessions/{id}/children/links/{child}",
+            axum::routing::get(link),
+        )
+        .route(
+            "/api/sessions/{id}/children/links/{child}/takeover",
+            axum::routing::post(takeover),
+        )
+        .route(
+            "/api/sessions/{id}/children/links/{child}/detach",
+            axum::routing::post(detach),
+        )
+        .route(
+            "/api/sessions/{id}/children/{assignment}/subscription",
+            axum::routing::post(subscription),
+        )
+}
+
+fn add_coordination_params(
+    params: &mut serde_json::Value,
+    subscription: Option<String>,
+    depends_on: Vec<Id>,
+) {
+    // Do not send unknown P2 fields to older Runtimes for a plain P0/P1 request.
+    if let Some(subscription) = subscription {
+        params["subscription"] = subscription.into();
+    }
+    if !depends_on.is_empty() {
+        params["depends_on"] = serde_json::json!(depends_on);
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Start {
@@ -20,6 +78,10 @@ pub(super) struct Start {
     worktree_base: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    subscription: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<Id>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +89,25 @@ pub(super) struct Start {
 pub(super) struct Continue {
     prompt: String,
     request_id: Id,
+    #[serde(default)]
+    subscription: Option<String>,
+    #[serde(default)]
+    depends_on: Vec<Id>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Control {
+    request_id: Id,
+    expected_control_revision: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Subscription {
+    request_id: Id,
+    expected_subscription_revision: u64,
+    subscription: String,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +149,29 @@ async fn authorize_child(
     parent: &Session,
     child: Id,
 ) -> Result<(), WebError> {
+    if !SessionStore::new(&state.home).path(child).exists() {
+        // Waiting dependencies may not have prepared a Core conversation yet.
+        // Their durable Link still authorizes status/control through this parent.
+        let link: willdeep_runtime_protocol::child_session::ChildSessionLink =
+            serde_json::from_value(
+                call(
+                    state,
+                    "session.child.link.get",
+                    serde_json::json!({
+                        "parent_session_id": parent.id, "child_session_id": child
+                    }),
+                    None,
+                )
+                .await?,
+            )
+            .map_err(|error| WebError::internal(error.to_string()))?;
+        if link.parent_session_id != parent.id || link.child_session_id != child {
+            return Err(WebError::forbidden(
+                "child conversation relation did not match",
+            ));
+        }
+        return Ok(());
+    }
     authorized_event_session(state, child).await?;
     let session = SessionStore::new(&state.home)
         .load(child)
@@ -102,14 +206,47 @@ async fn authorize_task(
             "assignment belongs to another parent conversation",
         ));
     }
-    if task.status == willdeep_runtime_protocol::child_session::ChildSessionTaskStatus::Preparing
-        && !SessionStore::new(&state.home)
-            .path(task.child_session_id)
-            .exists()
+    if !SessionStore::new(&state.home)
+        .path(task.child_session_id)
+        .exists()
     {
+        // The Runtime already validated this durable assignment's parent. A
+        // waiting, cancelled or blocked task may never have prepared Core state;
+        // its history must stay queryable, including on P0/P1 without link.get.
         return Ok(());
     }
     authorize_child(state, parent, task.child_session_id).await
+}
+
+fn legacy_subscription(value: &mut serde_json::Value) {
+    if let Some(task) = value.as_object_mut()
+        && !task.contains_key("subscription")
+    {
+        let subscription = if task.get("notify").and_then(serde_json::Value::as_str) == Some("none")
+        {
+            "none"
+        } else {
+            "auto_wake"
+        };
+        task.insert("subscription".into(), subscription.into());
+    }
+}
+
+fn decode_task(mut value: serde_json::Value) -> Result<ChildSessionTask, WebError> {
+    legacy_subscription(&mut value);
+    serde_json::from_value(value).map_err(|error| WebError::internal(error.to_string()))
+}
+
+fn decode_task_page(mut value: serde_json::Value) -> Result<ChildSessionTaskPage, WebError> {
+    if let Some(tasks) = value
+        .get_mut("tasks")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for task in tasks {
+            legacy_subscription(task);
+        }
+    }
+    serde_json::from_value(value).map_err(|error| WebError::internal(error.to_string()))
 }
 
 async fn call(
@@ -147,17 +284,46 @@ async fn get_task(
         None,
     )
     .await?;
-    let task: ChildSessionTask =
-        serde_json::from_value(value).map_err(|error| WebError::internal(error.to_string()))?;
+    let task = decode_task(value)?;
     authorize_task(state, parent, &task).await?;
     Ok(task)
+}
+
+#[derive(Serialize)]
+pub(super) struct TaskPage {
+    #[serde(flatten)]
+    page: ChildSessionTaskPage,
+    capabilities: Vec<String>,
+}
+
+async fn runtime_capabilities(state: &WebState) -> Result<serde_json::Value, WebError> {
+    crate::daemon::runtime_operation(
+        &state.home,
+        "runtime.capabilities",
+        serde_json::json!({}),
+        None,
+    )
+    .await
+    .map_err(WebError::from_anyhow)
+}
+
+fn child_capabilities(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|capability| capability.starts_with("session_children"))
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(super) async fn list(
     State(state): State<Arc<WebState>>,
     Path(id): Path<Id>,
     Query(page): Query<Page>,
-) -> Result<Json<ChildSessionTaskPage>, WebError> {
+) -> Result<Json<TaskPage>, WebError> {
     let parent = private_parent(&state, id).await?;
     let limit = page.limit.unwrap_or(50);
     if !(1..=100).contains(&limit) {
@@ -174,12 +340,12 @@ pub(super) async fn list(
         None,
     )
     .await?;
-    let page: ChildSessionTaskPage =
-        serde_json::from_value(value).map_err(|error| WebError::internal(error.to_string()))?;
+    let page = decode_task_page(value)?;
     for task in &page.tasks {
         authorize_task(&state, &parent, task).await?;
     }
-    Ok(Json(page))
+    let capabilities = child_capabilities(&runtime_capabilities(&state).await?);
+    Ok(Json(TaskPage { page, capabilities }))
 }
 
 pub(super) async fn start(
@@ -218,21 +384,18 @@ pub(super) async fn start(
             ));
         }
     }
-    call(
-        &state,
-        "session.child.start",
-        serde_json::json!({
-            "parent_session_id":id, "title":body.title, "prompt":body.prompt,
-            "context":context,
-            "through_turn_id":through_turn_id,
-            "workspace_mode":body.workspace_mode.unwrap_or_else(|| "shared_read_only".into()),
-            "worktree_base":body.worktree_base.unwrap_or_else(|| "head".into()),
-            "model":body.model
-        }),
-        Some(body.request_id),
-    )
-    .await
-    .map(Json)
+    let mut params = serde_json::json!({
+        "parent_session_id":id, "title":body.title, "prompt":body.prompt,
+        "context":context,
+        "through_turn_id":through_turn_id,
+        "workspace_mode":body.workspace_mode.unwrap_or_else(|| "shared_read_only".into()),
+        "worktree_base":body.worktree_base.unwrap_or_else(|| "head".into()),
+        "model":body.model
+    });
+    add_coordination_params(&mut params, body.subscription, body.depends_on);
+    call(&state, "session.child.start", params, Some(body.request_id))
+        .await
+        .map(Json)
 }
 
 pub(super) async fn get(
@@ -250,12 +413,14 @@ pub(super) async fn continue_task(
 ) -> Result<Json<serde_json::Value>, WebError> {
     let parent = private_parent(&state, id).await?;
     authorize_child(&state, &parent, child).await?;
+    let mut params = serde_json::json!({
+        "parent_session_id":id, "child_session_id":child, "prompt":body.prompt
+    });
+    add_coordination_params(&mut params, body.subscription, body.depends_on);
     call(
         &state,
         "session.child.continue",
-        serde_json::json!({
-            "parent_session_id":id, "child_session_id":child, "prompt":body.prompt
-        }),
+        params,
         Some(body.request_id),
     )
     .await
@@ -291,4 +456,156 @@ pub(super) async fn stop(
     )
     .await
     .map(Json)
+}
+
+async fn capabilities(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<Id>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    private_parent(&state, id).await?;
+    runtime_capabilities(&state).await.map(Json)
+}
+
+async fn link(
+    State(state): State<Arc<WebState>>,
+    Path((id, child)): Path<(Id, Id)>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    let parent = private_parent(&state, id).await?;
+    authorize_child(&state, &parent, child).await?;
+    let mut value = call(
+        &state,
+        "session.child.link.get",
+        serde_json::json!({
+            "parent_session_id": id, "child_session_id": child
+        }),
+        None,
+    )
+    .await?;
+    value["capabilities"] =
+        serde_json::json!(child_capabilities(&runtime_capabilities(&state).await?));
+    Ok(Json(value))
+}
+
+async fn change_control(
+    state: Arc<WebState>,
+    parent_id: Id,
+    child_id: Id,
+    body: Control,
+    operation: &str,
+) -> Result<Json<serde_json::Value>, WebError> {
+    let parent = private_parent(&state, parent_id).await?;
+    authorize_child(&state, &parent, child_id).await?;
+    call(
+        &state,
+        operation,
+        serde_json::json!({
+            "parent_session_id": parent_id, "child_session_id": child_id,
+            "expected_control_revision": body.expected_control_revision
+        }),
+        Some(body.request_id),
+    )
+    .await
+    .map(Json)
+}
+
+async fn takeover(
+    State(state): State<Arc<WebState>>,
+    Path((id, child)): Path<(Id, Id)>,
+    Json(body): Json<Control>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    change_control(state, id, child, body, "session.child.takeover").await
+}
+
+async fn detach(
+    State(state): State<Arc<WebState>>,
+    Path((id, child)): Path<(Id, Id)>,
+    Json(body): Json<Control>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    change_control(state, id, child, body, "session.child.detach").await
+}
+
+async fn subscription(
+    State(state): State<Arc<WebState>>,
+    Path((id, assignment)): Path<(Id, Id)>,
+    Json(body): Json<Subscription>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    let parent = private_parent(&state, id).await?;
+    get_task(&state, &parent, assignment).await?;
+    call(
+        &state,
+        "session.child.task.subscription.set",
+        serde_json::json!({
+            "parent_session_id": id, "assignment_id": assignment,
+            "expected_subscription_revision": body.expected_subscription_revision,
+            "subscription": body.subscription
+        }),
+        Some(body.request_id),
+    )
+    .await
+    .map(Json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coordination_fields_are_omitted_for_legacy_requests() {
+        let mut legacy = serde_json::json!({"prompt": "Read the code"});
+        add_coordination_params(&mut legacy, None, Vec::new());
+        assert_eq!(legacy, serde_json::json!({"prompt": "Read the code"}));
+        let dependency = Id::new_v4();
+        add_coordination_params(&mut legacy, Some("inbox".into()), vec![dependency]);
+        assert_eq!(legacy["subscription"], "inbox");
+        assert_eq!(legacy["depends_on"], serde_json::json!([dependency]));
+    }
+
+    #[test]
+    fn legacy_runtime_notifications_survive_list_and_detail_projection() {
+        use willdeep_runtime_protocol::child_session::ChildSessionSubscription;
+        for (notify, subscription, expected) in [
+            ("none", None, ChildSessionSubscription::None),
+            ("on_task_terminal", None, ChildSessionSubscription::AutoWake),
+            ("none", Some("inbox"), ChildSessionSubscription::Inbox),
+        ] {
+            let mut value = serde_json::json!({
+                "assignment_id": Id::new_v4(), "link_id": Id::new_v4(),
+                "parent_session_id": Id::new_v4(), "child_session_id": Id::new_v4(),
+                "request_id": Id::new_v4(), "title": "Legacy task", "prompt": "Read",
+                "notify": notify, "status": "completed", "created_at": 1, "updated_at": 2
+            });
+            if let Some(subscription) = subscription {
+                value["subscription"] = subscription.into();
+            }
+            let task = decode_task(value.clone()).unwrap();
+            let page = decode_task_page(serde_json::json!({
+                "tasks": [value], "next_cursor": null
+            }))
+            .unwrap();
+            assert_eq!(task.subscription, expected);
+            assert_eq!(page.tasks[0].subscription, expected);
+        }
+    }
+
+    #[test]
+    fn user_control_requires_a_revision_and_rejects_forged_identity() {
+        let request = Id::new_v4();
+        assert!(
+            serde_json::from_value::<Control>(serde_json::json!({
+                "request_id": request
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<Control>(serde_json::json!({
+                "request_id": request, "expected_control_revision": 1, "operator": true
+            }))
+            .is_err()
+        );
+        let control: Control = serde_json::from_value(serde_json::json!({
+            "request_id": request, "expected_control_revision": 3
+        }))
+        .unwrap();
+        assert_eq!(control.expected_control_revision, 3);
+    }
 }

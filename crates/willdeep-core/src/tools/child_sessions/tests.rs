@@ -92,6 +92,72 @@ fn child_tool_parameters_reject_spoofed_identity_and_unsupported_modes() {
     assert!(validate_call(&call(GET, json!({"assignment_id":"not-a-uuid"}))).is_err());
 }
 
+#[test]
+fn subscription_and_dependency_parameters_are_strict_and_only_available_on_creation() {
+    let id = uuid::Uuid::new_v4();
+    for (name, base) in [
+        (START, json!({"title":"Read", "prompt":"Inspect it"})),
+        (
+            CONTINUE,
+            json!({"child_session_id":id, "prompt":"Follow up"}),
+        ),
+    ] {
+        for subscription in ["none", "inbox", "auto_wake"] {
+            let mut args = base.clone();
+            args["subscription"] = json!(subscription);
+            args["depends_on"] = json!([id]);
+            validate_call(&call(name, args)).unwrap();
+        }
+        for (key, value) in [
+            ("subscription", json!("on_task_terminal")),
+            ("subscription", json!(null)),
+            ("depends_on", json!(["not-a-uuid"])),
+            ("depends_on", json!([id, id])),
+            ("depends_on", json!(null)),
+            ("depends_on", json!([3])),
+            (
+                "depends_on",
+                json!((0..17).map(|_| uuid::Uuid::new_v4()).collect::<Vec<_>>()),
+            ),
+            ("operation", json!("session.child.takeover")),
+            ("expected_control_revision", json!(1)),
+            ("control_state", json!("delegated")),
+            ("subscription_revision", json!(1)),
+            ("delegation_detached", json!(false)),
+        ] {
+            let mut args = base.clone();
+            args[key] = value;
+            assert!(
+                validate_call(&call(name, args)).is_err(),
+                "accepted {name}: {key}"
+            );
+        }
+    }
+    for name in [RETRY, GET] {
+        let mut args = json!({"assignment_id":id,"subscription":"inbox"});
+        if name == RETRY {
+            args["expected_result_revision"] = json!(1);
+        }
+        assert!(validate_call(&call(name, args)).is_err());
+    }
+    let definitions = definitions();
+    assert_eq!(definitions.len(), 4);
+    assert!(
+        definitions
+            .iter()
+            .all(|tool| [START, CONTINUE, RETRY, GET].contains(&tool.name.as_str()))
+    );
+    for name in [START, CONTINUE] {
+        let schema = &definitions
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap()
+            .parameters;
+        assert_eq!(schema["properties"]["depends_on"]["maxItems"], 16);
+        assert_eq!(schema["additionalProperties"], false);
+    }
+}
+
 #[tokio::test]
 async fn bound_child_tools_preserve_call_identity_and_enforce_read_only() {
     let root = std::env::temp_dir();

@@ -1693,6 +1693,7 @@ pub(super) async fn event_loop(
                                     },
                                 }
                             }
+                            if child_session_commands::dispatch(&mut app, session, store, runtime).await { continue; }
                             let prompt=app.take_submitted_input();
                             // 斜杠命令是操作不是对话：不回显成 `You:` 行，结果仍由各命令自己写。
                             // 送去模型的提示词（含 /goal、/local 这类会开工的）照常回显。
@@ -1798,7 +1799,12 @@ pub(super) async fn event_loop(
                                 }
                                 continue;
                             }
-                            if prompt.trim()=="/compress" {dispatch_compress(&mut app,session,store,&agent,&runtime.tx)?;continue;}
+                            if prompt.trim()=="/compress" {
+                                if let Err(error)=dispatch_compress(&mut app,session,store,&agent,&runtime.tx,runtime.runtime_submit.config.as_deref(),&runtime.provider_config) {
+                                    app.append_transcript(format!("Error: {}: {error:#}",language.text("无法开始上下文压缩","Could not start context compression","コンテキスト圧縮を開始できません")));
+                                }
+                                continue;
+                            }
                             if let Some(parsed)=daemon_commands::parse(&prompt) {
                                 match parsed {
                                     Ok(command)=>{

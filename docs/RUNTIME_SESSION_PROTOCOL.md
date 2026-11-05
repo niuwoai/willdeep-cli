@@ -2,7 +2,7 @@
 
 > 状态：实施中
 > 首个目标版本：v0.17.0
-> 最后更新：2026-11-04（v0.143.0-rc1 完整子会话 P1）
+> 最后更新：2026-11-05（v0.144.0-rc1 完整子会话 P2）
 
 ## 1. 目标
 
@@ -55,7 +55,7 @@ Runtime Session（长期存在）
 
 消息正文和附件继续使用 Core `SessionStore` 作为唯一来源；Runtime 元数据不得复制另一份消息历史。
 
-### 完整子会话与委派（0.143.0-rc1 P1）
+### 完整子会话与委派（0.144.0-rc1 P2）
 
 完整子会话自身仍是 RuntimeSession，拥有独立 `root_agent_id`、Core 历史和 Turn；它不是上文的 Worker Child Agent。可选 `parent_session_id` 记录任务树父级；`delegation_read_only` 只在共享只读模式为真，worktree 子会话为假并由工作区可写上限约束。`model_context_window` 记录创建时按目标模型解析的窗口快照，避免继承父模型数值。旧记录缺省按无父关系、无委派上限读取，`started_by` 继续表示历史 fork 来源。任务提出者/创建者与树形 parent 分开理解；P1 不开放子再派生或兄弟任务提案。
 
@@ -64,6 +64,10 @@ Runtime Session（长期存在）
 支持 `context=fresh|fork` 与 `workspace_mode=shared_read_only|worktree`。fork 必须指定已完成的父 Turn，只复制不可变消息前缀、闭合工具调用和内联附件，清空 Goal、计划、队列、压缩检查点、执行检查点、通知已读与运行游标；共享只读模式受独立能力上限约束，恢复执行时必须重新应用。worktree 在取得执行槽后创建，默认从 HEAD 建立，`snapshot` 基线冻结父目录修改；权限最多为工作区可写，任务结束保留 worktree 与分支，不自动合并、提交、推送或删除。可写子会话可派 Worker，父子共享家族并发/队列和按记录 ID 去重的家族用量；只读子会话仍禁止 Worker。capability 为 `session_children`，另声明 `session_children_fork/worktree/model/workers`；操作及字段见 [控制 API](RUNTIME_CONTROL_API.md) 与 [指南](CHILD_SESSIONS.md)。
 
 账本持久化创建受理点、稳定幂等身份、结果 outbox 和父 `wake_batch_id`，崩溃后按固定身份对账。结果由实际 Turn/最终 Task 形成，父历史/消费回执确认后才 ack；不能用一次事件发布或助手自述替代。父 stop 不取消已受理子任务，持久抑制父自动续推，待用户明确继续才解除；宿主委派与子结果来源不得冒充用户输入。实际回归与覆盖边界见 [验收记录](verification/0.143.0-rc1.md)。
+
+P2 将 Link 控制状态 `delegated/user_owned/detached` 与当前树形关系分开；`control_revision` 约束用户接管/脱离的并发修改。Session 的 `delegation_detached` 缺省 false，变为 true 后客户端忽略 parent 与 started_by 的树形缩进；原 parent 仍作为授权和家族用量来源保存。接管不取消已有 Turn，撤销未来父控制与自动投递；历史 assignment/result 仍可查。
+
+Task 新增三档 `subscription`（none/inbox/auto_wake）、`subscription_revision` 与固定 `depends_on`。等待依赖投影为 preparing + waiting_on_dependencies，不创建 Turn、不占执行槽；全部前置成功后才派发，失败或控制撤销使后继 blocked。旧 notify 枚举不扩展；缺少新字段时按旧策略读取。私有协调账本 schema 2 升级前备份 v1，旧 Runtime 拒绝读写 v2；API 仍以 1.0 信封和 capability 协商扩展。具体约定见 [P2 决策](decisions/2026-11-05-child-sessions-p2.md)。
 
 ### RuntimeTurn
 

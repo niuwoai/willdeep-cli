@@ -1,0 +1,23 @@
+{
+  "suite": "config-chat-runtime",
+  "checks": [
+    {
+      "name": "default Runtime chat exposes built-in configuration tools and saves all three fields",
+      "status": "passed"
+    },
+    {
+      "name": "chat snapshots and approval previews contain no credential or source comments",
+      "status": "passed"
+    },
+    {
+      "name": "ordinary next Runtime Turn uses the newly saved compressor",
+      "status": "passed"
+    },
+    {
+      "name": "strict chat can preview but a refused save leaves WILLDEEP_HOME config unchanged",
+      "status": "passed"
+    }
+  ],
+  "passed": 4,
+  "failed": 0
+}

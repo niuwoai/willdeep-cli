@@ -27,10 +27,13 @@ mod foreground_recovery;
 mod local_partial;
 #[path = "headless_runtime/monitor_events.rs"]
 mod monitor_events;
+#[path = "headless_runtime/process_cleanup.rs"]
+mod process_cleanup;
 #[path = "headless_runtime/prompt_variant.rs"]
 mod prompt_variant;
 #[path = "headless_runtime/provider_environment.rs"]
 mod provider_environment;
+use process_cleanup::{ChildGuard, TestGuard};
 #[path = "headless_runtime/readonly_queries.rs"]
 mod readonly_queries;
 #[path = "headless_runtime/retry_wait.rs"]
@@ -1238,30 +1241,35 @@ fn local_compression_bridge_preserves_seeded_constraint_then_resumes() {
         &home.join("sessions").join(format!("{id}.json")),
         serde_json::json!({"version":1,"id":id,"title":"Compression evaluation","workspace":workspace,"profile":null,"created_at":1,"updated_at":1,"messages":messages}),
     );
-    let mut command = willdeep(&home)
-        .args([
-            "--config",
-            path_text(&config),
-            "--workspace",
-            path_text(&workspace),
-            "--resume",
-            &id.to_string(),
-            "--no-tui",
-            "--json",
-            "--web-input-json",
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut command = ChildGuard(Some(
+        willdeep(&home)
+            .args([
+                "--config",
+                path_text(&config),
+                "--workspace",
+                path_text(&workspace),
+                "--resume",
+                &id.to_string(),
+                "--no-tui",
+                "--json",
+                "--web-input-json",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    ));
     command
+        .0
+        .as_mut()
+        .unwrap()
         .stdin
         .take()
         .unwrap()
         .write_all(br#"{"prompt":"/compress","attachments":[]}"#)
         .unwrap();
-    let output = command.wait_with_output().unwrap();
+    let output = command.0.take().unwrap().wait_with_output().unwrap();
     assert_success(&output, "explicit evaluation compression");
     let events = String::from_utf8(output.stdout)
         .unwrap()
@@ -1531,17 +1539,24 @@ fn daemon_upgrade_drains_active_work_and_hands_off_without_loss() {
     write_private_config(&config, provider.api_base());
     let _guard = TestGuard::new(root, home.clone());
 
-    let active = willdeep(&home)
-        .args([
-            "run",
-            "--config",
-            path_text(&config),
-            "--workspace",
-            path_text(&workspace),
-            "active during handoff",
-        ])
-        .spawn()
-        .expect("start active Runtime turn");
+    let mut active = ChildGuard(Some(
+        willdeep(&home)
+            .args([
+                "run",
+                "--config",
+                path_text(&config),
+                "--workspace",
+                path_text(&workspace),
+                "active during handoff",
+            ])
+            .spawn()
+            .expect("start active Runtime turn"),
+    ));
+    eprintln!(
+        "upgrade fixture: home={} active CLI={}",
+        home.display(),
+        active.0.as_ref().unwrap().id()
+    );
     wait_until(Duration::from_secs(10), || provider.requests() == 1);
 
     let async_runtime = tokio::runtime::Runtime::new().expect("create async test Runtime");
@@ -1549,10 +1564,17 @@ fn daemon_upgrade_drains_active_work_and_hands_off_without_loss() {
 
     let before = daemon_status(&home);
     let old_pid = status_value(&before, "pid");
-    let upgrade = willdeep(&home)
-        .args(["daemon", "upgrade", "--force", "--timeout", "15"])
-        .spawn()
-        .expect("start Runtime handoff");
+    let mut upgrade = ChildGuard(Some(
+        willdeep(&home)
+            .args(["daemon", "upgrade", "--force", "--timeout", "15"])
+            .spawn()
+            .expect("start Runtime handoff"),
+    ));
+    eprintln!(
+        "upgrade fixture: home={} upgrade CLI={}",
+        home.display(),
+        upgrade.0.as_ref().unwrap().id()
+    );
     wait_until(Duration::from_secs(5), || {
         daemon_status(&home).starts_with("draining\t")
     });
@@ -1578,14 +1600,26 @@ fn daemon_upgrade_drains_active_work_and_hands_off_without_loss() {
         "rejected work must not reach Provider"
     );
 
-    let active = active
-        .wait_with_output()
+    let active_status = active
+        .0
+        .as_mut()
+        .unwrap()
+        .wait()
         .expect("wait for active Runtime turn");
-    assert_success(&active, "active turn during Runtime handoff");
-    let upgrade = upgrade
-        .wait_with_output()
+    assert!(
+        active_status.success(),
+        "active turn during Runtime handoff: {active_status}"
+    );
+    let upgrade_status = upgrade
+        .0
+        .as_mut()
+        .unwrap()
+        .wait()
         .expect("wait for Runtime handoff");
-    assert_success(&upgrade, "Runtime handoff");
+    assert!(
+        upgrade_status.success(),
+        "Runtime handoff: {upgrade_status}"
+    );
     async_runtime.block_on(assert_event_stream_closed(&mut event_stream));
     let after = daemon_status(&home);
     assert!(after.starts_with("running\t"));
@@ -1782,7 +1816,6 @@ fn daemon_restart_recovers_persisted_execution_resources_exactly_once() {
         .output()
         .expect("restart recovered Runtime");
     assert_success(&restarted, "restart recovered Runtime");
-    guard.daemon_stopped = false;
     wait_until(Duration::from_secs(10), || {
         daemon_status(&home).starts_with("running\t")
     });
@@ -1925,7 +1958,12 @@ async fn assert_event_stream_closed(stream: &mut willdeep_runtime_client::Ndjson
 }
 
 fn willdeep(home: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_willdeep"));
+    let image = process_cleanup::fixture_executable(home);
+    let mut command = Command::new(if image.exists() {
+        image.as_os_str()
+    } else {
+        std::ffi::OsStr::new(env!("CARGO_BIN_EXE_willdeep"))
+    });
     command
         .env("WILLDEEP_HOME", home)
         .env_remove("WILLDEEP_API_BASE")
@@ -2493,60 +2531,6 @@ fn status_value<'a>(status: &'a str, name: &str) -> &'a str {
         .split_whitespace()
         .find_map(|part| part.strip_prefix(&format!("{name}=")))
         .unwrap_or_else(|| panic!("missing {name} in Runtime status: {status}"))
-}
-
-struct TestGuard {
-    root: PathBuf,
-    home: PathBuf,
-    daemon_stopped: bool,
-}
-
-struct ChildGuard(Option<std::process::Child>);
-
-impl ChildGuard {
-    fn stop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-impl TestGuard {
-    fn new(root: PathBuf, home: PathBuf) -> Self {
-        Self {
-            root,
-            home,
-            daemon_stopped: false,
-        }
-    }
-
-    fn stop_daemon(&mut self) {
-        let _ = willdeep(&self.home).args(["daemon", "stop"]).output();
-        self.daemon_stopped = true;
-    }
-}
-
-impl Drop for TestGuard {
-    fn drop(&mut self) {
-        if !self.daemon_stopped {
-            let _ = willdeep(&self.home).args(["daemon", "stop"]).output();
-        }
-        if thread::panicking() {
-            eprintln!(
-                "preserving failed Headless Runtime test at {}",
-                self.root.display()
-            );
-            return;
-        }
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
 }
 
 struct MockProvider {

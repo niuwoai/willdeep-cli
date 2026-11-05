@@ -115,7 +115,7 @@ module ConfigSchema
           description: "上下文压缩用的模型；some.im 默认走网关托管压缩，其它提供商默认取会话模型" },
         { key: "compressor_profile", label: "压缩提供商档案", type: "string", default: nil, ref: "providers",
           description: "把上下文压缩整套换到这个档案的端点、密钥与模型，主模型不变" },
-        { key: "compressor_context_window", label: "压缩上下文窗口", type: "int", default: nil, presets: TOKEN_PRESETS,
+        { key: "compressor_context_window", label: "压缩上下文窗口", type: "int", default: nil, min: 4000, max: 1_048_576, presets: TOKEN_PRESETS,
           description: "摘要器一次能吃下的原料上限；不写取压缩档案的 context_window，再没有就沿用会话窗口" }
       ]
     },

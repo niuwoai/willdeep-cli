@@ -334,7 +334,12 @@ pub(super) fn session_picker_result_line(
     let mut origin = session_origin_label(result.origin, language)
         .map(|label| format!(" [{label}]"))
         .unwrap_or_default();
-    if result.parent_session_id.is_some() {
+    if result.delegation_detached {
+        origin.push_str(&format!(
+            " [{}]",
+            language.text("已脱离", "detached", "切り離し済み")
+        ));
+    } else if result.parent_session_id.is_some() {
         let label = if result.delegation_read_only {
             language.text(
                 "只读子会话",
@@ -380,6 +385,14 @@ fn session_origin_label(
     }
 }
 
+fn active_parent(result: &willdeep_runtime_protocol::SessionSearchResult) -> Option<uuid::Uuid> {
+    if result.delegation_detached {
+        None
+    } else {
+        result.parent_session_id.or(result.started_by)
+    }
+}
+
 /// 把分凉出来的会话挪到来源正下方。
 ///
 /// 来源不在这份结果里（被截掉、被过滤掉、或指向自己）就留在原位，当普通会话。
@@ -395,9 +408,7 @@ fn nest_forked_sessions(
         .iter()
         .enumerate()
         .filter_map(|(index, result)| {
-            let parent = result
-                .parent_session_id
-                .or(result.started_by)
+            let parent = active_parent(result)
                 .filter(|parent| *parent != result.id && present.contains(parent))?;
             Some((index, parent))
         })
@@ -436,7 +447,7 @@ fn session_picker_depths(results: &[willdeep_runtime_protocol::SessionSearchResu
         .iter()
         .enumerate()
         .map(|(index, result)| {
-            let Some(parent) = result.parent_session_id.or(result.started_by) else {
+            let Some(parent) = active_parent(result) else {
                 return 0;
             };
             let parent_at = results.iter().position(|candidate| candidate.id == parent);
@@ -444,8 +455,7 @@ fn session_picker_depths(results: &[willdeep_runtime_protocol::SessionSearchResu
                 return 0;
             };
             let attached = results[parent_at + 1..=index].iter().all(|candidate| {
-                candidate.parent_session_id.or(candidate.started_by) == Some(parent)
-                    || candidate.id == parent
+                active_parent(candidate) == Some(parent) || candidate.id == parent
             });
             usize::from(attached)
         })
@@ -492,6 +502,7 @@ mod tests {
             started_by,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
         }
     }
 
@@ -518,5 +529,23 @@ mod tests {
         let orphan = nest_forked_sessions(vec![result(child, "孤儿", Some(parent))]);
         assert_eq!(orphan.len(), 1);
         assert_eq!(session_picker_depths(&orphan), vec![0]);
+    }
+
+    #[test]
+    fn detached_sessions_keep_audit_ids_without_parent_or_fork_nesting() {
+        let parent = uuid::Uuid::new_v4();
+        let child = uuid::Uuid::new_v4();
+        let mut detached = result(child, "Independent", Some(parent));
+        detached.parent_session_id = Some(parent);
+        detached.delegation_detached = true;
+        let listed = nest_forked_sessions(vec![detached, result(parent, "Source", None)]);
+        assert_eq!(listed[0].id, child);
+        assert_eq!(listed[0].parent_session_id, Some(parent));
+        assert_eq!(listed[0].started_by, Some(parent));
+        assert_eq!(session_picker_depths(&listed), vec![0, 0]);
+        let line = session_picker_result_line(&listed[0], false, Language::En, false, 0);
+        assert!(line.contains("[detached]"));
+        assert!(!line.contains("fork"));
+        assert!(!line.contains("child]"));
     }
 }

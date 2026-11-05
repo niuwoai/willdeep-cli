@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 /// 打开历史会话面板所需的初始状态：关键词进输入框，其余过滤器随每次刷新一起发。
 #[derive(Default)]
@@ -330,9 +331,21 @@ async fn switch_impl(
     store.save(session)?;
     // 带基线加载：切过来之后这份快照会一直被写回，基线必须记着改动前的执行状态。
     let mut target = store.load_baselined(id).context("load target Session")?;
+    let same_family = session.parent_session_id.unwrap_or(session.id)
+        == target.parent_session_id.unwrap_or(target.id);
+    let user_prepared = prepare_child_workspace_for_open(
+        &runtime.home,
+        session,
+        &target,
+        allow_workspace_change,
+        app.language,
+    )
+    .await?;
     let cross_workspace = target.workspace.canonicalize()? != session.workspace.canonicalize()?;
     let resolved_profile = if cross_workspace {
-        if !allow_workspace_change {
+        let user_family = same_family
+            && (session.delegation_detached || target.delegation_detached || user_prepared);
+        if !allow_workspace_change && !user_family {
             bail!("TUI in-place switching currently requires the same Workspace");
         }
         activate_target_workspace(app, &mut target, runtime).await?
@@ -364,6 +377,40 @@ async fn switch_impl(
         session.id,
         session.title
     ))
+}
+
+async fn prepare_child_workspace_for_open(
+    home: &Path,
+    current: &Session,
+    target: &Session,
+    allow_workspace_change: bool,
+    language: Language,
+) -> Result<bool> {
+    let Some(parent) = target.parent_session_id else {
+        return Ok(false);
+    };
+    let same_family = current.parent_session_id.unwrap_or(current.id) == parent;
+    if target.workspace.exists() && !allow_workspace_change && !same_family {
+        return Ok(false);
+    }
+    anyhow::ensure!(
+        allow_workspace_change || same_family,
+        "{}",
+        language.text(
+            "目标子会话不属于当前会话来源",
+            "The target child belongs to another source",
+            "対象の子セッションは別の依頼元に属しています",
+        )
+    );
+    crate::daemon::prepare_child_workspace_for_user_open(home, parent, target.id, &target.workspace)
+        .await
+        .with_context(|| {
+            language.text(
+                "准备子会话工作区失败",
+                "Could not prepare the child workspace",
+                "子セッションの作業領域を準備できません",
+            )
+        })
 }
 
 async fn activate_target_workspace(

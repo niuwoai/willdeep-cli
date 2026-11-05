@@ -22,6 +22,7 @@ mod cli_defaults;
 mod composer_references;
 mod config;
 mod config_plugin;
+mod configuration_host;
 mod daemon;
 mod detached_delivery;
 mod doctor;
@@ -788,7 +789,14 @@ async fn run() -> Result<()> {
             .or(loaded.file.agent.language.as_deref()),
     )?;
     let home = willdeep_home()?;
-    if !administrative {
+    // 内置插件只服务交互式 TUI 的插件面板：`--web` 由 PluginWebState 惰性安装，
+    // `run` 等 headless 一次性调用不经过插件面板，预装只会把首轮请求推后数秒。
+    let interactively_starting_tui = !cli.web
+        && !cli.no_tui
+        && !cli.web_input_json
+        && cli.prompt.is_empty()
+        && std::io::stdin().is_terminal();
+    if !administrative && interactively_starting_tui {
         favorites_plugin::ensure_installed(&home).await?;
         video_studio_plugin::ensure_installed(&home).await?;
     }

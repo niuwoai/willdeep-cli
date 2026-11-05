@@ -6,7 +6,7 @@
 
 | 对象 | 工作范围 | 主要入口 | 当前边界 |
 |---|---|---|---|
-| 完整子会话 | 独立 Session/root Agent/历史/Turn，可持续对话 | `session child`、TUI `/session children`、Web 父聊天任务区与会话树 | P1 fresh/fork、共享只读或独立 worktree；已实现但尚未发布 |
+| 完整子会话 | 独立 Session/root Agent/历史/Turn，可持续对话 | `session child`、TUI `/session children`、Web 父聊天任务区与会话树 | P0/P1/P2 已实现；本机验证与平台限制见版本台账 |
 | 专业 Worker | 当前会话内的有界任务、执行 Run 与报告 | `spawn_agent`、Agent/Run 查询与详情 | 单层团队，职责/工具/写集合/预算受限 |
 | 手动 Fork | 从完成的历史边界另开一条对话 | 会话分叉入口 | 记录历史来源，不自动订阅委派结果 |
 | 独立会话协作 | 同宿主同项目会话间协调消息 | TUI `/peers`、Web/手机收件箱 | 已读、模型消费和执行结果分开记录 |
@@ -15,7 +15,7 @@
 
 ## 已实现范围
 
-### 完整子会话 P0/P1
+### 完整子会话 P0/P1/P2
 
 父会话可委派调查并立即继续自身工作；用户能打开子对话、插话、查询、续做、显式重试及停止具体委派。每次 assignment 绑定具体 Turn，任务终态不表示整条 Session 永久结束，普通后续聊天也不自动成为旧 assignment 的新任务。
 
@@ -23,7 +23,7 @@ P1 支持 `context=fresh|fork` 与 `workspace_mode=shared_read_only|worktree`。
 
 协调账本持久保存关系、创建意图、稳定请求身份、assignment/Turn、结果 outbox 和父唤醒批次。结果以 Turn/Task 为准，模型报告待核验；重放按稳定身份去重，事件已收/客户端已读不等于父模型已处理。停止父会话不取消已受理子任务，但持久抑制父自动续推、保留待处理结果；明确继续父会话才解除抑制。
 
-P0/P1 已通过既有本机隔离 Rust/Web、Runtime/API/CLI、宽窄 PTY 与浏览器验收，本次提交尚未发布；真实模型表现和其他原生平台未获本轮证明。P2、子再派生和兄弟任务提案入口仍属后续阶段。任务提出者/创建者与树形 parent 独立。参数、家族容量及恢复竞态只在[完整子会话指南](../CHILD_SESSIONS.md)与[分期方案](../decisions/2026-11-04-child-sessions.md)维护。
+P0/P1 已通过既有本机隔离 Rust/Web、Runtime/API/CLI、宽窄 PTY 与浏览器验收。P2 支持用户接管、脱离、三档结果订阅与 assignment 依赖：控制权与树形投影分开，历史、只读上限和家族归属保留；依赖等待不占执行槽，非成功前置使后继 blocked。任务提出者/创建者、树形 parent 与历史来源独立；子再派生和兄弟任务提案仍不开放。参数和恢复竞态以[指南](../CHILD_SESSIONS.md)、[P2 决策](../decisions/2026-11-05-child-sessions-p2.md)与协议源码为准，本版执行结果见[验收台账](../verification/0.144.0-rc1.md)；真实模型表现与其他原生平台未获本轮证明。
 
 ### 专业 Worker、预算与恢复
 

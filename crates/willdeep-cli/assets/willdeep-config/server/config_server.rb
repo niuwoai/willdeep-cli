@@ -18,6 +18,7 @@ $LOAD_PATH.unshift(lib_dir) unless $LOAD_PATH.include?(lib_dir)
 
 require "json"
 require "fileutils"
+require "digest"
 require "toml_lite"
 require "config_doc"
 require "config_file"
@@ -30,7 +31,7 @@ require "rule_library"
 module WilldeepConfig
   PROTOCOL_VERSION = "2025-06-18"
   SERVER_NAME = "config"
-  SERVER_VERSION = "0.6.0-rc5"
+  SERVER_VERSION = "0.6.0-rc7"
   MASK = "••••"
   ABSENT = :__absent__
   OCTAL_FILE_MODE = 0o600
@@ -107,7 +108,7 @@ module WilldeepConfig
     # ==== 路径与环境 ====
 
     def default_config_path
-      env = ENV["WD_CONFIG_FILE"].to_s
+      env = ENV["WD_CONFIG_FILE"].to_s.dup.force_encoding(Encoding::UTF_8)
       return File.expand_path(env) unless env.strip.empty?
       File.join(Dir.home, ".willdeep", "config.toml")
     end
@@ -115,13 +116,13 @@ module WilldeepConfig
     # 技能与规则都放在 WillDeep 主目录下。宿主通过 WD_HOME 传入；没传时退回
     # 配置文件所在目录，那正是默认的 ~/.willdeep。
     def willdeep_home
-      env = ENV["WD_HOME"].to_s
+      env = ENV["WD_HOME"].to_s.dup.force_encoding(Encoding::UTF_8)
       return File.expand_path(env) unless env.strip.empty?
       File.dirname(config_path)
     end
 
     def default_backup_dir
-      env = ENV["WD_CONFIG_BACKUP_DIR"].to_s
+      env = ENV["WD_CONFIG_BACKUP_DIR"].to_s.dup.force_encoding(Encoding::UTF_8)
       return File.expand_path(env) unless env.strip.empty?
       File.join(Dir.home, "Library", "Application Support", "WillDeep",
                 "plugin-data", "willdeep-config", "backups")
@@ -352,24 +353,48 @@ module WilldeepConfig
       rescue ConfigDoc::RenderError => e
         return Json.error("render_failed", e.message)
       end
-      if (error = intake_dependency_error(normalized, rendered))
+      if (error = dependency_error(normalized, rendered))
         return Json.error("invalid_edits", error)
       end
 
-      Json.obj(
+      result = Json.obj(
         ["ok", true], ["valid", true], ["path", path],
-        ["diff", masked_diff(text, rendered)], ["changes", changes], ["warnings", []]
+        ["diff", masked_diff(text, rendered)], ["changes", changes], ["warnings", []],
+        ["revision", revision_of(text, exists)]
       )
+      # 私有宿主传输：Rust 用完整 ConfigFile 解析和 validate 检查候选，绝不转给模型。
+      result["candidate"] = rendered if ENV["WD_CONFIG_CHAT"] == "1"
+      result
+    end
+
+    def revision_of(text, exists)
+      exists ? Digest::SHA256.hexdigest(text) : "missing"
     end
 
     def tool_apply(args)
       path = resolve_path(args)
       return Json.error("invalid_edits", "apply requires confirm=true") unless args["confirm"] == true
+      # 跨配置服务进程共用同一目标锁；锁覆盖 revision 检查、备份、写入与回滚。
+      lock_path = File.join(File.dirname(path), ".#{File.basename(path)}.willdeep.lock")
+      File.open(lock_path, File::RDWR | File::CREAT, OCTAL_FILE_MODE) do |lock|
+        lock.flock(File::LOCK_EX)
+        begin
+          apply_locked(args, path)
+        ensure
+          lock.flock(File::LOCK_UN)
+        end
+      end
+    end
+
+    def apply_locked(args, path)
       edits = args["edits"]
       return Json.error("invalid_edits", "edits 必须是数组") unless edits.is_a?(Array)
       return Json.error("invalid_edits", "edits 不能为空") if edits.empty?
 
       text, exists = read_config_text(path)
+      if args.key?("expectedRevision") && args["expectedRevision"] != revision_of(text, exists)
+        return Json.error("conflict", "配置已变化，请重新查看并预览后再保存")
+      end
       base_root = nil
       base_entries = []
       if exists
@@ -403,7 +428,7 @@ module WilldeepConfig
       rescue ConfigDoc::RenderError => e
         return Json.error("render_failed", e.message)
       end
-      if (error = intake_dependency_error(normalized, rendered))
+      if (error = dependency_error(normalized, rendered))
         return Json.error("invalid_edits", error)
       end
 
@@ -454,6 +479,14 @@ module WilldeepConfig
       end
 
       if parsed
+        parsed[:entries].each do |entry|
+          ConfigSchema.value_errors(entry.section, entry.key, entry.value).each do |message|
+            errors << { "line" => entry.line + 1, "message" => "#{key_label(entry.section, entry.key)}：#{message}" }
+          end
+        end
+        if (error = dependency_error([], text))
+          errors << { "line" => nil, "message" => error }
+        end
         unknown = unknown_keys(parsed[:entries])
         first_line = {}
         parsed[:entries].each { |e| first_line[[e.section, e.key]] ||= e.line + 1 }
@@ -674,6 +707,23 @@ module WilldeepConfig
       end
       return nil if ConfigSchema.static_groups.any? { |g| g[:section] == section }
       "schema 未收录节 #{section}，拒绝写入（未知内容不会被本插件改动）"
+    end
+
+    # 检查最终文档，因此同一批可新增档案并引用，也可清除引用并删除档案。
+    def dependency_error(edits, rendered)
+      root = TomlLite.parse_document(rendered)[:root]
+      agent = root["agent"]
+      if agent.is_a?(Hash) && agent.key?("compressor_profile")
+        profile = agent["compressor_profile"]
+        unless profile.is_a?(String) && !profile.strip.empty?
+          return "agent.compressor_profile 必须是非空字符串"
+        end
+        providers = root["providers"]
+        unless providers.is_a?(Hash) && providers[profile.strip].is_a?(Hash)
+          return "agent.compressor_profile 引用的提供商档案不存在"
+        end
+      end
+      intake_dependency_error(edits, rendered)
     end
 
     # 实例联邦挂在入口监听上：Rust 每次加载配置都会校验

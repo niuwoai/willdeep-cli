@@ -1,0 +1,117 @@
+{
+  "events": 20,
+  "displayed": 20,
+  "median_ms": 77.38699996843934,
+  "p95_ms": 354.5029999804683,
+  "max_ms": 354.5029999804683,
+  "max_display_gap_ms": 389.0290000126697,
+  "display_updates": 17,
+  "first_reply_seconds": 2.95,
+  "samples": [
+    {
+      "marker": "FLOW0000",
+      "delay_ms": 227.44700004113838
+    },
+    {
+      "marker": "FLOW0001",
+      "delay_ms": 117.67999996664003
+    },
+    {
+      "marker": "FLOW0002",
+      "delay_ms": 76.7589999595657
+    },
+    {
+      "marker": "FLOW0003",
+      "delay_ms": 39.82299997005612
+    },
+    {
+      "marker": "FLOW0004",
+      "delay_ms": 153.85599998990074
+    },
+    {
+      "marker": "FLOW0005",
+      "delay_ms": 47.814999998081475
+    },
+    {
+      "marker": "FLOW0006",
+      "delay_ms": 108.7279999628663
+    },
+    {
+      "marker": "FLOW0007",
+      "delay_ms": 65.1499999803491
+    },
+    {
+      "marker": "FLOW0008",
+      "delay_ms": 37.51999995438382
+    },
+    {
+      "marker": "FLOW0009",
+      "delay_ms": 77.38699996843934
+    },
+    {
+      "marker": "FLOW0010",
+      "delay_ms": 41.41400003572926
+    },
+    {
+      "marker": "FLOW0011",
+      "delay_ms": 152.38600003067404
+    },
+    {
+      "marker": "FLOW0012",
+      "delay_ms": 45.22199998609722
+    },
+    {
+      "marker": "FLOW0013",
+      "delay_ms": 48.568999976851046
+    },
+    {
+      "marker": "FLOW0014",
+      "delay_ms": 103.99099998176098
+    },
+    {
+      "marker": "FLOW0015",
+      "delay_ms": 58.646999998018146
+    },
+    {
+      "marker": "FLOW0016",
+      "delay_ms": 354.5029999804683
+    },
+    {
+      "marker": "FLOW0017",
+      "delay_ms": 248.57699999120086
+    },
+    {
+      "marker": "FLOW0018",
+      "delay_ms": 150.0639999867417
+    },
+    {
+      "marker": "FLOW0019",
+      "delay_ms": 48.59199997736141
+    }
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/agent-first-response-latency/target/debug/willdeep",
+  "root": "/private/tmp/wd-stream-20261105-85221-gx1hqi",
+  "history_entries": 20,
+  "historical_runtime_events": 0,
+  "execution": "runtime",
+  "ui_mode": "compact",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "model": "fixture",
+      "stream": true
+    }
+  ],
+  "input_interval_ms": 100.0,
+  "runtime_stream_http_status": 200,
+  "observed_session_rewrites": 7,
+  "graceful_exit": true,
+  "saved_answer_complete": true,
+  "cursor_flushed_on_exit": true,
+  "runtime_event_median_ms": 72.49099999899045,
+  "runtime_event_p95_ms": 352.344999962952,
+  "submit_to_first_body_seconds": 4.527224999968894,
+  "stream_duration_seconds": 1.9099850000347942,
+  "idle_child_ledger_commits": 0,
+  "first_reply_passed": true
+}

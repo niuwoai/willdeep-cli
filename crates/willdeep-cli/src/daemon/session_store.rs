@@ -2,6 +2,7 @@ use super::*;
 
 mod child_sessions;
 mod deferred;
+mod execution;
 mod mobile_context;
 mod turn_queue;
 
@@ -44,6 +45,8 @@ pub(crate) struct RuntimeSession {
     pub parent_session_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub delegation_read_only: bool,
+    #[serde(default)]
+    pub delegation_detached: bool,
     /// Context window resolved for a delegated model override; never inherited
     /// from the parent's different model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +301,7 @@ pub(crate) struct RuntimeSessionSearchResult {
     pub(super) parent_session_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub(super) delegation_read_only: bool,
+    pub(super) delegation_detached: bool,
     pub(super) title: String,
     pub(super) workspace: PathBuf,
     pub(super) status: RuntimeSessionStatus,
@@ -588,6 +592,7 @@ impl RuntimeSessionStore {
             started_by: core.started_by,
             parent_session_id: core.parent_session_id,
             delegation_read_only: core.delegation_read_only,
+            delegation_detached: core.delegation_detached,
             model_context_window: core.model_context_window,
             workspace,
             profile: core.profile.clone(),
@@ -754,6 +759,7 @@ impl RuntimeSessionStore {
             started_by: Some(id),
             parent_session_id: core.parent_session_id,
             delegation_read_only: core.delegation_read_only,
+            delegation_detached: core.delegation_detached,
             model_context_window: core.model_context_window,
             workspace: source.workspace,
             profile: target_profile,
@@ -1045,6 +1051,7 @@ impl RuntimeSessionStore {
                 started_by: session.started_by.or(core.started_by),
                 parent_session_id: session.parent_session_id.or(core.parent_session_id),
                 delegation_read_only: session.delegation_read_only || core.delegation_read_only,
+                delegation_detached: session.delegation_detached || core.delegation_detached,
                 title: core.title,
                 workspace: session.workspace,
                 status: session.status,
@@ -1142,6 +1149,7 @@ impl RuntimeSessionStore {
                 started_by: digest.started_by,
                 parent_session_id: digest.parent_session_id,
                 delegation_read_only: digest.delegation_read_only,
+                delegation_detached: digest.delegation_detached,
                 title: digest.title,
                 workspace: digest_workspace,
                 status: RuntimeSessionStatus::Idle,
@@ -1523,120 +1531,26 @@ impl RuntimeSessionStore {
     pub fn schedulable_sessions(&self) -> Result<Vec<uuid::Uuid>> {
         let sessions = self.lock()?;
         let turns = self.turns_lock()?;
-        Ok(sessions
+        let mut oldest = HashMap::<uuid::Uuid, u64>::new();
+        for turn in turns
             .values()
-            .filter(|session| {
-                session.active_turn_id.is_none()
-                    && session.status != RuntimeSessionStatus::Archived
-                    && turns.values().any(|turn| {
-                        turn.metadata.session_id == session.id
-                            && turn.metadata.status == RuntimeTurnStatus::Queued
-                            && !turn.metadata.held
-                    })
-            })
-            .map(|session| session.id)
-            .collect())
-    }
-
-    pub fn claim_next(&self, session_id: uuid::Uuid) -> Result<Option<ClaimedRuntimeTurn>> {
-        self.children
-            .transaction(|ledger| self.claim_next_under_control(session_id, ledger))
-    }
-
-    fn claim_next_under_control(
-        &self,
-        session_id: uuid::Uuid,
-        ledger: &mut super::child_sessions::Ledger,
-    ) -> Result<Option<ClaimedRuntimeTurn>> {
-        let mut sessions = self.lock()?;
-        let session = sessions
-            .get_mut(&session_id)
-            .context("Runtime Session not found")?;
-        if session.active_turn_id.is_some()
-            || matches!(
-                session.status,
-                RuntimeSessionStatus::Queued
-                    | RuntimeSessionStatus::Running
-                    | RuntimeSessionStatus::WaitingApproval
-                    | RuntimeSessionStatus::WaitingAnswer
-                    | RuntimeSessionStatus::Archived
-            )
+            .filter(|turn| turn.metadata.status == RuntimeTurnStatus::Queued && !turn.metadata.held)
         {
-            return Ok(None);
+            let Some(session) = sessions.get(&turn.metadata.session_id).filter(|session| {
+                session.active_turn_id.is_none() && session.status != RuntimeSessionStatus::Archived
+            }) else {
+                continue;
+            };
+            oldest
+                .entry(session.id)
+                .and_modify(|sequence| *sequence = (*sequence).min(turn.metadata.queue_sequence))
+                .or_insert(turn.metadata.queue_sequence);
         }
-        let mut turns = self.turns_lock()?;
-        let Some(turn) = turns
-            .values_mut()
-            .filter(|turn| {
-                turn.metadata.session_id == session_id
-                    && turn.metadata.status == RuntimeTurnStatus::Queued
-                    && !turn.metadata.held
-            })
-            .min_by_key(|turn| turn.metadata.queue_sequence)
-        else {
-            return Ok(None);
-        };
-        if !self.check_child_claim(session, turn, ledger)? {
-            let stale_wake = turn
-                .origin_client
-                .as_deref()
-                .is_some_and(|origin| origin.starts_with(super::child_sessions::WAKE_ORIGIN));
-            if stale_wake {
-                turn.metadata.status = RuntimeTurnStatus::Cancelled;
-                turn.metadata.completed_at = Some(now());
-                persist_turns(&self.turns_path, &turns)?;
-            }
-            return Ok(None);
-        }
-        self.children.persist(ledger)?;
-        turn.metadata.attempts = turn.metadata.attempts.saturating_add(1);
-        let mut core = self
-            .core
-            .load_baselined(session_id)
-            .with_context(|| format!("load Core Session {session_id}"))?;
-        if core.magpie_integration != session.magpie_integration {
-            core.magpie_integration = session.magpie_integration;
-            self.core.save(&mut core)?;
-        }
-        let core_message_count = core.messages.len();
-        turn.metadata.message_generation = core.compression_generation;
-        turn.metadata.message_start = Some(if turn.replay_existing_user_message {
-            core_message_count
-                .checked_sub(1)
-                .context("recovered Turn is missing its persisted user message")?
-        } else {
-            core_message_count
-        });
-        turn.metadata.message_end = None;
-        session.status = RuntimeSessionStatus::Queued;
-        session.active_turn_id = Some(turn.metadata.id);
-        session.updated_at = now();
-        session.last_error = None;
-        let claimed = ClaimedRuntimeTurn {
-            metadata: turn.metadata.clone(),
-            request: SubmitTask {
-                execution_session_id: None,
-                team_control: turn.team_control.clone(),
-                prompt: turn.prompt.clone(),
-                attachments: turn.attachments.clone(),
-                workspace: session.workspace.clone(),
-                workspace_access: None,
-                approval_handle: None,
-                instruction_inbox: None,
-                workspace_skills: None,
-                workspace_mcp_servers: None,
-                profile: session.profile.clone(),
-                model: session.model.clone(),
-                config: session.config.clone(),
-                session_id: Some(session.id),
-                turn_id: Some(turn.metadata.id),
-                origin_client: turn.origin_client.clone(),
-                replay_existing_user_message: turn.replay_existing_user_message,
-            },
-        };
-        persist_turns(&self.turns_path, &turns)?;
-        persist_sessions(&self.path, &sessions)?;
-        Ok(Some(claimed))
+        // Repair and restart must preserve durable queue order. HashMap order
+        // otherwise lets newer children repeatedly take newly available slots.
+        let mut ready = oldest.into_iter().collect::<Vec<_>>();
+        ready.sort_unstable_by_key(|(session, sequence)| (*sequence, *session));
+        Ok(ready.into_iter().map(|(session, _)| session).collect())
     }
 
     pub fn bind_task(&self, turn_id: uuid::Uuid, task_id: uuid::Uuid) -> Result<bool> {
@@ -1671,83 +1585,6 @@ impl RuntimeSessionStore {
         Ok(true)
     }
 
-    /// Called after the Core execution lease is acquired, before any new message.
-    pub fn prepare_execution(
-        &self,
-        task_id: uuid::Uuid,
-        core: &willdeep_core::Session,
-    ) -> Result<()> {
-        self.children
-            .transaction(|ledger| self.prepare_execution_under_control(task_id, core, ledger))
-    }
-
-    fn prepare_execution_under_control(
-        &self,
-        task_id: uuid::Uuid,
-        core: &willdeep_core::Session,
-        ledger: &super::child_sessions::Ledger,
-    ) -> Result<()> {
-        let mut turns = self.turns_lock()?;
-        let Some(turn) = turns
-            .values_mut()
-            .find(|turn| turn.metadata.active_task_id == Some(task_id))
-        else {
-            return Ok(()); // Legacy tasks need not belong to a Runtime Turn.
-        };
-        anyhow::ensure!(
-            turn.metadata
-                .execution_session_id
-                .unwrap_or(turn.metadata.session_id)
-                == core.id
-                && turn.metadata.status == RuntimeTurnStatus::Running,
-            "Runtime Turn is no longer eligible for execution"
-        );
-        if turn
-            .origin_client
-            .as_deref()
-            .is_some_and(|origin| origin.starts_with(super::child_sessions::WAKE_ORIGIN))
-        {
-            let control = ledger.control(turn.metadata.session_id);
-            anyhow::ensure!(
-                !control.suppressed
-                    && ledger
-                        .wakes
-                        .values()
-                        .any(|batch| batch.turn_id == Some(turn.metadata.id)
-                            && !batch.invalidated
-                            && batch.generation == control.generation),
-                "child result wake was invalidated before execution"
-            );
-        }
-        if turn.replay_existing_user_message {
-            anyhow::ensure!(
-                turn.metadata.message_generation == core.compression_generation
-                    && turn
-                        .metadata
-                        .message_start
-                        .and_then(|start| start.checked_add(1))
-                        == Some(core.messages.len()),
-                "recovered Runtime Turn history changed before execution"
-            );
-            let message = core
-                .messages
-                .last()
-                .context("recovered user message is missing")?;
-            anyhow::ensure!(
-                message.role == willdeep_core::Role::User
-                    && message.content == turn.prompt
-                    && serde_json::to_vec(&message.attachments)?
-                        == serde_json::to_vec(&turn.attachments)?,
-                "recovered Runtime Turn user message changed before execution"
-            );
-        } else {
-            turn.metadata.message_start = Some(core.messages.len());
-            turn.metadata.message_generation = core.compression_generation;
-        }
-        turn.metadata.message_end = None;
-        persist_turns(&self.turns_path, &turns)
-    }
-
     /// Preserve the completed Harness snapshot, not a later writer's history.
     pub fn record_execution_end(
         &self,
@@ -1777,6 +1614,27 @@ impl RuntimeSessionStore {
         status: RuntimeTaskStatus,
         error: Option<String>,
     ) -> Result<Option<uuid::Uuid>> {
+        self.complete_task_with_outcome(task_id, status, error, false)
+    }
+
+    pub(in crate::daemon) fn complete_skipped_host_context(
+        &self,
+        task_id: uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>> {
+        // Serialize with real parent stop/control updates, without changing its
+        // suppression or generation. Skipping an obsolete wake is not a stop.
+        self.children.transaction(|_| {
+            self.complete_task_with_outcome(task_id, RuntimeTaskStatus::Cancelled, None, true)
+        })
+    }
+
+    fn complete_task_with_outcome(
+        &self,
+        task_id: uuid::Uuid,
+        status: RuntimeTaskStatus,
+        error: Option<String>,
+        skipped_host_context: bool,
+    ) -> Result<Option<uuid::Uuid>> {
         let mut turns = self.turns_lock()?;
         let Some(turn) = turns
             .values_mut()
@@ -1785,6 +1643,13 @@ impl RuntimeSessionStore {
             return Ok(None);
         };
         let session_id = turn.metadata.session_id;
+        anyhow::ensure!(
+            !skipped_host_context
+                || turn.origin_client.as_deref().is_some_and(|origin| {
+                    origin.starts_with(super::child_sessions::WAKE_ORIGIN)
+                }),
+            "only a host result wake may use skipped notification completion"
+        );
         turn.metadata.status = match status {
             RuntimeTaskStatus::Completed => RuntimeTurnStatus::Completed,
             RuntimeTaskStatus::Partial => RuntimeTurnStatus::Partial,
@@ -1839,10 +1704,12 @@ impl RuntimeSessionStore {
                 RuntimeTurnStatus::WaitingApproval => RuntimeSessionStatus::WaitingApproval,
                 _ => RuntimeSessionStatus::Running,
             }
-        } else if matches!(
-            status,
-            RuntimeTaskStatus::Completed | RuntimeTaskStatus::Partial
-        ) {
+        } else if skipped_host_context
+            || matches!(
+                status,
+                RuntimeTaskStatus::Completed | RuntimeTaskStatus::Partial
+            )
+        {
             RuntimeSessionStatus::Idle
         } else {
             RuntimeSessionStatus::Failed

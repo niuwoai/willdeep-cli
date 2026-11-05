@@ -2,7 +2,70 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const CHILD_SESSION_SCHEMA: u32 = 1;
+pub const CHILD_SESSION_SCHEMA: u32 = 2;
+pub const CHILD_SESSION_DEPENDENCY_LIMIT: usize = 16;
+
+pub fn initial_revision() -> u64 {
+    1
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildSessionControlState {
+    #[default]
+    Delegated,
+    UserOwned,
+    Detached,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildSessionSubscription {
+    None,
+    Inbox,
+    #[default]
+    AutoWake,
+}
+
+impl ChildSessionSubscription {
+    pub fn from_notify(notify: ChildSessionNotify) -> Self {
+        match notify {
+            ChildSessionNotify::None => Self::None,
+            ChildSessionNotify::OnTaskTerminal => Self::AutoWake,
+        }
+    }
+
+    pub fn legacy_notify(self) -> ChildSessionNotify {
+        match self {
+            Self::AutoWake => ChildSessionNotify::OnTaskTerminal,
+            Self::None | Self::Inbox => ChildSessionNotify::None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GetChildSessionLinkParams {
+    pub parent_session_id: Uuid,
+    pub child_session_id: Uuid,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeChildSessionControlParams {
+    pub parent_session_id: Uuid,
+    pub child_session_id: Uuid,
+    pub expected_control_revision: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SetChildSessionSubscriptionParams {
+    pub parent_session_id: Uuid,
+    pub assignment_id: Uuid,
+    pub expected_subscription_revision: u64,
+    pub subscription: ChildSessionSubscription,
+}
 pub const CHILD_SESSION_RUNNING_LIMIT: usize = 4;
 pub const CHILD_SESSION_QUEUE_LIMIT: usize = 16;
 pub const CHILD_SESSION_BRIEF_MAX_CHARS: usize = 16_000;
@@ -68,6 +131,10 @@ pub struct StartChildSessionParams {
     pub model: Option<String>,
     #[serde(default)]
     pub notify: ChildSessionNotify,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription: Option<ChildSessionSubscription>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +147,10 @@ pub struct ContinueChildSessionParams {
     pub prompt: String,
     #[serde(default)]
     pub notify: ChildSessionNotify,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription: Option<ChildSessionSubscription>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +282,12 @@ pub struct ChildSessionWorktree {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChildSessionLink {
     pub link_id: Uuid,
+    #[serde(default)]
+    pub control_state: ChildSessionControlState,
+    #[serde(default = "initial_revision")]
+    pub control_revision: u64,
+    #[serde(default)]
+    pub control_updated_at: u64,
     pub parent_session_id: Uuid,
     pub child_session_id: Uuid,
     pub created_from_turn_id: Option<Uuid>,
@@ -269,6 +346,19 @@ pub struct ChildSessionTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub notify: ChildSessionNotify,
+    #[serde(default)]
+    pub subscription: ChildSessionSubscription,
+    #[serde(default = "initial_revision")]
+    pub subscription_revision: u64,
+    /// Current Link projection, never a separate control authority.
+    #[serde(default)]
+    pub control_state: ChildSessionControlState,
+    #[serde(default = "initial_revision")]
+    pub control_revision: u64,
+    #[serde(default)]
+    pub depends_on: Vec<Uuid>,
+    #[serde(default)]
+    pub waiting_on_dependencies: bool,
     pub status: ChildSessionTaskStatus,
     pub created_at: u64,
     pub accepted_at: Option<u64>,
@@ -348,6 +438,9 @@ mod tests {
         let through = Uuid::new_v4();
         let link = ChildSessionLink {
             link_id: Uuid::new_v4(),
+            control_state: ChildSessionControlState::Delegated,
+            control_revision: 1,
+            control_updated_at: 1,
             parent_session_id: parent,
             child_session_id: child,
             created_from_turn_id: None,
@@ -423,6 +516,7 @@ mod tests {
         let old: crate::RuntimeSession = serde_json::from_value(legacy.clone()).unwrap();
         assert_eq!(old.parent_session_id, None);
         assert!(!old.delegation_read_only);
+        assert!(!old.delegation_detached);
         let parent = Uuid::new_v4();
         let mut child = legacy;
         child["parent_session_id"] = parent.to_string().into();
@@ -431,6 +525,46 @@ mod tests {
         assert_eq!(child.parent_session_id, Some(parent));
         assert!(child.delegation_read_only);
         assert_eq!(child.started_by, None);
+    }
+
+    #[test]
+    fn p2_fields_are_optional_and_legacy_notify_enum_is_unchanged() {
+        let legacy: StartChildSessionParams = serde_json::from_value(serde_json::json!({
+            "parent_session_id": Uuid::new_v4(), "title": "Read", "prompt": "Report", "notify": "none"
+        })).unwrap();
+        assert_eq!(legacy.subscription, None);
+        assert!(legacy.depends_on.is_empty());
+        let encoded = serde_json::to_value(&legacy).unwrap();
+        assert!(encoded.get("subscription").is_none());
+        assert!(encoded.get("depends_on").is_none());
+        assert!(serde_json::from_value::<ChildSessionNotify>("inbox".into()).is_err());
+        let mut modern = encoded;
+        modern["subscription"] = "inbox".into();
+        modern["depends_on"] = serde_json::json!([Uuid::new_v4()]);
+        let modern: StartChildSessionParams = serde_json::from_value(modern).unwrap();
+        assert_eq!(modern.subscription, Some(ChildSessionSubscription::Inbox));
+        assert_eq!(modern.depends_on.len(), 1);
+        let capabilities = crate::RuntimeCapabilities::current("p2");
+        for capability in [
+            crate::Capability::SessionChildrenControl,
+            crate::Capability::SessionChildrenSubscriptions,
+            crate::Capability::SessionChildrenDependencies,
+        ] {
+            assert!(capabilities.capabilities.contains(&capability));
+        }
+        for operation in [
+            "session.child.link.get",
+            "session.child.takeover",
+            "session.child.detach",
+            "session.child.task.subscription.set",
+        ] {
+            assert!(
+                capabilities
+                    .operations
+                    .iter()
+                    .any(|candidate| candidate == operation)
+            );
+        }
     }
 
     #[test]

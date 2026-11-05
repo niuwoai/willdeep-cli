@@ -1,0 +1,116 @@
+{
+  "events": 20,
+  "displayed": 20,
+  "median_ms": 89.55999999307096,
+  "p95_ms": 404.49200000148267,
+  "max_ms": 404.49200000148267,
+  "max_display_gap_ms": 381.34600000921637,
+  "display_updates": 15,
+  "first_reply_seconds": 5.33,
+  "samples": [
+    {
+      "marker": "FLOW0000",
+      "delay_ms": 404.49200000148267
+    },
+    {
+      "marker": "FLOW0001",
+      "delay_ms": 297.4859999958426
+    },
+    {
+      "marker": "FLOW0002",
+      "delay_ms": 199.67699999688193
+    },
+    {
+      "marker": "FLOW0003",
+      "delay_ms": 99.677000020165
+    },
+    {
+      "marker": "FLOW0004",
+      "delay_ms": 74.23699996434152
+    },
+    {
+      "marker": "FLOW0005",
+      "delay_ms": 37.33600000850856
+    },
+    {
+      "marker": "FLOW0006",
+      "delay_ms": 79.95599997229874
+    },
+    {
+      "marker": "FLOW0007",
+      "delay_ms": 38.54199999477714
+    },
+    {
+      "marker": "FLOW0008",
+      "delay_ms": 46.67499999050051
+    },
+    {
+      "marker": "FLOW0009",
+      "delay_ms": 75.90600004186854
+    },
+    {
+      "marker": "FLOW0010",
+      "delay_ms": 67.50499998452142
+    },
+    {
+      "marker": "FLOW0011",
+      "delay_ms": 144.07500001834705
+    },
+    {
+      "marker": "FLOW0012",
+      "delay_ms": 41.996999992989004
+    },
+    {
+      "marker": "FLOW0013",
+      "delay_ms": 49.01600000448525
+    },
+    {
+      "marker": "FLOW0014",
+      "delay_ms": 339.51899997191504
+    },
+    {
+      "marker": "FLOW0015",
+      "delay_ms": 339.28400004515424
+    },
+    {
+      "marker": "FLOW0016",
+      "delay_ms": 239.13500003982335
+    },
+    {
+      "marker": "FLOW0017",
+      "delay_ms": 139.84400004846975
+    },
+    {
+      "marker": "FLOW0018",
+      "delay_ms": 89.55999999307096
+    },
+    {
+      "marker": "FLOW0019",
+      "delay_ms": 49.22200000146404
+    }
+  ],
+  "binary": "/Users/rocky/.cargo/bin/willdeep",
+  "root": "/private/tmp/wd-stream-20261105-85219-s4kaop",
+  "history_entries": 20,
+  "historical_runtime_events": 0,
+  "execution": "runtime",
+  "ui_mode": "compact",
+  "requests": [
+    {
+      "path": "/v1/chat/completions",
+      "model": "fixture",
+      "stream": true
+    }
+  ],
+  "input_interval_ms": 100.0,
+  "runtime_stream_http_status": 200,
+  "observed_session_rewrites": 8,
+  "graceful_exit": true,
+  "saved_answer_complete": true,
+  "cursor_flushed_on_exit": true,
+  "runtime_event_median_ms": 89.16699996916577,
+  "runtime_event_p95_ms": 396.6350000118837,
+  "submit_to_first_body_seconds": 4.652093000011519,
+  "stream_duration_seconds": 1.910009999992326,
+  "idle_child_ledger_commits": 9
+}

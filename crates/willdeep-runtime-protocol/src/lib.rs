@@ -105,6 +105,9 @@ pub enum Capability {
     SessionChildrenWorktree,
     SessionChildrenModel,
     SessionChildrenWorkers,
+    SessionChildrenControl,
+    SessionChildrenSubscriptions,
+    SessionChildrenDependencies,
     AgentObserve,
     AgentControl,
     AgentWorktree,
@@ -164,6 +167,8 @@ pub struct RuntimeSession {
     pub parent_session_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub delegation_read_only: bool,
+    #[serde(default)]
+    pub delegation_detached: bool,
     /// Context window resolved for this Session's effective model. Child model
     /// overrides set it at creation so they never inherit the parent's window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -478,6 +483,8 @@ pub struct SessionSearchResult {
     pub parent_session_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub delegation_read_only: bool,
+    #[serde(default)]
+    pub delegation_detached: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1307,6 +1314,9 @@ impl RuntimeCapabilities {
                 Capability::SessionChildrenWorktree,
                 Capability::SessionChildrenModel,
                 Capability::SessionChildrenWorkers,
+                Capability::SessionChildrenControl,
+                Capability::SessionChildrenSubscriptions,
+                Capability::SessionChildrenDependencies,
                 Capability::AgentObserve,
                 Capability::AgentControl,
                 Capability::AgentWorktree,
@@ -1422,6 +1432,10 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "session.child.task.get",
     "session.child.task.list",
     "session.child.task.stop",
+    "session.child.link.get",
+    "session.child.takeover",
+    "session.child.detach",
+    "session.child.task.subscription.set",
     "session.search",
     "session.get",
     "session.attachments",
@@ -1878,6 +1892,7 @@ mod tests {
             started_by: None,
             parent_session_id: None,
             delegation_read_only: false,
+            delegation_detached: false,
             model_context_window: None,
             status: SessionStatus::Idle,
             active_turn_id: None,

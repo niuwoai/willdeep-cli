@@ -1,0 +1,79 @@
+{
+  "record_kind": "source_verification_summary_not_raw_log_or_combined_execution",
+  "version": "0.143.0-rc9",
+  "date": "2026-11-05",
+  "source_branch": "claude/affectionate-khorana-66872a",
+  "baseline_commit": "f2094c07",
+  "scope": "原生 Runtime 测试夹具进程回收与版本元数据",
+  "native_platform": "macOS",
+  "product_runtime_logic_changed": false,
+  "original_business_deadlines_changed": false,
+  "provider_timeout_root_cause_fixed": false,
+  "host_cancellation_stability_verified": false,
+  "nineteen_case_run": {
+    "task_id": "bojgkddv7",
+    "source_relation": "before_logic_equivalent_clippy_boolean_simplification",
+    "passed": 13,
+    "failed": 6,
+    "ignored": 0,
+    "filtered_out": 32,
+    "seconds": 189.88,
+    "exit_code": 101,
+    "cleanup_stage_errors": 0,
+    "cleanup_regressions_passed": 7,
+    "failures": [
+      "background_steering::runtime_steering_wakes_a_silent_monitor_after_the_turn_limit",
+      "daemon_upgrade_drains_active_work_and_hands_off_without_loss",
+      "retry_wait::root_retry_wait_is_observable_through_public_runtime_api",
+      "web_partial_stream_closes_and_resume_preserves_partial_status",
+      "web_sse_disconnect_resumes_the_same_runtime_turn_without_resubmission",
+      "web_text_delta_arrives_before_provider_is_allowed_to_finish"
+    ]
+  },
+  "final_cleanup_run": {
+    "task_id": "b2vpckx5q",
+    "source_relation": "after_logic_equivalent_clippy_boolean_simplification",
+    "passed": 7,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 44,
+    "seconds": 48.32,
+    "strict_workspace_clippy_exit_code": 0,
+    "strict_clippy_reported_seconds_including_lock_wait": 303,
+    "test_build_reported_seconds": 344,
+    "pipeline_exit_code": 0,
+    "nineteen_case_run_repeated": false
+  },
+  "windows_gnu_cross_clippy": {
+    "task_id": "bbo90u41l",
+    "exit_code": 0,
+    "seconds": 704,
+    "native_execution": false
+  },
+  "independent_kernel_observer": {
+    "observed_unique_roots": 57,
+    "enumerated_pids": 949,
+    "active_private_image_processes": 0,
+    "self_check_passed": true,
+    "signals_sent": 0,
+    "runtime_endpoints_contacted": 0,
+    "limitation": "观察快照不替代测试内截止断言，不能将早期超时计作通过"
+  },
+  "source_sha256": {
+    "crates/willdeep-cli/tests/headless_runtime.rs": "b46ae0d7188c53e773295fb7b99b5cb303abeb6ce38cf09ab8526b7f81db74a1",
+    "crates/willdeep-cli/tests/headless_runtime/fixture_processes.rs": "fbf8a2ae9dc2179b3d51d1a4bb5a002099a9e12c5ce8cded2cbce4333bea0b3c",
+    "crates/willdeep-cli/tests/headless_runtime/process_cleanup.rs": "d82e82a2d0d3566c5e81ecce7902e105072fb51085188d2f3a7c967581142c12",
+    "crates/willdeep-cli/tests/headless_runtime/process_cleanup_tests.rs": "164d8ab7abb18a8e6512efe8756785a9125bf36c100faebeeb5b11d314c107d7",
+    "crates/willdeep-cli/tests/headless_runtime/readonly_queries.rs": "4401416a8ec3b05bc6fc18d2150f4fb8c1ed0dbf8d26458940f052f11ef94b41"
+  },
+  "source_artifacts_sha256": {
+    "cli": "a6aa7f8b119a2904920b48a7a35191f505d15621881844df3198ea3a314ea95f",
+    "final_headless_test": "9e2937faa3e83c28b31ec47bc2a8917fc0459ab5252adfdfcb43f7410d4dc694",
+    "nineteen_case_headless_test": "0ef0bbe632b5def2ddec1571a21b953ae56c51c10c6c469128b30bd648eddeaf"
+  },
+  "not_covered": ["Linux/Windows native execution", "complete workspace tests", "Provider/Web precondition timeout root cause", "host cancellation stability"],
+  "committed": false,
+  "published": false,
+  "combined_0_145_verification": false,
+  "full_source_records_retained_in_source_worktree": true
+}
