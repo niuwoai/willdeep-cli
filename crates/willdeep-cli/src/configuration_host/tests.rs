@@ -46,7 +46,10 @@ async fn custom_path_preview_save_and_receipt_replay_preserve_default_and_backup
     assert_eq!(std::fs::read(&path).unwrap(), before);
     let id = plan["plan_id"].as_str().unwrap();
     let description = host.approval_description(id).unwrap();
-    assert!(description.contains(path.to_str().unwrap()));
+    // The host pins the loaded file through canonicalize, which on Windows adds
+    // a verbatim prefix and expands short names, so compare the resolved path.
+    let pinned = path.canonicalize().unwrap();
+    assert!(description.contains(pinned.to_str().unwrap()));
     assert!(description.contains("compressor_profile"));
     let receipt = host.execute("apply", json!({"plan_id":id})).await.unwrap();
     assert_eq!(receipt["ok"], true, "{receipt}");

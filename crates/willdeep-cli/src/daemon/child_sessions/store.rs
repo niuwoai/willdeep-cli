@@ -646,6 +646,9 @@ mod tests {
         });
         assert!(result.is_err());
         assert_unchanged(&fixture.store.path, &original, &old);
+        // Windows refuses to replace a ledger that still has an open handle, so
+        // release the identity probe before retrying the migration.
+        drop(original);
         assert_eq!(
             std::fs::read(fixture.store.path.with_extension("schema1.bak")).unwrap(),
             old
