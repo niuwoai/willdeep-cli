@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc2
+> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc3
 
 ## 分发
 
@@ -128,7 +128,7 @@ Agent Loop 只理解：
 - 已有文件 canonicalize 后再次检查工作区前缀，阻止符号链接逃逸；
 - 新文件检查最近存在的父目录，阻止通过符号链接写出工作区；
 - 审批档位 `strict` / `smart` / `workspace-write`（默认）/ `full-access` 与 Xedit 逐档对齐，判定集中在 `willdeep-core::tools::approval`；档位是 `SharedApprovalMode` 原子句柄，TUI（`/permissions`、Shift+Tab）、进程内 Agent 与 Runtime 任务共享同一份，切档对正在跑的一轮立即生效。Runtime 侧由 `daemon::approval_modes` 登记活跃任务句柄，会话档位经 `session.update_approval_mode` 持久化在 Runtime 会话上，`read_only` 工作区策略是硬上限；
-- 本轮进行中的用户插话不等轮次结束：根 Agent 与子 Agent 一样带 `AgentInstructionInbox`，主循环每一小轮开始前排空，用户插话以用户消息（`OperatorInput`）注入，父 Agent 指令仍以宿主口吻合并。Runtime 侧由 `daemon::steering` 按任务登记收件箱，控制面 `turn.steer` 按会话找到在途任务送达；任务结束时没赶上的插话以 `task.output` `steer_undelivered` 交回客户端重新排队。TUI 本轮在跑时回车先试送达，送不到再排队；
+- 根 Agent 与子 Agent 均有 `AgentInstructionInbox`，主循环每次调用模型前排空；用户插话以 `OperatorInput` 注入，父 Agent 指令保持宿主来源。Runtime 控制面 `turn.steer` 可向在途任务的内存收件箱投递，正常收尾时未消费输入通过 `steer_undelivered` 事件交回；该接口没有进程崩溃后的持久回收保证，且前台工具/审批等待期间不等于模型已读取。当前 Runtime TUI/Web 默认提交仍走持久 Turn 队列，宿主即时反馈真实任务状态和投递状态，不将入队显示成模型已读；本地执行保持原插话机制；
 - `strict` 对写入和命令逐次审批；`smart` 放行已通过工作区边界校验的创建和编辑；
 - Shell 命令走两级审批：`willdeep-core::safety` 的静态分类器（按 Shell 语义分段，只读/受限即放行，破坏性形状直接交用户且**不送 AI**），中间地带交 `willdeep-core::judge` 的 AI 判官——判官只能免审，不能扩权，NO / 不可用一律回落用户；命令在出网前本地脱敏，裁决只认唯一一个完整 `<verdict>` 标签；
 - 非交互审批失败时拒绝，不自动升级；

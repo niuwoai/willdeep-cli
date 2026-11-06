@@ -44,7 +44,7 @@ import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
-import { enqueueButtonState, queueText } from "./queueMessages";
+import { enqueueButtonState, queueText, runningInputFeedback } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
 import { sessionTree } from "./sessionTree";
 import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
@@ -435,6 +435,8 @@ export function App() {
   const [busy, setBusy] = useState(false); const [activity, setActivity] = useState("");
   const draftSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
   const queueSubmitting = useRef(false);
+  const [submissionNotice, setSubmissionNotice] = useState<{ sessionId: string; text: string } | null>(null);
+  useEffect(() => { setSubmissionNotice(null); }, [sessionId]);
   const inputSuggestion = useInputSuggestion();
   // 预测回包时要看「此刻」输入框空不空、有没有新一轮，闭包里的值是发起时的旧值。
   const composerEmptyRef = useRef(true);
@@ -464,13 +466,18 @@ export function App() {
     const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
     if (new TextEncoder().encode(body).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
     queueSubmitting.current = true;
+    const running = busy || selectedSession?.active || activeRuntimeSessionId === target;
+    const progress = running || visibleHumanGates.length ? runningInputFeedback(runtimeActivity, target, language).text : "";
+    setSubmissionNotice({ sessionId: target, text: [progress, queueText("sending", language)].filter(Boolean).join(" · ") });
     try {
       await queueRequest(`/api/sessions/${encodeURIComponent(target)}/queue`, { method: "POST", headers: { "content-type": "application/json" }, body });
       draftSendRequest.current = null;
       setPrompt((current) => current === outgoingPrompt ? "" : current);
       if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+      setSubmissionNotice({ sessionId: target, text: [progress, queueText("saved", language)].filter(Boolean).join(" · ") });
       setError("");
     } catch (reason) {
+      setSubmissionNotice({ sessionId: target, text: [progress, queueText("failed", language)].filter(Boolean).join(" · ") });
       setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally { queueSubmitting.current = false; }
   }
@@ -1495,10 +1502,18 @@ export function App() {
       if (busy) { setPrompt(""); return; }
     }
     const content = goalToStart || typed || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
-    // 采用过的建议在真正发出去这一刻结算（插话也算）：原样 / 改过 / 重写由服务端判定。
+    // 普通输入不是审批决定或工具提问的答案。恢复现有入口，并保留草稿。
+    if (!typed.startsWith("/") && visibleHumanGates.length) {
+      const feedback = runningInputFeedback(runtimeActivity, sessionId, language);
+      setSubmissionNotice({ sessionId, text: `${feedback.text} · ${queueText("inputRetained", language)}` });
+      if (feedback.gateId) openRuntimeGate(feedback.gateId);
+      return;
+    }
+    // 采用过的建议在真正发出去这一刻结算：原样 / 改过 / 重写由服务端判定。
     inputSuggestion.settleSent(typed);
-    // Runtime owns submitted messages; clients never keep a second execution queue.
+    // 旧 steer 仅内存入箱且无幂等键；保留 Runtime 持久队列，不能把入队说成模型已读。
     if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
+    setSubmissionNotice(null);
     const activeGoal = goalToStart || (goalEnabled ? goal : "");
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
     const outgoingAttachments = sendAttachments;
@@ -1811,6 +1826,7 @@ export function App() {
       )}
       <RuntimeQueue key={sessionId ?? "new"} sessionId={sessionId || null} language={language} />
       {selectionNotice && <Text className="selection-notice" role="status">{selectionNotice}</Text>}
+      {submissionNotice?.sessionId === sessionId && <Text className="selection-notice" role="status">{submissionNotice.text}</Text>}
       <Box className="composer-shell">
         {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
