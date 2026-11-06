@@ -350,6 +350,7 @@ tmux set -g mouse on
 | `/goal <目标>` | 保存持续目标并立即开始执行，后续消息继续携带目标；`/goal off` 关闭。目标按 Core Session 持久保存，重启及切换会话/工作区后恢复 |
 | `/compress` | 立即用压缩模型（some.im 默认 `someim-32b-compressor`，其它 Provider 为会话模型）总结较旧历史，保留最近六条消息并保存会话。历史不足八条时不消耗模型请求 |
 | `/model [模型名]` | 查看或切换当前 Session 模型 |
+| `/reasoning [等级]` | 查看或切换当前 Session 思考等级；`set <等级>` 可显式选择同名命令等级；`default` / `auto` / `reset` 清除覆盖并跟随 Provider 默认 |
 | `/permissions [档位]` | 切换审批模式（严格 / 智能审核 / 工作区可写 / 完全访问）；`default <档位>` 写入配置；Shift+Tab 快速循环前三档 |
 | `/routing` | 持久配置 Root、Worker、Deep 的 Provider、模型、上下文窗口和路由预算 |
 | `/mobile` | `show`（缺省）/ `hide` / `off`：打开 Runtime 托管的手机中继并出二维码，关终端不断，`off` 才关；详见 [手机中继](MOBILE.md) |
@@ -369,6 +370,10 @@ tmux set -g mouse on
 | `/sidebar` | 显示或隐藏右侧状态栏（`on` / `off` 显式指定）。状态栏**默认隐藏**，`Ctrl+B` 等效 |
 | `/uistyle [full|compact|status|no-status]` | 裸命令在完整 UI 与简洁 UI 间切换；`full` / `compact` 显式指定。`status` / `no-status` 显示或隐藏简洁 UI 底部状态栏，不改变当前布局；仅对当前 TUI 生效 |
 | `/clear` | 清空聊天显示（会话与上下文原样保留；要换上下文用 `/new`） |
+
+`/reasoning` 显示当前等级、Provider 默认值和可选等级；`/reasoning <等级>` 设置会话覆盖，`/reasoning default`、`/reasoning auto` 或 `/reasoning reset` 清除覆盖。`/reasoning set <等级>` 显式选择逻辑名称，例如 `/reasoning set default` 会选择名为 `default` 的等级，而不是清除覆盖。
+
+运行中切换会先校验并保存到 Runtime，只影响保存后领取的任务，当前任务沿用领取时的等级；非法等级不会覆盖此前有效选择。重开会话会恢复等级，即使会话尚未发送首条消息。`/thinking show|hide` 仍只控制 TUI 是否显示已有思维内容，与模型请求等级无关。
 
 ### Runtime 版本不一致
 

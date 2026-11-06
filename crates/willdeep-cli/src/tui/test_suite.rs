@@ -136,9 +136,10 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 37);
+        assert_eq!(commands.len(), 38);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
+            "/reasoning",
             "/daemon",
             "/runtime",
             "/local",

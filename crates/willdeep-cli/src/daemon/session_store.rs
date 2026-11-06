@@ -57,6 +57,9 @@ pub(crate) struct RuntimeSession {
     pub magpie_integration: bool,
     #[serde(default)]
     pub model: Option<String>,
+    /// Per-session logical reasoning level; absent values follow the Provider default.
+    #[serde(default)]
+    pub reasoning_level: Option<String>,
     /// 用户在这个会话里选的审批档位。`None` 表示跟随工作区策略。
     #[serde(default)]
     pub approval_mode: Option<super::WorkspaceAccess>,
@@ -598,6 +601,7 @@ impl RuntimeSessionStore {
             profile: core.profile.clone(),
             magpie_integration: core.magpie_integration,
             model: core.model.clone(),
+            reasoning_level: None,
             approval_mode: None,
             mobile_skills: Vec::new(),
             mobile_plugins: Vec::new(),
@@ -658,6 +662,32 @@ impl RuntimeSessionStore {
         Ok(result)
     }
 
+    /// A reasoning choice applies to turns claimed after this update. Already
+    /// claimed tasks hold their own ProviderConfig snapshot, so it is safe to
+    /// persist while the current turn is running.
+    pub fn update_reasoning_level(
+        &self,
+        id: uuid::Uuid,
+        reasoning_level: Option<String>,
+    ) -> Result<RuntimeSession> {
+        if let Some(level) = reasoning_level.as_deref()
+            && (level.is_empty()
+                || level.len() > 64
+                || !level.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                }))
+        {
+            bail!("reasoning level must use 1 to 64 ASCII letters, numbers, '_' or '-'");
+        }
+        let mut sessions = self.lock()?;
+        let session = sessions.get_mut(&id).context("Runtime Session not found")?;
+        session.reasoning_level = reasoning_level;
+        session.updated_at = now();
+        let result = session.clone();
+        persist_sessions(&self.path, &sessions)?;
+        Ok(result)
+    }
+
     /// 只记在 Runtime 会话上，不写进核心会话文件：档位是这台机器上这个
     /// Runtime 的执行偏好，不该跟着会话导出或被别的客户端导入。
     pub fn update_approval_mode(
@@ -691,6 +721,18 @@ impl RuntimeSessionStore {
         );
         let target_profile = provider_profile.or_else(|| source.profile.clone());
         let model = normalized_model(model, target_profile.as_deref())?;
+        let reasoning_level = if source.profile == target_profile {
+            source.reasoning_level.clone()
+        } else if let Some(level) = source.reasoning_level.as_deref() {
+            let loaded = crate::config::LoadedConfig::load(source.config.as_deref())?;
+            loaded
+                .select_provider(target_profile.as_deref())?
+                .and_then(|profile| profile.reasoning.as_ref())
+                .filter(|reasoning| reasoning.levels.contains_key(level))
+                .map(|_| level.to_owned())
+        } else {
+            None
+        };
         let mut core = self
             .core
             .load(id)
@@ -765,7 +807,8 @@ impl RuntimeSessionStore {
             profile: target_profile,
             magpie_integration: core.magpie_integration,
             model: core.model.clone(),
-            // 分叉出来的会话沿用原会话的档位：用户看到的是「同一个对话的另一支」。
+            reasoning_level,
+            // 目标 Provider 支持时沿用来源会话的逻辑等级；否则回到目标默认值。
             approval_mode: source.approval_mode,
             mobile_skills: source.mobile_skills,
             mobile_plugins: source.mobile_plugins,

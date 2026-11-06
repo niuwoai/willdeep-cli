@@ -155,6 +155,9 @@ pub struct RuntimeSession {
     pub workspace: Option<String>,
     pub profile: Option<String>,
     pub model: Option<String>,
+    /// Session-specific logical reasoning level; `None` follows the Provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_level: Option<String>,
     /// 会话里选过的审批档位；`None` 跟随工作区策略。旧版 Runtime 不发这个字段。
     #[serde(default)]
     pub approval_mode: Option<WorkspaceAccess>,
@@ -363,6 +366,14 @@ pub struct RenameSessionParams {
 pub struct UpdateSessionModelParams {
     pub id: uuid::Uuid,
     pub model: String,
+}
+
+/// Set or clear the Runtime-only logical reasoning level for future turns.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateSessionReasoningLevelParams {
+    pub id: uuid::Uuid,
+    pub reasoning_level: Option<String>,
 }
 
 /// 切换会话的审批档位。对这个会话正在跑的一轮立即生效；工作区策略为
@@ -1470,6 +1481,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "session.attachments",
     "session.rename",
     "session.update_model",
+    "session.update_reasoning_level",
     "session.configure",
     "session.update_approval_mode",
     "session.fork",
@@ -1955,6 +1967,7 @@ mod tests {
             workspace: Some("/workspace".to_owned()),
             profile: Some("coding".to_owned()),
             model: Some("model".to_owned()),
+            reasoning_level: None,
             approval_mode: Some(WorkspaceAccess::WorkspaceWrite),
             started_by: None,
             parent_session_id: None,

@@ -64,6 +64,14 @@
     width: min(460px, calc(100vw - 86px));
     max-height: calc(100dvh - 180px);
   }
+  .composer-control-row .conversation-permissions .reasoning-inspector {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(env(safe-area-inset-bottom) + 12px);
+    width: auto;
+    max-height: calc(100dvh - 24px);
+  }
   .model-options-list { max-height: 38vh; }
 }
 

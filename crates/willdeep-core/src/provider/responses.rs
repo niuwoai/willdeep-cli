@@ -67,6 +67,9 @@ impl Provider for ResponsesProvider {
                 .non_thinking
                 .then_some(ResponseReasoning { effort: "none" }),
         };
+        let mut body = serde_json::to_value(body)
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        self.config.apply_reasoning(&mut body, "reasoning.effort")?;
         let request =
             openai_auth(self.client.post(self.endpoint.clone()), &self.config).json(&body);
         let bytes = send_retrying(request, &self.config).await?;

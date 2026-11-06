@@ -2,7 +2,7 @@
 
 > 状态：实施中
 > 首个目标版本：v0.17.0
-> 最后更新：2026-11-05（v0.144.0-rc1 完整子会话 P2）
+> 最后更新：2026-11-07（v0.147.0-rc1 会话思考等级）
 
 ## 1. 目标
 
@@ -44,6 +44,7 @@ Runtime Session（长期存在）
 - `root_agent_id`
 - `workspace`
 - `profile`
+- `reasoning_level`（可选）：当前 Provider 的逻辑等级覆盖；缺少或 `null` 表示跟随 Provider 默认。只保存在 Runtime 元数据，不写入 Core Session。
 - `config`
 - `status`: `idle | queued | running | waiting_approval | waiting_answer | failed | interrupted | archived`
 - `active_turn_id`
@@ -94,6 +95,7 @@ session.list
 session.search
 session.get
 session.rename
+session.update_reasoning_level
 session.fork
 session.archive
 session.export
@@ -130,7 +132,15 @@ turn.stop
 
 带私有配置文件引用的 Session 创建属于进程内 Harness 能力，使用 `/v1/internal/sessions`，不进入公开 DTO；普通客户端只能通过 `session.create` 提交公开字段。
 
-### 3.1 会话管理语义
+### 3.1 思考等级与任务快照
+
+`session.update_reasoning_level` 接受 `id` 与可空 `reasoning_level`，校验当前 Provider 映射后持久化，再发布 `session.reasoning_level_updated`；参数、错误和 Web 适配见 [控制 API](RUNTIME_CONTROL_API.md)。旧会话无需提升 schema，缺失字段按无覆盖读取。客户端恢复 Session 时直接读取 Runtime 字段，不依赖 Core 消息是否为空。
+
+普通任务与独立任务在领取时将会话等级复制到私有 `SubmitTask.reasoning_level`，Provider 构建再应用协议映射；已领取任务不随会话后续切换而改变。运行中切换可以影响保存后领取的排队任务，不会重发当前请求。
+
+同 Provider 的 Fork 继承等级覆盖；跨 Provider Fork 只有目标映射包含同名逻辑等级时才继承，否则清除并使用目标默认值。完整委派子会话继承父会话的等级覆盖。等级字符串始终表示逻辑名称，不代表跨 Provider 使用相同的上游参数值。
+
+### 3.2 会话管理语义
 
 - 标题和消息正文仍以 Core `SessionStore` 为唯一来源；Runtime 元数据不得复制标题或消息。
 - 新建且未显式命名的 Session 以 `auto_pending` 开始，首个真实 Turn 入队前在本地从 Prompt 生成最多 80 字符的标题；不得为标题调用 Provider。疑似密码、Token、API Key、私钥、常见凭据前缀或高熵字段必须回退到通用标题。显式 Rename、旧会话收养与 Fork 不得被自动覆盖。

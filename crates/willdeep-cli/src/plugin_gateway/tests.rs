@@ -23,6 +23,16 @@ struct Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!(
+                "preserving failed gateway fixture at {}; spawned={} initialize={} tools_list={}",
+                self.home.display(),
+                events(&self.log, "spawned").len(),
+                events(&self.log, "initialize").len(),
+                events(&self.log, "tools_list").len(),
+            );
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.home);
     }
 }
@@ -707,11 +717,17 @@ async fn chat_tools_go_through_the_gateway_and_share_one_plugin_process() {
     };
     let chat = willdeep_core::plugin::PluginChatTools::new(&fixture.home);
     assert!(chat.available());
+    let refresh_started = std::time::Instant::now();
     chat.refresh_missing().await;
     assert!(
         chat.definitions()
             .iter()
-            .any(|definition| definition.name == "mcp__srv__echo")
+            .any(|definition| definition.name == "mcp__srv__echo"),
+        "missing echo after {:?}; spawned={} initialize={} tools_list={}",
+        refresh_started.elapsed(),
+        events(&fixture.log, "spawned").len(),
+        events(&fixture.log, "initialize").len(),
+        events(&fixture.log, "tools_list").len(),
     );
     let output = chat
         .call("mcp__srv__echo", json!({"from": "chat"}))

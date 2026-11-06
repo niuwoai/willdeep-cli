@@ -29,6 +29,7 @@ import { WorkspaceApprovalGuide } from "./WorkspaceApprovalGuide";
 import { needsWorkspaceApproval, useWorkspaceApproval, type WorkspaceEntry } from "./useWorkspaceApproval";
 import type { WorkspaceSummary as Workspace } from "./workspaceApprovalApi";
 import { ModelPicker } from "./ModelPicker";
+import { ReasoningPicker } from "./ReasoningPicker";
 import { SharePanel } from "./SharePanel";
 import { changeApprovalMode } from "./approvalModeApi";
 import { changeModel, ModelFailure as ModelSwitchFailure } from "./modelApi";
@@ -79,7 +80,7 @@ function lineageTime(createdAt: number, t: Messages): string {
   if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
   return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
 }
-type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null };
+type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null; reasoning_level?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -369,6 +370,7 @@ export function App() {
   // 会话当前模型（`None` 表示跟随 Provider 默认）与 `/model` 选择器的开合。
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [sessionModelProviderId, setSessionModelProviderId] = useState<string | null>(null);
+  const [sessionReasoningLevel, setSessionReasoningLevel] = useState<string | null>(null);
   // 还没建会话时先选好的模型。它不是会话上的设置，只是第一条消息的草稿：
   // 发出去时随请求一起交给服务端，建会话时一次写进去。
   const [draftModel, setDraftModel] = useState<{ model: string; providerId: string } | null>(null);
@@ -649,7 +651,7 @@ export function App() {
     setApprovalMode(workspaceDraftApprovalRef.current);
     setWorkspacePolicy(workspaceDefaultRef.current);
     setPermissionsOpen(false);
-    setSessionModel(null); setSessionModelProviderId(null);
+    setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
     setDraftModel(null);
     setModelOpen(false);
     setShareOpen(false);
@@ -799,6 +801,7 @@ export function App() {
     setWorkspacePolicy(detail.workspace_access);
     setSessionModel(detail.model ?? null);
     setSessionModelProviderId(detail.provider_id ?? null);
+    setSessionReasoningLevel(detail.reasoning_level ?? null);
     // 会话已经存在，草稿里的选择要么已经被采纳，要么不再相关。
     setDraftModel(null);
     conciseLineRef.current = null;
@@ -1124,7 +1127,7 @@ export function App() {
     } else if (!changed && entry.fresh) {
       sessionIdRef.current = "";
       setSessionId(""); setChat([]); setApprovalMode(workspaceDraftApprovalRef.current); setWorkspacePolicy(target.access);
-      setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null);
+      setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
       setDraftModel(null); setModelOpen(false); setShareOpen(false);
     }
   }
@@ -1593,7 +1596,7 @@ export function App() {
   const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = <>
     {workspaceApproval.pending && <WorkspaceApprovalGuide key={workspaceApproval.pending.revision} path={workspaceApproval.pending.workspace.path} language={language} messages={t} onSave={workspaceApproval.apply} onCancel={cancelWorkspaceEntry} />}
-    {showSetup ? <ConfigurationSettings compact messages={t} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
+    {showSetup ? <ConfigurationSettings compact messages={t} language={language} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
   </>;
 
   if (rail.kind === "configuration") {
@@ -1868,6 +1871,7 @@ export function App() {
         <div className="composer-control-items">
           {/* 还没建会话也要能选：这两个面板在没有会话时只存草稿，跟着第一条消息一起交出去。 */}
           <ModelPicker key={`model-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionModel : draftModel?.model ?? null} currentProviderId={sessionId ? sessionModelProviderId : draftModel?.providerId ?? null} open={modelOpen} onOpenChange={setModelOpen} onPicked={(model, providerId) => { setSessionModel(model); if (sessionId) setSessionModelProviderId(providerId); else setDraftModel({ model, providerId }); }} onApplied={showSelectionNotice} />
+          <ReasoningPicker key={`reasoning-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionReasoningLevel : null} currentProviderId={sessionId ? sessionModelProviderId : draftModel?.providerId ?? null} onChanged={setSessionReasoningLevel} onApplied={showSelectionNotice} />
           <PermissionsPanel key={`permissions-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open && sessionId) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />
         </div>
         <div className="goal-mode-control">

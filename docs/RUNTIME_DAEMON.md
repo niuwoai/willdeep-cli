@@ -41,6 +41,12 @@ willdeep daemon upgrade --timeout 600
 
 > 安全 Drain 协议从 rc32 开始。从 rc31 或更早版本首次迁移时，命令会保持旧任务不动并明确要求等待任务完成后手动 stop/start；之后的版本可以直接无损 Upgrade。
 
+## 会话思考等级
+
+从 `0.147.0-rc1` 起，Runtime Session 保存可选 `reasoning_level`，`null` 表示跟随 Provider 默认。TUI `/reasoning` 和 Web 选择器通过统一 `session.update_reasoning_level` 操作修改该字段；等级必须存在于当前 Provider 的映射中，清除旧覆盖不要求映射仍然存在。
+
+Runtime 在领取任务时将会话选择复制到执行请求，已经运行的任务保持原快照，后续领取的任务使用新选择。重开尚未发送消息的会话也会恢复该字段；同 Provider 派生继承覆盖，跨 Provider 派生只在目标存在同名等级时保留。接口和持久字段见 [控制 API](RUNTIME_CONTROL_API.md) 与 [会话协议](RUNTIME_SESSION_PROTOCOL.md)。
+
 ## 工作区
 
 ### 注册与管理

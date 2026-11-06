@@ -71,6 +71,7 @@ mod plan_ui;
 mod prompt_history;
 mod prompt_queue;
 mod quiet_mode;
+mod reasoning_commands;
 mod redraw;
 mod reference_menu;
 mod rendering;
@@ -378,6 +379,8 @@ struct App {
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
+    /// `Some(None)` 表示本轮结束后清除会话覆盖、恢复 Provider 默认。
+    pending_reasoning_level: Option<Option<String>>,
     /// 当前会话用的模型名，只给聊天区每条消息的时间后缀用。会话不记逐条模型，
     /// 历史消息一律标会话当前的这个；切模型或换会话时更新。
     display_model: Option<String>,
@@ -687,7 +690,7 @@ fn busy_input(prompt: &str) -> BusyInput {
         | "/fed" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
-        "/model" => BusyInput::RunNow,
+        "/model" | "/reasoning" => BusyInput::RunNow,
         // Workflow controls only admit durable state; the session executor owns work.
         "/workflow" => BusyInput::RunNow,
         "/session" => match value.split_whitespace().nth(1) {
@@ -777,6 +780,7 @@ pub async fn run(
         background_tasks: ui.3,
         runtime_submit: ui.4,
         provider_config: ui.5,
+        reasoning_level: None,
         local_workspace: session.workspace.clone(),
         tx: ui.0,
         rx: ui.1,
@@ -814,6 +818,7 @@ struct TuiRuntime {
     background_tasks: Arc<BackgroundTaskRegistry>,
     runtime_submit: crate::daemon::RuntimeSubmitOptions,
     provider_config: willdeep_core::provider::ProviderConfig,
+    reasoning_level: Option<String>,
     local_workspace: PathBuf,
     tx: mpsc::UnboundedSender<UiMessage>,
     rx: mpsc::UnboundedReceiver<UiMessage>,
@@ -839,6 +844,18 @@ impl TuiRuntime {
         if let Some(model) = &self.runtime_submit.model {
             config.model = model.clone();
         }
+        let selected_level = self
+            .reasoning_level
+            .as_ref()
+            .filter(|level| {
+                config
+                    .reasoning
+                    .as_ref()
+                    .is_some_and(|profile| profile.levels.contains_key(*level))
+            })
+            .cloned();
+        config.reasoning_level = selected_level.clone();
+        self.reasoning_level = selected_level;
         self.provider_config = config;
         Ok(())
     }

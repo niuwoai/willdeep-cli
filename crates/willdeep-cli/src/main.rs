@@ -951,7 +951,7 @@ async fn run() -> Result<()> {
         if let Some(connection) = web_input.as_ref().and_then(|input| input.runtime.clone()) {
             harness::HarnessFrontend::Runtime {
                 independent_execution: false,
-                connection,
+                connection: Box::new(connection),
                 sink: Arc::new(TerminalSink {
                     json: cli.json,
                     quiet: run_args
@@ -963,6 +963,7 @@ async fn run() -> Result<()> {
                 instruction_inbox: None,
                 allowed_skills: Vec::new(),
                 allowed_mcp_servers: Vec::new(),
+                reasoning_level: None,
                 // Web 桥接子进程：自己调模型，不经过 daemon 的执行器。
                 usage_origin: harness::UsageOrigin {
                     execution: willdeep_core::usage_ledger::Execution::InProcess,
