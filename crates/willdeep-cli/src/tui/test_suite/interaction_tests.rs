@@ -246,6 +246,7 @@ async fn session_switch_replaces_the_open_session_without_restarting_tui() {
             "test-model",
         ),
         local_workspace: root.join("workspace"),
+        reasoning_level: None,
         tx,
         rx,
     };

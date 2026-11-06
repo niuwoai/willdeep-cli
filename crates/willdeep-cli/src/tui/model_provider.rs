@@ -344,6 +344,18 @@ pub(super) async fn switch(
         "Invalid model"
     );
     config.model = model.to_owned();
+    let selected_level = runtime
+        .reasoning_level
+        .as_ref()
+        .filter(|level| {
+            config
+                .reasoning
+                .as_ref()
+                .is_some_and(|reasoning| reasoning.levels.contains_key(*level))
+        })
+        .cloned();
+    let clear_reasoning_level = runtime.reasoning_level.is_some() && selected_level.is_none();
+    config.reasoning_level = selected_level.clone();
     let provider = willdeep_core::provider::build_provider(config.clone())?;
     if app.running {
         let message = model_commands::defer_model_switch(app, model)?;
@@ -367,6 +379,10 @@ pub(super) async fn switch(
         model,
     )
     .await?;
+    if clear_reasoning_level {
+        crate::daemon::update_remote_session_reasoning_level(&runtime.home, session.id, None)
+            .await?;
+    }
     *session = store
         .load(session.id)
         .context("reload configured Session")?;
@@ -376,6 +392,7 @@ pub(super) async fn switch(
     store.save(session)?;
     runtime.runtime_submit.profile = Some(profile.to_owned());
     runtime.runtime_submit.model = Some(model.to_owned());
+    runtime.reasoning_level = selected_level;
     runtime.provider_config = config;
     app.clear_input_suggestion();
     Ok(format!(
@@ -432,6 +449,7 @@ mod tests {
                 config: Some(config),
             },
             provider_config: initial,
+            reasoning_level: None,
             local_workspace: root.clone(),
             tx,
             rx,

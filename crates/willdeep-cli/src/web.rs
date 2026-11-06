@@ -30,6 +30,7 @@ mod identity;
 mod intake;
 mod mcp_tokens;
 mod peer_sessions;
+mod reasoning;
 mod runtime_chat;
 mod schedules;
 mod session_access;
@@ -230,6 +231,8 @@ struct SessionDetail {
     /// 这条会话当前用的模型；`None` 表示跟随 Provider 默认。
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_level: Option<String>,
     /// 当前 Runtime Provider 档案，用于让模型选择器准确处理同名模型。
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_id: Option<String>,
@@ -526,6 +529,10 @@ async fn serve_internal(
             post(set_session_approval_mode),
         )
         .route("/api/sessions/{id}/model", post(set_session_model))
+        .route(
+            "/api/sessions/{id}/reasoning-level",
+            post(reasoning::set_session_reasoning_level),
+        )
         .route("/api/models", get(list_models))
         .route("/api/models/default", get(default_model))
         .route("/api/sessions/{id}/steer", post(steer_session))
@@ -1503,6 +1510,9 @@ async fn session_detail(
             .as_ref()
             .and_then(|candidate| candidate.model.clone())
             .or(session.model),
+        reasoning_level: runtime_session
+            .as_ref()
+            .and_then(|candidate| candidate.reasoning_level.clone()),
         provider_id: runtime_session
             .and_then(|candidate| candidate.profile)
             .or(session.profile),

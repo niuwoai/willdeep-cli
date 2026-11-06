@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-06 | 当前版本：v0.146.0-rc1
+> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc1
 
 ## 分发
 
@@ -88,6 +88,12 @@ CLI 的磁盘 `ConfigFile` 与临时有效 Provider 目录分离；`magpie-cli` 
 Provider 身份回答“如何鉴权、是否附带 some.im 上下文”；API Dialect 回答“如何编码消息和 Tool Call”。因此同一个 some.im Provider 可以承载 Chat Completions、Responses 或 Anthropic Messages。
 
 Web 模型选择先通过 `/api/settings/model-routing` 读取 Provider 档案，再以档案 id 请求 `/api/schedules/models?profile=<id>` 发现模型目录。模型切换同时提交模型名与 `provider_id`，会话详情也返回当前 Provider 身份；前端据此区分不同 Provider 下的同名模型，并把搜索限制在当前档案目录。
+
+### 会话级思考等级
+
+Provider Profile 可定义 `ReasoningProfile`：可自定义的逻辑等级名映射到字符串、数字或布尔值，并指定默认等级和请求参数路径。未覆盖路径时由 API Dialect 提供协议默认值。TUI `/reasoning` 与 Web 选择器保存 Runtime Session 的等级覆盖；`null` 表示跟随 Provider 默认，不写入可导出的 Core Session。恢复会话直接读取已存在的 Runtime 元数据，不依赖是否已经提交首个任务。
+
+Runtime 在领取任务时将生效等级复制到 `SubmitTask`，当前执行任务不会因后续选择改变。TUI 运行中切换先校验并保存 Runtime 选择，避免任务队列抢先领取旧等级；本地 Provider 刷新与正在执行的任务快照分离。Web 思考等级专用保存使用 `reasoning_only` 补丁，只更新映射并保留连接字段。`/thinking` 仍只控制 TUI 的思维内容显示。
 
 ### 统一领域模型
 

@@ -762,6 +762,8 @@ pub struct ProviderProfile {
     pub max_output_tokens: Option<u32>,
     pub context_window: Option<u64>,
     pub vision_model: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<willdeep_core::provider::ReasoningProfile>,
 }
 
 /// `[agent] max_turns` 的缺省值与可配置上限。64 轮曾被线上一个 46 次工具调用、
@@ -1472,6 +1474,11 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
         }
         if provider.api_key.is_some() && provider.api_key_env.is_some() {
             bail!("providers.{name} cannot define both api_key and api_key_env");
+        }
+        if let Some(reasoning) = &provider.reasoning {
+            reasoning
+                .validate()
+                .map_err(|error| anyhow::anyhow!("providers.{name}.reasoning: {error}"))?;
         }
     }
     for (name, subagent) in &file.subagents {

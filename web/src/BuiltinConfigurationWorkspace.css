@@ -7,6 +7,10 @@
   overflow: hidden;
 }
 
+.builtin-reasoning-settings { flex: none; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
+.builtin-reasoning-settings > summary { color: var(--text-muted); cursor: pointer; font-size: 13px; }
+.builtin-reasoning-settings[open] { max-height: 45vh; overflow: auto; }
+
 .builtin-configuration-workspace iframe {
   display: block;
   flex: 1;

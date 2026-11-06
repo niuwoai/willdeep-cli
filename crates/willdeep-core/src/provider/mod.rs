@@ -37,6 +37,81 @@ pub enum ProviderKind {
     Anthropic,
 }
 
+/// Logical reasoning levels configured per Provider profile. Values are kept
+/// as JSON scalars so providers can map names such as `balanced` to strings,
+/// booleans, or numeric budgets without assuming one shared vocabulary.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningProfile {
+    #[serde(default)]
+    pub default_level: Option<String>,
+    #[serde(default)]
+    pub parameter: Option<String>,
+    #[serde(default)]
+    pub levels: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl ReasoningProfile {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.levels.is_empty() {
+            if self.default_level.is_some() || self.parameter.is_some() {
+                return Err(
+                    "reasoning default_level and parameter require at least one level".into(),
+                );
+            }
+            return Ok(());
+        }
+        if self.levels.len() > 32 {
+            return Err("reasoning levels must contain at most 32 entries".into());
+        }
+        for (name, value) in &self.levels {
+            if name.is_empty()
+                || name.len() > 64
+                || !name.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                })
+            {
+                return Err(format!("invalid reasoning level name `{name}`"));
+            }
+            if !(value.is_string() || value.is_boolean() || value.is_number()) {
+                return Err(format!(
+                    "reasoning level `{name}` must map to a string, number, or boolean"
+                ));
+            }
+        }
+        let default = self
+            .default_level
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                "reasoning.default_level is required when levels are configured".to_owned()
+            })?;
+        if !self.levels.contains_key(default) {
+            return Err(format!(
+                "reasoning.default_level `{default}` is not defined in levels"
+            ));
+        }
+        if let Some(parameter) = self.parameter.as_deref() {
+            let parts = parameter.split('.').collect::<Vec<_>>();
+            if parameter.len() > 128
+                || parts.is_empty()
+                || parts.len() > 8
+                || parts.iter().any(|part| {
+                    part.is_empty()
+                        || !part.chars().all(|character| {
+                            character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                        })
+                })
+            {
+                return Err(
+                    "reasoning.parameter must be a dotted path of 1 to 8 simple field names".into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ProviderKind {
     pub fn infer(base_url: &str) -> Self {
         let host = Url::parse(base_url)
@@ -61,6 +136,10 @@ pub struct ProviderConfig {
     pub workspace_id: String,
     pub request_timeout_secs: u64,
     pub max_output_tokens: u32,
+    /// Per-profile logical-level to provider-value mapping.
+    pub reasoning: Option<ReasoningProfile>,
+    /// Per-session override; `None` selects the profile's configured default.
+    pub reasoning_level: Option<String>,
     /// Explicit non-thinking mode for bounded structured auxiliary requests.
     /// Independent of authentication and local-endpoint trust.
     pub non_thinking: bool,
@@ -94,6 +173,8 @@ impl ProviderConfig {
             workspace_id: Uuid::new_v4().to_string(),
             request_timeout_secs: 600,
             max_output_tokens: 16_384,
+            reasoning: None,
+            reasoning_level: None,
             non_thinking: false,
             allow_request_replay: true,
             allow_unauthenticated: false,
@@ -129,8 +210,78 @@ impl ProviderConfig {
         if self.model.trim().is_empty() {
             return Err(ProviderError::MissingModel);
         }
+        if let Some(reasoning) = &self.reasoning {
+            reasoning
+                .validate()
+                .map_err(ProviderError::InvalidReasoningProfile)?;
+        }
+        if let Some(level) = self.reasoning_level.as_deref()
+            && !self
+                .reasoning
+                .as_ref()
+                .is_some_and(|reasoning| reasoning.levels.contains_key(level))
+        {
+            return Err(ProviderError::InvalidReasoningLevel(level.to_owned()));
+        }
         Ok(())
     }
+
+    /// Apply the selected logical level using the configured request path, or
+    /// the protocol's conventional path when the profile leaves it unspecified.
+    pub fn apply_reasoning(
+        &self,
+        body: &mut serde_json::Value,
+        default_parameter: &str,
+    ) -> Result<(), ProviderError> {
+        if self.non_thinking {
+            return Ok(());
+        }
+        let Some(reasoning) = self.reasoning.as_ref() else {
+            return Ok(());
+        };
+        let Some(level) = self
+            .reasoning_level
+            .as_deref()
+            .or(reasoning.default_level.as_deref())
+        else {
+            return Ok(());
+        };
+        let value = reasoning
+            .levels
+            .get(level)
+            .cloned()
+            .ok_or_else(|| ProviderError::InvalidReasoningLevel(level.to_owned()))?;
+        let parameter = reasoning.parameter.as_deref().unwrap_or(default_parameter);
+        set_json_path(body, parameter, value)
+    }
+}
+
+fn set_json_path(
+    root: &mut serde_json::Value,
+    path: &str,
+    value: serde_json::Value,
+) -> Result<(), ProviderError> {
+    let mut parts = path.split('.').peekable();
+    let mut current = root;
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            let object = current
+                .as_object_mut()
+                .ok_or_else(|| ProviderError::InvalidReasoningParameter(path.to_owned()))?;
+            object.insert(part.to_owned(), value);
+            return Ok(());
+        }
+        let object = current
+            .as_object_mut()
+            .ok_or_else(|| ProviderError::InvalidReasoningParameter(path.to_owned()))?;
+        current = object
+            .entry(part.to_owned())
+            .or_insert_with(|| serde_json::json!({}));
+        if !current.is_object() {
+            return Err(ProviderError::InvalidReasoningParameter(path.to_owned()));
+        }
+    }
+    Err(ProviderError::InvalidReasoningParameter(path.to_owned()))
 }
 
 /// Detect the conventional same-machine endpoints. Explicit auxiliary
@@ -222,6 +373,12 @@ pub enum ProviderError {
         retry_after_secs: u64,
         source: Box<ProviderError>,
     },
+    #[error("invalid reasoning profile: {0}")]
+    InvalidReasoningProfile(String),
+    #[error("reasoning level is not configured: {0}")]
+    InvalidReasoningLevel(String),
+    #[error("reasoning request parameter conflicts with the request body: {0}")]
+    InvalidReasoningParameter(String),
     #[error("invalid provider response: {0}")]
     InvalidResponse(String),
     #[error("provider response did not include a completion")]
@@ -357,6 +514,9 @@ pub fn build_provider(config: ProviderConfig) -> Result<Arc<dyn Provider>, Provi
         ApiDialect::AnthropicMessages => Ok(Arc::new(AnthropicMessagesProvider::new(config)?)),
     }
 }
+
+#[cfg(test)]
+mod reasoning_profile_tests;
 
 #[cfg(test)]
 mod tests {

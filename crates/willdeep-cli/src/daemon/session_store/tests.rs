@@ -1124,6 +1124,94 @@ fn records_message_boundaries_and_forks_through_a_completed_turn() {
 }
 
 #[test]
+fn forks_keep_reasoning_only_when_the_target_provider_supports_it() {
+    let root =
+        std::env::temp_dir().join(format!("willdeep-reasoning-fork-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let config = root.join("fixture.toml");
+    std::fs::write(
+        &config,
+        r#"
+version = 1
+[providers.source]
+model = "source-model"
+[providers.source.reasoning]
+default_level = "deep"
+[providers.source.reasoning.levels]
+deep = "high"
+[providers.compatible]
+model = "target-model"
+[providers.compatible.reasoning]
+default_level = "deep"
+[providers.compatible.reasoning.levels]
+deep = "high"
+[providers.different]
+model = "target-model"
+[providers.different.reasoning]
+default_level = "quick"
+[providers.different.reasoning.levels]
+quick = "low"
+[providers.unmapped]
+model = "target-model"
+"#,
+    )
+    .unwrap();
+    let state_path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(state_path.clone(), &root).unwrap();
+    let source = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace: root.clone(),
+            profile: Some("source".into()),
+            model: Some("source-model".into()),
+            config: Some(config),
+            title: None,
+        })
+        .unwrap();
+    store
+        .update_reasoning_level(source.id, Some("deep".into()))
+        .unwrap();
+    for (profile, expected) in [
+        ("source", Some("deep")),
+        ("compatible", Some("deep")),
+        ("different", None),
+        ("unmapped", None),
+    ] {
+        let fork = store
+            .fork_through(
+                source.id,
+                None,
+                None,
+                Some(profile.into()),
+                Some("target-model".into()),
+            )
+            .unwrap();
+        assert_eq!(fork.reasoning_level.as_deref(), expected, "{profile}");
+        let reopened = RuntimeSessionStore::open(state_path.clone(), &root).unwrap();
+        assert_eq!(
+            reopened
+                .get(fork.id)
+                .unwrap()
+                .unwrap()
+                .reasoning_level
+                .as_deref(),
+            expected,
+            "{profile}"
+        );
+    }
+    assert_eq!(
+        store
+            .get(source.id)
+            .unwrap()
+            .unwrap()
+            .reasoning_level
+            .as_deref(),
+        Some("deep")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn restores_provider_model_and_config_before_claiming_the_next_turn() {
     let root = std::env::temp_dir().join(format!(
         "willdeep-runtime-session-execution-settings-{}",
@@ -1661,6 +1749,7 @@ fn session_stop_targets_only_its_declared_active_turn() {
         workspace: None,
         profile: None,
         model: None,
+        reasoning_level: None,
         approval_mode: None,
         started_by: None,
         parent_session_id: None,

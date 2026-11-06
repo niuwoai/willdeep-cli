@@ -162,6 +162,7 @@ pub(crate) struct RemoteSessionState {
     /// Runtime 当前的 Provider 和模型选择；Web 需要 Provider ID 才能准确标记同名模型。
     pub profile: Option<String>,
     pub model: Option<String>,
+    pub reasoning_level: Option<String>,
     /// 这个会话里用户选过的档位；`None` 表示跟随工作区策略。Web 要靠它显示
     /// 当前生效档位——档位只存在 Runtime 会话上，核心会话文件里没有。
     pub approval_mode: Option<super::WorkspaceAccess>,
@@ -187,6 +188,7 @@ pub(crate) async fn remote_session_states(home: &Path) -> Result<Vec<RemoteSessi
             active_turn_id: session.active_turn_id,
             profile: session.profile,
             model: session.model,
+            reasoning_level: session.reasoning_level,
             approval_mode: session
                 .approval_mode
                 .map(super::workspace_store::local_access),
@@ -481,6 +483,27 @@ pub(crate) async fn update_remote_session_model(
             .update_session_model(
                 &willdeep_runtime_protocol::UpdateSessionModelParams { id, model },
                 uuid::Uuid::new_v4(),
+            )
+            .await?,
+    )?;
+    Ok(())
+}
+
+pub(crate) async fn update_remote_session_reasoning_level(
+    home: &Path,
+    id: uuid::Uuid,
+    reasoning_level: Option<String>,
+) -> Result<()> {
+    let state = ensure_running(home).await?;
+    let _: serde_json::Value = api_data(
+        runtime_client(&state)?
+            .call(
+                "session.update_reasoning_level",
+                &willdeep_runtime_protocol::UpdateSessionReasoningLevelParams {
+                    id,
+                    reasoning_level,
+                },
+                Some(uuid::Uuid::new_v4()),
             )
             .await?,
     )?;
