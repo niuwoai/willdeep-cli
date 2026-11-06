@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-06",
+  "version": "0.145.0-rc4",
+  "platform": "macOS",
+  "fixture": "scripts/test/tui_enter_feedback.rb",
+  "measurement": "Single confirmation to completed synchronized terminal output frame, after draft and previous operation are visibly ready",
+  "measurement_source_uncommitted": true,
+  "passed": true,
+  "native_tests": {
+    "passed": 425,
+    "failed": 0,
+    "ignored": 2,
+    "ignored_reason": "Existing manual deterministic streaming benchmark and paced-stream display measurement"
+  },
+  "cli_build_passed": true,
+  "clippy_all_targets_warnings_denied_passed": true,
+  "baseline": {
+    "version": "0.145.0-rc3",
+    "case": "same_provider_selection",
+    "feedback_ms": 2636.02,
+    "gate_hold_ms": 2010.46,
+    "feedback_before_release": false
+  },
+  "feedback_threshold_ms": 300,
+  "results": [
+    {"name": "same_provider_selection", "passed": true, "feedback_ms": 3.62, "gate_operation": "session.update_model", "gate_hold_ms": 2019.43, "gate_entered": true, "feedback_before_release": true},
+    {"name": "model_failure", "passed": true, "feedback_ms": 4.40, "gate_operation": "session.update_model", "gate_hold_ms": 2002.92, "gate_entered": true, "feedback_before_release": true, "expected_failure": true},
+    {"name": "direct_model_command", "passed": true, "feedback_ms": 4.37, "gate_operation": "session.update_model", "gate_hold_ms": 2010.72, "gate_entered": true, "feedback_before_release": true},
+    {"name": "cross_provider_selection", "passed": true, "feedback_ms": 2.82, "gate_operation": "session.configure", "gate_hold_ms": 2010.01, "gate_entered": true, "feedback_before_release": true},
+    {"name": "mouse_model_selection", "passed": true, "feedback_ms": 41.16, "gate_operation": "session.update_model", "gate_hold_ms": 2002.71, "gate_entered": true, "feedback_before_release": true},
+    {"name": "ordinary_message", "passed": true, "feedback_ms": 10.08, "gate_operation": "session.create", "gate_hold_ms": 2006.86, "gate_entered": true, "feedback_before_release": true},
+    {"name": "busy_message", "passed": true, "feedback_ms": 19.05, "gate_operation": "session.create", "gate_hold_ms": 2004.31, "gate_entered": true, "feedback_before_release": true},
+    {"name": "busy_submission_failure", "passed": true, "feedback_ms": 19.25, "gate_operation": "session.create", "gate_hold_ms": 2016.55, "gate_entered": true, "feedback_before_release": true, "expected_failure": true}
+  ],
+  "limitations": [
+    "First-frame feedback is immediate; subsequent keys still wait for the serial control operation to finish",
+    "Measurements concern PTY output frames, not physical display latency or all platforms",
+    "Two earlier fixture runs failed before readiness and chat-boundary corrections; only the final complete run is recorded as passing",
+    "These measurements were recorded before committing; release and deployment status are reported separately"
+  ]
+}
