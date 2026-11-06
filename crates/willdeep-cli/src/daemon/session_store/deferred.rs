@@ -75,15 +75,19 @@ impl RuntimeSessionStore {
 
     pub(in crate::daemon) fn claim_independent(
         &self,
-        session_id: uuid::Uuid,
-        id: uuid::Uuid,
-        expected_text: &str,
+        expected_session: &RuntimeSession,
+        expected_message: &willdeep_runtime_protocol::QueuedTurnMessage,
     ) -> Result<Option<ClaimedRuntimeTurn>> {
+        let session_id = expected_session.id;
+        let id = expected_message.id;
         let mut sessions = self.lock()?;
-        let session = sessions
-            .get_mut(&session_id)
-            .context("Runtime Session not found")?;
-        if session.delegation_read_only || session.parent_session_id.is_some() {
+        let Some(session) = sessions.get_mut(&session_id) else {
+            return Ok(None);
+        };
+        if session != expected_session
+            || session.delegation_read_only
+            || session.parent_session_id.is_some()
+        {
             return Ok(None);
         }
         if session.human_wait_yield_suppressed
@@ -104,11 +108,16 @@ impl RuntimeSessionStore {
         }) {
             return Ok(None);
         }
-        let turn = turns.get_mut(&id).context("Queued message not found")?;
-        if turn.metadata.session_id != session_id
-            || turn.metadata.status != RuntimeTurnStatus::Queued
+        let Some(turn) = turns.get_mut(&id) else {
+            return Ok(None);
+        };
+        // Compare the complete scheduling snapshot while holding the same locks
+        // as queue.update; SendNow may revoke an earlier independent override.
+        if !turn_queue::is_pending(turn, session)
             || turn.metadata.execution_session_id.is_some()
-            || turn_queue::editable_text(&turn.prompt) != Some(expected_text)
+            || expected_message.held
+            || !expected_message.can_edit
+            || turn_queue::queued_message(turn) != *expected_message
         {
             return Ok(None);
         }

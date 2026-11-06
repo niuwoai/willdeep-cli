@@ -1,7 +1,18 @@
 import type { Language } from "./i18n";
+import type { RuntimeActivity } from "./RuntimeSidebar";
 const text = {
   composerHint: ["本轮进行中 · Enter 将附件加入待发队列 · 右侧按钮停止", "Current turn running · Enter queues attachments · Right button stops", "実行中 · Enter で添付を送信待ちに追加 · 右のボタンで停止"],
   sending: ["正在向 Runtime 提交", "Submitting to the Runtime", "Runtime に送信中"],
+  saved: ["已保存到待发队列，尚未交给当前模型；可在队列中查看。", "Saved to the queue, not delivered to the current model. You can review it in the queue.", "キューに保存しました。現在のモデルには未送達です。キューで確認できます。"],
+  inputRetained: ["输入与附件已保留；请处理待确认项，或用 Cmd/Ctrl+Enter 明确入队。", "Input and attachments retained. Handle the pending request or use Cmd/Ctrl+Enter to queue.", "入力と添付を保持しました。確認待ちを処理するか、Cmd/Ctrl+Enter でキューに追加してください。"],
+  noProgress: ["当前轮次仍在运行；尚未收到新进展", "The current turn is still running; no new progress received yet", "現在のターンは実行中です。新しい進捗はまだ届いていません"],
+  latestRunning: ["最近状态：正在执行", "Latest status: running", "直近の状態：実行中"],
+  latestCompleted: ["最近完成", "Last completed", "直近の完了"],
+  latestFailed: ["最近失败", "Last failed", "直近の失敗"],
+  latestInterrupted: ["最近中断", "Last interrupted", "直近の中断"],
+  latestPartial: ["最近部分完成", "Last partially completed", "直近の部分完了"],
+  waitingApproval: ["等待审批", "Waiting for approval", "承認待ち"],
+  waitingAnswer: ["等待回答", "Waiting for answer", "回答待ち"],
   title: ["Runtime 待发消息（各端同步）", "Runtime queue (synced across clients)", "Runtime の送信待ち（端末間で同期）"],
   syncFailed: ["队列同步失败，正在重试；请保留尚未送达的输入。", "Queue sync failed; retrying. Keep any unsubmitted input.", "キュー同期に失敗。未送信の入力を保持してください。"],
   mutationFailed: ["队列操作失败，已刷新状态，请检查后重试。", "Queue update failed. State refreshed; check before retrying.", "キュー更新に失敗。最新の状態を確認して再試行してください。"],
@@ -33,6 +44,27 @@ const text = {
 } as const;
 const index: Record<Language, number> = { "zh-CN": 0, en: 1, ja: 2 };
 export function queueText(key: keyof typeof text, language: Language) { return text[key][index[language]]; }
+
+// 状态来自现有 Runtime 快照，只报告本会话已经观察到的事实。
+export function runningInputFeedback(activity: RuntimeActivity, sessionId: string, language: Language) {
+  const gate = activity.gates.find((item) => activity.tasks.some((task) =>
+    task.id === item.task_id && (task.session_id === null || task.session_id === sessionId)));
+  if (gate) return {
+    gateId: gate.id,
+    text: `${queueText(gate.kind === "approval" ? "waitingApproval" : "waitingAnswer", language)}: ${gate.kind === "approval" ? gate.description : gate.question}`,
+  };
+  const tools = activity.tools.filter((tool) => tool.session_id === sessionId);
+  const running = tools.filter((tool) => tool.status === "running").sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
+  const recent = tools.filter((tool) => tool.status !== "running").sort((a, b) =>
+    (b.completed_at_ms ?? b.started_at_ms) - (a.completed_at_ms ?? a.started_at_ms))[0];
+  const details: string[] = [];
+  if (running) details.push(`${queueText("latestRunning", language)}: ${running.name}`);
+  if (recent) {
+    const key = { completed: "latestCompleted", failed: "latestFailed", interrupted: "latestInterrupted", partial: "latestPartial", running: "latestRunning" } as const;
+    details.push(`${queueText(key[recent.status], language)}: ${recent.name}`);
+  }
+  return { gateId: undefined, text: details.join(" · ") || queueText("noProgress", language) };
+}
 
 /// 入队按钮什么时候出现、能不能点。
 ///

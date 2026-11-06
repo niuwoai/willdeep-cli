@@ -15,33 +15,7 @@ impl RuntimeSessionStore {
             .filter(|turn| is_pending(turn, session))
             .collect::<Vec<_>>();
         pending.sort_by_key(|turn| turn.metadata.queue_sequence);
-        Ok(pending
-            .into_iter()
-            .map(|turn| QueuedTurnMessage {
-                priority_requested: turn.metadata.independent_requested,
-                independence_confirmed: turn.metadata.independent_override,
-                held: turn.metadata.held,
-                id: turn.metadata.id,
-                session_id,
-                text: editable_text(&turn.prompt).unwrap_or_default().to_owned(),
-                can_edit: editable_text(&turn.prompt).is_some(),
-                text_preview: editable_text(&turn.prompt)
-                    .unwrap_or_default()
-                    .chars()
-                    .take(240)
-                    .collect(),
-                image_count: turn
-                    .attachments
-                    .iter()
-                    .filter(|a| matches!(a, willdeep_core::MessageAttachment::Image { .. }))
-                    .count(),
-                text_attachment_count: turn
-                    .attachments
-                    .iter()
-                    .filter(|a| matches!(a, willdeep_core::MessageAttachment::Text { .. }))
-                    .count(),
-            })
-            .collect())
+        Ok(pending.into_iter().map(queued_message).collect())
     }
 
     /// Use the same lock order as claim_next. Persist a copy before publishing it,
@@ -161,7 +135,31 @@ impl RuntimeSessionStore {
     }
 }
 
-fn is_pending(turn: &StoredRuntimeTurn, session: &RuntimeSession) -> bool {
+pub(super) fn queued_message(turn: &StoredRuntimeTurn) -> QueuedTurnMessage {
+    let text = editable_text(&turn.prompt);
+    QueuedTurnMessage {
+        priority_requested: turn.metadata.independent_requested,
+        independence_confirmed: turn.metadata.independent_override,
+        held: turn.metadata.held,
+        id: turn.metadata.id,
+        session_id: turn.metadata.session_id,
+        text: text.unwrap_or_default().to_owned(),
+        can_edit: text.is_some(),
+        text_preview: text.unwrap_or_default().chars().take(240).collect(),
+        image_count: turn
+            .attachments
+            .iter()
+            .filter(|a| matches!(a, willdeep_core::MessageAttachment::Image { .. }))
+            .count(),
+        text_attachment_count: turn
+            .attachments
+            .iter()
+            .filter(|a| matches!(a, willdeep_core::MessageAttachment::Text { .. }))
+            .count(),
+    }
+}
+
+pub(super) fn is_pending(turn: &StoredRuntimeTurn, session: &RuntimeSession) -> bool {
     is_unclaimed(turn, session)
         && turn.team_control.is_none()
         && !turn.origin_client.as_deref().is_some_and(|origin| {

@@ -1668,6 +1668,10 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         if app.runtime_turn {
+                                            if !app.input.text().trim_start().starts_with('/')
+                                                && runtime_queue::retain_input_for_pending_gate(&mut app, &runtime.home, &runtime.tx) {
+                                                continue;
+                                            }
                                             if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false,term).await {
                                                 app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
                                             }
