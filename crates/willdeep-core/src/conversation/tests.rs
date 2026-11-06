@@ -278,24 +278,109 @@ fn malformed_or_incomplete_blocks_remain_visible_and_do_not_partially_update() {
 }
 
 #[test]
-fn a_new_phase_gets_its_own_card() {
+fn a_new_phase_reuses_the_card_and_clears_previous_details() {
+    let replacement = "```plan\n1. 下一阶段\n```";
     let items = project(
         &[
             Message::assistant(PLAN, vec![]),
             Message::assistant(PROGRESS, vec![]),
-            Message::assistant("```plan\n1. 下一阶段\n```", vec![]),
+            Message::assistant(replacement, vec![]),
         ],
         None,
     );
-    assert_eq!(items.len(), 2);
-    assert_eq!(
-        items[0].plan.as_ref().unwrap().steps[0].status,
-        StepStatus::Done
-    );
-    assert_eq!(
-        items[1].plan.as_ref().unwrap().steps[0].status,
-        StepStatus::Pending
-    );
+    assert_eq!(items.len(), 1);
+    let plan = items[0].plan.as_ref().unwrap();
+    assert_eq!(plan.steps.len(), 1);
+    assert_eq!(plan.steps[0].text, "下一阶段");
+    assert_eq!(plan.steps[0].status, StepStatus::Pending);
+    assert_eq!(items[0].details, vec![replacement]);
+}
+
+fn plan_detail_cases() -> Vec<(&'static str, Plan, bool)> {
+    let (plan, _) = parse_plan_reply(PLAN, None).unwrap();
+    let mut progress = plan.clone();
+    progress.steps[0].status = StepStatus::InProgress;
+    let mut renamed = plan.clone();
+    renamed.steps[1].text = "新的任务".into();
+    let mut reidentified = plan.clone();
+    reidentified.steps[1].id = "replacement".into();
+    let mut reduced = plan.clone();
+    reduced.steps.pop();
+    let mut extended = plan.clone();
+    let mut added = plan.steps[0].clone();
+    added.id = "3".into();
+    added.text = "新增任务".into();
+    extended.steps.push(added);
+    let mut reordered = plan;
+    reordered.steps.swap(0, 1);
+    vec![
+        ("progress", progress, false),
+        ("renamed", renamed, true),
+        ("reidentified", reidentified, true),
+        ("removed", reduced, true),
+        ("added", extended, true),
+        ("reordered", reordered, true),
+    ]
+}
+
+#[test]
+fn structured_plan_changes_reuse_the_card_and_discard_unrelated_details() {
+    let call = crate::types::ToolCall {
+        id: "plan-update".into(),
+        name: "update_plan".into(),
+        arguments: "{}".into(),
+    };
+    for (case, plan, changed_steps) in plan_detail_cases() {
+        for replaced in [false, true] {
+            let receipt = crate::planning::Receipt::new(plan.clone(), replaced);
+            let messages = [
+                Message::assistant(PLAN, vec![]),
+                Message::assistant(PROGRESS, vec![]),
+                Message::assistant("执行中", vec![call.clone()]),
+                Message::tool(&call, serde_json::to_string(&receipt).unwrap()),
+            ];
+            let items = project(&messages, None);
+            assert_eq!(items.len(), 2, "{case}, replaced={replaced}");
+            assert_eq!(items[0].plan.as_ref(), Some(&plan), "{case}");
+            assert_eq!(items[1].content, "执行中", "{case}");
+            let expected = if replaced || changed_steps {
+                Vec::<&str>::new()
+            } else {
+                vec![PLAN, PROGRESS]
+            };
+            assert_eq!(items[0].details, expected, "{case}, replaced={replaced}");
+            assert_eq!(messages[0].content, PLAN);
+            assert_eq!(messages[1].content, PROGRESS);
+        }
+    }
+}
+
+#[test]
+fn persisted_plan_changes_reuse_the_card_and_discard_unrelated_details() {
+    for (case, plan, changed_steps) in plan_detail_cases() {
+        let items = project(
+            &[
+                Message::assistant(PLAN, vec![]),
+                Message::assistant(PROGRESS, vec![]),
+                Message::user("继续"),
+            ],
+            Some(&plan),
+        );
+        assert_eq!(items.len(), 2, "{case}");
+        assert_eq!(items[0].plan.as_ref(), Some(&plan), "{case}");
+        assert_eq!(items[1].content, "继续", "{case}");
+        let expected = if changed_steps {
+            Vec::<&str>::new()
+        } else {
+            vec![PLAN, PROGRESS]
+        };
+        assert_eq!(items[0].details, expected, "{case}");
+    }
+    let (plan, _) = parse_plan_reply(PLAN, None).unwrap();
+    let items = project(&[], Some(&plan));
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].plan.as_ref(), Some(&plan));
+    assert!(items[0].details.is_empty());
 }
 
 #[test]
