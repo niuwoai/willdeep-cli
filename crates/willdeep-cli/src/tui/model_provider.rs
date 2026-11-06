@@ -59,12 +59,13 @@ pub(super) async fn handle(
     store: &SessionStore,
     runtime: &mut TuiRuntime,
     agent: &Arc<Agent>,
-) {
+    term: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<()> {
     let result = match action {
-        ModelPickerAction::None => return,
+        ModelPickerAction::None => return Ok(()),
         ModelPickerAction::Close => {
             app.model_picker = None;
-            return;
+            return Ok(());
         }
         ModelPickerAction::Provider(profile) => {
             if profile.is_some()
@@ -75,13 +76,13 @@ pub(super) async fn handle(
             if let Err(error) = browse(app, runtime, profile) {
                 app.set_model_picker_result(Err(error.to_string()));
             }
-            return;
+            return Ok(());
         }
         ModelPickerAction::Preview(profile) => {
             if let Err(error) = browse(app, runtime, Some(profile)) {
                 app.set_model_picker_result(Err(error.to_string()));
             }
-            return;
+            return Ok(());
         }
         ModelPickerAction::Refresh => {
             discover_local(runtime);
@@ -104,22 +105,93 @@ pub(super) async fn handle(
                 Ok(config) => load_models(app, config, &runtime.tx),
                 Err(error) => app.set_model_picker_result(Err(error.to_string())),
             }
-            return;
+            return Ok(());
         }
         ModelPickerAction::Select(model) => {
-            select(&model, app, session, store, runtime, agent).await
+            // select 需要 picker 的 profile；先捕获再关窗，否则跨 Provider 会误用当前连接。
+            let profile = prepare_selection(app, &model);
+            redraw::redraw(term, app, &runtime.skills, session)?;
+            select(
+                &model,
+                profile.as_deref(),
+                app,
+                session,
+                store,
+                runtime,
+                agent,
+            )
+            .await
         }
     };
+    finish_selection(app, result);
+    Ok(())
+}
+
+fn prepare_selection(app: &mut App, model: &str) -> Option<String> {
+    let profile = app.model_picker.take().and_then(|picker| picker.profile);
+    let target = profile.as_ref().map_or_else(
+        || model.to_owned(),
+        |profile| format!("{profile} / {model}"),
+    );
+    let message = format!(
+        "{}: {target}",
+        if app.running {
+            app.language.text(
+                "正在安排模型切换，本轮结束后生效",
+                "Preparing model switch after this turn",
+                "ターン終了後のモデル切替を準備しています",
+            )
+        } else {
+            app.language.text(
+                "正在切换模型",
+                "Switching model",
+                "モデルを切り替えています",
+            )
+        }
+    );
+    app.notice = Some(message.clone());
+    app.append_transcript(format!("System: {message}"));
+    app.scroll_to_bottom();
+    profile
+}
+
+fn finish_selection(app: &mut App, result: Result<String>) {
     match result {
         Ok(message) => {
-            app.model_picker = None;
+            app.notice = Some(message.clone());
             app.append_transcript(format!("System: {message}"));
         }
         Err(error) => {
-            app.notice = Some(format!(
-                "{}: {error:#}",
+            // TOML diagnostics quote source lines, including inline credentials.
+            // Keep configuration failures actionable without copying that source into chat.
+            let detail = if error.chain().any(|cause| cause.is::<toml::de::Error>()) {
+                app.language
+                    .text(
+                        "无法解析模型配置，请检查配置文件",
+                        "Cannot parse model configuration; check the configuration file",
+                        "モデル設定を解析できません。設定ファイルを確認してください",
+                    )
+                    .to_owned()
+            } else {
+                let diagnostic = format!("{error:#}")
+                    .split_whitespace()
+                    .map(|word| {
+                        if word.contains("://") {
+                            "[REDACTED_URL]"
+                        } else {
+                            word
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                willdeep_core::judge::redact_credentials(&diagnostic)
+            };
+            let message = format!(
+                "{}: {detail}",
                 app.language.text("切换失败", "Switch failed", "切替失敗")
-            ))
+            );
+            app.notice = Some(message.clone());
+            app.append_transcript(format!("Error: {message}"));
         }
     }
 }
@@ -231,22 +303,20 @@ pub(super) fn browse(app: &mut App, runtime: &TuiRuntime, profile: Option<String
 
 pub(super) async fn select(
     model: &str,
+    profile: Option<&str>,
     app: &mut App,
     session: &mut Session,
     store: &SessionStore,
     runtime: &mut TuiRuntime,
     agent: &Arc<Agent>,
 ) -> Result<String> {
-    let profile = app
-        .model_picker
-        .as_ref()
-        .and_then(|picker| picker.profile.clone());
-    let current = current_profile(runtime)?;
-    if let Some(profile) = profile.filter(|profile| current.as_ref() != Some(profile)) {
-        switch(&profile, model, app, session, store, runtime, agent).await
-    } else {
-        switch_or_defer_model(model, app, session, store, runtime, agent).await
+    // A direct /model command stays on the current Provider and needs no config reload.
+    if let Some(profile) = profile
+        && current_profile(runtime)?.as_deref() != Some(profile)
+    {
+        return switch(profile, model, app, session, store, runtime, agent).await;
     }
+    switch_or_defer_model(model, app, session, store, runtime, agent).await
 }
 
 pub(super) async fn switch(
@@ -370,9 +440,14 @@ mod tests {
         let mut session = Session::new(root.clone(), Some("alpha".into()), "existing");
         let mut app = App::new(Vec::new(), Language::En);
         app.begin_turn(true, "in flight".into());
-        switch(
-            "beta",
+        app.open_model_picker("old".into());
+        app.model_picker.as_mut().unwrap().profile = Some("beta".into());
+        let profile = prepare_selection(&mut app, "new");
+        assert!(app.model_picker.is_none());
+        assert!(app.transcript.last().unwrap().contains("after this turn"));
+        select(
             "new",
+            profile.as_deref(),
             &mut app,
             &mut session,
             &store,
@@ -404,8 +479,10 @@ mod tests {
         // Choosing another model on the active profile cancels the queued provider switch.
         app.open_model_picker("old".into());
         app.model_picker.as_mut().unwrap().profile = Some("alpha".into());
+        let profile = prepare_selection(&mut app, "different-model");
         select(
             "different-model",
+            profile.as_deref(),
             &mut app,
             &mut session,
             &store,
@@ -416,7 +493,146 @@ mod tests {
         .unwrap();
         assert!(app.pending_provider.is_none());
         assert_eq!(app.pending_model.as_deref(), Some("different-model"));
+        // Direct commands must still defer while the on-disk config is unavailable.
+        runtime.runtime_submit.config = Some(root.join("missing-config.toml"));
+        assert!(current_profile(&runtime).is_err());
+        select(
+            "direct-deferred-model",
+            None,
+            &mut app,
+            &mut session,
+            &store,
+            &mut runtime,
+            &agent,
+        )
+        .await
+        .unwrap();
+        assert!(app.pending_provider.is_none());
+        assert_eq!(app.pending_model.as_deref(), Some("direct-deferred-model"));
+        assert_eq!(agent.main_model().model().as_deref(), Some("old"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keyboard_selection_captures_profile_and_closes_picker_before_switching() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.display_model = Some("old-model".into());
+        app.open_model_picker("old-model".into());
+        app.model_picker.as_mut().unwrap().profile = Some("other-provider".into());
+        app.set_model_picker_result(Ok(vec!["searched-model".into(), "another-model".into()]));
+        app.model_picker.as_mut().unwrap().editor.insert("searched");
+        app.refresh_model_picker_matches();
+        let ModelPickerAction::Select(model) =
+            app.handle_model_picker_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        else {
+            panic!("Enter should select the search result");
+        };
+        let profile = prepare_selection(&mut app, &model);
+        assert_eq!(profile.as_deref(), Some("other-provider"));
+        assert_eq!(model, "searched-model");
+        assert!(app.model_picker.is_none());
+        assert_eq!(app.display_model.as_deref(), Some("old-model"));
+        assert_eq!(
+            app.transcript.last().unwrap(),
+            "System: Switching model: other-provider / searched-model"
+        );
+        assert!(!app.transcript.iter().any(|row| row.contains("switched")));
+    }
+
+    #[test]
+    fn mouse_selection_keeps_the_selected_provider_after_closing_the_picker() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.open_model_picker("old-model".into());
+        app.model_picker.as_mut().unwrap().profile = Some("other-provider".into());
+        app.set_model_picker_result(Ok(vec!["clicked-model".into()]));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| render_model_picker(frame, &mut app))
+            .unwrap();
+        let hit = app.model_picker_hits[0].0;
+        let Some(ModelPickerAction::Select(model)) = app.activate_model_picker_at(hit.x, hit.y)
+        else {
+            panic!("click should select the model");
+        };
+        assert_eq!(
+            prepare_selection(&mut app, &model).as_deref(),
+            Some("other-provider")
+        );
+        assert!(app.model_picker.is_none());
+        assert!(
+            app.transcript
+                .last()
+                .unwrap()
+                .contains("other-provider / clicked-model")
+        );
+    }
+
+    #[test]
+    fn direct_model_selection_records_pending_then_the_actual_result() {
+        let mut app = App::new(Vec::new(), Language::En);
+        assert!(prepare_selection(&mut app, "manual-model").is_none());
+        assert_eq!(
+            app.transcript.last().unwrap(),
+            "System: Switching model: manual-model"
+        );
+        finish_selection(&mut app, Ok("Model switched: manual-model".into()));
+        assert_eq!(
+            app.transcript.last().unwrap(),
+            "System: Model switched: manual-model"
+        );
+        assert_eq!(app.notice.as_deref(), Some("Model switched: manual-model"));
+    }
+
+    #[test]
+    fn failed_model_selection_is_recorded_in_transcript_and_notice() {
+        let mut app = App::new(Vec::new(), Language::En);
+        prepare_selection(&mut app, "unavailable-model");
+        finish_selection(
+            &mut app,
+            Err(anyhow::anyhow!(
+                "unavailable-model: Runtime rejected request"
+            )),
+        );
+        assert!(app.model_picker.is_none());
+        assert_eq!(app.transcript.len(), 2);
+        assert_eq!(
+            app.transcript[1],
+            "Error: Switch failed: unavailable-model: Runtime rejected request"
+        );
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Switch failed: unavailable-model: Runtime rejected request")
+        );
+        assert!(!app.transcript.iter().any(|row| row.contains("switched")));
+    }
+
+    #[test]
+    fn model_failure_never_copies_toml_credential_source_into_chat() {
+        let source = "api_key = \"fixture-sensitive-line\" extra";
+        let error = toml::from_str::<toml::Value>(source).unwrap_err();
+        assert!(error.to_string().contains("fixture-sensitive-line"));
+        let error = anyhow::Error::new(error).context("parse model configuration");
+        let mut app = App::new(Vec::new(), Language::En);
+        finish_selection(&mut app, Err(error));
+        let visible = format!("{} {:?}", app.transcript.join("\n"), app.notice);
+        assert!(visible.contains("Cannot parse model configuration"));
+        assert!(!visible.contains("fixture-sensitive-line"));
+        assert!(!visible.contains("api_key"));
+    }
+
+    #[test]
+    fn model_failure_redacts_urls_and_keeps_the_failure_reason() {
+        let mut app = App::new(Vec::new(), Language::En);
+        finish_selection(
+            &mut app,
+            Err(anyhow::anyhow!(
+                "fixture unavailable at https://fixture.invalid/v1?api_key=fixture-url-canary"
+            )),
+        );
+        let visible = format!("{} {:?}", app.transcript.join("\n"), app.notice);
+        assert!(visible.contains("fixture unavailable"));
+        assert!(visible.contains("[REDACTED_URL]"));
+        assert!(!visible.contains("fixture-url-canary"));
     }
 
     #[test]

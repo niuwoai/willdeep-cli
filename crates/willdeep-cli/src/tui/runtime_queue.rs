@@ -109,32 +109,65 @@ pub(super) async fn submit_input(
     runtime: &TuiRuntime,
     store: &SessionStore,
     defer_until_released: bool,
+    term: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<()> {
-    // 空白会话为了不污染历史列表，启动时故意不落盘。入队是第一次真正提交，
-    // 这里补写并登记，否则服务端不认这条会话。
-    runtime_ui::persist_missing_core_session(session, store)?;
-    crate::daemon::ensure_runtime_session(
-        &runtime.home,
-        session.id,
-        &session.workspace,
-        session.profile.clone(),
-        session.model.clone(),
-    )
-    .await?;
-    session.runtime_managed = true;
-    store.save(session)?;
-    crate::daemon::turn_queue::list(&runtime.home, session.id).await?;
-    let text = app.input.text().to_owned();
-    let attachments = app
-        .attachments
-        .iter()
-        .map(|item| item.message.clone())
-        .collect::<Vec<_>>();
-    let prompt = app.enrich_prompt(&text, &runtime.skills);
-    // 暂缓与否是这条提交的一部分：同一段文字，一个要马上发、一个要等着，
-    // 不能共用一个幂等键，否则重试会把两种意图搅在一起。
+    let (draft, expanded, row) = prepare_input_submission(app, defer_until_released);
+    let text = draft.text().to_owned();
+    // 先显示输入已转入聊天区、但尚未获确认；技能读取、落盘与 RPC 都在这一帧后。
+    let result = async {
+        redraw::redraw(term, app, &runtime.skills, session)?;
+        let attachments = app
+            .attachments
+            .iter()
+            .map(|item| item.message.clone())
+            .collect::<Vec<_>>();
+        let prompt = app.enrich_prompt(&text, &runtime.skills);
+        let request_id =
+            submission_request_id(app, &prompt, &attachments, session.id, defer_until_released)?;
+        // 空白会话在第一次真正提交时补写并登记，否则服务端不认这条会话。
+        runtime_ui::persist_missing_core_session(session, store)?;
+        crate::daemon::ensure_runtime_session(
+            &runtime.home,
+            session.id,
+            &session.workspace,
+            session.profile.clone(),
+            session.model.clone(),
+        )
+        .await?;
+        session.runtime_managed = true;
+        store.save(session)?;
+        crate::daemon::turn_queue::list(&runtime.home, session.id).await?;
+        crate::daemon::submit_runtime_turn_with_options(
+            &runtime.home,
+            session.id,
+            prompt,
+            attachments,
+            crate::Surface::Tui,
+            request_id,
+            defer_until_released,
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    finish_input_submission(app, draft, expanded, row, defer_until_released, &result);
+    result?;
+    if let Ok(items) = crate::daemon::turn_queue::list(&runtime.home, session.id).await {
+        app.sync_runtime_queue(items);
+    }
+    Ok(())
+}
+
+fn submission_request_id(
+    app: &mut App,
+    prompt: &str,
+    attachments: &[MessageAttachment],
+    session_id: uuid::Uuid,
+    defer_until_released: bool,
+) -> Result<uuid::Uuid> {
+    // 暂缓与否是提交的一部分；失败重试保留原幂等键。
     let fingerprint =
-        serde_json::to_string(&(&prompt, &attachments, session.id, defer_until_released))?;
+        serde_json::to_string(&(prompt, attachments, session_id, defer_until_released))?;
     if app
         .runtime_queue_submission
         .as_ref()
@@ -142,48 +175,90 @@ pub(super) async fn submit_input(
     {
         app.runtime_queue_submission = Some((fingerprint, uuid::Uuid::new_v4()));
     }
-    let request_id = app.runtime_queue_submission.as_ref().unwrap().1;
-    crate::daemon::submit_runtime_turn_with_options(
-        &runtime.home,
-        session.id,
-        prompt,
-        attachments,
-        crate::Surface::Tui,
-        request_id,
-        defer_until_released,
-    )
-    .await?;
-    app.runtime_queue_submission = None;
-    let submitted = app.take_submitted_input();
-    app.attachments.clear();
-    app.selected_attachment = 0;
-    // 立即回显。那条 `queued_user_message` 要等正在跑的这一轮结束、下一轮任务
-    // 启动才发出来，长轮次里就是好几分钟；输入框已经清空，用户只能看到这句话消失。
-    // 暂缓提交（Cmd+Enter、/queue add）不在此列，它本来就还没发。
-    if !defer_until_released {
-        app.echo_runtime_submission(&submitted);
-    }
-    app.notice = Some(if defer_until_released {
-        app.language
-            .text(
+    Ok(app.runtime_queue_submission.as_ref().unwrap().1)
+}
+
+fn prepare_input_submission(app: &mut App, deferred: bool) -> (PromptEditor, bool, usize) {
+    let draft = std::mem::take(&mut app.input);
+    let expanded = std::mem::replace(&mut app.composer_expanded, false);
+    let status = if deferred {
+        app.language.text(
+            "正在加入待发队列",
+            "Adding to queue for later",
+            "送信待ちキューに追加しています",
+        )
+    } else {
+        app.language.text("正在提交", "submitting", "送信中")
+    };
+    let row = app.transcript.len();
+    app.append_transcript(if deferred {
+        format!("System: {status}: {}", draft.text())
+    } else {
+        format!("You: [{status}] {}", draft.text())
+    });
+    app.notice = Some(status.to_owned());
+    app.scroll_to_bottom();
+    (draft, expanded, row)
+}
+
+fn finish_input_submission(
+    app: &mut App,
+    draft: PromptEditor,
+    expanded: bool,
+    row: usize,
+    deferred: bool,
+    result: &Result<()>,
+) {
+    app.input = draft;
+    match result {
+        Ok(()) => {
+            app.runtime_queue_submission = None;
+            let submitted = app.take_submitted_input();
+            app.attachments.clear();
+            app.selected_attachment = 0;
+            let message = app.language.text(
                 "已加入队列，暂不发送 · Ctrl+Q 里按 S 再发",
                 "Queued for later · press S in Ctrl+Q to send it",
                 "キューに追加しました（未送信）· Ctrl+Q で S を押すと送信",
-            )
-            .to_owned()
-    } else {
-        app.language
-            .text(
-                "已保存到 Runtime 队列，各端同步",
-                "Saved to Runtime queue; synced across clients",
-                "Runtime キューに保存・端末間で同期",
-            )
-            .to_owned()
-    });
-    if let Ok(items) = crate::daemon::turn_queue::list(&runtime.home, session.id).await {
-        app.sync_runtime_queue(items);
+            );
+            if deferred {
+                app.transcript[row] =
+                    terminal_safe_text(&format!("System: {message}: {submitted}"));
+            } else {
+                // 串行提交期间没有其他记录插入；用既有的回显/事件认领路径替换占位。
+                app.transcript.remove(row);
+                app.message_times.remove(row);
+                app.echo_runtime_submission(&submitted);
+            }
+            app.notice = Some(if deferred {
+                message.to_owned()
+            } else {
+                app.language
+                    .text(
+                        "已保存到 Runtime 队列，各端同步",
+                        "Saved to Runtime queue; synced across clients",
+                        "Runtime キューに保存・端末間で同期",
+                    )
+                    .to_owned()
+            });
+        }
+        Err(error) => {
+            app.composer_expanded = expanded;
+            let message = format!(
+                "{}: {error:#}",
+                app.language.text(
+                    "提交失败，输入与附件已保留",
+                    "Submission failed; input and attachments retained",
+                    "送信失敗。入力と添付を保持しました",
+                )
+            );
+            app.transcript[row] =
+                terminal_safe_text(&format!("Error: {message}\n{}", app.input.text()));
+            app.notice = Some(message);
+        }
     }
-    Ok(())
+    app.transcript_render_cache = None;
+    app.refresh_transcript_height();
 }
 
 /// Intercept remote mutations BEFORE the process-local queue editor changes
@@ -366,6 +441,121 @@ mod tests {
         };
         sender.send(ApprovalDecision::AllowOnce).unwrap();
         assert_eq!(receiver.try_recv().unwrap(), ApprovalDecision::AllowOnce);
+    }
+
+    #[test]
+    fn pending_submission_clears_the_composer_without_claiming_runtime_acceptance() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "working".into());
+        app.input.insert("show immediately");
+        app.composer_expanded = true;
+        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
+        assert_eq!(draft.text(), "show immediately");
+        assert!(expanded);
+        assert!(app.input.is_empty());
+        assert!(!app.composer_expanded);
+        assert_eq!(app.transcript[row], "You: [submitting] show immediately");
+        assert!(app.pending_runtime_echoes.is_empty());
+        assert_eq!(app.notice.as_deref(), Some("submitting"));
+    }
+
+    #[test]
+    fn successful_submission_confirms_the_existing_row_and_claims_runtime_echo_once() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "working".into());
+        app.input.insert("accepted input");
+        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
+        let before = app.transcript.len();
+        finish_input_submission(&mut app, draft, expanded, row, false, &Ok(()));
+        assert_eq!(app.transcript.len(), before);
+        assert_eq!(app.transcript[row], "You: accepted input");
+        assert!(app.input.is_empty());
+        app.append_transcript("WillDeep: still working".into());
+        let before = app.transcript.len();
+        let event = serde_json::json!({
+            "type": "queued_user_message",
+            "turn_id": "confirmed-once",
+            "text": "accepted input"
+        });
+        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
+        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
+        assert_eq!(app.transcript.len(), before);
+        assert!(app.pending_runtime_echoes.is_empty());
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|row| row.as_str() == "You: accepted input")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn failed_submission_restores_draft_attachments_and_reuses_the_request_id() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.input.insert("keep me");
+        app.input.left();
+        app.composer_expanded = true;
+        let attachment = DraftAttachment {
+            id: uuid::Uuid::new_v4(),
+            message: MessageAttachment::Text {
+                name: "draft.txt".into(),
+                content: "draft attachment".into(),
+            },
+        };
+        app.attachments.push(attachment.clone());
+        let session_id = uuid::Uuid::new_v4();
+        let attachments = vec![attachment.message.clone()];
+        let request_id =
+            submission_request_id(&mut app, "keep me", &attachments, session_id, false).unwrap();
+        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
+        finish_input_submission(
+            &mut app,
+            draft,
+            expanded,
+            row,
+            false,
+            &Err(anyhow::anyhow!("Runtime unavailable")),
+        );
+        assert_eq!(app.input.text(), "keep me");
+        assert!(app.composer_expanded);
+        assert_eq!(app.attachments[0].id, attachment.id);
+        assert!(app.transcript[row].starts_with(
+            "Error: Submission failed; input and attachments retained: Runtime unavailable"
+        ));
+        assert!(app.pending_runtime_echoes.is_empty());
+        assert_eq!(
+            submission_request_id(&mut app, "keep me", &attachments, session_id, false).unwrap(),
+            request_id
+        );
+        let (draft, expanded, retry_row) = prepare_input_submission(&mut app, false);
+        finish_input_submission(&mut app, draft, expanded, retry_row, false, &Ok(()));
+        assert!(app.runtime_queue_submission.is_none());
+        assert!(app.attachments.is_empty());
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|row| row.as_str() == "You: keep me")
+                .count(),
+            1
+        );
+        assert_eq!(app.pending_runtime_echoes.len(), 1);
+    }
+
+    #[test]
+    fn deferred_submission_remains_unsent_and_has_a_distinct_request_id() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let session_id = uuid::Uuid::new_v4();
+        let immediate = submission_request_id(&mut app, "later", &[], session_id, false).unwrap();
+        let deferred = submission_request_id(&mut app, "later", &[], session_id, true).unwrap();
+        assert_ne!(immediate, deferred);
+        app.input.insert("later");
+        let (draft, expanded, row) = prepare_input_submission(&mut app, true);
+        assert!(app.transcript[row].starts_with("System: Adding to queue for later"));
+        finish_input_submission(&mut app, draft, expanded, row, true, &Ok(()));
+        assert!(app.transcript[row].starts_with("System: Queued for later"));
+        assert!(app.pending_runtime_echoes.is_empty());
+        assert!(!app.transcript.iter().any(|row| row.starts_with("You: ")));
     }
 
     #[test]
