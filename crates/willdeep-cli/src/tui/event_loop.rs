@@ -750,19 +750,7 @@ pub(super) async fn event_loop(
             );
         }
         load_attention_diagnostics(&mut app, runtime);
-        // 同步更新把这一帧包成一次原子绘制：支持的终端会攒到结束再一次性翻页，
-        // 不支持的把这两条序列当未知模式忽略。没有它，滚动时整片聊天区的改写会
-        // 被终端逐段画出来，看起来就是屏闪。
-        queue!(
-            term.backend_mut(),
-            crossterm::terminal::BeginSynchronizedUpdate
-        )?;
-        let drawn = draw(term, &mut app, &runtime.skills, session);
-        execute!(
-            term.backend_mut(),
-            crossterm::terminal::EndSynchronizedUpdate
-        )?;
-        drawn?;
+        redraw::redraw(term, &mut app, &runtime.skills, session)?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
             _ = async {
@@ -972,11 +960,11 @@ pub(super) async fn event_loop(
                             MouseEventKind::ScrollUp|MouseEventKind::ScrollDown=>{
                                 let delta=if mouse.kind==MouseEventKind::ScrollUp{-1}else{1};
                                 let action=app.model_picker_scroll_at(delta,mouse.column,mouse.row);
-                                model_provider::handle(action,&mut app,session,store,runtime,&agent).await;
+                                model_provider::handle(action,&mut app,session,store,runtime,&agent,term).await?;
                             },
                             MouseEventKind::Down(MouseButton::Left)=>{
                                 if let Some(action)=app.activate_model_picker_at(mouse.column,mouse.row) {
-                                    model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
+                                    model_provider::handle(action, &mut app, session, store, runtime, &agent, term).await?;
                                 }
                             },
                             _=>{},
@@ -1370,7 +1358,7 @@ pub(super) async fn event_loop(
                     }
                     if app.model_picker.is_some(){
                         let action = app.handle_model_picker_key(key);
-                        model_provider::handle(action, &mut app, session, store, runtime, &agent).await;
+                        model_provider::handle(action, &mut app, session, store, runtime, &agent, term).await?;
                         continue;
                     }
                     if app.workspace_picker.is_some(){
@@ -1594,7 +1582,7 @@ pub(super) async fn event_loop(
                         KeyCode::Enter if is_queue_for_later_key(key)&&(!app.input.is_empty()||!app.attachments.is_empty())=>{
                             // 先入队、以后再发：走服务端队列并暂缓。本地队列不行——
                             // 空闲时 queued_prompt_ready 会立刻把它发出去。
-                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
+                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true,term).await {
                                 app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
                             }
                         },
@@ -1655,7 +1643,7 @@ pub(super) async fn event_loop(
                                     continue;
                                 }
                                 app.restore_queue_draft();
-                                if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true).await {
+                                if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,true,term).await {
                                     app.notice = Some(format!("{}: {error}", language.text("入队失败，输入与附件已保留", "Could not queue; input and attachments retained", "キューへの追加に失敗。入力と添付を保持しました")));
                                 }
                                 continue;
@@ -1670,7 +1658,7 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         if app.runtime_turn {
-                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false).await {
+                                            if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false,term).await {
                                                 app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
                                             }
                                             continue;
@@ -1694,12 +1682,20 @@ pub(super) async fn event_loop(
                                 }
                             }
                             if child_session_commands::dispatch(&mut app, session, store, runtime).await { continue; }
-                            let prompt=app.take_submitted_input();
-                            // 斜杠命令是操作不是对话：不回显成 `You:` 行，结果仍由各命令自己写。
-                            // 送去模型的提示词（含 /goal、/local 这类会开工的）照常回显。
+                            let prompt=app.take_prompt_for_submission();
+                            // You 行与清空的输入框必须在任何慢操作前真正显示到终端。
                             if !narration::is_display_only_command(&prompt){
-                                app.append_transcript(format!("You: {prompt}"));
-                                app.note_prompt_submitted(&prompt);
+                                redraw::redraw(term, &mut app, &runtime.skills, session)?;
+                            }
+                            if let Some(model_command)=model_commands::parse(&prompt) {
+                                match model_command {
+                                    ModelCommand::List=>{
+                                        let current=session.model.clone().unwrap_or_else(||runtime.provider_config.model.clone());
+                                        request_model_list(&mut app,runtime,current);
+                                    },
+                                    ModelCommand::Switch(model)=>model_provider::handle(ModelPickerAction::Select(model), &mut app, session, store, runtime, &agent, term).await?,
+                                }
+                                continue;
                             }
                             if let Some(command)=permission_commands::parse(&prompt) {
                                 match command {
@@ -1777,19 +1773,6 @@ pub(super) async fn event_loop(
                                 },
                                 Ok(false)=>{},
                                 Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("工作区操作失败","Workspace action failed","ワークスペース操作に失敗しました")));continue;},
-                            }
-                            if let Some(model_command)=model_commands::parse(&prompt) {
-                                match model_command {
-                                    ModelCommand::List=>{
-                                        let current=session.model.clone().unwrap_or_else(||runtime.provider_config.model.clone());
-                                        request_model_list(&mut app,runtime,current);
-                                    },
-                                    ModelCommand::Switch(model)=>match switch_or_defer_model(&model,&mut app,session,store,runtime,&agent).await {
-                                        Ok(message)=>app.append_transcript(format!("System: {message}")),
-                                        Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("切换模型失败","Model switch failed","モデル切替に失敗"))),
-                                    },
-                                }
-                                continue;
                             }
                             if prompt.trim()=="/routing" {
                                 let config_path=runtime.runtime_submit.config.clone().map(Ok).unwrap_or_else(crate::config::default_config_path);

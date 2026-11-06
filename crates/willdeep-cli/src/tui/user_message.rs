@@ -4,6 +4,17 @@ use super::*;
 pub(super) const PREVIEW_LINES: usize = 8;
 
 impl App {
+    /// 普通 Enter 的本地反馈先准备好，调用方立刻绘制，再执行命令或提交 Runtime。
+    pub(super) fn take_prompt_for_submission(&mut self) -> String {
+        let prompt = self.take_submitted_input();
+        if !narration::is_display_only_command(&prompt) {
+            self.append_transcript(format!("You: {prompt}"));
+            self.note_prompt_submitted(&prompt);
+            self.scroll_to_bottom();
+        }
+        prompt
+    }
+
     pub(super) fn render_user_transcript(
         &self,
         folded: &FoldedTranscript,
@@ -124,5 +135,40 @@ impl App {
         self.follow_bottom = false;
         self.scroll_from_bottom = self.max_scroll().saturating_sub(offset);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_submission_prepares_the_visible_message_and_clears_the_composer() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.input.insert("show this before the Runtime responds");
+        app.composer_expanded = true;
+        app.follow_bottom = false;
+        let prompt = app.take_prompt_for_submission();
+        assert_eq!(prompt, "show this before the Runtime responds");
+        assert!(app.input.is_empty());
+        assert!(!app.composer_expanded);
+        assert!(app.follow_bottom);
+        assert_eq!(
+            app.transcript.last().unwrap(),
+            "You: show this before the Runtime responds"
+        );
+        assert_eq!(
+            app.prompt_history_pending.back().map(String::as_str),
+            Some(prompt.as_str())
+        );
+    }
+
+    #[test]
+    fn model_command_consumes_input_without_echoing_it_as_a_user_message() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.input.insert("/model selected-model");
+        assert_eq!(app.take_prompt_for_submission(), "/model selected-model");
+        assert!(app.input.is_empty());
+        assert!(app.transcript.is_empty());
     }
 }

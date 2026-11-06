@@ -71,6 +71,7 @@ mod plan_ui;
 mod prompt_history;
 mod prompt_queue;
 mod quiet_mode;
+mod redraw;
 mod reference_menu;
 mod rendering;
 mod rewind_ui;
