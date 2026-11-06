@@ -19,6 +19,15 @@ fn root_retry_wait_is_observable_through_public_runtime_api() {
     let config = root.join("config.toml");
     write_private_config(&config, provider.api_base());
     let _guard = TestGuard::new(root.clone(), home.clone());
+    // This test observes retry states, so cold Runtime startup must finish
+    // before the first request's observation budget begins. Autostart has
+    // separate coverage in run_uses_persistent_runtime_and_continues_the_session.
+    let started = willdeep(&home)
+        .args(["daemon", "start"])
+        .output()
+        .expect("start Runtime before observing root retry");
+    assert_success(&started, "start Runtime before observing root retry");
+    assert_eq!(provider.requests(), 0, "startup must not call the Provider");
     let child = willdeep(&home)
         .args([
             "run",
