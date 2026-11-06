@@ -23,6 +23,24 @@ impl AnthropicMessagesProvider {
     }
 }
 
+fn apply_reasoning(
+    config: &ProviderConfig,
+    body: &mut serde_json::Value,
+) -> Result<(), ProviderError> {
+    if !config.non_thinking
+        && config.reasoning.as_ref().is_some_and(|reasoning| {
+            !reasoning.levels.is_empty()
+                && reasoning
+                    .parameter
+                    .as_deref()
+                    .is_none_or(|parameter| parameter == "output_config.effort")
+        })
+    {
+        body["thinking"] = serde_json::json!({ "type": "adaptive" });
+    }
+    config.apply_reasoning(body, "output_config.effort")
+}
+
 #[async_trait]
 impl Provider for AnthropicMessagesProvider {
     async fn complete_with_events(
@@ -59,6 +77,9 @@ impl Provider for AnthropicMessagesProvider {
             tools: wire_tools,
             stream: false,
         };
+        let mut body = serde_json::to_value(body)
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        apply_reasoning(&self.config, &mut body)?;
         let request =
             anthropic_auth(self.client.post(self.endpoint.clone()), &self.config).json(&body);
         let bytes = send_retrying(request, &self.config).await?;

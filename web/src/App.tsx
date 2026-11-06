@@ -29,6 +29,7 @@ import { WorkspaceApprovalGuide } from "./WorkspaceApprovalGuide";
 import { needsWorkspaceApproval, useWorkspaceApproval, type WorkspaceEntry } from "./useWorkspaceApproval";
 import type { WorkspaceSummary as Workspace } from "./workspaceApprovalApi";
 import { ModelPicker } from "./ModelPicker";
+import { ReasoningPicker } from "./ReasoningPicker";
 import { SharePanel } from "./SharePanel";
 import { changeApprovalMode } from "./approvalModeApi";
 import { changeModel, ModelFailure as ModelSwitchFailure } from "./modelApi";
@@ -43,7 +44,7 @@ import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
-import { enqueueButtonState, queueText } from "./queueMessages";
+import { enqueueButtonState, queueText, runningInputFeedback } from "./queueMessages";
 import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
 import { sessionTree } from "./sessionTree";
 import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
@@ -79,7 +80,7 @@ function lineageTime(createdAt: number, t: Messages): string {
   if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
   return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
 }
-type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null };
+type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null; reasoning_level?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -369,6 +370,7 @@ export function App() {
   // 会话当前模型（`None` 表示跟随 Provider 默认）与 `/model` 选择器的开合。
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [sessionModelProviderId, setSessionModelProviderId] = useState<string | null>(null);
+  const [sessionReasoningLevel, setSessionReasoningLevel] = useState<string | null>(null);
   // 还没建会话时先选好的模型。它不是会话上的设置，只是第一条消息的草稿：
   // 发出去时随请求一起交给服务端，建会话时一次写进去。
   const [draftModel, setDraftModel] = useState<{ model: string; providerId: string } | null>(null);
@@ -433,6 +435,8 @@ export function App() {
   const [busy, setBusy] = useState(false); const [activity, setActivity] = useState("");
   const draftSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
   const queueSubmitting = useRef(false);
+  const [submissionNotice, setSubmissionNotice] = useState<{ sessionId: string; text: string } | null>(null);
+  useEffect(() => { setSubmissionNotice(null); }, [sessionId]);
   const inputSuggestion = useInputSuggestion();
   // 预测回包时要看「此刻」输入框空不空、有没有新一轮，闭包里的值是发起时的旧值。
   const composerEmptyRef = useRef(true);
@@ -462,13 +466,18 @@ export function App() {
     const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
     if (new TextEncoder().encode(body).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
     queueSubmitting.current = true;
+    const running = busy || selectedSession?.active || activeRuntimeSessionId === target;
+    const progress = running || visibleHumanGates.length ? runningInputFeedback(runtimeActivity, target, language).text : "";
+    setSubmissionNotice({ sessionId: target, text: [progress, queueText("sending", language)].filter(Boolean).join(" · ") });
     try {
       await queueRequest(`/api/sessions/${encodeURIComponent(target)}/queue`, { method: "POST", headers: { "content-type": "application/json" }, body });
       draftSendRequest.current = null;
       setPrompt((current) => current === outgoingPrompt ? "" : current);
       if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+      setSubmissionNotice({ sessionId: target, text: [progress, queueText("saved", language)].filter(Boolean).join(" · ") });
       setError("");
     } catch (reason) {
+      setSubmissionNotice({ sessionId: target, text: [progress, queueText("failed", language)].filter(Boolean).join(" · ") });
       setError(`${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally { queueSubmitting.current = false; }
   }
@@ -649,7 +658,7 @@ export function App() {
     setApprovalMode(workspaceDraftApprovalRef.current);
     setWorkspacePolicy(workspaceDefaultRef.current);
     setPermissionsOpen(false);
-    setSessionModel(null); setSessionModelProviderId(null);
+    setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
     setDraftModel(null);
     setModelOpen(false);
     setShareOpen(false);
@@ -799,6 +808,7 @@ export function App() {
     setWorkspacePolicy(detail.workspace_access);
     setSessionModel(detail.model ?? null);
     setSessionModelProviderId(detail.provider_id ?? null);
+    setSessionReasoningLevel(detail.reasoning_level ?? null);
     // 会话已经存在，草稿里的选择要么已经被采纳，要么不再相关。
     setDraftModel(null);
     conciseLineRef.current = null;
@@ -1124,7 +1134,7 @@ export function App() {
     } else if (!changed && entry.fresh) {
       sessionIdRef.current = "";
       setSessionId(""); setChat([]); setApprovalMode(workspaceDraftApprovalRef.current); setWorkspacePolicy(target.access);
-      setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null);
+      setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
       setDraftModel(null); setModelOpen(false); setShareOpen(false);
     }
   }
@@ -1492,10 +1502,18 @@ export function App() {
       if (busy) { setPrompt(""); return; }
     }
     const content = goalToStart || typed || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
-    // 采用过的建议在真正发出去这一刻结算（插话也算）：原样 / 改过 / 重写由服务端判定。
+    // 普通输入不是审批决定或工具提问的答案。恢复现有入口，并保留草稿。
+    if (!typed.startsWith("/") && visibleHumanGates.length) {
+      const feedback = runningInputFeedback(runtimeActivity, sessionId, language);
+      setSubmissionNotice({ sessionId, text: `${feedback.text} · ${queueText("inputRetained", language)}` });
+      if (feedback.gateId) openRuntimeGate(feedback.gateId);
+      return;
+    }
+    // 采用过的建议在真正发出去这一刻结算：原样 / 改过 / 重写由服务端判定。
     inputSuggestion.settleSent(typed);
-    // Runtime owns submitted messages; clients never keep a second execution queue.
+    // 旧 steer 仅内存入箱且无幂等键；保留 Runtime 持久队列，不能把入队说成模型已读。
     if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
+    setSubmissionNotice(null);
     const activeGoal = goalToStart || (goalEnabled ? goal : "");
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
     const outgoingAttachments = sendAttachments;
@@ -1593,7 +1611,7 @@ export function App() {
   const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = <>
     {workspaceApproval.pending && <WorkspaceApprovalGuide key={workspaceApproval.pending.revision} path={workspaceApproval.pending.workspace.path} language={language} messages={t} onSave={workspaceApproval.apply} onCancel={cancelWorkspaceEntry} />}
-    {showSetup ? <ConfigurationSettings compact messages={t} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
+    {showSetup ? <ConfigurationSettings compact messages={t} language={language} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
   </>;
 
   if (rail.kind === "configuration") {
@@ -1808,6 +1826,7 @@ export function App() {
       )}
       <RuntimeQueue key={sessionId ?? "new"} sessionId={sessionId || null} language={language} />
       {selectionNotice && <Text className="selection-notice" role="status">{selectionNotice}</Text>}
+      {submissionNotice?.sessionId === sessionId && <Text className="selection-notice" role="status">{submissionNotice.text}</Text>}
       <Box className="composer-shell">
         {references.query && <ComposerReferences entries={references.entries} selected={references.selected} loading={references.loading} messages={t} choose={chooseReference} />}
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
@@ -1868,6 +1887,7 @@ export function App() {
         <div className="composer-control-items">
           {/* 还没建会话也要能选：这两个面板在没有会话时只存草稿，跟着第一条消息一起交出去。 */}
           <ModelPicker key={`model-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionModel : draftModel?.model ?? null} currentProviderId={sessionId ? sessionModelProviderId : draftModel?.providerId ?? null} open={modelOpen} onOpenChange={setModelOpen} onPicked={(model, providerId) => { setSessionModel(model); if (sessionId) setSessionModelProviderId(providerId); else setDraftModel({ model, providerId }); }} onApplied={showSelectionNotice} />
+          <ReasoningPicker key={`reasoning-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionReasoningLevel : null} currentProviderId={sessionId ? sessionModelProviderId : draftModel?.providerId ?? null} onChanged={setSessionReasoningLevel} onApplied={showSelectionNotice} />
           <PermissionsPanel key={`permissions-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open && sessionId) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />
         </div>
         <div className="goal-mode-control">

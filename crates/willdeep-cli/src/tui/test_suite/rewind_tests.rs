@@ -208,6 +208,7 @@ fn the_summary_line_reports_dropped_turns_and_file_changes() {
         workspace: Some("/workspace".to_owned()),
         profile: None,
         model: None,
+        reasoning_level: None,
         approval_mode: None,
         started_by: None,
         parent_session_id: None,

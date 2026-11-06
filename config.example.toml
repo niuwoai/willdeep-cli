@@ -207,6 +207,16 @@ api_base = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5"
 
+# 逻辑等级名由你定义；请求参数默认按 API 协议选择，也可在这里覆盖。
+[providers.openai-responses.reasoning]
+default_level = "balanced"
+parameter = "reasoning.effort"
+
+[providers.openai-responses.reasoning.levels]
+economy = "low"
+balanced = "medium"
+deep = "high"
+
 [providers.anthropic]
 provider = "anthropic"
 api = "anthropic-messages"

@@ -50,6 +50,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/plan",
             "/tools",
             "/thinking [show|hide]",
+            "/reasoning [show|<等级>|set <等级>|default|auto|reset]",
             "/compress",
             "/model [模型名]",
             "/permissions [档位]",
@@ -87,6 +88,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/plan",
             "/tools",
             "/thinking [show|hide]",
+            "/reasoning [show|<level>|set <level>|default|auto|reset]",
             "/compress",
             "/model [model]",
             "/permissions [mode]",
@@ -124,6 +126,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/plan",
             "/tools",
             "/thinking [show|hide]",
+            "/reasoning [show|<レベル>|set <レベル>|default|auto|reset]",
             "/compress",
             "/model [モデル名]",
             "/permissions [モード]",
@@ -261,6 +264,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "显示或隐藏模型思考内容；Thought 摘要可点击展开",
                 "Show or hide model reasoning; click Thought summaries to expand",
                 "モデルの思考を表示・非表示。Thought の要約をクリックして展開",
+            ),
+        ),
+        (
+            "/reasoning",
+            language.text(
+                "查看或切换等级；set 可选择与子命令同名的等级；default 恢复默认",
+                "Show or change the level; set selects command-named levels; default resets it",
+                "レベルを表示・切替。コマンドと同名のレベルは set、既定に戻すには default",
             ),
         ),
         (

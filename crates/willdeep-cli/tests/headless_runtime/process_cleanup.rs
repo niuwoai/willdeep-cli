@@ -93,25 +93,96 @@ fn stop_daemon_until(home: &Path, deadline: std::time::Instant) -> Result<(), St
     stop_daemon_observing_startup(home, deadline, || {})
 }
 
+struct CleanupProgress {
+    started: std::time::Instant,
+    stage_started: std::time::Instant,
+    stage: &'static str,
+    observed: Vec<u32>,
+    starting: Option<bool>,
+    forced: bool,
+    enumerations: usize,
+    enumeration_elapsed: Duration,
+    stop_status: Option<String>,
+}
+
+impl CleanupProgress {
+    fn new() -> Self {
+        let started = std::time::Instant::now();
+        Self {
+            started,
+            stage_started: started,
+            stage: "initializing",
+            observed: Vec::new(),
+            starting: None,
+            forced: false,
+            enumerations: 0,
+            enumeration_elapsed: Duration::ZERO,
+            stop_status: None,
+        }
+    }
+
+    fn enter(&mut self, stage: &'static str) {
+        self.stage = stage;
+        self.stage_started = std::time::Instant::now();
+    }
+
+    fn describe(&self, home: &Path) -> String {
+        format!(
+            "home={} elapsed={:?} stage={} stage_elapsed={:?} enumerations={} enumeration_elapsed={:?} observed PIDs={:?} starting={:?} forced={} daemon_stop={:?}",
+            home.display(),
+            self.started.elapsed(),
+            self.stage,
+            self.stage_started.elapsed(),
+            self.enumerations,
+            self.enumeration_elapsed,
+            self.observed,
+            self.starting,
+            self.forced,
+            self.stop_status,
+        )
+    }
+}
+
 fn stop_daemon_observing_startup(
     home: &Path,
     deadline: std::time::Instant,
     mut on_starting: impl FnMut(),
 ) -> Result<(), String> {
+    let mut progress = CleanupProgress::new();
+    let result = cleanup_daemon_loop(home, deadline, &mut on_starting, &mut progress);
+    let context = progress.describe(home);
+    match result {
+        Ok(()) => {
+            eprintln!("test process cleanup confirmed: {context}");
+            Ok(())
+        }
+        Err(error) => Err(format!("{error}; {context}")),
+    }
+}
+
+fn cleanup_daemon_loop(
+    home: &Path,
+    deadline: std::time::Instant,
+    on_starting: &mut impl FnMut(),
+    progress: &mut CleanupProgress,
+) -> Result<(), String> {
     let runtime = home.join("runtime");
     let state_path = runtime.join("daemon.json");
     let image = fixture_executable(home);
     let mut normal_deadline = deadline.checked_sub(FORCE_REAP_WINDOW).unwrap_or(deadline);
-    let mut observed = Vec::new();
-    let mut forced = false;
     let mut empty_snapshot = false;
     loop {
-        let owned = fixture_processes::owned_until(&image, deadline)?;
+        progress.enter("image enumeration");
+        let owned = fixture_processes::owned_until(&image, deadline);
+        progress.enumerations += 1;
+        progress.enumeration_elapsed += progress.stage_started.elapsed();
+        let owned = owned?;
         for &pid in &owned {
-            if !observed.contains(&pid) {
-                observed.push(pid);
+            if !progress.observed.contains(&pid) {
+                progress.observed.push(pid);
             }
         }
+        progress.enter("read daemon state");
         let state = match std::fs::read(&state_path) {
             Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
                 Ok(state) => Some(state),
@@ -132,28 +203,30 @@ fn stop_daemon_observing_startup(
             }
         };
         let starting = runtime.join("daemon.lock").exists();
+        progress.starting = Some(starting);
         if state.is_none() && starting {
+            progress.enter("startup observer");
             on_starting();
         }
-        let empty = owned.is_empty() && (!starting || forced);
+        // An empty image snapshot cannot distinguish a stale lease from a
+        // launcher that has not started yet. Only an actual owned-process
+        // termination permits ignoring the startup marker.
+        let empty = owned.is_empty() && (!starting || progress.forced);
         // Re-snapshot after a launcher exits during PID enumeration: its newly
         // forked daemon may not have been present in that first PID snapshot.
         if empty && empty_snapshot {
-            if !observed.is_empty() {
-                eprintln!(
-                    "test process cleanup confirmed: home={} exited PIDs={observed:?} forced={forced}",
-                    home.display()
-                );
+            if std::time::Instant::now() >= deadline {
+                return Err("test process cleanup exceeded total deadline".into());
             }
+            progress.enter("confirm empty snapshots");
             return Ok(());
         }
         empty_snapshot = empty;
         if std::time::Instant::now() >= normal_deadline {
+            progress.enter("force terminate");
             for pid in owned {
-                match fixture_processes::terminate(&image, pid) {
-                    Ok(()) => forced = true,
-                    Err(error) => eprintln!("{error}"),
-                }
+                fixture_processes::terminate(&image, pid, deadline)?;
+                progress.forced = true;
             }
         } else if state
             .as_ref()
@@ -161,6 +234,7 @@ fn stop_daemon_observing_startup(
             .and_then(|pid| u32::try_from(pid).ok())
             .is_some_and(|pid| owned.contains(&pid))
         {
+            progress.enter("spawn daemon stop");
             // Never contact a state file whose PID does not belong to our image.
             let child = willdeep(home)
                 .args(["daemon", "stop"])
@@ -171,37 +245,50 @@ fn stop_daemon_observing_startup(
             let mut stop = match child {
                 Ok(child) => ChildGuard(Some(child)),
                 Err(error) => {
+                    progress.stop_status = Some(format!("spawn failed: {error}"));
                     eprintln!(
-                        "spawn test Daemon stop for {}: {error}; using private image cleanup",
-                        home.display()
+                        "test Daemon stop failed; using private image cleanup: {}",
+                        progress.describe(home)
                     );
                     normal_deadline = std::time::Instant::now();
                     continue;
                 }
             };
-            loop {
+            progress.enter("wait daemon stop");
+            let waited = loop {
                 match stop.0.as_mut().unwrap().try_wait() {
-                    Ok(Some(_)) => break,
+                    Ok(Some(status)) => break Ok(Some(status)),
                     Ok(None) => {}
-                    Err(error) => {
-                        eprintln!("wait for test Daemon stop: {error}");
-                        normal_deadline = std::time::Instant::now();
-                        break;
-                    }
+                    Err(error) => break Err(format!("wait for test Daemon stop: {error}")),
                 }
-                if std::time::Instant::now() >= normal_deadline {
-                    break;
+                let remaining =
+                    normal_deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break Ok(None);
                 }
-                thread::sleep(CLEANUP_POLL);
+                thread::sleep(CLEANUP_POLL.min(remaining));
+            };
+            progress.stop_status = Some(match &waited {
+                Ok(Some(status)) => status.to_string(),
+                Ok(None) => "graceful stop deadline exceeded".into(),
+                Err(error) => error.clone(),
+            });
+            progress.enter("reap daemon stop");
+            // Preserve the existing direct-child ownership and reap contract:
+            // a deadline must not discard a Child whose exit is still pending.
+            stop.stop();
+            let status = waited?;
+            if status.is_none_or(|status| !status.success()) {
+                normal_deadline = std::time::Instant::now();
             }
+            eprintln!("test Daemon stop completed: {}", progress.describe(home));
         }
-        if std::time::Instant::now() >= deadline {
-            return Err(format!(
-                "test process cleanup exceeded {CLEANUP_TIMEOUT:?} for {}; observed PIDs: {observed:?}",
-                home.display()
-            ));
+        progress.enter("cleanup poll");
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("test process cleanup exceeded total deadline".into());
         }
-        thread::sleep(CLEANUP_POLL);
+        thread::sleep(CLEANUP_POLL.min(remaining));
     }
 }
 

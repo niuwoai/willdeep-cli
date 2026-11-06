@@ -1,0 +1,30 @@
+{
+  "version": "0.147.0-rc2",
+  "date": "2026-11-06",
+  "status": "historical_verification_record",
+  "source_record_commit": "f246a18e935dd80bc91edebd3e2dae6e8c1898b5",
+  "applies_to_current_split_commits": false,
+  "scope_note": "Historical checks cover both reasoning functionality (split rc1) and plan-card fixes (split rc2); new regression tests, Web module extraction, Harness wiring and mobile reasoning popover adjustments were not covered.",
+  "scope": ["reasoning_profile", "tui_reasoning", "web_reasoning", "single_plan_card"],
+  "checks": {
+    "core_targeted": {"status": "passed", "passed": 39},
+    "cli_targeted": {"status": "passed", "passed": 21},
+    "web_targeted": {"status": "passed", "files": 2, "passed": 7},
+    "typescript": {"status": "passed"},
+    "targeted_eslint": {"status": "passed"},
+    "web_build": {"status": "passed", "warning": "JavaScript chunk exceeds 500 kB"},
+    "rustfmt": {"status": "passed"},
+    "diff_whitespace": {"status": "passed"},
+    "cli_build": {"status": "passed"},
+    "final_ui_verification": {
+      "status": "passed", "tui_restored_level": "deep", "tui_plan_cards": 1,
+      "web_plan_cards": 1, "web_level_transitions": ["economy", null, "deep"],
+      "configuration_default_transitions": ["deep", "balanced"],
+      "configuration_reload_preserved": true, "browser_console_errors": 0,
+      "scope": "isolated reasoning and plan fixture"
+    }
+  },
+  "isolation": {"separate_home": true, "synthetic_sessions": true, "production_provider_configuration_modified": false, "real_upstream_requests": 0},
+  "not_run": ["full_workspace_tests", "windows_native", "linux_native", "real_upstream_requests", "rollback_compatibility"],
+  "published": false
+}

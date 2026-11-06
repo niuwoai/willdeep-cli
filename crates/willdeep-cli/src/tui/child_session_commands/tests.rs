@@ -25,6 +25,7 @@ fn runtime(root: &std::path::Path) -> TuiRuntime {
             "test-model",
         ),
         local_workspace: root.to_owned(),
+        reasoning_level: None,
         tx,
         rx,
     }

@@ -22,6 +22,9 @@ pub(super) async fn complete(
         tools: tools.iter().map(AnthropicTool::from).collect(),
         stream: true,
     };
+    let mut body = serde_json::to_value(body)
+        .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+    super::apply_reasoning(&provider.config, &mut body)?;
     let request = anthropic_auth(
         provider.client.post(provider.endpoint.clone()),
         &provider.config,

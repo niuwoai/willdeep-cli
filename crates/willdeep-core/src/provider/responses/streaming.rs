@@ -31,6 +31,11 @@ pub(super) async fn complete(
             .non_thinking
             .then_some(ResponseReasoning { effort: "none" }),
     };
+    let mut body = serde_json::to_value(body)
+        .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+    provider
+        .config
+        .apply_reasoning(&mut body, "reasoning.effort")?;
     let request = openai_auth(
         provider.client.post(provider.endpoint.clone()),
         &provider.config,

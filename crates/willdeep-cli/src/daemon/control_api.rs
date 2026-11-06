@@ -315,6 +315,7 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         "session.attachments" => attachments::get(state, &request),
         "session.rename" => session_rename(state, &request),
         "session.update_model" => session_update_model(state, &request),
+        "session.update_reasoning_level" => session_update_reasoning_level(state, &request),
         "session.configure" => mobile_gateway::configure_run_context(state, &request.params)
             .await
             .map_err(|_| ApiFailure::invalid("Invalid or unavailable session configuration"))
@@ -849,6 +850,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "session.create",
     "session.rename",
     "session.update_model",
+    "session.update_reasoning_level",
     "session.configure",
     "session.update_approval_mode",
     "session.fork",
@@ -925,6 +927,7 @@ fn public_session(
         workspace: Some(session.workspace.to_string_lossy().into_owned()),
         profile: session.profile,
         model: session.model,
+        reasoning_level: session.reasoning_level,
         approval_mode: session.approval_mode.map(workspace_store::public_access),
         started_by: session.started_by,
         parent_session_id: session.parent_session_id,
@@ -1481,6 +1484,53 @@ fn session_update_model(state: &ServerState, request: &ApiRequest) -> ApiResult 
     state
         .events
         .append("session.model_updated", format!("session_id={}", params.id))
+        .map_err(ApiFailure::internal)?;
+    json(public_session(session))
+}
+
+fn session_update_reasoning_level(state: &ServerState, request: &ApiRequest) -> ApiResult {
+    let params = params::<willdeep_runtime_protocol::UpdateSessionReasoningLevelParams>(request)?;
+    let existing = state
+        .sessions
+        .get(params.id)
+        .map_err(ApiFailure::internal)?
+        .ok_or_else(|| ApiFailure::not_found("Runtime Session not found"))?;
+    if let Some(level) = params.reasoning_level.as_deref() {
+        let loaded =
+            crate::config::LoadedConfig::load(existing.config.as_deref()).map_err(|error| {
+                ApiFailure::invalid(format!("cannot load Session provider config: {error}"))
+            })?;
+        let profile = loaded
+            .select_provider(existing.profile.as_deref())
+            .map_err(|error| {
+                ApiFailure::invalid(format!("cannot resolve Session Provider: {error}"))
+            })?;
+        let configured = profile
+            .and_then(|profile| profile.reasoning.as_ref())
+            .is_some_and(|reasoning| reasoning.levels.contains_key(level));
+        if !configured {
+            return Err(ApiFailure::invalid(
+                "reasoning level is not configured for this Session Provider",
+            ));
+        }
+    }
+    let level = params.reasoning_level;
+    let session = state
+        .sessions
+        .update_reasoning_level(params.id, level.clone())
+        .map_err(|error| {
+            ApiFailure::invalid(format!("cannot update Session reasoning level: {error}"))
+        })?;
+    state
+        .events
+        .append(
+            "session.reasoning_level_updated",
+            format!(
+                "session_id={} reasoning_level={}",
+                params.id,
+                level.as_deref().unwrap_or("default")
+            ),
+        )
         .map_err(ApiFailure::internal)?;
     json(public_session(session))
 }

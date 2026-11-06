@@ -2,9 +2,9 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.144.0-rc1
+> 当前实现版本：v0.147.0-rc1
 >
-> 最后更新：2026-11-06
+> 最后更新：2026-11-07
 
 ### 待发队列（0.115.0-rc3）
 
@@ -114,6 +114,7 @@ session.list
 session.search
 session.rename
 session.update_model
+session.update_reasoning_level
 session.update_approval_mode
 session.fork
 session.rewind
@@ -148,6 +149,19 @@ diff.revert
 ```
 
 `workspace.set_approval_mode` 持久化用户选择的工作区审批档位，参数为 `root`、`approval_mode` 与可选 `confirm_full_access`（缺省为 `false`）。档位为 `strict` / `smart` / `workspace_write` / `full_access`；`read_only` 是管理员设置的工作区策略，不在可选枚举中。Runtime 在 WorkspaceStore 同一互斥区读取当前记录、拒绝 `read_only`、检查 Full Access 二次确认，并且只更新 `access`、`approval_mode_configured` 与 `updated_at`。只读冲突返回 `ErrorCode::Conflict` 和 HTTP 409。管理员仍可通过 `workspace.register` 显式更改档位及其他注册字段。
+
+`session.update_reasoning_level`（0.147.0-rc1）设置或清除会话的逻辑思考等级，客户端先检查能力响应的 `operations` 是否包含该操作。参数类型为 `UpdateSessionReasoningLevelParams`：
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "reasoning_level": "deep"
+}
+```
+
+`reasoning_level` 为 `null` 时清除覆盖并跟随 Provider 默认；非空值必须是当前 Session Provider 已配置的等级，名称为 1–64 个 ASCII 字母、数字、`_` 或 `-`。未知字段或非法等级返回 `invalid_request`，不存在的 Session 返回 `not_found`。操作按统一写请求处理幂等，成功返回含可选 `reasoning_level` 的 `RuntimeSession`，先持久化再发布 `session.reasoning_level_updated` 事件。
+
+等级只作用于保存后领取的任务，已领取的 `SubmitTask` 保持原快照；重开空会话也从 Runtime 元数据恢复。清除覆盖不要求当前 Provider 仍有等级映射。旧 Runtime 缺少该可选字段时按 `null` 读取。Web 的回环适配端点为 `POST /api/sessions/{id}/reasoning-level`，请求体为 `{ "reasoning_level": "deep" }` 或 `{ "reasoning_level": null }`，成功返回 HTTP 204，并校验会话工作区访问范围。
 
 `session.update_approval_mode` 切换会话审批档位，`approval_mode` 取 `strict` / `smart` / `workspace_write` / `full_access`（`read_only` 仅是工作区策略，不接受）：
 
@@ -364,7 +378,7 @@ Swift、Android 和第三方客户端应在 CI 中逐项解码 `responses`，并
 
 ## 11. Rust SDK
 
-`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都同步为 `0.143.0-rc4`，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
+`willdeep-runtime-client` 是 CLI、TUI 与 Web 桥接使用的共享客户端，DTO 与信封来自 `willdeep-runtime-protocol`，事件流按游标续传；新操作可先通过通用操作入口调用，不代表已经有同名类型化方法。两个 crate 的版本跟随 `willdeep` 发行版本，根 Cargo.toml 的 protocol/client 两处内部依赖 version 要求都与工作区当前版本同步，不能遗留旧预发布线。CI 负责打包验证；本轮未执行 `cargo publish --dry-run`，也未发布到 crates.io。
 
 ```bash
 willdeep daemon start

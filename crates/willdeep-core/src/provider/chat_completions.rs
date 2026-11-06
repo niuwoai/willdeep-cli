@@ -80,19 +80,28 @@ impl ChatCompletionsProvider {
             }
         }
         let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
+        let configured_reasoning = !self.config.non_thinking
+            && self
+                .config
+                .reasoning
+                .as_ref()
+                .is_some_and(|profile| !profile.levels.is_empty());
+        // Explicit profile mappings also apply to local/credential-free providers.
+        // Preserve their legacy non-thinking default only without such a mapping.
+        let local_non_thinking = self.is_auxiliary_or_loopback() && !configured_reasoning;
         let body = ChatRequest {
             model: &self.config.model,
             messages: &wire_messages,
             tools: &wire_tools,
             tool_choice: (!tools.is_empty()).then_some("auto"),
             stream,
-            reasoning_effort: (self.is_auxiliary_or_loopback() || self.config.non_thinking)
-                .then_some("none"),
-            think: self.is_auxiliary_or_loopback().then_some(false),
+            reasoning_effort: (local_non_thinking || self.config.non_thinking).then_some("none"),
+            think: local_non_thinking.then_some(false),
         };
         let mut body = serde_json::to_value(body)
             .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
         self.apply_output_limit(&mut body);
+        self.config.apply_reasoning(&mut body, "reasoning_effort")?;
         Ok(body)
     }
 }
@@ -418,6 +427,73 @@ mod generation_limit_tests {
                 .unwrap();
             assert_eq!(body["max_completion_tokens"], 700);
             assert!(body.get("max_tokens").is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod reasoning_level_tests {
+    use super::*;
+    use crate::provider::{ApiDialect, ProviderKind, ReasoningProfile};
+    use serde_json::json;
+
+    fn configured(base: &str, parameter: Option<&str>, value: serde_json::Value) -> ProviderConfig {
+        let mut config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            base,
+            "",
+            "demo",
+        );
+        config.allow_unauthenticated = true;
+        config.reasoning = Some(ReasoningProfile {
+            default_level: Some("deep".into()),
+            parameter: parameter.map(str::to_owned),
+            levels: [("deep".into(), value)].into(),
+        });
+        config
+    }
+
+    #[test]
+    fn configured_local_levels_override_legacy_defaults_for_both_request_modes() {
+        for base in ["http://localhost:11434/v1", "https://models.example/v1"] {
+            for stream in [false, true] {
+                for (parameter, value) in [(None, json!("high")), (Some("think"), json!(true))] {
+                    let config = configured(base, parameter, value.clone());
+                    config.validate().unwrap();
+                    let body = ChatCompletionsProvider::new(config)
+                        .unwrap()
+                        .request_body(&[Message::user("check")], &[], stream)
+                        .unwrap();
+                    assert_eq!(body[parameter.unwrap_or("reasoning_effort")], value);
+                    assert_eq!(body["stream"], stream);
+                    if parameter.is_none() {
+                        assert!(body.get("think").is_none());
+                    } else {
+                        assert!(body.get("reasoning_effort").is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unmapped_local_and_explicit_non_thinking_requests_keep_disabled_defaults() {
+        for stream in [false, true] {
+            for non_thinking in [false, true] {
+                let mut config =
+                    configured("http://localhost:11434/v1", Some("think"), json!(true));
+                config.non_thinking = non_thinking;
+                if !non_thinking {
+                    config.reasoning = None;
+                }
+                let body = ChatCompletionsProvider::new(config)
+                    .unwrap()
+                    .request_body(&[Message::user("check")], &[], stream)
+                    .unwrap();
+                assert_eq!(body["reasoning_effort"], "none");
+                assert_eq!(body["think"], false);
+            }
         }
     }
 }

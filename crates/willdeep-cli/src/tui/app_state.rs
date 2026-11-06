@@ -60,6 +60,7 @@ impl App {
             queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
+            pending_reasoning_level: None,
             display_model: None,
             pending_provider: None,
             local_turn: None,
@@ -251,6 +252,7 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        self.pending_reasoning_level = None;
         self.pending_provider = None;
         self.display_model = session.model.clone().filter(|model| !model.is_empty());
         let display = self
@@ -2156,6 +2158,7 @@ impl App {
                 | "/local"
                 | "/mobile"
                 | "/model"
+                | "/reasoning"
                 | "/new"
                 | "/routing"
                 | "/runtime"

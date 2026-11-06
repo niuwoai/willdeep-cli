@@ -103,6 +103,129 @@ impl App {
     }
 }
 
+/// 普通输入不能代替审批或回答。恢复原入口，草稿留在输入框中。
+pub(super) fn retain_input_for_pending_gate(
+    app: &mut App,
+    home: &std::path::Path,
+    ui: &mpsc::UnboundedSender<UiMessage>,
+) -> bool {
+    let Some(gate) = app.runtime_gates.first().cloned() else {
+        return false;
+    };
+    let message = format!(
+        "{} · {}",
+        gate_progress(app.language, &gate),
+        app.language.text(
+            "输入与附件已保留；请处理待确认项，或用 Cmd/Ctrl+Enter 明确入队",
+            "Input and attachments retained; handle the pending request or use Cmd/Ctrl+Enter to queue",
+            "入力と添付を保持しました。確認待ちを処理するか、Cmd/Ctrl+Enter でキューに追加してください",
+        ),
+    );
+    app.append_transcript(format!("System: {message}"));
+    app.notice = Some(message);
+    runtime_ui::open_remote_gate(app, gate, home.to_path_buf(), ui.clone());
+    true
+}
+
+fn gate_progress(language: Language, gate: &crate::daemon::RemoteGate) -> String {
+    let (status, detail) = match gate {
+        crate::daemon::RemoteGate::Approval { description, .. } => (
+            language.text("等待审批", "Waiting for approval", "承認待ち"),
+            description,
+        ),
+        crate::daemon::RemoteGate::Question { question, .. } => (
+            language.text("等待回答", "Waiting for answer", "回答待ち"),
+            question,
+        ),
+    };
+    format!("{status}: {detail}")
+}
+
+/// 只使用已收到的工具/审批快照，不把入队当成模型已读，也不推断完成比例。
+fn current_progress(app: &App, session_id: uuid::Uuid) -> String {
+    if let Some(gate) = app.runtime_gates.first() {
+        return gate_progress(app.language, gate);
+    }
+    use willdeep_runtime_protocol::ToolStatus;
+    let tools = app
+        .runtime_tools
+        .iter()
+        .filter(|tool| tool.session_id == Some(session_id));
+    let running = tools
+        .clone()
+        .filter(|tool| tool.status == ToolStatus::Running)
+        .max_by_key(|tool| tool.started_at_ms);
+    let recent = tools
+        .filter(|tool| tool.status != ToolStatus::Running)
+        .max_by_key(|tool| tool.completed_at_ms.unwrap_or(tool.started_at_ms));
+    let mut progress = Vec::new();
+    if let Some(tool) = running {
+        progress.push(format!(
+            "{}: {}",
+            app.language.text(
+                "最近状态：正在执行",
+                "Latest status: running",
+                "直近の状態：実行中"
+            ),
+            tool.name
+        ));
+    } else if let Some(tool) = app
+        .tools
+        .details
+        .iter()
+        .rev()
+        .find_map(|line| line.strip_prefix("… "))
+    {
+        progress.push(format!(
+            "{}: {tool}",
+            app.language.text(
+                "最近状态：正在执行",
+                "Latest status: running",
+                "直近の状態：実行中"
+            )
+        ));
+    }
+    if let Some(tool) = recent {
+        let status = match tool.status {
+            ToolStatus::Completed => app
+                .language
+                .text("最近完成", "Last completed", "直近の完了"),
+            ToolStatus::Failed => app.language.text("最近失败", "Last failed", "直近の失敗"),
+            ToolStatus::Interrupted => {
+                app.language
+                    .text("最近中断", "Last interrupted", "直近の中断")
+            }
+            _ => app
+                .language
+                .text("最近部分完成", "Last partially completed", "直近の部分完了"),
+        };
+        progress.push(format!("{status}: {}", tool.name));
+    } else if let Some(tool) = app
+        .tools
+        .details
+        .iter()
+        .rev()
+        .find_map(|line| line.strip_prefix("✓ "))
+    {
+        progress.push(format!(
+            "{}: {tool}",
+            app.language
+                .text("最近完成", "Last completed", "直近の完了")
+        ));
+    }
+    if progress.is_empty() {
+        return app
+            .language
+            .text(
+                "当前轮次仍在运行；尚未收到新进展",
+                "The current turn is still running; no new progress received yet",
+                "現在のターンは実行中です。新しい進捗はまだ届いていません",
+            )
+            .to_owned();
+    }
+    progress.join(" · ")
+}
+
 pub(super) async fn submit_input(
     app: &mut App,
     session: &mut Session,
@@ -111,6 +234,9 @@ pub(super) async fn submit_input(
     defer_until_released: bool,
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<()> {
+    if app.running {
+        app.append_transcript(format!("System: {}", current_progress(app, session.id)));
+    }
     let (draft, expanded, row) = prepare_input_submission(app, defer_until_released);
     let text = draft.text().to_owned();
     // 先显示输入已转入聊天区、但尚未获确认；技能读取、落盘与 RPC 都在这一帧后。
@@ -230,17 +356,21 @@ fn finish_input_submission(
                 app.message_times.remove(row);
                 app.echo_runtime_submission(&submitted);
             }
-            app.notice = Some(if deferred {
+            let feedback = if deferred {
                 message.to_owned()
             } else {
                 app.language
                     .text(
-                        "已保存到 Runtime 队列，各端同步",
-                        "Saved to Runtime queue; synced across clients",
-                        "Runtime キューに保存・端末間で同期",
+                        "已保存到待发队列，尚未交给当前模型；当前轮次结束后处理",
+                        "Saved to queue, not delivered to the current model; waits for this turn to finish",
+                        "キューに保存しました。現在のモデルには未送達で、ターン終了後に処理します",
                     )
                     .to_owned()
-            });
+            };
+            if !deferred {
+                app.append_transcript(format!("System: {feedback}"));
+            }
+            app.notice = Some(feedback);
         }
         Err(error) => {
             app.composer_expanded = expanded;
@@ -443,6 +573,94 @@ mod tests {
         assert_eq!(receiver.try_recv().unwrap(), ApprovalDecision::AllowOnce);
     }
 
+    #[tokio::test]
+    async fn waiting_input_restores_original_approval_without_submitting_or_deciding() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "working".into());
+        app.input.insert("what is the progress?");
+        app.attachments.push(DraftAttachment {
+            id: uuid::Uuid::new_v4(),
+            message: MessageAttachment::Text {
+                name: "keep.txt".into(),
+                content: "keep me".into(),
+            },
+        });
+        let id = uuid::Uuid::new_v4();
+        let (sender, mut receiver) = oneshot::channel();
+        app.parked_remote_dialogs.insert(
+            id,
+            ParkedRemoteDialog::Approval(("read directory".into(), false, sender)),
+        );
+        app.runtime_gates.push(crate::daemon::RemoteGate::Approval {
+            id,
+            task_id: uuid::Uuid::new_v4(),
+            description: "read directory".into(),
+            always_allow_available: false,
+            parked: false,
+        });
+        // 恢复缓存中的 sender 不访问磁盘或 Runtime；使用唯一隔离路径即可。
+        let home =
+            std::env::temp_dir().join(format!("willdeep-gate-test-{}", uuid::Uuid::new_v4()));
+        let (ui, mut events) = mpsc::unbounded_channel();
+        assert!(retain_input_for_pending_gate(&mut app, &home, &ui));
+        assert_eq!(app.input.text(), "what is the progress?");
+        assert_eq!(app.attachments.len(), 1);
+        assert_eq!(app.active_remote_gate, Some(id));
+        assert!(app.approval.is_some());
+        assert!(app.queued_prompts.is_empty());
+        assert!(app.pending_runtime_echoes.is_empty());
+        assert!(app.runtime_queue_submission.is_none());
+        assert!(app.running);
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.contains("Waiting for approval: read directory"))
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(events.try_recv().is_err());
+    }
+
+    #[test]
+    fn progress_feedback_reports_observed_tools_and_filters_other_sessions() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let session_id = uuid::Uuid::new_v4();
+        assert!(current_progress(&app, session_id).contains("no new progress received yet"));
+        app.runtime_tools
+            .push(willdeep_runtime_protocol::RuntimeTool {
+                id: uuid::Uuid::new_v4(),
+                session_id: Some(uuid::Uuid::new_v4()),
+                turn_id: None,
+                task_id: uuid::Uuid::new_v4(),
+                agent_id: uuid::Uuid::new_v4(),
+                name: "unrelated tool".into(),
+                status: willdeep_runtime_protocol::ToolStatus::Running,
+                started_at_ms: 20,
+                completed_at_ms: None,
+            });
+        assert!(!current_progress(&app, session_id).contains("unrelated tool"));
+        app.tools.requested("read_file");
+        app.tools.completed("read_file", false);
+        app.tools.requested("list_directory");
+        let progress = current_progress(&app, session_id);
+        assert!(progress.contains("Latest status: running: list_directory"));
+        assert!(progress.contains("Last completed: read_file"));
+        app.runtime_gates.push(crate::daemon::RemoteGate::Question {
+            id: uuid::Uuid::new_v4(),
+            task_id: uuid::Uuid::new_v4(),
+            question: "Which directory?".into(),
+            options: vec![],
+            multi_select: false,
+            parked: true,
+        });
+        assert_eq!(
+            current_progress(&app, session_id),
+            "Waiting for answer: Which directory?"
+        );
+    }
+
     #[test]
     fn pending_submission_clears_the_composer_without_claiming_runtime_acceptance() {
         let mut app = App::new(Vec::new(), Language::En);
@@ -467,7 +685,13 @@ mod tests {
         let (draft, expanded, row) = prepare_input_submission(&mut app, false);
         let before = app.transcript.len();
         finish_input_submission(&mut app, draft, expanded, row, false, &Ok(()));
-        assert_eq!(app.transcript.len(), before);
+        assert_eq!(app.transcript.len(), before + 1);
+        assert!(
+            app.transcript
+                .last()
+                .unwrap()
+                .contains("not delivered to the current model")
+        );
         assert_eq!(app.transcript[row], "You: accepted input");
         assert!(app.input.is_empty());
         app.append_transcript("WillDeep: still working".into());

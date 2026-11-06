@@ -66,6 +66,15 @@ api_base = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5"
 
+[providers.openai.reasoning]
+default_level = "balanced"
+parameter = "reasoning.effort" # 可省略，Responses 默认使用此路径
+
+[providers.openai.reasoning.levels]
+economy = "low"
+balanced = "medium"
+deep = "high"
+
 [providers.anthropic]
 provider = "anthropic"
 api = "anthropic-messages"
@@ -164,8 +173,30 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `vision_model` | some.im 纯文本模型的视觉回退模型 |
 | `context_window` | 上下文窗口，用于状态栏占比显示；被 `[agent] compressor_profile` 选中时，还决定压缩摘要器能吃下的原料上限 |
 | `max_output_tokens` | 单次回复的输出上限，三种协议都会带上。上下文压缩、会话标题和跟主模型的 Worker 都沿用它，思考 token 占同一额度。写小了，长会话的压缩会因为摘要被截断而失败，报「provider response did not include a completion」。不写时缺省 16384，不是模型的真实上限 |
+| `reasoning` | 可选的思考等级映射，配置字段见下文；逻辑名称不要求是 `low` / `medium` / `high` |
 
 `api_key` 与 `api_key_env` 不能同时定义，也不允许为空字符串。
+
+### 思考等级映射
+
+每个 Provider 可独立定义逻辑等级名、默认等级、请求参数路径和实际上游值：
+
+```toml
+[providers.openai.reasoning]
+default_level = "balanced"
+parameter = "reasoning.effort" # 可省略，按协议使用默认路径
+
+[providers.openai.reasoning.levels]
+economy = "low"
+balanced = "medium"
+deep = "high"
+```
+
+`default_level` 必须对应 `levels` 中的一项。映射值可为字符串、数字或布尔值；逻辑名称允许 1–64 位 ASCII 字母、数字、`_` 和 `-`，不限定为 `low` / `medium` / `high`。省略 `parameter` 时，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。没有等级映射时不向请求添加该字段。
+
+也可在 `[providers.openai.reasoning]` 内写 `levels = { economy = "low", balanced = "medium", deep = "high" }`；Web 配置页支持这种内联映射的更新与清空。思考等级专用表单仅修改映射，不改写该 Provider 的隐藏连接字段、环境变量引用或隐式协议设置。
+
+TUI 用 `/reasoning <等级>` 切换，用 `/reasoning default` 恢复 Provider 默认。若逻辑等级名与命令重名，例如 `default`、`auto` 或 `reset`，用 `/reasoning set default` 这类显式形式选择。会话覆盖保存在 Runtime 中，重新打开会话后恢复；更改只影响保存后领取的任务。
 
 ## Provider 与 API 是两个维度
 

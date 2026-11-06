@@ -282,6 +282,112 @@ fn cleanup_deadline_reports_an_unfinished_startup_without_removing_evidence() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+mod boundary_regressions {
+    use super::*;
+
+    fn private_guard() -> TestGuard {
+        let root = temporary_root();
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join("runtime")).unwrap();
+        let mut guard = TestGuard::new(root, home);
+        // These tests explicitly drive cleanup with their own deadline.
+        guard.skip_daemon_cleanup = true;
+        guard
+    }
+
+    #[test]
+    fn unowned_startup_lock_cannot_be_assumed_stale_after_empty_snapshots() {
+        let _serial = process_test_guard();
+        let guard = private_guard();
+        let lease = guard.home.join("runtime/daemon.lock");
+        std::fs::write(&lease, b"startup owner not yet observed").unwrap();
+        let mut snapshots = 0;
+        let error = stop_daemon_observing_startup(
+            &guard.home,
+            std::time::Instant::now() + Duration::from_secs(1),
+            || snapshots += 1,
+        )
+        .unwrap_err();
+        assert!(snapshots >= 2, "empty snapshots alone cannot confirm exit");
+        assert!(error.contains("forced=false"), "{error}");
+        assert!(lease.exists(), "cleanup must not rewrite startup evidence");
+    }
+
+    #[test]
+    fn startup_lock_still_blocks_empty_snapshots_before_force_phase() {
+        let _serial = process_test_guard();
+        let guard = private_guard();
+        let lease = guard.home.join("runtime/daemon.lock");
+        std::fs::write(&lease, b"startup in progress").unwrap();
+        let mut snapshots = 0;
+        stop_daemon_observing_startup(
+            &guard.home,
+            std::time::Instant::now() + CLEANUP_TIMEOUT,
+            || {
+                snapshots += 1;
+                if snapshots == 4 {
+                    std::fs::remove_file(&lease).unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(snapshots, 4, "early empty snapshots must not end cleanup");
+    }
+
+    #[test]
+    fn enumeration_deadline_includes_cumulative_cleanup_context() {
+        let _serial = process_test_guard();
+        let guard = private_guard();
+        let error = stop_daemon_until(&guard.home, std::time::Instant::now()).unwrap_err();
+        for field in [
+            "cleanup exceeded",
+            "elapsed=",
+            "stage=image enumeration",
+            "stage_elapsed=",
+            "enumerations=1",
+            "enumeration_elapsed=",
+            "observed PIDs=[]",
+            "starting=None",
+            "forced=false",
+            "daemon_stop=None",
+        ] {
+            assert!(error.contains(field), "missing {field} in {error}");
+        }
+    }
+
+    #[test]
+    fn force_phase_waits_for_startup_released_after_two_empty_snapshots() {
+        let _serial = process_test_guard();
+        let guard = private_guard();
+        let mut daemon = OwnedDaemon::new(&guard.home);
+        let mut snapshots = 0;
+        stop_daemon_observing_startup(
+            &guard.home,
+            std::time::Instant::now() + FORCE_REAP_WINDOW,
+            || {
+                snapshots += 1;
+                if snapshots == 2 {
+                    daemon.release.send(()).unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert!(snapshots >= 2);
+        wait_until(Duration::from_secs(1), || {
+            daemon.worker.as_ref().unwrap().is_finished()
+        });
+        assert!(daemon.pid.load(Ordering::SeqCst) > 0);
+        assert!(
+            daemon.exited.load(Ordering::SeqCst),
+            "cleanup must reap the delayed daemon before the observer fallback"
+        );
+        if let Err(error) = daemon.worker.take().unwrap().join().unwrap() {
+            assert!(error.starts_with("owned test Daemon exited "), "{error}");
+        }
+        assert!(!process_exists(daemon.pid.load(Ordering::SeqCst) as u32).unwrap());
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn cleanup_finds_pre_state_daemon_after_lease_disappears_and_spares_another_home() {

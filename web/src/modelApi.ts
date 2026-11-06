@@ -4,6 +4,11 @@ export type ModelOption = { provider_id: string; provider: string; model: string
 export type ModelProvider = { id: string; provider: string; model: string };
 export type ModelProviderCatalog = { default_provider: string; providers: ModelProvider[] };
 export type ProviderModels = { models: string[]; warning: string | null };
+export type ReasoningValue = string | number | boolean;
+export type ReasoningProfile = { default_level: string | null; parameter: string | null; levels: Record<string, ReasoningValue> };
+export type ReasoningProvider = { id: string; reasoning?: ReasoningProfile | null };
+export type ReasoningProviderCatalog = { providers: ReasoningProvider[] };
+export type SessionReasoningState = { reasoning_level: string | null; provider_id: string | null };
 
 export class ModelFailure extends Error {
   constructor(readonly status: number, detail: string) {
@@ -47,6 +52,28 @@ export async function changeModel(sessionId: string, model: string, providerId?:
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(providerId ? { model, provider_id: providerId } : { model }),
+  });
+  if (response.ok) return;
+  throw await failure(response);
+}
+
+export async function loadReasoningProviders(signal?: AbortSignal): Promise<ReasoningProviderCatalog> {
+  const response = await fetch("/api/settings/providers", { signal });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as ReasoningProviderCatalog;
+}
+
+export async function loadSessionReasoningState(sessionId: string, signal?: AbortSignal): Promise<SessionReasoningState> {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { signal });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as SessionReasoningState;
+}
+
+export async function changeReasoningLevel(sessionId: string, reasoningLevel: string | null): Promise<void> {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/reasoning-level`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reasoning_level: reasoningLevel }),
   });
   if (response.ok) return;
   throw await failure(response);
