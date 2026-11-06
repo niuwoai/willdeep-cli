@@ -28,6 +28,39 @@ fn check_deadline(deadline: Instant) -> Result<(), String> {
     }
 }
 
+#[cfg(any(windows, test))]
+const IMAGE_QUERY_RETRY: Duration = Duration::from_millis(250);
+
+// Keep querying and waiting on the *same* process handle: reopening a PID could
+// observe an unrelated replacement. A failed query alone never proves exit.
+#[cfg(any(windows, test))]
+fn query_image_until<T>(
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut query: impl FnMut() -> Result<T, String>,
+    mut wait_exited: impl FnMut(Duration) -> Result<bool, String>,
+) -> Result<Option<T>, String> {
+    let retry_deadline = deadline.min(now() + IMAGE_QUERY_RETRY);
+    let mut failure = "fixture image query exceeded cleanup deadline".to_owned();
+    loop {
+        if now() >= retry_deadline {
+            return Err(failure);
+        }
+        match query() {
+            Ok(image) => {
+                return wait_exited(Duration::ZERO).map(|exited| (!exited).then_some(image));
+            }
+            Err(error) => {
+                failure = format!("{error}; process did not exit within image query retry budget");
+                let remaining = retry_deadline.saturating_duration_since(now());
+                if wait_exited(remaining.min(CLEANUP_POLL))? {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn owned(executable: &Path) -> Result<Vec<u32>, String> {
     owned_until(executable, Instant::now() + CLEANUP_TIMEOUT)
 }
@@ -128,7 +161,8 @@ fn unix_image(pid: u32) -> Option<PathBuf> {
 }
 
 #[cfg(unix)]
-pub(super) fn terminate(executable: &Path, pid: u32) -> Result<(), String> {
+pub(super) fn terminate(executable: &Path, pid: u32, deadline: Instant) -> Result<(), String> {
+    check_deadline(deadline)?;
     let expected = executable
         .canonicalize()
         .map_err(|error| error.to_string())?;
@@ -136,6 +170,7 @@ pub(super) fn terminate(executable: &Path, pid: u32) -> Result<(), String> {
         return Ok(());
     }
     let pid = i32::try_from(pid).map_err(|error| error.to_string())?;
+    check_deadline(deadline)?;
     // SAFETY: a kernel image query just bound this PID to this test's private copy.
     if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
         let error = std::io::Error::last_os_error();
@@ -149,9 +184,11 @@ pub(super) fn terminate(executable: &Path, pid: u32) -> Result<(), String> {
 #[cfg(windows)]
 pub(super) use windows::owned_until;
 #[cfg(windows)]
-pub(super) fn terminate(executable: &Path, pid: u32) -> Result<(), String> {
-    if let Some(handle) = windows::matching_handle(executable, pid, true)? {
-        handle.terminate()?;
+pub(super) fn terminate(executable: &Path, pid: u32, deadline: Instant) -> Result<(), String> {
+    if let Some(handle) = windows::matching_handle(executable, pid, true, deadline)? {
+        handle
+            .terminate(deadline)
+            .map_err(|error| format!("terminate fixture PID {pid}: {error}"))?;
     }
     Ok(())
 }
@@ -207,16 +244,29 @@ mod windows {
         }
     }
     impl Handle {
-        fn exited(&self) -> bool {
+        fn wait_exited(&self, timeout: Duration) -> Result<bool, String> {
             const WAIT_OBJECT_0: u32 = 0;
-            // SAFETY: the valid process handle has SYNCHRONIZE; zero never blocks.
-            unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
+            const WAIT_TIMEOUT: u32 = 258;
+            // Round down so the wait never exceeds the remaining cleanup budget.
+            let milliseconds = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;
+            // SAFETY: the valid process handle has SYNCHRONIZE; the wait is bounded.
+            match unsafe { WaitForSingleObject(self.0, milliseconds) } {
+                WAIT_OBJECT_0 => Ok(true),
+                WAIT_TIMEOUT => Ok(false),
+                status => Err(format!(
+                    "wait for fixture process exit (status={status}): {}",
+                    std::io::Error::last_os_error()
+                )),
+            }
         }
-        pub(super) fn terminate(&self) -> Result<(), String> {
+        pub(super) fn terminate(&self, deadline: Instant) -> Result<(), String> {
+            check_deadline(deadline)?;
             // SAFETY: TERMINATE access and the image were checked on this same handle.
             if unsafe { TerminateProcess(self.0, 1) } == 0 {
                 let error = std::io::Error::last_os_error();
-                if !self.exited() {
+                let timeout =
+                    IMAGE_QUERY_RETRY.min(deadline.saturating_duration_since(Instant::now()));
+                if !self.wait_exited(timeout)? {
                     return Err(format!("terminate fixture process: {error}"));
                 }
             }
@@ -252,7 +302,7 @@ mod windows {
                 .unwrap_or(MAX_PATH);
             let name = String::from_utf16_lossy(&entry.executable[..length]);
             if name.eq_ignore_ascii_case(&executable.file_name().unwrap().to_string_lossy())
-                && matching_handle(executable, entry.pid, false)?.is_some()
+                && matching_handle(executable, entry.pid, false, deadline)?.is_some()
             {
                 result.push(entry.pid);
             }
@@ -270,7 +320,9 @@ mod windows {
         executable: &Path,
         pid: u32,
         terminate: bool,
+        deadline: Instant,
     ) -> Result<Option<Handle>, String> {
+        check_deadline(deadline)?;
         let access =
             QUERY_LIMITED_INFORMATION | SYNCHRONIZE | if terminate { TERMINATE } else { 0 };
         // SAFETY: OpenProcess returns an owned handle or null.
@@ -283,36 +335,161 @@ mod windows {
             // A process can finish between the snapshot and OpenProcess.
             // SAFETY: a separate query-only synchronization handle, if still available.
             let sync = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
-            if !sync.is_null() && Handle(sync).exited() {
-                return Ok(None);
+            if !sync.is_null() {
+                let sync = Handle(sync);
+                let timeout =
+                    IMAGE_QUERY_RETRY.min(deadline.saturating_duration_since(Instant::now()));
+                if sync
+                    .wait_exited(timeout)
+                    .map_err(|error| format!("wait fixture PID {pid}: {error}"))?
+                {
+                    return Ok(None);
+                }
             }
             return Err(format!("open fixture PID {pid}: {error}"));
         }
         let handle = Handle(raw);
         let mut buffer = vec![0u16; IMAGE_PATH_CAPACITY];
-        let mut length = buffer.len() as u32;
-        // SAFETY: a valid process handle and writable buffer of the reported size.
-        if unsafe { QueryFullProcessImageNameW(raw, 0, buffer.as_mut_ptr(), &mut length) } == 0 {
-            let error = std::io::Error::last_os_error();
-            return if handle.exited() {
-                Ok(None)
-            } else {
-                Err(format!("query fixture PID {pid} image: {error}"))
-            };
-        }
-        if handle.exited() {
+        let Some(length) = query_image_until(
+            deadline,
+            Instant::now,
+            || {
+                let mut length = buffer.len() as u32;
+                // SAFETY: the same owned process handle and a writable UTF-16 buffer.
+                if unsafe { QueryFullProcessImageNameW(raw, 0, buffer.as_mut_ptr(), &mut length) }
+                    == 0
+                {
+                    Err(format!(
+                        "query fixture PID {pid} image: {}",
+                        std::io::Error::last_os_error()
+                    ))
+                } else {
+                    Ok(length as usize)
+                }
+            },
+            |timeout| {
+                handle
+                    .wait_exited(timeout)
+                    .map_err(|error| format!("wait fixture PID {pid}: {error}"))
+            },
+        )?
+        else {
             return Ok(None);
-        }
-        let image = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]))
+        };
+        let image = PathBuf::from(String::from_utf16_lossy(&buffer[..length]))
             .canonicalize()
             .map_err(|error| error.to_string())?;
         let expected = executable
             .canonicalize()
             .map_err(|error| error.to_string())?;
+        check_deadline(deadline)?;
         Ok(image
             .as_os_str()
             .to_string_lossy()
             .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy())
             .then_some(handle))
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn query_failure_waits_for_exit_instead_of_treating_denial_as_exit() {
+        let started = Instant::now();
+        let now = Cell::new(started);
+        let queries = Cell::new(0);
+        let waits = Cell::new(0);
+        let result = query_image_until::<()>(
+            started + CLEANUP_TIMEOUT,
+            || now.get(),
+            || {
+                queries.set(queries.get() + 1);
+                Err("injected access denied".into())
+            },
+            |timeout| {
+                assert_eq!(timeout, CLEANUP_POLL);
+                now.set(now.get() + timeout);
+                waits.set(waits.get() + 1);
+                Ok(waits.get() == 2)
+            },
+        );
+        assert_eq!(result, Ok(None));
+        assert_eq!(queries.get(), 2);
+    }
+
+    #[test]
+    fn transient_query_failure_returns_the_image_for_identity_validation() {
+        let started = Instant::now();
+        let now = Cell::new(started);
+        let queries = Cell::new(0);
+        let expected = PathBuf::from("another-fixture/image.exe");
+        let result = query_image_until(
+            started + CLEANUP_TIMEOUT,
+            || now.get(),
+            || {
+                queries.set(queries.get() + 1);
+                if queries.get() == 1 {
+                    Err("injected access denied".into())
+                } else {
+                    Ok(expected.clone())
+                }
+            },
+            |timeout| {
+                now.set(now.get() + timeout);
+                Ok(false)
+            },
+        );
+        assert_eq!(result, Ok(Some(expected)));
+        assert_eq!(queries.get(), 2);
+    }
+
+    #[test]
+    fn live_unqueryable_process_fails_within_both_budgets() {
+        for budget in [Duration::from_millis(40), CLEANUP_TIMEOUT] {
+            let started = Instant::now();
+            let now = Cell::new(started);
+            let result = query_image_until::<()>(
+                started + budget,
+                || now.get(),
+                || Err("injected access denied".into()),
+                |timeout| {
+                    assert!(timeout <= CLEANUP_POLL);
+                    now.set(now.get() + timeout);
+                    Ok(false)
+                },
+            );
+            let error = result.unwrap_err();
+            assert!(error.contains("injected access denied"), "{error}");
+            assert_eq!(now.get() - started, budget.min(IMAGE_QUERY_RETRY));
+        }
+    }
+
+    #[test]
+    fn wait_failure_is_not_reported_as_a_live_or_exited_process() {
+        let error = query_image_until::<()>(
+            Instant::now() + CLEANUP_TIMEOUT,
+            Instant::now,
+            || Err("injected access denied".into()),
+            |_| Err("injected wait failure".into()),
+        )
+        .unwrap_err();
+        assert_eq!(error, "injected wait failure");
+    }
+
+    #[test]
+    fn expired_deadline_never_queries_or_waits() {
+        let deadline = Instant::now();
+        assert!(
+            query_image_until::<()>(
+                deadline,
+                || deadline,
+                || panic!("query after deadline"),
+                |_| panic!("wait after deadline"),
+            )
+            .is_err()
+        );
     }
 }
