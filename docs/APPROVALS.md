@@ -9,13 +9,15 @@
 | 模式 | 工作区内创建/编辑 | Shell 命令 | 网络 POST、MCP、Worktree |
 |---|---|---|---|
 | `strict` | 逐次审批 | 逐次审批 | 逐次审批 |
-| `smart` | 免审 | 静态规则 → AI 判官 → 拿不准才问 | 审批 |
-| `workspace-write`（默认） | 免审 | 工作区内命令由 OS 写入围栏保护并免审；工作区外、远程与联网命令走 AI 判官，风险或判官不可用时再问人 | 审批 |
+| `smart`（默认） | 免审 | 静态规则 → AI 判官 → 拿不准才问 | 审批 |
+| `workspace-write` | 免审 | 工作区内命令由 OS 写入围栏保护并免审；工作区外、远程与联网命令走 AI 判官，风险或判官不可用时再问人 | 审批 |
 | `full-access` | 免审 | 放行；明确的项目/临时目录子路径清理免审，**其余破坏性操作（`sudo`、`git push --force`…）仍问** | 放行 |
 
 另有 `read-only`，它是 Runtime 工作区策略而不是会话档位：写入、Shell、MCP、Worktree 在审批前直接拒绝，会话切档无法越过它。
 
-未显式配置时默认采用 `workspace-write`。别名：`ask` / `request-every-time` = `strict`，`auto-review` = `smart`，`workspace-access` = `workspace-write`，`full` / `silent` = `full-access`。
+首次交互打开新目录时，会先解释审批模式并默认选中智能审核（`smart`）。担心风险、愿意逐次确认时选严格模式；接受更大自主执行权限时明确选择完全访问。选择保存到现有工作区审批字段，之后仍能通过权限面板或 `/permissions` 调整；不会额外建立“信任状态”。已有目录或会话的明确选择保持，非交互运行不等待引导。
+
+未显式配置时默认采用 `smart`。别名：`ask` / `request-every-time` = `strict`，`auto-review` = `smart`，`workspace-access` = `workspace-write`，`full` / `silent` = `full-access`。
 
 ### `workspace-write` 怎样处理工作区外操作
 
@@ -155,7 +157,7 @@ Runtime 注册表里每个 Workspace 保存独立的访问策略（`read_only` /
 
 `read-only` 策略下，Shell、文件写入、Worktree 创建、MCP 和 `editor` 子 Agent 会在进入审批流程**之前**就被拒绝。
 
-自动登记的工作区默认 `workspace-write`。历史注册表中用户明确选择的档位仍保留；没有档位的工作区继续使用兼容默认值。详见 [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)。
+自动登记的新工作区默认 `smart`，首次交互引导也默认选中智能审核。历史注册表中用户明确选择的档位仍保留；引导完成标记只避免重复弹窗，不改变审批语义。详见 [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)。
 
 ## 网络工具
 

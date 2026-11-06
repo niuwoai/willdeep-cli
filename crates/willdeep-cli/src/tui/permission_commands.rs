@@ -27,6 +27,17 @@ pub(super) struct PermissionPickerState {
     pub(super) selected: usize,
     /// 停在完全访问的确认页上。
     pub(super) confirming: bool,
+    pub(super) guide: Option<workspace_approval::WorkspaceApprovalGuide>,
+}
+
+impl PermissionPickerState {
+    fn modes(&self) -> &'static [ApprovalMode] {
+        if self.guide.is_some() {
+            &crate::workspace_approval_startup::GUIDE_MODES
+        } else {
+            &ApprovalMode::SELECTABLE
+        }
+    }
 }
 
 pub(super) enum PermissionPickerAction {
@@ -130,6 +141,7 @@ impl App {
                 .position(|mode| *mode == selected)
                 .unwrap_or(1),
             confirming: confirm_full_access,
+            guide: None,
         });
     }
 
@@ -137,7 +149,14 @@ impl App {
         let Some(picker) = self.permission_picker.as_mut() else {
             return PermissionPickerAction::None;
         };
-        let count = ApprovalMode::SELECTABLE.len();
+        let count = picker.modes().len();
+        if picker.guide.is_some()
+            && ((key.code == KeyCode::Esc && !picker.confirming)
+                || (key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)))
+        {
+            return PermissionPickerAction::Close;
+        }
         if picker.confirming {
             return match key.code {
                 KeyCode::Char('y' | 'Y') => PermissionPickerAction::Apply(ApprovalMode::FullAccess),
@@ -158,7 +177,7 @@ impl App {
                 picker.selected = (picker.selected + 1) % count;
                 PermissionPickerAction::None
             }
-            KeyCode::Char(digit @ '1'..='4') => {
+            KeyCode::Char(digit @ '1'..='4') if (digit as usize - '1' as usize) < count => {
                 picker.selected = digit as usize - '1' as usize;
                 choose(picker)
             }
@@ -169,7 +188,7 @@ impl App {
 }
 
 fn choose(picker: &mut PermissionPickerState) -> PermissionPickerAction {
-    let mode = ApprovalMode::SELECTABLE[picker.selected];
+    let mode = picker.modes()[picker.selected];
     if mode == ApprovalMode::FullAccess {
         picker.confirming = true;
         return PermissionPickerAction::None;
@@ -192,6 +211,10 @@ pub(super) fn render_permission_picker(f: &mut ratatui::Frame<'_>, app: &mut App
     };
     let language = app.language;
     let mut lines = Vec::new();
+    if let Some(guide) = &picker.guide {
+        lines.push(Line::raw(guide.workspace.root.display().to_string()));
+        lines.push(Line::raw(""));
+    }
     let title = if picker.confirming {
         lines.push(Line::styled(
             language.text(
@@ -210,11 +233,19 @@ pub(super) fn render_permission_picker(f: &mut ratatui::Frame<'_>, app: &mut App
             "The Agent can reach the network, read and write files outside the workspace, and call any MCP tool without asking.",
             "Agent は確認なしで通信し、ワークスペース外のファイルを読み書きし、任意の MCP を呼び出せます。",
         )));
-        lines.push(Line::raw(language.text(
-            "只对当前 TUI 生效，退出后回到配置里的默认档。",
-            "Applies to this TUI only; the configured default returns on restart.",
-            "この TUI のみ有効。再起動で設定の既定値に戻ります。",
-        )));
+        lines.push(Line::raw(if picker.guide.is_some() {
+            language.text(
+                "此选择将保存为该目录的默认审批模式。",
+                "This choice is saved as this directory's default approval mode.",
+                "この選択は、このディレクトリの既定の承認モードとして保存されます。",
+            )
+        } else {
+            language.text(
+                "只对当前 TUI 生效，退出后回到配置里的默认档。",
+                "Applies to this TUI only; the configured default returns on restart.",
+                "この TUI のみ有効。再起動で設定の既定値に戻ります。",
+            )
+        }));
         lines.push(Line::raw(""));
         lines.push(Line::styled(
             language.text(
@@ -226,9 +257,9 @@ pub(super) fn render_permission_picker(f: &mut ratatui::Frame<'_>, app: &mut App
         ));
         language.text("完全访问", "Full access", "フルアクセス")
     } else {
-        for (index, mode) in ApprovalMode::SELECTABLE.iter().enumerate() {
+        for (index, mode) in picker.modes().iter().enumerate() {
             let selected = index == picker.selected;
-            let current = *mode == app.approval_mode;
+            let current = picker.guide.is_none() && *mode == app.approval_mode;
             let style = if selected {
                 Style::default()
                     .fg(Color::Black)
@@ -252,22 +283,59 @@ pub(super) fn render_permission_picker(f: &mut ratatui::Frame<'_>, app: &mut App
                 style,
             ));
             lines.push(Line::styled(
-                format!("     {}", summary(*mode, language)),
+                format!(
+                    "     {}",
+                    if picker.guide.is_some() {
+                        language.workspace_approval_summary(*mode)
+                    } else {
+                        summary(*mode, language)
+                    }
+                ),
                 Style::default().fg(Color::DarkGray),
             ));
         }
-        language.text(
-            "审批模式 · ↑/↓ · 1-4 · Enter · Esc",
-            "Approval mode · ↑/↓ · 1-4 · Enter · Esc",
-            "承認モード · ↑/↓ · 1-4 · Enter · Esc",
-        )
+        if picker.guide.is_some() {
+            lines.push(Line::raw(""));
+            lines.push(Line::raw(language.workspace_approval_hint()));
+            language.workspace_approval_title()
+        } else {
+            language.text(
+                "审批模式 · ↑/↓ · 1-4 · Enter · Esc",
+                "Approval mode · ↑/↓ · 1-4 · Enter · Esc",
+                "承認モード · ↑/↓ · 1-4 · Enter · Esc",
+            )
+        }
     };
     let width = f.area().width.min(96);
-    let height = f.area().height.min(lines.len() as u16 + 2);
+    let inner_width = width.saturating_sub(2).max(1);
+    let focus_row = if picker.guide.is_some() && !picker.confirming {
+        Paragraph::new(lines[..2 + picker.selected * 2].to_vec())
+            .wrap(Wrap { trim: false })
+            .line_count(inner_width)
+    } else {
+        0
+    };
+    let mut paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let rows = paragraph.line_count(inner_width);
+    let height = f
+        .area()
+        .height
+        .min(rows.saturating_add(2).min(u16::MAX as usize) as u16);
+    let visible = height.saturating_sub(2) as usize;
+    if picker.guide.is_some() && rows > visible {
+        let scroll = if picker.confirming {
+            rows.saturating_sub(visible)
+        } else {
+            focus_row
+                .saturating_sub(visible / 2)
+                .min(rows.saturating_sub(visible))
+        };
+        paragraph = paragraph.scroll((scroll.min(u16::MAX as usize) as u16, 0));
+    }
     let popup = centered_rect(width, height, f.area());
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+        paragraph.block(
             Block::default()
                 .title(title)
                 .borders(Borders::ALL)
@@ -290,6 +358,18 @@ pub(super) async fn apply(
     runtime: &TuiRuntime,
     agent: &Arc<Agent>,
 ) -> Result<String> {
+    let workspace =
+        crate::daemon::ensure_remote_workspace(&runtime.home, &session.workspace).await?;
+    let mode = if session.delegation_read_only {
+        ApprovalMode::ReadOnly
+    } else {
+        workspace
+            .access
+            .with_session_override(Some(crate::daemon::WorkspaceAccess::from_approval_mode(
+                mode,
+            )))
+            .approval_mode()
+    };
     let handle = agent.approval_mode_handle();
     let previous = handle.set(mode);
     if session.runtime_managed

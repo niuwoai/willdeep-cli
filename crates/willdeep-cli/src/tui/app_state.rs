@@ -194,6 +194,7 @@ impl App {
             workspace_picker_rect: Rect::default(),
             workspace_picker_hits: Vec::new(),
             permission_picker: None,
+            approval_handle: None,
             approval_mode: willdeep_core::ApprovalMode::Smart,
             approval_synced_session: None,
             routing_settings: None,

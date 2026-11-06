@@ -103,6 +103,16 @@ pub(super) async fn start_new(
     )
     .await?;
     app.load_session(&target);
+    let workspace =
+        crate::daemon::ensure_remote_workspace(&runtime.home, &target.workspace).await?;
+    let session_override =
+        crate::workspace_approval_startup::session_override(&runtime.home, Some(&target)).await?;
+    let configured_mode = workspace_approval::configured_mode(cli.config.as_deref())?;
+    let explicit_mode = workspace_approval::explicit_mode(session_override, configured_mode);
+    app.set_effective_approval(workspace_approval::effective_mode(
+        &workspace,
+        explicit_mode,
+    ));
     refresh_session_lineage(app, &target, store);
     app.runtime_event_cursor = target.runtime_event_cursor;
     // 这三份都是上一条会话的运行产物，留着只会让新会话看起来像在干活。
@@ -286,7 +296,26 @@ pub(super) async fn switch(
     runtime: &mut TuiRuntime,
     id: &str,
 ) -> Result<String> {
-    switch_impl(app, session, store, runtime, id, false).await
+    switch_impl(app, session, store, runtime, id, false, false).await
+}
+
+pub(super) async fn switch_from_picker(
+    app: &mut App,
+    session: &mut Session,
+    store: &SessionStore,
+    runtime: &mut TuiRuntime,
+    target: PendingSessionSwitch,
+) -> Result<String> {
+    switch_impl(
+        app,
+        session,
+        store,
+        runtime,
+        &target.id,
+        false,
+        target.archived,
+    )
+    .await
 }
 
 /// 打开子会话或返回父会话时允许跨越 Workspace。
@@ -301,7 +330,7 @@ pub(super) async fn switch_related(
     runtime: &mut TuiRuntime,
     id: &str,
 ) -> Result<String> {
-    switch_impl(app, session, store, runtime, id, true).await
+    switch_impl(app, session, store, runtime, id, true, false).await
 }
 
 async fn switch_impl(
@@ -311,6 +340,7 @@ async fn switch_impl(
     runtime: &mut TuiRuntime,
     id: &str,
     allow_workspace_change: bool,
+    archived_hint: bool,
 ) -> Result<String> {
     if app.running {
         bail!("cannot switch Session while a local turn is running");
@@ -326,13 +356,43 @@ async fn switch_impl(
             )
             .to_owned());
     }
-    session.attention_read = app.attention_read.clone();
-    session.runtime_event_cursor = app.runtime_event_cursor;
-    store.save(session)?;
-    // 带基线加载：切过来之后这份快照会一直被写回，基线必须记着改动前的执行状态。
+    // Load and obtain approval before changing the current or target Session.
     let mut target = store.load_baselined(id).context("load target Session")?;
     let same_family = session.parent_session_id.unwrap_or(session.id)
         == target.parent_session_id.unwrap_or(target.id);
+    if !allow_workspace_change
+        && !same_family
+        && target.parent_session_id.is_none()
+        && target.workspace.canonicalize()? != session.workspace.canonicalize()?
+    {
+        bail!("TUI in-place switching currently requires the same Workspace");
+    }
+    let Some(approval_mode) = workspace_approval::prepare_session(
+        app,
+        &target,
+        runtime,
+        &session.workspace,
+        allow_workspace_change,
+    )
+    .await?
+    else {
+        return Ok(workspace_approval::pending_message(app.language));
+    };
+    session.attention_read = app.attention_read.clone();
+    session.runtime_event_cursor = app.runtime_event_cursor;
+    store.save(session)?;
+    let archived = target.runtime_managed
+        && (archived_hint
+            || crate::daemon::remote_session_states(&runtime.home)
+                .await?
+                .into_iter()
+                .any(|state| state.id == id && state.archived));
+    if archived {
+        crate::daemon::set_remote_session_archived(&runtime.home, id, false).await?;
+        target = store
+            .load_baselined(id)
+            .context("reload unarchived target Session")?;
+    }
     let user_prepared = prepare_child_workspace_for_open(
         &runtime.home,
         session,
@@ -360,6 +420,7 @@ async fn switch_impl(
     runtime.runtime_submit.config = target.config.clone();
     let _ = runtime.refresh_provider_config();
     app.load_session(&target);
+    app.set_effective_approval(approval_mode);
     refresh_session_lineage(app, &target, store);
     *session = target;
     if cross_workspace {

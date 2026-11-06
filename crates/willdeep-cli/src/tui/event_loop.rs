@@ -458,6 +458,7 @@ pub(super) async fn event_loop(
         .cloned()
         .unwrap_or_else(willdeep_core::feedback::FeedbackRecorder::disabled);
     app.approval_mode = agent.approval_mode_handle().get();
+    app.approval_handle = Some(agent.approval_mode_handle());
     let (media_resize_tx, mut media_resize_rx) =
         mpsc::unbounded_channel::<ratatui_image::thread::ResizeRequest>();
     app.media = MediaState::detect(media_resize_tx);
@@ -570,7 +571,7 @@ pub(super) async fn event_loop(
                 );
                 continue;
             }
-            let target_id = match uuid::Uuid::parse_str(&target.id) {
+            let _target_id = match uuid::Uuid::parse_str(&target.id) {
                 Ok(id) => id,
                 Err(error) => {
                     app.notice = Some(format!(
@@ -584,31 +585,10 @@ pub(super) async fn event_loop(
                     continue;
                 }
             };
-            let archived = if target.archived {
-                true
-            } else {
-                crate::daemon::remote_session_states(&runtime.home)
-                    .await
-                    .ok()
-                    .and_then(|states| {
-                        states
-                            .into_iter()
-                            .find(|state| state.id == target_id)
-                            .map(|state| state.archived)
-                    })
-                    .unwrap_or(false)
-            };
-            let unarchive = if archived {
-                crate::daemon::set_remote_session_archived(&runtime.home, target_id, false).await
-            } else {
-                Ok(())
-            };
-            let switched = match unarchive {
-                Ok(()) => {
-                    session_commands::switch(&mut app, session, store, runtime, &target.id).await
-                }
-                Err(error) => Err(error),
-            };
+            // Approval preflight happens inside switch, before unarchiving.
+            let switched =
+                session_commands::switch_from_picker(&mut app, session, store, runtime, target)
+                    .await;
             match switched {
                 Ok(message) => app.notice = Some(message),
                 Err(error) => {
@@ -644,7 +624,7 @@ pub(super) async fn event_loop(
         // 用户已提交的队列本身就是启动下一轮的理由。待处理内核事件会在模型
         // 边界投递，不能要求它们先被另一个自动唤醒消费；Runtime 终态、恢复的
         // 事件或被限流的唤醒都可能没有后续回调，否则会永久饿死用户队列。
-        if app.queued_steering_ready() {
+        if app.permission_picker.is_none() && app.queued_steering_ready() {
             let text = app.queued_prompts.front().unwrap().text.clone();
             if steer_running_turn(&app, session, runtime, &agent, &text).await {
                 app.note_steering_delivered(&text, app.queued_submission_time(0));
@@ -665,7 +645,8 @@ pub(super) async fn event_loop(
             }
             continue;
         }
-        if app.queued_prompt_ready()
+        if app.permission_picker.is_none()
+            && app.queued_prompt_ready()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
             let draft_attachments = std::mem::replace(
@@ -771,7 +752,7 @@ pub(super) async fn event_loop(
                 if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));}
                 app.background_tasks=runtime.background_tasks.snapshots();
                 workflow_ui::refresh(&mut app, &runtime.home, session.id);
-                if !app.running { dispatch::wake_for_workflows(&mut app, session, store, &agent, runtime)?; }
+                if !app.running && app.permission_picker.is_none() { dispatch::wake_for_workflows(&mut app, session, store, &agent, runtime)?; }
                 // 事件内核的用户侧投影跟着秒级刷新走：它是观察面，不需要自己
                 // 的通知通道。落盘也在这里收口——状态每变一次就写一次盘，
                 // 打字的时候会卡在磁盘上。
@@ -902,6 +883,7 @@ pub(super) async fn event_loop(
             // 晚一圈处理会让按键看起来像丢了。
             event=next_terminal_event(&mut events, &mut deferred_events)=>if let Some(event)=event { match event {
                 Event::Paste(value)=>{
+                    if app.permission_picker.is_some() { continue; }
                     if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
                         if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
@@ -924,6 +906,7 @@ pub(super) async fn event_loop(
                     }
                 },
                 Event::Mouse(mouse)=>{
+                    if app.permission_picker.is_some() { continue; }
                     app.prompt_history = None;
                     interrupt_esc_deadline = None;
                     if app.question.is_some()||app.approval.is_some() {
@@ -1085,6 +1068,10 @@ pub(super) async fn event_loop(
                         continue;
                     }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('c'){break;}
+                    if app.permission_picker.is_some() {
+                        workspace_approval::handle_key(key,&mut app,session,store,runtime,&agent).await;
+                        continue;
+                    }
                     if key.code==KeyCode::Esc&&app.mobile_qr.take().is_some(){continue;}
                     if app.question.is_some(){app.prompt_history=None;app.handle_question_key(key);continue;}
                     if app.approval.is_some(){
@@ -1337,20 +1324,6 @@ pub(super) async fn event_loop(
                                         app.notice=Some(language.text("模型与路由设置已保存","Models and routing saved","モデルとルーティングを保存しました").to_owned());
                                     },
                                     Err(error)=>app.set_routing_settings_error(error.to_string()),
-                                }
-                            },
-                        }
-                        continue;
-                    }
-                    if app.permission_picker.is_some(){
-                        match app.handle_permission_picker_key(key) {
-                            PermissionPickerAction::None=>{},
-                            PermissionPickerAction::Close=>app.permission_picker=None,
-                            PermissionPickerAction::Apply(mode)=>{
-                                app.permission_picker=None;
-                                match permission_commands::apply(mode,&mut app,session,runtime,&agent).await {
-                                    Ok(message)=>app.append_transcript(message),
-                                    Err(error)=>app.append_transcript(format!("Error: {}: {error:#}",language.text("切换审批模式失败","Approval mode switch failed","承認モードの切替に失敗"))),
                                 }
                             },
                         }

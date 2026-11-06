@@ -1737,6 +1737,7 @@ fn workspace_fixture(name: &str, root: &str, active: bool) -> crate::daemon::Run
         name: name.to_owned(),
         root: std::path::PathBuf::from(root),
         access: crate::daemon::WorkspaceAccess::Smart,
+        approval_mode_configured: true,
         provider_profile: None,
         skills: Vec::new(),
         mcp_servers: Vec::new(),

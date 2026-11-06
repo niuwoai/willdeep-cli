@@ -86,6 +86,7 @@ mod update_notice;
 mod user_message;
 mod webapp_commands;
 mod workflow_ui;
+mod workspace_approval;
 mod workspace_attention;
 mod workspace_commands;
 mod workspace_picker_ui;
@@ -122,6 +123,7 @@ use session_picker_ui::{
     render_session_picker,
 };
 use sidebar::{render_attention_detail, render_sidebar};
+pub(crate) use workspace_approval::select_workspace_approval;
 use workspace_attention::workspace_attention;
 use workspace_commands::handle_workspace_command;
 use workspace_picker_ui::{WorkspacePickerAction, WorkspacePickerState, render_workspace_picker};
@@ -553,6 +555,7 @@ struct App {
     /// 当前审批档位，显示在输入框标题上。真正生效的是 Agent 与 Runtime 会话
     /// 手里的句柄，这里只是界面上的镜像。
     approval_mode: willdeep_core::ApprovalMode,
+    approval_handle: Option<willdeep_core::SharedApprovalMode>,
     /// 已经把当前档位同步过去的 Runtime 会话。
     approval_synced_session: Option<uuid::Uuid>,
     routing_settings: Option<RoutingSettingsState>,

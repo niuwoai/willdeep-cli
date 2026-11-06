@@ -2067,13 +2067,13 @@ fn resolve_workspace_sandbox(
     )
 }
 
-/// 配置里的 `agent.approval`，未配置时为 `workspace-write`。`read-only` 是工作区策略，
+/// 配置里的 `agent.approval`，未配置时为 `smart`。`read-only` 是工作区策略，
 /// 不是会话默认档，这里不接受。
 pub(crate) fn configured_approval_mode(
     agent: &crate::config::AgentSettings,
 ) -> Result<ApprovalMode> {
     let Some(value) = agent.approval.as_deref() else {
-        return Ok(ApprovalMode::WorkspaceAccess);
+        return Ok(ApprovalMode::Smart);
     };
     match ApprovalMode::parse(value) {
         Some(mode) if mode != ApprovalMode::ReadOnly => Ok(mode),
@@ -2134,12 +2134,20 @@ mod tests {
     }
 
     #[test]
-    fn approval_mode_defaults_to_workspace_write() {
-        let config: crate::config::ConfigFile = toml::from_str("version = 1\n[agent]\n").unwrap();
-        assert_eq!(
-            configured_approval_mode(&config.agent).unwrap(),
-            ApprovalMode::WorkspaceAccess
-        );
+    fn approval_mode_defaults_to_smart_and_keeps_explicit_selections() {
+        for (value, expected) in [
+            (None, ApprovalMode::Smart),
+            (Some("smart"), ApprovalMode::Smart),
+            (Some("strict"), ApprovalMode::Strict),
+            (Some("workspace-write"), ApprovalMode::WorkspaceAccess),
+            (Some("full-access"), ApprovalMode::FullAccess),
+        ] {
+            let config: crate::config::ConfigFile =
+                toml::from_str("version = 1\n[agent]\n").unwrap();
+            let mut agent = config.agent;
+            agent.approval = value.map(str::to_owned);
+            assert_eq!(configured_approval_mode(&agent).unwrap(), expected);
+        }
     }
 
     mod gateway_capabilities {

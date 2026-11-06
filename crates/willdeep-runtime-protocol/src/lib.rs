@@ -869,12 +869,16 @@ pub enum WorkspaceAccess {
     ReadOnly,
     /// 每次都问。与 Xedit 的 `requestEveryTime` 对应。
     Strict,
+    #[default]
     Smart,
     /// 工作区内写入免审；工作区外操作走智能审核，风险或判官不可用时再询问用户。
-    #[default]
     WorkspaceWrite,
     /// 除破坏性命令黑名单外全部免审。与 Xedit 的 `fullAccess`（raw `silent`）对应。
     FullAccess,
+}
+
+fn legacy_approval_mode_configured() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -883,6 +887,10 @@ pub struct RuntimeWorkspace {
     pub name: String,
     pub root: Option<String>,
     pub access: WorkspaceAccess,
+    /// Whether the existing approval-mode onboarding was completed. This does
+    /// not confer authority; older hosts have already configured their mode.
+    #[serde(default = "legacy_approval_mode_configured")]
+    pub approval_mode_configured: bool,
     pub provider_profile: Option<String>,
     pub skills: Vec<String>,
     pub mcp_servers: Vec<String>,
@@ -903,6 +911,26 @@ pub struct RegisterWorkspaceParams {
     pub skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
+}
+
+/// User-selectable approval mode. `read_only` remains an administrator-owned
+/// workspace policy and cannot be selected through this operation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceApprovalMode {
+    Strict,
+    Smart,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SetWorkspaceApprovalModeParams {
+    pub root: String,
+    pub approval_mode: WorkspaceApprovalMode,
+    #[serde(default)]
+    pub confirm_full_access: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1418,6 +1446,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "workspace.list",
     "workspace.register",
     "workspace.ensure",
+    "workspace.set_approval_mode",
     "workspace.activate",
     "workspace.remove",
     "session.create",
@@ -1715,6 +1744,44 @@ mod tests {
         assert_eq!(data.objects.last(), Some(&ObjectKind::Unknown));
         assert_eq!(data.capabilities.last(), Some(&Capability::Unknown));
         assert_eq!(data.transports.last(), Some(&TransportKind::Unknown));
+    }
+
+    #[test]
+    fn workspace_approval_mode_params_exclude_read_only_policy() {
+        let request: SetWorkspaceApprovalModeParams = serde_json::from_value(serde_json::json!({
+            "root": "/workspace",
+            "approval_mode": "smart"
+        }))
+        .unwrap();
+        assert_eq!(request.root, "/workspace");
+        assert_eq!(request.approval_mode, WorkspaceApprovalMode::Smart);
+        assert!(!request.confirm_full_access);
+        assert!(SUPPORTED_OPERATIONS.contains(&"workspace.set_approval_mode"));
+
+        let full_access: SetWorkspaceApprovalModeParams =
+            serde_json::from_value(serde_json::json!({
+                "root": "/workspace",
+                "approval_mode": "full_access",
+                "confirm_full_access": true
+            }))
+            .unwrap();
+        assert_eq!(full_access.approval_mode, WorkspaceApprovalMode::FullAccess);
+        assert!(full_access.confirm_full_access);
+        assert!(
+            serde_json::from_value::<SetWorkspaceApprovalModeParams>(serde_json::json!({
+                "root": "/workspace",
+                "approval_mode": "read_only"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SetWorkspaceApprovalModeParams>(serde_json::json!({
+                "root": "/workspace",
+                "approval_mode": "smart",
+                "unexpected": true
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -2032,6 +2099,7 @@ mod tests {
             name: "Project".to_owned(),
             root: None,
             access: WorkspaceAccess::WorkspaceWrite,
+            approval_mode_configured: true,
             provider_profile: None,
             skills: Vec::new(),
             mcp_servers: Vec::new(),
@@ -2054,6 +2122,23 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn workspace_approval_defaults_to_smart_and_legacy_choices_remain_configured() {
+        let request: RegisterWorkspaceParams = serde_json::from_value(serde_json::json!({
+            "root": "/workspace", "name": null, "provider_profile": null
+        }))
+        .unwrap();
+        assert_eq!(request.access, WorkspaceAccess::Smart);
+        let legacy: RuntimeWorkspace = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::new_v4(), "name": "Project", "root": "/workspace",
+            "access": "full_access", "provider_profile": null,
+            "skills": [], "mcp_servers": [], "created_at": 1, "updated_at": 1, "active": true
+        }))
+        .unwrap();
+        assert!(legacy.approval_mode_configured);
+        assert_eq!(legacy.access, WorkspaceAccess::FullAccess);
     }
 
     #[test]

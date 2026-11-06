@@ -149,7 +149,12 @@ pub(super) fn wake_for_kernel_events(
     agent: &Arc<Agent>,
     runtime: &super::TuiRuntime,
 ) -> Result<()> {
-    if app.running {
+    if app.running
+        || app
+            .permission_picker
+            .as_ref()
+            .is_some_and(|picker| picker.guide.is_some())
+    {
         return Ok(());
     }
     let Some(authority) = runtime.kernel.pending_wake_authority(session.id) else {

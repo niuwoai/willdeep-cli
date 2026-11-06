@@ -107,7 +107,8 @@ pub(crate) use tui_bridge::{
 };
 pub(crate) use workspace_store::WorkspaceAccess;
 pub(crate) use workspace_store::{
-    RuntimeWorkspace, activate_remote_workspace, ensure_remote_workspace, remote_workspaces,
+    RuntimeWorkspace, WorkspaceApprovalError, activate_remote_workspace, ensure_remote_workspace,
+    remote_workspaces, set_remote_workspace_approval_mode,
 };
 pub(crate) use worktree_review::{WorktreeReview, remote_merge, remote_review};
 
