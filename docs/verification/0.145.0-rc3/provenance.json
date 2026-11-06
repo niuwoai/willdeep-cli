@@ -17,6 +17,9 @@
     "crates/willdeep-cli/src/daemon/diff_review/fingerprints/tests.rs": "38d5993e17fc64413e0c24a600a62599251aa1a0dc472a19d092beb0e1c14aa2",
     "crates/willdeep-cli/src/harness/verification.rs": "18641a7c6d7448a5f76611b3e0753d6819489db322b552b225cc55190c789a90"
   },
+  "post_import_changes": [
+    {"path": "crates/willdeep-cli/src/harness/verification.rs", "scope": "test_only", "reason": "Git 2.56 改用 gitfile does not point to a valid repository；错误详情回归改为对照当前 Git 的真实诊断，保留失败与路径断言，未改产品实现"}
+  ],
   "audit_is_runtime_validation": false,
   "historical_test_results_count_as_current": false,
   "read_only_review": "独立复核未发现高置信发布阻塞；测试与 CI 结果另行记录"

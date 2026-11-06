@@ -136,9 +136,20 @@ mod tests {
         assert!(init.status.success());
         std::fs::write(nested.join(".git"), "gitdir: missing-directory\n").unwrap();
         std::fs::write(nested.join("input.txt"), "fixture\n").unwrap();
+        let probe = Command::new("git")
+            .args(["rev-parse", "--show-prefix"])
+            .env("LC_ALL", "C")
+            .current_dir(&nested)
+            .output()
+            .unwrap();
+        assert!(!probe.status.success());
+        // Git versions use different messages for the same broken gitfile.
+        // The snapshot must retain this Git's actual diagnostic, not a fixed phrase.
+        let reason = discovery_diagnostic(&String::from_utf8_lossy(&probe.stderr));
+        assert!(!reason.is_empty(), "Git must explain the broken metadata");
         let error = snapshot(&root).unwrap_err();
         assert!(error.contains("broken-nested-input"), "{error}");
-        assert!(error.contains("not a git repository"), "{error}");
+        assert!(error.contains(&reason), "{error}");
         assert!(error.starts_with("Git verification snapshot could not be captured:"));
         std::fs::remove_dir_all(root).unwrap();
     }
