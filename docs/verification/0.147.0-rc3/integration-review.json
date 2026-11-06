@@ -38,9 +38,28 @@
     "console_errors_observed": 0,
     "network_note": "Initial preview retries preceded fixture readiness; this is not a full network archive."
   },
+  "subsequent_validation": {
+    "test_fixture_commit": "b7993ceb",
+    "full_workspace_run": {
+      "exit_code": 101,
+      "cli": {"passed": 1460, "failed": 0, "ignored": 5},
+      "headless_runtime": {"passed": 49, "failed": 3},
+      "core": {"passed": 975, "failed": 2, "ignored": 6}
+    },
+    "isolated_rerun_original_binaries": {"passed": 4, "failed": 1},
+    "retry_observation_after_explicit_runtime_startup": {"passed": 1, "failed": 0},
+    "first_branch_cleanup_retry_handoff_regression": {"passed": 21, "failed": 0},
+    "plugin_gateway_regression": {"passed": 9, "failed": 0},
+    "command_catalog_regression": {"passed": 15, "failed": 0},
+    "final_combined_commit": "05a8b60236774e149fe828dcbf1d0e290f0aad64",
+    "final_combined_runtime_regression": {"passed": 22, "failed": 0, "includes_first_branch_21_tests": true},
+    "final_combined_clippy_workspace_all_targets_deny_warnings": "passed",
+    "windows_native_ci_after_fixture_changes": "pending",
+    "note": "Targeted reruns do not replace the failed full-suite result. Approval queue validation passed on the final combined branch."
+  },
   "limitations": [
     "No native Windows or Linux run in local validation; cross-platform CI is required.",
-    "No full workspace test suite run locally.",
+    "The full workspace run failed; subsequent targeted validation is recorded separately.",
     "Browser interactions preceded RuntimeConnection boxing; Clippy and Runtime integration were rerun afterwards.",
     "This pre-release record does not assert a published release or completed production installation."
   ],
