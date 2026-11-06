@@ -1,0 +1,26 @@
+{
+  "version": "0.145.0-rc3",
+  "date": "2026-11-06",
+  "baseline": "ea6f38baf94c00e2739f79695c16112e865de290",
+  "baseline_version": "0.145.0-rc2",
+  "default_branch": "develop",
+  "integration_branch": "fix/combined-session-release-20261106",
+  "sources": [
+    {"area": "child_sessions_p2", "source_branch": "feat/child-sessions-p2", "integrated_in": "a126369e9cd5ee34870e20237c504a795bf832a5", "missing": [], "audit": "已完成范围的协议、协调、客户端和测试均保留"},
+    {"area": "runtime_process_cleanup", "source_branch": "claude/affectionate-khorana-66872a", "integrated_in": "a126369e9cd5ee34870e20237c504a795bf832a5", "missing": [], "audit": "fixture_processes、process_cleanup、readonly_queries 字节一致；原七项测试完整保留，另有 stdin panic 回收测试"},
+    {"area": "chat_configuration", "source_branch": "claude/ecstatic-grothendieck-d9fa27", "integrated_in": "a126369e9cd5ee34870e20237c504a795bf832a5", "missing": [], "audited_paths": 40, "identical_paths": 26, "audit": "其余差异为 P2 接线、Windows 修复和版本/文档；未发现功能或回归遗漏"},
+    {"area": "git_verification_snapshot", "source_branch": "fix/verification-nested-worktree", "source_version": "0.143.0-rc9", "source_was_uncommitted": true, "integrated_in": "9b41592e", "audit": "四个 Rust 文件移植后逐字节匹配已验证来源"}
+  ],
+  "snapshot_source_sha256": {
+    "crates/willdeep-cli/src/daemon/diff_review.rs": "28fe9b7b73f02a6ec43882f39e18abccaac234606c2ad508a8ba127fbb4afc2d",
+    "crates/willdeep-cli/src/daemon/diff_review/fingerprints.rs": "b6291e748c4c441d42afbad0107f7de9e43f6ba06b6c2a3db534e73a69497e13",
+    "crates/willdeep-cli/src/daemon/diff_review/fingerprints/tests.rs": "38d5993e17fc64413e0c24a600a62599251aa1a0dc472a19d092beb0e1c14aa2",
+    "crates/willdeep-cli/src/harness/verification.rs": "18641a7c6d7448a5f76611b3e0753d6819489db322b552b225cc55190c789a90"
+  },
+  "post_import_changes": [
+    {"path": "crates/willdeep-cli/src/harness/verification.rs", "scope": "test_only", "reason": "Git 2.56 改用 gitfile does not point to a valid repository；错误详情回归改为对照当前 Git 的真实诊断，保留失败与路径断言，未改产品实现"}
+  ],
+  "audit_is_runtime_validation": false,
+  "historical_test_results_count_as_current": false,
+  "read_only_review": "独立复核未发现高置信发布阻塞；测试与 CI 结果另行记录"
+}

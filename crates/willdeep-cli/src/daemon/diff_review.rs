@@ -5,6 +5,11 @@ use std::sync::OnceLock;
 
 use super::*;
 
+mod fingerprints;
+use fingerprints::{
+    content_fingerprint, repository_head, snapshot_id, submodule_fingerprint, untracked_fingerprint,
+};
+
 const MAX_DIFF_BYTES: usize = 512 * 1024;
 
 /// 未跟踪文件逐个读内容判定二进制与行数的条数上限。
@@ -1702,10 +1707,7 @@ pub(crate) fn snapshot(workspace: &Path) -> Result<DiffSnapshot> {
     let additions = files.iter().map(|file| file.additions).sum();
     let deletions = files.iter().map(|file| file.deletions).sum();
     let has_conflicts = files.iter().any(|file| file.kind == DiffFileKind::Unmerged);
-    let head = git(workspace, &["rev-parse", "HEAD"])
-        .ok()
-        .map(|value| String::from_utf8_lossy(&value).trim().to_owned())
-        .filter(|value| !value.is_empty());
+    let head = repository_head(workspace)?;
     Ok(DiffSnapshot {
         id: snapshot_id(workspace, &status, head.as_deref())?,
         workspace: workspace.to_path_buf(),
@@ -1749,7 +1751,7 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
             .hash(&mut hasher);
         let entry = indexed.get(&file.path);
         entry.hash(&mut hasher);
-        let path = workspace.join(&file.path);
+        let path = workspace.join(file.path.trim_end_matches('/'));
         match std::fs::symlink_metadata(&path) {
             Ok(metadata)
                 if metadata.is_dir()
@@ -1758,6 +1760,9 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
                     }) =>
             {
                 submodule_fingerprint(&path, &mut hasher, 0)?;
+            }
+            Ok(metadata) if metadata.is_dir() && file.kind == DiffFileKind::Untracked => {
+                untracked_fingerprint(&path, &mut hasher, 0)?;
             }
             Ok(_) => content_fingerprint(&path, &mut hasher)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1992,134 +1997,6 @@ fn apply_numstat(
     Ok(())
 }
 
-fn snapshot_id(workspace: &Path, status: &[u8], head: Option<&str>) -> Result<String> {
-    snapshot_id_at_depth(workspace, status, head, 0)
-}
-
-const MAX_SUBMODULE_DEPTH: usize = 32;
-
-fn submodule_fingerprint(path: &Path, hasher: &mut DefaultHasher, depth: usize) -> Result<()> {
-    anyhow::ensure!(
-        depth < MAX_SUBMODULE_DEPTH,
-        "submodule nesting exceeds snapshot limit"
-    );
-    // An uninitialized checkout must not let Git discover the parent repository.
-    if !path.join(".git").exists() {
-        "uninitialized-submodule".hash(hasher);
-        return Ok(());
-    }
-    let status = git(
-        path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ],
-    )?;
-    let head = git(path, &["rev-parse", "HEAD"])?;
-    snapshot_id_at_depth(
-        path,
-        &status,
-        Some(String::from_utf8_lossy(&head).trim()),
-        depth + 1,
-    )?
-    .hash(hasher);
-    Ok(())
-}
-
-fn snapshot_id_at_depth(
-    workspace: &Path,
-    status: &[u8],
-    head: Option<&str>,
-    depth: usize,
-) -> Result<String> {
-    let mut hasher = DefaultHasher::new();
-    // Two clean checkouts can contain entirely different code. Empty status and
-    // diff output must not let verification from one commit authorize another.
-    head.hash(&mut hasher);
-    status.hash(&mut hasher);
-    git(workspace, &["diff", "--binary", "--no-ext-diff"])?.hash(&mut hasher);
-    git(
-        workspace,
-        &["diff", "--cached", "--binary", "--no-ext-diff"],
-    )?
-    .hash(&mut hasher);
-    // Include every initialized gitlink, even when user configuration hides its
-    // dirty status. Parent diff text only contains HEAD and a generic dirty flag.
-    let index = git(workspace, &["ls-files", "--stage", "-z"])?;
-    for entry in index
-        .split(|byte| *byte == 0)
-        .filter(|entry| entry.starts_with(b"160000 "))
-    {
-        let split = entry
-            .iter()
-            .position(|byte| *byte == b'\t')
-            .context("invalid gitlink index entry")?;
-        let relative = std::str::from_utf8(&entry[split + 1..]).context("non-UTF8 gitlink path")?;
-        relative.hash(&mut hasher);
-        let path = workspace.join(relative);
-        match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_dir() => submodule_fingerprint(&path, &mut hasher, depth)?,
-            Ok(_) => content_fingerprint(&path, &mut hasher)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                "missing-submodule".hash(&mut hasher)
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    // Verification records use this ID: metadata alone cannot prove that
-    // untracked inputs still contain the bytes that were tested.
-    for file in parse_status(status)
-        .into_values()
-        .filter(|file| file.kind == DiffFileKind::Untracked)
-    {
-        file.path.hash(&mut hasher);
-        content_fingerprint(&workspace.join(&file.path), &mut hasher)?;
-    }
-    Ok(format!("diff-{:016x}", hasher.finish()))
-}
-
-fn content_fingerprint(path: &Path, hasher: &mut DefaultHasher) -> Result<()> {
-    use std::io::Read;
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-    let metadata = std::fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        "symlink".hash(hasher);
-        std::fs::read_link(path)?.hash(hasher);
-        return Ok(());
-    }
-    anyhow::ensure!(metadata.is_file(), "unsupported verification input type");
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    let mut file = options.open(path)?;
-    anyhow::ensure!(
-        file.metadata()?.is_file(),
-        "verification input changed type"
-    );
-    "file".hash(hasher);
-    metadata.len().hash(hasher);
-    metadata.permissions().readonly().hash(hasher);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode().hash(hasher);
-    }
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.write(&buffer[..read]);
-    }
-    Ok(())
-}
-
 fn safe_revert(
     home: &Path,
     workspace: &Path,
@@ -2313,15 +2190,29 @@ fn file_diff_bounded(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-fn git(workspace: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+fn git_output(workspace: &Path, args: &[&str]) -> Result<std::process::Output> {
+    Command::new("git")
         .args(args)
+        .env("LC_ALL", "C")
         .current_dir(workspace)
-        .output()?;
+        .output()
+        .with_context(|| {
+            format!(
+                "Cannot run git {} in {}",
+                args.join(" "),
+                workspace.display()
+            )
+        })
+}
+
+fn git(workspace: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = git_output(workspace, args)?;
     if !output.status.success() {
         bail!(
-            "git {} failed: {}",
+            "git {} failed in {} ({}): {}",
             args.join(" "),
+            workspace.display(),
+            output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
@@ -2456,7 +2347,9 @@ mod tests {
         let mut second = DefaultHasher::new();
         submodule_fingerprint(&root.join("empty"), &mut second, 0).unwrap();
         assert_eq!(first.finish(), second.finish());
-        assert!(submodule_fingerprint(&root, &mut second, MAX_SUBMODULE_DEPTH).is_err());
+        assert!(
+            submodule_fingerprint(&root, &mut second, fingerprints::MAX_SUBMODULE_DEPTH).is_err()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

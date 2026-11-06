@@ -11,13 +11,16 @@ pub(super) fn snapshot(workspace: &Path) -> Result<Option<String>, String> {
         .env("LC_ALL", "C")
         .current_dir(workspace)
         .output()
-        .map_err(|error| format!("Git workspace discovery could not be started: {error}"))?;
+        .map_err(|error| {
+            let diagnostic = discovery_diagnostic(&format!("{}: {error}", workspace.display()));
+            format!("Git workspace discovery could not be started: {diagnostic}")
+        })?;
     if !discovery.status.success() {
         let stderr = String::from_utf8_lossy(&discovery.stderr);
         if repository_is_absent(&stderr) {
             return Ok(None);
         }
-        let diagnostic = discovery_diagnostic(&stderr);
+        let diagnostic = discovery_diagnostic(&format!("{}: {stderr}", workspace.display()));
         return Err(format!(
             "Git workspace discovery failed ({}): {diagnostic}",
             discovery.status
@@ -25,7 +28,10 @@ pub(super) fn snapshot(workspace: &Path) -> Result<Option<String>, String> {
     }
     crate::daemon::diff_review::snapshot(workspace)
         .map(|snapshot| Some(snapshot.id))
-        .map_err(|_| "Git verification snapshot could not be captured".into())
+        .map_err(|error| {
+            let diagnostic = discovery_diagnostic(&format!("{}: {error:#}", workspace.display()));
+            format!("Git verification snapshot could not be captured: {diagnostic}")
+        })
 }
 
 fn repository_is_absent(stderr: &str) -> bool {
@@ -92,6 +98,60 @@ mod tests {
         ] {
             assert!(!repository_is_absent(stderr), "{stderr}");
         }
+    }
+
+    #[test]
+    #[ignore = "requires an explicit WILLDEEP_VERIFICATION_DIAGNOSTIC_WORKSPACE"]
+    fn diagnostic_snapshot_and_capture_for_explicit_workspace() {
+        let workspace = std::path::PathBuf::from(
+            std::env::var_os("WILLDEEP_VERIFICATION_DIAGNOSTIC_WORKSPACE")
+                .expect("set WILLDEEP_VERIFICATION_DIAGNOSTIC_WORKSPACE explicitly"),
+        );
+        let baseline = snapshot(&workspace)
+            .expect("Harness verification snapshot")
+            .expect("diagnostic workspace must be a Git repository");
+        let view = crate::daemon::diff_review::snapshot(&workspace).expect("Diff snapshot");
+        let _capture = crate::daemon::diff_review::capture(&workspace).expect("Diff capture");
+        println!(
+            "WILLDEEP_VERIFICATION_DIAGNOSTIC {}",
+            serde_json::json!({
+                "snapshot_id": baseline,
+                "diff_files": view.files.len(),
+                "capture_succeeded": true,
+            })
+        );
+    }
+
+    #[test]
+    fn snapshot_failure_preserves_the_input_path_and_reason() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-snapshot-error-{}", uuid::Uuid::new_v4()));
+        let nested = root.join("broken-nested-input");
+        std::fs::create_dir_all(&nested).unwrap();
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+        std::fs::write(nested.join(".git"), "gitdir: missing-directory\n").unwrap();
+        std::fs::write(nested.join("input.txt"), "fixture\n").unwrap();
+        let probe = Command::new("git")
+            .args(["rev-parse", "--show-prefix"])
+            .env("LC_ALL", "C")
+            .current_dir(&nested)
+            .output()
+            .unwrap();
+        assert!(!probe.status.success());
+        // Git versions use different messages for the same broken gitfile.
+        // The snapshot must retain this Git's actual diagnostic, not a fixed phrase.
+        let reason = discovery_diagnostic(&String::from_utf8_lossy(&probe.stderr));
+        assert!(!reason.is_empty(), "Git must explain the broken metadata");
+        let error = snapshot(&root).unwrap_err();
+        assert!(error.contains("broken-nested-input"), "{error}");
+        assert!(error.contains(&reason), "{error}");
+        assert!(error.starts_with("Git verification snapshot could not be captured:"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
