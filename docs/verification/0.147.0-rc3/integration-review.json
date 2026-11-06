@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-07",
+  "version": "0.147.0-rc3",
+  "phase": "pre_release_integration_validation",
+  "base_commit": "2a2fe3b8277120e269639dd9c7bdc7c4a2b4c862",
+  "source_commit": "f246a18e935dd80bc91edebd3e2dae6e8c1898b5",
+  "combined_code_commit": "8013035199c0b8d9c7994910a3d29decca4da95c",
+  "source_comparison": {"files": 896, "missing": 0, "extra": 0, "changed": 0},
+  "tests": {
+    "core": {"passed": 50, "failed": 0},
+    "cli": {"passed": 78, "failed": 0},
+    "web": {"passed": 37, "failed": 0},
+    "configuration_bridge": {"passed": 6, "failed": 0},
+    "runtime_integration": {"passed": 1, "failed": 0, "rerun_after_harness_fix": true}
+  },
+  "static": {
+    "version_consistency": "passed",
+    "rustfmt": "passed",
+    "diff_check": "passed",
+    "source_size": "passed_after_splitting_web_handler",
+    "clippy_workspace_all_targets_deny_warnings": "passed_after_boxing_runtime_connection",
+    "web_build": "passed",
+    "web_lint_errors": 0,
+    "web_lint_existing_warnings": 1,
+    "first_two_commits_individual_web_build_and_cargo_check_all_targets": "passed"
+  },
+  "browser": {
+    "isolated_runtime": true,
+    "ordinary_enter_retains_draft_and_queue_one": true,
+    "explicit_enqueue_clears_draft_and_queue_two": true,
+    "approval_remains_pending": true,
+    "reasoning_level_deep_persisted": true,
+    "api_status": 200,
+    "api_version": "0.147.0-rc3",
+    "mobile_viewport": [375, 812],
+    "mobile_panel_bounds": [12, 553.1015625, 363, 800],
+    "mobile_panel_fully_visible": true,
+    "console_errors_observed": 0,
+    "network_note": "Initial preview retries preceded fixture readiness; this is not a full network archive."
+  },
+  "limitations": [
+    "No native Windows or Linux run in local validation; cross-platform CI is required.",
+    "No full workspace test suite run locally.",
+    "Browser interactions preceded RuntimeConnection boxing; Clippy and Runtime integration were rerun afterwards.",
+    "This pre-release record does not assert a published release or completed production installation."
+  ],
+  "new_database_migrations": false
+}
