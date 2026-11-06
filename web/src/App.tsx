@@ -25,6 +25,9 @@ import { ChildSessions, ChildSessionOrigin } from "./ChildSessions";
 import type { ChildLink } from "./childSessionsApi";
 import { childSessionsText } from "./childSessionsMessages";
 import { PermissionsPanel } from "./PermissionsPanel";
+import { WorkspaceApprovalGuide } from "./WorkspaceApprovalGuide";
+import { needsWorkspaceApproval, useWorkspaceApproval, type WorkspaceEntry } from "./useWorkspaceApproval";
+import type { WorkspaceSummary as Workspace } from "./workspaceApprovalApi";
 import { ModelPicker } from "./ModelPicker";
 import { SharePanel } from "./SharePanel";
 import { changeApprovalMode } from "./approvalModeApi";
@@ -61,12 +64,11 @@ import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
 import { RuntimeFailureDetails } from "./RuntimeFailureDetails";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { WorkflowCard } from "./WorkflowCard";
 import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
 
-type Workspace = { id: string; path: string; name: string; active: boolean; access: WorkspaceAccess };
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
 
 /** 谱系行的时间按子会话的创建时间算，不用最后更新时间。 */
@@ -321,10 +323,19 @@ export function App() {
   // 插件页面在自己的 effect 里读 token 推主题时，拿到的已经是新配色。
   useLayoutEffect(() => { applyThemeMode(theme); }, [theme]);
   const colorScheme = useResolvedColorScheme(theme);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]); const [workspace, setWorkspace] = useState("");
+  const [workspace, setWorkspace] = useState("");
+  const workspaceRef = useRef("");
+  const workspaceDefaultRef = useRef<WorkspaceAccess>("smart");
+  const workspaceDraftApprovalRef = useRef<WorkspaceAccess | null>(null);
+  const workspaceEntryRevision = useRef(0);
+  const initialWorkspaceRequested = useRef(false);
+  const skipWorkspaceRestore = useRef(false);
+  const workspaceApproval = useWorkspaceApproval(enterWorkspace);
+  const workspaces = workspaceApproval.workspaces;
   const [sessions, setSessions] = useState<Session[]>([]); const [sessionId, setSessionId] = useState("");
   const [sessionRelation, setSessionRelation] = useState<{ id: string; parent: string | null; readOnly: boolean; detached: boolean } | null>(null);
   const deepLinkSession = useRef(new URLSearchParams(window.location.search).get("session"));
+  const startupSessions = useQuery({ queryKey: ["sessions", "workspace-entry"], queryFn: () => json<Session[]>("/api/sessions"), enabled: Boolean(deepLinkSession.current) && !initialWorkspaceRequested.current });
   // 项目树的展开与每个项目已加载的条数。默认只展开最近更新的项目，其余收起。
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [projectShown, setProjectShown] = useState<Record<string, number>>({});
@@ -609,16 +620,35 @@ export function App() {
   useEffect(() => { document.title = t.documentTitle; document.documentElement.lang = language; localStorage.setItem("willdeep.language", language); }, [language, t.documentTitle]);
   useEffect(() => { json<Health>("/health").then((value) => setVersion(value.version)).catch(() => setVersion("")); }, []);
   useEffect(() => { loadIdentity().then(setIdentity).catch(() => setIdentity(null)); }, []);
-  useEffect(() => { json<Workspace[]>("/api/workspaces").then((values) => { setWorkspaces(values); setWorkspace(values[0]?.path ?? ""); }).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`)); }, [t.loadFailed]);
+  useEffect(() => {
+    const reason = workspaceApproval.query.error ?? startupSessions.error;
+    if (reason) setError(`${t.loadFailed}: ${reason.message}`);
+  }, [workspaceApproval.query.error, startupSessions.error, t.loadFailed]);
+  useEffect(() => {
+    if (initialWorkspaceRequested.current || !workspaceApproval.query.isSuccess) return;
+    const linkedId = deepLinkSession.current;
+    if (linkedId && startupSessions.isPending) return;
+    const linked = startupSessions.data?.find((item) => item.id === linkedId);
+    const target = workspaces.find((item) => item.path === linked?.workspace) ?? workspaces[0];
+    if (!target) return;
+    initialWorkspaceRequested.current = true;
+    deepLinkSession.current = null;
+    workspaceApproval.requestEntry(target, linked ? { session: { id: linked.id, turnId: linked.active_turn_id } } : {});
+  }, [workspaces, workspaceApproval, startupSessions.data, startupSessions.isPending]);
   useEffect(() => {
     if (!workspace) return;
+    let active = true;
+    const revision = workspaceEntryRevision.current;
+    const skipRestore = skipWorkspaceRestore.current;
+    skipWorkspaceRestore.current = false;
     abortRef.current?.abort();
+    sessionIdRef.current = "";
     setSessionId("");
     setChat([]);
-    // 审批档位挂在会话上，换工作区就不再属于任何会话。
-    setApprovalMode(null);
+    // 新会话使用此目录已选的审批值；恢复后再取会话自身的覆盖值。
+    setApprovalMode(workspaceDraftApprovalRef.current);
+    setWorkspacePolicy(workspaceDefaultRef.current);
     setPermissionsOpen(false);
-    // 模型同理：会话没了，当前模型也就没有归属。
     setSessionModel(null); setSessionModelProviderId(null);
     setDraftModel(null);
     setModelOpen(false);
@@ -629,27 +659,18 @@ export function App() {
     setRuntimeFailure(null);
     setShowArchived(false);
     json<Session[]>("/api/sessions").then((values) => {
+      if (!active || revision !== workspaceEntryRevision.current) return;
       setSessions(values);
-      const linkedId = deepLinkSession.current;
-      if (linkedId) {
-        deepLinkSession.current = null;
-        const linked = values.find((item) => item.id === linkedId);
-        if (linked && linked.workspace !== workspace) {
-          pendingWorkspaceSession.current = { id: linked.id, workspace: linked.workspace, turnId: linked.active_turn_id };
-          setWorkspace(linked.workspace);
-        } else {
-          void loadSessionRef.current(linkedId, linked?.active_turn_id);
-        }
-        return;
-      }
+      if (skipRestore) return;
       const available = values.filter((item) => item.workspace === workspace && !item.archived);
       const remembered = localStorage.getItem(`${lastSessionPrefix}${workspace}`);
       const pending = pendingWorkspaceSession.current;
       const candidate = pending?.workspace === workspace ? values.find((item) => item.id === pending.id) : available.find((item) => item.id === remembered) ?? available.find((item) => item.active);
       if (pending?.workspace === workspace) pendingWorkspaceSession.current = null;
       if (candidate) void loadSessionRef.current(candidate.id, pending?.workspace === workspace ? pending.turnId ?? candidate.active_turn_id : candidate.active_turn_id);
-    }).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`));
-    json<ComposerData>(`/api/composer?workspace=${encodeURIComponent(workspace)}`).then(setComposer).catch((reason: Error) => setError(`${t.loadFailed}: ${reason.message}`));
+    }).catch((reason: Error) => { if (active) setError(`${t.loadFailed}: ${reason.message}`); });
+    json<ComposerData>(`/api/composer?workspace=${encodeURIComponent(workspace)}`).then((value) => { if (active) setComposer(value); }).catch((reason: Error) => { if (active) setError(`${t.loadFailed}: ${reason.message}`); });
+    return () => { active = false; };
   }, [workspace, t.loadFailed]);
   useEffect(() => {
     if (!workspace) { setRuntimeActivity({ tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 }); return; }
@@ -781,6 +802,7 @@ export function App() {
     // 会话已经存在，草稿里的选择要么已经被采纳，要么不再相关。
     setDraftModel(null);
     conciseLineRef.current = null;
+    sessionIdRef.current = detail.id;
     setSessionId(detail.id);
     pendingGoalPreference.current = null;
     const goalPreference = savedGoalPreference(detail.id);
@@ -1074,22 +1096,58 @@ export function App() {
     }
   }
 
+  function requestWorkspaceEntry(target: Workspace, entry: WorkspaceEntry = {}) {
+    ++workspaceEntryRevision.current;
+    workspaceApproval.requestEntry(target, entry);
+  }
+
+  function cancelWorkspaceEntry() {
+    ++workspaceEntryRevision.current;
+    workspaceApproval.cancel();
+  }
+
+  function enterWorkspace(target: Workspace, entry: WorkspaceEntry) {
+    ++workspaceEntryRevision.current;
+    const changed = target.path !== workspaceRef.current;
+    workspaceRef.current = target.path;
+    workspaceDefaultRef.current = target.access;
+    // 引导选择写入工作区默认；这里只恢复入口携带的会话覆盖值。
+    workspaceDraftApprovalRef.current = target.access === "read_only" ? null : entry.approvalMode ?? null;
+    pendingWorkspaceSession.current = entry.session ? { ...entry.session, workspace: target.path } : null;
+    skipWorkspaceRestore.current = entry.fresh ?? false;
+    if (entry.fresh) localStorage.removeItem(`${lastSessionPrefix}${target.path}`);
+    if (entry.added) { setNewWorkspacePath(""); setAddingWorkspace(false); }
+    setWorkspace(target.path);
+    if (!changed && entry.session) {
+      pendingWorkspaceSession.current = null;
+      void loadSessionRef.current(entry.session.id, entry.session.turnId);
+    } else if (!changed && entry.fresh) {
+      sessionIdRef.current = "";
+      setSessionId(""); setChat([]); setApprovalMode(workspaceDraftApprovalRef.current); setWorkspacePolicy(target.access);
+      setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null);
+      setDraftModel(null); setModelOpen(false); setShareOpen(false);
+    }
+  }
+
   async function loadSession(id: string, activeTurnId: string | null = null) {
     if (busy) return;
-    inputSuggestion.clear();
-    setError("");
-    setRuntimeFailure(null);
+    workspaceApproval.cancel();
+    const revision = ++workspaceEntryRevision.current;
     try {
       const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
-      if (detail.workspace !== workspace) {
-        pendingWorkspaceSession.current = { id: detail.id, workspace: detail.workspace, turnId: activeTurnId };
-        localStorage.setItem(`${lastSessionPrefix}${detail.workspace}`, detail.id);
-        setWorkspace(detail.workspace); return;
+      if (revision !== workspaceEntryRevision.current) return;
+      const target = workspaces.find((item) => item.path === detail.workspace);
+      if (target && (detail.workspace !== workspaceRef.current || needsWorkspaceApproval(target))) {
+        requestWorkspaceEntry(target, { session: { id: detail.id, turnId: activeTurnId } });
+        return;
       }
+      if (detail.workspace !== workspaceRef.current) return;
+      workspaceApproval.cancel();
+      inputSuggestion.clear(); setError(""); setRuntimeFailure(null);
       applySessionDetail(detail);
       if (activeTurnId) await resumeTurn(detail.id, activeTurnId);
     } catch (reason) {
-      setError(`${t.loadFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+      if (revision === workspaceEntryRevision.current) setError(`${t.loadFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
   }
   loadSessionRef.current = loadSession;
@@ -1122,8 +1180,10 @@ export function App() {
 
   /// 面板摊开时再读一次档位：TUI 那边也能切，页面上的旧值会骗人。
   async function refreshApprovalMode(id: string) {
+    const requestedWorkspace = workspaceRef.current;
     try {
       const detail = await json<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
+      if (id !== sessionIdRef.current || requestedWorkspace !== workspaceRef.current) return;
       setApprovalMode(detail.approval_mode ?? null);
       setWorkspacePolicy(detail.workspace_access);
     } catch { /* 读不到就保留现值；真正的切换失败会在面板里报出来 */ }
@@ -1208,21 +1268,14 @@ export function App() {
   // 非回环监听时后端会拒绝并说明理由——那条边界留在启动命令里。
   async function addWorkspace() {
     const path = newWorkspacePath.trim();
-    if (!path) return;
+    if (!path || busy) return;
+    const revision = ++workspaceEntryRevision.current;
     setWorkspaceError("");
     try {
-      const added = await json<Workspace>("/api/workspaces", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      const values = await json<Workspace[]>("/api/workspaces");
-      setWorkspaces(values);
-      setWorkspace(added.path);
-      setNewWorkspacePath("");
-      setAddingWorkspace(false);
+      const added = await workspaceApproval.addWorkspace(path);
+      if (revision === workspaceEntryRevision.current) requestWorkspaceEntry(added, { fresh: true, added: true });
     } catch (reason) {
-      setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
+      if (revision === workspaceEntryRevision.current) setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
     }
   }
 
@@ -1353,6 +1406,7 @@ export function App() {
   // 立刻起一个回合，而 setPrompt 是异步的——读 state 会读到上一轮的值。
   // 走的是与用户敲回车完全相同的这条路：审批档位与沙箱一个都不绕。
   async function send(override?: string, source: "composer" | "plugin" = "composer") {
+    if (workspaceApproval.pending || !workspaceRef.current) return;
     const sendAttachments = attachmentsRef.current;
     const typed = (override ?? prompt).trim();
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
@@ -1537,7 +1591,10 @@ export function App() {
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
   const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
-  const setupGuide = showSetup ? <ConfigurationSettings compact messages={t} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null;
+  const setupGuide = <>
+    {workspaceApproval.pending && <WorkspaceApprovalGuide key={workspaceApproval.pending.revision} path={workspaceApproval.pending.workspace.path} language={language} messages={t} onSave={workspaceApproval.apply} onCancel={cancelWorkspaceEntry} />}
+    {showSetup ? <ConfigurationSettings compact messages={t} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
+  </>;
 
   if (rail.kind === "configuration") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<Box as="main" flex="1" minW="0" overflow="hidden"><BuiltinConfigurationWorkspace messages={t} locale={language} colorScheme={colorScheme} onIdentityChange={setIdentity} /></Box>{pluginOverlays}</Flex></Box>;
@@ -1641,7 +1698,7 @@ export function App() {
                   <span className="project-name">{project.name}</span>
                   <span className="project-count">{matched.length}</span>
                 </button>
-                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => { setWorkspace(project.path); localStorage.removeItem(`${lastSessionPrefix}${project.path}`); setSessionId(""); setChat([]); setApprovalMode(null); setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null); setDraftModel(null); setModelOpen(false); setShareOpen(false); }}><SfIcon name="sf:plus.circle" size={13} /></button>
+                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => requestWorkspaceEntry(project, { fresh: true })}><SfIcon name="sf:plus.circle" size={13} /></button>
               </div>
               {open && <VStack align="stretch" gap="1" className="project-sessions">
                 {rows.map((entry) => sessionRow(entry.session, entry.depth))}

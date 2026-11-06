@@ -70,6 +70,7 @@ mod tui;
 mod usage_cmd;
 mod video_studio_plugin;
 mod web;
+mod workspace_approval_startup;
 
 use config::{LoadedConfig, ProviderProfile, willdeep_home};
 
@@ -916,20 +917,17 @@ async fn run() -> Result<()> {
         .unwrap_or_default();
 
     let interactive_tui = prompt.is_none() && std::io::stdin().is_terminal() && !cli.no_tui;
-    if session_startup::eligible(
+    let directory_approval = session_startup::prepare(
         &cli,
+        &loaded,
+        &home,
+        &store,
         interactive_tui && std::io::stdout().is_terminal(),
         run_args.is_some(),
-    ) {
-        let workspace = harness::resolve_workspace(&cli, None)?;
-        resumed = session_startup::select(
-            &store,
-            &workspace,
-            cli.session_startup
-                .unwrap_or(loaded.file.agent.session_startup),
-            language,
-        )?;
-    }
+        language,
+        &mut resumed,
+    )
+    .await?;
     if should_use_headless_runtime(
         &cli,
         run_args.as_ref(),
@@ -984,6 +982,9 @@ async fn run() -> Result<()> {
         };
     let built = harness::build(&cli, &loaded, &home, language, resumed.as_ref(), frontend).await?;
     let agent = built.agent.clone();
+    if let Some(mode) = directory_approval {
+        agent.approval_mode_handle().set(mode);
+    }
     let workspace = built.workspace.clone();
     let skills = built.skills.clone();
     let background_tasks = built.background_tasks.clone();

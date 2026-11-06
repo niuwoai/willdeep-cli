@@ -4,7 +4,7 @@
 > 协议版本：1.0  
 > 当前实现版本：v0.144.0-rc1
 >
-> 最后更新：2026-11-05
+> 最后更新：2026-11-06
 
 ### 待发队列（0.115.0-rc3）
 
@@ -106,6 +106,7 @@ runtime.capabilities
 runtime.status
 workspace.register
 workspace.ensure
+workspace.set_approval_mode
 workspace.activate
 workspace.remove
 session.create
@@ -145,6 +146,8 @@ diff.content
 diff.review
 diff.revert
 ```
+
+`workspace.set_approval_mode` 持久化用户选择的工作区审批档位，参数为 `root`、`approval_mode` 与可选 `confirm_full_access`（缺省为 `false`）。档位为 `strict` / `smart` / `workspace_write` / `full_access`；`read_only` 是管理员设置的工作区策略，不在可选枚举中。Runtime 在 WorkspaceStore 同一互斥区读取当前记录、拒绝 `read_only`、检查 Full Access 二次确认，并且只更新 `access`、`approval_mode_configured` 与 `updated_at`。只读冲突返回 `ErrorCode::Conflict` 和 HTTP 409。管理员仍可通过 `workspace.register` 显式更改档位及其他注册字段。
 
 `session.update_approval_mode` 切换会话审批档位，`approval_mode` 取 `strict` / `smart` / `workspace_write` / `full_access`（`read_only` 仅是工作区策略，不接受）：
 

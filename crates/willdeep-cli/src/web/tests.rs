@@ -52,6 +52,7 @@ fn workspace(path: &str, active: bool) -> crate::daemon::RuntimeWorkspace {
         name: path.to_owned(),
         root: PathBuf::from(path),
         access: crate::daemon::WorkspaceAccess::Smart,
+        approval_mode_configured: true,
         provider_profile: None,
         skills: Vec::new(),
         mcp_servers: Vec::new(),
@@ -59,6 +60,78 @@ fn workspace(path: &str, active: bool) -> crate::daemon::RuntimeWorkspace {
         updated_at: 1,
         active,
     }
+}
+
+#[test]
+fn workspace_summary_carries_the_approval_guide_marker() {
+    for configured in [false, true] {
+        let mut item = workspace("/workspace/first", false);
+        item.approval_mode_configured = configured;
+        let summary = serde_json::to_value(WorkspaceSummary::from(item)).unwrap();
+        assert_eq!(summary["approval_mode_configured"], configured);
+        assert_eq!(summary["access"], "smart");
+    }
+}
+
+#[test]
+fn workspace_approval_conflict_maps_to_http_409() {
+    let response =
+        WebError::from_workspace_approval(crate::daemon::WorkspaceApprovalError::Conflict)
+            .into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[test]
+fn workspace_approval_request_requires_a_path_and_an_explicit_valid_mode() {
+    for mode in ["strict", "smart", "workspace_write", "full_access"] {
+        let value = serde_json::json!({ "path": "/allowed", "approval_mode": mode });
+        let request: WorkspaceApprovalModeRequest = serde_json::from_value(value).unwrap();
+        assert!(
+            !request.confirm,
+            "full access must never be confirmed by default"
+        );
+        let expected = if mode == "full_access" {
+            Err(ApprovalModeRejection::FullAccessNeedsConfirmation)
+        } else {
+            Ok(())
+        };
+        assert_eq!(
+            check_session_approval_mode(
+                crate::daemon::WorkspaceAccess::Smart,
+                request.approval_mode,
+                request.confirm
+            ),
+            expected
+        );
+    }
+    for value in [
+        serde_json::json!({ "path": "/allowed" }),
+        serde_json::json!({ "approval_mode": "smart" }),
+        serde_json::json!({ "path": "/allowed", "approval_mode": "auto" }),
+        serde_json::json!({ "path": "/allowed", "approval_mode": "smart", "confirm": "true" }),
+        serde_json::json!({ "path": "/allowed", "approval_mode": "full_access", "trusted": true }),
+    ] {
+        assert!(serde_json::from_value::<WorkspaceApprovalModeRequest>(value).is_err());
+    }
+}
+
+#[tokio::test]
+async fn workspace_approval_route_rejects_remote_writes_before_contacting_runtime() {
+    let state = suggestion_state_at(std::path::Path::new("/nonexistent-web-approval-home"));
+    let result = set_workspace_approval_mode(
+        State(state),
+        Json(WorkspaceApprovalModeRequest {
+            path: "/not-allowed".into(),
+            approval_mode: crate::daemon::WorkspaceAccess::FullAccess,
+            confirm: true,
+        }),
+    )
+    .await;
+    let response = match result {
+        Ok(_) => panic!("remote writes must be refused"),
+        Err(error) => error.into_response(),
+    };
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[test]
@@ -608,6 +681,7 @@ fn turn_actions_require_the_owning_session_workspace_in_the_allowlist() {
         name: "workspace".to_owned(),
         root: std::path::PathBuf::from(root),
         access: crate::daemon::WorkspaceAccess::WorkspaceWrite,
+        approval_mode_configured: true,
         provider_profile: None,
         skills: Vec::new(),
         mcp_servers: Vec::new(),

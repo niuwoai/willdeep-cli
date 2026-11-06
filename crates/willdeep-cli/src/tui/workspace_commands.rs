@@ -112,8 +112,14 @@ pub(super) async fn switch(
                     || workspace.root.to_string_lossy() == id
             }
         })
-        .cloned()
-        .context("Runtime Workspace not found")?;
+        .cloned();
+    let workspace = match workspace {
+        Some(workspace) => workspace,
+        None if std::path::Path::new(id).is_dir() => {
+            crate::daemon::ensure_remote_workspace(&runtime.home, std::path::Path::new(id)).await?
+        }
+        None => bail!("Runtime Workspace not found"),
+    };
     let id = workspace.id;
     if workspace.root == session.workspace.canonicalize()? {
         crate::daemon::activate_remote_workspace(&runtime.home, id).await?;
@@ -126,10 +132,6 @@ pub(super) async fn switch(
             )
             .to_owned());
     }
-
-    session.attention_read = app.attention_read.clone();
-    session.runtime_event_cursor = app.runtime_event_cursor;
-    store.save(session)?;
     let target = store
         .digests()
         .into_iter()
@@ -140,7 +142,29 @@ pub(super) async fn switch(
                 .is_ok_and(|root| root == workspace.root)
         })
         .max_by_key(|candidate| candidate.updated_at)
-        .and_then(|candidate| store.load_baselined(candidate.id).ok());
+        .map(|candidate| store.load_baselined(candidate.id))
+        .transpose()?;
+    let session_override =
+        crate::workspace_approval_startup::session_override(&runtime.home, target.as_ref()).await?;
+    let configured_mode = workspace_approval::configured_mode(
+        target
+            .as_ref()
+            .and_then(|target| target.config.as_deref())
+            .or(runtime.runtime_submit.config.as_deref()),
+    )?;
+    let explicit_mode = workspace_approval::explicit_mode(session_override, configured_mode);
+    if crate::workspace_approval_startup::needs_guide(
+        &workspace,
+        true,
+        explicit_mode.map(crate::daemon::WorkspaceAccess::approval_mode),
+    ) {
+        app.open_workspace_approval(workspace, workspace_approval::GuideNext::Workspace(id));
+        return Ok(workspace_approval::pending_message(app.language));
+    }
+
+    session.attention_read = app.attention_read.clone();
+    session.runtime_event_cursor = app.runtime_event_cursor;
+    store.save(session)?;
     let mut target = target.unwrap_or_else(|| {
         Session::new(
             workspace.root.clone(),
@@ -179,6 +203,10 @@ pub(super) async fn switch(
     runtime.skills =
         Arc::new(SkillCatalog::discover(&workspace.root, &[]).allow_only(&workspace.skills));
     app.load_session(&target);
+    app.set_effective_approval(workspace_approval::effective_mode(
+        &workspace,
+        explicit_mode,
+    ));
     refresh_session_lineage(app, &target, store);
     app.runtime_event_cursor = target.runtime_event_cursor;
     app.runtime_attention.clear();

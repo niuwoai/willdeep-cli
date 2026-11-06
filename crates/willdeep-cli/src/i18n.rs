@@ -29,6 +29,52 @@ impl Language {
         }
     }
 
+    pub fn workspace_approval_title(self) -> &'static str {
+        self.text(
+            "选择此目录的审批模式",
+            "Choose approval mode for this directory",
+            "このディレクトリの承認モードを選択",
+        )
+    }
+
+    pub fn workspace_approval_cancelled(self) -> &'static str {
+        self.text(
+            "已取消打开目录",
+            "Opening directory cancelled",
+            "ディレクトリを開く操作をキャンセルしました",
+        )
+    }
+
+    pub fn workspace_approval_hint(self) -> &'static str {
+        self.text(
+            "↑/↓ 选择 · Enter 确认 · Esc 取消 · 之后可用 /permissions 调整",
+            "↑/↓ select · Enter confirm · Esc cancel · Change later with /permissions",
+            "↑/↓ 選択 · Enter 確定 · Esc キャンセル · 後から /permissions で変更可能",
+        )
+    }
+
+    pub fn workspace_approval_summary(self, mode: willdeep_core::ApprovalMode) -> &'static str {
+        use willdeep_core::ApprovalMode;
+        match mode {
+            ApprovalMode::Strict => self.text(
+                "风险较高且愿意值守时选择；需要审批的操作先由你确认。",
+                "For higher-risk work when you can stay present; confirm actions that require approval.",
+                "リスクが高く、立ち会える場合に。承認が必要な操作を自分で確認します。",
+            ),
+            ApprovalMode::Smart => self.text(
+                "默认推荐；按现有规则和智能审核决定放行或询问。",
+                "Recommended default; rules and smart review decide whether to proceed or ask.",
+                "推奨の既定値。ルールとスマート審査で実行または確認を判断します。",
+            ),
+            ApprovalMode::FullAccess => self.text(
+                "愿意给予更大自主执行权限时选择；减少操作审批，仍保留必要保护。",
+                "For greater execution autonomy; fewer approval prompts, with necessary protections retained.",
+                "より広い自律実行権限を与える場合に。承認確認を減らし、必要な保護は維持します。",
+            ),
+            _ => "",
+        }
+    }
+
     pub fn compression_configuration_error(self) -> &'static str {
         self.text(
             "压缩配置无法加载，请检查配置文件后重试",

@@ -54,6 +54,38 @@ pub fn eligible(cli: &crate::Cli, interactive: bool, run_command: bool) -> bool 
         && !cli.web
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare(
+    cli: &crate::Cli,
+    loaded: &crate::config::LoadedConfig,
+    home: &Path,
+    store: &SessionStore,
+    interactive: bool,
+    run_command: bool,
+    language: Language,
+    resumed: &mut Option<Session>,
+) -> Result<Option<willdeep_core::ApprovalMode>> {
+    if eligible(cli, interactive, run_command) {
+        let workspace = crate::harness::resolve_workspace(cli, None)?;
+        *resumed = select(
+            store,
+            &workspace,
+            cli.session_startup
+                .unwrap_or(loaded.file.agent.session_startup),
+            language,
+        )?;
+    }
+    crate::workspace_approval_startup::prepare(
+        cli,
+        loaded,
+        home,
+        resumed.as_ref(),
+        interactive,
+        language,
+    )
+    .await
+}
+
 fn latest_project(store: &SessionStore, workspace: &Path) -> Option<SessionDigest> {
     let workspace = workspace.canonicalize().ok()?;
     store
@@ -89,7 +121,8 @@ pub fn select(
         return Ok(None);
     }
     // Reload after the chooser: a Runtime may have advanced while it was open.
-    Ok(Some(store.load(digest.id)?))
+    // This snapshot can be edited by the TUI and saved, so retain its execution baseline.
+    Ok(Some(store.load_baselined(digest.id)?))
 }
 
 #[derive(Default)]
@@ -449,6 +482,56 @@ mod tests {
             std::fs::read(root.join("sessions").join(format!("{}.json", wanted.id))).unwrap(),
             before
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn selected_session_can_save_first_message_and_preserves_cursor_progress() {
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-startup-save-selected-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let store = SessionStore::new(&root);
+        let mut original = Session::new(project.clone(), None, "existing history");
+        original
+            .messages
+            .push(willdeep_core::Message::user("existing question"));
+        original.runtime_event_cursor = 7;
+        assert!(original.execution_checkpoint.is_none());
+        assert_eq!(original.manual_compression_usage.reported_calls, 0);
+        assert_eq!(original.manual_compression_usage.input_tokens, 0);
+        assert_eq!(original.manual_compression_usage.output_tokens, 0);
+        store.save(&mut original).unwrap();
+
+        let mut selected = select(&store, &project, StartupMode::Latest, Language::En)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.runtime_event_cursor, 7);
+
+        // A concurrent runtime may advance this monotonic cursor while the
+        // selected TUI snapshot is waiting for its first local message.
+        store
+            .update(selected.id, |session| session.runtime_event_cursor = 11)
+            .unwrap();
+        selected
+            .messages
+            .push(willdeep_core::Message::user("first /local user message"));
+        store.save(&mut selected).unwrap();
+
+        let saved = store.load(selected.id).unwrap();
+        assert!(
+            saved
+                .messages
+                .iter()
+                .any(|message| message.content == "first /local user message")
+        );
+        assert_eq!(saved.runtime_event_cursor, 11);
+        assert!(saved.execution_checkpoint.is_none());
+        assert_eq!(saved.manual_compression_usage.reported_calls, 0);
+        assert_eq!(saved.manual_compression_usage.input_tokens, 0);
+        assert_eq!(saved.manual_compression_usage.output_tokens, 0);
         std::fs::remove_dir_all(root).unwrap();
     }
 

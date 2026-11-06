@@ -911,7 +911,7 @@ pub fn willdeep_home() -> Result<PathBuf> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Deprecation {
     /// `agent.approval` 用了 `ask` / `request-every-time`：等同 `strict`，每次写入、
-    /// 命令、联网都问；推荐 `workspace-write`。
+    /// 命令、联网都问；推荐 `smart`。
     LegacyApproval { spelled: String },
 }
 
@@ -919,7 +919,7 @@ impl Deprecation {
     pub fn summary(&self) -> String {
         match self {
             Self::LegacyApproval { spelled } => format!(
-                "agent.approval = \"{spelled}\" is a legacy spelling of \"strict\" (every write, command and network call asks); the recommended default is \"workspace-write\" — run `/permissions default workspace-write` in the TUI or edit the file"
+                "agent.approval = \"{spelled}\" is a legacy spelling of \"strict\" (every write, command and network call asks); the recommended default is \"smart\" — run `/permissions default smart` in the TUI or edit the file"
             ),
         }
     }

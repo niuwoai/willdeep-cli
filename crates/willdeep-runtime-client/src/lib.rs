@@ -80,9 +80,9 @@ use willdeep_runtime_protocol::{
     RuntimeEvent, RuntimeInteractionResult, RuntimeSession, RuntimeStatus, RuntimeTask,
     RuntimeTaskDiagnostics, RuntimeTool, RuntimeTurn, RuntimeWorkspace, RuntimeWorktreeAudit,
     RuntimeWorktreeMergeResult, RuntimeWorktreeQuarantineResult, RuntimeWorktreeReview,
-    SearchSessionsParams, SteerTurnOutcome, SteerTurnParams, SubmitTurnParams,
-    UpdateSessionApprovalModeParams, UpdateSessionModelParams, WorkspaceEnsureParams,
-    WorktreeMergeParams, WorktreeQuarantineParams, WorktreeReviewParams,
+    SearchSessionsParams, SetWorkspaceApprovalModeParams, SteerTurnOutcome, SteerTurnParams,
+    SubmitTurnParams, UpdateSessionApprovalModeParams, UpdateSessionModelParams,
+    WorkspaceEnsureParams, WorktreeMergeParams, WorktreeQuarantineParams, WorktreeReviewParams,
 };
 
 const TOKEN_HEADER: &str = "x-willdeep-token";
@@ -340,6 +340,15 @@ impl RuntimeClient {
         request_id: uuid::Uuid,
     ) -> Result<ApiResponse<RuntimeWorkspace>, ClientError> {
         self.call("workspace.ensure", params, Some(request_id))
+            .await
+    }
+
+    pub async fn set_workspace_approval_mode(
+        &self,
+        params: &SetWorkspaceApprovalModeParams,
+        request_id: uuid::Uuid,
+    ) -> Result<ApiResponse<RuntimeWorkspace>, ClientError> {
+        self.call("workspace.set_approval_mode", params, Some(request_id))
             .await
     }
 
@@ -1048,6 +1057,7 @@ mod tests {
         let workspace_id = uuid::Uuid::new_v4();
         let session_id = uuid::Uuid::new_v4();
         let workspace_request_id = uuid::Uuid::new_v4();
+        let approval_request_id = uuid::Uuid::new_v4();
         let session_request_id = uuid::Uuid::new_v4();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -1068,11 +1078,46 @@ mod tests {
                         name: "workspace".to_owned(),
                         root: Some("/workspace".to_owned()),
                         access: willdeep_runtime_protocol::WorkspaceAccess::WorkspaceWrite,
+                        approval_mode_configured: true,
                         provider_profile: None,
                         skills: Vec::new(),
                         mcp_servers: Vec::new(),
                         created_at: 1,
                         updated_at: 1,
+                        active: true,
+                    },
+                    "test",
+                    Some(request.request_id),
+                ),
+            )
+            .await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = receive_request(&mut stream).await;
+            assert_eq!(request.request_id, approval_request_id);
+            assert_eq!(request.operation, "workspace.set_approval_mode");
+            let params: SetWorkspaceApprovalModeParams =
+                serde_json::from_value(request.params).unwrap();
+            assert_eq!(params.root, "/workspace");
+            assert_eq!(
+                params.approval_mode,
+                willdeep_runtime_protocol::WorkspaceApprovalMode::Strict
+            );
+            assert!(!params.confirm_full_access);
+            send_response(
+                &mut stream,
+                &ApiResponse::ok(
+                    RuntimeWorkspace {
+                        id: workspace_id,
+                        name: "workspace".to_owned(),
+                        root: Some("/workspace".to_owned()),
+                        access: willdeep_runtime_protocol::WorkspaceAccess::Strict,
+                        approval_mode_configured: true,
+                        provider_profile: None,
+                        skills: Vec::new(),
+                        mcp_servers: Vec::new(),
+                        created_at: 1,
+                        updated_at: 2,
                         active: true,
                     },
                     "test",
@@ -1138,6 +1183,21 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(workspace, ApiResponse::Ok { data, .. } if data.id == workspace_id));
+
+        let approval = client
+            .set_workspace_approval_mode(
+                &SetWorkspaceApprovalModeParams {
+                    root: "/workspace".to_owned(),
+                    approval_mode: willdeep_runtime_protocol::WorkspaceApprovalMode::Strict,
+                    confirm_full_access: false,
+                },
+                approval_request_id,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(approval, ApiResponse::Ok { data, .. }
+            if data.id == workspace_id
+                && data.access == willdeep_runtime_protocol::WorkspaceAccess::Strict));
 
         let deleted = client
             .delete_session(

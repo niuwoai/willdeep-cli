@@ -7,7 +7,7 @@ mod turn_queue;
 use willdeep_runtime_protocol::{
     AgentPromptParams, AgentWaitParams, AnswerQuestionParams, ApiRequest, ApiResponse,
     ApprovalDecision, ErrorCode, EventListParams, IdParams, KernelListParams,
-    ResolveApprovalParams, SpawnAgentParams, WorkspaceEnsureParams,
+    ResolveApprovalParams, SetWorkspaceApprovalModeParams, SpawnAgentParams, WorkspaceEnsureParams,
 };
 
 const IDEMPOTENCY_CACHE_LIMIT: usize = 1_024;
@@ -283,6 +283,7 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         })),
         "workspace.register" => workspace_register(state, &request),
         "workspace.ensure" => workspace_ensure(state, &request),
+        "workspace.set_approval_mode" => workspace_set_approval_mode(state, &request),
         "workspace.activate" => workspace_activate(state, &request),
         "workspace.remove" => workspace_remove(state, &request),
         "session.list" => json_result(
@@ -840,6 +841,7 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "task.cancel",
     "workspace.register",
     "workspace.ensure",
+    "workspace.set_approval_mode",
     "workspace.activate",
     "workspace.remove",
     "approval.resolve",
@@ -1299,6 +1301,7 @@ fn public_workspace(
         name: workspace.name,
         root: Some(workspace.root.to_string_lossy().into_owned()),
         access: workspace_store::public_access(workspace.access),
+        approval_mode_configured: workspace.approval_mode_configured,
         provider_profile: workspace.provider_profile,
         skills: workspace.skills,
         mcp_servers: workspace.mcp_servers,
@@ -1334,6 +1337,41 @@ fn workspace_register(state: &ServerState, request: &ApiRequest) -> ApiResult {
         )
         .map_err(ApiFailure::internal)?;
     json(public_workspace(workspace))
+}
+
+fn workspace_set_approval_mode(state: &ServerState, request: &ApiRequest) -> ApiResult {
+    let params = params::<SetWorkspaceApprovalModeParams>(request)?;
+    let workspace = state
+        .workspaces
+        .set_approval_mode(
+            Path::new(&params.root),
+            params.approval_mode,
+            params.confirm_full_access,
+        )
+        .map_err(workspace_approval_failure)?;
+    state
+        .events
+        .append(
+            "workspace.approval_mode_updated",
+            format!("workspace_id={}", workspace.id),
+        )
+        .map_err(ApiFailure::internal)?;
+    json(public_workspace(workspace))
+}
+
+fn workspace_approval_failure(error: workspace_store::WorkspaceApprovalError) -> ApiFailure {
+    match error {
+        workspace_store::WorkspaceApprovalError::Conflict => ApiFailure::conflict(
+            "this workspace is read-only; the approval mode cannot override it",
+        ),
+        workspace_store::WorkspaceApprovalError::FullAccessNeedsConfirmation => {
+            ApiFailure::invalid("full access requires explicit confirmation")
+        }
+        workspace_store::WorkspaceApprovalError::NotFound => {
+            ApiFailure::not_found("Runtime Workspace not found")
+        }
+        workspace_store::WorkspaceApprovalError::Other(error) => ApiFailure::internal(error),
+    }
 }
 
 fn workspace_ensure(state: &ServerState, request: &ApiRequest) -> ApiResult {
@@ -2354,6 +2392,18 @@ mod tests {
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
             MUTATING_OPERATIONS.len()
+        );
+    }
+
+    #[test]
+    fn workspace_approval_conflict_has_typed_conflict_status() {
+        let failure = workspace_approval_failure(workspace_store::WorkspaceApprovalError::Conflict);
+        assert_eq!(failure.status, StatusCode::CONFLICT);
+        assert_eq!(failure.code, ErrorCode::Conflict);
+        assert!(is_mutating_operation("workspace.set_approval_mode"));
+        assert!(
+            willdeep_runtime_protocol::SUPPORTED_OPERATIONS
+                .contains(&"workspace.set_approval_mode")
         );
     }
 

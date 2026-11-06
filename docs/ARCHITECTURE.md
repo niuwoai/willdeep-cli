@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-06 | 当前版本：v0.145.0-rc4
+> 最后更新：2026-11-06 | 当前版本：v0.146.0-rc1
 
 ## 分发
 
@@ -38,6 +38,12 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 Enter 的本地 UI 状态更新与 Runtime 执行结果分开呈现：普通提交先把用户消息加入聊天区并清空输入；模型确认先捕获目标 Provider/model，再关闭弹窗并追加切换中反馈。首个落盘或控制请求之前完成一次 `BeginSynchronizedUpdate → draw → EndSynchronizedUpdate/flush`，避免内存状态已更新但终端仍显示旧画面。完成后再显示成功或失败，不将收到选择误报为切换完成。
 
 本次保留事件循环中的串行操作和现有模型切换事务顺序，没有引入后台结果归并或新的 Runtime 协议；后续按键仍等待当前控制操作完成。运行中选择继续使用已有 pending model/provider，在轮次结束后生效；忙时提交的失败恢复与回显认领复用现有队列机制。验收使用独立 HOME、真实 PTY 与 Runtime 控制请求阻塞门，检查完整终端帧而非累计 ANSI 文本，见[本版记录](verification/0.145.0-rc4/README.md)。
+
+### 首次目录审批引导
+
+首次交互打开新目录时，客户端解释既有 Strict / Smart / FullAccess 的适用场景，默认 Smart，FullAccess 仍需明确确认；工作区访问档继续在原权限面板提供。选择写入既有 `WorkspaceAccess`，当前会话仍使用原 `session.update_approval_mode` 与 `SharedApprovalMode` 执行，不增加 Core 权限维度、信任账本或 Web 配对体系。新目录自动登记及公开注册参数缺省均为 Smart，用户既有只读策略保持硬上限。
+
+`RuntimeWorkspace.approval_mode_configured` 只标识首次引导是否完成，不参与工具权限计算；自动登记为 false，显式登记/选择后为 true，旧记录和旧服务响应缺少该字段时按 true 读取，避免覆盖既有选择。`workspace.set_approval_mode` 在 Store 锁内只更新 access 与引导标记，和管理员改档串行检查 ReadOnly；工作区名称、Provider、Skills 与 MCP 限定保持不变。恢复会话保留已有会话覆盖值；非交互入口不增加阻塞式选择。产品边界见[审批引导决策](decisions/2026-11-06-workspace-trust.md)。
 
 ### Git 验收快照与嵌套工作树
 

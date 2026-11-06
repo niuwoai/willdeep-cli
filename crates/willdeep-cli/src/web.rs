@@ -242,6 +242,20 @@ struct WorkspaceSummary {
     name: String,
     active: bool,
     access: &'static str,
+    approval_mode_configured: bool,
+}
+
+impl From<crate::daemon::RuntimeWorkspace> for WorkspaceSummary {
+    fn from(workspace: crate::daemon::RuntimeWorkspace) -> Self {
+        Self {
+            id: workspace.id.to_string(),
+            path: workspace.root.display().to_string(),
+            name: workspace.name,
+            active: workspace.active,
+            access: workspace.access.wire_name(),
+            approval_mode_configured: workspace.approval_mode_configured,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -543,6 +557,10 @@ async fn serve_internal(
             get(turn_queue::independent),
         )
         .route("/api/workspaces", get(workspaces).post(add_workspace))
+        .route(
+            "/api/workspaces/approval-mode",
+            post(set_workspace_approval_mode),
+        )
         .route("/api/runtime/activity", get(runtime_activity))
         .route("/api/runtime/events", get(runtime_events))
         .route(
@@ -752,13 +770,7 @@ async fn workspaces(
     let values = registered_web_workspaces(&state)
         .await?
         .into_iter()
-        .map(|workspace| WorkspaceSummary {
-            id: workspace.id.to_string(),
-            path: workspace.root.display().to_string(),
-            name: workspace.name,
-            active: workspace.active,
-            access: workspace.access.wire_name(),
-        })
+        .map(WorkspaceSummary::from)
         .collect();
     Ok(Json(values))
 }
@@ -810,13 +822,39 @@ async fn add_workspace(
             allowed.push(workspace.root.clone());
         }
     }
-    Ok(Json(WorkspaceSummary {
-        id: workspace.id.to_string(),
-        path: workspace.root.display().to_string(),
-        name: workspace.name,
-        active: workspace.active,
-        access: workspace.access.wire_name(),
-    }))
+    Ok(Json(WorkspaceSummary::from(workspace)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceApprovalModeRequest {
+    path: String,
+    approval_mode: crate::daemon::WorkspaceAccess,
+    #[serde(default)]
+    confirm: bool,
+}
+
+async fn set_workspace_approval_mode(
+    State(state): State<Arc<WebState>>,
+    Json(request): Json<WorkspaceApprovalModeRequest>,
+) -> Result<Json<WorkspaceSummary>, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "workspace approval settings require a local Web server",
+        ));
+    }
+    let workspace = select_workspace(&state, Some(&request.path)).await?;
+    check_session_approval_mode(workspace.access, request.approval_mode, request.confirm)
+        .map_err(approval_mode_error)?;
+    let saved = crate::daemon::set_remote_workspace_approval_mode(
+        &state.home,
+        &workspace.root,
+        request.approval_mode.approval_mode(),
+        request.confirm,
+    )
+    .await
+    .map_err(WebError::from_workspace_approval)?;
+    Ok(Json(WorkspaceSummary::from(saved)))
 }
 
 /// 只展开开头的 `~`。不做通配符与变量展开：这是一个路径，不是一条 shell 命令。
@@ -1579,6 +1617,20 @@ enum ApprovalModeRejection {
     FullAccessNeedsConfirmation,
 }
 
+fn approval_mode_error(rejection: ApprovalModeRejection) -> WebError {
+    match rejection {
+        ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
+            WebError::bad_request("read_only is a workspace policy, not an approval mode")
+        }
+        ApprovalModeRejection::ReadOnlyWorkspace => {
+            WebError::conflict("this workspace is read-only; the approval mode cannot override it")
+        }
+        ApprovalModeRejection::FullAccessNeedsConfirmation => {
+            WebError::bad_request("switching to full_access requires \"confirm\": true")
+        }
+    }
+}
+
 /// Web 里切换会话审批档位。
 ///
 /// 档位不只是会话上的一个偏好：`session.update_approval_mode` 会先落盘，再把
@@ -1625,19 +1677,8 @@ async fn set_session_approval_mode(
             "a delegated child cannot exceed the workspace-write approval mode",
         ));
     }
-    check_session_approval_mode(workspace_access, request.approval_mode, request.confirm).map_err(
-        |rejection| match rejection {
-            ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
-                WebError::bad_request("read_only is a workspace policy, not a session mode")
-            }
-            ApprovalModeRejection::ReadOnlyWorkspace => WebError::conflict(
-                "this workspace is read-only; the session mode cannot override it",
-            ),
-            ApprovalModeRejection::FullAccessNeedsConfirmation => {
-                WebError::bad_request("switching to full_access requires \"confirm\": true")
-            }
-        },
-    )?;
+    check_session_approval_mode(workspace_access, request.approval_mode, request.confirm)
+        .map_err(approval_mode_error)?;
     crate::daemon::update_remote_session_approval_mode(
         &state.home,
         id,
@@ -2127,19 +2168,8 @@ async fn chat_stream(
     // 新会话开局就选的档位在提交之前校验：档位一旦进了 Runtime 就会改变接下来
     // 每一次工具调用的判定，不能等消息发出去再回头说「这个档位不行」。
     if let Some(requested) = input.approval_mode {
-        check_session_approval_mode(workspace.access, requested, input.approval_confirm).map_err(
-            |rejection| match rejection {
-                ApprovalModeRejection::ReadOnlyIsWorkspacePolicy => {
-                    WebError::bad_request("read_only is a workspace policy, not a session mode")
-                }
-                ApprovalModeRejection::ReadOnlyWorkspace => WebError::conflict(
-                    "this workspace is read-only; the session mode cannot override it",
-                ),
-                ApprovalModeRejection::FullAccessNeedsConfirmation => {
-                    WebError::bad_request("switching to full_access requires \"confirm\": true")
-                }
-            },
-        )?;
+        check_session_approval_mode(workspace.access, requested, input.approval_confirm)
+            .map_err(approval_mode_error)?;
     }
     let profile = workspace
         .provider_profile
@@ -2921,6 +2951,20 @@ impl WebError {
     }
     fn from_anyhow(error: anyhow::Error) -> Self {
         Self::internal(error.to_string())
+    }
+    fn from_workspace_approval(error: crate::daemon::WorkspaceApprovalError) -> Self {
+        match error {
+            crate::daemon::WorkspaceApprovalError::Conflict => {
+                Self::conflict("this workspace is read-only; the approval mode cannot override it")
+            }
+            crate::daemon::WorkspaceApprovalError::FullAccessNeedsConfirmation => {
+                Self::bad_request("switching to full_access requires \"confirm\": true")
+            }
+            crate::daemon::WorkspaceApprovalError::NotFound => {
+                Self::not_found("workspace is not registered")
+            }
+            crate::daemon::WorkspaceApprovalError::Other(error) => Self::from_anyhow(error),
+        }
     }
 }
 impl IntoResponse for WebError {

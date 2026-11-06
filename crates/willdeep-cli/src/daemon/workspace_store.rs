@@ -6,6 +6,10 @@ const MAX_WORKSPACE_NAME_CHARS: usize = 120;
 /// 判定；`2` 起两者分开；`3` 调整默认行为但保留已显式选择的档位。
 const ACCESS_SEMANTICS: u32 = 3;
 
+fn legacy_approval_mode_configured() -> bool {
+    true
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WorkspaceAccess {
@@ -69,6 +73,9 @@ pub(crate) struct RuntimeWorkspace {
     pub name: String,
     pub root: PathBuf,
     pub access: WorkspaceAccess,
+    /// UI onboarding only; approval continues to depend solely on `access`.
+    #[serde(default = "legacy_approval_mode_configured")]
+    pub approval_mode_configured: bool,
     pub provider_profile: Option<String>,
     pub skills: Vec<String>,
     pub mcp_servers: Vec<String>,
@@ -111,6 +118,18 @@ struct PersistedWorkspaces {
 pub(super) struct WorkspaceStore {
     path: PathBuf,
     state: Mutex<PersistedWorkspaces>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum WorkspaceApprovalError {
+    #[error("this workspace is read-only; the approval mode cannot override it")]
+    Conflict,
+    #[error("full access requires explicit confirmation")]
+    FullAccessNeedsConfirmation,
+    #[error("workspace is not registered")]
+    NotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 impl WorkspaceStore {
@@ -177,6 +196,7 @@ impl WorkspaceStore {
                 let existing = &mut state.items[index];
                 existing.name = name;
                 existing.access = request.access;
+                existing.approval_mode_configured = true;
                 existing.provider_profile = provider_profile;
                 existing.skills = skills;
                 existing.mcp_servers = mcp_servers;
@@ -196,6 +216,7 @@ impl WorkspaceStore {
             name,
             root,
             access: request.access,
+            approval_mode_configured: true,
             provider_profile,
             skills,
             mcp_servers,
@@ -225,7 +246,8 @@ impl WorkspaceStore {
             id,
             name: normalize_name(None, &root)?,
             root,
-            access: WorkspaceAccess::WorkspaceWrite,
+            access: WorkspaceAccess::Smart,
+            approval_mode_configured: false,
             provider_profile: None,
             skills: Vec::new(),
             mcp_servers: Vec::new(),
@@ -236,6 +258,49 @@ impl WorkspaceStore {
         state.items.push(item.clone());
         persist(&self.path, &state)?;
         Ok(item)
+    }
+
+    pub fn set_approval_mode(
+        &self,
+        root: &Path,
+        mode: willdeep_runtime_protocol::WorkspaceApprovalMode,
+        confirm_full_access: bool,
+    ) -> std::result::Result<RuntimeWorkspace, WorkspaceApprovalError> {
+        let root = canonical_directory(root)?;
+        let mut state = self.lock()?;
+        let Some(index) = state.items.iter().position(|item| item.root == root) else {
+            return Err(WorkspaceApprovalError::NotFound);
+        };
+        if state.items[index].access == WorkspaceAccess::ReadOnly {
+            return Err(WorkspaceApprovalError::Conflict);
+        }
+        if mode == willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess
+            && !confirm_full_access
+        {
+            return Err(WorkspaceApprovalError::FullAccessNeedsConfirmation);
+        }
+
+        let access = match mode {
+            willdeep_runtime_protocol::WorkspaceApprovalMode::Strict => WorkspaceAccess::Strict,
+            willdeep_runtime_protocol::WorkspaceApprovalMode::Smart => WorkspaceAccess::Smart,
+            willdeep_runtime_protocol::WorkspaceApprovalMode::WorkspaceWrite => {
+                WorkspaceAccess::WorkspaceWrite
+            }
+            willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess => {
+                WorkspaceAccess::FullAccess
+            }
+        };
+        let active = state.active_id == Some(state.items[index].id);
+        let mut updated_state = (*state).clone();
+        let workspace = &mut updated_state.items[index];
+        workspace.access = access;
+        workspace.approval_mode_configured = true;
+        workspace.updated_at = now();
+        let mut updated = workspace.clone();
+        updated.active = active;
+        persist(&self.path, &updated_state)?;
+        *state = updated_state;
+        Ok(updated)
     }
 
     pub fn activate(&self, id: uuid::Uuid) -> Result<Option<RuntimeWorkspace>> {
@@ -487,6 +552,64 @@ pub(crate) async fn ensure_remote_workspace(home: &Path, root: &Path) -> Result<
     workspace_data(response).map(local_workspace)
 }
 
+/// Persist a human selection through Runtime's atomic workspace-policy operation.
+/// The onboarding marker never grants permissions or changes session overrides.
+pub(crate) async fn set_remote_workspace_approval_mode(
+    home: &Path,
+    root: &Path,
+    mode: willdeep_core::ApprovalMode,
+    confirm_full_access: bool,
+) -> std::result::Result<RuntimeWorkspace, WorkspaceApprovalError> {
+    let approval_mode = match mode {
+        willdeep_core::ApprovalMode::Strict => {
+            willdeep_runtime_protocol::WorkspaceApprovalMode::Strict
+        }
+        willdeep_core::ApprovalMode::Smart => {
+            willdeep_runtime_protocol::WorkspaceApprovalMode::Smart
+        }
+        willdeep_core::ApprovalMode::WorkspaceAccess => {
+            willdeep_runtime_protocol::WorkspaceApprovalMode::WorkspaceWrite
+        }
+        willdeep_core::ApprovalMode::FullAccess => {
+            willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess
+        }
+        willdeep_core::ApprovalMode::ReadOnly => {
+            return Err(WorkspaceApprovalError::Other(anyhow::anyhow!(
+                "read_only is a workspace policy, not an approval mode"
+            )));
+        }
+    };
+    let state = ensure_running(home)
+        .await
+        .map_err(WorkspaceApprovalError::Other)?;
+    let client = runtime_client(&state).map_err(WorkspaceApprovalError::Other)?;
+    let response = client
+        .set_workspace_approval_mode(
+            &willdeep_runtime_protocol::SetWorkspaceApprovalModeParams {
+                root: root.to_string_lossy().into_owned(),
+                approval_mode,
+                confirm_full_access,
+            },
+            uuid::Uuid::new_v4(),
+        )
+        .await
+        .map_err(|error| WorkspaceApprovalError::Other(error.into()))?;
+    match response {
+        willdeep_runtime_protocol::ApiResponse::Ok { data, .. } => Ok(local_workspace(data)),
+        willdeep_runtime_protocol::ApiResponse::Error { error, .. } => match error.code {
+            willdeep_runtime_protocol::ErrorCode::Conflict => Err(WorkspaceApprovalError::Conflict),
+            willdeep_runtime_protocol::ErrorCode::InvalidRequest => {
+                Err(WorkspaceApprovalError::FullAccessNeedsConfirmation)
+            }
+            willdeep_runtime_protocol::ErrorCode::NotFound => Err(WorkspaceApprovalError::NotFound),
+            _ => Err(WorkspaceApprovalError::Other(anyhow::anyhow!(
+                "Runtime Workspace API error: {}",
+                error.message
+            ))),
+        },
+    }
+}
+
 pub(crate) async fn activate_remote_workspace(
     home: &Path,
     id: uuid::Uuid,
@@ -536,6 +659,7 @@ fn local_workspace(workspace: willdeep_runtime_protocol::RuntimeWorkspace) -> Ru
         name: workspace.name,
         root: workspace.root.map(PathBuf::from).unwrap_or_default(),
         access: local_access(workspace.access),
+        approval_mode_configured: workspace.approval_mode_configured,
         provider_profile: workspace.provider_profile,
         skills: workspace.skills,
         mcp_servers: workspace.mcp_servers,
@@ -706,7 +830,10 @@ mod tests {
             .unwrap();
         assert!(!second_item.active);
         let third_item = store.ensure_registered(&third).unwrap();
-        assert_eq!(third_item.access, WorkspaceAccess::WorkspaceWrite);
+        assert_eq!(third_item.access, WorkspaceAccess::Smart);
+        assert!(!third_item.approval_mode_configured);
+        assert!(first_item.approval_mode_configured);
+        assert!(second_item.approval_mode_configured);
         assert!(store.activate(second_item.id).unwrap().unwrap().active);
         drop(store);
 
@@ -795,6 +922,7 @@ mod tests {
                 name: "project".to_owned(),
                 root: PathBuf::from("/tmp/project"),
                 access: WorkspaceAccess::WorkspaceWrite,
+                approval_mode_configured: true,
                 provider_profile: None,
                 skills: Vec::new(),
                 mcp_servers: Vec::new(),
@@ -807,6 +935,172 @@ mod tests {
         assert!(migrate_access_semantics(&mut state));
         assert_eq!(state.access_semantics, ACCESS_SEMANTICS);
         assert_eq!(state.items[0].access, WorkspaceAccess::WorkspaceWrite);
+    }
+
+    #[test]
+    fn approval_selection_updates_only_mode_fields_and_preserves_workspace_settings() {
+        let home = temporary_root("workspace-approval-selection");
+        let root = home.join("project");
+        std::fs::create_dir(&root).unwrap();
+        let path = home.join("workspaces.json");
+        let store = WorkspaceStore::open(path.clone()).unwrap();
+        let (initial, created) = store
+            .register(RegisterWorkspace {
+                root: root.clone(),
+                name: Some("Kept name".into()),
+                access: WorkspaceAccess::Smart,
+                provider_profile: Some("kept-profile".into()),
+                skills: vec!["kept-skill".into()],
+                mcp_servers: vec!["kept-mcp".into()],
+            })
+            .unwrap();
+        assert!(created);
+
+        let selected = store
+            .set_approval_mode(
+                &root,
+                willdeep_runtime_protocol::WorkspaceApprovalMode::Strict,
+                false,
+            )
+            .unwrap();
+        let mut expected = initial;
+        expected.access = WorkspaceAccess::Strict;
+        expected.approval_mode_configured = true;
+        expected.updated_at = selected.updated_at;
+        assert_eq!(selected, expected);
+
+        drop(store);
+        let reopened = WorkspaceStore::open(path)
+            .unwrap()
+            .ensure_registered(&root)
+            .unwrap();
+        assert!(reopened.approval_mode_configured);
+        assert_eq!(reopened.access, WorkspaceAccess::Strict);
+        assert_eq!(reopened.name, "Kept name");
+        assert_eq!(reopened.provider_profile.as_deref(), Some("kept-profile"));
+        assert_eq!(reopened.skills, vec!["kept-skill".to_owned()]);
+        assert_eq!(reopened.mcp_servers, vec!["kept-mcp".to_owned()]);
+    }
+
+    #[test]
+    fn failed_approval_persistence_keeps_in_memory_policy_unchanged() {
+        let registry_home = temporary_root("workspace-approval-persist-failure-registry");
+        let workspace_home = temporary_root("workspace-approval-persist-failure-project");
+        let root = workspace_home.join("project");
+        std::fs::create_dir(&root).unwrap();
+        let path = registry_home.join("workspaces.json");
+        let store = WorkspaceStore::open(path.clone()).unwrap();
+        let initial = store.ensure_registered(&root).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&registry_home).unwrap();
+        std::fs::write(&registry_home, b"not a directory").unwrap();
+        assert!(matches!(
+            store.set_approval_mode(
+                &root,
+                willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess,
+                true,
+            ),
+            Err(WorkspaceApprovalError::Other(_))
+        ));
+        assert_eq!(store.get(initial.id).unwrap().unwrap(), initial);
+
+        drop(store);
+        std::fs::remove_file(registry_home).unwrap();
+        std::fs::remove_dir_all(workspace_home).unwrap();
+    }
+
+    #[test]
+    fn stale_smart_approval_selection_conflicts_after_admin_sets_read_only() {
+        let home = temporary_root("workspace-approval-read-only-race");
+        let root = home.join("project");
+        std::fs::create_dir(&root).unwrap();
+        let store = WorkspaceStore::open(home.join("workspaces.json")).unwrap();
+        let approval_snapshot = store.ensure_registered(&root).unwrap();
+        assert_eq!(approval_snapshot.access, WorkspaceAccess::Smart);
+
+        let (read_only, created) = store
+            .register(RegisterWorkspace {
+                root: root.clone(),
+                name: Some(approval_snapshot.name.clone()),
+                access: WorkspaceAccess::ReadOnly,
+                provider_profile: None,
+                skills: Vec::new(),
+                mcp_servers: Vec::new(),
+            })
+            .unwrap();
+        assert!(!created);
+        assert!(matches!(
+            store.set_approval_mode(
+                &root,
+                willdeep_runtime_protocol::WorkspaceApprovalMode::WorkspaceWrite,
+                false,
+            ),
+            Err(WorkspaceApprovalError::Conflict)
+        ));
+        let final_workspace = store.get(approval_snapshot.id).unwrap().unwrap();
+        assert_eq!(final_workspace.access, WorkspaceAccess::ReadOnly);
+        assert_eq!(final_workspace, read_only);
+
+        let (admin_updated, created) = store
+            .register(RegisterWorkspace {
+                root,
+                name: Some("Admin change".into()),
+                access: WorkspaceAccess::WorkspaceWrite,
+                provider_profile: None,
+                skills: Vec::new(),
+                mcp_servers: Vec::new(),
+            })
+            .unwrap();
+        assert!(!created);
+        assert_eq!(admin_updated.access, WorkspaceAccess::WorkspaceWrite);
+        assert_eq!(admin_updated.name, "Admin change");
+    }
+
+    #[test]
+    fn full_access_requires_confirmation_inside_the_store_operation() {
+        let home = temporary_root("workspace-approval-confirmation");
+        let root = home.join("project");
+        std::fs::create_dir(&root).unwrap();
+        let store = WorkspaceStore::open(home.join("workspaces.json")).unwrap();
+        let initial = store.ensure_registered(&root).unwrap();
+        assert!(matches!(
+            store.set_approval_mode(
+                &root,
+                willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess,
+                false,
+            ),
+            Err(WorkspaceApprovalError::FullAccessNeedsConfirmation)
+        ));
+        assert_eq!(
+            store.get(initial.id).unwrap().unwrap().access,
+            WorkspaceAccess::Smart
+        );
+        assert_eq!(
+            store
+                .set_approval_mode(
+                    &root,
+                    willdeep_runtime_protocol::WorkspaceApprovalMode::FullAccess,
+                    true,
+                )
+                .unwrap()
+                .access,
+            WorkspaceAccess::FullAccess
+        );
+    }
+
+    #[test]
+    fn legacy_workspace_keeps_existing_mode_and_does_not_repeat_onboarding() {
+        let home = temporary_root("workspace-approval-legacy");
+        let store = WorkspaceStore::open(home.join("workspaces.json")).unwrap();
+        let mut item = serde_json::to_value(store.ensure_registered(&home).unwrap()).unwrap();
+        item.as_object_mut()
+            .unwrap()
+            .remove("approval_mode_configured");
+        item["access"] = serde_json::json!("full_access");
+        let legacy: RuntimeWorkspace = serde_json::from_value(item).unwrap();
+        assert!(legacy.approval_mode_configured);
+        assert_eq!(legacy.access, WorkspaceAccess::FullAccess);
     }
 
     #[test]
