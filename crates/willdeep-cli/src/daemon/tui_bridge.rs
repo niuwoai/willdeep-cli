@@ -176,6 +176,32 @@ pub(crate) struct RemoteActiveTurn {
     pub replay_after: u64,
 }
 
+/// Web 的待处理会话投影需要完整归属，不能复用已经按当前会话过滤的 gates。
+/// 原始对象只在服务端使用，Web 层完成工作区授权后再输出最小 DTO。
+pub(crate) struct RemoteAttentionSnapshot {
+    pub sessions: Vec<willdeep_runtime_protocol::RuntimeSession>,
+    pub tasks: Vec<willdeep_runtime_protocol::RuntimeTask>,
+    pub approvals: Vec<willdeep_runtime_protocol::PendingApproval>,
+    pub questions: Vec<willdeep_runtime_protocol::PendingQuestion>,
+}
+
+pub(crate) async fn remote_attention_snapshot(home: &Path) -> Result<RemoteAttentionSnapshot> {
+    let state = require_running(home).await?;
+    let client = runtime_client(&state)?;
+    let (sessions, tasks, approvals, questions) = tokio::try_join!(
+        client.sessions(),
+        client.tasks(),
+        client.approvals(),
+        client.questions(),
+    )?;
+    Ok(RemoteAttentionSnapshot {
+        sessions: api_data(sessions)?,
+        tasks: api_data(tasks)?,
+        approvals: api_data(approvals)?,
+        questions: api_data(questions)?,
+    })
+}
+
 pub(crate) async fn remote_session_states(home: &Path) -> Result<Vec<RemoteSessionState>> {
     let state = require_running(home).await?;
     let sessions = api_data(runtime_client(&state)?.sessions().await?)?;
@@ -1521,7 +1547,7 @@ const SETTLED_TASK_RETENTION_SECONDS: u64 = 5 * 60;
 /// 关注的条目挤出视野。
 const UNSETTLED_TASK_RETENTION_SECONDS: u64 = 24 * 60 * 60;
 
-pub(super) fn runtime_task_visible(
+pub(crate) fn runtime_task_visible(
     task: &willdeep_runtime_protocol::RuntimeTask,
     timestamp: u64,
 ) -> bool {
@@ -1547,7 +1573,7 @@ pub(super) fn runtime_task_visible(
 /// 同一会话里之后又提交过轮次的未竟任务。用户已经接着往下聊了，上一轮的
 /// 「部分完成」「失败」不再是待办——否则每追问一句，Inbox 里就多压一条
 /// 「需要你处理」，而且点开也无事可做。
-pub(super) fn superseded_runtime_tasks(
+pub(crate) fn superseded_runtime_tasks(
     tasks: &[willdeep_runtime_protocol::RuntimeTask],
 ) -> std::collections::HashSet<uuid::Uuid> {
     use willdeep_runtime_protocol::TaskStatus;

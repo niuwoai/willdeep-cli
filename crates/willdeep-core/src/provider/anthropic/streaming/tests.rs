@@ -2,6 +2,22 @@ use super::*;
 use crate::provider::stream_test_support::{Events, frame, server};
 use serde_json::json;
 
+#[test]
+fn stream_error_retains_cause_without_upstream_request_fields() {
+    let error = push(
+        &mut State::default(),
+        json!({"type": "error", "error": {
+            "type": "overloaded_error", "message": "Service is temporarily overloaded",
+            "request": "private prompt", "debug": "private diagnostics"
+        }}),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("overloaded_error"), "{error}");
+    assert!(error.contains("temporarily overloaded"), "{error}");
+    assert!(!error.contains("private"), "{error}");
+}
+
 fn push(state: &mut State, value: Value) -> Result<(bool, Vec<ProviderEvent>), ProviderError> {
     state.push(SseEvent {
         kind: "message".into(),

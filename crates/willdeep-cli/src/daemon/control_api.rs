@@ -822,6 +822,8 @@ const MUTATING_OPERATIONS: &[&str] = &[
     "session.peer.send",
     "session.peer.read",
     "session.child.start",
+    "session.child.proposal.start",
+    "session.child.proposal.dismiss",
     "session.child.continue",
     "session.child.retry",
     "session.child.task.stop",
@@ -887,6 +889,7 @@ fn is_work_producing_operation(operation: &str) -> bool {
         operation,
         "turn.submit"
             | "session.child.start"
+            | "session.child.proposal.start"
             | "session.child.continue"
             | "session.child.retry"
             | "production.start"

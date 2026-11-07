@@ -44,8 +44,19 @@ impl RuntimeSessionStore {
             return Ok(None);
         }
         let turn_id = turn.metadata.id;
+        // Recheck the durable batch before publishing the claim: Web members may
+        // have joined after enqueue, or this Turn may predate the policy field.
+        // Reuse the held ledger -> sessions -> turns locks without reentering them.
+        let child_start_confirmation = child_sessions::inherited_child_start_confirmation(
+            session_id,
+            turn.metadata.request_id,
+            turn.origin_client.as_deref(),
+            ledger,
+            &turns,
+        );
         let session = sessions.get_mut(&session_id).unwrap();
         let turn = turns.get_mut(&turn_id).unwrap();
+        turn.child_start_confirmation |= child_start_confirmation;
         if !self.check_child_claim(session, turn, ledger)? {
             let stale_wake = turn.origin_client.as_deref().is_some_and(|origin| {
                 origin.starts_with(crate::daemon::child_sessions::WAKE_ORIGIN)

@@ -91,7 +91,10 @@ impl State {
         let value: serde_json::Value =
             serde_json::from_str(&event.data).map_err(|error| invalid(error.to_string()))?;
         if value.get("error").is_some_and(|error| !error.is_null()) {
-            return Err(invalid("provider emitted a stream error"));
+            return Err(invalid(crate::provider::error_detail::stream_error_detail(
+                &value["error"],
+                "provider emitted a stream error",
+            )));
         }
         let mut updates = Vec::new();
         if let Some(usage) = value.get("usage").filter(|value| !value.is_null()) {

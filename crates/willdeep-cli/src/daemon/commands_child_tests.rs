@@ -128,6 +128,30 @@ fn cli_control_and_subscription_use_exact_revisions_and_envelope_request_id() {
 }
 
 #[test]
+fn missing_proposal_operation_preserves_typed_error_through_context() {
+    let mut capabilities = RuntimeCapabilities::current("legacy-fixture");
+    capabilities
+        .operations
+        .retain(|operation| operation != "session.child.proposal.list");
+    let error = validate_child_capabilities(
+        &capabilities,
+        "session.child.proposal.list",
+        &json!({}),
+        crate::i18n::Language::En,
+    )
+    .unwrap_err()
+    .context("request_id=fixture");
+    assert!(error.is::<UnsupportedChildOperation>());
+    validate_child_capabilities(
+        &capabilities,
+        "session.child.task.list",
+        &json!({}),
+        crate::i18n::Language::En,
+    )
+    .unwrap();
+}
+
+#[test]
 fn unsupported_hosts_receive_no_p2_fields_and_legacy_calls_stay_compatible() {
     let mut capabilities = RuntimeCapabilities::current("fixture");
     capabilities.capabilities.retain(|capability| {

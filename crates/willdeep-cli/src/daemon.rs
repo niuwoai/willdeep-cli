@@ -266,7 +266,9 @@ impl willdeep_core::EventSink for RuntimeEventSink {
 mod commands;
 pub(crate) use commands::runtime_operation;
 pub use commands::{DaemonAction, SessionAction, handle_session};
-pub(crate) use commands::{child_operation, child_operation_in_language};
+pub(crate) use commands::{
+    UnsupportedChildOperation, child_operation, child_operation_in_language,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct DaemonState {

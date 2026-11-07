@@ -2,6 +2,8 @@ mod anthropic;
 pub mod capabilities;
 mod chat_completions;
 mod common;
+mod error_detail;
+pub use error_detail::safe_error_detail;
 pub mod magpie;
 mod main_model;
 mod responses;

@@ -97,7 +97,10 @@ impl State {
             return Ok((false, Vec::new()));
         }
         if kind == "error" {
-            return Err(invalid("Anthropic stream emitted an error"));
+            return Err(invalid(crate::provider::error_detail::stream_error_detail(
+                &value["error"],
+                "Anthropic stream emitted an error",
+            )));
         }
         if kind == "message_start" {
             if self.started {

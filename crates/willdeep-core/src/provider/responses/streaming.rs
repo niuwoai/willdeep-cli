@@ -153,7 +153,10 @@ impl State {
             "response.completed" | "response.incomplete" | "response.failed" => {
                 self.terminal(kind, &value["response"])
             }
-            "error" => Err(invalid("Responses stream emitted an error")),
+            "error" => Err(invalid(crate::provider::error_detail::stream_error_detail(
+                value.get("error").unwrap_or(&value),
+                "Responses stream emitted an error",
+            ))),
             _ => Ok((false, Vec::new())),
         }
     }
@@ -393,27 +396,8 @@ fn invalid(message: impl Into<String>) -> ProviderError {
 /// 只取 `error.code` 与 `error.message`，不带整个事件体：请求正文也在那份 JSON
 /// 里，整段抄进错误会把它顺着日志和界面带出去。两者都没有时退回原来的说法。
 fn failed_detail(response: &Value) -> String {
-    const MAX_DETAIL_CHARS: usize = 400;
-    let error = &response["error"];
-    let code = error["code"]
-        .as_str()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
-    let message = error["message"]
-        .as_str()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
-    let detail = match (code, message) {
-        (Some(code), Some(message)) => format!("{code}: {message}"),
-        (Some(code), None) => code.to_owned(),
-        (None, Some(message)) => message.to_owned(),
-        (None, None) => String::new(),
-    };
-    let detail = detail.chars().take(MAX_DETAIL_CHARS).collect::<String>();
-    let detail = detail.trim();
-    if detail.is_empty() {
-        "Responses generation failed".to_owned()
-    } else {
-        format!("Responses generation failed: {detail}")
-    }
+    crate::provider::error_detail::stream_error_detail(
+        &response["error"],
+        "Responses generation failed",
+    )
 }

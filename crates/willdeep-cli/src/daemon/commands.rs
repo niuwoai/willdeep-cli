@@ -535,6 +535,9 @@ pub(crate) async fn child_operation_in_language(
         matches!(
             operation,
             "session.child.start"
+                | "session.child.proposal.list"
+                | "session.child.proposal.start"
+                | "session.child.proposal.dismiss"
                 | "session.child.continue"
                 | "session.child.retry"
                 | "session.child.task.get"
@@ -579,6 +582,10 @@ fn child_message(zh: &'static str, en: &'static str, ja: &'static str) -> &'stat
     crate::i18n::Language::default().text(zh, en, ja)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct UnsupportedChildOperation(pub(crate) &'static str);
+
 fn validate_child_capabilities(
     capabilities: &willdeep_runtime_protocol::RuntimeCapabilities,
     operation: &str,
@@ -594,12 +601,11 @@ fn validate_child_capabilities(
                 .operations
                 .iter()
                 .any(|candidate| candidate == operation),
-        "{}",
-        child_message(
+        UnsupportedChildOperation(child_message(
             "当前 Runtime 不支持此子会话操作，请更新 Runtime",
             "The Runtime does not support this child operation; update it",
             "Runtime がこの子セッション操作をサポートしていません。更新してください"
-        )
+        ))
     );
     if matches!(
         operation,

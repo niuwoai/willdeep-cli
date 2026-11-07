@@ -42,6 +42,18 @@ export type StartChildOptions = ChildTaskOptions & {
   model?: string | null;
 };
 export type ChildTaskPage = { tasks: ChildTask[]; next_cursor: string | null };
+export type ChildProposal = {
+  id: string; created_at: number; dismissed: boolean; error?: string | null;
+  params: {
+    parent_session_id: string; created_from_turn_id?: string | null;
+    title: string; prompt: string; context: "fresh" | "fork";
+    through_turn_id?: string | null; workspace_mode: "shared_read_only" | "worktree";
+    worktree_base: "head" | "snapshot"; model?: string | null;
+    notify: "none" | "on_task_terminal"; subscription?: ChildSubscription | null;
+    depends_on?: string[];
+  };
+};
+export type ChildProposalPage = { proposals: ChildProposal[] };
 export const childTaskTerminal = (status: ChildTaskStatus) => ["completed", "partial", "failed", "cancelled", "interrupted", "blocked"].includes(status);
 export const childTaskRetryable = (task: ChildTask) => ["partial", "failed", "interrupted", "blocked"].includes(task.status) && task.result != null && task.result.superseded_by == null;
 export const childTaskControlled = (task: ChildTask) => (task.control_state ?? "delegated") === "delegated";
@@ -65,6 +77,17 @@ const post = <T = ChildTask>(path: string, body: object) => request<T>(path, {
 export function listChildTasks(parent: string, after: string | null, signal: AbortSignal) {
   return request<ChildTaskPage>(`${base(parent)}?limit=50${after ? `&after=${encodeURIComponent(after)}` : ""}`, { signal });
 }
+export async function listChildProposals(parent: string, signal: AbortSignal): Promise<ChildProposalPage> {
+  try { return await request<ChildProposalPage>(`${base(parent)}/proposals`, { signal }); }
+  catch (error) {
+    // Older Web servers have no proposal route; existing task controls remain usable.
+    if (error instanceof ChildSessionFailure && [404, 501].includes(error.status)) return { proposals: [] };
+    throw error;
+  }
+}
+const proposalPath = (parent: string, proposal: string) => `${base(parent)}/proposals/${encodeURIComponent(proposal)}`;
+export const startChildProposal = (parent: string, proposal: string, requestId: string) => post(`${proposalPath(parent, proposal)}/start`, { request_id: requestId });
+export const dismissChildProposal = (parent: string, proposal: string, requestId: string) => post<{ proposal_id: string; status: "dismissed" }>(`${proposalPath(parent, proposal)}/dismiss`, { request_id: requestId });
 export async function getChildCapabilities(parent: string, signal: AbortSignal): Promise<ChildCapabilities> {
   try { return await request<ChildCapabilities>(`${base(parent)}/capabilities`, { signal }); }
   catch (error) {
