@@ -5,7 +5,7 @@
 #
 #   ruby scripts/publish_npm_willdeep.rb --version 0.123.0-rc2
 #
-# 它只接受与 package.json、install-manifest.json 完全一致的版本，先下载四个
+# 它只接受与 package.json、install-manifest.json 完全一致的版本，先下载三个
 # GitHub Release 产物并核对 SHA256，再执行 npm publish --tag rc。
 
 require 'digest'
@@ -21,8 +21,7 @@ PACKAGE = File.join(ROOT, 'npm', 'willdeep')
 ASSETS = {
   'willdeep-macos-universal.tar.gz' => 'willdeep',
   'willdeep-linux-amd64.tar.gz' => 'willdeep',
-  'willdeep-linux-arm64.tar.gz' => 'willdeep',
-  'willdeep-windows-x64.zip' => 'willdeep.exe'
+  'willdeep-linux-arm64.tar.gz' => 'willdeep'
 }.freeze
 MAX_BYTES = 128 * 1024 * 1024
 TRUSTED_HOSTS = %w[github.com release-assets.githubusercontent.com].freeze
@@ -71,7 +70,7 @@ def verify_assets(manifest)
       File.binwrite(archive, body)
       output = File.join(directory, 'out')
       Dir.mkdir(output)
-      command = name.end_with?('.zip') ? ['unzip', '-q', archive, '-d', output] : ['tar', '-xzf', archive, '-C', output]
+      command = ['tar', '-xzf', archive, '-C', output]
       _out, err, status = Open3.capture3(*command)
       abort "#{name} 无法解压：#{err}" unless status.success?
       entries = Dir.children(output)
@@ -79,7 +78,7 @@ def verify_assets(manifest)
       metadata = File.lstat(File.join(output, entry))
       abort "#{name} 里的程序不是普通文件" unless metadata.file?
       abort "#{name} 里的程序超过 128 MiB" if metadata.size > MAX_BYTES
-      abort "#{name} 里的程序不可执行" if !name.end_with?('.zip') && (metadata.mode & 0o111).zero?
+      abort "#{name} 里的程序不可执行" if (metadata.mode & 0o111).zero?
     end
     assets[name] = { 'name' => name, 'sha256' => digest }
     warn "#{name} #{digest}"
@@ -107,7 +106,7 @@ def publish(version, dry_run: false)
   end
 
   if dry_run
-    warn 'dry-run：已核验四个产物，不发布。'
+    warn 'dry-run：已核验三个产物，不发布。'
     return
   end
 

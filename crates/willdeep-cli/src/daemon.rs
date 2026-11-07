@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -2572,29 +2572,6 @@ fn persist_interactions(
     let mut interactions = interactions.values().cloned().collect::<Vec<_>>();
     interactions.sort_by_key(|interaction| interaction.created_at);
     write_json_atomic(path, &interactions)
-}
-
-fn read_events(path: &Path, after: u64, limit: usize) -> Result<Vec<RuntimeEvent>> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let file = File::open(path)?;
-    let mut events = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let event: RuntimeEvent = serde_json::from_str(&line)
-            .with_context(|| format!("parse Runtime event from {}", path.display()))?;
-        if event.sequence > after {
-            events.push(event);
-            if events.len() >= limit {
-                break;
-            }
-        }
-    }
-    Ok(events)
 }
 
 struct StateCleanup {

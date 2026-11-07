@@ -31,8 +31,9 @@ impl Writer {
     pub(super) fn start(
         path: PathBuf,
         live: tokio::sync::broadcast::Sender<RuntimeEvent>,
-        head: u64,
+        index: EventIndex,
     ) -> Result<Self> {
+        let head = index.head();
         let (tx, rx) = mpsc::sync_channel(WRITE_QUEUE_CAPACITY);
         let committed = Arc::new(AtomicU64::new(head));
         let failure = Arc::new(Mutex::new(None));
@@ -52,6 +53,7 @@ impl Writer {
                     worker_head,
                     worker_failure,
                     (worker_commits, worker_reads),
+                    index,
                 );
             })
             .context("start Runtime event writer")?;
@@ -139,6 +141,7 @@ fn run(
     head: Arc<AtomicU64>,
     failure: Arc<Mutex<Option<String>>>,
     statistics: (Arc<AtomicU64>, Arc<AtomicU64>),
+    mut index: EventIndex,
 ) {
     let (commits, reads) = statistics;
     let mut deferred = None;
@@ -163,21 +166,28 @@ fn run(
                 }
                 let existing_failure = failure.lock().ok().and_then(|value| value.clone());
                 let result = existing_failure.map_or_else(|| commit(&path, &batch), Err);
-                if let Err(error) = &result {
-                    if let Ok(mut slot) = failure.lock() {
-                        *slot = Some(error.clone());
+                match &result {
+                    Err(error) => {
+                        if let Ok(mut slot) = failure.lock() {
+                            *slot = Some(error.clone());
+                        }
+                        eprintln!("Runtime event persistence failed: {error}");
                     }
-                    eprintln!("Runtime event persistence failed: {error}");
-                } else {
-                    commits.fetch_add(1, Ordering::Release);
-                    head.store(batch.last().unwrap().0.sequence, Ordering::Release);
-                    for (event, _) in &batch {
-                        let _ = live.send(event.clone());
+                    Ok((_len, offsets)) => {
+                        commits.fetch_add(1, Ordering::Release);
+                        head.store(batch.last().unwrap().0.sequence, Ordering::Release);
+                        for (sequence, offset) in offsets {
+                            index.observe(*sequence, *offset);
+                        }
+                        for (event, _) in &batch {
+                            let _ = live.send(event.clone());
+                        }
                     }
                 }
+                let ack_result = result.map(|_| ());
                 for (_, ack) in batch {
                     if let Some(ack) = ack {
-                        let _ = ack.send(result.clone());
+                        let _ = ack.send(ack_result.clone());
                     }
                 }
             }
@@ -185,7 +195,11 @@ fn run(
                 reads.fetch_add(1, Ordering::Release);
                 let error = failure.lock().ok().and_then(|value| value.clone());
                 let result = error.map_or_else(
-                    || read_events(&path, after, limit).map_err(|error| error.to_string()),
+                    || {
+                        index
+                            .read_after(&path, after, limit)
+                            .map_err(|error| error.to_string())
+                    },
                     Err,
                 );
                 let _ = ack.send(result);
@@ -201,17 +215,23 @@ fn run(
 fn commit(
     path: &Path,
     batch: &[(RuntimeEvent, Option<Ack<()>>)],
-) -> std::result::Result<(), String> {
-    (|| -> Result<()> {
+) -> std::result::Result<(u64, Vec<(u64, u64)>), String> {
+    (|| -> Result<(u64, Vec<(u64, u64)>)> {
+        let mut file = append_log(path)?;
+        let start = file.metadata()?.len();
         let mut bytes = Vec::new();
+        let mut offsets = Vec::with_capacity(batch.len());
+        let mut cursor = start;
         for (event, _) in batch {
+            offsets.push((event.sequence, cursor));
+            let before = bytes.len();
             serde_json::to_writer(&mut bytes, event)?;
             bytes.push(b'\n');
+            cursor += (bytes.len() - before) as u64;
         }
-        let mut file = append_log(path)?;
         std::io::Write::write_all(&mut file, &bytes)?;
         file.sync_data()?;
-        Ok(())
+        Ok((cursor, offsets))
     })()
     .map_err(|error| error.to_string())
 }

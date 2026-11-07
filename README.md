@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/niuwoai/willdeep-rs)](https://github.com/niuwoai/willdeep-rs/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.94%2B-orange.svg)
-![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 
 ```bash
 willdeep --workspace . "检查当前仓库并修复测试"
@@ -42,7 +42,6 @@ willdeep --version
 |---|---|
 | macOS | `willdeep-macos-universal.tar.gz` |
 | Linux amd64 / arm64 | `willdeep-linux-amd64.tar.gz` · `willdeep-linux-arm64.tar.gz` |
-| Windows x64 | `willdeep-windows-x64.zip` |
 
 想从源码构建，见下文[参与开发](#参与开发)。
 
