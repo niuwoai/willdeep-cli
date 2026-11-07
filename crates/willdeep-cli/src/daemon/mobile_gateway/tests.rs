@@ -25,17 +25,19 @@ impl Harness {
         std::fs::create_dir_all(root.join("project")).unwrap();
         let root = root.canonicalize().unwrap();
         let workspace = root.join("project");
-        let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
-        let agents = Arc::new(AgentStore::open(root.join("agents.json")).unwrap());
+        // Use the production layout: the execution Harness reads the persisted
+        // confirmation policy from this same Runtime Turn ledger.
+        let paths = crate::daemon::DaemonPaths::new(&root);
+        let events = Arc::new(EventLog::open(paths.events).unwrap());
+        let agents = Arc::new(AgentStore::open(paths.agents).unwrap());
         let sessions = Arc::new(
-            session_store::RuntimeSessionStore::open(root.join("runtime-sessions.json"), &root)
-                .unwrap(),
+            session_store::RuntimeSessionStore::open(paths.runtime_sessions, &root).unwrap(),
         );
         let (turn_scheduler, scheduled) = tokio::sync::mpsc::unbounded_channel();
         let tasks = Arc::new(
             TaskManager::open(TaskManagerOptions {
-                path: root.join("tasks.json"),
-                interactions_path: root.join("interactions.json"),
+                path: paths.tasks,
+                interactions_path: paths.interactions,
                 home: root.clone(),
                 events: events.clone(),
                 agents: agents.clone(),
@@ -54,9 +56,7 @@ impl Harness {
             events,
             tasks: tasks.clone(),
             agents,
-            agent_commands: Arc::new(
-                AgentCommandStore::open(root.join("agent-commands.json")).unwrap(),
-            ),
+            agent_commands: Arc::new(AgentCommandStore::open(paths.agent_commands).unwrap()),
             sessions,
             workspaces: tasks.workspaces.clone(),
             diff_review_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1375,7 +1375,7 @@ async fn mobile_configuration_catalog_persists_and_reaches_the_actual_turn() {
     );
     one(&phone(&mut gateway, patch).await, "ack");
     let reopened = session_store::RuntimeSessionStore::open(
-        harness.state.home.join("runtime-sessions.json"),
+        crate::daemon::DaemonPaths::new(&harness.state.home).runtime_sessions,
         &harness.state.home,
     )
     .unwrap();
