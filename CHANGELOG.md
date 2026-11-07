@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.147.0-rc7] - 2026-11-07
+
+### Fixed
+- Runtime 事件日志改用稀疏字节偏移索引：`read_after` 二分定位到采样点再向前扫描，不再每次从文件头解析整份 `events.ndjson`；`EventLog::open` 也只保留采样点与末尾序号，不再把全部事件读进内存。日志涨到 168 MB / 90 万条后，事件流、健康检查和 `daemon status` 不再被全量扫描拖住。
+
 ## [0.147.0-rc6] - 2026-11-07
 
 ### Fixed
