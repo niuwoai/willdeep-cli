@@ -12,7 +12,10 @@ const LIVE_BACKLOG_LIMIT: usize = 1_000;
 
 #[cfg(test)]
 mod group_commit_tests;
+mod index;
 mod writer;
+
+use index::EventIndex;
 
 pub(super) struct EventLog {
     #[cfg(test)]
@@ -28,12 +31,10 @@ struct EventLogState {
 
 impl EventLog {
     pub(super) fn open(path: PathBuf) -> Result<Self> {
-        let next_sequence = read_events(&path, 0, usize::MAX)?
-            .last()
-            .map_or(1, |event| event.sequence.saturating_add(1));
+        let index = EventIndex::scan(&path)?;
+        let next_sequence = index.head().saturating_add(1);
         let (live, _) = tokio::sync::broadcast::channel(512);
-        let writer =
-            writer::Writer::start(path.clone(), live.clone(), next_sequence.saturating_sub(1))?;
+        let writer = writer::Writer::start(path.clone(), live.clone(), index)?;
         Ok(Self {
             #[cfg(test)]
             path,
