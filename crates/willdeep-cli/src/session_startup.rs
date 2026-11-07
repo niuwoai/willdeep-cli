@@ -32,15 +32,15 @@ const MINUTES_BEFORE_HOURS: u64 = 90;
 fn format_last_used(age_seconds: u64, language: Language) -> String {
     let (count, zh_unit, en_singular_unit, en_plural_unit, ja_unit) =
         if age_seconds > SECONDS_PER_DAY {
-            (
-                age_seconds / SECONDS_PER_DAY,
-                "天",
-                "day",
-                "days",
-                "日",
-            )
+            (age_seconds / SECONDS_PER_DAY, "天", "day", "days", "日")
         } else if age_seconds > MINUTES_BEFORE_HOURS * SECONDS_PER_MINUTE {
-            (age_seconds / SECONDS_PER_HOUR, "小时", "hour", "hours", "時間")
+            (
+                age_seconds / SECONDS_PER_HOUR,
+                "小时",
+                "hour",
+                "hours",
+                "時間",
+            )
         } else {
             (
                 age_seconds / SECONDS_PER_MINUTE,
