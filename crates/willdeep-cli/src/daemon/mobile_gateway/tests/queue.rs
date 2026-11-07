@@ -129,7 +129,7 @@ async fn queue_round_trip_edit_preserves_ids_attachments_and_survives_restart() 
     assert_eq!(pending["image_count"], 1);
     assert_eq!(pending["text"], "修改后的消息\nnext step");
     let restarted = session_store::RuntimeSessionStore::open(
-        h.state.home.join("runtime-sessions.json"),
+        crate::daemon::DaemonPaths::new(&h.state.home).runtime_sessions,
         &h.state.home,
     )
     .unwrap();
@@ -270,7 +270,9 @@ async fn queue_write_failure_keeps_memory_and_request_retry_is_idempotent() {
     let session = h.session().await;
     let mut gateway = h.gateway();
     let item = add(&mut gateway, session, "keep me").await;
-    let path = h.state.home.join("turns.json");
+    let path = crate::daemon::DaemonPaths::new(&h.state.home)
+        .runtime_sessions
+        .with_file_name("turns.json");
     assert!(path.exists(), "{}", path.display());
     std::fs::rename(&path, path.with_extension("backup")).unwrap();
     std::fs::create_dir(&path).unwrap();
