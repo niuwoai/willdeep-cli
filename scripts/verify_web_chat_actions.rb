@@ -11,7 +11,8 @@ fixture_path = File.expand_path(ARGV.fetch(0))
 proposal_id = ARGV[1]
 fixture = JSON.parse(File.read(fixture_path))
 raise 'not an isolated Web fixture' unless fixture.fetch('root').start_with?('/private/tmp/willdeep-web-chat-actions-')
-raise 'unexpected fixture port' unless fixture.fetch('port') == 19_862
+# The second port keeps an existing preview instance untouched during integration.
+raise 'unexpected fixture port' unless [19_862, 19_863].include?(fixture.fetch('port'))
 base = "http://#{[127, 0, 0, 1].join('.')}:#{fixture.fetch('port')}"
 checks = []
 request = lambda do |path, body = nil|

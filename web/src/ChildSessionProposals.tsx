@@ -81,7 +81,9 @@ export function ChildSessionProposals({ sessionId, proposals, tasks, language }:
           {value.workspace_mode === "worktree" && <p className="child-session-hint">{t.worktreeHint}</p>}
         </details>
         <p className="child-session-hint">{p.hint}</p>
-        {active && mutation.error && <p className="child-session-error" role="alert">{childFailureText(mutation.error, language)}</p>}
+        {active && mutation.error
+          ? <p className="child-session-error" role="alert">{childFailureText(mutation.error, language)}</p>
+          : proposal.error && <p className="child-session-error" role="alert">{proposal.error}</p>}
         <footer>
           <button type="button" disabled={mutation.isPending} onClick={() => act({ proposal: proposal.id, kind: "dismiss" })}>{active && mutation.isPending && mutation.variables?.kind === "dismiss" ? p.dismissing : p.dismiss}</button>
           <button type="button" className="child-proposal-start" disabled={mutation.isPending} onClick={() => act({ proposal: proposal.id, kind: "start" })}>{active && mutation.isPending && mutation.variables?.kind === "start" ? p.starting : p.start}</button>

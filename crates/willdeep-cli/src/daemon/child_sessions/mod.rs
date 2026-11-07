@@ -7,6 +7,7 @@ use willdeep_runtime_protocol::child_session::*;
 mod control;
 mod dependencies;
 mod proposals;
+pub(in crate::daemon) use proposals::confirmed_request_requires_child_confirmation;
 mod reconcile;
 mod store;
 #[cfg(test)]
@@ -51,7 +52,9 @@ pub(in crate::daemon) fn dispatch(
                 "session.child.proposal.start" => {
                     proposals::start(state, ledger, request, preflight)
                 }
-                "session.child.proposal.dismiss" => proposals::dismiss(ledger, request),
+                "session.child.proposal.dismiss" => {
+                    proposals::dismiss(&state.sessions, ledger, request)
+                }
                 "session.child.task.get" => {
                     let params: GetChildSessionTaskParams =
                         serde_json::from_value(request.params.clone())?;
@@ -658,6 +661,9 @@ pub(super) fn advance_preparation(
             "child control was revoked before a Turn existed".into(),
         );
     }
+    if proposals::awaiting_retry(ledger, &entry.task) {
+        return Ok(());
+    }
     if entry.task.accepted_at.is_none() {
         let source = sessions.get(entry.task.parent_session_id)?;
         if source
@@ -677,7 +683,11 @@ pub(super) fn advance_preparation(
             .get(&entry.task.link_id)
             .cloned()
             .context("child relation missing during preparation")?;
-        sessions.prepare_child(&source, &entry.task, &link, entry.root_agent_id)?;
+        if let Err(error) = sessions.prepare_child(&source, &entry.task, &link, entry.root_agent_id)
+        {
+            proposals::preparation_failed(sessions, ledger, id, &error)?;
+            return Err(error);
+        }
         let control = ledger.control(source.id);
         let cancelled = control.generation != entry.prepared_generation
             || entry

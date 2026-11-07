@@ -993,6 +993,16 @@ pub(crate) async fn build(
             ..
         }
     );
+    let web_child_proposals = web_child_proposals
+        || !independent_execution
+            && turn_id
+                .map(|turn| {
+                    crate::daemon::session_store::child_start_confirmation_for_turn(
+                        home, session_id, turn,
+                    )
+                })
+                .transpose()?
+                .unwrap_or(false);
     let (runtime_access, runtime_approval_handle, runtime_inbox) = match &frontend {
         HarnessFrontend::Runtime {
             workspace_access,

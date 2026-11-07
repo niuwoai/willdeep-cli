@@ -43,7 +43,7 @@ export type StartChildOptions = ChildTaskOptions & {
 };
 export type ChildTaskPage = { tasks: ChildTask[]; next_cursor: string | null };
 export type ChildProposal = {
-  id: string; created_at: number; dismissed: boolean;
+  id: string; created_at: number; dismissed: boolean; error?: string | null;
   params: {
     parent_session_id: string; created_from_turn_id?: string | null;
     title: string; prompt: string; context: "fresh" | "fork";

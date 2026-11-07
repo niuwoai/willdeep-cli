@@ -40,12 +40,63 @@ pub(super) fn requires_confirmation(state: &ServerState, request: &ApiRequest) -
         .child_start_requires_confirmation(params.parent_session_id, turn_id)
 }
 
-fn started(ledger: &Ledger, proposal: &Proposal) -> bool {
+fn assignment<'a>(ledger: &'a Ledger, proposal: &Proposal) -> Option<&'a Assignment> {
     let id = start_request_id(proposal.id);
-    ledger.assignments.values().any(|entry| {
+    ledger.assignments.values().find(|entry| {
         entry.task.request_id == id
             && entry.task.parent_session_id == proposal.params.parent_session_id
     })
+}
+
+fn started(ledger: &Ledger, proposal: &Proposal) -> bool {
+    assignment(ledger, proposal)
+        .is_some_and(|entry| entry.task.accepted_at.is_some() || entry.task.child_turn_id.is_some())
+}
+
+/// Called with the existing ledger lock; the originating Turn may already be gone.
+pub(in crate::daemon) fn confirmed_request_requires_child_confirmation(
+    ledger: &Ledger,
+    parent: Uuid,
+    request: Uuid,
+) -> bool {
+    ledger.proposals.values().any(|proposal| {
+        proposal.params.parent_session_id == parent && start_request_id(proposal.id) == request
+    })
+}
+
+fn is_proposal_task(ledger: &Ledger, task: &ChildSessionTask) -> bool {
+    confirmed_request_requires_child_confirmation(ledger, task.parent_session_id, task.request_id)
+}
+
+/// Failed preparation stays visible until the operator retries or dismisses it.
+/// Ordinary child starts retain their automatic recovery behavior.
+pub(super) fn awaiting_retry(ledger: &Ledger, task: &ChildSessionTask) -> bool {
+    task.accepted_at.is_none()
+        && task.child_turn_id.is_none()
+        && task.error.is_some()
+        && is_proposal_task(ledger, task)
+}
+
+pub(super) fn preparation_failed(
+    sessions: &RuntimeSessionStore,
+    ledger: &mut Ledger,
+    id: Uuid,
+    error: &anyhow::Error,
+) -> Result<()> {
+    let entry = ledger
+        .assignments
+        .get(&id)
+        .context("child assignment missing")?;
+    if !is_proposal_task(ledger, &entry.task) {
+        return Ok(());
+    }
+    let task = &mut ledger.assignments.get_mut(&id).unwrap().task;
+    task.error = Some(willdeep_core::provider::safe_error_detail(&format!(
+        "Child preparation failed: {error:#}"
+    )));
+    task.updated_at = now();
+    // The API returns an error, so the transaction's final commit will not run.
+    sessions.children.persist(ledger)
 }
 
 fn start_request_id(proposal: Uuid) -> Uuid {
@@ -110,6 +161,7 @@ fn reply(ledger: &Ledger, proposal: &Proposal) -> serde_json::Value {
     serde_json::json!({"proposal_id": proposal.id,
         "status": if proposal.dismissed { "dismissed" } else if started(ledger, proposal) { "started" } else { "awaiting_user_start" },
         "title": proposal.params.title,
+        "error": assignment(ledger, proposal).and_then(|entry| entry.task.error.as_deref()),
         "instruction": "A filled proposal is available in the conversation. The user must select Start before any child Session or Turn is created. Do not call another tool to start it, poll it, or say it is already running."})
 }
 
@@ -125,6 +177,16 @@ pub(super) fn list(ledger: &Ledger, request: &ApiRequest) -> Result<serde_json::
         })
         .collect::<Vec<_>>();
     proposals.sort_by_key(|proposal| (proposal.created_at, proposal.id));
+    let proposals = proposals
+        .into_iter()
+        .map(|proposal| {
+            let mut value = serde_json::to_value(proposal)?;
+            value["error"] = serde_json::to_value(
+                assignment(ledger, proposal).and_then(|entry| entry.task.error.as_deref()),
+            )?;
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(serde_json::json!({"proposals": proposals}))
 }
 
@@ -161,23 +223,58 @@ pub(super) fn start(
     preflight: Option<&ChildModelPreflight>,
 ) -> Result<serde_json::Value> {
     let proposal = owned(ledger, request)?;
+    let existing = assignment(ledger, proposal).map(|entry| entry.task.assignment_id);
     let mut start = ApiRequest::new(
         "session.child.start",
         serde_json::to_value(confirmed_params(ledger, request)?)?,
     );
     start.request_id = start_request_id(proposal.id);
-    // Assignment receipts are the source of truth, including crash recovery and
-    // concurrent clicks. No second mutable accepted flag can drift from admission.
+    if let Some(id) = existing {
+        dependencies::restore_turn(&state.sessions, ledger, id)?;
+        let task = &mut ledger.assignments.get_mut(&id).unwrap().task;
+        if task.status == ChildSessionTaskStatus::Preparing
+            && task.accepted_at.is_none()
+            && task.child_turn_id.is_none()
+        {
+            task.error = None;
+        }
+    }
+    // Preserve assignment and Turn request identities across explicit retries.
     start_assignment(state, ledger, &start, preflight)
 }
 
-pub(super) fn dismiss(ledger: &mut Ledger, request: &ApiRequest) -> Result<serde_json::Value> {
+pub(super) fn dismiss(
+    sessions: &RuntimeSessionStore,
+    ledger: &mut Ledger,
+    request: &ApiRequest,
+) -> Result<serde_json::Value> {
     let proposal = owned(ledger, request)?;
+    let id = proposal.id;
+    let existing = assignment(ledger, proposal).map(|entry| entry.task.assignment_id);
+    if let Some(assignment_id) = existing {
+        // Enqueue may have committed before its ledger pointer. Never dismiss
+        // work that already has a durable Turn, even after a lost acceptance write.
+        dependencies::restore_turn(sessions, ledger, assignment_id)?;
+    }
     anyhow::ensure!(
-        !started(ledger, proposal),
+        !started(ledger, ledger.proposals.get(&id).unwrap()),
         "child proposal has already started"
     );
-    let id = proposal.id;
+    if let Some(assignment_id) = existing {
+        let task = &mut ledger.assignments.get_mut(&assignment_id).unwrap().task;
+        if !task.status.is_terminal() {
+            task.status = ChildSessionTaskStatus::Cancelled;
+            task.waiting_on_dependencies = false;
+            task.updated_at = now();
+        }
+        // Dismissing work before acceptance must not wake the parent to handle it.
+        if task.subscription != ChildSessionSubscription::None {
+            task.subscription = ChildSessionSubscription::None;
+            task.notify = ChildSessionNotify::None;
+            task.subscription_revision += 1;
+        }
+        reconcile::record_result(sessions, ledger, assignment_id, None)?;
+    }
     ledger
         .proposals
         .get_mut(&id)

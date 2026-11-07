@@ -1,6 +1,7 @@
 use super::*;
 
 mod child_sessions;
+pub(crate) use child_sessions::child_start_confirmation_for_turn;
 mod deferred;
 mod execution;
 mod mobile_context;
@@ -201,6 +202,9 @@ struct StoredRuntimeTurn {
     /// 任务上，否则认领那一刻就丢了。旧记录读回来是 `None`。
     #[serde(default)]
     origin_client: Option<String>,
+    /// Host-derived child confirmation policy. Never accepted from tool/request parameters.
+    #[serde(default)]
+    child_start_confirmation: bool,
 }
 
 /// 重启时历史有歧义、不能安全重放的在途轮次记的错误。`goal_resume` 只接这一种
@@ -1309,13 +1313,28 @@ impl RuntimeSessionStore {
             false
         };
         let mut turns = self.turns_lock()?;
-        if let Some(turn) = turns.values().find(|turn| {
+        let child_start_confirmation = child_sessions::inherited_child_start_confirmation(
+            session_id,
+            request.request_id,
+            request.origin_client.as_deref(),
+            ledger,
+            &turns,
+        );
+        if let Some(turn) = turns.values_mut().find(|turn| {
             turn.metadata.session_id == session_id && turn.metadata.request_id == request.request_id
         }) {
             if turn.team_control != request.team_control {
                 bail!("Turn request ID was reused for a different Agent control request");
             }
-            return Ok((turn.metadata.clone(), false, title_changed));
+            // Reconciliation can add a Web result to an already queued wake batch.
+            // Confirmation is monotonic, including recovery of pre-policy records.
+            let changed = child_start_confirmation && !turn.child_start_confirmation;
+            turn.child_start_confirmation |= child_start_confirmation;
+            let metadata = turn.metadata.clone();
+            if changed {
+                persist_turns(&self.turns_path, &turns)?;
+            }
+            return Ok((metadata, false, title_changed));
         }
         if let Some(willdeep_runtime_protocol::agent_team::AgentTeamControl::Continue { id, .. }) = &request.team_control
             && turns.values().any(|turn| !turn_status_is_terminal(turn.metadata.status)
@@ -1447,6 +1466,7 @@ impl RuntimeSessionStore {
                 attachments: request.attachments,
                 replay_existing_user_message: false,
                 origin_client: request.origin_client,
+                child_start_confirmation,
             },
         );
         persist_turns(&self.turns_path, &turns)?;

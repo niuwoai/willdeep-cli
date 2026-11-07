@@ -132,6 +132,16 @@ it("blocks repeated clicks and dismissal while the start request is in flight", 
   await screen.findByRole("button", { name: "打开完整对话" });
 });
 
+it("shows persisted preparation failure after reload and still offers start or dismiss", async () => {
+  const { state } = mockApi([{ ...proposal(), error: "Fork boundary no longer matches the conversation compression generation" }]);
+  mount();
+  expect((await screen.findByRole("alert")).textContent).toContain("compression generation");
+  expect(screen.getByRole("button", { name: "开始" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "不创建" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "子会话" })).toBeNull());
+  expect(state.tasks).toHaveLength(0);
+});
+
 it("restores a pending proposal after remount without submitting anything until clicked", async () => {
   const { state } = mockApi();
   const first = mount();

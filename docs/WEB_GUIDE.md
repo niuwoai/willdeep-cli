@@ -263,7 +263,7 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 
 - 审批、提问、Agent 操作会二次校验目标对象确实属于该工作区，跨工作区操作返回 404；
 - 停止 Turn（`POST /api/turns/{id}/stop`）请求体里没有 `workspace`，服务端先按 Turn id 反查所属 Session，再校验该 Session 的工作区在 allowlist 内；Turn 不存在、会话读不到、工作区不在白名单三种情况统一返回 404；
-- 失败详情仅由用户展开后读取，且只允许回环监听；服务端校验会话在 allowlist 内、Task 归属会话且状态为失败或中断，返回字段另做凭据脱敏和长度限制；
+- 回环监听的私有 Web 会自动显示已脱敏、限长的具体失败原因，展开入口补充诊断信息；服务端校验会话在 allowlist 内、Task/Turn 归属会话且状态为失败或中断，不返回原始工具参数或输出；
 - 所有请求体都是 `deny_unknown_fields`，客户端夹带 `workspace_root` / `task_id` / `agent_id` 等额外作用域字段会直接反序列化失败；
 - 子 Agent Spawn 只公开 `reader` / `judge` 两种无 Shell、无写入 Profile，父级、Task、Workspace 和 Child ID 全部由 Runtime 推导；
 - 模型路由设置可读取但只允许回环监听实例写入；保存携带配置版本指纹，陈旧请求返回 409；
