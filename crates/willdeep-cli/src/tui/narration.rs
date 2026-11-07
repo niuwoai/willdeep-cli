@@ -1899,11 +1899,10 @@ mod tests {
         let (_transient, _notice) = app.prepare_transcript_frame();
         let rows = app.transcript_rows.clone();
         let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
-        let blank = rows[user..].iter().position(|row| row.is_empty()).unwrap();
-        let notice_row = &rows[user + blank + 1];
+        let notice_row = &rows[user + 1];
         assert!(
             notice_row.contains("正在压缩上下文"),
-            "the notice follows the blank line under the message: {rows:?}"
+            "the notice sits on the line right under the message: {rows:?}"
         );
         assert!(notice_row.contains('s'), "{notice_row}");
 

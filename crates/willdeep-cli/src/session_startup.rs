@@ -24,6 +24,44 @@ use crate::i18n::Language;
 
 const COUNTDOWN: Duration = Duration::from_secs(5);
 const REFRESH: Duration = Duration::from_millis(100);
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+const MINUTES_BEFORE_HOURS: u64 = 90;
+
+fn format_last_used(age_seconds: u64, language: Language) -> String {
+    let (count, zh_unit, en_singular_unit, en_plural_unit, ja_unit) =
+        if age_seconds > SECONDS_PER_DAY {
+            (age_seconds / SECONDS_PER_DAY, "天", "day", "days", "日")
+        } else if age_seconds > MINUTES_BEFORE_HOURS * SECONDS_PER_MINUTE {
+            (
+                age_seconds / SECONDS_PER_HOUR,
+                "小时",
+                "hour",
+                "hours",
+                "時間",
+            )
+        } else {
+            (
+                age_seconds / SECONDS_PER_MINUTE,
+                "分钟",
+                "minute",
+                "minutes",
+                "分",
+            )
+        };
+    let en_unit = if count == 1 {
+        en_singular_unit
+    } else {
+        en_plural_unit
+    };
+
+    language.pick(
+        format!("最后使用：{count} {zh_unit}前"),
+        format!("Last used: {count} {en_unit} ago"),
+        format!("最終使用：{count}{ja_unit}前"),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -266,21 +304,16 @@ fn render(
         Constraint::Length(1),
     ])
     .split(inner);
-    let age = SystemTime::now()
+    let age_seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-        .saturating_sub(digest.updated_at)
-        / 60;
+        .saturating_sub(digest.updated_at);
     let metadata = format!(
         "{}\n{}\n{}",
         digest.title,
         digest.workspace.display(),
-        language.pick(
-            format!("最后使用：{age} 分钟前"),
-            format!("Last used: {age} minutes ago"),
-            format!("最終使用：{age} 分前")
-        )
+        format_last_used(age_seconds, language),
     );
     frame.render_widget(Paragraph::new(metadata), rows[0]);
     for (index, text) in [

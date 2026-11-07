@@ -122,6 +122,8 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 
 首版聊天允许编辑的范围是 `[agent]` 中的 `compressor_model`、`compressor_profile`、`compressor_context_window`，支持设置与取消设置。Provider 档案的创建、端点和凭据维护仍通过配置工作台或手动配置完成；聊天只能查看档案名、模型和窗口，无法读取密钥。
 
+快照同时返回每个 `[subagents.<职责>]` 的 `provider_profile` 与 `model`，供模型回答「这个工种绑定了什么模型」。字段为 null 表示沿用会话模型，不是没有这个工种。这与智能体库安装项的 `binding` 是两处配置：内置职责读 `[subagents.*]`，安装的专家定义读 `agent_library_read`。工种的预算、超时、重试等其余字段不进快照，也不能通过聊天修改。
+
 | 步骤 | 工具及参数 | 行为 |
 |---|---|---|
 | 查看 | `configuration_read`，`operation: "schema"` 或 `"snapshot"` | 返回受限 schema / 结构化字段，不返回原始 TOML、注释、未知节或密钥预览 |

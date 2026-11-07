@@ -277,6 +277,18 @@ impl ConfigurationHost for ChatConfigurationHost {
     }
 }
 
+/// 模型能看见的字段。`[subagents.*]` 只放 provider 与 model：工种的模型绑定
+/// 就写在这里，漏掉的话模型只能看到智能体库里那个默认空的 binding，会说成
+/// 「没有绑定模型」。预算、超时这些运行参数不进快照，写入范围仍只有压缩字段。
+fn visible_field(section: &str, key: &str) -> bool {
+    match section {
+        "agent" => COMPRESSOR_KEYS.contains(&key),
+        name if name.starts_with("providers.") => matches!(key, "model" | "context_window"),
+        name if name.starts_with("subagents.") => matches!(key, "provider_profile" | "model"),
+        _ => false,
+    }
+}
+
 fn safe_projection(result: Value, path: &Path) -> Value {
     let sections: Vec<Value> = result["sections"]
         .as_array()
@@ -284,7 +296,10 @@ fn safe_projection(result: Value, path: &Path) -> Value {
         .flatten()
         .filter_map(|section| {
             let name = section["name"].as_str()?;
-            if name != "agent" && !name.starts_with("providers.") {
+            if !matches!(name, "agent")
+                && !name.starts_with("providers.")
+                && !name.starts_with("subagents.")
+            {
                 return None;
             }
             let fields: Vec<Value> = section["fields"]
@@ -292,13 +307,9 @@ fn safe_projection(result: Value, path: &Path) -> Value {
                 .into_iter()
                 .flatten()
                 .filter(|field| {
-                    field["key"].as_str().is_some_and(|key| {
-                        if name == "agent" {
-                            COMPRESSOR_KEYS.contains(&key)
-                        } else {
-                            matches!(key, "model" | "context_window")
-                        }
-                    })
+                    field["key"]
+                        .as_str()
+                        .is_some_and(|key| visible_field(name, key))
                 })
                 .cloned()
                 .collect();

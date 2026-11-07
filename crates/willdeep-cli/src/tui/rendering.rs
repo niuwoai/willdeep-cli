@@ -91,7 +91,7 @@ impl App {
         (transient, notice)
     }
 
-    /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行和后面那行空白。
+    /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行，紧贴着插。
     /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
     fn compression_notice_insert_at(&self) -> usize {
         self.transcript_rows
@@ -102,7 +102,7 @@ impl App {
                     .iter()
                     .position(|row| row.is_empty())
                     .unwrap_or(self.transcript_rows.len() - user);
-                (user + body + 1).min(self.transcript_rows.len())
+                (user + body).min(self.transcript_rows.len())
             })
     }
 
@@ -179,6 +179,9 @@ pub(super) fn colored_transcript_at_width(
 }
 
 /// 画聊天区。分隔线只有在最后一行时才带「轮到你」，语言跟界面走。
+///
+/// 空行的位置按整段记录算，不按单条记录算：它只属于「本轮结束」分隔线与下一条
+/// 用户消息之间。逐条画的路径看不到下一条是什么，所以这里不留空行。
 pub(super) fn colored_transcript(
     entries: &[String],
     search_query: Option<&str>,
@@ -249,11 +252,6 @@ pub(super) fn colored_transcript(
                 .or_else(|| banner::styled_name_line(line))
                 .unwrap_or_else(|| Line::styled(line.to_owned(), style))
         }));
-        // 用户消息后面留一行空白，问答之间才分得开。分隔线本身已经是浅色，
-        // 紧贴着上一轮输出画，不再额外空一行。
-        if value.starts_with("You:") {
-            lines.push(Line::default());
-        }
     }
     let mut text = Text::from(lines);
     if let Some(query) = search_query {
@@ -315,16 +313,20 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 分隔线紧贴上一轮输出：回复后面不再多空一行，分隔线后面也不再空一行。
-    /// 用户消息后面的空白仍在，问答之间才分得开。
+    /// 同一轮不空行：用户消息后面紧贴 Thought，回复后面紧贴分隔线。
+    /// 空行只在分隔线与下一轮的用户消息之间，两轮之间留一行。空行由整段渲染
+    /// 补上，逐条上色看不到下一条记录，所以这里断言走那条路径。
     #[test]
-    fn the_turn_divider_sits_against_the_reply_it_closes() {
-        let text = colored_transcript(
+    fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
+        let text = message_time::render_with_times(
             &[
+                "You: first".to_owned(),
+                "· + Thought: 3.0s".to_owned(),
                 "WillDeep: done".to_owned(),
                 "── turn finished · total 1.0s ──".to_owned(),
                 "You: next".to_owned(),
             ],
+            &[None, None, None, None, None],
             None,
             80,
             Language::En,
@@ -334,10 +336,13 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], "WillDeep: done");
-        assert!(rows[1].contains("turn finished"), "{rows:?}");
-        assert_eq!(rows[2], "You: next");
-        assert_eq!(rows.last().map(String::as_str), Some(""));
+        assert_eq!(rows[0], "You: first");
+        assert!(rows[1].contains("Thought: 3.0s"), "{rows:?}");
+        assert_eq!(rows[2], "WillDeep: done");
+        assert!(rows[3].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[4], "");
+        assert_eq!(rows[5], "You: next");
+        assert_eq!(rows.len(), 6, "{rows:?}");
     }
 
     /// 「轮到你」只属于最后一行。后面有了新输出，旧分隔线就不再说这话。
