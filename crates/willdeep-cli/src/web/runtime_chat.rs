@@ -212,9 +212,10 @@ pub(super) async fn run_runtime_turn_inner(
                 "text": turn_text(&store, &turn).unwrap_or_default(),
                 "session_id": remote_session.id, "turn_id": turn.id,
             }),
-            status => {
-                serde_json::json!({"type":"error", "message":format!("turn.{status:?}").to_ascii_lowercase(), "session_id":remote_session.id,"turn_id":turn.id,"task_id":turn.active_task_id})
-            }
+            _ => failures::for_turn(&state, &turn)
+                .await
+                .expect("terminal failure status was checked")
+                .into_event(),
         };
         send_event(tx, event).await;
         return Ok(());

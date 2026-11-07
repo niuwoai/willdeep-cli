@@ -5,6 +5,24 @@ use willdeep_runtime_protocol::child_session::{
 };
 
 impl RuntimeSessionStore {
+    /// Origin comes from the persisted host submission, never tool arguments.
+    pub(in crate::daemon) fn child_start_requires_confirmation(
+        &self,
+        session: uuid::Uuid,
+        turn: uuid::Uuid,
+    ) -> Result<bool> {
+        let turns = self.turns_lock()?;
+        let source = turns.get(&turn).context("parent Turn not found")?;
+        anyhow::ensure!(
+            source.metadata.session_id == session,
+            "parent Turn belongs to another Session"
+        );
+        Ok(source
+            .origin_client
+            .as_deref()
+            .is_some_and(|origin| origin == "web" || origin.starts_with("web:")))
+    }
+
     /// Called only under the child control lock. Fresh starts an empty Core;
     /// fork copies only an immutable completed Turn prefix and clears execution
     /// state; worktree binds the child to its prepared dedicated workspace.

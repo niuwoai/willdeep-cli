@@ -1,6 +1,22 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn stream_error_retains_cause_without_upstream_request_fields() {
+    let error = push(
+        &mut State::default(),
+        json!({"error": {
+            "code": "context_length_exceeded", "message": "Maximum context length is 8192 tokens",
+            "request": "private prompt", "debug": "private diagnostics"
+        }}),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("context_length_exceeded"), "{error}");
+    assert!(error.contains("8192 tokens"), "{error}");
+    assert!(!error.contains("private"), "{error}");
+}
+
 fn push(
     state: &mut State,
     value: serde_json::Value,

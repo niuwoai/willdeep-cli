@@ -4,6 +4,8 @@ use willdeep_runtime_protocol::ApiRequest;
 
 #[path = "p2_tests.rs"]
 mod p2;
+#[path = "proposal_tests.rs"]
+mod proposals;
 
 struct Fixture {
     root: PathBuf,

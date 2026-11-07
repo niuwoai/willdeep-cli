@@ -6,6 +6,7 @@ use willdeep_runtime_protocol::child_session::*;
 
 mod control;
 mod dependencies;
+mod proposals;
 mod reconcile;
 mod store;
 #[cfg(test)]
@@ -35,52 +36,22 @@ pub(in crate::daemon) fn dispatch(
     preflight: Option<&ChildModelPreflight>,
 ) -> Result<serde_json::Value, control_api::ApiFailure> {
     let execute = || -> Result<serde_json::Value> {
-        state.sessions.children.transaction(|ledger| {
-            match request.operation.as_str() {
+        state
+            .sessions
+            .children
+            .transaction(|ledger| match request.operation.as_str() {
                 "session.child.start" | "session.child.continue" | "session.child.retry" => {
-                    let parent_id = request
-                        .params
-                        .get("parent_session_id")
-                        .and_then(|value| value.as_str())
-                        .context("parent_session_id is required")?
-                        .parse::<Uuid>()?;
-                    let fingerprint = store::fingerprint(&request.operation, &request.params)?;
-                    anyhow::ensure!(
-                        !ledger.mutations.contains_key(&request.request_id),
-                        "child request_id already belongs to a control mutation"
-                    );
-                    let existing = ledger
-                        .assignments
-                        .values()
-                        .find(|entry| {
-                            entry.task.parent_session_id == parent_id
-                                && entry.task.request_id == request.request_id
-                        })
-                        .cloned();
-                    let id = if let Some(existing) = existing {
-                        anyhow::ensure!(
-                            existing.fingerprint == fingerprint,
-                            "child request_id conflicts with different parameters"
-                        );
-                        control::require_delegated(ledger, &existing.task)?;
-                        existing.task.assignment_id
+                    if proposals::requires_confirmation(state, request)? {
+                        proposals::create(state, ledger, request)
                     } else {
-                        prepare(state, ledger, request, fingerprint, preflight)?
-                    };
-                    advance_preparation(&state.sessions, ledger, id)?;
-                    let task = ledger.project(
-                        ledger
-                            .assignments
-                            .get(&id)
-                            .context("prepared assignment missing")?,
-                    );
-                    // Persist before scheduling. A lost signal is repaired by periodic reconciliation.
-                    state.sessions.children.persist(ledger)?;
-                    if task.accepted_at.is_some() && !task.status.is_terminal() {
-                        state.tasks.schedule_session(task.child_session_id)?;
+                        start_assignment(state, ledger, request, preflight)
                     }
-                    Ok(serde_json::to_value(task)?)
                 }
+                "session.child.proposal.list" => proposals::list(ledger, request),
+                "session.child.proposal.start" => {
+                    proposals::start(state, ledger, request, preflight)
+                }
+                "session.child.proposal.dismiss" => proposals::dismiss(ledger, request),
                 "session.child.task.get" => {
                     let params: GetChildSessionTaskParams =
                         serde_json::from_value(request.params.clone())?;
@@ -121,14 +92,62 @@ pub(in crate::daemon) fn dispatch(
                 | "session.child.detach"
                 | "session.child.task.subscription.set" => control::mutate(state, ledger, request),
                 _ => bail!("unsupported child session operation"),
-            }
-        })
+            })
     };
     execute().map_err(|error| {
         control_api::ApiFailure::conflict(willdeep_core::judge::redact_credentials(
             &error.to_string(),
         ))
     })
+}
+
+fn start_assignment(
+    state: &ServerState,
+    ledger: &mut Ledger,
+    request: &willdeep_runtime_protocol::ApiRequest,
+    preflight: Option<&ChildModelPreflight>,
+) -> Result<serde_json::Value> {
+    let parent_id = request
+        .params
+        .get("parent_session_id")
+        .and_then(serde_json::Value::as_str)
+        .context("parent_session_id is required")?
+        .parse::<Uuid>()?;
+    let fingerprint = store::fingerprint(&request.operation, &request.params)?;
+    anyhow::ensure!(
+        !ledger.mutations.contains_key(&request.request_id),
+        "child request_id already belongs to a control mutation"
+    );
+    let existing = ledger
+        .assignments
+        .values()
+        .find(|entry| {
+            entry.task.parent_session_id == parent_id && entry.task.request_id == request.request_id
+        })
+        .cloned();
+    let id = if let Some(existing) = existing {
+        anyhow::ensure!(
+            existing.fingerprint == fingerprint,
+            "child request_id conflicts with different parameters"
+        );
+        control::require_delegated(ledger, &existing.task)?;
+        existing.task.assignment_id
+    } else {
+        prepare(state, ledger, request, fingerprint, preflight)?
+    };
+    advance_preparation(&state.sessions, ledger, id)?;
+    let task = ledger.project(
+        ledger
+            .assignments
+            .get(&id)
+            .context("prepared assignment missing")?,
+    );
+    // Persist before scheduling. A lost signal is repaired by periodic reconciliation.
+    state.sessions.children.persist(ledger)?;
+    if task.accepted_at.is_some() && !task.status.is_terminal() {
+        state.tasks.schedule_session(task.child_session_id)?;
+    }
+    Ok(serde_json::to_value(task)?)
 }
 
 /// Test entry that bypasses the async model preflight. Production requests
@@ -200,11 +219,21 @@ pub(in crate::daemon) async fn preflight(
     state: &ServerState,
     request: &willdeep_runtime_protocol::ApiRequest,
 ) -> Result<Option<ChildModelPreflight>, control_api::ApiFailure> {
-    if request.operation != "session.child.start" {
+    if proposals::requires_confirmation(state, request)
+        .map_err(control_api::ApiFailure::internal)?
+    {
         return Ok(None);
     }
-    let params: StartChildSessionParams = serde_json::from_value(request.params.clone())
-        .map_err(|error| control_api::ApiFailure::invalid(error.to_string()))?;
+    let params: StartChildSessionParams = match request.operation.as_str() {
+        "session.child.start" => serde_json::from_value(request.params.clone())
+            .map_err(|error| control_api::ApiFailure::invalid(error.to_string()))?,
+        "session.child.proposal.start" => state
+            .sessions
+            .children
+            .transaction(|ledger| proposals::confirmed_params(ledger, request))
+            .map_err(|error| control_api::ApiFailure::conflict(error.to_string()))?,
+        _ => return Ok(None),
+    };
     params
         .validate()
         .map_err(control_api::ApiFailure::invalid)?;

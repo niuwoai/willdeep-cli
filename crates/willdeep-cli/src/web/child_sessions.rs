@@ -3,12 +3,25 @@ use super::*;
 use willdeep_runtime_protocol::child_session::{ChildSessionTask, ChildSessionTaskPage};
 
 type Id = uuid::Uuid;
+mod proposals;
 
 pub(super) fn router() -> axum::Router<Arc<WebState>> {
     axum::Router::new()
         .route(
             "/api/sessions/{id}/children",
             axum::routing::get(list).post(start),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals",
+            axum::routing::get(proposals::list),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals/{proposal}/start",
+            axum::routing::post(proposals::start),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals/{proposal}/dismiss",
+            axum::routing::post(proposals::dismiss),
         )
         .route(
             "/api/sessions/{id}/children/capabilities",

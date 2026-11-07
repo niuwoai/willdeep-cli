@@ -535,6 +535,9 @@ pub(crate) async fn child_operation_in_language(
         matches!(
             operation,
             "session.child.start"
+                | "session.child.proposal.list"
+                | "session.child.proposal.start"
+                | "session.child.proposal.dismiss"
                 | "session.child.continue"
                 | "session.child.retry"
                 | "session.child.task.get"

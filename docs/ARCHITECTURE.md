@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc3
+> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc5
 
 ## 分发
 
@@ -32,6 +32,12 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 ```
 
 ## 核心设计
+
+### Web 失败与可操作会话投影
+
+Web 失败详情统一从 Runtime Turn/Task 投影为有界、脱敏的 `failure_detail`，实时 SSE、终态重连、重复请求和会话历史使用同一逻辑。Provider 流内错误提取 code/type/message 后先过滤凭据和内部内容；浏览器只展示投影字段与已授权的诊断引用。待处理列表按父项目归属和注册工作区权限筛选 Session，聚合人工等待及未被新轮次覆盖的失败，计数直接取列表长度。
+
+Web 来源 Turn 中的 `start_session` 先写入现有子会话账本的可选 `proposals` 字段，不创建 Session、Turn 或执行槽。来源由 Runtime 已持久化的 `origin_client` 判定，模型不能指定来源或确认权限。私有 Web 的 `proposal.start` 操作将保存的参数提交到原有 admission；稳定的派生 request ID 复用 assignment 幂等记录，因此跨刷新、重复点击和进程恢复均不会重复创建。`proposal.dismiss` 与开始共用账本锁，已开始任务不能被关闭提议操作取消。旧账本缺少该字段时按空集合读取；未新增数据库迁移。执行选项、权限、依赖和模型仍在确认开始时复核。
 
 ### 当前计划卡的原位更新
 

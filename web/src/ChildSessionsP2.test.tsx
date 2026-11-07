@@ -30,6 +30,7 @@ function mockApi(parent: string, tasks: ChildTask[]) {
       state.posts.push(request);
       return state.onPost ? state.onPost(request) : Response.json(state.tasks[0]);
     }
+    if (path.endsWith("/proposals")) return Response.json({ proposals: [] });
     if (path.endsWith("/capabilities")) return Response.json({ capabilities: state.capabilities }, { status: state.capabilitiesStatus });
     if (path.includes("/links/")) return state.onLink ? state.onLink() : Response.json(state.link, { status: state.linkStatus });
     return Response.json({ tasks: state.tasks, next_cursor: null });
@@ -49,9 +50,8 @@ function mount(parent: string) {
 const fieldValue = (label: string) => (screen.getByLabelText(label) as HTMLInputElement).value;
 const subscriptionSelect = async () => within((await screen.findByText("检查恢复", { selector: "strong" })).closest("li")!).findByLabelText("结果通知");
 const fillDraft = () => {
-  fireEvent.click(screen.getByText("发起子会话"));
-  fireEvent.change(screen.getByLabelText("任务名称"), { target: { value: "后续调查" } });
-  fireEvent.change(screen.getByLabelText("任务说明"), { target: { value: "保留子任务草稿" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "继续任务" })[0]);
+  fireEvent.change(screen.getByLabelText("后续任务"), { target: { value: "保留子任务草稿" } });
 };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -79,7 +79,7 @@ it("requires a fresh Link and explicit confirmation, and preserves drafts and fo
   expect(state.posts[0]).toMatchObject({ path: "/api/sessions/p2-takeover/children/links/child-a/takeover", body: { expected_control_revision: 4 } });
   expect(state.posts[0].body.request_id).toBeTypeOf("string");
   expect(fetcher.mock.calls.some(([path, init]) => path.endsWith("/links/child-a") && !init?.method)).toBe(true);
-  expect(fieldValue("任务名称")).toBe("后续调查"); expect(fieldValue("任务说明")).toBe("保留子任务草稿");
+  expect(screen.queryByText("发起子会话")).toBeNull();
   expect(fieldValue("后续任务")).toBe("保留续做草稿"); expect(fieldValue("父会话草稿")).toBe("保留父聊天草稿");
   expect(document.activeElement).toBe(screen.getByLabelText("父会话草稿"));
   expect((screen.getByRole("button", { name: "继续任务" }) as HTMLButtonElement).disabled).toBe(true);
@@ -162,16 +162,16 @@ it.each(["user_owned", "detached"] as const)("disables parent stop/retry/continu
   expect(open).toHaveBeenCalledWith("child-a"); expect(state.posts).toHaveLength(0);
 });
 
-it("starts a task with multiple assignment prerequisites and an inbox subscription", async () => {
+it("continues a task with multiple assignment prerequisites and an inbox subscription", async () => {
   const { state } = mockApi("p2-start-options", [task(), task({ assignment_id: "assignment-b", title: "检查权限", child_session_id: "child-b" })]);
   mount("p2-start-options");
   await screen.findAllByRole("button", { name: "由我接管" });
   fillDraft();
-  const form = screen.getByLabelText("任务名称").closest("form")!;
+  const form = screen.getByLabelText("后续任务").closest("form")!;
   fireEvent.change(within(form).getByLabelText("结果通知"), { target: { value: "inbox" } });
   fireEvent.click(within(form).getByRole("checkbox", { name: /检查恢复/ }));
   fireEvent.click(within(form).getByRole("checkbox", { name: /检查权限/ }));
-  fireEvent.click(screen.getByRole("button", { name: "开始任务" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交后续任务" }));
   await waitFor(() => expect(state.posts).toHaveLength(1));
   expect(state.posts[0].body).toMatchObject({ subscription: "inbox", depends_on: ["assignment-a", "assignment-b"] });
 });
@@ -205,7 +205,7 @@ it("limits prerequisite selection to 16 and excludes conversations outside paren
   mockApi("p2-dependency-limit", [...Array.from({ length: 17 }, (_, index) => task({ assignment_id: `dep-${index}`, child_session_id: `child-${index}`, title: `前置 ${index}` })), task({ assignment_id: "owned", child_session_id: "owned-child", title: "已接管前置", control_state: "user_owned" })]);
   mount("p2-dependency-limit");
   await screen.findByText("已接管前置"); fillDraft();
-  const form = screen.getByLabelText("任务名称").closest("form")!;
+  const form = screen.getByLabelText("后续任务").closest("form")!;
   await waitFor(() => expect(within(form).getAllByRole("checkbox")).toHaveLength(17));
   const boxes = within(form).getAllByRole("checkbox") as HTMLInputElement[];
   boxes.slice(0, 16).forEach((box) => fireEvent.click(box));
@@ -215,17 +215,17 @@ it("limits prerequisite selection to 16 and excludes conversations outside paren
 });
 
 it("keeps a selected prerequisite visible for removal after it is taken over", async () => {
-  const { state } = mockApi("p2-dependency-stale", [task()]);
+  const { state } = mockApi("p2-dependency-stale", [task(), task({ assignment_id: "continuation", child_session_id: "child-b", title: "后续调查", created_at: 2 })]);
   const { client } = mount("p2-dependency-stale");
-  await screen.findByRole("button", { name: "由我接管" }); fillDraft();
-  const form = screen.getByLabelText("任务名称").closest("form")!;
+  await screen.findAllByRole("button", { name: "由我接管" }); fillDraft();
+  const form = screen.getByLabelText("后续任务").closest("form")!;
   fireEvent.click(within(form).getByRole("checkbox", { name: /检查恢复/ }));
-  state.tasks = state.tasks.map((value) => ({ ...value, control_state: "user_owned" }));
+  state.tasks = state.tasks.map((value) => value.assignment_id === "assignment-a" ? { ...value, control_state: "user_owned" } : value);
   await client.invalidateQueries({ queryKey: childTasksKey("p2-dependency-stale") });
   await within(form).findByText(/部分已选前置任务不再受父会话管理/);
-  expect((screen.getByRole("button", { name: "开始任务" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "提交后续任务" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(within(form).getByRole("checkbox", { name: /检查恢复/ }));
-  expect((screen.getByRole("button", { name: "开始任务" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByRole("button", { name: "提交后续任务" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it("updates only the assignment subscription with its expected revision, preserving drafts", async () => {
@@ -274,39 +274,31 @@ it.each([
   if (consumed_at != null) expect(((await subscriptionSelect()) as HTMLSelectElement).disabled).toBe(true);
 });
 
-it("blocks a restored draft after capability loading fails and retains dependencies and inbox on recovery", async () => {
-  const parent = "p2-restored-capabilities-error";
+it("keeps existing history visible but blocks new continuation after initial capability loading fails", async () => {
+  const parent = "p2-initial-capabilities-error";
   const { state } = mockApi(parent, [task()]);
-  const first = mount(parent);
-  await screen.findByRole("button", { name: "由我接管" });
-  fillDraft();
-  let form = screen.getByLabelText("任务名称").closest("form")!;
-  fireEvent.change(within(form).getByLabelText("结果通知"), { target: { value: "inbox" } });
-  fireEvent.click(within(form).getByRole("checkbox", { name: /检查恢复/ }));
-  first.unmount(); first.client.clear();
-
   state.capabilitiesStatus = 500;
   mount(parent);
   await screen.findByRole("alert");
-  fireEvent.click(screen.getByText("发起子会话"));
-  form = screen.getByLabelText("任务名称").closest("form")!;
-  expect(fieldValue("任务名称")).toBe("后续调查");
-  expect(fieldValue("任务说明")).toBe("保留子任务草稿");
-  expect((within(form).getByRole("button", { name: "开始任务" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText("任务报告")).toBeTruthy();
+  expect(screen.queryByText("发起子会话")).toBeNull();
+  fillDraft();
+  const form = screen.getByLabelText("后续任务").closest("form")!;
+  expect(fieldValue("后续任务")).toBe("保留子任务草稿");
+  expect((within(form).getByRole("button", { name: "提交后续任务" }) as HTMLButtonElement).disabled).toBe(true);
   expect(within(form).queryByText(/当前 Runtime 使用原有自动回报策略/)).toBeNull();
   expect(within(form).queryByText(/当前 Runtime 不支持任务依赖/)).toBeNull();
   await act(async () => { fireEvent.submit(form); });
   expect(state.posts).toHaveLength(0);
-
   state.capabilitiesStatus = 200;
   fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-  await waitFor(() => expect((within(form).getByRole("button", { name: "开始任务" }) as HTMLButtonElement).disabled).toBe(false));
-  expect((within(form).getByLabelText("结果通知") as HTMLSelectElement).value).toBe("inbox");
-  expect((within(form).getByRole("checkbox", { name: /检查恢复/ }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(within(form).getByRole("button", { name: "开始任务" }));
+  await waitFor(() => expect((within(form).getByRole("button", { name: "提交后续任务" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(within(form).getByLabelText("结果通知"), { target: { value: "inbox" } });
+  fireEvent.click(within(form).getByRole("checkbox", { name: /检查恢复/ }));
+  fireEvent.click(within(form).getByRole("button", { name: "提交后续任务" }));
   await waitFor(() => expect(state.posts).toHaveLength(1));
-  expect(state.posts[0]).toMatchObject({ path: `/api/sessions/${parent}/children`, body: {
-    title: "后续调查", prompt: "保留子任务草稿", subscription: "inbox", depends_on: ["assignment-a"],
+  expect(state.posts[0]).toMatchObject({ path: `/api/sessions/${parent}/children/child-a/continue`, body: {
+    prompt: "保留子任务草稿", subscription: "inbox", depends_on: ["assignment-a"],
   } });
 });
 
@@ -343,13 +335,13 @@ it.each(["refresh", "reset"] as const)("blocks an existing continuation after ca
 });
 
 it.each([404, 501])("falls back on an older host without sending P2 fields (%s)", async (status) => {
-  const { state } = mockApi(`p2-legacy-${status}`, []); state.capabilitiesStatus = status;
+  const { state } = mockApi(`p2-legacy-${status}`, [task()]); state.capabilitiesStatus = status;
   mount(`p2-legacy-${status}`);
-  await screen.findByText(/暂无子会话任务/); fillDraft();
-  await waitFor(() => expect((screen.getByRole("button", { name: "开始任务" }) as HTMLButtonElement).disabled).toBe(false));
+  await screen.findByText("检查恢复", { selector: "strong" }); fillDraft();
+  await waitFor(() => expect((screen.getByRole("button", { name: "提交后续任务" }) as HTMLButtonElement).disabled).toBe(false));
   expect(screen.getByText(/当前 Runtime 使用原有自动回报策略/)).toBeTruthy();
   expect(screen.queryByLabelText("结果通知")).toBeNull(); expect(screen.queryByRole("checkbox")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "开始任务" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交后续任务" }));
   await waitFor(() => expect(state.posts).toHaveLength(1));
   expect(state.posts[0].body).not.toHaveProperty("subscription"); expect(state.posts[0].body).not.toHaveProperty("depends_on");
 });
@@ -359,7 +351,7 @@ it("gates each feature by its own capability", async () => {
   mount("p2-partial-caps");
   await subscriptionSelect(); fillDraft();
   expect(screen.queryByRole("button", { name: "由我接管" })).toBeNull(); expect(screen.queryByRole("checkbox")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "开始任务" }));
+  fireEvent.click(screen.getByRole("button", { name: "提交后续任务" }));
   await waitFor(() => expect(state.posts).toHaveLength(1));
   expect(state.posts[0].body).toHaveProperty("subscription", "auto_wake"); expect(state.posts[0].body).not.toHaveProperty("depends_on");
 });

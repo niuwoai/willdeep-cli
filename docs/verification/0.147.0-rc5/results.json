@@ -1,0 +1,38 @@
+{
+  "version": "0.147.0-rc5",
+  "date": "2026-11-07",
+  "scope": "web repair version coordination only",
+  "checks": {
+    "release_version_consistency": true,
+    "cargo_locked_offline_metadata": true,
+    "workspace_packages": 4,
+    "verification_script_ruby_syntax": true,
+    "git_diff_whitespace": true,
+    "runtime_source_unchanged": true,
+    "runtime_source_files": 731,
+    "runtime_source_sha256": "5a11da514bb1691d1d4c03b181f7600522fbfc0654e904ec6932d31996fe8dfb"
+  },
+  "previous_runtime_validation": {
+    "actual_build_version": "0.147.0-rc4",
+    "report": "../0.147.0-rc4/README.md",
+    "web_tests_passed": 423,
+    "rust_targeted_tests_passed": 25,
+    "api_checks_passed": 10,
+    "browser_verified": true
+  },
+  "other_branch": {
+    "ref": "refs/heads/claude/serene-heisenberg-0dc01e",
+    "commit": "82fbe778ffaae5948adfb6bf872038bf99836f29",
+    "version": "0.147.0-rc4",
+    "included_in_web_branch": false
+  },
+  "limits": {
+    "rc5_binary_rebuilt": false,
+    "rc5_browser_rerun": false,
+    "combined_source_verified": false,
+    "committed": false,
+    "pushed": false,
+    "released": false,
+    "installed": false
+  }
+}

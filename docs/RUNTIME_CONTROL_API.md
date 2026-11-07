@@ -2,7 +2,7 @@
 
 > 状态：实施中  
 > 协议版本：1.0  
-> 当前实现版本：v0.147.0-rc1
+> 当前实现版本：v0.147.0-rc5
 >
 > 最后更新：2026-11-07
 
@@ -50,14 +50,16 @@ X-WillDeep-Request-Id: <optional UUID>
 
 | 操作 | `params` | 结果与限制 |
 |---|---|---|
-| `session.child.start` | `parent_session_id`、可选 `created_from_turn_id`、`title`、`prompt`、可选 `context` / `through_turn_id` / `workspace_mode` / `worktree_base` / `model` / `notify` / `subscription` / `depends_on` | 返回本次 `ChildSessionTask`，含 child/assignment/Turn 身份；支持 `fresh|fork`、`shared_read_only|worktree`；P2 字段需先探测对应能力 |
+| `session.child.start` | `parent_session_id`、可选 `created_from_turn_id`、`title`、`prompt`、可选 `context` / `through_turn_id` / `workspace_mode` / `worktree_base` / `model` / `notify` / `subscription` / `depends_on` | 通常返回本次 `ChildSessionTask`；若宿主绑定的来源 Turn 为 Web，则返回 `proposal_id` 与 `awaiting_user_start`，确认前不创建 child/assignment/Turn。支持 `fresh|fork`、`shared_read_only|worktree`；P2 字段需先探测对应能力 |
 | `session.child.continue` | `parent_session_id`、可选 `created_from_turn_id`、`child_session_id`、`prompt`、可选 `notify` / `subscription` / `depends_on` | 原子会话空闲时创建新 assignment/Turn；保留历史、工作区模式和模型；依赖等待时尚无 Turn |
 | `session.child.retry` | `parent_session_id`、可选 `created_from_turn_id`、`assignment_id`、`expected_result_revision` | 仅重试 partial/failed/interrupted/blocked，创建带 `retry_of_assignment_id` 的新任务；原结果保留 |
 | `session.child.task.get` | `parent_session_id`、`assignment_id` | 本关系内任务状态及可选结果 |
 | `session.child.task.list` | `parent_session_id`、可选 `after` / `limit` | `tasks` 与 `next_cursor`；默认一页 50，分页不影响准入计数 |
 | `session.child.task.stop` | `parent_session_id`、`assignment_id` | 校验关系后停止对应 child Turn，不取得无关会话控制权 |
 
-参数的唯一类型定义在 `willdeep-runtime-protocol::child_session`。创建默认 `context=fresh`、`workspace_mode=shared_read_only`、`worktree_base=head`、`notify=on_task_terminal`，也可设 `notify=none`。`context=fork` 必须提供属于父会话且已完成的 `through_turn_id`；`worktree_base=snapshot` 只对 worktree 有效。`model` 必须是父 Session Provider 配置中可用的模型，创建前校验工具/图片能力并记录目标模型窗口；未知字段、未知枚举和非法组合拒绝。Prompt 上限 16,000 个 Unicode 字符，结果摘要上限 2,000 个字符。通知仅覆盖本次 assignment，用户在子会话直接继续聊天不会自动重新订阅旧委派。
+Web 提议确认（0.147.0-rc5）通过 `operations` 探测：`session.child.proposal.list` 接收 `parent_session_id`，返回未开始、未关闭的 `proposals`；`session.child.proposal.start` / `session.child.proposal.dismiss` 接收 `parent_session_id`、`proposal_id` 和外层 `request_id`，仅供用户控制入口，模型工具不暴露这两个操作。开始使用账本保存的参数，复用稳定 assignment 请求身份并重新验证当前准入条件；关闭和开始共用事务锁。提议保留原始发起 Turn 以便追溯，确认可在该 Turn 结束后发生。私有 Web 的路由为 `/api/sessions/{id}/children/proposals` 以及 `/{proposal_id}/start`、`/{proposal_id}/dismiss`，需要父会话工作区授权；浏览器不能覆写提议参数。
+
+执行参数的唯一类型定义在 `willdeep-runtime-protocol::child_session`。创建默认 `context=fresh`、`workspace_mode=shared_read_only`、`worktree_base=head`、`notify=on_task_terminal`，也可设 `notify=none`。`context=fork` 必须提供属于父会话且已完成的 `through_turn_id`；`worktree_base=snapshot` 只对 worktree 有效。`model` 必须是父 Session Provider 配置中可用的模型，创建前校验工具/图片能力并记录目标模型窗口；未知字段、未知枚举和非法组合拒绝。Prompt 上限 16,000 个 Unicode 字符，结果摘要上限 2,000 个字符。通知仅覆盖本次 assignment，用户在子会话直接继续聊天不会自动重新订阅旧委派。
 
 `fork` 只复制已完成 Turn 的不可变消息前缀与内联附件，要求压缩代次、消息边界和工具调用闭合；Goal、计划、队列、压缩检查点、执行检查点、通知已读与运行游标不复制。`worktree` 在取得执行槽后创建，默认从已提交 HEAD 建立，`snapshot` 基线冻结父目录已跟踪修改和未跟踪文件并记录补丁摘要；子空间权限最多为 `WorkspaceWrite`，不继承父 `FullAccess`。任务结束保留 worktree 和分支，不自动合并、提交、推送或删除。
 

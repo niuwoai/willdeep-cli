@@ -830,6 +830,8 @@ pub(crate) async fn build(
     resumed: Option<&willdeep_core::Session>,
     frontend: HarnessFrontend,
 ) -> Result<BuiltHarness> {
+    let web_child_proposals = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
+        if usage_origin.origin_client.as_deref().is_some_and(|origin| origin == "web" || origin.starts_with("web:")));
     let mut preparation = willdeep_core::preparation::PreparationTrace::new("harness");
     // Resolve before gateway/provider requests. Invalid explicit profiles never
     // silently run with legacy defaults.
@@ -1257,6 +1259,9 @@ pub(crate) async fn build(
     let configured_rules = loaded.file.rules.as_ref().map(|rules| rules.files.clone());
     let global_rules = willdeep_core::prompt::global_user_instructions(configured_rules.as_deref());
     let mut stable = willdeep_core::prompt::stable_prefix(global_rules.as_deref());
+    if web_child_proposals {
+        stable.push_str("\n\n# Web child conversations\nOnly use start_session when the user explicitly asks for a separate child conversation. Derive its full title, brief, context and workspace options from the conversation. This creates a filled proposal card, not running work: the user must click Start. Do not ask them to retype the brief, call another tool to bypass confirmation, or show a proposal for ordinary chat.\n");
+    }
     if delegation_read_only {
         stable.push_str(delegation::READ_ONLY_CONTRACT);
     } else if delegation_child {
