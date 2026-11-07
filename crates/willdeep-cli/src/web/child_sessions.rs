@@ -3,12 +3,25 @@ use super::*;
 use willdeep_runtime_protocol::child_session::{ChildSessionTask, ChildSessionTaskPage};
 
 type Id = uuid::Uuid;
+mod proposals;
 
 pub(super) fn router() -> axum::Router<Arc<WebState>> {
     axum::Router::new()
         .route(
             "/api/sessions/{id}/children",
             axum::routing::get(list).post(start),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals",
+            axum::routing::get(proposals::list),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals/{proposal}/start",
+            axum::routing::post(proposals::start),
+        )
+        .route(
+            "/api/sessions/{id}/children/proposals/{proposal}/dismiss",
+            axum::routing::post(proposals::dismiss),
         )
         .route(
             "/api/sessions/{id}/children/capabilities",
@@ -257,17 +270,20 @@ async fn call(
 ) -> Result<serde_json::Value, WebError> {
     crate::daemon::child_operation(&state.home, operation, params, request)
         .await
-        .map_err(|error| {
-            let message = willdeep_core::judge::redact_credentials(&error.to_string());
-            if message.contains("unsupported child sessions") {
-                WebError {
-                    status: StatusCode::NOT_IMPLEMENTED,
-                    message,
-                }
-            } else {
-                WebError::conflict(message)
-            }
-        })
+        .map_err(child_operation_error)
+}
+
+fn child_operation_error(error: anyhow::Error) -> WebError {
+    let unsupported = error.is::<crate::daemon::UnsupportedChildOperation>();
+    let message = willdeep_core::provider::safe_error_detail(&format!("{error:#}"));
+    if unsupported {
+        WebError {
+            status: StatusCode::NOT_IMPLEMENTED,
+            message,
+        }
+    } else {
+        WebError::conflict(message)
+    }
 }
 
 async fn get_task(
@@ -548,6 +564,24 @@ async fn subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_runtime_operation_projects_as_not_implemented_through_context() {
+        let source = anyhow::Error::new(crate::daemon::UnsupportedChildOperation(
+            "Runtime does not support proposals",
+        ))
+        .context("request_id=fixture");
+        let projected = child_operation_error(source);
+        assert_eq!(projected.status, StatusCode::NOT_IMPLEMENTED);
+        assert!(
+            projected
+                .message
+                .contains("Runtime does not support proposals")
+        );
+
+        let conflict = child_operation_error(anyhow::anyhow!("proposal belongs to another parent"));
+        assert_eq!(conflict.status, StatusCode::CONFLICT);
+    }
 
     #[test]
     fn coordination_fields_are_omitted_for_legacy_requests() {

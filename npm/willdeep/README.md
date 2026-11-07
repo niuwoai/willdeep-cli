@@ -19,7 +19,6 @@ willdeep --version
 |---|---|
 | macOS（Universal，Apple Silicon 与 Intel 通用） | `willdeep-macos-universal.tar.gz` |
 | Linux amd64 / arm64 | `willdeep-linux-amd64.tar.gz` · `willdeep-linux-arm64.tar.gz` |
-| Windows x64 | `willdeep-windows-x64.zip` |
 
 ## 开始用
 

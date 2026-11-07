@@ -1,0 +1,224 @@
+{
+  "version": "0.147.0-rc5",
+  "date": "2026-11-07",
+  "passed": true,
+  "scope": "Combined Web and context-summary sources, plus proposal recovery and confirmation lineage fixes",
+  "source_digest_sha256": "0af2a5cb5f754365a3bab31e37fb0188244bebe28e20ee0f5a175cccd96ef56d",
+  "tests": {
+    "web": 424,
+    "core_targeted": 92,
+    "cli_targeted": 83,
+    "runtime_api": 10
+  },
+  "automated_checks": {
+    "rust": {
+      "version": "0.147.0-rc5",
+      "source": "combined Web and context-summary branches",
+      "mode": "rust",
+      "steps": [
+        {
+          "name": "web_build",
+          "command": [
+            "yarn",
+            "--cwd",
+            "web",
+            "build"
+          ],
+          "exit_code": 0,
+          "seconds": 11.04
+        },
+        {
+          "name": "version",
+          "command": [
+            "ruby",
+            "scripts/check_release_version.rb",
+            "0.147.0-rc5"
+          ],
+          "exit_code": 0,
+          "seconds": 0.11
+        },
+        {
+          "name": "format",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 3.69
+        },
+        {
+          "name": "core_targeted",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "willdeep-core",
+            "--lib",
+            "--",
+            "agent::context::tests",
+            "agent::tests",
+            "agent::guidance::tests",
+            "provider::error_detail::tests",
+            "stream_error_retains_cause_without_upstream_request_fields",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "seconds": 8.38
+        },
+        {
+          "name": "cli_targeted",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "willdeep",
+            "--bin",
+            "willdeep",
+            "--",
+            "daemon::child_sessions::tests",
+            "daemon::commands::child_tests",
+            "web::failures",
+            "web::attention",
+            "web::child_sessions",
+            "--test-threads=4"
+          ],
+          "exit_code": 0,
+          "seconds": 238.3
+        },
+        {
+          "name": "cli_build",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "willdeep"
+          ],
+          "exit_code": 0,
+          "seconds": 54.75
+        },
+        {
+          "name": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 37.43
+        }
+      ],
+      "passed": true
+    },
+    "web": {
+      "version": "0.147.0-rc5",
+      "source": "combined Web and context-summary branches",
+      "mode": "web",
+      "steps": [
+        {
+          "name": "web_tests",
+          "command": [
+            "yarn",
+            "--cwd",
+            "web",
+            "test"
+          ],
+          "exit_code": 0,
+          "seconds": 21.75
+        },
+        {
+          "name": "web_lint",
+          "command": [
+            "yarn",
+            "--cwd",
+            "web",
+            "lint"
+          ],
+          "exit_code": 0,
+          "seconds": 3.64
+        }
+      ],
+      "passed": true
+    }
+  },
+  "runtime_api": {
+    "version": "0.147.0-rc5",
+    "checks": [
+      {
+        "check": "fixture_version",
+        "passed": true
+      },
+      {
+        "check": "historical_failure_contains_specific_model_cause",
+        "passed": true
+      },
+      {
+        "check": "failure_has_authorized_session_task_and_turn",
+        "passed": true
+      },
+      {
+        "check": "failure_redacts_credentials_and_private_paths",
+        "passed": true
+      },
+      {
+        "check": "terminal_reconnect_restores_the_same_failure",
+        "passed": true
+      },
+      {
+        "check": "attention_count_and_session_list_are_consistent",
+        "passed": true
+      },
+      {
+        "check": "attention_lists_failure_and_pending_approval",
+        "passed": true
+      },
+      {
+        "check": "ordinary_completed_session_is_not_attention",
+        "passed": true
+      },
+      {
+        "check": "repeat_confirmation_reuses_browser_started_assignment",
+        "passed": true
+      },
+      {
+        "check": "started_proposal_no_longer_offers_start",
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  "browser": [
+    "ordinary_chat_without_empty_proposal",
+    "attention_count_focus_and_navigation",
+    "live_and_historical_safe_failure",
+    "filled_proposal_survives_reload",
+    "no_child_before_confirmation",
+    "one_child_after_confirmation",
+    "unsent_draft_preserved",
+    "open_full_child_chat",
+    "dismiss_without_new_task",
+    "mobile_no_horizontal_overflow",
+    "mobile_navigation_closes_sidebar",
+    "dark_theme"
+  ],
+  "limitations": [
+    "Local macOS verification only; platform CI and release artifacts checked separately",
+    "Existing lint dependency and Vite chunk-size warnings remain",
+    "Network inspection covers retained browser request buffer"
+  ],
+  "initial_failures_fixed": [
+    "Test module ordering",
+    "RuntimeTurnStatus assertion type",
+    "Single execution-slot fixture ordering"
+  ],
+  "deployed": false
+}

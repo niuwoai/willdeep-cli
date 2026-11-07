@@ -1164,6 +1164,10 @@ impl Agent {
                 self.tools.completion_contract_prompt()
             );
             self.append_instance_identity(&mut messages[0].content)?;
+            // Only stable rules enter summary input and its system fingerprint.
+            // Live state is reattached verbatim after compression; including a
+            // round number here would invalidate the cache on every tool turn.
+            let mut runtime_context = String::new();
             if self.tools.allows_agent_tool("update_plan") {
                 messages[0].content.push_str("\n\n");
                 messages[0]
@@ -1171,7 +1175,7 @@ impl Agent {
                     .push_str(crate::planning::SCHEDULING_CONTRACT);
                 if let Some(plan) = &plan {
                     let state = crate::planning::Receipt::new(plan.clone(), false);
-                    messages[0].content.push_str(&format!(
+                    runtime_context.push_str(&format!(
                         "\n<session-plan>{}</session-plan>",
                         serde_json::to_string(&state).expect("plan serializes")
                     ));
@@ -1184,25 +1188,27 @@ impl Agent {
                 .as_ref()
                 .and_then(|goal| goal.pin(self.workers_in_flight()))
             {
-                messages[0].content.push_str("\n\n");
-                messages[0].content.push_str(&pin);
+                runtime_context.push_str("\n\n");
+                runtime_context.push_str(&pin);
             }
-            messages[0].content.push_str("\n\n");
-            messages[0].content.push_str(&guidance::budget_context(
+            runtime_context.push_str("\n\n");
+            runtime_context.push_str(&guidance::budget_context(
                 used_tokens,
                 self.config.token_budget,
                 turn,
                 self.config.max_turns,
             ));
             if let Some(remaining) = self.tools.remaining_execution_time() {
-                messages[0].content.push_str(&format!("\n[run-time-budget] Remaining wall clock: {} ms. Model waits and tools consume this same budget; worker deadlines reserve the final 20% for parent integration.", remaining.as_millis()));
+                runtime_context.push_str(&format!("\n[run-time-budget] Remaining wall clock: {} ms. Model waits and tools consume this same budget; worker deadlines reserve the final 20% for parent integration.", remaining.as_millis()));
                 if self
                     .time_budget
                     .is_some_and(|budget| remaining <= budget / 5)
                 {
-                    messages[0].content.push_str(" Begin bounded wrap-up now: inspect retained worker reports and actual parent diff, integrate explicitly, preserve partial work, and run short target/regression checks. Do not launch broad suites or new delegation; do not weaken tests or claim unverified completion.");
+                    runtime_context.push_str(" Begin bounded wrap-up now: inspect retained worker reports and actual parent diff, integrate explicitly, preserve partial work, and run short target/regression checks. Do not launch broad suites or new delegation; do not weaken tests or claim unverified completion.");
                 }
             }
+            let stable_system = messages[0].clone();
+            messages[0].content.push_str(&runtime_context);
             self.append_pending_instructions(&mut messages);
             let workflow_reports = self.append_workflow_reports(&mut messages)?;
             if let Some(preparation) = preparation.as_mut() {
@@ -1242,39 +1248,47 @@ impl Agent {
                     .map_err(AgentError::TeamBudgetBlocked)?;
             }
             let prepared = self
-                .request_messages_accounted(&messages, compressed, &mut |usage| {
-                    input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
-                    output_tokens = output_tokens.saturating_add(usage.output_tokens.unwrap_or(0));
-                    let call_tokens = usage.billable_tokens();
-                    used_tokens = used_tokens.saturating_add(call_tokens);
-                    if let Some(goal) = &self.goal_continuation {
-                        goal.record_tokens(call_tokens);
-                    }
-                    checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
-                    if self.has_bounded_usage()
-                        && usage.total_tokens.is_none()
-                        && (usage.input_tokens.is_none() || usage.output_tokens.is_none())
-                    {
-                        return Err(AgentError::TokenBudgetUsageUnknown);
-                    }
-                    if let Some(budget) = self.config.token_budget
-                        && used_tokens >= budget
-                    {
-                        return Err(AgentError::TokenBudgetExceeded {
-                            budget,
-                            used: used_tokens,
-                        });
-                    }
-                    Ok(())
-                })
+                .request_messages_accounted(
+                    &messages,
+                    compressed,
+                    Some(&stable_system),
+                    &runtime_context,
+                    &mut |usage| {
+                        input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
+                        output_tokens =
+                            output_tokens.saturating_add(usage.output_tokens.unwrap_or(0));
+                        let call_tokens = usage.billable_tokens();
+                        used_tokens = used_tokens.saturating_add(call_tokens);
+                        if let Some(goal) = &self.goal_continuation {
+                            goal.record_tokens(call_tokens);
+                        }
+                        checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
+                        if self.has_bounded_usage()
+                            && usage.total_tokens.is_none()
+                            && (usage.input_tokens.is_none() || usage.output_tokens.is_none())
+                        {
+                            return Err(AgentError::TokenBudgetUsageUnknown);
+                        }
+                        if let Some(budget) = self.config.token_budget
+                            && used_tokens >= budget
+                        {
+                            return Err(AgentError::TokenBudgetExceeded {
+                                budget,
+                                used: used_tokens,
+                            });
+                        }
+                        Ok(())
+                    },
+                )
                 .await;
-            let request_messages = match prepared {
+            let mut request_messages = match prepared {
                 Ok(messages) => messages,
                 Err(error) => {
                     self.settle_leases(&leases, LeaseOutcome::Failed);
                     return Err(error);
                 }
             };
+            request_messages[0].content.push_str(&runtime_context);
             if let Some(scope) = &self.usage_ledger {
                 scope
                     .check_budget()

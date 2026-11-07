@@ -1,20 +1,32 @@
 .child-sessions { margin: 18px 0 6px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); color: var(--text); font-size: 13px; }
-.child-sessions-heading, .child-task > header, .child-task-actions, .child-create footer, .child-continue footer, .child-session-origin { display: flex; align-items: center; gap: 8px; }
+.child-sessions-heading, .child-task > header, .child-task-actions, .child-continue footer, .child-session-origin { display: flex; align-items: center; gap: 8px; }
 .child-sessions-heading { justify-content: space-between; margin-bottom: 10px; }
 .child-sessions-heading h2 { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin: 0; }
 .child-sessions button, .child-session-origin button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text); font-size: 12px; cursor: pointer; }
 .child-sessions button:hover, .child-session-origin button:hover { background: var(--bg-panel-hover); }
 .child-sessions button:disabled { opacity: .5; cursor: default; }
 .child-sessions :focus-visible, .child-session-origin :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.child-create > summary { cursor: pointer; font-weight: 500; padding: 6px 0; }
+.child-proposal-list { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0; }
+.child-proposal { min-width: 0; padding: 14px; border: 1px solid var(--accent-border); border-radius: 9px; background: var(--bg-raised); }
+.child-proposal > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.child-proposal h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.child-proposal > header > span { flex-shrink: 0; color: var(--accent); font-size: 11px; }
+.child-proposal-brief { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin: 10px 0; }
+.child-proposal-options { font-size: 12px; color: var(--text-dim); }
+.child-proposal-options > summary { cursor: pointer; }
+.child-proposal-options dl { display: grid; grid-template-columns: minmax(70px, auto) minmax(0, 1fr); gap: 6px 12px; }
+.child-proposal-options dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
+.child-proposal > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.child-sessions .child-proposal-start { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+.child-proposal > footer > button { min-height: 36px; padding: 6px 14px; }
+.child-sessions .child-proposal-start:hover { background: var(--accent-strong); border-color: var(--accent); }
 .child-session-hint, .child-session-empty, .child-session-scope { color: var(--text-dim); line-height: 1.6; margin: 7px 0; }
 .child-sessions form { display: grid; gap: 10px; margin-top: 12px; }
 .child-sessions label { display: grid; gap: 5px; font-size: 12px; }
 .child-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .child-sessions input, .child-sessions textarea, .child-sessions select { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-raised); color: var(--text); font: inherit; }
 .child-sessions textarea { min-height: 90px; resize: vertical; }
-.child-create footer, .child-continue footer { justify-content: flex-end; color: var(--text-dim); font-size: 11px; }
-.child-create footer span { margin-right: auto; }
+.child-continue footer { justify-content: flex-end; color: var(--text-dim); font-size: 11px; }
 .child-task-list { display: grid; gap: 10px; list-style: none; padding: 0; margin: 12px 0 0; }
 .child-task { padding: 12px; border: 1px solid var(--border); border-radius: 9px; }
 .child-task > header { justify-content: space-between; align-items: flex-start; }

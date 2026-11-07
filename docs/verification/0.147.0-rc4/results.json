@@ -1,0 +1,58 @@
+{
+  "version": "0.147.0-rc4",
+  "date": "2026-11-07",
+  "environment": "isolated macOS Runtime with deterministic local provider",
+  "status": "verified_not_released",
+  "tests": {
+    "web": { "files": 52, "passed": 423 },
+    "rust_core_targeted": { "passed": 6 },
+    "rust_cli_targeted": { "passed": 19 },
+    "api": { "passed": 10 }
+  },
+  "checks": {
+    "web_build": true,
+    "rust_cli_build": true,
+    "workspace_clippy_deny_warnings": true,
+    "workspace_format": true,
+    "version_consistency": true,
+    "eslint_errors": 0,
+    "eslint_existing_warnings": 1
+  },
+  "browser": {
+    "ordinary_chat_hides_empty_child_panel": true,
+    "attention_count_focuses_complete_list": true,
+    "attention_title_opens_matching_session": true,
+    "historical_failure_has_redacted_cause": true,
+    "live_failure_has_redacted_cause": true,
+    "proposal_prefilled_without_manual_fields": true,
+    "proposal_durable_after_reload": true,
+    "no_child_execution_before_confirmation": true,
+    "start_preserves_parent_draft": true,
+    "confirmed_child_executes_and_opens": true,
+    "repeat_confirmation_is_idempotent": true,
+    "dismiss_does_not_start_work": true,
+    "mobile_attention_navigation_closes_sidebar": true,
+    "mobile_horizontal_overflow": false,
+    "light_and_dark_styles_checked": true,
+    "zh_en_ja_resources_checked": true,
+    "enter_send_and_focus_semantics_checked": true,
+    "full_physical_keyboard_sequence_checked": false,
+    "console_errors_observed": false,
+    "preview_server_errors_observed": false,
+    "complete_network_history_retained": false
+  },
+  "cleanup": {
+    "viewport_reset": true,
+    "preview_service_stopped": false,
+    "stop_blocked_by_automatic_approval": true
+  },
+  "limits": {
+    "full_rust_workspace_tests_run": false,
+    "linux_windows_release_ci_run": false,
+    "paid_live_model_evaluation_run": false,
+    "committed": false,
+    "pushed": false,
+    "released": false,
+    "installed": false
+  }
+}

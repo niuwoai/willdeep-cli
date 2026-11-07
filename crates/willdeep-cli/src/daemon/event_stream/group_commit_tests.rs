@@ -1,4 +1,31 @@
 use super::*;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+/// 参照实现：从文件头逐行解析。索引读取的结果必须与它逐条一致。
+fn full_scan(path: &Path, after: u64, limit: usize) -> Vec<RuntimeEvent> {
+    let file = File::open(path).unwrap();
+    let mut events = Vec::new();
+    for line in BufReader::new(file).lines() {
+        let line = line.unwrap();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: RuntimeEvent = serde_json::from_str(&line).unwrap();
+        if event.sequence > after {
+            events.push(event);
+            if events.len() >= limit {
+                break;
+            }
+        }
+    }
+    events
+}
+
+fn on_disk(path: &Path, after: u64, limit: usize) -> Vec<RuntimeEvent> {
+    let index = EventIndex::scan(path).unwrap();
+    index.read_after(path, after, limit).unwrap()
+}
 
 fn preview(index: usize) -> String {
     format!(
@@ -53,7 +80,7 @@ async fn a_single_preview_is_delivered_without_waiting_for_another_token() {
         .unwrap()
         .unwrap();
     assert_eq!(event.sequence, 1);
-    assert_eq!(read_events(&path, 0, 10).unwrap().len(), 1);
+    assert_eq!(on_disk(&path, 0, 10).len(), 1);
     drop(log);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -68,7 +95,7 @@ fn drop_and_read_barriers_flush_tail_previews() {
     assert_eq!(log.read_after(0, 10).unwrap().len(), 1);
     log.append("task.output", preview(1)).unwrap();
     drop(log);
-    assert_eq!(read_events(&path, 0, 10).unwrap().len(), 2);
+    assert_eq!(on_disk(&path, 0, 10).len(), 2);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -137,5 +164,73 @@ async fn a_live_gap_backfills_history_before_returning_the_new_event() {
     assert_eq!(log.writer.reads(), 1);
     drop(state);
     drop(log);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn index_reads_match_a_full_scan_across_sample_boundaries() {
+    let root = std::env::temp_dir().join(format!("wd-index-boundary-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("events.ndjson");
+    let log = EventLog::open(path.clone()).unwrap();
+    for index in 0..700 {
+        log.append("task.output", preview(index)).unwrap();
+    }
+    drop(log);
+
+    let reopened = EventLog::open(path.clone()).unwrap();
+    for after in [0, 1, 255, 256, 257, 511, 512, 513, 698, 699, 700, 701] {
+        for limit in [1, 7, 256, 1_000] {
+            let indexed = reopened.read_after(after, limit).unwrap();
+            let expected = full_scan(&path, after, limit);
+            assert_eq!(
+                indexed
+                    .iter()
+                    .map(|event| event.sequence)
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|event| event.sequence)
+                    .collect::<Vec<_>>(),
+                "after={after} limit={limit}"
+            );
+        }
+    }
+    drop(reopened);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn appended_events_stay_indexed_after_a_restart() {
+    let root = std::env::temp_dir().join(format!("wd-index-restart-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("events.ndjson");
+    let log = EventLog::open(path.clone()).unwrap();
+    for index in 0..300 {
+        log.append("task.output", preview(index)).unwrap();
+    }
+    drop(log);
+
+    let reopened = EventLog::open(path.clone()).unwrap();
+    assert_eq!(reopened.append("next", "resumed").unwrap().sequence, 301);
+    for index in 300..620 {
+        reopened.append("task.output", preview(index)).unwrap();
+    }
+    for after in [0, 299, 300, 301, 557, 619, 620, 621] {
+        let indexed = reopened.read_after(after, 500).unwrap();
+        let expected = full_scan(&path, after, 500);
+        assert_eq!(
+            indexed
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            "after={after}"
+        );
+    }
+    drop(reopened);
     std::fs::remove_dir_all(root).unwrap();
 }

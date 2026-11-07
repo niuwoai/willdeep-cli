@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Box, Button, NativeSelect, Textarea } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react";
-import type { Messages } from "./i18n";
+import type { Language, Messages } from "./i18n";
+import { attentionMessages } from "./attentionMessages";
 import "./runtimeSidebar.css";
 const AGENT_PREVIEW_LIMIT = 4;
 import { RuntimeDetailPanel, type RuntimeDetailTarget } from "./RuntimeDetailPanel";
@@ -81,7 +82,21 @@ export type RuntimeEvent = {
   delivery_state: string;
 };
 
+export type RuntimeAttentionReason = {
+  status: "waiting_approval" | "waiting_answer" | "failed" | "interrupted" | "partial";
+  failure_domain: string | null;
+  exit_code: number | null;
+};
+
+export type RuntimeAttentionSession = {
+  session_id: string;
+  title: string | null;
+  active_turn_id: string | null;
+  reasons: RuntimeAttentionReason[];
+};
+
 export type RuntimeActivity = {
+  attention_sessions?: RuntimeAttentionSession[];
   tools: RuntimeTool[];
   artifacts: RuntimeArtifact[];
   agents: RuntimeAgent[];
@@ -122,6 +137,8 @@ type Props = {
   events: RuntimeEvent[];
   onIgnoreEvent: (id: string) => Promise<void>;
   messages: Messages;
+  language?: Language;
+  onOpenSession?: (id: string, activeTurnId: string | null) => void;
   onOpenGate: (id: string) => void;
   onAgentAction: (id: string, action: "stop" | "retry" | "retry_model" | "prompt" | "continue", currentModel?: string | null) => Promise<void>;
   canSpawnAgent: boolean;
@@ -153,7 +170,14 @@ function failureDomain(domain: string | null, t: Messages) {
   return t.unknownValue;
 }
 
-export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns, workflowPanel }: Props) {
+export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, language = "zh-CN", onOpenSession, onOpenGate, onAgentAction, canSpawnAgent, onSpawnAgent, onLoadRuns, workflowPanel }: Props) {
+  const attentionText = attentionMessages[language];
+  const attentionSessions = activity.attention_sessions ?? [];
+  const attentionCount = attentionSessions.length;
+  const attentionId = useId();
+  const attentionSection = useRef<HTMLElement>(null);
+  const focusAttention = useRef(false);
+  const [attentionRequest, setAttentionRequest] = useState(0);
   const [controlBusy, setControlBusy] = useState(false);
   const [spawnProfile, setSpawnProfile] = useState<AgentSpawnProfile>("generalist");
   const [spawnPrompt, setSpawnPrompt] = useState("");
@@ -161,6 +185,17 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
   // 只列还等着人的那些。已经由 Agent 读过但不需要人处理的事件不该占用户的注意力。
   const pendingEvents = events.filter((event) => event.requires_user_action && event.delivery_state !== "ignored" && event.delivery_state !== "resolved");
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!expanded || !focusAttention.current || !attentionSection.current) return;
+    focusAttention.current = false;
+    attentionSection.current.scrollIntoView?.({ block: "nearest" });
+    attentionSection.current.focus({ preventScroll: true });
+  }, [expanded, attentionRequest]);
+  function openAttention() {
+    focusAttention.current = true;
+    setExpanded(true);
+    setAttentionRequest((request) => request + 1);
+  }
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [showAllAgents, setShowAllAgents] = useState(false);
   const [showAgentHistory, setShowAgentHistory] = useState(false);
@@ -182,11 +217,13 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
     try { if (await onSpawnAgent(spawnProfile, task)) setSpawnPrompt(""); } finally { setControlBusy(false); }
   }
   return <Box mt="4" p="3" border="1px solid" borderColor="var(--border-subtle)" borderRadius="md" bg="var(--bg-raised)" flexShrink="0" className="runtime-panel">
-    <button type="button" className="runtime-toggle" aria-expanded={expanded} aria-label={activity.attention_count > 0 ? `${t.runtimeActivity} · ${t.needsAttention} ${activity.attention_count}` : t.runtimeActivity} onClick={() => setExpanded((current) => !current)}>
-      <span className="runtime-toggle-title">{t.runtimeActivity}</span>
-      {activity.attention_count > 0 && <span className="runtime-toggle-badge" title={`${t.needsAttention} ${activity.attention_count}`} aria-hidden="true">{activity.attention_count}</span>}
-      <span className="runtime-toggle-hint" aria-hidden="true">{expanded ? t.collapse : t.expand}{expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</span>
-    </button>
+    <div className="runtime-panel-header">
+      <button type="button" className="runtime-toggle" aria-expanded={expanded} aria-label={t.runtimeActivity} onClick={() => setExpanded((current) => !current)}>
+        <span className="runtime-toggle-title">{t.runtimeActivity}</span>
+        <span className="runtime-toggle-hint" aria-hidden="true">{expanded ? t.collapse : t.expand}{expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</span>
+      </button>
+      {attentionCount > 0 && <button type="button" className="runtime-toggle-badge" aria-label={`${t.needsAttention} ${attentionCount}`} aria-controls={expanded ? attentionId : undefined} onClick={openAttention}>{attentionCount}</button>}
+    </div>
     {expanded && <div className="runtime-body">
       <div className="runtime-stats">
         <div className="runtime-stat"><span className="runtime-stat-label">{t.tools}</span><span className="runtime-stat-value">{activity.tools.length}</span></div>
@@ -194,9 +231,22 @@ export function RuntimeSidebar({ activity, events, onIgnoreEvent, messages: t, o
         <div className="runtime-stat"><span className="runtime-stat-label">{t.artifacts}</span><span className="runtime-stat-value">{activity.artifacts.length}</span></div>
         <div className="runtime-stat"><span className="runtime-stat-label">{t.tasks}</span><span className="runtime-stat-value">{activity.tasks.length}</span></div>
         <div className="runtime-stat"><span className="runtime-stat-label">{t.agents}</span><span className="runtime-stat-value">{sidebarAgents.length}{hiddenAgents > 0 && <small title={`+${hiddenAgents} ${t.finishedHidden}`}>+{hiddenAgents}</small>}</span></div>
-        <div className={`runtime-stat${activity.attention_count > 0 ? " alert" : ""}`}><span className="runtime-stat-label">{t.needsAttention}</span><span className="runtime-stat-value">{activity.attention_count}</span></div>
+        <button type="button" className={`runtime-stat runtime-attention-stat${attentionCount > 0 ? " alert" : ""}`} aria-controls={attentionId} onClick={openAttention}><span className="runtime-stat-label">{t.needsAttention}</span><span className="runtime-stat-value">{attentionCount}</span></button>
         <div className="runtime-stat wide"><span className="runtime-stat-label">{t.runtimeEvents}</span><span className="runtime-stat-value">{pendingEvents.length}</span></div>
       </div>
+      <section id={attentionId} ref={attentionSection} tabIndex={-1} aria-labelledby={`${attentionId}-heading`} className="runtime-section runtime-attention-section">
+        <div className="runtime-section-head"><span id={`${attentionId}-heading`}>{attentionText.sessions}</span><span className="runtime-section-count">{attentionCount}</span></div>
+        {attentionSessions.length === 0 ? <p className="runtime-card-note">{attentionText.empty}</p> : <ul className="runtime-list runtime-attention-list">
+          {attentionSessions.map((session) => <li key={session.session_id} className="runtime-card">
+            <button type="button" className="runtime-link runtime-attention-title" disabled={!onOpenSession} onClick={() => onOpenSession?.(session.session_id, session.active_turn_id)}>
+              {session.title?.trim() || attentionText.untitled.replace("{id}", session.session_id.slice(0, 8))}<ChevronRight size={12} aria-hidden="true" />
+            </button>
+            {session.reasons.map((reason) => <p key={`${reason.status}-${reason.failure_domain}-${reason.exit_code}`} className="runtime-card-text runtime-attention-reason">
+              {attentionText[reason.status]}{reason.failure_domain ? ` · ${failureDomain(reason.failure_domain, t)}` : ""}{reason.exit_code !== null ? ` · ${t.exitCode}: ${reason.exit_code}` : ""}
+            </p>)}
+          </li>)}
+        </ul>}
+      </section>
       {activity.gates.length > 0 && <div className="runtime-section">
         <div className="runtime-section-head"><span>{t.needsAttention}</span><span className="runtime-section-count">{activity.gates.length}</span></div>
         <div className="runtime-list">{activity.gates.map((gate) => <div key={gate.id} className="runtime-card">

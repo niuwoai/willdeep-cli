@@ -22,9 +22,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use willdeep_core::{MessageAttachment, Role, Session, SessionStore};
 
 mod agent_library;
+mod attention;
 mod child_sessions;
 mod composer;
 mod configuration;
+mod failures;
 mod federation;
 mod identity;
 mod intake;
@@ -43,7 +45,6 @@ use session_access::{authorized_event_session, session_workspace_allowed};
 
 const MAX_PROMPT_CHARS: usize = 100_000;
 const MAX_AGENT_LABEL_CHARS: usize = 128;
-const MAX_DIAGNOSTIC_CHARS: usize = 12_000;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/dist"]
@@ -212,6 +213,7 @@ struct ForkSessionResponse {
 
 #[derive(Serialize)]
 struct SessionDetail {
+    failure: Option<failures::WebRuntimeFailure>,
     id: String,
     workspace: String,
     parent_session_id: Option<uuid::Uuid>,
@@ -377,6 +379,7 @@ struct RuntimeActivitySummary {
     tasks: Vec<WebRuntimeTask>,
     gates: Vec<WebRuntimeGate>,
     attention_count: usize,
+    attention_sessions: Vec<attention::WebAttentionSession>,
     teams: Vec<willdeep_runtime_protocol::agent_team::AgentTeamSummary>,
     team_statistics_unavailable: bool,
 }
@@ -936,6 +939,11 @@ async fn runtime_activity(
     )
     .await
     .map_err(WebError::from_anyhow)?;
+    let attention_sessions = if snapshot.runtime_diagnostic.is_none() {
+        attention::attention_sessions(&state, &workspace.root).await?
+    } else {
+        Vec::new()
+    };
     let mut teams = Vec::new();
     let mut team_statistics_unavailable = false;
     for agent in snapshot
@@ -1006,7 +1014,8 @@ async fn runtime_activity(
                 },
             })
             .collect(),
-        attention_count: snapshot.attention.len(),
+        attention_count: attention_sessions.len(),
+        attention_sessions,
     }))
 }
 
@@ -1485,7 +1494,9 @@ async fn session_detail(
         .await
         .ok()
         .and_then(|sessions| sessions.into_iter().find(|candidate| candidate.id == id));
+    let failure = failures::latest(&state, id).await;
     Ok(Json(SessionDetail {
+        failure,
         id: session.id.to_string(),
         workspace: workspace.root.display().to_string(),
         parent_session_id: session.parent_session_id,
@@ -1548,7 +1559,8 @@ async fn task_diagnostics(
     let diagnostics = crate::daemon::remote_task_diagnostics(&state.home, task_id)
         .await
         .map_err(WebError::from_anyhow)?;
-    if diagnostics.task.session_id != Some(session_id)
+    if diagnostics.task.id != task_id
+        || diagnostics.task.session_id != Some(session_id)
         || !matches!(
             diagnostics.task.status,
             willdeep_runtime_protocol::TaskStatus::Failed
@@ -1566,27 +1578,18 @@ async fn task_diagnostics(
             .into_iter()
             .map(|tool| WebToolFailure {
                 sequence: tool.sequence,
-                name: tool.name,
-                arguments: tool.arguments.as_deref().map(diagnostic_text),
-                output: tool.output.as_deref().map(diagnostic_text),
+                name: diagnostic_text(&tool.name),
+                arguments: None,
+                output: None,
             })
             .collect(),
     }))
 }
 
-fn diagnostic_failure_text(message: &str) -> String {
-    diagnostic_text(
-        message
-            .split_once(" error=")
-            .map_or(message, |(_, detail)| detail),
-    )
-}
+use failures::diagnostic_failure_text;
 
 fn diagnostic_text(value: &str) -> String {
-    willdeep_core::judge::redact_credentials(value)
-        .chars()
-        .take(MAX_DIAGNOSTIC_CHARS)
-        .collect()
+    willdeep_core::provider::safe_error_detail(value)
 }
 
 #[derive(Deserialize)]
@@ -2235,7 +2238,7 @@ async fn resume_session_stream(
                 }),
             )
             .await;
-            if relay_runtime_turn(
+            if let Err(error) = relay_runtime_turn(
                 &stream_state,
                 &session.workspace,
                 RuntimeTurnRelay {
@@ -2248,13 +2251,8 @@ async fn resume_session_stream(
                 &tx,
             )
             .await
-            .is_err()
             {
-                send_event(
-                    &tx,
-                    serde_json::json!({"type":"error","message":"Runtime stream unavailable"}),
-                )
-                .await;
+                send_event(&tx, failures::bridge_error(&error.message)).await;
             }
         });
     } else {
@@ -2284,12 +2282,12 @@ async fn resume_session_stream(
                     "session_id":id,
                     "turn_id":turn.id,
                 }),
-                status => serde_json::json!({
-                    "type":"error",
-                    "message":format!("turn.{status:?}").to_ascii_lowercase(),
-                    "session_id":id,
-                    "turn_id":turn.id,
-                }),
+                _ => failures::for_turn(&stream_state, &turn)
+                    .await
+                    .map(failures::WebRuntimeFailure::into_event)
+                    .unwrap_or_else(|| {
+                        failures::bridge_error("Runtime Turn is not available for resuming")
+                    }),
             };
             send_event_at(&tx, event, event_head).await;
         });
@@ -2355,11 +2353,7 @@ async fn run_runtime_turn(
 ) {
     let result = runtime_chat::run_runtime_turn_inner(state, input, workspace, profile, &tx).await;
     if let Err(error) = result {
-        send_event(
-            &tx,
-            serde_json::json!({"type":"error","message":error.message}),
-        )
-        .await;
+        send_event(&tx, failures::bridge_error(&error.message)).await;
     }
 }
 
@@ -2458,15 +2452,16 @@ async fn relay_runtime_turn(
                             .or(failure_domain);
                     send_event_at(
                         tx,
-                        serde_json::json!({
-                            "type":"error",
-                            "message":event.kind,
-                            "session_id":session_id,
-                            "turn_id":turn_id,
-                            "task_id":task_id,
-                            "reason":failure_reason,
-                            "failure_domain":failure_domain,
-                        }),
+                        failures::terminal_failure(
+                            state,
+                            &event.kind,
+                            session_id,
+                            turn_id,
+                            task_id,
+                        )
+                        .await
+                        .with_classification(failure_reason, failure_domain)
+                        .into_event(),
                         event.sequence,
                     )
                     .await;
@@ -2960,7 +2955,9 @@ impl WebError {
         }
     }
     fn from_anyhow(error: anyhow::Error) -> Self {
-        Self::internal(error.to_string())
+        Self::internal(willdeep_core::provider::safe_error_detail(&format!(
+            "{error:#}"
+        )))
     }
     fn from_workspace_approval(error: crate::daemon::WorkspaceApprovalError) -> Self {
         match error {
@@ -2979,7 +2976,7 @@ impl WebError {
 }
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
-        (self.status, Json(serde_json::json!({"error":self.message}))).into_response()
+        (self.status, Json(serde_json::json!({"error":willdeep_core::provider::safe_error_detail(&self.message)}))).into_response()
     }
 }
 #[cfg(test)]

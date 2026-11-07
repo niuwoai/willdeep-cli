@@ -4,7 +4,110 @@ use willdeep_runtime_protocol::child_session::{
     ChildSessionContext, ChildSessionLink, ChildSessionTask, ChildSessionWorkspaceMode,
 };
 
+/// Read the same host policy in a task Harness without opening/recovering the
+/// Session store or reacquiring the child coordinator's control lock.
+pub(crate) fn child_start_confirmation_for_turn(
+    home: &Path,
+    session: uuid::Uuid,
+    turn: uuid::Uuid,
+) -> Result<bool> {
+    let turns = load_turns(&home.join("runtime/turns.json"))?;
+    confirmation_for_turn(&turns, session, turn)
+}
+
+fn confirmation_for_turn(
+    turns: &HashMap<uuid::Uuid, StoredRuntimeTurn>,
+    session: uuid::Uuid,
+    turn: uuid::Uuid,
+) -> Result<bool> {
+    let source = turns.get(&turn).context("parent Turn not found")?;
+    anyhow::ensure!(
+        source.metadata.session_id == session,
+        "parent Turn belongs to another Session"
+    );
+    Ok(requires_confirmation(source))
+}
+
+fn requires_confirmation(turn: &StoredRuntimeTurn) -> bool {
+    turn.child_start_confirmation
+        || turn
+            .origin_client
+            .as_deref()
+            .is_some_and(|origin| origin == "web" || origin.starts_with("web:"))
+}
+
+/// Called while the coordinator owns the ledger and Turn locks. A wake inherits
+/// only from its durable batch members, never from the prompt, arbitrary origin
+/// text, or the latest unrelated operator input in the same Session.
+pub(super) fn inherited_child_start_confirmation(
+    session: uuid::Uuid,
+    request_id: uuid::Uuid,
+    origin: Option<&str>,
+    ledger: &Ledger,
+    turns: &HashMap<uuid::Uuid, StoredRuntimeTurn>,
+) -> bool {
+    let mut pending = vec![(request_id, origin)];
+    let mut visited = HashSet::new();
+    while let Some((request_id, origin)) = pending.pop() {
+        let Some(batch) = origin
+            .and_then(|origin| origin.strip_prefix(crate::daemon::CHILD_RESULT_WAKE_ORIGIN))
+            .and_then(|id| id.parse::<uuid::Uuid>().ok())
+            .and_then(|id| ledger.wakes.get(&id))
+            .filter(|batch| batch.parent == session && batch.request_id == request_id)
+        else {
+            continue;
+        };
+        if !visited.insert(batch.id) {
+            continue;
+        }
+        for task in ledger
+            .assignments
+            .values()
+            .map(|entry| &entry.task)
+            .filter(|task| {
+                task.parent_session_id == session
+                    && task
+                        .result
+                        .as_ref()
+                        .is_some_and(|result| batch.members.contains(&result.notification_id))
+            })
+        {
+            if crate::daemon::child_sessions::confirmed_request_requires_child_confirmation(
+                ledger,
+                session,
+                task.request_id,
+            ) {
+                return true;
+            }
+            let Some(source) = task
+                .created_from_turn_id
+                .and_then(|id| turns.get(&id))
+                .filter(|source| source.metadata.session_id == session)
+            else {
+                continue;
+            };
+            if requires_confirmation(source) {
+                return true;
+            }
+            // Earlier wake Turns may also predate the persisted policy. Recover
+            // their lineage from the same ledger snapshot, with cycle protection.
+            pending.push((source.metadata.request_id, source.origin_client.as_deref()));
+        }
+    }
+    false
+}
+
 impl RuntimeSessionStore {
+    /// Origin and inherited policy come from persisted host state, never tool arguments.
+    pub(in crate::daemon) fn child_start_requires_confirmation(
+        &self,
+        session: uuid::Uuid,
+        turn: uuid::Uuid,
+    ) -> Result<bool> {
+        let turns = self.turns_lock()?;
+        confirmation_for_turn(&turns, session, turn)
+    }
+
     /// Called only under the child control lock. Fresh starts an empty Core;
     /// fork copies only an immutable completed Turn prefix and clears execution
     /// state; worktree binds the child to its prepared dedicated workspace.

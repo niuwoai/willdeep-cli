@@ -45,31 +45,6 @@ jobs:
           name: willdeep-linux-${{ matrix.arch }}
           path: willdeep-linux-${{ matrix.arch }}.tar.gz
 
-  windows:
-    name: Windows x64
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: yarn
-          cache-dependency-path: web/yarn.lock
-      - name: Build embedded Web frontend
-        working-directory: web
-        run: yarn install --frozen-lockfile && yarn build
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.94.1
-      - run: cargo build --locked --release -p willdeep
-      - name: Package
-        shell: pwsh
-        run: Compress-Archive -Path target/release/willdeep.exe -DestinationPath willdeep-windows-x64.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: willdeep-windows-x64
-          path: willdeep-windows-x64.zip
-
   macos:
     name: macOS universal
     # 固定 Intel 池，避开默认 arm64 runner 容量不足；仍编译并合并两个目标。
@@ -102,7 +77,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [linux, windows, macos, verify]
+    needs: [linux, macos, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +87,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Publish four platform archives
+      - name: Publish platform archives
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
