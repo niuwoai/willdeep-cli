@@ -11,12 +11,9 @@ const PLATFORMS = Object.freeze({
   'darwin-arm64': 'willdeep-macos-universal.tar.gz',
   'linux-x64': 'willdeep-linux-amd64.tar.gz',
   'linux-arm64': 'willdeep-linux-arm64.tar.gz',
-  'win32-x64': 'willdeep-windows-x64.zip',
 });
-const EXPECTED_ENTRIES = Object.freeze({
-  '.tar.gz': 'willdeep',
-  '.zip': 'willdeep.exe',
-});
+const ARCHIVE_SUFFIX = '.tar.gz';
+const EXPECTED_ENTRY = 'willdeep';
 const MAX_ASSET_BYTES = 128 * 1024 * 1024;
 const MAX_BINARY_BYTES = 128 * 1024 * 1024;
 const RELEASE_HOSTS = new Set(['github.com', 'release-assets.githubusercontent.com']);
@@ -70,27 +67,19 @@ async function downloadAsset(url, expected, fetchImpl, redirectCount = 0, truste
 }
 
 function extractBinary(archivePath, assetName, destination) {
-  const extension = Object.keys(EXPECTED_ENTRIES).find((item) => assetName.endsWith(item));
-  const expected = EXPECTED_ENTRIES[extension];
-  if (!expected) throw new InstallError(`不认识的发行包：${assetName}。`);
+  if (!assetName.endsWith(ARCHIVE_SUFFIX)) throw new InstallError(`不认识的发行包：${assetName}。`);
   const output = fs.mkdtempSync(path.join(os.tmpdir(), 'willdeep-npm-'));
   try {
-    if (extension === '.tar.gz') {
-      execFileSync('tar', ['-xzf', archivePath, '-C', output], { stdio: 'pipe' });
-    } else if (process.platform === 'win32') {
-      execFileSync('tar', ['-xf', archivePath, '-C', output], { stdio: 'pipe' });
-    } else {
-      execFileSync('unzip', ['-q', archivePath, '-d', output], { stdio: 'pipe' });
-    }
+    execFileSync('tar', ['-xzf', archivePath, '-C', output], { stdio: 'pipe' });
     const extracted = fs.readdirSync(output);
-    if (extracted.length !== 1 || extracted[0] !== expected) {
+    if (extracted.length !== 1 || extracted[0] !== EXPECTED_ENTRY) {
       throw new InstallError(`发行包内容异常：${extracted.join(', ') || '空包'}。`);
     }
-    const source = path.join(output, expected);
+    const source = path.join(output, EXPECTED_ENTRY);
     const metadata = fs.lstatSync(source);
     if (!metadata.isFile()) throw new InstallError('发行包里的程序必须是普通文件。');
     if (metadata.size > MAX_BINARY_BYTES) throw new InstallError('发行包里的程序超过 128 MiB 上限。');
-    if (extension !== '.zip' && (metadata.mode & 0o111) === 0) {
+    if ((metadata.mode & 0o111) === 0) {
       throw new InstallError('发行包里的程序没有可执行权限。');
     }
     fs.mkdirSync(path.dirname(destination), { recursive: true });

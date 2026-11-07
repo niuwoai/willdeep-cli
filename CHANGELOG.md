@@ -8,6 +8,9 @@
 
 ## [0.147.0-rc7] - 2026-11-07
 
+### Changed
+- GitHub Release 不再构建和发布 Windows x64 发行包，`@niuwoai/willdeep` 也不再接受 `win32/x64`，暂无可用的 Windows 用户；macOS Universal、Linux amd64/arm64、Homebrew 与 npm 分发不变，CI 仍保留 Windows 编译与测试。
+
 ### Fixed
 - Runtime 事件日志改用稀疏字节偏移索引：`read_after` 二分定位到采样点再向前扫描，不再每次从文件头解析整份 `events.ndjson`；`EventLog::open` 也只保留采样点与末尾序号，不再把全部事件读进内存。日志涨到 168 MB / 90 万条后，事件流、健康检查和 `daemon status` 不再被全量扫描拖住。
 

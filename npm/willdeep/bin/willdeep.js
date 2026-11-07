@@ -5,7 +5,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const binary = path.join(__dirname, process.platform === 'win32' ? 'willdeep.exe' : 'willdeep');
+const binary = path.join(__dirname, 'willdeep');
 if (!fs.existsSync(binary)) {
   process.stderr.write('willdeep 还没有安装完成。请重新执行 npm install willdeep。\n');
   process.exit(1);

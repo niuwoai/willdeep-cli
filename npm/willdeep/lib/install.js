@@ -7,7 +7,7 @@ const { installWilldeep } = require('./release');
 async function main() {
   const packageRoot = path.resolve(__dirname, '..');
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'install-manifest.json'), 'utf8'));
-  const destination = path.join(packageRoot, 'bin', process.platform === 'win32' ? 'willdeep.exe' : 'willdeep');
+  const destination = path.join(packageRoot, 'bin', 'willdeep');
   const installed = await installWilldeep({
     manifest,
     platform: process.platform,

@@ -104,7 +104,7 @@ class NpmWilldeepTest < Minitest::Test
     end
   end
 
-  def test_symlink_and_windows_archive_without_mode_are_handled
+  def test_symlink_entry_is_rejected
     Dir.mktmpdir do |directory|
       copy_package(directory)
       File.symlink('/bin/echo', File.join(directory, 'willdeep'))
@@ -116,23 +116,16 @@ class NpmWilldeepTest < Minitest::Test
       _out, err, status = run_installer(directory, 'linux', 'x64')
       refute status.success?
       assert_includes utf8(err), '普通文件'
+    end
+  end
 
-      exe = File.binread('/bin/echo')
-      zip = Dir.mktmpdir do |source|
-        File.binwrite(File.join(source, 'willdeep.exe'), exe)
-        _out, zip_err, zip_status = Open3.capture3('python3', '-c', 'import pathlib,zipfile; zipfile.ZipFile("win.zip","w").write("willdeep.exe")', chdir: source)
-        flunk(zip_err) unless zip_status.success?
-        File.binread(File.join(source, 'win.zip'))
-      end
-      serve('willdeep-windows-x64.zip' => zip)
-      manifest = manifest_for(Digest::SHA256.hexdigest(zip))
-      manifest['assets'] = {
-        'willdeep-windows-x64.zip' => { 'name' => 'willdeep-windows-x64.zip', 'sha256' => Digest::SHA256.hexdigest(zip) }
-      }
-      File.write(File.join(directory, 'install-manifest.json'), JSON.generate(manifest))
+  def test_windows_is_not_published
+    serve({})
+    Dir.mktmpdir do |directory|
+      copy_package(directory)
       _out, err, status = run_installer(directory, 'win32', 'x64')
-      assert status.success?, "#{_out}\n#{utf8(err)}"
-      assert_equal exe, File.binread(File.join(directory, 'bin', 'willdeep.exe'))
+      refute status.success?
+      assert_includes utf8(err), '暂不支持'
     end
   end
 
@@ -215,7 +208,7 @@ class NpmWilldeepTest < Minitest::Test
         manifest,
         platform: process.argv[1],
         arch: process.argv[2],
-        destination: require('node:path').join(process.cwd(), 'bin', process.argv[1] === 'win32' ? 'willdeep.exe' : 'willdeep'),
+        destination: require('node:path').join(process.cwd(), 'bin', 'willdeep'),
         packageRoot: process.cwd(),
         fetchImpl,
         trustedHosts: new Set(['127.0.0.1']),
