@@ -91,7 +91,7 @@ impl Agent {
         messages: &[Message],
         cache: &mut Option<SummaryCache>,
     ) -> Result<Vec<Message>, AgentError> {
-        self.request_messages_accounted(messages, cache, &mut |_| Ok(()))
+        self.request_messages_accounted(messages, cache, None, "", &mut |_| Ok(()))
             .await
     }
 
@@ -99,11 +99,33 @@ impl Agent {
         &self,
         messages: &[Message],
         cache: &mut Option<SummaryCache>,
+        stable_system: Option<&Message>,
+        runtime_context: &str,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
         let settings = self.compression_settings()?;
         let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
-        let paged = self.page_tool_outputs(messages, capacity)?;
+        // The caller appends live plan/goal/budget state after compression. Reserve
+        // its full cost here, but never summarize it or use it as a cache key.
+        let reserved = text_tokens(runtime_context);
+        let capacity = capacity
+            .checked_sub(reserved)
+            .filter(|capacity| *capacity > 0)
+            .ok_or(AgentError::ContextCapacity {
+                estimated: reserved,
+                capacity,
+            })?;
+        // Durable checkpoints retain the full system pin. Normalize only the
+        // already-cloned request projection, without copying the whole history again.
+        let page = || {
+            let mut paged = self.page_tool_outputs(messages, capacity)?;
+            if let Some(system) = stable_system {
+                paged.messages[0] = system.clone();
+            }
+            Ok::<_, AgentError>(paged)
+        };
+        let paged = page()?;
+        let system = system_fingerprint(&paged.messages);
         let watermark = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
         let raw_estimate = estimate_tokens(&paged.messages);
         if raw_estimate < watermark {
@@ -114,12 +136,11 @@ impl Agent {
         // compacted projection instead: an existing summary is reused until the
         // projection built from it crosses the watermark again.
         //
-        // 缓存的 `through` 是 durable 下标，`matches` 也只看 durable 历史：分页
-        // 去重（重复的 host instruction）和随窗口变化的工具输出缩写都不会让
-        // 摘要失效，只有真被改写的前缀或换掉的 system 提示才会。
+        // `through` 和前缀指纹始终锚定 durable 历史；system 指纹来自稳定规则。
+        // 分页去重、工具摘录及实时状态变化不会失效；真实前缀或规则改写才会。
         let cached = cache
             .take()
-            .filter(|entry| entry.matches(messages))
+            .filter(|entry| entry.matches(messages, &system))
             .map(|entry| {
                 let through = paged.projected_index(entry.through);
                 (through, entry)
@@ -133,7 +154,7 @@ impl Agent {
         }
         self.sink
             .emit(AgentEvent::CompressionStarted {
-                estimated_tokens: raw_estimate,
+                estimated_tokens: raw_estimate.saturating_add(reserved),
             })
             .await;
         // Preserve every original user/system message verbatim, including pasted text.
@@ -161,7 +182,12 @@ impl Agent {
                 *cache = Some(entry);
             } else if !replaceable(&result[through..split]) {
                 result = compact_prefix(&result, split, &entry.summary);
-                *cache = Some(SummaryCache::new(messages, split_through, entry.summary));
+                *cache = Some(SummaryCache::new(
+                    messages,
+                    split_through,
+                    entry.summary,
+                    &system,
+                ));
             } else {
                 // Incremental: previous summary plus only the messages it does not cover.
                 // The outgoing marker is recomputed from the original durable prefix;
@@ -175,14 +201,14 @@ impl Agent {
                     .summarize_history_with_settings(&source, &settings, record_usage)
                     .await?;
                 result = compact_prefix(&result, split, &summary);
-                *cache = Some(SummaryCache::new(messages, split_through, summary));
+                *cache = Some(SummaryCache::new(messages, split_through, summary, &system));
             }
         } else if split > 0 && replaceable(&result[..split]) {
             let summary = self
                 .summarize_history_with_settings(&result[..split], &settings, record_usage)
                 .await?;
             result = compact_prefix(&result, split, &summary);
-            *cache = Some(SummaryCache::new(messages, split_through, summary));
+            *cache = Some(SummaryCache::new(messages, split_through, summary, &system));
         }
         // The usual recent tail is a preference, not a licence to exceed the
         // window. A single thinking response can be larger than that whole tail.
@@ -190,9 +216,14 @@ impl Agent {
             let summary = self
                 .summarize_history_with_settings(&result, &settings, record_usage)
                 .await?;
-            let full = self.page_tool_outputs(messages, capacity)?;
+            let full = page()?;
             result = compact_prefix(&full.messages, full.messages.len(), &summary);
-            *cache = Some(SummaryCache::new(messages, messages.len(), summary));
+            *cache = Some(SummaryCache::new(
+                messages,
+                messages.len(),
+                summary,
+                &system,
+            ));
         }
         // If the recent tail remains too large, replace complete tool batches with
         // archived references. Never remove individual protocol messages.
@@ -206,7 +237,7 @@ impl Agent {
         }
         self.sink
             .emit(AgentEvent::CompressionCompleted {
-                estimated_tokens: estimated,
+                estimated_tokens: estimated.saturating_add(reserved),
                 dropped_messages: dropped,
             })
             .await;
@@ -450,12 +481,15 @@ impl Agent {
         let mut skipped: Vec<(String, String)> = Vec::new();
         // 目标状态由宿主另行维护、每轮钉在 system 消息里；摘要只需别和它打架。
         // 托管压缩走服务端固定指令，不往里塞额外说明。
-        let goal_note = self
+        let goal_note = if self
             .goal_continuation
             .as_ref()
-            .and_then(|goal| goal.pin(0))
-            .map(|pin| format!("\n\nThe host tracks the active goal separately and re-injects it every turn; do not restate its checklist, and never contradict it:\n{pin}"))
-            .unwrap_or_default();
+            .is_some_and(|goal| goal.is_active())
+        {
+            "\n\nThe host tracks the active goal separately and re-injects it every turn; do not restate its live checklist or budgets."
+        } else {
+            ""
+        };
         for (index, (provider, hosted_prompt)) in settings.candidates.iter().enumerate() {
             if let Some(scope) = &self.usage_ledger {
                 scope
@@ -592,8 +626,8 @@ impl PagedHistory {
 ///
 /// System messages are excluded from the prefix fingerprint: they are refreshed
 /// every turn and always kept verbatim outside the summary. They are hashed
-/// separately as [`Self::system`] so that editing rules invalidates the summary
-/// instead of leaving the old one in force.
+/// separately as [`Self::system`] after the caller replaces live state with the
+/// stable system snapshot. Editing rules still invalidates the summary.
 ///
 /// 这份缓存会随会话落盘（见 [`crate::context_summary`]）。run 内复用只是省一次
 /// 调用，跨 run 复用才是真正的账：durable 历史从不因压缩变短，没有它每一轮都
@@ -607,11 +641,11 @@ pub(super) struct SummaryCache {
 }
 
 impl SummaryCache {
-    fn new(messages: &[Message], through: usize, summary: String) -> Self {
+    fn new(messages: &[Message], through: usize, summary: String, system: &str) -> Self {
         Self {
             through,
             fingerprint: prefix_fingerprint(&messages[..through]),
-            system: system_fingerprint(messages),
+            system: system.to_owned(),
             // 分块合并那条路按 token 预算截断，按字节算仍可能超上限；入缓存时
             // 统一封顶，保证落盘的东西一定能通过 `matches` 的长度校验。
             summary: clamp_summary(summary),
@@ -640,14 +674,14 @@ impl SummaryCache {
         }
     }
 
-    fn matches(&self, messages: &[Message]) -> bool {
+    fn matches(&self, messages: &[Message], system: &str) -> bool {
         // 落盘的摘要是外部输入：越界、坏指纹、超长正文都只能算不匹配，不能
         // panic，也不能把来路不明的文本当成可信缓存回放。
         self.through <= messages.len()
             && self.summary.len() <= MAX_PERSISTED_SUMMARY_BYTES
             && is_sha256_hex(&self.fingerprint)
             && is_sha256_hex(&self.system)
-            && system_fingerprint(messages) == self.system
+            && system == self.system
             && prefix_fingerprint(&messages[..self.through]) == self.fingerprint
     }
 }
@@ -669,8 +703,8 @@ fn prefix_fingerprint(messages: &[Message]) -> String {
 /// system 提示（系统提示、全局/项目规则、技能目录）的指纹。
 ///
 /// 摘要里会概括 system 的内容，而摘要现在跨运行复用：规则删改之后还拿旧摘要，
-/// 等于让已经删掉的指令继续随请求发出去。system 每轮由宿主重新拼一遍，同一个
-/// 会话里内容稳定，按内容比对不会误伤。
+/// 等于让已经删掉的指令继续随请求发出去。这里接收已去除实时计划、目标和预算
+/// 的请求投影；按稳定规则比对，不能对完整 durable system 直接取指纹。
 fn system_fingerprint(messages: &[Message]) -> String {
     fingerprint_of(
         messages

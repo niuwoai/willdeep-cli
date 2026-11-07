@@ -1,0 +1,109 @@
+{
+  "date": "2026-11-07",
+  "version": "0.147.0-rc4",
+  "baseline_commit": "ec565d68657eeaf97e0ffc2467c7bd6b49a65e3d",
+  "baseline_tag": "v0.147.0-rc3",
+  "remote_develop_matches_baseline": true,
+  "result": "targeted_checks_passed",
+  "root_cause": "The Agent loop changed the system prompt's execution budget every round, invalidating a summary cache that hashed the entire system prompt.",
+  "reproduction": {
+    "production_code_modified": false,
+    "fixture": "Synthetic history, five local read_file tool turns, final answer, then a subsequent Agent run with the returned summary",
+    "command": "cargo test --locked -p willdeep-core real_agent_tool_turns_reuse_the_compressed_prefix -- --nocapture",
+    "exit_code": 101,
+    "summary_calls_before_each_main_request": [1, 2, 5, 8, 11, 14, 17],
+    "expected_summary_calls": [1, 1, 1, 1, 1, 1, 1]
+  },
+  "fixed_regression": {
+    "additional_summary_calls_after_first_main_request": 0,
+    "subsequent_main_requests": 6,
+    "latest_tool_call_and_result_preserved": true,
+    "rewritten_prefix_invalidates_cache": true,
+    "changed_system_rules_invalidate_cache": true,
+    "live_plan_goal_and_deadline_preserved": true,
+    "deadline_outcome_and_checkpoint_match_main_request_system": true,
+    "live_context_capacity_reserved": true,
+    "oversized_live_context_rejected_before_summary_call": true
+  },
+  "checks": [
+    {
+      "phase": "baseline",
+      "command": "cargo test --locked -p willdeep-core agent::context::tests -- --nocapture",
+      "passed": 42,
+      "failed": 0,
+      "test_seconds": 1.94,
+      "exit_code": 0
+    },
+    {
+      "phase": "fixed",
+      "command": "cargo test --locked -p willdeep-core agent::context::tests -- --nocapture",
+      "passed": 47,
+      "failed": 0,
+      "test_seconds": 2.89,
+      "exit_code": 0
+    },
+    {
+      "phase": "fixed",
+      "command": "cargo test --locked -p willdeep-core agent::tests -- --nocapture",
+      "passed": 35,
+      "failed": 0,
+      "test_seconds": 3.97,
+      "exit_code": 0
+    },
+    {
+      "phase": "fixed",
+      "command": "cargo test --locked -p willdeep-core agent::guidance::tests -- --nocapture",
+      "passed": 4,
+      "failed": 0,
+      "test_seconds": 0.12,
+      "exit_code": 0
+    },
+    {
+      "phase": "final_recheck",
+      "command": "cargo test --locked -p willdeep-core agent::context::tests",
+      "passed": 47,
+      "failed": 0,
+      "test_seconds": 3.96,
+      "exit_code": 0
+    },
+    {
+      "phase": "final_recheck",
+      "command": "cargo clippy --locked -p willdeep-core --all-targets -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0
+    },
+    {
+      "command": "ruby scripts/check_release_version.rb 0.147.0-rc4",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "incomplete_checks": [
+    {
+      "command": "cargo test --locked -p willdeep-core agent:: -- --nocapture",
+      "status": "stopped",
+      "reason": "The broad filter also selected subagent tests. The recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports test remained running; the command was stopped before testing the revised implementation. This run is not reported as fully passed."
+    },
+    {
+      "command": "cargo test --locked -p willdeep-core --lib",
+      "status": "stopped_during_compilation",
+      "reason": "Stopped while revising the implementation; no test results."
+    }
+  ],
+  "unique_targeted_tests_passed": 86,
+  "full_core_suite_completed": false,
+  "cross_platform_ci_run": false,
+  "production_runtime_modified": false,
+  "production_task_bodies_read": false,
+  "credentials_read": false,
+  "paid_provider_calls": 0,
+  "published": false,
+  "installed": false,
+  "existing_tags_modified": false
+}

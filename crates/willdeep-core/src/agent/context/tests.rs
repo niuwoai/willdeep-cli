@@ -7,6 +7,7 @@ use std::sync::Mutex;
 /// 专门的测试，混进来只会让「缓存命中几次」「记了几笔账」这些断言跟着跳。
 pub(super) const WINDOW: u64 = 12_288;
 
+mod multi_turn_tests;
 mod recovery_tests;
 mod settings_tests;
 mod usage_tests;
@@ -668,7 +669,7 @@ async fn a_repaged_projection_keeps_the_persisted_summary_valid() {
         "the paging limit must actually rewrite tool output"
     );
     assert!(
-        SummaryCache::restore(persisted).matches(&messages),
+        SummaryCache::restore(persisted).matches(&messages, &system_fingerprint(&messages)),
         "repaging must not invalidate a summary anchored on durable history"
     );
 }
