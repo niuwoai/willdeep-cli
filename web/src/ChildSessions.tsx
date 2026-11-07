@@ -3,7 +3,10 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { ArrowLeft, ArrowUpRight, GitBranch, RefreshCw } from "lucide-react";
 import type { Language } from "./i18n";
 import { childSessionsText } from "./childSessionsMessages";
-import { ChildSessionFailure, childTaskControlled, childTaskRetryable, childTaskTerminal, continueChildTask, getChildLink, listChildTasks, retryChildTask, startChildTask, stopChildTask, type ChildControlState, type ChildLink, type ChildTask, type ChildTaskOptions, type StartChildOptions } from "./childSessionsApi";
+import { childProposalText } from "./childProposalMessages";
+import { useChildProposals } from "./childProposalQueries";
+import { ChildSessionProposals } from "./ChildSessionProposals";
+import { ChildSessionFailure, childTaskControlled, childTaskRetryable, childTaskTerminal, continueChildTask, getChildLink, listChildTasks, retryChildTask, stopChildTask, type ChildControlState, type ChildLink, type ChildTask, type ChildTaskOptions } from "./childSessionsApi";
 import { ChildSessionControl } from "./ChildSessionControl";
 import { ChildTaskOptionsFields, ChildTaskSubscription } from "./ChildTaskOptions";
 import { childFailureText, childNotificationLabel, emptyTaskOptions, invalidDependencies, type TaskOptionsDraft } from "./childSessionsPresentation";
@@ -11,50 +14,37 @@ import { childLinkKey, childTasksKey, useChildCapabilities } from "./childSessio
 import "./childSessions.css";
 
 const BRIEF_LIMIT = 16_000;
-type Draft = TaskOptionsDraft & {
-  title: string; prompt: string;
-  context: "fresh" | "fork";
-  throughTurnId: string;
-  workspaceMode: "shared_read_only" | "worktree";
-  worktreeBase: "head" | "snapshot";
-  model: string;
-};
-const emptyDraft = (): Draft => ({ title: "", prompt: "", context: "fresh", throughTurnId: "", workspaceMode: "shared_read_only", worktreeBase: "head", model: "", ...emptyTaskOptions() });
-const drafts = new Map<string, Draft>();
-type Action = { kind: "start"; options: StartChildOptions } | { kind: "continue"; child: string; prompt: string; options: ChildTaskOptions } | { kind: "retry"; task: ChildTask } | { kind: "stop"; task: ChildTask };
+type Action = { kind: "continue"; child: string; prompt: string; options: ChildTaskOptions } | { kind: "retry"; task: ChildTask } | { kind: "stop"; task: ChildTask };
 
 export function ChildSessions({ sessionId, language, onOpenSession, onRelationshipChanged }: {
   sessionId: string; language: Language; onOpenSession: (id: string) => void; onRelationshipChanged?: (link: ChildLink) => void;
 }) {
   const t = childSessionsText(language);
+  const p = childProposalText(language);
   const cache = useQueryClient();
   const queryKey = childTasksKey(sessionId);
   const capabilities = useChildCapabilities(sessionId);
+  const proposals = useChildProposals(sessionId);
   const tasks = useInfiniteQuery({
     queryKey, initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => listChildTasks(sessionId, pageParam, signal),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     refetchInterval: 4000, retry: false,
   });
-  const [draft, setDraft] = useState<Draft>(() => drafts.get(sessionId) ?? emptyDraft());
   const [continuation, setContinuation] = useState<({ child: string; prompt: string } & TaskOptionsDraft) | null>(null);
-  const [notice, setNotice] = useState(false);
   const identities = useRef(new Map<string, string>());
-  const update = (next: Draft) => { drafts.set(sessionId, next); setDraft(next); setNotice(false); };
   const mutation = useMutation({
     mutationFn: (action: Action) => {
       const fingerprint = JSON.stringify([sessionId, action]);
       let id = identities.current.get(fingerprint);
       if (!id) { id = crypto.randomUUID(); identities.current.set(fingerprint, id); }
       switch (action.kind) {
-        case "start": return startChildTask(sessionId, action.options, id);
         case "continue": return continueChildTask(sessionId, action.child, action.prompt, id, action.options);
         case "retry": return retryChildTask(sessionId, action.task, id);
         case "stop": return stopChildTask(sessionId, action.task.assignment_id, id);
       }
     },
     onSuccess: async (_, action) => {
-      if (action.kind === "start") { drafts.delete(sessionId); setDraft(emptyDraft()); setNotice(true); }
       if (action.kind === "continue") setContinuation(null);
       identities.current.delete(JSON.stringify([sessionId, action]));
       await cache.invalidateQueries({ queryKey });
@@ -63,11 +53,11 @@ export function ChildSessions({ sessionId, language, onOpenSession, onRelationsh
       if (error instanceof ChildSessionFailure && error.status === 409) await cache.invalidateQueries({ queryKey });
     },
   });
-  const failure = mutation.error ?? tasks.error;
-  const unavailable = failure instanceof ChildSessionFailure && [403, 404, 501].includes(failure.status);
+  const failure = mutation.error ?? tasks.error ?? proposals.error;
   const errorMessage = failure instanceof ChildSessionFailure && [404, 501].includes(failure.status) ? t.unsupported : childFailureText(failure, language);
   const allTasks = tasks.data?.pages.flatMap((page) => page.tasks) ?? [];
   const uniqueTasks = [...new Map(allTasks.map((task) => [task.assignment_id, task])).values()].sort((a, b) => b.created_at - a.created_at);
+  const pendingProposals = (proposals.data?.proposals ?? []).filter((proposal) => !proposal.dismissed && proposal.params.parent_session_id === sessionId);
   const pending = mutation.isPending;
   // 404/501 resolve as confirmed legacy support; failed capability reads must block new work.
   const capabilitiesReady = capabilities.isSuccess;
@@ -77,49 +67,15 @@ export function ChildSessions({ sessionId, language, onOpenSession, onRelationsh
     ...(capabilities.dependencies ? { dependsOn: value.dependsOn } : {}),
   });
   const dependenciesValid = (value: TaskOptionsDraft) => !capabilities.dependencies || !invalidDependencies(value.dependsOn, uniqueTasks);
+  if (!uniqueTasks.length && !pendingProposals.length && !failure && !capabilities.error) return null;
+  const refreshing = tasks.isFetching || proposals.isFetching || capabilities.isFetching;
+  const refresh = () => { void tasks.refetch(); void proposals.refetch(); void capabilities.refetch(); };
   return <section className="child-sessions" aria-label={t.title}>
-    <header className="child-sessions-heading"><h2><GitBranch size={16} />{t.title}</h2><button type="button" disabled={tasks.isFetching} aria-label={t.refresh} title={t.refresh} onClick={() => { void tasks.refetch(); void capabilities.refetch(); }}><RefreshCw size={14} /></button></header>
-    {tasks.isPending && <p role="status">{t.loading}</p>}
-    {failure && <p className="child-session-error" role="alert">{errorMessage}</p>}
+    <header className="child-sessions-heading"><h2><GitBranch size={16} />{t.title}</h2><button type="button" disabled={refreshing} aria-label={t.refresh} title={t.refresh} onClick={refresh}><RefreshCw size={14} /></button></header>
+    {failure && <p className="child-session-error" role="alert">{proposals.error === failure && !(failure instanceof ChildSessionFailure) ? p.error : errorMessage}</p>}
     {capabilities.error && !failure && <p className="child-session-error" role="alert">{childFailureText(capabilities.error, language)}</p>}
-    {!unavailable && <details className="child-create"><summary>{t.create}</summary>
-      <p className="child-session-hint">{t.hint}</p>
-      <form onSubmit={(event) => {
-        event.preventDefault();
-        if (pending || !capabilitiesReady || !draft.title.trim() || !validPrompt(draft.prompt) || !dependenciesValid(draft)) return;
-        mutation.mutate({ kind: "start", options: {
-          title: draft.title.trim(), prompt: draft.prompt.trim(),
-          context: draft.context,
-          throughTurnId: draft.context === "fork" && draft.throughTurnId.trim() ? draft.throughTurnId.trim() : null,
-          workspaceMode: draft.workspaceMode,
-          worktreeBase: draft.workspaceMode === "worktree" ? draft.worktreeBase : "head",
-          model: draft.model.trim() || null, ...options(draft),
-        } });
-      }}>
-        <label>{t.titleLabel}<input value={draft.title} maxLength={200} disabled={pending} onChange={(event) => update({ ...draft, title: event.target.value })} /></label>
-        <label>{t.brief}<textarea value={draft.prompt} disabled={pending} placeholder={t.placeholder} onChange={(event) => update({ ...draft, prompt: event.target.value })} /></label>
-        <div className="child-options">
-          <label>{t.contextLabel}<select value={draft.context} disabled={pending} onChange={(event) => update({ ...draft, context: event.target.value === "fork" ? "fork" : "fresh" })}>
-            <option value="fresh">{t.contextFresh}</option><option value="fork">{t.contextFork}</option>
-          </select></label>
-          {draft.context === "fork" && <label>{t.forkTurnLabel}<input value={draft.throughTurnId} disabled={pending} placeholder={t.forkTurnPlaceholder} onChange={(event) => update({ ...draft, throughTurnId: event.target.value })} /></label>}
-          <label>{t.workspaceLabel}<select value={draft.workspaceMode} disabled={pending} onChange={(event) => update({ ...draft, workspaceMode: event.target.value === "worktree" ? "worktree" : "shared_read_only" })}>
-            <option value="shared_read_only">{t.workspaceReadOnly}</option><option value="worktree">{t.workspaceWorktree}</option>
-          </select></label>
-          {draft.workspaceMode === "worktree" && <label>{t.worktreeBaseLabel}<select value={draft.worktreeBase} disabled={pending} onChange={(event) => update({ ...draft, worktreeBase: event.target.value === "snapshot" ? "snapshot" : "head" })}>
-            <option value="head">{t.worktreeHead}</option><option value="snapshot">{t.worktreeSnapshot}</option>
-          </select></label>}
-          <label>{t.modelLabel}<input value={draft.model} maxLength={256} disabled={pending} placeholder={t.modelPlaceholder} onChange={(event) => update({ ...draft, model: event.target.value })} /></label>
-        </div>
-        {draft.workspaceMode === "worktree" && <p className="child-session-hint">{t.worktreeHint}</p>}
-        {draft.model.trim() && <p className="child-session-hint">{t.modelHint}</p>}
-        {capabilities.data && <ChildTaskOptionsFields value={draft} onChange={(value) => update({ ...draft, ...value })} tasks={uniqueTasks} features={capabilities} disabled={pending || !capabilitiesReady} language={language} />}
-        {tasks.hasNextPage && capabilities.dependencies && <button type="button" disabled={tasks.isFetchingNextPage} onClick={() => void tasks.fetchNextPage()}>{t.more}</button>}
-        <footer><span>{Array.from(draft.prompt).length}/{BRIEF_LIMIT}</span><button type="submit" disabled={pending || !capabilitiesReady || !draft.title.trim() || !validPrompt(draft.prompt) || !dependenciesValid(draft)}>{pending ? t.working : t.start}</button></footer>
-      </form>
-    </details>}
-    {notice && <p role="status">{t.created}</p>}
-    {!tasks.isPending && !failure && !uniqueTasks.length && <p className="child-session-empty">{t.empty}</p>}
+    {(tasks.error || proposals.error || capabilities.error) && <button type="button" disabled={refreshing} onClick={refresh}>{p.retry}</button>}
+    <ChildSessionProposals key={sessionId} sessionId={sessionId} proposals={pendingProposals} tasks={uniqueTasks} language={language} />
     <ol className="child-task-list">{uniqueTasks.map((task) => {
       const terminal = childTaskTerminal(task.status);
       const controlled = childTaskControlled(task);

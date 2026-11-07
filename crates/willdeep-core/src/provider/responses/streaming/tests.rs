@@ -2,6 +2,22 @@ use super::*;
 use crate::provider::stream_test_support::{Events, frame, server};
 use serde_json::json;
 
+#[test]
+fn stream_error_retains_cause_without_upstream_request_fields() {
+    let error = push(
+        &mut State::default(),
+        json!({"type": "error",
+            "code": "invalid_model", "message": "The selected model does not support tools",
+            "request": "private prompt", "debug": "private diagnostics"
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("invalid_model"), "{error}");
+    assert!(error.contains("does not support tools"), "{error}");
+    assert!(!error.contains("private"), "{error}");
+}
+
 pub(super) fn push(
     state: &mut State,
     value: Value,

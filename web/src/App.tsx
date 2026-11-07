@@ -65,6 +65,7 @@ import { AgentLibrary } from "./AgentLibrary";
 import { allowAgentNavigation } from "./agentNavigation";
 import { agentText } from "./agentLibraryMessages";
 import { RuntimeFailureDetails } from "./RuntimeFailureDetails";
+import { runtimeFailureMessage, runtimeFailureReference, type RuntimeFailure } from "./runtimeErrors";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { WorkflowCard } from "./WorkflowCard";
@@ -80,7 +81,7 @@ function lineageTime(createdAt: number, t: Messages): string {
   if (elapsed < 86400) return t.timeHoursAgo.replace("{count}", String(Math.floor(elapsed / 3600)));
   return t.timeDaysAgo.replace("{count}", String(Math.floor(elapsed / 86400)));
 }
-type SessionDetail = { id: string; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null; reasoning_level?: string | null };
+type SessionDetail = { id: string; failure?: RuntimeFailure | null; workspace: string; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; messages: ConversationItem[]; response_style?: "short" | "detailed" | null; approval_mode?: WorkspaceAccess | null; workspace_access: WorkspaceAccess; model?: string | null; provider_id?: string | null; reasoning_level?: string | null };
 type RewindPoint = { step: number; turn_id: string | null; snippet: string; completed_at: number | null; can_restore_workspace: boolean };
 type RewindResult = { message_count: number; dropped_turn_ids: string[]; workspace: { restored: string[]; removed: string[]; skipped: string[]; recovery_path: string | null } | null };
 
@@ -153,38 +154,9 @@ type RuntimeStreamEvent = {
   task_id?: string | null;
   reason?: string | null;
   failure_domain?: string | null;
+  failure_detail?: string | null;
 };
 type RuntimeFailureReference = { sessionId: string; taskId: string };
-const failureReasonMessageKeys: Record<string, keyof Messages> = {
-  context_overflow: "turnFailureContextOverflow",
-  rate_limited: "turnFailureRateLimited",
-  auth: "turnFailureAuth",
-  quota: "turnFailureQuota",
-  stream_timeout: "turnFailureStreamTimeout",
-  timeout: "turnFailureTimeout",
-  network: "turnFailureNetwork",
-  provider_unavailable: "turnFailureProviderUnavailable",
-  execution_owner_conflict: "turnFailureOwnerConflict",
-  unclassified: "turnFailureUnclassified",
-  runtime_restarted: "turnFailureRuntimeRestarted",
-};
-const failureDomainMessageKeys: Record<string, keyof Messages> = {
-  provider: "failureProvider",
-  policy: "failurePolicy",
-  tool: "failureTool",
-  harness: "failureHarness",
-  internal: "failureInternal",
-  unknown: "failureInternal",
-};
-function runtimeFailureMessage(event: RuntimeStreamEvent, t: Messages): string {
-  if (event.message === "turn.cancelled") return t.turnFailureCancelled;
-  if (event.message === "turn.interrupted") return t.turnFailureInterrupted;
-  const reasonKey = event.reason ? failureReasonMessageKeys[event.reason] : undefined;
-  const reason = reasonKey ? t[reasonKey] : t.turnFailureUnknown;
-  const domainKey = event.failure_domain ? failureDomainMessageKeys[event.failure_domain] : undefined;
-  const domain = domainKey ? ` · ${t.failureDomain}: ${t[domainKey]}` : "";
-  return `${t.requestFailed}: ${reason}${domain}`;
-}
 const defaultCommands = ["/help", "/goal", "/permissions", "/model", "/compress", "/skills", "/clear", "/short", "/verbose", "/name"];
 const lastSessionPrefix = "willdeep.web.last-session.";
 const runtimeCursorPrefix = "willdeep.web.runtime-cursor.";
@@ -802,6 +774,8 @@ export function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
+    setError(detail.failure ? runtimeFailureMessage(detail.failure, t) : "");
+    setRuntimeFailure(detail.failure ? runtimeFailureReference(detail.failure, detail.id) : null);
     setSessionRelation({ id: detail.id, parent: detail.parent_session_id ?? null, readOnly: detail.delegation_read_only ?? false, detached: detail.delegation_detached ?? false });
     replyStyleRef.current = detail.response_style ?? null;
     setApprovalMode(detail.approval_mode ?? null);
@@ -885,9 +859,7 @@ export function App() {
       return { terminal: true as const, text: event.text || t.emptyReply };
     }
     if (event.type === "error") {
-      if (currentSessionId && event.task_id && (event.message === "turn.failed" || event.message === "turn.interrupted")) {
-        setRuntimeFailure({ sessionId: currentSessionId, taskId: event.task_id });
-      }
+      setRuntimeFailure(currentSessionId ? runtimeFailureReference(event, currentSessionId) : null);
       return { terminal: true as const, error: runtimeFailureMessage(event, t) };
     }
     if (event.type === "assistant_text_delta") {
@@ -1162,8 +1134,10 @@ export function App() {
   }
   loadSessionRef.current = loadSession;
 
-  function openRelatedSession(id: string) {
-    if (busy) {
+  function openRelatedSession(id: string, activeTurnId?: string | null) {
+    setMobileSessionsOpen(false);
+    if (id === sessionIdRef.current) return;
+    if (busy || prompt.trim() || attachmentsRef.current.length > 0) {
       // The current stream remains attached here; the independent conversation
       // opens with its own stream and approval controls.
       const url = new URL(window.location.href);
@@ -1172,7 +1146,7 @@ export function App() {
       window.open(url.toString(), "_blank", "noopener");
       return;
     }
-    void loadSession(id, sessions.find((item) => item.id === id)?.active_turn_id);
+    void loadSession(id, activeTurnId ?? sessions.find((item) => item.id === id)?.active_turn_id);
   }
 
   async function refreshSessions() {
@@ -1689,7 +1663,7 @@ export function App() {
         <Text fontSize="2xs" color="var(--text-faint)" mt="1">{t.addWorkspaceHint}</Text>
         {workspaceError && <Text fontSize="xs" color="var(--danger-text)" mt="1">{workspaceError}</Text>}
       </Box>}
-      <RuntimeSidebar workflowPanel={<WorkflowSidebar key={sessionId} parentSessionId={sessionId} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} />} onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && !childReadOnly && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
+      <RuntimeSidebar language={language} onOpenSession={openRelatedSession} workflowPanel={<WorkflowSidebar key={sessionId} parentSessionId={sessionId} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} />} onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && !childReadOnly && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="4">

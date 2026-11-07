@@ -2,8 +2,12 @@ use super::*;
 
 use willdeep_runtime_protocol::ApiRequest;
 
+#[path = "confirmation_origin_tests.rs"]
+mod confirmation_origin;
 #[path = "p2_tests.rs"]
 mod p2;
+#[path = "proposal_tests.rs"]
+mod proposals;
 
 struct Fixture {
     root: PathBuf,

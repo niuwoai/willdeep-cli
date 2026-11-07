@@ -50,6 +50,9 @@ pub(in crate::daemon) struct Ledger {
     /// Durable responses for user control operations; request IDs survive restart.
     #[serde(default)]
     pub mutations: BTreeMap<Uuid, MutationReceipt>,
+    /// Web chat suggestions do not allocate Sessions or Turns until confirmed.
+    #[serde(default)]
+    pub proposals: BTreeMap<Uuid, super::proposals::Proposal>,
 }
 
 impl Default for Ledger {
@@ -63,6 +66,7 @@ impl Default for Ledger {
             slots: BTreeMap::new(),
             wakes: BTreeMap::new(),
             mutations: BTreeMap::new(),
+            proposals: BTreeMap::new(),
         }
     }
 }
