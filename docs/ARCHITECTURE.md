@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-07 | 当前版本：v0.147.0-rc8
+> 最后更新：2026-11-08 | 当前版本：v0.147.0-rc9
 
 ## 分发
 
@@ -81,7 +81,7 @@ Harness 在模型请求前采集基线，失败保留路径与错误链，先脱
 
 默认父 Harness 在全局配置能力允许时挂载 `ChatConfigurationHost`，Core 通过 `ConfigurationHost` trait 暴露 `configuration_read`（schema/snapshot/plan）与 `configuration_write`（apply）。该能力独立于用户插件目录、普通 MCP 服务和 Web 网关；Worker、委派子会话及受限 MCP 任务不会继承它。写操作沿用全局写审批和共享审批句柄，`workspace-write` 不会将其当成工作区内编辑放行；只读保持硬拒绝，未知结果的写操作进入现有副作用恢复门禁。配置写重放先检查计划身份、参数和当前权限，再请求一次性审批；失效或只读计划不弹审批。
 
-CLI 适配器绑定实际配置绝对路径，现有符号链接解析到目标。首次调用才展开内嵌配置资产并用已有 MCP stdio 客户端启动私有 Ruby 服务，显式注入 `WD_CONFIG_FILE`、`WD_HOME`、`WD_CONFIG_BACKUP_DIR`；不安装/启用/批准插件。首版只编辑三个 `[agent] compressor_*` 字段，结构化查看仅返回这些字段及 Provider 的名称、模型、窗口；原文、注释、未知节和密钥预览不进入模型上下文。
+CLI 适配器绑定实际配置绝对路径，现有符号链接解析到目标。首次调用才展开内嵌配置资产并用已有 MCP stdio 客户端启动私有 Ruby 服务，显式注入 `WD_CONFIG_FILE`、`WD_HOME`、`WD_CONFIG_BACKUP_DIR`；不安装/启用/批准插件。首版只编辑三个 `[agent] compressor_*` 字段，结构化查看返回这些字段、Provider 的名称、模型、窗口，以及每个 `[subagents.*]` 的 `provider_profile` 与 `model`；原文、注释、未知节和密钥预览不进入模型上下文。
 
 `plan` 复用 Ruby schema/渲染，私有传输将候选文档交给 Rust `ConfigFile` 解析、`config::validate` 与 `build_compression_settings` 校验，随后仅返回结构化变更和宿主 plan_id。每个宿主保留最新成功计划，绑定本实例、目标、edits 及文件 SHA256 revision；`apply` 只收 plan_id，在审批后注入保存参数。共享 Ruby 保存路径在文件锁内重新检查 revision、备份、原子替换及写后校验。不同目标共用备份目录时，再以目录级锁覆盖备份名称分配和写入，避免同名配置覆盖彼此备份。回执丢失不自动重放；已收到的成功回执可幂等返回。文件锁协调使用同一配置服务协议的保存，普通外部编辑器不参与该协议。
 

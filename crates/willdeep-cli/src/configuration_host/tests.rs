@@ -236,6 +236,61 @@ async fn snapshot_and_preview_never_expose_credentials_raw_comments_or_multiline
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 工种的 provider 与 model 必须进快照：模型回答「implementer 用什么模型」时
+/// 读的就是这份投影。没写的字段保持 null，不能被当成没这一段。预算、超时和
+/// 密钥仍不出现，写入范围也不因此变大。
+#[tokio::test]
+async fn snapshot_includes_each_subagent_provider_and_model() {
+    let (root, path, host) = fixture();
+    std::fs::write(
+        &path,
+        "version = 1\n[providers.some-im]\nprovider = \"openai-compatible\"\napi_base = \"http://127.0.0.1:1/v1\"\napi_key = \"synthetic-fixture\"\nmodel = \"qwen3.8-27b\"\n[subagents.implementer]\nprovider_profile = \"some-im\"\nmodel = \"qwen3.8-27b\"\nmax_turns = 9\n[subagents.reviewer]\nprovider_profile = \"some-im\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let snapshot = host.execute("snapshot", json!({})).await.unwrap();
+    let text = snapshot.to_string();
+    assert!(!text.contains("synthetic-fixture"), "{text}");
+    assert!(!text.contains("max_turns"), "{text}");
+    let implementer = snapshot["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["name"] == "subagents.implementer")
+        .expect("implementer section");
+    let field = |key: &str| {
+        implementer["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["key"] == key)
+            .unwrap_or_else(|| panic!("{key} missing: {implementer}"))
+    };
+    assert_eq!(field("provider_profile")["value"], "some-im");
+    assert_eq!(field("model")["value"], "qwen3.8-27b");
+    let reviewer = snapshot["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["name"] == "subagents.reviewer")
+        .expect("reviewer section");
+    let model = reviewer["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["key"] == "model")
+        .expect("unset model");
+    assert!(model["value"].is_null(), "{model}");
+    assert_eq!(model["hasValue"], false);
+    assert_eq!(snapshot["editable_keys"], json!(COMPRESSOR_KEYS));
+    drop(host);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn config_symlinks_are_pinned_to_the_loaded_target() {

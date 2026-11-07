@@ -453,6 +453,14 @@ pub(super) fn render_with_user_folds(
             }
         }
         text.lines.extend(entry.lines);
+        // 空行只属于分隔线与下一条用户消息之间。逐条上色看不到下一条是什么，
+        // 所以留在这里：后面没有用户消息时（最后一行、或后面是 Thought）不留。
+        let followed_by_user = rows
+            .get(index + 1)
+            .is_some_and(|row| row.starts_with("You:"));
+        if displayed.starts_with(TURN_DIVIDER_PREFIX) && followed_by_user {
+            text.lines.push(Line::default());
+        }
     }
     FoldedFrame {
         text,

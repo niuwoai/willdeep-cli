@@ -178,7 +178,7 @@ impl ToolRegistry {
         if self.agent_definition_host.is_some() {
             definitions.push(host_definition(
                 "agent_library_read",
-                "Read this host's specialist Agent library: list available definition ids, get a definition and its installation_revision, or inspect history. list/get record each selected local/private installation in the host for subsequent management CAS; history alone does not select a target. Built-in roles are permission ceilings. New specialists can be used by spawn_agent in this same turn after a successful management call.",
+                "Read this host's specialist Agent library: list available definition ids, get a definition and its installation_revision, or inspect history. An installation binding of null inherits the model; it does not describe the built-in responsibilities, whose provider and model live in [subagents.*] and are read with configuration_read. list/get record each selected local/private installation in the host for subsequent management CAS; history alone does not select a target. Built-in roles are permission ceilings. New specialists can be used by spawn_agent in this same turn after a successful management call.",
                 LIBRARY_READ,
             ));
             definitions.push(host_definition(
@@ -202,7 +202,7 @@ impl ToolRegistry {
         if self.configuration_host.is_some() {
             definitions.push(definition(
                 "configuration_read",
-                "Inspect the host's configuration schema or redacted snapshot, or prepare a change plan. Read schema for supported targets and plan parameters. plan validates edits without applying them and returns a host-owned plan_id and redacted preview. Use configuration_write apply with that plan_id to commit the saved plan. Available only to the parent session.",
+                "Inspect the host's configuration schema or redacted snapshot, or prepare a change plan. The snapshot includes each [subagents.<responsibility>] provider_profile and model; a null value means that responsibility follows the session model. That binding is separate from an installed specialist's binding, which stays null unless agent_library_manage bind set one. Read schema for supported targets and plan parameters. plan validates edits without applying them and returns a host-owned plan_id and redacted preview. Use configuration_write apply with that plan_id to commit the saved plan. Available only to the parent session.",
                 json!({"type":"object","properties":{
                     "operation":{"type":"string","enum":CONFIGURATION_READ},
                     "params":{"type":"object","description":"schema/snapshot use {}. plan uses {edits:[{op:'set'|'unset',section:'agent',key:'compressor_model'|'compressor_profile'|'compressor_context_window',value:...}]}; omit value for unset. Inspect schema/snapshot first. Identity and configuration path are supplied by the host; no path or request_id parameter is accepted."}
