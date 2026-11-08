@@ -918,6 +918,19 @@ async fn run() -> Result<()> {
         .unwrap_or_default();
 
     let interactive_tui = prompt.is_none() && std::io::stdin().is_terminal() && !cli.no_tui;
+    let (tui_tx, tui_rx) = tui::channel();
+    // MuseTerm writes gallery frames into the same stream as the keys. The filter must be in
+    // place before the first reader touches stdin — the session picker below is one — so it is
+    // installed here rather than in the event loop. A terminal that does not set either marker
+    // never gets a hello, so it keeps an untouched stdin.
+    let _gallery_input = if interactive_tui
+        && std::io::stdout().is_terminal()
+        && crate::gallery::hosted()
+    {
+        crate::gallery::GalleryInput::install(tui_tx.clone()).ok()
+    } else {
+        None
+    };
     let directory_approval = session_startup::prepare(
         &cli,
         &loaded,
@@ -947,7 +960,6 @@ async fn run() -> Result<()> {
         )
         .await;
     }
-    let (tui_tx, tui_rx) = tui::channel();
     let frontend =
         if let Some(connection) = web_input.as_ref().and_then(|input| input.runtime.clone()) {
             harness::HarnessFrontend::Runtime {

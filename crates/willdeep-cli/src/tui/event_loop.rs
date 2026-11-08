@@ -398,7 +398,7 @@ async fn open_external_editor(
 }
 
 /// Applies one request from the terminal's image column and tells the column what changed.
-/// Requests only arrive through the unix input splice.
+/// Requests only arrive through the filtered pty.
 #[cfg(unix)]
 fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
     use std::io::Write;
@@ -527,19 +527,10 @@ pub(super) async fn event_loop(
     app.background_tasks = runtime.background_tasks.snapshots();
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
-    // Sits in front of the terminal's own reader. The terminal sends gallery bytes only after it
-    // has seen the hello below, so a build that never reaches this line never has to filter them.
-    // Windows has no pipe splice, so the column stays off there and no hello is written.
-    #[cfg(unix)]
-    if let Ok((_, mut forwarder)) = crate::gallery::GalleryInput::install() {
-        let tx = runtime.tx.clone();
-        tokio::task::spawn_blocking(move || {
-            while let Ok(Some(request)) = forwarder.recv() {
-                if tx.send(UiMessage::Gallery(request)).is_err() {
-                    break;
-                }
-            }
-        });
+    // The terminal sends gallery bytes only after it has seen this hello. The filtered pty that
+    // answers them was installed in `main`, before anything read stdin; without it there is no
+    // hello, so a build that cannot filter never receives a frame.
+    if crate::gallery::active() {
         let _ = crate::gallery::announce(
             &mut io::stdout(),
             "hello",

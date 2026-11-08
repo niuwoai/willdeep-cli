@@ -142,6 +142,9 @@ pub(super) async fn edit(
     std::fs::write(&file, original)
         .with_context(|| format!("write prompt draft to {}", file.display()))?;
     drop(std::mem::replace(events, EventStream::new()));
+    // 编辑器继承的 stdin 是过滤后的 pty，先把真实终端的大小同步过去，
+    // 否则全屏编辑器会按过期的尺寸排版。
+    crate::gallery::sync_window_size();
     suspend(term)?;
     let status = run_editor(editor, &file, workspace).await;
     // 不管编辑器怎么结束，终端都要先收回来，否则错误提示没地方显示。
