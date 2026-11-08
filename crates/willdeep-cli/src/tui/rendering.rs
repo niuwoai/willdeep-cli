@@ -17,6 +17,7 @@ pub(super) struct TranscriptRenderCache {
 }
 
 impl App {
+    #[allow(clippy::type_complexity)]
     pub(super) fn prepare_transcript_frame(
         &mut self,
     ) -> (

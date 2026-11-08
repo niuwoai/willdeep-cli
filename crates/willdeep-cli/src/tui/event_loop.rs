@@ -397,6 +397,40 @@ async fn open_external_editor(
     Ok(())
 }
 
+/// Applies one request from the terminal's image column and tells the column what changed.
+fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
+    use std::io::Write;
+    let mut out = io::stdout();
+    match request {
+        crate::gallery::GalleryRequest::Paste { nonce, png } => {
+            let Some(attachment) = crate::gallery::attachment_from_png(&png) else {
+                let _ = crate::gallery::reject(&mut out, &nonce, "not a png");
+                let _ = out.flush();
+                return;
+            };
+            let id = attachment.id;
+            if app.append_draft_attachment(attachment) {
+                let _ = crate::gallery::acknowledge(&mut out, &nonce, id);
+            } else {
+                let _ = crate::gallery::reject(&mut out, &nonce, "limit");
+            }
+        }
+        crate::gallery::GalleryRequest::Delete { id } => {
+            let Ok(uuid) = uuid::Uuid::parse_str(&id) else { return };
+            if let Some(index) = app.attachments.iter().position(|item| item.id == uuid) {
+                app.attachments.remove(index);
+                app.selected_attachment = app
+                    .selected_attachment
+                    .min(app.attachments.len().saturating_sub(1));
+                let _ = crate::gallery::confirm_removed(&mut out, &id);
+                let images = crate::gallery::gallery_images(&app.attachments);
+                let _ = crate::gallery::announce_list(&mut out, &images);
+            }
+        }
+    }
+    let _ = out.flush();
+}
+
 pub(super) async fn event_loop(
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     agent: Arc<Agent>,
@@ -489,6 +523,23 @@ pub(super) async fn event_loop(
     app.background_tasks = runtime.background_tasks.snapshots();
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
+    // Sits in front of the terminal's own reader. The terminal sends gallery bytes only after it
+    // has seen the hello below, so a build that never reaches this line never has to filter them.
+    if let Ok((_, mut forwarder)) = crate::gallery::GalleryInput::install() {
+        let tx = runtime.tx.clone();
+        tokio::task::spawn_blocking(move || {
+            while let Ok(Some(request)) = forwarder.recv() {
+                if tx.send(UiMessage::Gallery(request)).is_err() {
+                    break;
+                }
+            }
+        });
+        let _ = crate::gallery::announce(
+            &mut io::stdout(),
+            "hello",
+            &format!("willdeep {}", env!("CARGO_PKG_VERSION")),
+        );
+    }
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
     // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
@@ -1942,6 +1993,7 @@ pub(super) async fn event_loop(
                 _=>{}
             }},
             Some(message)=runtime.rx.recv()=>match message {
+                UiMessage::Gallery(request)=>handle_gallery(&mut app, request),
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
                     willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),
                     willdeep_core::provider::ProviderEvent::TextDelta(text)=>app.stream_transient(StreamKind::Reply,&text),

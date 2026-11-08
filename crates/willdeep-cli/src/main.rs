@@ -31,6 +31,7 @@ mod event_cmd;
 mod favorites_plugin;
 mod federation;
 mod feedback_cmd;
+mod gallery;
 mod feedback_review_cmd;
 mod handoff_cmd;
 mod harness;

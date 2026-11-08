@@ -151,10 +151,7 @@ pub(super) fn append_plan_reply(entries: &mut Vec<String>, reply: &str) -> bool 
     true
 }
 
-pub(super) fn session_transcript(session: &Session, language: Language) -> Vec<String> {
-    projected_transcript(&session.messages, session.current_plan.as_ref(), language)
-}
-
+#[cfg(test)]
 pub(super) fn projected_transcript(
     messages: &[Message],
     plan: Option<&Plan>,

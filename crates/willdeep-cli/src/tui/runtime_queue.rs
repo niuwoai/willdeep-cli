@@ -353,6 +353,7 @@ fn finish_input_submission(
                 .map(|item| item.message)
                 .collect::<Vec<_>>();
             app.selected_attachment = 0;
+            app.publish_gallery();
             let message = app.language.text(
                 "已加入队列，暂不发送 · Ctrl+Q 里按 S 再发",
                 "Queued for later · press S in Ctrl+Q to send it",
