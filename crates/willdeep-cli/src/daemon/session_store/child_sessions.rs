@@ -76,6 +76,7 @@ impl RuntimeSessionStore {
             workspace,
             profile: core.profile,
             model: core.model,
+            reasoning_level: source.reasoning_level.clone(),
             config: core.config,
             magpie_integration: source.magpie_integration,
             approval_mode: source.approval_mode,

@@ -59,6 +59,7 @@ mod plugin_web;
 mod projects;
 mod prompt_cmd;
 mod provider_settings;
+mod gallery;
 mod qterm;
 mod schedule_cmd;
 mod screenplay_cmd;
@@ -963,6 +964,7 @@ async fn run() -> Result<()> {
                 instruction_inbox: None,
                 allowed_skills: Vec::new(),
                 allowed_mcp_servers: Vec::new(),
+                reasoning_level: None,
                 // Web 桥接子进程：自己调模型，不经过 daemon 的执行器。
                 usage_origin: harness::UsageOrigin {
                     execution: willdeep_core::usage_ledger::Execution::InProcess,

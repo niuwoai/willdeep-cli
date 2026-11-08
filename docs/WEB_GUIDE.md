@@ -87,7 +87,8 @@ TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 
 | 操作 | 行为 |
 |---|---|
-| `Enter` | 发送 |
+| `Enter` | 空闲时发送；运行中持久入队；等待审批/回答时保留普通文本草稿并打开原请求 |
+| `Cmd/Ctrl+Enter` | 明确加入待发队列 |
 | `Shift+Enter` | 换行 |
 | 粘贴图片 | 自动转为图片附件并显示缩略图与尺寸 |
 | 粘贴长文本 | 含换行或超过 200 字符时自动转为 `.txt` 附件，不塞进输入框 |
@@ -104,7 +105,7 @@ TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 用户已经开始打字或新一轮已经开始时晚到的结果直接丢弃。预测只在浏览器内存里：刷新页面即无，也不写进会话。
 与 TUI 同一契约、同一档模型候选，受同一个 `[agent] input_suggestions` 开关管，见 TUI_GUIDE.md「轮次结束后的下一句预测」。
 
-Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。点击 `/model` 或 `/permissions` 命令候选会直接打开对应面板；输入完整命令也会打开面板。模型与权限选择器位于输入框下方。顶部协作、分享和定时任务入口只显示图标，悬停提示使用当前界面语言。
+Web 端的 `/` 命令是前端拦截的：`/clear` 清空显示、`/help` 打印帮助、`/skills` 列出技能、`/goal <文本>` 开启目标模式、`/goal off` 关闭。点击 `/model` 或 `/permissions` 命令候选会直接打开对应面板；输入完整命令也会打开面板。模型、思考等级与权限选择器位于输入框下方。思考等级选择器展示当前 Provider 配置的逻辑等级；选择 Provider 默认会清除会话覆盖。即使当前 Provider 没有等级映射，也可清除此前保留的会话覆盖。配置工作区的“思考等级映射”区域可为各 Provider 编辑默认逻辑等级、请求参数路径和上游值；这里保存时仅修改映射，保留连接设置及环境变量引用。顶部协作、分享和定时任务入口只显示图标，悬停提示使用当前界面语言。
 
 目标模式的开关和文本框也在输入框下方。启用后，目标会附加到本会话后续消息；关闭开关会保留文本供重新启用，`/goal off` 会清空目标。Web 将目标按 Session ID 保存在当前浏览器的 localStorage，刷新后仍有效，但不会同步到 TUI 或其他浏览器。
 
@@ -293,6 +294,8 @@ ssh -L 9847:127.0.0.1:9847 user@remote
 | GET | `/api/sessions/{id}/export` | 脱敏 JSON 导出 |
 | GET | `/api/models` | 配置里的 Provider/模型候选 `[{ provider_id, provider, model }]` |
 | POST | `/api/sessions/{id}/model` | 切换会话模型：`{ model, provider_id? }`；带 `provider_id` 走会话 `configure`，否则只换模型名。仅回环监听开放 |
+| POST | `/api/sessions/{id}/reasoning-level` | 设置会话思考等级：`{ reasoning_level }`；传 `null` 清除覆盖并跟随 Provider 默认。仅回环监听开放 |
+| GET / PUT | `/api/settings/providers` | 读取或更新 Provider Profile 与思考等级映射；PUT 仅回环监听开放 |
 | GET / POST / DELETE | `/api/sessions/{id}/share` | 读取 / 创建（`{ mode: "read" \| "chat" }`）/ 撤销分享链接。仅回环监听开放，且会话工作区须在 allowlist 内 |
 | POST | `/api/turns/{id}/stop` | 停止 Turn |
 | GET | `/api/workspaces` | 工作区列表与访问模式 |

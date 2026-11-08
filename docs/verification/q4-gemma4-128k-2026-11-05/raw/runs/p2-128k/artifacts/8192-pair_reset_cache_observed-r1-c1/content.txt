@@ -1,0 +1,26 @@
+1. Automated test fixtures ensure consistency across regression testing cycles.
+2. Isolated regression fixtures allow for granular identification of bugs within specific logic branches.
+3. Synthetic test data helps validate edge cases that may not be easily reproducible in production environments.
+4. Assertions provide a clear, binary definition of success or failure for any given input.
+5. Modularizing tests into individual records improves maintainability and readability of the test suite.
+6. Standardizing the input/output format across fixtures simplifies the implementation of test runners.
+7. Regression testing is essential for preventing the reintroduction of previously fixed defects.
+8. Using specific constants (like 997) in fixtures helps verify mathematical correctness and overflow handling.
+9. Automated validation reduces the human error associated with manual test execution.
+10. Comprehensive test coverage is achieved by systematically iterating through a wide range of expected values.
+11. Test fixtures serve as a "source of truth" for expected behavior in software specifications.
+12. Rapid feedback loops are enabled when tests can be executed automatically during the CI/CD pipeline.
+13. Unit tests focusing on small, isolated functions are easier to debug than large, integrated tests.
+14. Mocking and stubbing can be used alongside fixtures to simulate complex external dependencies.
+15. Documentation through code (like comments in fixtures) helps developers understand the intent of specific tests.
+16. Scalable testing requires a systematic approach to generating and managing thousands of test cases.
+17. Boundary value analysis is a key strategy for selecting which inputs to include in test fixtures.
+18. Equivalence partitioning helps reduce the number of test cases while maintaining high confidence in software quality.
+19. Error handling paths should be explicitly tested using fixtures that provide invalid or malformed inputs.
+20. Performance testing can be integrated into the fixture framework to monitor execution time for specific operations.
+21. Test data poisoning can occur if synthetic fixtures are not properly isolated from one another.
+22. Refactoring code is safer when a robust suite of regression fixtures is already in place.
+23. Traceability between requirements and test fixtures ensures that all functional needs are verified.
+24. Flaky tests can undermine confidence in the automated suite and should be identified and resolved quickly.
+25. Parameterized testing allows for the reuse of test logic across multiple different input values.
+26. Code coverage metrics provide a high-level view of which parts

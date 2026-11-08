@@ -1,0 +1,56 @@
+{
+  "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/12b/mtp-gemma-4-12B-it.gguf",
+  "bytes": 253708800,
+  "gguf_version": 3,
+  "tensors": 49,
+  "metadata": {
+    "general.architecture": "gemma4-assistant",
+    "general.type": "model",
+    "general.sampling.top_k": 64,
+    "general.sampling.top_p": 0.949999988079071,
+    "general.sampling.temp": 1.0,
+    "general.name": "12B Assistant",
+    "general.finetune": "12B-assistant",
+    "general.size_label": "423M",
+    "gemma4-assistant.block_count": 4,
+    "gemma4-assistant.context_length": 262144,
+    "gemma4-assistant.embedding_length": 1024,
+    "gemma4-assistant.attention.head_count": 16,
+    "gemma4-assistant.attention.head_count_kv": {
+      "array_type": 5,
+      "count": 4
+    },
+    "gemma4-assistant.rope.freq_base": 1000000.0,
+    "gemma4-assistant.rope.freq_base_swa": 10000.0,
+    "gemma4-assistant.attention.layer_norm_rms_epsilon": 9.999999974752427e-07,
+    "gemma4-assistant.attention.key_length": 512,
+    "gemma4-assistant.attention.value_length": 512,
+    "general.file_type": 32,
+    "gemma4-assistant.attention.sliding_window": 1024,
+    "gemma4-assistant.attention.shared_kv_layers": 4,
+    "gemma4-assistant.embedding_length_per_layer_input": 0,
+    "gemma4-assistant.attention.sliding_window_pattern": {
+      "array_type": 7,
+      "count": 4
+    },
+    "gemma4-assistant.attention.key_length_swa": 256,
+    "gemma4-assistant.attention.value_length_swa": 256,
+    "gemma4-assistant.rope.dimension_count": 512,
+    "gemma4-assistant.rope.dimension_count_swa": 256,
+    "gemma4-assistant.embedding_length_out": 3840,
+    "gemma4-assistant.nextn_predict_layers": 4,
+    "general.quantization_version": 2
+  },
+  "tensor_types": [
+    {
+      "id": 0,
+      "name": "F32",
+      "count": 26
+    },
+    {
+      "id": 2,
+      "name": "Q4_0",
+      "count": 23
+    }
+  ]
+}

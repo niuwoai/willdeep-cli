@@ -1,0 +1,12 @@
+{
+  "status": "deployed_and_healthy",
+  "tool_version": "1.0.0-rc2",
+  "run_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p2-128k-retry1",
+  "identity": {
+    "verified_at": "2026-11-04T18:24:35Z",
+    "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf",
+    "model_alias": "gemma-4-12b-qat",
+    "total_slots": 2,
+    "context_per_slot": 131072
+  }
+}

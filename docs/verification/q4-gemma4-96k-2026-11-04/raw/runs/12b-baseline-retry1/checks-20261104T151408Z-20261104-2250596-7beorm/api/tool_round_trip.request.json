@@ -1,0 +1,71 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:11435/v1/chat/completions",
+  "body": {
+    "model": "gemma-4-12b-qat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Use add to calculate 19 plus 23. Call the tool once with a=19 and b=23."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "add",
+              "arguments": "{\"a\":19,\"b\":23}"
+            },
+            "id": "3kaSYrYwzjlsMoO2VchyY0td30XQRYB1"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "3kaSYrYwzjlsMoO2VchyY0td30XQRYB1",
+        "content": "{\"result\":42,\"receipt\":\"dad2864517cdee40\"}"
+      },
+      {
+        "role": "user",
+        "content": "Return only a JSON object with result and receipt copied exactly from the tool response, with no extra fields."
+      }
+    ],
+    "temperature": 0,
+    "max_tokens": 2048,
+    "stream": false,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "add",
+          "description": "Add two integers.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "integer"
+              },
+              "b": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "tool_choice": "none",
+    "response_format": {
+      "type": "json_object"
+    }
+  }
+}

@@ -1,0 +1,403 @@
+{"received_ms":32218.428004009183,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":1,"tokens_evaluated":73728}}
+{"received_ms":32238.630623032805,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":2,"tokens_evaluated":73728}}
+{"received_ms":32260.518688999582,"event":{"index":0,"content":" Automated","tokens":[94770],"stop":false,"id_slot":-1,"tokens_predicted":3,"tokens_evaluated":73728}}
+{"received_ms":32277.36427099444,"event":{"index":0,"content":" regression","tokens":[21055],"stop":false,"id_slot":-1,"tokens_predicted":4,"tokens_evaluated":73728}}
+{"received_ms":32294.20713498257,"event":{"index":0,"content":" testing","tokens":[7257],"stop":false,"id_slot":-1,"tokens_predicted":5,"tokens_evaluated":73728}}
+{"received_ms":32310.992159007583,"event":{"index":0,"content":" ensures","tokens":[22606],"stop":false,"id_slot":-1,"tokens_predicted":6,"tokens_evaluated":73728}}
+{"received_ms":32327.6924440288,"event":{"index":0,"content":" that","tokens":[600],"stop":false,"id_slot":-1,"tokens_predicted":7,"tokens_evaluated":73728}}
+{"received_ms":32344.346039986704,"event":{"index":0,"content":" new","tokens":[861],"stop":false,"id_slot":-1,"tokens_predicted":8,"tokens_evaluated":73728}}
+{"received_ms":32361.14487698069,"event":{"index":0,"content":" code","tokens":[3393],"stop":false,"id_slot":-1,"tokens_predicted":9,"tokens_evaluated":73728}}
+{"received_ms":32377.838200016413,"event":{"index":0,"content":" changes","tokens":[3731],"stop":false,"id_slot":-1,"tokens_predicted":10,"tokens_evaluated":73728}}
+{"received_ms":32394.60478600813,"event":{"index":0,"content":" do","tokens":[776],"stop":false,"id_slot":-1,"tokens_predicted":11,"tokens_evaluated":73728}}
+{"received_ms":32411.45673202118,"event":{"index":0,"content":" not","tokens":[711],"stop":false,"id_slot":-1,"tokens_predicted":12,"tokens_evaluated":73728}}
+{"received_ms":32428.216324013192,"event":{"index":0,"content":" break","tokens":[2541],"stop":false,"id_slot":-1,"tokens_predicted":13,"tokens_evaluated":73728}}
+{"received_ms":32445.0791850104,"event":{"index":0,"content":" existing","tokens":[6330],"stop":false,"id_slot":-1,"tokens_predicted":14,"tokens_evaluated":73728}}
+{"received_ms":32461.970671021845,"event":{"index":0,"content":" functionality","tokens":[18544],"stop":false,"id_slot":-1,"tokens_predicted":15,"tokens_evaluated":73728}}
+{"received_ms":32478.995996993035,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":16,"tokens_evaluated":73728}}
+{"received_ms":32495.835838024504,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":17,"tokens_evaluated":73728}}
+{"received_ms":32512.762819998898,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":18,"tokens_evaluated":73728}}
+{"received_ms":32529.627049982082,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":19,"tokens_evaluated":73728}}
+{"received_ms":32546.4484289987,"event":{"index":0,"content":" Isolated","tokens":[31735],"stop":false,"id_slot":-1,"tokens_predicted":20,"tokens_evaluated":73728}}
+{"received_ms":32563.22742498014,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":21,"tokens_evaluated":73728}}
+{"received_ms":32580.163631995674,"event":{"index":0,"content":" fixtures","tokens":[45650],"stop":false,"id_slot":-1,"tokens_predicted":22,"tokens_evaluated":73728}}
+{"received_ms":32597.0790470019,"event":{"index":0,"content":" allow","tokens":[2174],"stop":false,"id_slot":-1,"tokens_predicted":23,"tokens_evaluated":73728}}
+{"received_ms":32613.952544983476,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":24,"tokens_evaluated":73728}}
+{"received_ms":32630.766096990556,"event":{"index":0,"content":" granular","tokens":[60333],"stop":false,"id_slot":-1,"tokens_predicted":25,"tokens_evaluated":73728}}
+{"received_ms":32647.653841006104,"event":{"index":0,"content":" verification","tokens":[28250],"stop":false,"id_slot":-1,"tokens_predicted":26,"tokens_evaluated":73728}}
+{"received_ms":32664.538885990623,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":27,"tokens_evaluated":73728}}
+{"received_ms":32681.3887230237,"event":{"index":0,"content":" specific","tokens":[3530],"stop":false,"id_slot":-1,"tokens_predicted":28,"tokens_evaluated":73728}}
+{"received_ms":32698.26405501226,"event":{"index":0,"content":" logic","tokens":[13179],"stop":false,"id_slot":-1,"tokens_predicted":29,"tokens_evaluated":73728}}
+{"received_ms":32715.04773700144,"event":{"index":0,"content":" paths","tokens":[16412],"stop":false,"id_slot":-1,"tokens_predicted":30,"tokens_evaluated":73728}}
+{"received_ms":32731.747558980715,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":31,"tokens_evaluated":73728}}
+{"received_ms":32748.6281869933,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":32,"tokens_evaluated":73728}}
+{"received_ms":32765.423181001097,"event":{"index":0,"content":"3","tokens":[236800],"stop":false,"id_slot":-1,"tokens_predicted":33,"tokens_evaluated":73728}}
+{"received_ms":32782.323458988685,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":34,"tokens_evaluated":73728}}
+{"received_ms":32799.216593033634,"event":{"index":0,"content":" Synthetic","tokens":[105773],"stop":false,"id_slot":-1,"tokens_predicted":35,"tokens_evaluated":73728}}
+{"received_ms":32816.14362000255,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":36,"tokens_evaluated":73728}}
+{"received_ms":32832.89483602857,"event":{"index":0,"content":" data","tokens":[1262],"stop":false,"id_slot":-1,"tokens_predicted":37,"tokens_evaluated":73728}}
+{"received_ms":32849.88479700405,"event":{"index":0,"content":" helps","tokens":[7351],"stop":false,"id_slot":-1,"tokens_predicted":38,"tokens_evaluated":73728}}
+{"received_ms":32866.76972202258,"event":{"index":0,"content":" simulate","tokens":[43928],"stop":false,"id_slot":-1,"tokens_predicted":39,"tokens_evaluated":73728}}
+{"received_ms":32883.65844998043,"event":{"index":0,"content":" edge","tokens":[7377],"stop":false,"id_slot":-1,"tokens_predicted":40,"tokens_evaluated":73728}}
+{"received_ms":32900.617435981985,"event":{"index":0,"content":" cases","tokens":[3636],"stop":false,"id_slot":-1,"tokens_predicted":41,"tokens_evaluated":73728}}
+{"received_ms":32917.45596501278,"event":{"index":0,"content":" that","tokens":[600],"stop":false,"id_slot":-1,"tokens_predicted":42,"tokens_evaluated":73728}}
+{"received_ms":32934.78444701759,"event":{"index":0,"content":" may","tokens":[1149],"stop":false,"id_slot":-1,"tokens_predicted":43,"tokens_evaluated":73728}}
+{"received_ms":32951.692692004144,"event":{"index":0,"content":" not","tokens":[711],"stop":false,"id_slot":-1,"tokens_predicted":44,"tokens_evaluated":73728}}
+{"received_ms":32968.73860800406,"event":{"index":0,"content":" be","tokens":[577],"stop":false,"id_slot":-1,"tokens_predicted":45,"tokens_evaluated":73728}}
+{"received_ms":32985.5094840168,"event":{"index":0,"content":" easily","tokens":[5583],"stop":false,"id_slot":-1,"tokens_predicted":46,"tokens_evaluated":73728}}
+{"received_ms":33002.55130499136,"event":{"index":0,"content":" reproducible","tokens":[95655],"stop":false,"id_slot":-1,"tokens_predicted":47,"tokens_evaluated":73728}}
+{"received_ms":33019.41713999258,"event":{"index":0,"content":" in","tokens":[528],"stop":false,"id_slot":-1,"tokens_predicted":48,"tokens_evaluated":73728}}
+{"received_ms":33036.3016470219,"event":{"index":0,"content":" production","tokens":[3719],"stop":false,"id_slot":-1,"tokens_predicted":49,"tokens_evaluated":73728}}
+{"received_ms":33053.125649981666,"event":{"index":0,"content":" environments","tokens":[18567],"stop":false,"id_slot":-1,"tokens_predicted":50,"tokens_evaluated":73728}}
+{"received_ms":33069.87735000439,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":51,"tokens_evaluated":73728}}
+{"received_ms":33086.63629600778,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":52,"tokens_evaluated":73728}}
+{"received_ms":33103.38123101974,"event":{"index":0,"content":"4","tokens":[236812],"stop":false,"id_slot":-1,"tokens_predicted":53,"tokens_evaluated":73728}}
+{"received_ms":33120.14473602176,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":54,"tokens_evaluated":73728}}
+{"received_ms":33136.946202022955,"event":{"index":0,"content":" Consistent","tokens":[108135],"stop":false,"id_slot":-1,"tokens_predicted":55,"tokens_evaluated":73728}}
+{"received_ms":33153.735181025695,"event":{"index":0,"content":" naming","tokens":[48486],"stop":false,"id_slot":-1,"tokens_predicted":56,"tokens_evaluated":73728}}
+{"received_ms":33170.62576202443,"event":{"index":0,"content":" conventions","tokens":[53359],"stop":false,"id_slot":-1,"tokens_predicted":57,"tokens_evaluated":73728}}
+{"received_ms":33187.41396802943,"event":{"index":0,"content":" in","tokens":[528],"stop":false,"id_slot":-1,"tokens_predicted":58,"tokens_evaluated":73728}}
+{"received_ms":33204.07250302378,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":59,"tokens_evaluated":73728}}
+{"received_ms":33221.00603702711,"event":{"index":0,"content":" records","tokens":[8735],"stop":false,"id_slot":-1,"tokens_predicted":60,"tokens_evaluated":73728}}
+{"received_ms":33237.84840799635,"event":{"index":0,"content":" improve","tokens":[4006],"stop":false,"id_slot":-1,"tokens_predicted":61,"tokens_evaluated":73728}}
+{"received_ms":33254.59107401548,"event":{"index":0,"content":" maintain","tokens":[4883],"stop":false,"id_slot":-1,"tokens_predicted":62,"tokens_evaluated":73728}}
+{"received_ms":33271.29965100903,"event":{"index":0,"content":"ability","tokens":[2109],"stop":false,"id_slot":-1,"tokens_predicted":63,"tokens_evaluated":73728}}
+{"received_ms":33288.102157006506,"event":{"index":0,"content":" and","tokens":[532],"stop":false,"id_slot":-1,"tokens_predicted":64,"tokens_evaluated":73728}}
+{"received_ms":33304.91076997714,"event":{"index":0,"content":" readability","tokens":[122499],"stop":false,"id_slot":-1,"tokens_predicted":65,"tokens_evaluated":73728}}
+{"received_ms":33321.61092502065,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":66,"tokens_evaluated":73728}}
+{"received_ms":33338.481468032114,"event":{"index":0,"content":" engineering","tokens":[10630],"stop":false,"id_slot":-1,"tokens_predicted":67,"tokens_evaluated":73728}}
+{"received_ms":33355.267912033014,"event":{"index":0,"content":" teams","tokens":[7974],"stop":false,"id_slot":-1,"tokens_predicted":68,"tokens_evaluated":73728}}
+{"received_ms":33372.30793200433,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":69,"tokens_evaluated":73728}}
+{"received_ms":33389.28373699309,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":70,"tokens_evaluated":73728}}
+{"received_ms":33406.3190940069,"event":{"index":0,"content":"5","tokens":[236810],"stop":false,"id_slot":-1,"tokens_predicted":71,"tokens_evaluated":73728}}
+{"received_ms":33423.20691101486,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":72,"tokens_evaluated":73728}}
+{"received_ms":33440.19363500411,"event":{"index":0,"content":" Assert","tokens":[27759],"stop":false,"id_slot":-1,"tokens_predicted":73,"tokens_evaluated":73728}}
+{"received_ms":33457.07548700739,"event":{"index":0,"content":"ions","tokens":[878],"stop":false,"id_slot":-1,"tokens_predicted":74,"tokens_evaluated":73728}}
+{"received_ms":33473.83864200674,"event":{"index":0,"content":" provide","tokens":[2847],"stop":false,"id_slot":-1,"tokens_predicted":75,"tokens_evaluated":73728}}
+{"received_ms":33490.6510959845,"event":{"index":0,"content":" a","tokens":[496],"stop":false,"id_slot":-1,"tokens_predicted":76,"tokens_evaluated":73728}}
+{"received_ms":33507.44231400313,"event":{"index":0,"content":" clear","tokens":[3582],"stop":false,"id_slot":-1,"tokens_predicted":77,"tokens_evaluated":73728}}
+{"received_ms":33524.184929032344,"event":{"index":0,"content":",","tokens":[236764],"stop":false,"id_slot":-1,"tokens_predicted":78,"tokens_evaluated":73728}}
+{"received_ms":33540.99144099746,"event":{"index":0,"content":" binary","tokens":[14820],"stop":false,"id_slot":-1,"tokens_predicted":79,"tokens_evaluated":73728}}
+{"received_ms":33557.80907702865,"event":{"index":0,"content":" signal","tokens":[6953],"stop":false,"id_slot":-1,"tokens_predicted":80,"tokens_evaluated":73728}}
+{"received_ms":33574.60199401248,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":81,"tokens_evaluated":73728}}
+{"received_ms":33591.31506702397,"event":{"index":0,"content":" success","tokens":[2630],"stop":false,"id_slot":-1,"tokens_predicted":82,"tokens_evaluated":73728}}
+{"received_ms":33608.12032199465,"event":{"index":0,"content":" or","tokens":[653],"stop":false,"id_slot":-1,"tokens_predicted":83,"tokens_evaluated":73728}}
+{"received_ms":33624.80613699881,"event":{"index":0,"content":" failure","tokens":[8800],"stop":false,"id_slot":-1,"tokens_predicted":84,"tokens_evaluated":73728}}
+{"received_ms":33641.633284976706,"event":{"index":0,"content":",","tokens":[236764],"stop":false,"id_slot":-1,"tokens_predicted":85,"tokens_evaluated":73728}}
+{"received_ms":33658.46908901585,"event":{"index":0,"content":" facilitating","tokens":[55401],"stop":false,"id_slot":-1,"tokens_predicted":86,"tokens_evaluated":73728}}
+{"received_ms":33675.19459599862,"event":{"index":0,"content":" rapid","tokens":[7226],"stop":false,"id_slot":-1,"tokens_predicted":87,"tokens_evaluated":73728}}
+{"received_ms":33692.08971998887,"event":{"index":0,"content":" debugging","tokens":[63114],"stop":false,"id_slot":-1,"tokens_predicted":88,"tokens_evaluated":73728}}
+{"received_ms":33708.95761001157,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":89,"tokens_evaluated":73728}}
+{"received_ms":33725.72083299747,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":90,"tokens_evaluated":73728}}
+{"received_ms":33742.52998002339,"event":{"index":0,"content":"6","tokens":[236825],"stop":false,"id_slot":-1,"tokens_predicted":91,"tokens_evaluated":73728}}
+{"received_ms":33759.23722301377,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":92,"tokens_evaluated":73728}}
+{"received_ms":33776.119376008864,"event":{"index":0,"content":" Boundary","tokens":[86526],"stop":false,"id_slot":-1,"tokens_predicted":93,"tokens_evaluated":73728}}
+{"received_ms":33792.95864602318,"event":{"index":0,"content":" value","tokens":[1550],"stop":false,"id_slot":-1,"tokens_predicted":94,"tokens_evaluated":73728}}
+{"received_ms":33809.79041598039,"event":{"index":0,"content":" analysis","tokens":[3671],"stop":false,"id_slot":-1,"tokens_predicted":95,"tokens_evaluated":73728}}
+{"received_ms":33826.615522033535,"event":{"index":0,"content":" is","tokens":[563],"stop":false,"id_slot":-1,"tokens_predicted":96,"tokens_evaluated":73728}}
+{"received_ms":33843.389232002664,"event":{"index":0,"content":" critical","tokens":[6749],"stop":false,"id_slot":-1,"tokens_predicted":97,"tokens_evaluated":73728}}
+{"received_ms":33860.22403702373,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":98,"tokens_evaluated":73728}}
+{"received_ms":33876.958822016604,"event":{"index":0,"content":" identifying","tokens":[21558],"stop":false,"id_slot":-1,"tokens_predicted":99,"tokens_evaluated":73728}}
+{"received_ms":33893.85723002488,"event":{"index":0,"content":" errors","tokens":[9825],"stop":false,"id_slot":-1,"tokens_predicted":100,"tokens_evaluated":73728}}
+{"received_ms":33910.90109501965,"event":{"index":0,"content":" at","tokens":[657],"stop":false,"id_slot":-1,"tokens_predicted":101,"tokens_evaluated":73728}}
+{"received_ms":33928.282897977624,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":102,"tokens_evaluated":73728}}
+{"received_ms":33945.15559601132,"event":{"index":0,"content":" limits","tokens":[11649],"stop":false,"id_slot":-1,"tokens_predicted":103,"tokens_evaluated":73728}}
+{"received_ms":33962.112764013,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":104,"tokens_evaluated":73728}}
+{"received_ms":33979.02835602872,"event":{"index":0,"content":" input","tokens":[2744],"stop":false,"id_slot":-1,"tokens_predicted":105,"tokens_evaluated":73728}}
+{"received_ms":33995.7840120187,"event":{"index":0,"content":" ranges","tokens":[21280],"stop":false,"id_slot":-1,"tokens_predicted":106,"tokens_evaluated":73728}}
+{"received_ms":34012.30525801657,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":107,"tokens_evaluated":73728}}
+{"received_ms":34028.80908502266,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":108,"tokens_evaluated":73728}}
+{"received_ms":34045.568276022095,"event":{"index":0,"content":"7","tokens":[236832],"stop":false,"id_slot":-1,"tokens_predicted":109,"tokens_evaluated":73728}}
+{"received_ms":34062.311584013514,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":110,"tokens_evaluated":73728}}
+{"received_ms":34079.202282009646,"event":{"index":0,"content":" Modular","tokens":[142406],"stop":false,"id_slot":-1,"tokens_predicted":111,"tokens_evaluated":73728}}
+{"received_ms":34096.03840298951,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":112,"tokens_evaluated":73728}}
+{"received_ms":34112.82002698863,"event":{"index":0,"content":" design","tokens":[1702],"stop":false,"id_slot":-1,"tokens_predicted":113,"tokens_evaluated":73728}}
+{"received_ms":34129.6042019967,"event":{"index":0,"content":" enables","tokens":[17630],"stop":false,"id_slot":-1,"tokens_predicted":114,"tokens_evaluated":73728}}
+{"received_ms":34146.383210027125,"event":{"index":0,"content":" parallel","tokens":[10616],"stop":false,"id_slot":-1,"tokens_predicted":115,"tokens_evaluated":73728}}
+{"received_ms":34163.16224099137,"event":{"index":0,"content":" execution","tokens":[14860],"stop":false,"id_slot":-1,"tokens_predicted":116,"tokens_evaluated":73728}}
+{"received_ms":34179.84361399431,"event":{"index":0,"content":",","tokens":[236764],"stop":false,"id_slot":-1,"tokens_predicted":117,"tokens_evaluated":73728}}
+{"received_ms":34196.442011976615,"event":{"index":0,"content":" significantly","tokens":[8792],"stop":false,"id_slot":-1,"tokens_predicted":118,"tokens_evaluated":73728}}
+{"received_ms":34213.08949001832,"event":{"index":0,"content":" reducing","tokens":[13471],"stop":false,"id_slot":-1,"tokens_predicted":119,"tokens_evaluated":73728}}
+{"received_ms":34229.797554027755,"event":{"index":0,"content":" CI","tokens":[29302],"stop":false,"id_slot":-1,"tokens_predicted":120,"tokens_evaluated":73728}}
+{"received_ms":34246.570123999845,"event":{"index":0,"content":"/","tokens":[236786],"stop":false,"id_slot":-1,"tokens_predicted":121,"tokens_evaluated":73728}}
+{"received_ms":34263.319318997674,"event":{"index":0,"content":"CD","tokens":[6329],"stop":false,"id_slot":-1,"tokens_predicted":122,"tokens_evaluated":73728}}
+{"received_ms":34280.16203502193,"event":{"index":0,"content":" pipeline","tokens":[18922],"stop":false,"id_slot":-1,"tokens_predicted":123,"tokens_evaluated":73728}}
+{"received_ms":34296.92094598431,"event":{"index":0,"content":" times","tokens":[2782],"stop":false,"id_slot":-1,"tokens_predicted":124,"tokens_evaluated":73728}}
+{"received_ms":34313.672702002805,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":125,"tokens_evaluated":73728}}
+{"received_ms":34330.44868399156,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":126,"tokens_evaluated":73728}}
+{"received_ms":34347.156335017644,"event":{"index":0,"content":"8","tokens":[236828],"stop":false,"id_slot":-1,"tokens_predicted":127,"tokens_evaluated":73728}}
+{"received_ms":34363.86743799085,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":128,"tokens_evaluated":73728}}
+{"received_ms":34380.49305498134,"event":{"index":0,"content":" Regression","tokens":[77361],"stop":false,"id_slot":-1,"tokens_predicted":129,"tokens_evaluated":73728}}
+{"received_ms":34397.08431297913,"event":{"index":0,"content":" fixtures","tokens":[45650],"stop":false,"id_slot":-1,"tokens_predicted":130,"tokens_evaluated":73728}}
+{"received_ms":34413.71761797927,"event":{"index":0,"content":" serve","tokens":[7298],"stop":false,"id_slot":-1,"tokens_predicted":131,"tokens_evaluated":73728}}
+{"received_ms":34430.29445799766,"event":{"index":0,"content":" as","tokens":[618],"stop":false,"id_slot":-1,"tokens_predicted":132,"tokens_evaluated":73728}}
+{"received_ms":34447.06092600245,"event":{"index":0,"content":" a","tokens":[496],"stop":false,"id_slot":-1,"tokens_predicted":133,"tokens_evaluated":73728}}
+{"received_ms":34463.830719992984,"event":{"index":0,"content":" \"","tokens":[623],"stop":false,"id_slot":-1,"tokens_predicted":134,"tokens_evaluated":73728}}
+{"received_ms":34480.69537302945,"event":{"index":0,"content":"source","tokens":[6265],"stop":false,"id_slot":-1,"tokens_predicted":135,"tokens_evaluated":73728}}
+{"received_ms":34497.42469802732,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":136,"tokens_evaluated":73728}}
+{"received_ms":34514.06615698943,"event":{"index":0,"content":" truth","tokens":[9043],"stop":false,"id_slot":-1,"tokens_predicted":137,"tokens_evaluated":73728}}
+{"received_ms":34530.6220939965,"event":{"index":0,"content":"\"","tokens":[236775],"stop":false,"id_slot":-1,"tokens_predicted":138,"tokens_evaluated":73728}}
+{"received_ms":34547.32444201363,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":139,"tokens_evaluated":73728}}
+{"received_ms":34564.01538703358,"event":{"index":0,"content":" expected","tokens":[4275],"stop":false,"id_slot":-1,"tokens_predicted":140,"tokens_evaluated":73728}}
+{"received_ms":34580.561631999444,"event":{"index":0,"content":" behavior","tokens":[6868],"stop":false,"id_slot":-1,"tokens_predicted":141,"tokens_evaluated":73728}}
+{"received_ms":34597.152228991035,"event":{"index":0,"content":" over","tokens":[1024],"stop":false,"id_slot":-1,"tokens_predicted":142,"tokens_evaluated":73728}}
+{"received_ms":34613.751468015835,"event":{"index":0,"content":" time","tokens":[990],"stop":false,"id_slot":-1,"tokens_predicted":143,"tokens_evaluated":73728}}
+{"received_ms":34630.30763401184,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":144,"tokens_evaluated":73728}}
+{"received_ms":34646.89081400866,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":145,"tokens_evaluated":73728}}
+{"received_ms":34663.44014502829,"event":{"index":0,"content":"9","tokens":[236819],"stop":false,"id_slot":-1,"tokens_predicted":146,"tokens_evaluated":73728}}
+{"received_ms":34680.002107983455,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":147,"tokens_evaluated":73728}}
+{"received_ms":34696.64142502006,"event":{"index":0,"content":" High","tokens":[4819],"stop":false,"id_slot":-1,"tokens_predicted":148,"tokens_evaluated":73728}}
+{"received_ms":34713.2055159891,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":149,"tokens_evaluated":73728}}
+{"received_ms":34729.82500703074,"event":{"index":0,"content":" coverage","tokens":[12606],"stop":false,"id_slot":-1,"tokens_predicted":150,"tokens_evaluated":73728}}
+{"received_ms":34746.4383590268,"event":{"index":0,"content":" reduces","tokens":[17707],"stop":false,"id_slot":-1,"tokens_predicted":151,"tokens_evaluated":73728}}
+{"received_ms":34762.938425992616,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":152,"tokens_evaluated":73728}}
+{"received_ms":34779.57415400306,"event":{"index":0,"content":" risk","tokens":[4652],"stop":false,"id_slot":-1,"tokens_predicted":153,"tokens_evaluated":73728}}
+{"received_ms":34796.18524300167,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":154,"tokens_evaluated":73728}}
+{"received_ms":34813.00781900063,"event":{"index":0,"content":" \"","tokens":[623],"stop":false,"id_slot":-1,"tokens_predicted":155,"tokens_evaluated":73728}}
+{"received_ms":34829.715305997524,"event":{"index":0,"content":"silent","tokens":[124419],"stop":false,"id_slot":-1,"tokens_predicted":156,"tokens_evaluated":73728}}
+{"received_ms":34846.37657599524,"event":{"index":0,"content":"\"","tokens":[236775],"stop":false,"id_slot":-1,"tokens_predicted":157,"tokens_evaluated":73728}}
+{"received_ms":34863.149520009756,"event":{"index":0,"content":" bugs","tokens":[34725],"stop":false,"id_slot":-1,"tokens_predicted":158,"tokens_evaluated":73728}}
+{"received_ms":34879.84275800409,"event":{"index":0,"content":" reaching","tokens":[17154],"stop":false,"id_slot":-1,"tokens_predicted":159,"tokens_evaluated":73728}}
+{"received_ms":34896.417076990474,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":160,"tokens_evaluated":73728}}
+{"received_ms":34913.06920198258,"event":{"index":0,"content":" end","tokens":[1345],"stop":false,"id_slot":-1,"tokens_predicted":161,"tokens_evaluated":73728}}
+{"received_ms":34930.16713601537,"event":{"index":0,"content":" user","tokens":[2430],"stop":false,"id_slot":-1,"tokens_predicted":162,"tokens_evaluated":73728}}
+{"received_ms":34946.66886201594,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":163,"tokens_evaluated":73728}}
+{"received_ms":34963.30569701968,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":164,"tokens_evaluated":73728}}
+{"received_ms":34980.16572400229,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":165,"tokens_evaluated":73728}}
+{"received_ms":34996.854086988606,"event":{"index":0,"content":"0","tokens":[236771],"stop":false,"id_slot":-1,"tokens_predicted":166,"tokens_evaluated":73728}}
+{"received_ms":35013.659378979355,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":167,"tokens_evaluated":73728}}
+{"received_ms":35030.40338202845,"event":{"index":0,"content":" Reprodu","tokens":[104707],"stop":false,"id_slot":-1,"tokens_predicted":168,"tokens_evaluated":73728}}
+{"received_ms":35047.12289897725,"event":{"index":0,"content":"cible","tokens":[48266],"stop":false,"id_slot":-1,"tokens_predicted":169,"tokens_evaluated":73728}}
+{"received_ms":35063.710069982335,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":170,"tokens_evaluated":73728}}
+{"received_ms":35080.25123400148,"event":{"index":0,"content":" environments","tokens":[18567],"stop":false,"id_slot":-1,"tokens_predicted":171,"tokens_evaluated":73728}}
+{"received_ms":35096.74571198411,"event":{"index":0,"content":" are","tokens":[659],"stop":false,"id_slot":-1,"tokens_predicted":172,"tokens_evaluated":73728}}
+{"received_ms":35113.20580501342,"event":{"index":0,"content":" essential","tokens":[5250],"stop":false,"id_slot":-1,"tokens_predicted":173,"tokens_evaluated":73728}}
+{"received_ms":35129.76534903282,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":174,"tokens_evaluated":73728}}
+{"received_ms":35146.29401901038,"event":{"index":0,"content":" consistent","tokens":[9958],"stop":false,"id_slot":-1,"tokens_predicted":175,"tokens_evaluated":73728}}
+{"received_ms":35162.930511985905,"event":{"index":0,"content":" results","tokens":[2536],"stop":false,"id_slot":-1,"tokens_predicted":176,"tokens_evaluated":73728}}
+{"received_ms":35179.59679098567,"event":{"index":0,"content":" across","tokens":[3418],"stop":false,"id_slot":-1,"tokens_predicted":177,"tokens_evaluated":73728}}
+{"received_ms":35196.212465991266,"event":{"index":0,"content":" different","tokens":[1607],"stop":false,"id_slot":-1,"tokens_predicted":178,"tokens_evaluated":73728}}
+{"received_ms":35212.955611990765,"event":{"index":0,"content":" developer","tokens":[19788],"stop":false,"id_slot":-1,"tokens_predicted":179,"tokens_evaluated":73728}}
+{"received_ms":35229.63263402926,"event":{"index":0,"content":" machines","tokens":[12512],"stop":false,"id_slot":-1,"tokens_predicted":180,"tokens_evaluated":73728}}
+{"received_ms":35246.26574199647,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":181,"tokens_evaluated":73728}}
+{"received_ms":35262.94656802202,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":182,"tokens_evaluated":73728}}
+{"received_ms":35279.58293398842,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":183,"tokens_evaluated":73728}}
+{"received_ms":35296.23047000496,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":184,"tokens_evaluated":73728}}
+{"received_ms":35312.89291899884,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":185,"tokens_evaluated":73728}}
+{"received_ms":35329.41771001788,"event":{"index":0,"content":" Unit","tokens":[15610],"stop":false,"id_slot":-1,"tokens_predicted":186,"tokens_evaluated":73728}}
+{"received_ms":35345.92586499639,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":187,"tokens_evaluated":73728}}
+{"received_ms":35362.45839699404,"event":{"index":0,"content":" should","tokens":[1374],"stop":false,"id_slot":-1,"tokens_predicted":188,"tokens_evaluated":73728}}
+{"received_ms":35378.972741018515,"event":{"index":0,"content":" focus","tokens":[3213],"stop":false,"id_slot":-1,"tokens_predicted":189,"tokens_evaluated":73728}}
+{"received_ms":35395.49070998328,"event":{"index":0,"content":" on","tokens":[580],"stop":false,"id_slot":-1,"tokens_predicted":190,"tokens_evaluated":73728}}
+{"received_ms":35412.01623098459,"event":{"index":0,"content":" small","tokens":[1944],"stop":false,"id_slot":-1,"tokens_predicted":191,"tokens_evaluated":73728}}
+{"received_ms":35428.46059799194,"event":{"index":0,"content":",","tokens":[236764],"stop":false,"id_slot":-1,"tokens_predicted":192,"tokens_evaluated":73728}}
+{"received_ms":35444.95873898268,"event":{"index":0,"content":" discrete","tokens":[23757],"stop":false,"id_slot":-1,"tokens_predicted":193,"tokens_evaluated":73728}}
+{"received_ms":35461.39342797687,"event":{"index":0,"content":" pieces","tokens":[9097],"stop":false,"id_slot":-1,"tokens_predicted":194,"tokens_evaluated":73728}}
+{"received_ms":35477.85664402181,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":195,"tokens_evaluated":73728}}
+{"received_ms":35494.331311027054,"event":{"index":0,"content":" logic","tokens":[13179],"stop":false,"id_slot":-1,"tokens_predicted":196,"tokens_evaluated":73728}}
+{"received_ms":35510.82105800742,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":197,"tokens_evaluated":73728}}
+{"received_ms":35527.34935900662,"event":{"index":0,"content":" simplify","tokens":[30091],"stop":false,"id_slot":-1,"tokens_predicted":198,"tokens_evaluated":73728}}
+{"received_ms":35544.0933299833,"event":{"index":0,"content":" root","tokens":[5989],"stop":false,"id_slot":-1,"tokens_predicted":199,"tokens_evaluated":73728}}
+{"received_ms":35560.58816600125,"event":{"index":0,"content":" cause","tokens":[4400],"stop":false,"id_slot":-1,"tokens_predicted":200,"tokens_evaluated":73728}}
+{"received_ms":35577.01986498432,"event":{"index":0,"content":" analysis","tokens":[3671],"stop":false,"id_slot":-1,"tokens_predicted":201,"tokens_evaluated":73728}}
+{"received_ms":35593.50230998825,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":202,"tokens_evaluated":73728}}
+{"received_ms":35610.14066397911,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":203,"tokens_evaluated":73728}}
+{"received_ms":35626.62951700622,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":204,"tokens_evaluated":73728}}
+{"received_ms":35643.14857602585,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":205,"tokens_evaluated":73728}}
+{"received_ms":35659.71960697789,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":206,"tokens_evaluated":73728}}
+{"received_ms":35675.9803169989,"event":{"index":0,"content":" Integration","tokens":[43645],"stop":false,"id_slot":-1,"tokens_predicted":207,"tokens_evaluated":73728}}
+{"received_ms":35692.4172519939,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":208,"tokens_evaluated":73728}}
+{"received_ms":35708.87514500646,"event":{"index":0,"content":" verify","tokens":[16807],"stop":false,"id_slot":-1,"tokens_predicted":209,"tokens_evaluated":73728}}
+{"received_ms":35725.34557903418,"event":{"index":0,"content":" that","tokens":[600],"stop":false,"id_slot":-1,"tokens_predicted":210,"tokens_evaluated":73728}}
+{"received_ms":35741.74161301926,"event":{"index":0,"content":" separate","tokens":[7732],"stop":false,"id_slot":-1,"tokens_predicted":211,"tokens_evaluated":73728}}
+{"received_ms":35758.204632031266,"event":{"index":0,"content":" modules","tokens":[19505],"stop":false,"id_slot":-1,"tokens_predicted":212,"tokens_evaluated":73728}}
+{"received_ms":35774.67460598564,"event":{"index":0,"content":" interact","tokens":[12740],"stop":false,"id_slot":-1,"tokens_predicted":213,"tokens_evaluated":73728}}
+{"received_ms":35791.11172800185,"event":{"index":0,"content":" correctly","tokens":[15195],"stop":false,"id_slot":-1,"tokens_predicted":214,"tokens_evaluated":73728}}
+{"received_ms":35807.608789007645,"event":{"index":0,"content":" according","tokens":[3894],"stop":false,"id_slot":-1,"tokens_predicted":215,"tokens_evaluated":73728}}
+{"received_ms":35823.98924900917,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":216,"tokens_evaluated":73728}}
+{"received_ms":35840.37450602045,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":217,"tokens_evaluated":73728}}
+{"received_ms":35856.71884502517,"event":{"index":0,"content":" system","tokens":[1458],"stop":false,"id_slot":-1,"tokens_predicted":218,"tokens_evaluated":73728}}
+{"received_ms":35873.259102983866,"event":{"index":0,"content":" architecture","tokens":[13217],"stop":false,"id_slot":-1,"tokens_predicted":219,"tokens_evaluated":73728}}
+{"received_ms":35889.764557010494,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":220,"tokens_evaluated":73728}}
+{"received_ms":35906.36175702093,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":221,"tokens_evaluated":73728}}
+{"received_ms":35922.85581497708,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":222,"tokens_evaluated":73728}}
+{"received_ms":35939.94776898762,"event":{"index":0,"content":"3","tokens":[236800],"stop":false,"id_slot":-1,"tokens_predicted":223,"tokens_evaluated":73728}}
+{"received_ms":35956.57080900855,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":224,"tokens_evaluated":73728}}
+{"received_ms":35973.124527023174,"event":{"index":0,"content":" Mock","tokens":[49499],"stop":false,"id_slot":-1,"tokens_predicted":225,"tokens_evaluated":73728}}
+{"received_ms":35989.65829599183,"event":{"index":0,"content":"ing","tokens":[522],"stop":false,"id_slot":-1,"tokens_predicted":226,"tokens_evaluated":73728}}
+{"received_ms":36006.23349600937,"event":{"index":0,"content":" external","tokens":[8398],"stop":false,"id_slot":-1,"tokens_predicted":227,"tokens_evaluated":73728}}
+{"received_ms":36022.90466002887,"event":{"index":0,"content":" dependencies","tokens":[29176],"stop":false,"id_slot":-1,"tokens_predicted":228,"tokens_evaluated":73728}}
+{"received_ms":36039.3675660016,"event":{"index":0,"content":" prevents","tokens":[27364],"stop":false,"id_slot":-1,"tokens_predicted":229,"tokens_evaluated":73728}}
+{"received_ms":36055.87863898836,"event":{"index":0,"content":" flaky","tokens":[198911],"stop":false,"id_slot":-1,"tokens_predicted":230,"tokens_evaluated":73728}}
+{"received_ms":36072.32616998954,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":231,"tokens_evaluated":73728}}
+{"received_ms":36088.73224502895,"event":{"index":0,"content":" caused","tokens":[7321],"stop":false,"id_slot":-1,"tokens_predicted":232,"tokens_evaluated":73728}}
+{"received_ms":36105.1007329952,"event":{"index":0,"content":" by","tokens":[684],"stop":false,"id_slot":-1,"tokens_predicted":233,"tokens_evaluated":73728}}
+{"received_ms":36121.50530703366,"event":{"index":0,"content":" network","tokens":[3707],"stop":false,"id_slot":-1,"tokens_predicted":234,"tokens_evaluated":73728}}
+{"received_ms":36137.94772600522,"event":{"index":0,"content":" latency","tokens":[51534],"stop":false,"id_slot":-1,"tokens_predicted":235,"tokens_evaluated":73728}}
+{"received_ms":36154.32230901206,"event":{"index":0,"content":" or","tokens":[653],"stop":false,"id_slot":-1,"tokens_predicted":236,"tokens_evaluated":73728}}
+{"received_ms":36170.671736006625,"event":{"index":0,"content":" third","tokens":[4168],"stop":false,"id_slot":-1,"tokens_predicted":237,"tokens_evaluated":73728}}
+{"received_ms":36187.02149699675,"event":{"index":0,"content":"-","tokens":[236772],"stop":false,"id_slot":-1,"tokens_predicted":238,"tokens_evaluated":73728}}
+{"received_ms":36203.32659402629,"event":{"index":0,"content":"party","tokens":[7362],"stop":false,"id_slot":-1,"tokens_predicted":239,"tokens_evaluated":73728}}
+{"received_ms":36219.592252979055,"event":{"index":0,"content":" downtime","tokens":[77284],"stop":false,"id_slot":-1,"tokens_predicted":240,"tokens_evaluated":73728}}
+{"received_ms":36235.827455995604,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":241,"tokens_evaluated":73728}}
+{"received_ms":36252.07710498944,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":242,"tokens_evaluated":73728}}
+{"received_ms":36268.334617023356,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":243,"tokens_evaluated":73728}}
+{"received_ms":36284.56685098354,"event":{"index":0,"content":"4","tokens":[236812],"stop":false,"id_slot":-1,"tokens_predicted":244,"tokens_evaluated":73728}}
+{"received_ms":36300.9404509794,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":245,"tokens_evaluated":73728}}
+{"received_ms":36317.27784802206,"event":{"index":0,"content":" Test","tokens":[5803],"stop":false,"id_slot":-1,"tokens_predicted":246,"tokens_evaluated":73728}}
+{"received_ms":36333.677329006605,"event":{"index":0,"content":" data","tokens":[1262],"stop":false,"id_slot":-1,"tokens_predicted":247,"tokens_evaluated":73728}}
+{"received_ms":36350.03512300318,"event":{"index":0,"content":" should","tokens":[1374],"stop":false,"id_slot":-1,"tokens_predicted":248,"tokens_evaluated":73728}}
+{"received_ms":36366.423390980344,"event":{"index":0,"content":" be","tokens":[577],"stop":false,"id_slot":-1,"tokens_predicted":249,"tokens_evaluated":73728}}
+{"received_ms":36382.797355006915,"event":{"index":0,"content":" refreshed","tokens":[88618],"stop":false,"id_slot":-1,"tokens_predicted":250,"tokens_evaluated":73728}}
+{"received_ms":36399.4079179829,"event":{"index":0,"content":" periodically","tokens":[48778],"stop":false,"id_slot":-1,"tokens_predicted":251,"tokens_evaluated":73728}}
+{"received_ms":36415.782662981655,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":252,"tokens_evaluated":73728}}
+{"received_ms":36432.320292980876,"event":{"index":0,"content":" reflect","tokens":[7495],"stop":false,"id_slot":-1,"tokens_predicted":253,"tokens_evaluated":73728}}
+{"received_ms":36448.69797403226,"event":{"index":0,"content":" changes","tokens":[3731],"stop":false,"id_slot":-1,"tokens_predicted":254,"tokens_evaluated":73728}}
+{"received_ms":36465.12675401755,"event":{"index":0,"content":" in","tokens":[528],"stop":false,"id_slot":-1,"tokens_predicted":255,"tokens_evaluated":73728}}
+{"received_ms":36481.49969399674,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":256,"tokens_evaluated":73728}}
+{"received_ms":36497.89405299816,"event":{"index":0,"content":" evolving","tokens":[36757],"stop":false,"id_slot":-1,"tokens_predicted":257,"tokens_evaluated":73728}}
+{"received_ms":36515.27522102697,"event":{"index":0,"content":" schema","tokens":[13603],"stop":false,"id_slot":-1,"tokens_predicted":258,"tokens_evaluated":73728}}
+{"received_ms":36533.1541679916,"event":{"index":0,"content":" or","tokens":[653],"stop":false,"id_slot":-1,"tokens_predicted":259,"tokens_evaluated":73728}}
+{"received_ms":36549.65375602478,"event":{"index":0,"content":" business","tokens":[1960],"stop":false,"id_slot":-1,"tokens_predicted":260,"tokens_evaluated":73728}}
+{"received_ms":36566.18177401833,"event":{"index":0,"content":" logic","tokens":[13179],"stop":false,"id_slot":-1,"tokens_predicted":261,"tokens_evaluated":73728}}
+{"received_ms":36582.68336899346,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":262,"tokens_evaluated":73728}}
+{"received_ms":36599.17440201389,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":263,"tokens_evaluated":73728}}
+{"received_ms":36615.554211020935,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":264,"tokens_evaluated":73728}}
+{"received_ms":36632.050811022054,"event":{"index":0,"content":"5","tokens":[236810],"stop":false,"id_slot":-1,"tokens_predicted":265,"tokens_evaluated":73728}}
+{"received_ms":36648.51561700925,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":266,"tokens_evaluated":73728}}
+{"received_ms":36664.97814102331,"event":{"index":0,"content":" Documentation","tokens":[69759],"stop":false,"id_slot":-1,"tokens_predicted":267,"tokens_evaluated":73728}}
+{"received_ms":36681.52814300265,"event":{"index":0,"content":" within","tokens":[2351],"stop":false,"id_slot":-1,"tokens_predicted":268,"tokens_evaluated":73728}}
+{"received_ms":36698.07793601649,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":269,"tokens_evaluated":73728}}
+{"received_ms":36714.597279031295,"event":{"index":0,"content":" records","tokens":[8735],"stop":false,"id_slot":-1,"tokens_predicted":270,"tokens_evaluated":73728}}
+{"received_ms":36731.071898015216,"event":{"index":0,"content":" (","tokens":[568],"stop":false,"id_slot":-1,"tokens_predicted":271,"tokens_evaluated":73728}}
+{"received_ms":36747.63530900236,"event":{"index":0,"content":"like","tokens":[5282],"stop":false,"id_slot":-1,"tokens_predicted":272,"tokens_evaluated":73728}}
+{"received_ms":36764.06926399795,"event":{"index":0,"content":" comments","tokens":[8968],"stop":false,"id_slot":-1,"tokens_predicted":273,"tokens_evaluated":73728}}
+{"received_ms":36780.58414300904,"event":{"index":0,"content":")","tokens":[236768],"stop":false,"id_slot":-1,"tokens_predicted":274,"tokens_evaluated":73728}}
+{"received_ms":36797.11026401492,"event":{"index":0,"content":" provides","tokens":[4728],"stop":false,"id_slot":-1,"tokens_predicted":275,"tokens_evaluated":73728}}
+{"received_ms":36813.50847898284,"event":{"index":0,"content":" context","tokens":[4403],"stop":false,"id_slot":-1,"tokens_predicted":276,"tokens_evaluated":73728}}
+{"received_ms":36829.952342028264,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":277,"tokens_evaluated":73728}}
+{"received_ms":36846.34685399942,"event":{"index":0,"content":" why","tokens":[3217],"stop":false,"id_slot":-1,"tokens_predicted":278,"tokens_evaluated":73728}}
+{"received_ms":36862.791049992666,"event":{"index":0,"content":" specific","tokens":[3530],"stop":false,"id_slot":-1,"tokens_predicted":279,"tokens_evaluated":73728}}
+{"received_ms":36879.25114098471,"event":{"index":0,"content":" values","tokens":[2979],"stop":false,"id_slot":-1,"tokens_predicted":280,"tokens_evaluated":73728}}
+{"received_ms":36895.675873034634,"event":{"index":0,"content":" were","tokens":[964],"stop":false,"id_slot":-1,"tokens_predicted":281,"tokens_evaluated":73728}}
+{"received_ms":36912.16969501693,"event":{"index":0,"content":" chosen","tokens":[9949],"stop":false,"id_slot":-1,"tokens_predicted":282,"tokens_evaluated":73728}}
+{"received_ms":36929.07641403144,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":283,"tokens_evaluated":73728}}
+{"received_ms":36945.540546032134,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":284,"tokens_evaluated":73728}}
+{"received_ms":36961.98999200715,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":285,"tokens_evaluated":73728}}
+{"received_ms":36978.35259500425,"event":{"index":0,"content":"6","tokens":[236825],"stop":false,"id_slot":-1,"tokens_predicted":286,"tokens_evaluated":73728}}
+{"received_ms":36994.768457021564,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":287,"tokens_evaluated":73728}}
+{"received_ms":37011.1348030041,"event":{"index":0,"content":" Continuous","tokens":[64773],"stop":false,"id_slot":-1,"tokens_predicted":288,"tokens_evaluated":73728}}
+{"received_ms":37027.51414600061,"event":{"index":0,"content":" Integration","tokens":[43645],"stop":false,"id_slot":-1,"tokens_predicted":289,"tokens_evaluated":73728}}
+{"received_ms":37043.88091398869,"event":{"index":0,"content":" (","tokens":[568],"stop":false,"id_slot":-1,"tokens_predicted":290,"tokens_evaluated":73728}}
+{"received_ms":37060.2462310344,"event":{"index":0,"content":"CI","tokens":[9575],"stop":false,"id_slot":-1,"tokens_predicted":291,"tokens_evaluated":73728}}
+{"received_ms":37076.63163001416,"event":{"index":0,"content":")","tokens":[236768],"stop":false,"id_slot":-1,"tokens_predicted":292,"tokens_evaluated":73728}}
+{"received_ms":37093.23387098266,"event":{"index":0,"content":" automatically","tokens":[11269],"stop":false,"id_slot":-1,"tokens_predicted":293,"tokens_evaluated":73728}}
+{"received_ms":37109.74173300201,"event":{"index":0,"content":" triggers","tokens":[45898],"stop":false,"id_slot":-1,"tokens_predicted":294,"tokens_evaluated":73728}}
+{"received_ms":37126.26768602058,"event":{"index":0,"content":" test","tokens":[1594],"stop":false,"id_slot":-1,"tokens_predicted":295,"tokens_evaluated":73728}}
+{"received_ms":37142.74578698678,"event":{"index":0,"content":" suites","tokens":[54149],"stop":false,"id_slot":-1,"tokens_predicted":296,"tokens_evaluated":73728}}
+{"received_ms":37159.194345003925,"event":{"index":0,"content":" upon","tokens":[3324],"stop":false,"id_slot":-1,"tokens_predicted":297,"tokens_evaluated":73728}}
+{"received_ms":37175.57486798614,"event":{"index":0,"content":" every","tokens":[1418],"stop":false,"id_slot":-1,"tokens_predicted":298,"tokens_evaluated":73728}}
+{"received_ms":37192.01309798518,"event":{"index":0,"content":" commit","tokens":[8274],"stop":false,"id_slot":-1,"tokens_predicted":299,"tokens_evaluated":73728}}
+{"received_ms":37208.4357230342,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":300,"tokens_evaluated":73728}}
+{"received_ms":37224.8547829804,"event":{"index":0,"content":" catch","tokens":[4682],"stop":false,"id_slot":-1,"tokens_predicted":301,"tokens_evaluated":73728}}
+{"received_ms":37241.40881502535,"event":{"index":0,"content":" errors","tokens":[9825],"stop":false,"id_slot":-1,"tokens_predicted":302,"tokens_evaluated":73728}}
+{"received_ms":37257.80646299245,"event":{"index":0,"content":" early","tokens":[3649],"stop":false,"id_slot":-1,"tokens_predicted":303,"tokens_evaluated":73728}}
+{"received_ms":37274.2041759775,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":304,"tokens_evaluated":73728}}
+{"received_ms":37290.633145021275,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":305,"tokens_evaluated":73728}}
+{"received_ms":37307.084710977506,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":306,"tokens_evaluated":73728}}
+{"received_ms":37323.52575700497,"event":{"index":0,"content":"7","tokens":[236832],"stop":false,"id_slot":-1,"tokens_predicted":307,"tokens_evaluated":73728}}
+{"received_ms":37340.06345103262,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":308,"tokens_evaluated":73728}}
+{"received_ms":37356.586526031606,"event":{"index":0,"content":" Error","tokens":[11489],"stop":false,"id_slot":-1,"tokens_predicted":309,"tokens_evaluated":73728}}
+{"received_ms":37373.128860024735,"event":{"index":0,"content":" handling","tokens":[12804],"stop":false,"id_slot":-1,"tokens_predicted":310,"tokens_evaluated":73728}}
+{"received_ms":37389.5516860066,"event":{"index":0,"content":" paths","tokens":[16412],"stop":false,"id_slot":-1,"tokens_predicted":311,"tokens_evaluated":73728}}
+{"received_ms":37406.15765698021,"event":{"index":0,"content":" must","tokens":[1921],"stop":false,"id_slot":-1,"tokens_predicted":312,"tokens_evaluated":73728}}
+{"received_ms":37422.62747097993,"event":{"index":0,"content":" be","tokens":[577],"stop":false,"id_slot":-1,"tokens_predicted":313,"tokens_evaluated":73728}}
+{"received_ms":37439.142564020585,"event":{"index":0,"content":" explicitly","tokens":[25010],"stop":false,"id_slot":-1,"tokens_predicted":314,"tokens_evaluated":73728}}
+{"received_ms":37455.650877032895,"event":{"index":0,"content":" tested","tokens":[10418],"stop":false,"id_slot":-1,"tokens_predicted":315,"tokens_evaluated":73728}}
+{"received_ms":37472.07278601127,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":316,"tokens_evaluated":73728}}
+{"received_ms":37488.53924300056,"event":{"index":0,"content":" ensure","tokens":[5330],"stop":false,"id_slot":-1,"tokens_predicted":317,"tokens_evaluated":73728}}
+{"received_ms":37505.01326599624,"event":{"index":0,"content":" the","tokens":[506],"stop":false,"id_slot":-1,"tokens_predicted":318,"tokens_evaluated":73728}}
+{"received_ms":37521.44667302491,"event":{"index":0,"content":" system","tokens":[1458],"stop":false,"id_slot":-1,"tokens_predicted":319,"tokens_evaluated":73728}}
+{"received_ms":37537.90229099104,"event":{"index":0,"content":" fails","tokens":[20269],"stop":false,"id_slot":-1,"tokens_predicted":320,"tokens_evaluated":73728}}
+{"received_ms":37554.337700014,"event":{"index":0,"content":" gracefully","tokens":[122605],"stop":false,"id_slot":-1,"tokens_predicted":321,"tokens_evaluated":73728}}
+{"received_ms":37570.76764898375,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":322,"tokens_evaluated":73728}}
+{"received_ms":37587.18631300144,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":323,"tokens_evaluated":73728}}
+{"received_ms":37603.64996298449,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":324,"tokens_evaluated":73728}}
+{"received_ms":37620.26257603429,"event":{"index":0,"content":"8","tokens":[236828],"stop":false,"id_slot":-1,"tokens_predicted":325,"tokens_evaluated":73728}}
+{"received_ms":37636.8933810154,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":326,"tokens_evaluated":73728}}
+{"received_ms":37653.594573028386,"event":{"index":0,"content":" Performance","tokens":[19791],"stop":false,"id_slot":-1,"tokens_predicted":327,"tokens_evaluated":73728}}
+{"received_ms":37670.11823900975,"event":{"index":0,"content":" testing","tokens":[7257],"stop":false,"id_slot":-1,"tokens_predicted":328,"tokens_evaluated":73728}}
+{"received_ms":37686.6066629882,"event":{"index":0,"content":" identifies","tokens":[38905],"stop":false,"id_slot":-1,"tokens_predicted":329,"tokens_evaluated":73728}}
+{"received_ms":37703.05945700966,"event":{"index":0,"content":" bottlenecks","tokens":[117147],"stop":false,"id_slot":-1,"tokens_predicted":330,"tokens_evaluated":73728}}
+{"received_ms":37719.73370597698,"event":{"index":0,"content":" that","tokens":[600],"stop":false,"id_slot":-1,"tokens_predicted":331,"tokens_evaluated":73728}}
+{"received_ms":37736.40440503368,"event":{"index":0,"content":" functional","tokens":[10828],"stop":false,"id_slot":-1,"tokens_predicted":332,"tokens_evaluated":73728}}
+{"received_ms":37752.94950598618,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":333,"tokens_evaluated":73728}}
+{"received_ms":37769.444875011686,"event":{"index":0,"content":" might","tokens":[2473],"stop":false,"id_slot":-1,"tokens_predicted":334,"tokens_evaluated":73728}}
+{"received_ms":37785.96175898565,"event":{"index":0,"content":" overlook","tokens":[29346],"stop":false,"id_slot":-1,"tokens_predicted":335,"tokens_evaluated":73728}}
+{"received_ms":37802.45358101092,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":336,"tokens_evaluated":73728}}
+{"received_ms":37818.789916986134,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":337,"tokens_evaluated":73728}}
+{"received_ms":37835.18330799416,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":338,"tokens_evaluated":73728}}
+{"received_ms":37851.51602898259,"event":{"index":0,"content":"9","tokens":[236819],"stop":false,"id_slot":-1,"tokens_predicted":339,"tokens_evaluated":73728}}
+{"received_ms":37867.96267400496,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":340,"tokens_evaluated":73728}}
+{"received_ms":37884.46375000058,"event":{"index":0,"content":" Security","tokens":[12096],"stop":false,"id_slot":-1,"tokens_predicted":341,"tokens_evaluated":73728}}
+{"received_ms":37900.836157030426,"event":{"index":0,"content":" testing","tokens":[7257],"stop":false,"id_slot":-1,"tokens_predicted":342,"tokens_evaluated":73728}}
+{"received_ms":37917.40514500998,"event":{"index":0,"content":" ensures","tokens":[22606],"stop":false,"id_slot":-1,"tokens_predicted":343,"tokens_evaluated":73728}}
+{"received_ms":37934.44195599295,"event":{"index":0,"content":" that","tokens":[600],"stop":false,"id_slot":-1,"tokens_predicted":344,"tokens_evaluated":73728}}
+{"received_ms":37950.97949000774,"event":{"index":0,"content":" input","tokens":[2744],"stop":false,"id_slot":-1,"tokens_predicted":345,"tokens_evaluated":73728}}
+{"received_ms":37967.506566026714,"event":{"index":0,"content":" validation","tokens":[18256],"stop":false,"id_slot":-1,"tokens_predicted":346,"tokens_evaluated":73728}}
+{"received_ms":37984.0765640256,"event":{"index":0,"content":" prevents","tokens":[27364],"stop":false,"id_slot":-1,"tokens_predicted":347,"tokens_evaluated":73728}}
+{"received_ms":38000.52891502855,"event":{"index":0,"content":" common","tokens":[3364],"stop":false,"id_slot":-1,"tokens_predicted":348,"tokens_evaluated":73728}}
+{"received_ms":38016.90170599613,"event":{"index":0,"content":" vulnerabilities","tokens":[70584],"stop":false,"id_slot":-1,"tokens_predicted":349,"tokens_evaluated":73728}}
+{"received_ms":38033.26545300661,"event":{"index":0,"content":" like","tokens":[1133],"stop":false,"id_slot":-1,"tokens_predicted":350,"tokens_evaluated":73728}}
+{"received_ms":38049.76671602344,"event":{"index":0,"content":" injection","tokens":[19125],"stop":false,"id_slot":-1,"tokens_predicted":351,"tokens_evaluated":73728}}
+{"received_ms":38066.29576598061,"event":{"index":0,"content":" attacks","tokens":[13120],"stop":false,"id_slot":-1,"tokens_predicted":352,"tokens_evaluated":73728}}
+{"received_ms":38082.83611602383,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":353,"tokens_evaluated":73728}}
+{"received_ms":38099.31639599381,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":354,"tokens_evaluated":73728}}
+{"received_ms":38115.85738800932,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":355,"tokens_evaluated":73728}}
+{"received_ms":38132.215822988655,"event":{"index":0,"content":"0","tokens":[236771],"stop":false,"id_slot":-1,"tokens_predicted":356,"tokens_evaluated":73728}}
+{"received_ms":38148.74646899989,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":357,"tokens_evaluated":73728}}
+{"received_ms":38165.33616400557,"event":{"index":0,"content":" Ref","tokens":[10867],"stop":false,"id_slot":-1,"tokens_predicted":358,"tokens_evaluated":73728}}
+{"received_ms":38181.864830025006,"event":{"index":0,"content":"actoring","tokens":[194684],"stop":false,"id_slot":-1,"tokens_predicted":359,"tokens_evaluated":73728}}
+{"received_ms":38198.35645298008,"event":{"index":0,"content":" is","tokens":[563],"stop":false,"id_slot":-1,"tokens_predicted":360,"tokens_evaluated":73728}}
+{"received_ms":38214.97412602184,"event":{"index":0,"content":" safer","tokens":[34303],"stop":false,"id_slot":-1,"tokens_predicted":361,"tokens_evaluated":73728}}
+{"received_ms":38231.46092001116,"event":{"index":0,"content":" and","tokens":[532],"stop":false,"id_slot":-1,"tokens_predicted":362,"tokens_evaluated":73728}}
+{"received_ms":38247.94531601947,"event":{"index":0,"content":" faster","tokens":[11442],"stop":false,"id_slot":-1,"tokens_predicted":363,"tokens_evaluated":73728}}
+{"received_ms":38264.44017898757,"event":{"index":0,"content":" when","tokens":[1056],"stop":false,"id_slot":-1,"tokens_predicted":364,"tokens_evaluated":73728}}
+{"received_ms":38281.000071030576,"event":{"index":0,"content":" a","tokens":[496],"stop":false,"id_slot":-1,"tokens_predicted":365,"tokens_evaluated":73728}}
+{"received_ms":38297.3699879949,"event":{"index":0,"content":" robust","tokens":[16317],"stop":false,"id_slot":-1,"tokens_predicted":366,"tokens_evaluated":73728}}
+{"received_ms":38313.76863899641,"event":{"index":0,"content":" suite","tokens":[16848],"stop":false,"id_slot":-1,"tokens_predicted":367,"tokens_evaluated":73728}}
+{"received_ms":38330.062278022524,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":368,"tokens_evaluated":73728}}
+{"received_ms":38346.57650301233,"event":{"index":0,"content":" regression","tokens":[21055],"stop":false,"id_slot":-1,"tokens_predicted":369,"tokens_evaluated":73728}}
+{"received_ms":38363.01478801761,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":370,"tokens_evaluated":73728}}
+{"received_ms":38379.64187603211,"event":{"index":0,"content":" is","tokens":[563],"stop":false,"id_slot":-1,"tokens_predicted":371,"tokens_evaluated":73728}}
+{"received_ms":38396.18361700559,"event":{"index":0,"content":" already","tokens":[3016],"stop":false,"id_slot":-1,"tokens_predicted":372,"tokens_evaluated":73728}}
+{"received_ms":38412.78545802925,"event":{"index":0,"content":" in","tokens":[528],"stop":false,"id_slot":-1,"tokens_predicted":373,"tokens_evaluated":73728}}
+{"received_ms":38429.444868001156,"event":{"index":0,"content":" place","tokens":[1977],"stop":false,"id_slot":-1,"tokens_predicted":374,"tokens_evaluated":73728}}
+{"received_ms":38445.94966399018,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":375,"tokens_evaluated":73728}}
+{"received_ms":38462.30558399111,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":376,"tokens_evaluated":73728}}
+{"received_ms":38478.62728498876,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":377,"tokens_evaluated":73728}}
+{"received_ms":38495.0935820234,"event":{"index":0,"content":"1","tokens":[236770],"stop":false,"id_slot":-1,"tokens_predicted":378,"tokens_evaluated":73728}}
+{"received_ms":38511.39340602094,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":379,"tokens_evaluated":73728}}
+{"received_ms":38527.65092300251,"event":{"index":0,"content":" Test","tokens":[5803],"stop":false,"id_slot":-1,"tokens_predicted":380,"tokens_evaluated":73728}}
+{"received_ms":38543.920285999775,"event":{"index":0,"content":" suites","tokens":[54149],"stop":false,"id_slot":-1,"tokens_predicted":381,"tokens_evaluated":73728}}
+{"received_ms":38560.14065799536,"event":{"index":0,"content":" should","tokens":[1374],"stop":false,"id_slot":-1,"tokens_predicted":382,"tokens_evaluated":73728}}
+{"received_ms":38576.394258998334,"event":{"index":0,"content":" be","tokens":[577],"stop":false,"id_slot":-1,"tokens_predicted":383,"tokens_evaluated":73728}}
+{"received_ms":38592.63637801632,"event":{"index":0,"content":" organized","tokens":[13957],"stop":false,"id_slot":-1,"tokens_predicted":384,"tokens_evaluated":73728}}
+{"received_ms":38608.87327499222,"event":{"index":0,"content":" logically","tokens":[87121],"stop":false,"id_slot":-1,"tokens_predicted":385,"tokens_evaluated":73728}}
+{"received_ms":38625.10684499284,"event":{"index":0,"content":" to","tokens":[531],"stop":false,"id_slot":-1,"tokens_predicted":386,"tokens_evaluated":73728}}
+{"received_ms":38641.3209909806,"event":{"index":0,"content":" allow","tokens":[2174],"stop":false,"id_slot":-1,"tokens_predicted":387,"tokens_evaluated":73728}}
+{"received_ms":38657.70523197716,"event":{"index":0,"content":" for","tokens":[573],"stop":false,"id_slot":-1,"tokens_predicted":388,"tokens_evaluated":73728}}
+{"received_ms":38674.23296201741,"event":{"index":0,"content":" targeted","tokens":[20054],"stop":false,"id_slot":-1,"tokens_predicted":389,"tokens_evaluated":73728}}
+{"received_ms":38690.655422979034,"event":{"index":0,"content":" execution","tokens":[14860],"stop":false,"id_slot":-1,"tokens_predicted":390,"tokens_evaluated":73728}}
+{"received_ms":38707.02261698898,"event":{"index":0,"content":" of","tokens":[529],"stop":false,"id_slot":-1,"tokens_predicted":391,"tokens_evaluated":73728}}
+{"received_ms":38723.3855209779,"event":{"index":0,"content":" relevant","tokens":[7798],"stop":false,"id_slot":-1,"tokens_predicted":392,"tokens_evaluated":73728}}
+{"received_ms":38739.725325023755,"event":{"index":0,"content":" components","tokens":[6237],"stop":false,"id_slot":-1,"tokens_predicted":393,"tokens_evaluated":73728}}
+{"received_ms":38756.201834999956,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":394,"tokens_evaluated":73728}}
+{"received_ms":38772.43862702744,"event":{"index":0,"content":"\n","tokens":[107],"stop":false,"id_slot":-1,"tokens_predicted":395,"tokens_evaluated":73728}}
+{"received_ms":38788.894868979696,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":396,"tokens_evaluated":73728}}
+{"received_ms":38805.23669498507,"event":{"index":0,"content":"2","tokens":[236778],"stop":false,"id_slot":-1,"tokens_predicted":397,"tokens_evaluated":73728}}
+{"received_ms":38821.59021298867,"event":{"index":0,"content":".","tokens":[236761],"stop":false,"id_slot":-1,"tokens_predicted":398,"tokens_evaluated":73728}}
+{"received_ms":38838.03966501728,"event":{"index":0,"content":" \"","tokens":[623],"stop":false,"id_slot":-1,"tokens_predicted":399,"tokens_evaluated":73728}}
+{"received_ms":38854.55999698024,"event":{"index":0,"content":"Fl","tokens":[6720],"stop":false,"id_slot":-1,"tokens_predicted":400,"tokens_evaluated":73728}}
+{"received_ms":38870.964345987886,"event":{"index":0,"content":"aky","tokens":[32873],"stop":false,"id_slot":-1,"tokens_predicted":401,"tokens_evaluated":73728}}
+{"received_ms":38887.236597016454,"event":{"index":0,"content":"\"","tokens":[236775],"stop":false,"id_slot":-1,"tokens_predicted":402,"tokens_evaluated":73728}}
+{"received_ms":38903.61989400117,"event":{"index":0,"content":" tests","tokens":[7713],"stop":false,"id_slot":-1,"tokens_predicted":403,"tokens_evaluated":73728}}

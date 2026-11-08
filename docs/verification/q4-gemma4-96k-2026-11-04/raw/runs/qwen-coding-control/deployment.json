@@ -1,0 +1,12 @@
+{
+  "service": "llama-qwen38-cuda.service",
+  "expected_model_file": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+  "model_alias": "qwen3.6-35b-a3b",
+  "legacy_aliases": [
+    "qwen3.8-27b"
+  ],
+  "mode": "qwen-coding-control",
+  "container": "qwen36-35b-a3b-96k",
+  "sandbox_image": "python:3.12.12-slim-bookworm",
+  "recorded_at": "2026-11-04T15:31:20Z"
+}

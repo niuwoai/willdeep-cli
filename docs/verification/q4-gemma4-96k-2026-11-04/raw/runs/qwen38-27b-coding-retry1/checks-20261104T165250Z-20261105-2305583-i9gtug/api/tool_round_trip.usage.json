@@ -1,0 +1,8 @@
+{
+  "completion_tokens": 37,
+  "prompt_tokens": 414,
+  "total_tokens": 451,
+  "prompt_tokens_details": {
+    "cached_tokens": 346
+  }
+}

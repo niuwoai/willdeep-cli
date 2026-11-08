@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "configuration_tests.rs"]
+mod tests;
+
 #[derive(RustEmbed)]
 #[folder = "assets/willdeep-config/ui"]
 struct ConfigurationUiAssets;
@@ -223,6 +227,16 @@ struct ProviderSummary {
     api_base: String,
     model: String,
     api_key_configured: bool,
+    reasoning: Option<willdeep_core::provider::ReasoningProfile>,
+}
+
+fn deserialize_present_reasoning<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<willdeep_core::provider::ReasoningProfile>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<willdeep_core::provider::ReasoningProfile>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -236,6 +250,10 @@ pub(super) struct ProviderUpdate {
     api_key: String,
     model: String,
     set_default: bool,
+    #[serde(default)]
+    reasoning_only: bool,
+    #[serde(default, deserialize_with = "deserialize_present_reasoning")]
+    reasoning: Option<Option<willdeep_core::provider::ReasoningProfile>>,
 }
 
 pub(super) async fn list(
@@ -305,6 +323,7 @@ fn read_settings(path: &std::path::Path) -> anyhow::Result<ProviderSettings> {
                     .api_key_env
                     .as_ref()
                     .is_some_and(|key| !key.is_empty()),
+            reasoning: profile.reasoning.clone(),
         })
         .collect();
     Ok(ProviderSettings {
@@ -327,6 +346,18 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
     }
     if !safe_provider_id(&update.id) {
         bail!("provider id must use ASCII letters, numbers, '_' or '-' (1 to 64 characters)");
+    }
+    // The reasoning panel hides connection fields. Their summary values may be
+    // inferred defaults or empty (for api_base_env), never connection edits.
+    if update.reasoning_only {
+        let old: crate::config::ConfigFile =
+            toml::from_str(&current).context("parse provider configuration")?;
+        anyhow::ensure!(
+            old.providers.contains_key(&update.id),
+            "provider was not found"
+        );
+        anyhow::ensure!(update.reasoning.is_some(), "reasoning update is required");
+        return save_reasoning_only(path, &current, &old, &update);
     }
     if !matches!(
         update.provider.as_str(),
@@ -367,17 +398,7 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
         toml::from_str(&current).context("parse provider configuration")?
     };
     let existing = old.providers.get(&update.id);
-    let has_existing_auth = existing.is_some_and(|profile| {
-        profile
-            .api_key
-            .as_ref()
-            .is_some_and(|value| !value.is_empty())
-            || profile
-                .api_key_env
-                .as_ref()
-                .is_some_and(|value| !value.is_empty())
-    });
-    if key.is_empty() && !has_existing_auth {
+    if key.is_empty() && existing.is_none() {
         bail!("API key is required for a new provider");
     }
 
@@ -399,6 +420,12 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
             Some(crate::model_routing::toml_string(value)),
         );
     }
+    patched = patch_reasoning(
+        &patched,
+        &section,
+        existing.and_then(|profile| profile.reasoning.as_ref()),
+        &update.reasoning,
+    )?;
     if !key.is_empty() {
         patched = crate::model_routing::patch_key(&patched, Some(&section), "api_key_env", None);
         patched = crate::model_routing::patch_key(
@@ -408,7 +435,7 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
             Some(crate::model_routing::toml_string(key)),
         );
     }
-    if update.set_default || old.default_provider.is_none() {
+    if update.set_default || (old.default_provider.is_none() && existing.is_none()) {
         patched = crate::model_routing::patch_key(
             &patched,
             None,
@@ -416,7 +443,150 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
             Some(crate::model_routing::toml_string(&update.id)),
         );
     }
-    let parsed: crate::config::ConfigFile = toml::from_str(&patched)
+    save_validated_configuration(path, &patched)
+}
+
+fn save_reasoning_only(
+    path: &std::path::Path,
+    current: &str,
+    old: &crate::config::ConfigFile,
+    update: &ProviderUpdate,
+) -> anyhow::Result<()> {
+    let section = format!("providers.{}", update.id);
+    let patched = patch_reasoning(
+        current,
+        &section,
+        old.providers
+            .get(&update.id)
+            .and_then(|profile| profile.reasoning.as_ref()),
+        &update.reasoning,
+    )?;
+    save_validated_configuration(path, &patched)
+}
+
+fn patch_reasoning(
+    current: &str,
+    section: &str,
+    existing: Option<&willdeep_core::provider::ReasoningProfile>,
+    update: &Option<Option<willdeep_core::provider::ReasoningProfile>>,
+) -> anyhow::Result<String> {
+    if update.is_none() {
+        return Ok(current.to_owned());
+    }
+    if let Some(Some(reasoning)) = update {
+        reasoning
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid reasoning profile: {error}"))?;
+    }
+    // Locate inline values with the TOML parser, not line matching: a valid
+    // inline table cannot also be extended by a later explicit table header.
+    #[derive(Deserialize)]
+    struct Source {
+        #[serde(default)]
+        providers: std::collections::BTreeMap<String, ProviderSource>,
+    }
+    #[derive(Deserialize)]
+    struct ProviderSource {
+        reasoning: Option<toml::Spanned<ReasoningSource>>,
+    }
+    #[derive(Deserialize)]
+    struct ReasoningSource {
+        levels: Option<toml::Spanned<toml::Value>>,
+    }
+    let source: Source = toml::from_str(current).context("locate reasoning configuration")?;
+    let provider_id = section
+        .strip_prefix("providers.")
+        .context("invalid provider section")?;
+    let source_reasoning = source
+        .providers
+        .get(provider_id)
+        .and_then(|value| value.reasoning.as_ref());
+    let inline_span = |span: std::ops::Range<usize>| {
+        current
+            .get(span.clone())
+            .is_some_and(|text| text.trim_start().starts_with('{'))
+            .then_some(span)
+    };
+    let mut patched = current.to_owned();
+    if let Some(span) = source_reasoning.and_then(|value| inline_span(value.span())) {
+        let value = match update.as_ref().and_then(Option::as_ref) {
+            Some(reasoning) => toml::Value::try_from(reasoning)?,
+            None => toml::Value::Table(Default::default()),
+        };
+        patched.replace_range(span, &value.to_string());
+        return Ok(patched);
+    }
+    let levels_span = source_reasoning
+        .and_then(|value| value.get_ref().levels.as_ref())
+        .and_then(|value| inline_span(value.span()));
+    let inline_levels = levels_span.is_some();
+    if let Some(span) = levels_span {
+        let value = match update.as_ref().and_then(Option::as_ref) {
+            Some(reasoning) => toml::Value::try_from(&reasoning.levels)?,
+            None => toml::Value::Table(Default::default()),
+        };
+        patched.replace_range(span, &value.to_string());
+    }
+    let reasoning_section = format!("{section}.reasoning");
+    let levels_section = format!("{reasoning_section}.levels");
+    let old_levels = existing.map(|reasoning| &reasoning.levels);
+    let new_levels = update
+        .as_ref()
+        .and_then(Option::as_ref)
+        .map(|reasoning| &reasoning.levels);
+    if !inline_levels {
+        for old_level in old_levels.into_iter().flat_map(|levels| levels.keys()) {
+            if !new_levels.is_some_and(|levels| levels.contains_key(old_level)) {
+                patched = crate::model_routing::patch_key(
+                    &patched,
+                    Some(&levels_section),
+                    old_level,
+                    None,
+                );
+            }
+        }
+    }
+    if let Some(Some(reasoning)) = update {
+        for (name, value) in [
+            ("default_level", reasoning.default_level.as_deref()),
+            ("parameter", reasoning.parameter.as_deref()),
+        ] {
+            patched = crate::model_routing::patch_key(
+                &patched,
+                Some(&reasoning_section),
+                name,
+                value.map(crate::model_routing::toml_string),
+            );
+        }
+        if !inline_levels {
+            for (level, value) in &reasoning.levels {
+                let value = match value {
+                    serde_json::Value::String(value) => crate::model_routing::toml_string(value),
+                    serde_json::Value::Bool(value) => value.to_string(),
+                    serde_json::Value::Number(value) => value.to_string(),
+                    _ => anyhow::bail!(
+                        "reasoning level `{level}` must map to a string, number, or boolean"
+                    ),
+                };
+                patched = crate::model_routing::patch_key(
+                    &patched,
+                    Some(&levels_section),
+                    level,
+                    Some(value),
+                );
+            }
+        }
+    } else if update.is_some() {
+        for name in ["default_level", "parameter"] {
+            patched =
+                crate::model_routing::patch_key(&patched, Some(&reasoning_section), name, None);
+        }
+    }
+    Ok(patched)
+}
+
+fn save_validated_configuration(path: &std::path::Path, patched: &str) -> anyhow::Result<()> {
+    let parsed: crate::config::ConfigFile = toml::from_str(patched)
         .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     crate::config::validate(&parsed, path)?;
     if let Some(parent) = path.parent() {

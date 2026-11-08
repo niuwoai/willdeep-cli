@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "checked_at": "2026-11-04T16:31:01Z",
+  "original_27b_override_path": "/root/benchmarks/qwen38-96k-70043de5/override-96k.conf",
+  "original_27b_override_sha256": "fe3e52f3901e2cc478b4c990af8e52a6d271909958e6bbbf72aa74736f119744",
+  "model_host_path": "/home/ml-data/opt-models/unsloth-Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ3_XXS.gguf",
+  "model_file": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+  "model_bytes": 10934860704,
+  "model_sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee",
+  "model_sha256_provenance": "Computed from the retained previously tested 27B file; not an upstream checksum comparison.",
+  "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+  "binary_bytes": 75075352,
+  "current_override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+  "original_jinja_enabled": false,
+  "current_identity": {
+    "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+    "model_alias": "qwen3.6-35b-a3b",
+    "total_slots": 1
+  },
+  "context_tokens": 98304,
+  "slot_idle": true,
+  "test_jinja_enabled": true,
+  "existing_fixed_tests_unchanged": true,
+  "checks_rb_sha256": "125f9a67335256c2864715c73fb8f48ca6380200fc5b8a1aceeba17aea609f48"
+}

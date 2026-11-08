@@ -230,6 +230,8 @@ struct SessionDetail {
     /// 这条会话当前用的模型；`None` 表示跟随 Provider 默认。
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_level: Option<String>,
     /// 当前 Runtime Provider 档案，用于让模型选择器准确处理同名模型。
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_id: Option<String>,
@@ -526,6 +528,10 @@ async fn serve_internal(
             post(set_session_approval_mode),
         )
         .route("/api/sessions/{id}/model", post(set_session_model))
+        .route(
+            "/api/sessions/{id}/reasoning-level",
+            post(set_session_reasoning_level),
+        )
         .route("/api/models", get(list_models))
         .route("/api/models/default", get(default_model))
         .route("/api/sessions/{id}/steer", post(steer_session))
@@ -1503,6 +1509,9 @@ async fn session_detail(
             .as_ref()
             .and_then(|candidate| candidate.model.clone())
             .or(session.model),
+        reasoning_level: runtime_session
+            .as_ref()
+            .and_then(|candidate| candidate.reasoning_level.clone()),
         provider_id: runtime_session
             .and_then(|candidate| candidate.profile)
             .or(session.profile),
@@ -1904,6 +1913,53 @@ async fn set_session_model(
                 .map_err(WebError::from_anyhow)?;
         }
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReasoningLevelRequest {
+    reasoning_level: Option<String>,
+}
+
+async fn set_session_reasoning_level(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<uuid::Uuid>,
+    Json(request): Json<ReasoningLevelRequest>,
+) -> Result<StatusCode, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "changing reasoning level from the browser is only available when the Web server listens on a loopback address; use `/reasoning` in the TUI instead",
+        ));
+    }
+    ensure_web_runtime_session(&state, id).await?;
+    if let Some(level) = request.reasoning_level.as_deref() {
+        let core = SessionStore::new(&state.home)
+            .load(id)
+            .map_err(|_| WebError::bad_request("session was not found"))?;
+        let runtime_session = crate::daemon::remote_session_states(&state.home)
+            .await
+            .map_err(WebError::from_anyhow)?
+            .into_iter()
+            .find(|session| session.id == id)
+            .ok_or_else(|| WebError::bad_request("Runtime Session was not found"))?;
+        let loaded = crate::config::LoadedConfig::load(core.config.as_deref())
+            .map_err(WebError::from_anyhow)?;
+        let profile = loaded
+            .select_provider(runtime_session.profile.as_deref())
+            .map_err(WebError::from_anyhow)?;
+        let configured = profile
+            .and_then(|profile| profile.reasoning.as_ref())
+            .is_some_and(|reasoning| reasoning.levels.contains_key(level));
+        if !configured {
+            return Err(WebError::bad_request(
+                "reasoning level is not configured for this Session Provider",
+            ));
+        }
+    }
+    crate::daemon::update_remote_session_reasoning_level(&state.home, id, request.reasoning_level)
+        .await
+        .map_err(WebError::from_anyhow)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -1,0 +1,63 @@
+{
+  "version": "0.147.0-rc2",
+  "date": "2026-11-06",
+  "status": "local_cli_installed_runtime_handoff_pending",
+  "scope": ["reasoning_profile", "tui_reasoning", "web_reasoning", "single_plan_card"],
+  "checks": {
+    "core_targeted": {"status": "passed", "passed": 39, "failed": 0},
+    "cli_targeted": {"status": "passed", "passed": 21, "failed": 0},
+    "web_targeted": {"status": "passed", "files": 2, "passed": 7, "failed": 0},
+    "typescript": {"status": "passed"},
+    "targeted_eslint": {"status": "passed"},
+    "web_build": {"status": "passed", "warning": "JavaScript chunk exceeds 500 kB"},
+    "rustfmt": {"status": "passed"},
+    "diff_whitespace": {"status": "passed"},
+    "cli_build": {"status": "passed"},
+    "final_ui_verification": {
+      "status": "passed",
+      "tui_restored_level": "deep",
+      "tui_plan_cards": 1,
+      "web_plan_cards": 1,
+      "web_level_transitions": ["economy", null, "deep"],
+      "configuration_default_transitions": ["deep", "balanced"],
+      "configuration_reload_preserved": true,
+      "browser_console_errors": 0,
+      "scope": "isolated reasoning and plan fixture; does not verify production approval or message delivery"
+    },
+    "cargo_install": {
+      "status": "passed",
+      "command": "cargo install --path crates/willdeep-cli --locked --offline",
+      "version": "0.147.0-rc2",
+      "architecture": "arm64",
+      "sha256": "ef3abf92c6163a9f1daf1af950df12f3e22f4016db5b5c2c6335b927aec4001b",
+      "warnings": ["locked chacha20 0.10.1 is yanked", "locked clipboard-win 5.4.1 is yanked"]
+    }
+  },
+  "isolation": {
+    "home": "/tmp/willdeep-web-rc7",
+    "web_port": 9851,
+    "production_web_service_accessed": false,
+    "upstream_model_requests": 0,
+    "fixture_messages_used": true
+  },
+  "local_installation": {
+    "active_entry": "~/.cargo/bin/willdeep",
+    "previous_cli_version": "0.145.0-rc4",
+    "backup": "~/.local/share/willdeep-cli/local-backups/0.145.0-rc4-20261106-225522/willdeep",
+    "backup_sha256": "475f08dfbb34cf9045ceb8079d1739a2420b3b7c220b439cab2d09c5cbc06172",
+    "homebrew_changed": false,
+    "homebrew_version": "0.145.0-rc4"
+  },
+  "runtime": {
+    "version": "0.145.0-rc3",
+    "pid": 30102,
+    "health": "ok",
+    "upgrade_executed": false,
+    "handoff_status": "pending_existing_work_and_approval",
+    "approval_visibility_recovered_via": "interaction.present",
+    "approval_resolved_by_assistant": false,
+    "additional_ui_diagnosis": "in_progress"
+  },
+  "not_run": ["full_workspace_tests", "windows_native", "linux_native", "real_upstream_requests", "rollback_compatibility"],
+  "release": {"committed": false, "pushed": false, "tagged": false, "published": false, "requires_user_confirmation": true}
+}

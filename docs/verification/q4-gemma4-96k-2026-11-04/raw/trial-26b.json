@@ -1,0 +1,94 @@
+{
+  "model_key": "26b",
+  "trial_name": "26b",
+  "status": "completed_with_failures",
+  "started_at": "2026-11-04T16:04:52Z",
+  "phases": [
+    {
+      "label": "baseline-deploy",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "deploy",
+        "26b",
+        "baseline",
+        ""
+      ],
+      "started_at": "2026-11-04T16:04:52Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-baseline-deploy.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T16:05:41Z"
+    },
+    {
+      "label": "baseline-checks",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/checks.rb",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline"
+      ],
+      "started_at": "2026-11-04T16:05:41Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-baseline-checks.log",
+      "status": "failed",
+      "exit_code": 1,
+      "completed_at": "2026-11-04T16:05:52Z"
+    },
+    {
+      "label": "baseline-prepare",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "prepare",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline"
+      ],
+      "started_at": "2026-11-04T16:05:52Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-baseline-prepare.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T16:05:53Z"
+    },
+    {
+      "label": "baseline-benchmark",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "run",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline"
+      ],
+      "started_at": "2026-11-04T16:05:53Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-baseline-benchmark.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T16:12:25Z"
+    },
+    {
+      "label": "baseline-verify",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "verify",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline"
+      ],
+      "started_at": "2026-11-04T16:12:25Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-baseline-verify.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T16:12:25Z"
+    },
+    {
+      "label": "restore-qwen",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "restore"
+      ],
+      "started_at": "2026-11-04T16:12:25Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/26b-restore-qwen.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T16:12:35Z"
+    }
+  ],
+  "qwen_restored": true,
+  "completed_at": "2026-11-04T16:12:35Z"
+}

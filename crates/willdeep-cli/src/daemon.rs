@@ -70,6 +70,8 @@ pub(crate) use schedule_client::{
     read_session_attachments, schedule_operation, schedule_policy, schedule_response,
 };
 mod deferred_gates;
+#[cfg(test)]
+pub(crate) mod reasoning_test_support;
 pub(crate) mod session_store;
 mod steering;
 mod tool_store;
@@ -103,7 +105,7 @@ pub(crate) use tui_bridge::{
     start_runtime_event_follower, steer_remote_turn, stop_remote_agent, stop_remote_turn,
     submit_runtime_turn, submit_runtime_turn_with_id, submit_runtime_turn_with_options,
     update_remote_session_approval_mode, update_remote_session_model,
-    update_remote_session_provider,
+    update_remote_session_provider, update_remote_session_reasoning_level,
 };
 pub(crate) use workspace_store::WorkspaceAccess;
 pub(crate) use workspace_store::{
@@ -409,6 +411,8 @@ pub(crate) struct SubmitTask {
     pub(crate) profile: Option<String>,
     #[serde(default)]
     pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) reasoning_level: Option<String>,
     pub(crate) config: Option<PathBuf>,
     #[serde(default)]
     pub(crate) session_id: Option<uuid::Uuid>,
@@ -927,6 +931,7 @@ pub(crate) async fn submit_runtime_prompt(
                     workspace_mcp_servers: None,
                     profile: options.profile.clone(),
                     model: options.model.clone(),
+                    reasoning_level: None,
                     config: options.config.clone(),
                     session_id: None,
                     turn_id: None,

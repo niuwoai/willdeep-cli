@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "checked_at": "2026-11-04T17:11:33Z",
+  "current_model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+  "current_model_alias": "qwen3.6-35b-a3b",
+  "current_context_per_slot": 98304,
+  "current_parallel": 1,
+  "current_slots_idle": true,
+  "current_override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+  "model_sha256_verified": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+  "mtp_sha256_verified": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+  "gpu_total_mib": 16303,
+  "gpu_used_before_change_mib": 12934,
+  "memory_available_mib": 29404,
+  "disk_free_home_gib_rounded": 203,
+  "source_contract": "common.cpp sets n_seq_max from parallel; non-unified llama-context.cpp divides total context by n_seq_max. Actual /slots contexts must independently match 131072 in each deployment.",
+  "note": "Host invocation of llama-server --help lacks libcudart.so.12; help was successfully inspected in the existing CUDA container. The deployment uses that same fixed CUDA image."
+}

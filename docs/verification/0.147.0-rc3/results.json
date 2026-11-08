@@ -1,0 +1,49 @@
+{
+  "version": "0.147.0-rc3",
+  "date": "2026-11-07",
+  "status": "local_installed_runtime_upgraded",
+  "scope": "human_gate_visibility_and_busy_input_feedback",
+  "baseline": {
+    "runtime_version": "0.147.0-rc2",
+    "isolated": true,
+    "real_upstream_requests": 0,
+    "fixture_provider": "local deterministic Chat Completions",
+    "approval_retained": true,
+    "approval_visible_after_ineligible_queue": false,
+    "dependent_message_retained": true,
+    "original_request_unanswered": true,
+    "outcome": "reported_regression_reproduced"
+  },
+  "checks": {
+    "web_build": {"status": "passed", "includes_final_feedback_changes": true, "warning": "JavaScript chunk exceeds 500 kB"},
+    "web_targeted_tests": {"status": "passed", "passed": 31, "files": 4, "note": "App fixture clipboard.files corrected before 17-case rerun; other 14 cases passed initially"},
+    "web_targeted_eslint": {"status": "passed"},
+    "rust_format": {"status": "passed"},
+    "diff_check": {"status": "passed"},
+    "runtime_unit_tests": {"status": "passed", "passed": 52, "breakdown": {"deferred_gates": 18, "runtime_queue": 13, "reasoning_commands": 6, "plan_ui": 10, "web_configuration": 5}, "initial_failure": "E0433: undeclared tempfile dependency in new test; replaced with unique temporary path before passing rerun"},
+    "runtime_integration_test": {"status": "passed", "passed": 1, "name": "runtime_yields_past_a_dependent_head_then_restores_the_original_question"},
+    "debug_build": {"status": "passed"},
+    "release_build": {"status": "passed"},
+    "fixed_isolated_runtime": {"status": "passed", "approval_retained": true, "approval_visible_after_ineligible_queue": true, "dependent_message_retained": true, "original_request_unanswered": true},
+    "tui_approval_visible": {"status": "passed", "screenshot": "tui-approval.png", "queue_sync_after_web_submission": 2},
+    "web_approval_visible": {"status": "passed", "screenshot": "web-approval.jpg"},
+    "web_ordinary_enter": {"status": "passed", "draft_retained": true, "original_gate_focused": true, "queue_before": 1, "queue_after": 1},
+    "web_explicit_queue": {"status": "passed", "draft_cleared_after_acceptance": true, "queue_after": 2, "original_gate_retained": true, "notice_distinguishes_queue_from_model_delivery": true},
+    "browser_errors": {"status": "passed", "scope": "current console and network buffers; earlier polling requests are not archived"},
+    "local_installation": {"status": "passed", "cargo_version": "0.147.0-rc3", "sha256": "959a3cbb7028b2918a85ba4b14a25d81f8138c78ec93180eb372b9e1b6901ce3", "homebrew_version": "0.145.0-rc4", "warnings": ["locked chacha20 0.10.1 yanked", "locked clipboard-win 5.4.1 yanked"]},
+    "production_runtime_upgrade": {"status": "passed", "version": "0.147.0-rc3", "pid": 9794, "health": "ok", "previous_version": "0.145.0-rc3", "previous_pid": 30102, "protocol_version": "1.0", "reasoning_operation_supported": true, "method": "user_authorized_immediate_shutdown_then_start", "drain_waiter_cancelled": true, "active_tasks_before_upgrade": 2, "pending_approvals_before_upgrade": 0, "pending_questions_before_upgrade": 0, "previous_task_statuses": ["interrupted", "cancelled"], "affected_original_turn_status": "interrupted", "affected_queued_turns_cancelled": 3, "affected_queued_turn_attempts": 0, "cancelled_requests_resubmitted": false},
+    "subsequent_drain_recovery": {"status": "passed", "trigger": "Homebrew 0.145.0-rc4 upgrade against already upgraded Runtime", "shell_entry_modified": false, "previous_pid": 9794, "current_pid": 45197, "version": "0.147.0-rc3", "health": "ok", "verified_via_homebrew_cli": true, "previous_running_task_status": "cancelled", "failed_user_input_resubmitted": false, "real_model_probe": false}
+  },
+  "behavior_limits": [
+    "Busy input remains in the durable Runtime queue until eligible; immediate feedback is observed host state, not a model answer",
+    "Ordinary Enter during human waiting preserves the draft and opens the existing request; Cmd/Ctrl+Enter explicitly queues",
+    "No approval decision, stop request, or automatic independent-task authorization is inferred from a progress inquiry"
+  ],
+  "backups": [
+    "~/.local/share/willdeep-cli/local-backups/0.145.0-rc4-20261106-225522/willdeep",
+    "~/.local/share/willdeep-cli/local-backups/0.147.0-rc2-20261106-233502/willdeep"
+  ],
+  "cleanup": {"current_fixture_stop_requested": true, "current_tui_closed": true, "current_isolated_runtime_confirmed_stopped": true, "older_9851_preview": "stop denied by automatic approval: Interfere With Workloads; no bypass attempted"},
+  "not_run": ["full_workspace_tests", "windows_native", "linux_native", "real_upstream_requests", "rollback_compatibility"],
+  "release": {"committed": false, "pushed": false, "tagged": false, "published": false}
+}

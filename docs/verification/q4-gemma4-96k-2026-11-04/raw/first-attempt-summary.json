@@ -1,0 +1,1093 @@
+{
+  "generated_at": "2026-11-04T15:18:36Z",
+  "models": {
+    "12b-baseline": {
+      "deployment": {
+        "service": "llama-qwen38-cuda.service",
+        "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+        "model_alias": "gemma-4-12b-qat",
+        "aliases": [
+          "gemma-4-12b-qat",
+          "qwen3.6-35b-a3b",
+          "qwen3.8-27b"
+        ],
+        "mode": "12b-qat",
+        "trial_mode": "baseline",
+        "model_key": "12b",
+        "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+        "model_bytes": 6975879296,
+        "context_tokens": 98304,
+        "parallel": 1,
+        "container": "gemma4-12b-baseline-96k",
+        "sandbox_image": "python:3.12.12-slim-bookworm",
+        "baseline": {
+          "service": "llama-qwen38-cuda.service",
+          "original_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+          "backup_dir": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original",
+          "backup_override": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original/override.conf",
+          "expected_model_file": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+          "original_override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+          "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+          "verified_identity": {
+            "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+            "model_alias": "qwen3.6-35b-a3b",
+            "context_tokens": 98304,
+            "total_slots": 1
+          },
+          "saved_at": "2026-11-04T13:28:50Z"
+        },
+        "override_sha256": "9858ca543b78778f686f9e45d4252e730e37215c02800b6a22720952bfbf6465",
+        "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+        "deployed_at": "2026-11-04T15:02:22Z"
+      },
+      "run_directory": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-baseline",
+      "groups": {},
+      "checks": [
+        {
+          "path": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/report.json",
+          "status": "failed",
+          "summary": {
+            "passed": 9,
+            "failed": 2,
+            "not_run": 3
+          },
+          "checks": [
+            {
+              "name": "configuration",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {
+                "model_alias": "gemma-4-12b-qat",
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "service": "llama-qwen38-cuda.service",
+                "legacy_aliases": [
+                  "qwen3.6-35b-a3b",
+                  "qwen3.8-27b"
+                ],
+                "sandbox_image": "python:3.12.12-slim-bookworm"
+              }
+            },
+            {
+              "name": "authentication",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {}
+            },
+            {
+              "name": "service_active",
+              "status": "failed",
+              "error": "FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 0.007,
+              "evidence": {}
+            },
+            {
+              "name": "health",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "response": {
+                  "status": "ok"
+                }
+              }
+            },
+            {
+              "name": "loaded_model",
+              "status": "failed",
+              "error": "Encoding::UndefinedConversionError: \"\\xE2\" from ASCII-8BIT to UTF-8",
+              "elapsed_seconds": 0.003,
+              "evidence": {}
+            },
+            {
+              "name": "chat_ok",
+              "status": "passed",
+              "elapsed_seconds": 0.065,
+              "evidence": {
+                "requested_model": "gemma-4-12b-qat",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_1",
+              "status": "passed",
+              "elapsed_seconds": 0.044,
+              "evidence": {
+                "requested_model": "qwen3.6-35b-a3b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_2",
+              "status": "passed",
+              "elapsed_seconds": 0.043,
+              "evidence": {
+                "requested_model": "qwen3.8-27b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "forced_tool_add",
+              "status": "passed",
+              "elapsed_seconds": 0.265,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 96,
+                  "total_tokens": 113,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "add",
+                      "arguments": "{\"a\":19,\"b\":23}"
+                    },
+                    "id": "4pUSCQgyR9JAr6jArYLiDtW9Gi6LyyHt"
+                  }
+                ],
+                "tool_result": 42
+              }
+            },
+            {
+              "name": "tool_round_trip",
+              "status": "passed",
+              "elapsed_seconds": 0.092,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 3,
+                  "prompt_tokens": 148,
+                  "total_tokens": 151,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 91
+                  }
+                },
+                "content": "42"
+              }
+            },
+            {
+              "name": "json_object",
+              "status": "passed",
+              "elapsed_seconds": 0.246,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 32,
+                  "total_tokens": 49,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "content": "{\n  \"result\": 42\n}"
+              }
+            },
+            {
+              "name": "sandbox_availability",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: sandbox 探针不可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 0.014,
+              "evidence": {}
+            },
+            {
+              "name": "programming_dedupe",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 2.809,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 222,
+                  "prompt_tokens": 275,
+                  "total_tokens": 497,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_dedupe",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_dedupe/solution.py",
+                "source_bytes": 705,
+                "source_sha256": "6511a8393f50052b700a89d19789a114b85bab8bdc01c32bb9e178c5438f1349",
+                "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+                "expected_tests": 8
+              }
+            },
+            {
+              "name": "programming_decimal_refunds",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 7.891,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 632,
+                  "prompt_tokens": 392,
+                  "total_tokens": 1024,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 24
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_decimal_refunds",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_decimal_refunds/solution.py",
+                "source_bytes": 2136,
+                "source_sha256": "6b7f1ab62b1cd67eeeabaa06e8f75bfdbb7370de192abe8e679886cd85eea069",
+                "fixed_tests_sha256": "aa44997c8a90f0420af777c4268c1643e22e50878edc966a3d75250361751a0f",
+                "expected_tests": 9
+              }
+            }
+          ]
+        }
+      ],
+      "benchmark_status": "failed",
+      "benchmark_error": {
+        "message": "Encoding::UndefinedConversionError: \"\\xE2\" from ASCII-8BIT to UTF-8",
+        "at": "2026-11-04T15:03:23.909017Z",
+        "backtrace": [
+          "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:676:in `write'",
+          "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:676:in `block (3 levels) in completion'",
+          "/usr/lib/ruby/3.3.0/net/protocol.rb:535:in `call_block'",
+          "/usr/lib/ruby/3.3.0/net/protocol.rb:526:in `<<'",
+          "/usr/lib/ruby/3.3.0/net/protocol.rb:168:in `read'",
+          "/usr/lib/ruby/3.3.0/net/http/response.rb:631:in `read_chunked'",
+          "/usr/lib/ruby/3.3.0/net/http/response.rb:595:in `block in read_body_0'",
+          "/usr/lib/ruby/3.3.0/net/http/response.rb:588:in `inflater'",
+          "/usr/lib/ruby/3.3.0/net/http/response.rb:593:in `read_body_0'",
+          "/usr/lib/ruby/3.3.0/net/http/response.rb:363:in `read_body'",
+          "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:675:in `block (2 levels) in completion'",
+          "/usr/lib/ruby/3.3.0/net/http.rb:2353:in `block in transport_request'"
+        ]
+      },
+      "results_sha256": "3b7b1ce5dcf2dcd9164ad5e093ca92f771d5311682c73b5c7a2e08061c38e794",
+      "samples": 1,
+      "completed_samples": 0,
+      "failed_samples": [
+        {
+          "condition": "cold_first_request_no_kv",
+          "iteration": 1,
+          "status": "failed",
+          "started_at": "2026-11-04T15:02:44.921473Z",
+          "input_tokens": 73728,
+          "requested_output_tokens": 512,
+          "cache_prompt": true,
+          "evidence_directory": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/measurements/01-cold_first_request_no_kv",
+          "input_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+          "gpu_before": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8088, 0, 44, 51.03",
+          "request_metadata": {
+            "model": "gemma-4-12b-qat",
+            "id_slot": 0,
+            "n_predict": 512,
+            "ignore_eos": true,
+            "temperature": 0,
+            "seed": 42,
+            "cache_prompt": true,
+            "stream": true,
+            "timings_per_token": false
+          },
+          "dispatched_at": "2026-11-04T15:02:44.955547Z",
+          "http_status": "200",
+          "event_count": 403,
+          "client_first_nonempty_content_ms": 32218.428004009183,
+          "first_content_event_tokens_predicted": 1,
+          "error": {
+            "message": "Encoding::UndefinedConversionError: \"\\xE2\" from ASCII-8BIT to UTF-8",
+            "at": "2026-11-04T15:03:23.893703Z",
+            "backtrace": [
+              "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:676:in `write'",
+              "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:676:in `block (3 levels) in completion'",
+              "/usr/lib/ruby/3.3.0/net/protocol.rb:535:in `call_block'",
+              "/usr/lib/ruby/3.3.0/net/protocol.rb:526:in `<<'",
+              "/usr/lib/ruby/3.3.0/net/protocol.rb:168:in `read'",
+              "/usr/lib/ruby/3.3.0/net/http/response.rb:631:in `read_chunked'",
+              "/usr/lib/ruby/3.3.0/net/http/response.rb:595:in `block in read_body_0'",
+              "/usr/lib/ruby/3.3.0/net/http/response.rb:588:in `inflater'",
+              "/usr/lib/ruby/3.3.0/net/http/response.rb:593:in `read_body_0'",
+              "/usr/lib/ruby/3.3.0/net/http/response.rb:363:in `read_body'",
+              "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb:675:in `block (2 levels) in completion'",
+              "/usr/lib/ruby/3.3.0/net/http.rb:2353:in `block in transport_request'"
+            ]
+          },
+          "client_total_ms": 38938.17323300755,
+          "finished_at": "2026-11-04T15:03:23.900434Z"
+        }
+      ],
+      "prompt_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "observed_gpu_used_mib": {
+        "median": 8088.0,
+        "min": 8088.0,
+        "max": 8088.0,
+        "values": [
+          8088.0
+        ]
+      },
+      "cold_restart_to_ready_seconds": null
+    },
+    "12b-mtp-n2": {
+      "deployment": {
+        "service": "llama-qwen38-cuda.service",
+        "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+        "model_alias": "gemma-4-12b-qat",
+        "aliases": [
+          "gemma-4-12b-qat",
+          "qwen3.6-35b-a3b",
+          "qwen3.8-27b"
+        ],
+        "mode": "12b-qat-mtp",
+        "trial_mode": "mtp-n2",
+        "model_key": "12b",
+        "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+        "model_bytes": 6975879296,
+        "context_tokens": 98304,
+        "parallel": 1,
+        "container": "gemma4-12b-mtp-n2-96k",
+        "sandbox_image": "python:3.12.12-slim-bookworm",
+        "baseline": {
+          "service": "llama-qwen38-cuda.service",
+          "original_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+          "backup_dir": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original",
+          "backup_override": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original/override.conf",
+          "expected_model_file": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+          "original_override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+          "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+          "verified_identity": {
+            "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+            "model_alias": "qwen3.6-35b-a3b",
+            "context_tokens": 98304,
+            "total_slots": 1
+          },
+          "saved_at": "2026-11-04T13:28:50Z"
+        },
+        "override_sha256": "7c529ecfbf98031783a9b9ba36eb3f01beda6b2d833a0399dcafbe1d44f06195",
+        "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+        "deployed_at": "2026-11-04T15:03:44Z"
+      },
+      "run_directory": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-mtp-n2",
+      "groups": {
+        "cold_first_request_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2218.3752224866844,
+            "min": 2203.2503201717655,
+            "max": 2227.726137861706,
+            "values": [
+              2203.2503201717655,
+              2218.3752224866844,
+              2227.726137861706
+            ]
+          },
+          "decode_tps": {
+            "median": 87.6319881794566,
+            "min": 86.16302719210712,
+            "max": 88.20308734970952,
+            "values": [
+              86.16302719210712,
+              87.6319881794566,
+              88.20308734970952
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 33.235135,
+            "min": 33.09563,
+            "max": 33.463288,
+            "values": [
+              33.09563,
+              33.235135,
+              33.463288
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.831204,
+            "min": 5.793448000000001,
+            "max": 5.930618000000001,
+            "values": [
+              5.793448000000001,
+              5.831204,
+              5.930618000000001
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.24707764299819,
+            "min": 33.10749320598552,
+            "max": 33.475037158990745,
+            "values": [
+              33.10749320598552,
+              33.24707764299819,
+              33.475037158990745
+            ]
+          },
+          "wall_seconds": {
+            "median": 39.049796674982645,
+            "min": 38.94802344200434,
+            "max": 39.41493678995175,
+            "values": [
+              38.94802344200434,
+              39.049796674982645,
+              39.41493678995175
+            ]
+          },
+          "drafted_tokens": [
+            478,
+            478,
+            478
+          ],
+          "accepted_draft_tokens": [
+            272,
+            272,
+            272
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5690376569037657,
+            "min": 0.5690376569037657,
+            "max": 0.5690376569037657,
+            "values": [
+              0.5690376569037657,
+              0.5690376569037657,
+              0.5690376569037657
+            ]
+          },
+          "prefill_tps": {
+            "median": 2218.3752224866844,
+            "min": 2203.2503201717655,
+            "max": 2227.726137861706,
+            "values": [
+              2203.2503201717655,
+              2218.3752224866844,
+              2227.726137861706
+            ]
+          }
+        },
+        "warm_gpu_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2235.0755774945646,
+            "min": 2224.405622875511,
+            "max": 2244.1581894104456,
+            "values": [
+              2224.405622875511,
+              2235.0755774945646,
+              2244.1581894104456
+            ]
+          },
+          "decode_tps": {
+            "median": 86.17438998312937,
+            "min": 85.45723551027417,
+            "max": 86.33578266766078,
+            "values": [
+              85.45723551027417,
+              86.17438998312937,
+              86.33578266766078
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 32.986804,
+            "min": 32.853299,
+            "max": 33.145034,
+            "values": [
+              32.853299,
+              32.986804,
+              33.145034
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.929836,
+            "min": 5.918751,
+            "max": 5.979599,
+            "values": [
+              5.918751,
+              5.929836,
+              5.979599
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.042842424008995,
+            "min": 32.910348990990315,
+            "max": 33.203583124035504,
+            "values": [
+              32.910348990990315,
+              33.042842424008995,
+              33.203583124035504
+            ]
+          },
+          "wall_seconds": {
+            "median": 38.98080110596493,
+            "min": 38.8403075679671,
+            "max": 39.192726148001384,
+            "values": [
+              38.8403075679671,
+              38.98080110596493,
+              39.192726148001384
+            ]
+          },
+          "drafted_tokens": [
+            478,
+            478,
+            478
+          ],
+          "accepted_draft_tokens": [
+            272,
+            272,
+            272
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5690376569037657,
+            "min": 0.5690376569037657,
+            "max": 0.5690376569037657,
+            "values": [
+              0.5690376569037657,
+              0.5690376569037657,
+              0.5690376569037657
+            ]
+          },
+          "prefill_tps": {
+            "median": 2235.0755774945646,
+            "min": 2224.405622875511,
+            "max": 2244.1581894104456,
+            "values": [
+              2224.405622875511,
+              2235.0755774945646,
+              2244.1581894104456
+            ]
+          }
+        },
+        "warm_64k_prefix_plus_8k": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            8192
+          ],
+          "cache_hit_tokens": [
+            65536
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 1636.935597414553,
+            "min": 1629.130248883851,
+            "max": 1638.8041290982358,
+            "values": [
+              1629.130248883851,
+              1636.935597414553,
+              1638.8041290982358
+            ]
+          },
+          "decode_tps": {
+            "median": 82.73561841231805,
+            "min": 81.44955339823157,
+            "max": 83.20441533755347,
+            "values": [
+              81.44955339823157,
+              82.73561841231805,
+              83.20441533755347
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 5.004473,
+            "min": 4.998767,
+            "max": 5.028449999999999,
+            "values": [
+              4.998767,
+              5.004473,
+              5.028449999999999
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.1763,
+            "min": 6.141501,
+            "max": 6.273822,
+            "values": [
+              6.141501,
+              6.1763,
+              6.273822
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 5.015977176022716,
+            "min": 5.0083770580240525,
+            "max": 5.039297095965594,
+            "values": [
+              5.0083770580240525,
+              5.015977176022716,
+              5.039297095965594
+            ]
+          },
+          "wall_seconds": {
+            "median": 11.195783420000225,
+            "min": 11.16849823098164,
+            "max": 11.323023446951993,
+            "values": [
+              11.16849823098164,
+              11.195783420000225,
+              11.323023446951993
+            ]
+          },
+          "drafted_tokens": [
+            507,
+            507,
+            507
+          ],
+          "accepted_draft_tokens": [
+            257,
+            257,
+            257
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5069033530571992,
+            "min": 0.5069033530571992,
+            "max": 0.5069033530571992,
+            "values": [
+              0.5069033530571992,
+              0.5069033530571992,
+              0.5069033530571992
+            ]
+          },
+          "prefill_tps": {
+            "median": 1636.935597414553,
+            "min": 1629.130248883851,
+            "max": 1638.8041290982358,
+            "values": [
+              1629.130248883851,
+              1636.935597414553,
+              1638.8041290982358
+            ]
+          }
+        },
+        "warm_full_72k_prefix": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            5
+          ],
+          "cache_hit_tokens": [
+            73723
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 51.63475638721937,
+            "min": 50.837807060354635,
+            "max": 52.65707605788066,
+            "values": [
+              50.837807060354635,
+              51.63475638721937,
+              52.65707605788066
+            ]
+          },
+          "decode_tps": {
+            "median": 86.53160173042883,
+            "min": 86.21863459715904,
+            "max": 86.79716589418322,
+            "values": [
+              86.21863459715904,
+              86.53160173042883,
+              86.79716589418322
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 0.096834,
+            "min": 0.094954,
+            "max": 0.09835200000000001,
+            "values": [
+              0.094954,
+              0.096834,
+              0.09835200000000001
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.905357,
+            "min": 5.887289,
+            "max": 5.926793,
+            "values": [
+              5.887289,
+              5.905357,
+              5.926793
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 0.10658277699258178,
+            "min": 0.10508146899519488,
+            "max": 0.10854979098076001,
+            "values": [
+              0.10508146899519488,
+              0.10658277699258178,
+              0.10854979098076001
+            ]
+          },
+          "wall_seconds": {
+            "median": 6.021501515002456,
+            "min": 6.004063133033924,
+            "max": 6.043058925948571,
+            "values": [
+              6.004063133033924,
+              6.021501515002456,
+              6.043058925948571
+            ]
+          },
+          "drafted_tokens": [
+            481,
+            481,
+            481
+          ],
+          "accepted_draft_tokens": [
+            270,
+            270,
+            270
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5613305613305614,
+            "min": 0.5613305613305614,
+            "max": 0.5613305613305614,
+            "values": [
+              0.5613305613305614,
+              0.5613305613305614,
+              0.5613305613305614
+            ]
+          },
+          "prefill_tps_note": "Too few newly evaluated tokens to estimate long-input prefill throughput; raw short-stage rates retained separately."
+        }
+      },
+      "checks": [
+        {
+          "path": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-mtp-n2/checks-20261104T150350Z-20261104-2243628-3eb2bx/report.json",
+          "status": "failed",
+          "summary": {
+            "passed": 9,
+            "failed": 2,
+            "not_run": 3
+          },
+          "checks": [
+            {
+              "name": "configuration",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {
+                "model_alias": "gemma-4-12b-qat",
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "service": "llama-qwen38-cuda.service",
+                "legacy_aliases": [
+                  "qwen3.6-35b-a3b",
+                  "qwen3.8-27b"
+                ],
+                "sandbox_image": "python:3.12.12-slim-bookworm"
+              }
+            },
+            {
+              "name": "authentication",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {}
+            },
+            {
+              "name": "service_active",
+              "status": "failed",
+              "error": "FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 0.006,
+              "evidence": {}
+            },
+            {
+              "name": "health",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "response": {
+                  "status": "ok"
+                }
+              }
+            },
+            {
+              "name": "loaded_model",
+              "status": "failed",
+              "error": "Encoding::UndefinedConversionError: \"\\xE2\" from ASCII-8BIT to UTF-8",
+              "elapsed_seconds": 0.001,
+              "evidence": {}
+            },
+            {
+              "name": "chat_ok",
+              "status": "passed",
+              "elapsed_seconds": 0.069,
+              "evidence": {
+                "requested_model": "gemma-4-12b-qat",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_1",
+              "status": "passed",
+              "elapsed_seconds": 0.048,
+              "evidence": {
+                "requested_model": "qwen3.6-35b-a3b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_2",
+              "status": "passed",
+              "elapsed_seconds": 0.047,
+              "evidence": {
+                "requested_model": "qwen3.8-27b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "forced_tool_add",
+              "status": "passed",
+              "elapsed_seconds": 0.196,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 96,
+                  "total_tokens": 113,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "add",
+                      "arguments": "{\"a\":19,\"b\":23}"
+                    },
+                    "id": "cBnfF5WY3fknK1vZAByAamMV4PYRe89l"
+                  }
+                ],
+                "tool_result": 42
+              }
+            },
+            {
+              "name": "tool_round_trip",
+              "status": "passed",
+              "elapsed_seconds": 0.081,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 3,
+                  "prompt_tokens": 148,
+                  "total_tokens": 151,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 91
+                  }
+                },
+                "content": "42"
+              }
+            },
+            {
+              "name": "json_object",
+              "status": "passed",
+              "elapsed_seconds": 0.14,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 32,
+                  "total_tokens": 49,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "content": "{\n  \"result\": 42\n}"
+              }
+            },
+            {
+              "name": "sandbox_availability",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: sandbox 探针不可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 0.01,
+              "evidence": {}
+            },
+            {
+              "name": "programming_dedupe",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 1.406,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 216,
+                  "prompt_tokens": 275,
+                  "total_tokens": 491,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2/checks-20261104T150350Z-20261104-2243628-3eb2bx/fixture_programming_dedupe",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2/checks-20261104T150350Z-20261104-2243628-3eb2bx/fixture_programming_dedupe/solution.py",
+                "source_bytes": 688,
+                "source_sha256": "f64174e27ad98a317faa2fa32300d84572c8febbdd45b44a5606babb56b3138d",
+                "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+                "expected_tests": 8
+              }
+            },
+            {
+              "name": "programming_decimal_refunds",
+              "status": "not_run",
+              "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+              "elapsed_seconds": 4.309,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 671,
+                  "prompt_tokens": 392,
+                  "total_tokens": 1063,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 24
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2/checks-20261104T150350Z-20261104-2243628-3eb2bx/fixture_programming_decimal_refunds",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2/checks-20261104T150350Z-20261104-2243628-3eb2bx/fixture_programming_decimal_refunds/solution.py",
+                "source_bytes": 2253,
+                "source_sha256": "e84f2f055a1e5da9c41096abfed881059d48cfae4a089abc2c33cb3be39841ca",
+                "fixed_tests_sha256": "aa44997c8a90f0420af777c4268c1643e22e50878edc966a3d75250361751a0f",
+                "expected_tests": 9
+              }
+            }
+          ]
+        }
+      ],
+      "benchmark_status": "completed",
+      "benchmark_error": null,
+      "results_sha256": "72c338e9fdc47d278441945a697249e9b634d29150cf0bf42dd736712f7e480e",
+      "samples": 12,
+      "completed_samples": 12,
+      "failed_samples": [],
+      "prompt_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "observed_gpu_used_mib": {
+        "median": 8562.0,
+        "min": 8552.0,
+        "max": 8562.0,
+        "values": [
+          8552.0,
+          8552.0,
+          8552.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0
+        ]
+      },
+      "cold_restart_to_ready_seconds": {
+        "median": 4.632570778951049,
+        "min": 4.516644842980895,
+        "max": 4.670242192980368,
+        "values": [
+          4.516644842980895,
+          4.632570778951049,
+          4.670242192980368
+        ]
+      }
+    }
+  }
+}

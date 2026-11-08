@@ -1,0 +1,326 @@
+{
+  "started_at": "2026-11-04T16:52:50Z",
+  "status": "failed",
+  "endpoint": "http://127.0.0.1:11435",
+  "run_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1",
+  "artifacts_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug",
+  "report_json": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/report.json",
+  "report_markdown": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/report.md",
+  "checks": [
+    {
+      "name": "configuration",
+      "status": "passed",
+      "evidence": {
+        "model_alias": "qwen3.8-27b",
+        "expected_model_file": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+        "service": "llama-qwen38-cuda.service",
+        "legacy_aliases": [
+          "qwen3.8-27b-compat"
+        ],
+        "sandbox_image": "python:3.12.12-slim-bookworm"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "authentication",
+      "status": "passed",
+      "evidence": {
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "service_active",
+      "status": "passed",
+      "evidence": {
+        "command": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "active\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.007
+        }
+      },
+      "elapsed_seconds": 0.007
+    },
+    {
+      "name": "health",
+      "status": "passed",
+      "evidence": {
+        "response": {
+          "status": "ok"
+        }
+      },
+      "elapsed_seconds": 0.001
+    },
+    {
+      "name": "loaded_model",
+      "status": "passed",
+      "evidence": {
+        "expected_model_file": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+        "model_path": "/models/Qwen3.8-27B-UD-IQ3_XXS.gguf"
+      },
+      "elapsed_seconds": 0.001
+    },
+    {
+      "name": "chat_ok",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.8-27b",
+        "content": "OK",
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 21,
+          "total_tokens": 23,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        }
+      },
+      "elapsed_seconds": 0.239
+    },
+    {
+      "name": "legacy_alias_1",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.8-27b-compat",
+        "content": "OK",
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 21,
+          "total_tokens": 23,
+          "prompt_tokens_details": {
+            "cached_tokens": 17
+          }
+        }
+      },
+      "elapsed_seconds": 0.114
+    },
+    {
+      "name": "forced_tool_add",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 37,
+          "prompt_tokens": 310,
+          "total_tokens": 347,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        },
+        "finish_reason": "tool_calls",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "add",
+              "arguments": "{\"a\":19,\"b\":23}"
+            },
+            "id": "3lmsKNq24ji7r1yJ5JWkkinEJwxXYUSV"
+          }
+        ],
+        "tool_result": 42
+      },
+      "elapsed_seconds": 1.23
+    },
+    {
+      "name": "tool_round_trip",
+      "status": "failed",
+      "evidence": {
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 37,
+          "prompt_tokens": 414,
+          "total_tokens": 451,
+          "prompt_tokens_details": {
+            "cached_tokens": 346
+          }
+        },
+        "content": "<tool_call>\n<function=add>\n<parameter=a>\n19\n</parameter>\n<parameter=b>\n23\n</parameter>\n</function>\n</tool_call>"
+      },
+      "error": "JSON::ParserError: unexpected token at '<tool_call>\n<function=add>\n<parameter=a>\n19\n</parameter>\n<parameter=b>\n23\n</parameter>\n</function>\n</tool_call>'",
+      "elapsed_seconds": 0.926
+    },
+    {
+      "name": "json_object",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 8,
+          "prompt_tokens": 31,
+          "total_tokens": 39,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        },
+        "content": "{\"result\": 42}"
+      },
+      "elapsed_seconds": 0.492
+    },
+    {
+      "name": "sandbox_availability",
+      "status": "passed",
+      "evidence": {
+        "image_inspect": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.011
+        },
+        "image": "python:3.12.12-slim-bookworm",
+        "image_id": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a",
+        "probe": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "{\"sandbox_ready\": true, \"python\": \"3.12.12\"}\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.368,
+          "security_args": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--name",
+            "willdeep-accept-2305583-b9b986bfac94",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "64",
+            "--memory",
+            "256m",
+            "--memory-swap",
+            "256m",
+            "--cpus",
+            "1",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+            "--ipc",
+            "none",
+            "--user",
+            "65534:65534",
+            "--workdir",
+            "/tmp",
+            "--env",
+            "HOME=/tmp",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--entrypoint",
+            "python3",
+            "python:3.12.12-slim-bookworm",
+            "-I",
+            "-c",
+            "import json,sys; assert sys.version_info.major == 3 and sys.flags.isolated; print(json.dumps({\"sandbox_ready\": True, \"python\": sys.version.split()[0]}))"
+          ],
+          "cleanup": {
+            "exit_code": 0,
+            "timed_out": false,
+            "stdout": "",
+            "stderr": "Error response from daemon: No such container: willdeep-accept-2305583-b9b986bfac94\n",
+            "output_truncated": false,
+            "elapsed_seconds": 0.01
+          }
+        },
+        "python": "3.12.12"
+      },
+      "elapsed_seconds": 0.389
+    },
+    {
+      "name": "programming_dedupe",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 146,
+          "prompt_tokens": 272,
+          "total_tokens": 418,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/fixture_programming_dedupe",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/fixture_programming_dedupe/solution.py",
+        "source_bytes": 522,
+        "source_sha256": "06dbc9a08686ee456952040d5a410498e97e78e9379de68c0f6106a1deadb3ec",
+        "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+        "expected_tests": 8,
+        "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/programming_dedupe.sandbox.json",
+        "exit_code": 0,
+        "unittest": {
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "successful": true,
+          "tests_run": 8
+        }
+      },
+      "elapsed_seconds": 3.474
+    },
+    {
+      "name": "programming_decimal_refunds",
+      "status": "failed",
+      "evidence": {
+        "actual_response_model": "qwen3.8-27b",
+        "expected_response_model": "qwen3.8-27b",
+        "usage": {
+          "completion_tokens": 411,
+          "prompt_tokens": 387,
+          "total_tokens": 798,
+          "prompt_tokens_details": {
+            "cached_tokens": 24
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/fixture_programming_decimal_refunds",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/fixture_programming_decimal_refunds/solution.py",
+        "source_bytes": 1489,
+        "source_sha256": "39bdd465687401852189a314c33e47883e6e1b91b02c45744089e46490aa157f",
+        "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+        "expected_tests": 9,
+        "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/programming_decimal_refunds.sandbox.json",
+        "exit_code": 1,
+        "unittest": {
+          "errors": 1,
+          "failures": 1,
+          "skipped": 0,
+          "successful": false,
+          "tests_run": 9
+        }
+      },
+      "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出",
+      "elapsed_seconds": 8.355
+    }
+  ],
+  "deployment": {
+    "model_alias": "qwen3.8-27b",
+    "expected_model_file": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+    "service": "llama-qwen38-cuda.service",
+    "legacy_aliases": [
+      "qwen3.8-27b-compat"
+    ],
+    "sandbox_image": "python:3.12.12-slim-bookworm"
+  },
+  "completed_at": "2026-11-04T16:53:05Z",
+  "summary": {
+    "passed": 11,
+    "failed": 2,
+    "not_run": 0
+  }
+}

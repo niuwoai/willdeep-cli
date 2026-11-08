@@ -1,0 +1,27 @@
+1. Automated regression testing ensures that new code changes do not break existing functionality.
+2. Isolated test fixtures allow for granular verification of specific logic components.
+3. Edge case testing identifies how software handles unexpected or extreme input values.
+4. Unit tests provide the fastest feedback loop during the development lifecycle.
+5. Mocking dependencies helps isolate the system under test from external network or database failures.
+6. Code coverage metrics indicate which parts of the codebase are not being exercised by current tests.
+7. Integration testing verifies that different modules or services communicate correctly with each other.
+8. End-to-end (E2E) testing validates the entire user journey from start to finish in a production-like environment.
+9. Test-driven development (TDD) encourages writing testable code by defining requirements before implementation.
+10. Continuous Integration (CI) pipelines automate the execution of tests on every commit.
+11. Flaky tests can undermine confidence in the build process and should be investigated and fixed.
+12. Property-based testing generates a wide range of inputs to find violations of general rules.
+13. Mutation testing evaluates the quality of tests by intentionally introducing bugs into the source code.
+14. Performance testing ensures that the software meets latency and throughput requirements under load.
+15. Security testing identifies vulnerabilities like SQL injection or cross-site scripting.
+16. Load testing determines the maximum capacity of a system before performance degrades.
+17. Stress testing pushes a system beyond its limits to observe how it fails and recovers.
+18. Smoke testing quickly verifies that the most critical functions of an application are operational.
+19. Sanity testing checks if a specific bug fix or feature works as intended without affecting other areas.
+20. Test data management is crucial for ensuring tests are reproducible and do not pollute production databases.
+21. Parallel test execution reduces the time required to run large test suites.
+22. Logging and observability are essential for debugging failed tests in automated environments.
+23. Refactoring is safer when a robust suite of regression tests is in place.
+24. Documentation of test cases helps team members understand the intended behavior of the software.
+25. Error handling paths should be explicitly tested to ensure graceful degradation.
+26. Boundary value analysis focuses on testing the limits of input ranges.
+27. Equivalence partitioning divides input data into classes to reduce the number of test cases needed.

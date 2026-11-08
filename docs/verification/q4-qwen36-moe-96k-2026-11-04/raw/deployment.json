@@ -1,0 +1,15 @@
+{
+  "service": "llama-qwen38-cuda.service",
+  "original_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+  "backup_dir": "/root/backups/qwen38-27b/20261104T123650Z-before-moe",
+  "old_context": 98304,
+  "new_context": 98304,
+  "parallel": 1,
+  "old_model": "Qwen3.8-27B-UD-IQ3_XXS",
+  "new_model": "Qwen3.6-35B-A3B-UD-Q2_K_XL",
+  "model_file": "/home/ml-data/opt-models/qwen3.6-35b-a3b-trial-20261103/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+  "model_bytes": 12290628576,
+  "model_sha256": "96b9c0af5c77a4ecaabe3983175112b5ece763261c1ece12b2494b692a70dad7",
+  "source": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF",
+  "time_utc": "2026-11-04T12:36:50Z"
+}

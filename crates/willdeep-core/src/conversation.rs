@@ -149,6 +149,18 @@ pub struct Plan {
     pub steps: Vec<PlanStep>,
 }
 
+impl Plan {
+    /// Compare ordered step identities and titles, independently of progress.
+    pub fn has_same_steps(&self, other: &Self) -> bool {
+        self.steps.len() == other.steps.len()
+            && self
+                .steps
+                .iter()
+                .zip(&other.steps)
+                .all(|(previous, next)| previous.id == next.id && previous.text == next.text)
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ConversationItem {
     pub role: &'static str,
@@ -229,14 +241,17 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
                 .is_some_and(|id| plan_calls.contains(id))
             && let Some(receipt) = crate::planning::receipt(&message.content)
         {
-            let index = if !receipt.replaced
-                && let Some(index) = active
-            {
-                index
-            } else {
+            let index = active.unwrap_or_else(|| {
                 items.push(item("plan", String::new(), 0));
                 items.len() - 1
-            };
+            });
+            let same_plan = items[index]
+                .plan
+                .as_ref()
+                .is_some_and(|previous| previous.has_same_steps(&receipt.plan));
+            if receipt.replaced || !same_plan {
+                items[index].details.clear();
+            }
             items[index].plan = Some(receipt.plan);
             active = Some(index);
             continue;
@@ -262,12 +277,13 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         if role == "assistant" {
             let existing = active.and_then(|index| items[index].plan.as_ref());
             if let Some((plan, is_new)) = parse_plan_reply(content, existing) {
-                let index = if !is_new && let Some(index) = active {
-                    index
-                } else {
+                let index = active.unwrap_or_else(|| {
                     items.push(item("plan", String::new(), 0));
                     items.len() - 1
-                };
+                });
+                if is_new {
+                    items[index].details.clear();
+                }
                 items[index].plan = Some(plan);
                 if !items[index].details.iter().any(|detail| detail == content) {
                     items[index].details.push(content.to_owned());
@@ -306,31 +322,27 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         }
         items.push(entry);
     }
-    // Persisted host state wins over model self-reports. Do not apply a newer
-    // phase's state to an unrelated historical plan.
+    // Persisted host state wins over model self-reports and reuses the current
+    // card. Keep details only when they still describe these steps.
     if let Some(plan) = current_plan.filter(|plan| !plan.steps.is_empty()) {
-        let matching = items.iter().rposition(|item| {
-            item.plan.as_ref().is_some_and(|p| {
-                p.steps.len() == plan.steps.len()
-                    && (p
-                        .steps
-                        .iter()
-                        .zip(&plan.steps)
-                        .all(|(a, b)| a.text == b.text)
-                        || p.steps.iter().all(|step| {
-                            step.text == step.id
-                                && !step.id.chars().all(|c| c.is_ascii_digit())
-                                && step_index(plan, &step.id).is_some()
-                        }))
-            })
+        let index = active.unwrap_or_else(|| {
+            items.push(item("plan", String::new(), 0));
+            items.len() - 1
         });
-        if let Some(index) = matching {
-            items[index].plan = Some(plan.clone());
-        } else {
-            let mut entry = item("plan", String::new(), 0);
-            entry.plan = Some(plan.clone());
-            items.push(entry);
+        let preserves_details = items[index].plan.as_ref().is_some_and(|previous| {
+            previous.has_same_steps(plan)
+                // A legacy progress-only reply has ids in place of titles.
+                || (previous.steps.len() == plan.steps.len()
+                    && previous.steps.iter().all(|step| {
+                        step.text == step.id
+                            && !step.id.chars().all(|c| c.is_ascii_digit())
+                            && step_index(plan, &step.id).is_some()
+                    }))
+        });
+        if !preserves_details {
+            items[index].details.clear();
         }
+        items[index].plan = Some(plan.clone());
     }
     items
 }

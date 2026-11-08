@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "verified_at": "2026-11-04T12:50:57Z",
+  "base_url": "https://q4.niuwoai.com",
+  "health": {
+    "status": "ok"
+  },
+  "model": "qwen3.6-35b-a3b",
+  "content": "OK",
+  "usage": {
+    "completion_tokens": 2,
+    "prompt_tokens": 21,
+    "total_tokens": 23,
+    "prompt_tokens_details": {
+      "cached_tokens": 17
+    }
+  },
+  "chat_wall_seconds": 0.22794089402304962,
+  "note": "Public-domain connectivity smoke test from q4; this is not an end-user-network latency or throughput measurement."
+}

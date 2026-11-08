@@ -1,0 +1,10 @@
+{
+  "service": "llama-qwen38-cuda.service",
+  "original_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+  "backup_dir": "/root/backups/qwen38-27b/20261104T100426Z-before-96k",
+  "old_context": 196608,
+  "new_context": 98304,
+  "parallel": 1,
+  "original_sha256": "059f150bbfd64bf3c148498d4add39f4528ad57a842b213b7f8438897dcb5baa",
+  "time_utc": "2026-11-04T10:04:26Z"
+}

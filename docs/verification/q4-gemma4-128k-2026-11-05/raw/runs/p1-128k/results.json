@@ -1,0 +1,1112 @@
+{
+  "helper_version": "1.0.1",
+  "run_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k",
+  "started_at": "2026-11-04T17:36:32.972908Z",
+  "status": "failed",
+  "samples": [
+    {
+      "label": "8192-single_reset_cache_observed",
+      "iteration": 1,
+      "client_index": 0,
+      "status": "completed",
+      "evidence_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r1-c0",
+      "requested_slot": 0,
+      "allowed_slots": [
+        0
+      ],
+      "requested_output_tokens": 512,
+      "cache_prompt": true,
+      "max_allowed_cache_tokens": 0,
+      "fixture_variant": "A",
+      "request": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r1-c0/request.json",
+        "sha256": "4fe2f6e12f7e07025a40916e3910fff4c365a4819913d13208adefbd447e67c6",
+        "bytes": 89965
+      },
+      "input_token_ids_sha256": "3ac33ead414969340c005a80ccff3eb77f62aa1a4643116a2bd2214db3ac417e",
+      "input_tokens": 8192,
+      "dispatched_at": "2026-11-04T17:36:59.651628Z",
+      "shared_start_monotonic_seconds": 282860.840611447,
+      "dispatch_monotonic_seconds": 282860.840634714,
+      "dispatch_from_shared_start_ms": 0.023266999050974846,
+      "server": {
+        "index": 0,
+        "content": "",
+        "tokens": [
+
+        ],
+        "id_slot": 0,
+        "stop": true,
+        "model": "gemma-4-12b-qat",
+        "tokens_predicted": 512,
+        "tokens_evaluated": 8192,
+        "generation_settings": {
+          "seed": 42,
+          "temperature": 0.0,
+          "dynatemp_range": 0.0,
+          "dynatemp_exponent": 1.0,
+          "top_k": 64,
+          "top_p": 0.949999988079071,
+          "min_p": 0.05000000074505806,
+          "top_n_sigma": -1.0,
+          "xtc_probability": 0.0,
+          "xtc_threshold": 0.10000000149011612,
+          "typical_p": 1.0,
+          "repeat_last_n": 64,
+          "repeat_penalty": 1.0,
+          "presence_penalty": 0.0,
+          "frequency_penalty": 0.0,
+          "dry_multiplier": 0.0,
+          "dry_base": 1.75,
+          "dry_allowed_length": 2,
+          "dry_penalty_last_n": 64,
+          "dry_sequence_breakers": [
+            "\n",
+            ":",
+            "\"",
+            "*"
+          ],
+          "mirostat": 0,
+          "mirostat_tau": 5.0,
+          "mirostat_eta": 0.10000000149011612,
+          "adaptive_target": -1.0,
+          "adaptive_decay": 0.8999999761581421,
+          "stop": [
+
+          ],
+          "max_tokens": 512,
+          "n_predict": 512,
+          "n_keep": 0,
+          "n_discard": 0,
+          "ignore_eos": true,
+          "stream": true,
+          "logit_bias": [
+            {
+              "bias": null,
+              "token": 1
+            },
+            {
+              "bias": null,
+              "token": 50
+            },
+            {
+              "bias": null,
+              "token": 106
+            }
+          ],
+          "n_probs": 0,
+          "min_keep": 0,
+          "grammar": "",
+          "grammar_lazy": false,
+          "grammar_triggers": [
+
+          ],
+          "preserved_tokens": [
+
+          ],
+          "chat_format": "Content-only",
+          "reasoning_format": "deepseek",
+          "reasoning_in_content": false,
+          "generation_prompt": "",
+          "samplers": [
+            "penalties",
+            "dry",
+            "top_n_sigma",
+            "top_k",
+            "typ_p",
+            "top_p",
+            "min_p",
+            "xtc",
+            "temperature"
+          ],
+          "speculative.types": "none,draft-mtp",
+          "timings_per_token": false,
+          "post_sampling_probs": false,
+          "backend_sampling": false,
+          "lora": [
+
+          ]
+        },
+        "prompt": "<|turn>system\nYou are a coding assistant. Follow the user's instructions and do not use tools.<turn|>\n<|turn>user\nThe following records are synthetic test fixtures. Read them, then follow the instruction after the records.\nrecord_0: fn check_0(input: i64) -> bool { let expected = 0; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 0\nrecord_1: fn check_1(input: i64) -> bool { let expected = 1; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 1\nrecord_2: fn check_2(input: i64) -> bool { let expected = 2; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 2\nrecord_3: fn check_3(input: i64) -> bool { let expected = 3; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 3\nrecord_4: fn check_4(input: i64) -> bool { let expected = 4; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 4\nrecord_5: fn check_5(input: i64) -> bool { let expected = 5; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 5\nrecord_6: fn check_6(input: i64) -> bool { let expected = 6; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 6\nrecord_7: fn check_7(input: i64) -> bool { let expected = 7; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 7\nrecord_8: fn check_8(input: i64) -> bool { let expected = 8; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 8\nrecord_9: fn check_9(input: i64) -> bool { let expected = 9; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 9\nrecord_10: fn check_10(input: i64) -> bool { let expected = 10; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 10\nrecord_11: fn check_11(input: i64) -> bool { let expected = 11; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 11\nrecord_12: fn check_12(input: i64) -> bool { let expected = 12; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 12\nrecord_13: fn check_13(input: i64) -> bool { let expected = 13; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 13\nrecord_14: fn check_14(input: i64) -> bool { let expected = 14; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 14\nrecord_15: fn check_15(input: i64) -> bool { let expected = 15; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 15\nrecord_16: fn check_16(input: i64) -> bool { let expected = 16; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 16\nrecord_17: fn check_17(input: i64) -> bool { let expected = 17; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 17\nrecord_18: fn check_18(input: i64) -> bool { let expected = 18; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 18\nrecord_19: fn check_19(input: i64) -> bool { let expected = 19; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 19\nrecord_20: fn check_20(input: i64) -> bool { let expected = 20; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 20\nrecord_21: fn check_21(input: i64) -> bool { let expected = 21; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 21\nrecord_22: fn check_22(input: i64) -> bool { let expected = 22; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 22\nrecord_23: fn check_23(input: i64) -> bool { let expected = 23; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 23\nrecord_24: fn check_24(input: i64) -> bool { let expected = 24; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 24\nrecord_25: fn check_25(input: i64) -> bool { let expected = 25; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 25\nrecord_26: fn check_26(input: i64) -> bool { let expected = 26; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 26\nrecord_27: fn check_27(input: i64) -> bool { let expected = 27; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 27\nrecord_28: fn check_28(input: i64) -> bool { let expected = 28; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 28\nrecord_29: fn check_29(input: i64) -> bool { let expected = 29; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 29\nrecord_30: fn check_30(input: i64) -> bool { let expected = 30; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 30\nrecord_31: fn check_31(input: i64) -> bool { let expected = 31; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 31\nrecord_32: fn check_32(input: i64) -> bool { let expected = 32; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 32\nrecord_33: fn check_33(input: i64) -> bool { let expected = 33; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 33\nrecord_34: fn check_34(input: i64) -> bool { let expected = 34; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 34\nrecord_35: fn check_35(input: i64) -> bool { let expected = 35; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 35\nrecord_36: fn check_36(input: i64) -> bool { let expected = 36; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 36\nrecord_37: fn check_37(input: i64) -> bool { let expected = 37; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 37\nrecord_38: fn check_38(input: i64) -> bool { let expected = 38; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 38\nrecord_39: fn check_39(input: i64) -> bool { let expected = 39; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 39\nrecord_40: fn check_40(input: i64) -> bool { let expected = 40; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 40\nrecord_41: fn check_41(input: i64) -> bool { let expected = 41; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 41\nrecord_42: fn check_42(input: i64) -> bool { let expected = 42; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 42\nrecord_43: fn check_43(input: i64) -> bool { let expected = 43; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 43\nrecord_44: fn check_44(input: i64) -> bool { let expected = 44; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 44\nrecord_45: fn check_45(input: i64) -> bool { let expected = 45; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 45\nrecord_46: fn check_46(input: i64) -> bool { let expected = 46; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 46\nrecord_47: fn check_47(input: i64) -> bool { let expected = 47; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 47\nrecord_48: fn check_48(input: i64) -> bool { let expected = 48; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 48\nrecord_49: fn check_49(input: i64) -> bool { let expected = 49; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 49\nrecord_50: fn check_50(input: i64) -> bool { let expected = 50; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 50\nrecord_51: fn check_51(input: i64) -> bool { let expected = 51; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 51\nrecord_52: fn check_52(input: i64) -> bool { let expected = 52; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 52\nrecord_53: fn check_53(input: i64) -> bool { let expected = 53; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 53\nrecord_54: fn check_54(input: i64) -> bool { let expected = 54; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 54\nrecord_55: fn check_55(input: i64) -> bool { let expected = 55; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 55\nrecord_56: fn check_56(input: i64) -> bool { let expected = 56; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 56\nrecord_57: fn check_57(input: i64) -> bool { let expected = 57; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 57\nrecord_58: fn check_58(input: i64) -> bool { let expected = 58; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 58\nrecord_59: fn check_59(input: i64) -> bool { let expected = 59; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 59\nrecord_60: fn check_60(input: i64) -> bool { let expected = 60; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 60\nrecord_61: fn check_61(input: i64) -> bool { let expected = 61; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 61\nrecord_62: fn check_62(input: i64) -> bool { let expected = 62; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 62\nrecord_63: fn check_63(input: i64) -> bool { let expected = 63; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 63\nrecord_64: fn check_64(input: i64) -> bool { let expected = 64; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 64\nrecord_65: fn check_65(input: i64) -> bool { let expected = 65; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 65\nrecord_66: fn check_66(input: i64) -> bool { let expected = 66; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 66\nrecord_67: fn check_67(input: i64) -> bool { let expected = 67; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 67\nrecord_68: fn check_68(input: i64) -> bool { let expected = 68; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 68\nrecord_69: fn check_69(input: i64) -> bool { let expected = 69; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 69\nrecord_70: fn check_70(input: i64) -> bool { let expected = 70; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 70\nrecord_71: fn check_71(input: i64) -> bool { let expected = 71; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 71\nrecord_72: fn check_72(input: i64) -> bool { let expected = 72; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 72\nrecord_73: fn check_73(input: i64) -> bool { let expected = 73; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 73\nrecord_74: fn check_74(input: i64) -> bool { let expected = 74; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 74\nrecord_75: fn check_75(input: i64) -> bool { let expected = 75; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 75\nrecord_76: fn check_76(input: i64) -> bool { let expected = 76; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 76\nrecord_77: fn check_77(input: i64) -> bool { let expected = 77; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 77\nrecord_78: fn check_78(input: i64) -> bool { let expected = 78; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 78\nrecord_79: fn check_79(input: i64) -> bool { let expected = 79; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 79\nrecord_80: fn check_80(input: i64) -> bool { let expected = 80; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 80\nrecord_81: fn check_81(input: i64) -> bool { let expected = 81; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 81\nrecord_82: fn check_82(input: i64) -> bool { let expected = 82; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 82\nrecord_83: fn check_83(input: i64) -> bool { let expected = 83; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 83\nrecord_84: fn check_84(input: i64) -> bool { let expected = 84; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 84\nrecord_85: fn check_85(input: i64) -> bool { let expected = 85; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 85\nrecord_86: fn check_86(input: i64) -> bool { let expected = 86; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 86\nrecord_87: fn check_87(input: i64) -> bool { let expected = 87; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 87\nrecord_88: fn check_88(input: i64) -> bool { let expected = 88; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 88\nrecord_89: fn check_89(input: i64) -> bool { let expected = 89; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 89\nrecord_90: fn check_90(input: i64) -> bool { let expected = 90; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 90\nrecord_91: fn check_91(input: i64) -> bool { let expected = 91; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 91\nrecord_92: fn check_92(input: i64) -> bool { let expected = 92; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 92\nrecord_93: fn check_93(input: i64) -> bool { let expected = 93; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 93\nrecord_94: fn check_94(input: i64) -> bool { let expected = 94; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 94\nrecord_95: fn check_95(input: i64) -> bool { let expected = 95; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 95\nrecord_96: fn check_96(input: i64) -> bool { let expected = 96; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 96\nrecord_97: fn check_97(input: i64) -> bool { let expected = 97; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 97\nrecord_98: fn check_98(input: i64) -> bool { let expected = 98; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 98\nrecord_99: fn check_99(input: i64) -> bool { let expected = 99; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 99\nrecord_100: fn check_100(input: i64) -> bool { let expected = 100; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 100\nrecord_101: fn check_101(input: i64) -> bool { let expected = 101; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 101\nrecord_102: fn check_102(input: i64) -> bool { let expected = 102; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 102\nrecord_103: fn check_103(input: i64) -> bool { let expected = 103; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 103\nrecord_104: fn check_104(input: i64) -> bool { let expected = 104; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 104\nrecord_105: fn check_105(input: i64) -> bool { let expected = 105; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 105\nrecord_106: fn check_106(input: i64) -> bool { let expected = 106; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 106\nrecord_107: fn check_107(input: i64) -> bool { let expected = 107; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 107\nrecord_108: fn check_108(input: i64) -> bool { let expected = 108; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 108\nrecord_109: fn check_109(input: i64) -> bool { let expected = 109; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 109\nrecord_110: fn check_110(input: i64) -> bool { let expected = 110; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 110\nrecord_111: fn check_111(input: i64) -> bool { let expected = 111; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 111\nrecord_112: fn check_112(input: i64) -> bool { let expected = 112; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 112\nrecord_113: fn check_113(input: i64) -> bool { let expected = 113; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 113\nrecord_114: fn check_114(input: i64) -> bool { let expected = 114; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 114\nrecord_115: fn check_115(input: i64) -> bool { let expected = 115; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 115\nrecord_116: fn check_116(input: i64) -> bool { let expected = 116; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 116\nrecord_117: fn check_117(input: i64) -> bool { let expected = 117; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 117\nrecord_118: fn check_118(input: i64) -> bool { let expected = 118; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 118\nrecord_119: fn check_119(input: i64) -> bool { let expected = 119; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 119\nrecord_120: fn check_120(input: i64) -> bool { let expected = 120; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 120\nrecord_121: fn check_121(input: i64) -> bool { let expected = 121; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 121\nrecord_122: fn check_122(input: i64) -> bool { let expected = 122; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 122\nrecord_123: fn check_123(input: i64) -> bool { let expected = 123; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 123\nrecord_124: fn check_124(input: i64) -> bool { let expected = 124; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 124\nrecord_125: fn check_125(input: i64) -> bool { let expected = 125; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 125\nrecord_126: fn check_126(input: i64) -> bool { let expected = 126; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 126\nrecord_127: fn check_127(input: i64) -> bool { let expected = 127; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 127\nrecord_128: fn check_128(input: i64) -> bool { let expected = 128; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 128\nrecord_129: fn check_129(input: i64) -> bool { let expected = 129; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 129\nrecord_130: fn check_130(input: i64) -> bool { let expected = 130; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 130\nrecord_131: fn check_131(input: i64) -> bool { let expected = 131; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 131\nrecord_132: fn check_132(input: i64) -> bool { let expected = 132; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 132\nrecord_133: fn check_133(input: i64) -> bool { let expected = 133; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 133\nrecord_134: fn check_134(input: i64) -> bool { let expected = 134; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 134\nrecord_135: fn check_135(input: i64) -> bool { let expected = 135; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 135\nrecord_136: fn check_136(input: i64) -> bool { let expected = 136; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 136\nrecord_137: fn check_137(input: i64) -> bool { let expected = 137; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 137\nrecord_138: fn check_138(input: i64) -> bool { let expected = 138; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 138\nrecord_139: fn check_139(input: i64) -> bool { let expected = 139; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 139\nrecord_140: fn check_140(input: i64) -> bool { let expected = 140; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 140\nrecord_141: fn check_141(input: i64) -> bool { let expected = 141; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 141\nrecord_142: fn check_142(input: i64) -> bool { let expected = 142; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 142\nrecord_143: fn check_143(input: i64) -> bool { let expected = 143; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 143\nrecord_144: fn check_144(input: i64) -> bool { let expected = 144; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 144\nrecord_145: fn check_145(input: i64) -> bool { let expected = 145; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 145\nrecord_146: fn check_146(input: i64) -> bool { let expected = 146; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 146\nrecord_147: fn check_147(input: i64) -> bool { let expected = 1\nEnd of test fixtures. Continue a numbered list of concise observations about software testing. Keep generating until the output limit.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "has_new_line": true,
+        "truncated": false,
+        "stop_type": "limit",
+        "stopping_word": "",
+        "tokens_cached": 8703,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 8192,
+          "prompt_ms": 2641.352,
+          "prompt_per_token_ms": 0.3224306640625,
+          "prompt_per_second": 3101.4419887996755,
+          "predicted_n": 512,
+          "predicted_ms": 3878.607,
+          "predicted_per_token_ms": 7.590228962818004,
+          "predicted_per_second": 131.74833129523049,
+          "draft_n": 459,
+          "draft_n_accepted": 281
+        }
+      },
+      "client_final_event_ms": 6524.544430023525,
+      "native_final": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r1-c0/final-event.json",
+        "sha256": "41da92fda708d1a109823067bda3f4894d87a43838d8d0e37fc4db07d88f1fcc",
+        "bytes": 25259
+      },
+      "client_total_ms": 6530.589870992117,
+      "finish_monotonic_seconds": 282867.371224585,
+      "finish_from_shared_start_ms": 6530.613137991168,
+      "client_first_nonempty_content_ms": 2645.7603350281715,
+      "output_tokens": 512,
+      "actual_slot": 0,
+      "prompt_n": 8192,
+      "cache_n": 0,
+      "prefill_tps": 3101.4419887996755,
+      "decode_tps": 131.74833129523049,
+      "server_prompt_ms": 2641.352,
+      "server_decode_ms": 3878.607,
+      "cache_classification": "no_kv_observed",
+      "client_end_to_end_output_tps": 78.40026859965987,
+      "client_minus_server_ms": 10.630870992116797,
+      "draft_counters": {
+        "draft_n": 459,
+        "draft_n_accepted": 281
+      },
+      "draft_acceptance_ratio": 0.6122004357298475,
+      "finished_at": "2026-11-04T17:37:06.192942Z",
+      "gpu_before": {
+        "at": "2026-11-04T17:36:59.626749Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8848, 0, 41, 47.87"
+      },
+      "gpu_after": {
+        "at": "2026-11-04T17:37:07.200232Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 44, 58.33"
+      }
+    },
+    {
+      "label": "8192-single_reset_cache_observed",
+      "iteration": 2,
+      "client_index": 0,
+      "status": "failed",
+      "evidence_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r2-c0",
+      "requested_slot": 0,
+      "allowed_slots": [
+        0
+      ],
+      "requested_output_tokens": 512,
+      "cache_prompt": true,
+      "max_allowed_cache_tokens": 0,
+      "fixture_variant": "A",
+      "request": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r2-c0/request.json",
+        "sha256": "4fe2f6e12f7e07025a40916e3910fff4c365a4819913d13208adefbd447e67c6",
+        "bytes": 89965
+      },
+      "input_token_ids_sha256": "3ac33ead414969340c005a80ccff3eb77f62aa1a4643116a2bd2214db3ac417e",
+      "input_tokens": 8192,
+      "dispatched_at": "2026-11-04T17:37:08.511616Z",
+      "shared_start_monotonic_seconds": 282869.700557172,
+      "dispatch_monotonic_seconds": 282869.700624602,
+      "dispatch_from_shared_start_ms": 0.06742996629327536,
+      "server": {
+        "index": 0,
+        "content": "",
+        "tokens": [
+
+        ],
+        "id_slot": 0,
+        "stop": true,
+        "model": "gemma-4-12b-qat",
+        "tokens_predicted": 512,
+        "tokens_evaluated": 8192,
+        "generation_settings": {
+          "seed": 42,
+          "temperature": 0.0,
+          "dynatemp_range": 0.0,
+          "dynatemp_exponent": 1.0,
+          "top_k": 64,
+          "top_p": 0.949999988079071,
+          "min_p": 0.05000000074505806,
+          "top_n_sigma": -1.0,
+          "xtc_probability": 0.0,
+          "xtc_threshold": 0.10000000149011612,
+          "typical_p": 1.0,
+          "repeat_last_n": 64,
+          "repeat_penalty": 1.0,
+          "presence_penalty": 0.0,
+          "frequency_penalty": 0.0,
+          "dry_multiplier": 0.0,
+          "dry_base": 1.75,
+          "dry_allowed_length": 2,
+          "dry_penalty_last_n": 64,
+          "dry_sequence_breakers": [
+            "\n",
+            ":",
+            "\"",
+            "*"
+          ],
+          "mirostat": 0,
+          "mirostat_tau": 5.0,
+          "mirostat_eta": 0.10000000149011612,
+          "adaptive_target": -1.0,
+          "adaptive_decay": 0.8999999761581421,
+          "stop": [
+
+          ],
+          "max_tokens": 512,
+          "n_predict": 512,
+          "n_keep": 0,
+          "n_discard": 0,
+          "ignore_eos": true,
+          "stream": true,
+          "logit_bias": [
+            {
+              "bias": null,
+              "token": 1
+            },
+            {
+              "bias": null,
+              "token": 50
+            },
+            {
+              "bias": null,
+              "token": 106
+            }
+          ],
+          "n_probs": 0,
+          "min_keep": 0,
+          "grammar": "",
+          "grammar_lazy": false,
+          "grammar_triggers": [
+
+          ],
+          "preserved_tokens": [
+
+          ],
+          "chat_format": "Content-only",
+          "reasoning_format": "deepseek",
+          "reasoning_in_content": false,
+          "generation_prompt": "",
+          "samplers": [
+            "penalties",
+            "dry",
+            "top_n_sigma",
+            "top_k",
+            "typ_p",
+            "top_p",
+            "min_p",
+            "xtc",
+            "temperature"
+          ],
+          "speculative.types": "none,draft-mtp",
+          "timings_per_token": false,
+          "post_sampling_probs": false,
+          "backend_sampling": false,
+          "lora": [
+
+          ]
+        },
+        "prompt": "<|turn>system\nYou are a coding assistant. Follow the user's instructions and do not use tools.<turn|>\n<|turn>user\nThe following records are synthetic test fixtures. Read them, then follow the instruction after the records.\nrecord_0: fn check_0(input: i64) -> bool { let expected = 0; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 0\nrecord_1: fn check_1(input: i64) -> bool { let expected = 1; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 1\nrecord_2: fn check_2(input: i64) -> bool { let expected = 2; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 2\nrecord_3: fn check_3(input: i64) -> bool { let expected = 3; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 3\nrecord_4: fn check_4(input: i64) -> bool { let expected = 4; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 4\nrecord_5: fn check_5(input: i64) -> bool { let expected = 5; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 5\nrecord_6: fn check_6(input: i64) -> bool { let expected = 6; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 6\nrecord_7: fn check_7(input: i64) -> bool { let expected = 7; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 7\nrecord_8: fn check_8(input: i64) -> bool { let expected = 8; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 8\nrecord_9: fn check_9(input: i64) -> bool { let expected = 9; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 9\nrecord_10: fn check_10(input: i64) -> bool { let expected = 10; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 10\nrecord_11: fn check_11(input: i64) -> bool { let expected = 11; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 11\nrecord_12: fn check_12(input: i64) -> bool { let expected = 12; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 12\nrecord_13: fn check_13(input: i64) -> bool { let expected = 13; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 13\nrecord_14: fn check_14(input: i64) -> bool { let expected = 14; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 14\nrecord_15: fn check_15(input: i64) -> bool { let expected = 15; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 15\nrecord_16: fn check_16(input: i64) -> bool { let expected = 16; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 16\nrecord_17: fn check_17(input: i64) -> bool { let expected = 17; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 17\nrecord_18: fn check_18(input: i64) -> bool { let expected = 18; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 18\nrecord_19: fn check_19(input: i64) -> bool { let expected = 19; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 19\nrecord_20: fn check_20(input: i64) -> bool { let expected = 20; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 20\nrecord_21: fn check_21(input: i64) -> bool { let expected = 21; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 21\nrecord_22: fn check_22(input: i64) -> bool { let expected = 22; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 22\nrecord_23: fn check_23(input: i64) -> bool { let expected = 23; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 23\nrecord_24: fn check_24(input: i64) -> bool { let expected = 24; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 24\nrecord_25: fn check_25(input: i64) -> bool { let expected = 25; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 25\nrecord_26: fn check_26(input: i64) -> bool { let expected = 26; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 26\nrecord_27: fn check_27(input: i64) -> bool { let expected = 27; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 27\nrecord_28: fn check_28(input: i64) -> bool { let expected = 28; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 28\nrecord_29: fn check_29(input: i64) -> bool { let expected = 29; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 29\nrecord_30: fn check_30(input: i64) -> bool { let expected = 30; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 30\nrecord_31: fn check_31(input: i64) -> bool { let expected = 31; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 31\nrecord_32: fn check_32(input: i64) -> bool { let expected = 32; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 32\nrecord_33: fn check_33(input: i64) -> bool { let expected = 33; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 33\nrecord_34: fn check_34(input: i64) -> bool { let expected = 34; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 34\nrecord_35: fn check_35(input: i64) -> bool { let expected = 35; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 35\nrecord_36: fn check_36(input: i64) -> bool { let expected = 36; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 36\nrecord_37: fn check_37(input: i64) -> bool { let expected = 37; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 37\nrecord_38: fn check_38(input: i64) -> bool { let expected = 38; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 38\nrecord_39: fn check_39(input: i64) -> bool { let expected = 39; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 39\nrecord_40: fn check_40(input: i64) -> bool { let expected = 40; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 40\nrecord_41: fn check_41(input: i64) -> bool { let expected = 41; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 41\nrecord_42: fn check_42(input: i64) -> bool { let expected = 42; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 42\nrecord_43: fn check_43(input: i64) -> bool { let expected = 43; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 43\nrecord_44: fn check_44(input: i64) -> bool { let expected = 44; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 44\nrecord_45: fn check_45(input: i64) -> bool { let expected = 45; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 45\nrecord_46: fn check_46(input: i64) -> bool { let expected = 46; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 46\nrecord_47: fn check_47(input: i64) -> bool { let expected = 47; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 47\nrecord_48: fn check_48(input: i64) -> bool { let expected = 48; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 48\nrecord_49: fn check_49(input: i64) -> bool { let expected = 49; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 49\nrecord_50: fn check_50(input: i64) -> bool { let expected = 50; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 50\nrecord_51: fn check_51(input: i64) -> bool { let expected = 51; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 51\nrecord_52: fn check_52(input: i64) -> bool { let expected = 52; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 52\nrecord_53: fn check_53(input: i64) -> bool { let expected = 53; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 53\nrecord_54: fn check_54(input: i64) -> bool { let expected = 54; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 54\nrecord_55: fn check_55(input: i64) -> bool { let expected = 55; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 55\nrecord_56: fn check_56(input: i64) -> bool { let expected = 56; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 56\nrecord_57: fn check_57(input: i64) -> bool { let expected = 57; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 57\nrecord_58: fn check_58(input: i64) -> bool { let expected = 58; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 58\nrecord_59: fn check_59(input: i64) -> bool { let expected = 59; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 59\nrecord_60: fn check_60(input: i64) -> bool { let expected = 60; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 60\nrecord_61: fn check_61(input: i64) -> bool { let expected = 61; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 61\nrecord_62: fn check_62(input: i64) -> bool { let expected = 62; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 62\nrecord_63: fn check_63(input: i64) -> bool { let expected = 63; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 63\nrecord_64: fn check_64(input: i64) -> bool { let expected = 64; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 64\nrecord_65: fn check_65(input: i64) -> bool { let expected = 65; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 65\nrecord_66: fn check_66(input: i64) -> bool { let expected = 66; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 66\nrecord_67: fn check_67(input: i64) -> bool { let expected = 67; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 67\nrecord_68: fn check_68(input: i64) -> bool { let expected = 68; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 68\nrecord_69: fn check_69(input: i64) -> bool { let expected = 69; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 69\nrecord_70: fn check_70(input: i64) -> bool { let expected = 70; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 70\nrecord_71: fn check_71(input: i64) -> bool { let expected = 71; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 71\nrecord_72: fn check_72(input: i64) -> bool { let expected = 72; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 72\nrecord_73: fn check_73(input: i64) -> bool { let expected = 73; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 73\nrecord_74: fn check_74(input: i64) -> bool { let expected = 74; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 74\nrecord_75: fn check_75(input: i64) -> bool { let expected = 75; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 75\nrecord_76: fn check_76(input: i64) -> bool { let expected = 76; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 76\nrecord_77: fn check_77(input: i64) -> bool { let expected = 77; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 77\nrecord_78: fn check_78(input: i64) -> bool { let expected = 78; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 78\nrecord_79: fn check_79(input: i64) -> bool { let expected = 79; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 79\nrecord_80: fn check_80(input: i64) -> bool { let expected = 80; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 80\nrecord_81: fn check_81(input: i64) -> bool { let expected = 81; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 81\nrecord_82: fn check_82(input: i64) -> bool { let expected = 82; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 82\nrecord_83: fn check_83(input: i64) -> bool { let expected = 83; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 83\nrecord_84: fn check_84(input: i64) -> bool { let expected = 84; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 84\nrecord_85: fn check_85(input: i64) -> bool { let expected = 85; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 85\nrecord_86: fn check_86(input: i64) -> bool { let expected = 86; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 86\nrecord_87: fn check_87(input: i64) -> bool { let expected = 87; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 87\nrecord_88: fn check_88(input: i64) -> bool { let expected = 88; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 88\nrecord_89: fn check_89(input: i64) -> bool { let expected = 89; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 89\nrecord_90: fn check_90(input: i64) -> bool { let expected = 90; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 90\nrecord_91: fn check_91(input: i64) -> bool { let expected = 91; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 91\nrecord_92: fn check_92(input: i64) -> bool { let expected = 92; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 92\nrecord_93: fn check_93(input: i64) -> bool { let expected = 93; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 93\nrecord_94: fn check_94(input: i64) -> bool { let expected = 94; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 94\nrecord_95: fn check_95(input: i64) -> bool { let expected = 95; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 95\nrecord_96: fn check_96(input: i64) -> bool { let expected = 96; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 96\nrecord_97: fn check_97(input: i64) -> bool { let expected = 97; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 97\nrecord_98: fn check_98(input: i64) -> bool { let expected = 98; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 98\nrecord_99: fn check_99(input: i64) -> bool { let expected = 99; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 99\nrecord_100: fn check_100(input: i64) -> bool { let expected = 100; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 100\nrecord_101: fn check_101(input: i64) -> bool { let expected = 101; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 101\nrecord_102: fn check_102(input: i64) -> bool { let expected = 102; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 102\nrecord_103: fn check_103(input: i64) -> bool { let expected = 103; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 103\nrecord_104: fn check_104(input: i64) -> bool { let expected = 104; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 104\nrecord_105: fn check_105(input: i64) -> bool { let expected = 105; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 105\nrecord_106: fn check_106(input: i64) -> bool { let expected = 106; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 106\nrecord_107: fn check_107(input: i64) -> bool { let expected = 107; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 107\nrecord_108: fn check_108(input: i64) -> bool { let expected = 108; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 108\nrecord_109: fn check_109(input: i64) -> bool { let expected = 109; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 109\nrecord_110: fn check_110(input: i64) -> bool { let expected = 110; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 110\nrecord_111: fn check_111(input: i64) -> bool { let expected = 111; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 111\nrecord_112: fn check_112(input: i64) -> bool { let expected = 112; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 112\nrecord_113: fn check_113(input: i64) -> bool { let expected = 113; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 113\nrecord_114: fn check_114(input: i64) -> bool { let expected = 114; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 114\nrecord_115: fn check_115(input: i64) -> bool { let expected = 115; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 115\nrecord_116: fn check_116(input: i64) -> bool { let expected = 116; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 116\nrecord_117: fn check_117(input: i64) -> bool { let expected = 117; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 117\nrecord_118: fn check_118(input: i64) -> bool { let expected = 118; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 118\nrecord_119: fn check_119(input: i64) -> bool { let expected = 119; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 119\nrecord_120: fn check_120(input: i64) -> bool { let expected = 120; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 120\nrecord_121: fn check_121(input: i64) -> bool { let expected = 121; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 121\nrecord_122: fn check_122(input: i64) -> bool { let expected = 122; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 122\nrecord_123: fn check_123(input: i64) -> bool { let expected = 123; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 123\nrecord_124: fn check_124(input: i64) -> bool { let expected = 124; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 124\nrecord_125: fn check_125(input: i64) -> bool { let expected = 125; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 125\nrecord_126: fn check_126(input: i64) -> bool { let expected = 126; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 126\nrecord_127: fn check_127(input: i64) -> bool { let expected = 127; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 127\nrecord_128: fn check_128(input: i64) -> bool { let expected = 128; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 128\nrecord_129: fn check_129(input: i64) -> bool { let expected = 129; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 129\nrecord_130: fn check_130(input: i64) -> bool { let expected = 130; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 130\nrecord_131: fn check_131(input: i64) -> bool { let expected = 131; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 131\nrecord_132: fn check_132(input: i64) -> bool { let expected = 132; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 132\nrecord_133: fn check_133(input: i64) -> bool { let expected = 133; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 133\nrecord_134: fn check_134(input: i64) -> bool { let expected = 134; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 134\nrecord_135: fn check_135(input: i64) -> bool { let expected = 135; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 135\nrecord_136: fn check_136(input: i64) -> bool { let expected = 136; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 136\nrecord_137: fn check_137(input: i64) -> bool { let expected = 137; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 137\nrecord_138: fn check_138(input: i64) -> bool { let expected = 138; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 138\nrecord_139: fn check_139(input: i64) -> bool { let expected = 139; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 139\nrecord_140: fn check_140(input: i64) -> bool { let expected = 140; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 140\nrecord_141: fn check_141(input: i64) -> bool { let expected = 141; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 141\nrecord_142: fn check_142(input: i64) -> bool { let expected = 142; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 142\nrecord_143: fn check_143(input: i64) -> bool { let expected = 143; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 143\nrecord_144: fn check_144(input: i64) -> bool { let expected = 144; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 144\nrecord_145: fn check_145(input: i64) -> bool { let expected = 145; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 145\nrecord_146: fn check_146(input: i64) -> bool { let expected = 146; assert_eq!(input.rem_euclid(997), expected); true } // isolated regression fixture 146\nrecord_147: fn check_147(input: i64) -> bool { let expected = 1\nEnd of test fixtures. Continue a numbered list of concise observations about software testing. Keep generating until the output limit.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "has_new_line": true,
+        "truncated": false,
+        "stop_type": "limit",
+        "stopping_word": "",
+        "tokens_cached": 8703,
+        "timings": {
+          "cache_n": 8187,
+          "prompt_n": 5,
+          "prompt_ms": 98.839,
+          "prompt_per_token_ms": 19.7678,
+          "prompt_per_second": 50.58731877093051,
+          "predicted_n": 512,
+          "predicted_ms": 3974.36,
+          "predicted_per_token_ms": 7.77761252446184,
+          "predicted_per_second": 128.57416036795863,
+          "draft_n": 462,
+          "draft_n_accepted": 280
+        }
+      },
+      "client_final_event_ms": 4096.129046054557,
+      "native_final": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-single_reset_cache_observed-r2-c0/final-event.json",
+        "sha256": "73997c6059d2d68211b1ab6bdfe6bf6485baf507a60ef863cc03e7082735bbf6",
+        "bytes": 25246
+      },
+      "client_total_ms": 4103.833123052027,
+      "finish_monotonic_seconds": 282873.804457725,
+      "finish_from_shared_start_ms": 4103.90055301832,
+      "client_first_nonempty_content_ms": 121.56769301509485,
+      "error": {
+        "class": "Gemma128::Failure",
+        "message": "Unexpected cache reuse beyond permitted common template prefix",
+        "at": "2026-11-04T17:37:12.615497Z"
+      },
+      "finished_at": "2026-11-04T17:37:12.624258Z",
+      "gpu_before": {
+        "at": "2026-11-04T17:37:08.479275Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 43, 49.69"
+      },
+      "gpu_after": {
+        "at": "2026-11-04T17:37:13.630393Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 44, 61.94"
+      }
+    }
+  ],
+  "auxiliary": [
+    {
+      "label": "8192-reset-single_reset_cache_observed-slot0",
+      "iteration": 1,
+      "client_index": 0,
+      "status": "completed",
+      "evidence_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r1-c0",
+      "requested_slot": 0,
+      "allowed_slots": [
+        0
+      ],
+      "requested_output_tokens": 1,
+      "cache_prompt": false,
+      "request": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r1-c0/request.json",
+        "sha256": "632a4925398a28ee1527f4ba3cc9ed322efb9fd67e9b4af7f40f3945863bd871",
+        "bytes": 539
+      },
+      "input_token_ids_sha256": "d841baa8c09ad77b10e540db4eb636b4a21540e532d26a3a9dc5bdc39007fbaa",
+      "input_tokens": 28,
+      "dispatched_at": "2026-11-04T17:36:58.520447Z",
+      "shared_start_monotonic_seconds": 282859.709330188,
+      "dispatch_monotonic_seconds": 282859.709455267,
+      "dispatch_from_shared_start_ms": 0.12507900828495622,
+      "server": {
+        "index": 0,
+        "content": "",
+        "tokens": [
+
+        ],
+        "id_slot": 0,
+        "stop": true,
+        "model": "gemma-4-12b-qat",
+        "tokens_predicted": 1,
+        "tokens_evaluated": 28,
+        "generation_settings": {
+          "seed": 42,
+          "temperature": 0.0,
+          "dynatemp_range": 0.0,
+          "dynatemp_exponent": 1.0,
+          "top_k": 64,
+          "top_p": 0.949999988079071,
+          "min_p": 0.05000000074505806,
+          "top_n_sigma": -1.0,
+          "xtc_probability": 0.0,
+          "xtc_threshold": 0.10000000149011612,
+          "typical_p": 1.0,
+          "repeat_last_n": 64,
+          "repeat_penalty": 1.0,
+          "presence_penalty": 0.0,
+          "frequency_penalty": 0.0,
+          "dry_multiplier": 0.0,
+          "dry_base": 1.75,
+          "dry_allowed_length": 2,
+          "dry_penalty_last_n": 64,
+          "dry_sequence_breakers": [
+            "\n",
+            ":",
+            "\"",
+            "*"
+          ],
+          "mirostat": 0,
+          "mirostat_tau": 5.0,
+          "mirostat_eta": 0.10000000149011612,
+          "adaptive_target": -1.0,
+          "adaptive_decay": 0.8999999761581421,
+          "stop": [
+
+          ],
+          "max_tokens": 1,
+          "n_predict": 1,
+          "n_keep": 0,
+          "n_discard": 0,
+          "ignore_eos": true,
+          "stream": true,
+          "logit_bias": [
+            {
+              "bias": null,
+              "token": 1
+            },
+            {
+              "bias": null,
+              "token": 50
+            },
+            {
+              "bias": null,
+              "token": 106
+            }
+          ],
+          "n_probs": 0,
+          "min_keep": 0,
+          "grammar": "",
+          "grammar_lazy": false,
+          "grammar_triggers": [
+
+          ],
+          "preserved_tokens": [
+
+          ],
+          "chat_format": "Content-only",
+          "reasoning_format": "deepseek",
+          "reasoning_in_content": false,
+          "generation_prompt": "",
+          "samplers": [
+            "penalties",
+            "dry",
+            "top_n_sigma",
+            "top_k",
+            "typ_p",
+            "top_p",
+            "min_p",
+            "xtc",
+            "temperature"
+          ],
+          "speculative.types": "none,draft-mtp",
+          "timings_per_token": false,
+          "post_sampling_probs": false,
+          "backend_sampling": false,
+          "lora": [
+
+          ]
+        },
+        "prompt": "CACHE_RESET_DISJOINT_GEMMA128_8192_1_single_reset_cache_observed",
+        "has_new_line": false,
+        "truncated": false,
+        "stop_type": "limit",
+        "stopping_word": "",
+        "tokens_cached": 28,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 28,
+          "prompt_ms": 35.127,
+          "prompt_per_token_ms": 1.2545357142857143,
+          "prompt_per_second": 797.1076379992599,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        }
+      },
+      "client_final_event_ms": 45.353407971560955,
+      "native_final": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r1-c0/final-event.json",
+        "sha256": "2f5c52700287d7eb6d36010d12b8696f2205911e467bbb8be004472e914c22f4",
+        "bytes": 2406
+      },
+      "client_total_ms": 49.251723976340145,
+      "finish_monotonic_seconds": 282859.758706991,
+      "finish_from_shared_start_ms": 49.3768029846251,
+      "client_first_nonempty_content_ms": 45.185437018517405,
+      "output_tokens": 1,
+      "actual_slot": 0,
+      "prompt_n": 28,
+      "cache_n": 0,
+      "prefill_tps": 797.1076379992599,
+      "decode_tps": 0.0,
+      "server_prompt_ms": 35.127,
+      "server_decode_ms": 0.001,
+      "cache_classification": "no_kv_observed",
+      "client_end_to_end_output_tps": 20.303857799584566,
+      "client_minus_server_ms": 14.123723976340143,
+      "draft_counters": {
+      },
+      "finished_at": "2026-11-04T17:36:58.579479Z",
+      "gpu_before": {
+        "at": "2026-11-04T17:36:58.482546Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8846, 0, 40, 17.46"
+      },
+      "gpu_after": {
+        "at": "2026-11-04T17:36:59.589094Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8848, 0, 41, 47.87"
+      }
+    },
+    {
+      "label": "8192-reset-single_reset_cache_observed-slot0",
+      "iteration": 2,
+      "client_index": 0,
+      "status": "completed",
+      "evidence_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r2-c0",
+      "requested_slot": 0,
+      "allowed_slots": [
+        0
+      ],
+      "requested_output_tokens": 1,
+      "cache_prompt": false,
+      "request": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r2-c0/request.json",
+        "sha256": "74f7b2dbe47249b4d832c778f77fb44baebad5b826d0e4b39784946f34d6bca2",
+        "bytes": 539
+      },
+      "input_token_ids_sha256": "20fdbe521befe7e11bdd1caee36004a661814ab501a7e2910234e25391bb8945",
+      "input_tokens": 28,
+      "dispatched_at": "2026-11-04T17:37:07.263644Z",
+      "shared_start_monotonic_seconds": 282868.452578962,
+      "dispatch_monotonic_seconds": 282868.45265217,
+      "dispatch_from_shared_start_ms": 0.0732079497538507,
+      "server": {
+        "index": 0,
+        "content": "",
+        "tokens": [
+
+        ],
+        "id_slot": 0,
+        "stop": true,
+        "model": "gemma-4-12b-qat",
+        "tokens_predicted": 1,
+        "tokens_evaluated": 28,
+        "generation_settings": {
+          "seed": 42,
+          "temperature": 0.0,
+          "dynatemp_range": 0.0,
+          "dynatemp_exponent": 1.0,
+          "top_k": 64,
+          "top_p": 0.949999988079071,
+          "min_p": 0.05000000074505806,
+          "top_n_sigma": -1.0,
+          "xtc_probability": 0.0,
+          "xtc_threshold": 0.10000000149011612,
+          "typical_p": 1.0,
+          "repeat_last_n": 64,
+          "repeat_penalty": 1.0,
+          "presence_penalty": 0.0,
+          "frequency_penalty": 0.0,
+          "dry_multiplier": 0.0,
+          "dry_base": 1.75,
+          "dry_allowed_length": 2,
+          "dry_penalty_last_n": 64,
+          "dry_sequence_breakers": [
+            "\n",
+            ":",
+            "\"",
+            "*"
+          ],
+          "mirostat": 0,
+          "mirostat_tau": 5.0,
+          "mirostat_eta": 0.10000000149011612,
+          "adaptive_target": -1.0,
+          "adaptive_decay": 0.8999999761581421,
+          "stop": [
+
+          ],
+          "max_tokens": 1,
+          "n_predict": 1,
+          "n_keep": 0,
+          "n_discard": 0,
+          "ignore_eos": true,
+          "stream": true,
+          "logit_bias": [
+            {
+              "bias": null,
+              "token": 1
+            },
+            {
+              "bias": null,
+              "token": 50
+            },
+            {
+              "bias": null,
+              "token": 106
+            }
+          ],
+          "n_probs": 0,
+          "min_keep": 0,
+          "grammar": "",
+          "grammar_lazy": false,
+          "grammar_triggers": [
+
+          ],
+          "preserved_tokens": [
+
+          ],
+          "chat_format": "Content-only",
+          "reasoning_format": "deepseek",
+          "reasoning_in_content": false,
+          "generation_prompt": "",
+          "samplers": [
+            "penalties",
+            "dry",
+            "top_n_sigma",
+            "top_k",
+            "typ_p",
+            "top_p",
+            "min_p",
+            "xtc",
+            "temperature"
+          ],
+          "speculative.types": "none,draft-mtp",
+          "timings_per_token": false,
+          "post_sampling_probs": false,
+          "backend_sampling": false,
+          "lora": [
+
+          ]
+        },
+        "prompt": "CACHE_RESET_DISJOINT_GEMMA128_8192_2_single_reset_cache_observed",
+        "has_new_line": false,
+        "truncated": false,
+        "stop_type": "limit",
+        "stopping_word": "",
+        "tokens_cached": 28,
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 28,
+          "prompt_ms": 31.861,
+          "prompt_per_token_ms": 1.1378928571428573,
+          "prompt_per_second": 878.8173629201846,
+          "predicted_n": 1,
+          "predicted_ms": 0.001,
+          "predicted_per_token_ms": 0.0,
+          "predicted_per_second": 0.0
+        }
+      },
+      "client_final_event_ms": 155.15923604834825,
+      "native_final": {
+        "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/8192-reset-single_reset_cache_observed-slot0-r2-c0/final-event.json",
+        "sha256": "fb45c3a61f53169c33b787ad0ca0f1d032e499c88a66b431843f78f43ec2da20",
+        "bytes": 2406
+      },
+      "client_total_ms": 160.97017202991992,
+      "finish_monotonic_seconds": 282868.613622342,
+      "finish_from_shared_start_ms": 161.04337997967377,
+      "client_first_nonempty_content_ms": 155.06690402980894,
+      "output_tokens": 1,
+      "actual_slot": 0,
+      "prompt_n": 28,
+      "cache_n": 0,
+      "prefill_tps": 878.8173629201846,
+      "decode_tps": 0.0,
+      "server_prompt_ms": 31.861,
+      "server_decode_ms": 0.001,
+      "cache_classification": "no_kv_observed",
+      "client_end_to_end_output_tps": 6.212331063509875,
+      "client_minus_server_ms": 129.10817202991993,
+      "draft_counters": {
+      },
+      "finished_at": "2026-11-04T17:37:07.434394Z",
+      "gpu_before": {
+        "at": "2026-11-04T17:37:07.238847Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 44, 58.33"
+      },
+      "gpu_after": {
+        "at": "2026-11-04T17:37:08.440988Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 43, 50.34"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "input_tokens": 8192,
+      "condition": "single_reset_cache_observed",
+      "status": "failed",
+      "sample_label": "8192-single_reset_cache_observed",
+      "single_active_slot": 0,
+      "service_parallel": 1,
+      "error": {
+        "class": "Gemma128::Failure",
+        "message": "Failed sample group 8192-single_reset_cache_observed; raw evidence preserved",
+        "at": "2026-11-04T17:37:13.663630Z"
+      }
+    }
+  ],
+  "method": "Warmed running service; no cold restart, no clock/page-cache reset. Three repeats per length and condition.",
+  "timing_semantics": {
+    "client_first_nonempty_content_ms": "Wall time after client dispatch; includes p1 queue delay and streamed MTP batching.",
+    "pair_makespan_ms": "Shared barrier release through the slower completion; aggregate throughput = 1024 / makespan seconds.",
+    "sum_server_decode_tps": "Sum of native per-client decoder rates; excludes queue/prefill and is not pair throughput.",
+    "tokens_evaluated": "Full submitted token count; prompt_n + cache_n must equal it.",
+    "tokens_cached": "Resident slot length after decode; not input KV hit count.",
+    "predicted_per_second": "Pinned b10549 server uses (predicted_n - 1) / predicted_ms.",
+    "gpu": "nvidia-smi point samples before/after a request group; NOT peak VRAM or peak utilization."
+  },
+  "caveats": [
+    "Compare old 96K results only with context, cold/warm, slot, fixture, cache and binary differences disclosed.",
+    "Pairs use distinct A/B bodies; p1 clients target automatic slot (-1). Only common-template KV reuse is permitted; actual cache counts are retained.",
+    "At 8K the reusable prefix length is zero, so prefix condition is a reset baseline without a priming inference."
+  ],
+  "deployment": {
+    "tool_version": "1.0.0-rc2",
+    "service": "llama-qwen38-cuda.service",
+    "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+    "model_alias": "gemma-4-12b-qat",
+    "legacy_aliases": [
+      "qwen3.6-35b-a3b",
+      "qwen3.8-27b"
+    ],
+    "mode": "12b-qat-mtp",
+    "parallel": 1,
+    "context_per_slot": 131072,
+    "context_total": 131072,
+    "container": "gemma4-12b-mtp-128k-p1",
+    "override_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+    "override_sha256": "437bcc929cc20d92551aeac604f07316d289058fd457ae95847c9cd70bc87191",
+    "sandbox_image": "python:3.12.12-slim-bookworm",
+    "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+    "mtp_sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+    "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+    "deployed_at": "2026-11-04T17:26:02Z",
+    "kind": "gemma128",
+    "run_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k"
+  },
+  "deployment_sha256": "02973ce02f7427cd24e4372389c7f31d5a3cecf20b65a0aa4a442c649534780e",
+  "configuration_checks": [
+    {
+      "at": "2026-11-04T17:36:32.993900Z",
+      "props": {
+        "default_generation_settings": {
+          "params": {
+            "seed": 4294967295,
+            "temperature": 1.0,
+            "dynatemp_range": 0.0,
+            "dynatemp_exponent": 1.0,
+            "top_k": 64,
+            "top_p": 0.949999988079071,
+            "min_p": 0.05000000074505806,
+            "top_n_sigma": -1.0,
+            "xtc_probability": 0.0,
+            "xtc_threshold": 0.10000000149011612,
+            "typical_p": 1.0,
+            "repeat_last_n": 64,
+            "repeat_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+            "dry_multiplier": 0.0,
+            "dry_base": 1.75,
+            "dry_allowed_length": 2,
+            "dry_penalty_last_n": 64,
+            "mirostat": 0,
+            "mirostat_tau": 5.0,
+            "mirostat_eta": 0.10000000149011612,
+            "adaptive_target": -1.0,
+            "adaptive_decay": 0.8999999761581421,
+            "max_tokens": -1,
+            "n_predict": -1,
+            "n_keep": 0,
+            "n_discard": 0,
+            "ignore_eos": false,
+            "stream": false,
+            "n_probs": 0,
+            "min_keep": 0,
+            "chat_format": "Content-only",
+            "reasoning_format": "none",
+            "reasoning_in_content": false,
+            "generation_prompt": "",
+            "samplers": [
+              "penalties",
+              "dry",
+              "top_n_sigma",
+              "top_k",
+              "typ_p",
+              "top_p",
+              "min_p",
+              "xtc",
+              "temperature"
+            ],
+            "speculative.types": "none",
+            "timings_per_token": false,
+            "post_sampling_probs": false,
+            "backend_sampling": false,
+            "lora": [
+
+            ]
+          },
+          "n_ctx": 131072
+        },
+        "total_slots": 1,
+        "model_alias": "gemma-4-12b-qat",
+        "model_ftype": "Q4_0",
+        "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf",
+        "modalities": {
+          "vision": false,
+          "video": false,
+          "audio": false
+        },
+        "media_marker": "<__media_MgIfxB5Q228igXGQ64V4WOL2MQhRDJoE__>",
+        "endpoint_slots": true,
+        "endpoint_props": false,
+        "endpoint_metrics": false,
+        "ui": true,
+        "ui_settings": {
+        },
+        "chat_template": "{#\n  Template: Google Gemma 4 Canonical Chat Template\n  Author: Google Gemma Engineering Team\n  Published: 2026-07-09\n  Context: Fixed tool-calling loops, turn closures, and thinking content-ordering.\n#}\n{%- macro format_parameters(properties, required, filter_keys=false) -%}\n    {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}\n    {%- set ns = namespace(found_first=false) -%}\n    {%- for key, value in properties | dictsort -%}\n        {%- set add_comma = false -%}\n        {%- if not filter_keys or key not in standard_keys -%}\n            {%- if ns.found_first %},{% endif -%}\n            {%- set ns.found_first = true -%}\n            {{ key }}:{\n            {%- if value['description'] -%}\n                description:<|\"|>{{ value['description'] }}<|\"|>\n                {%- set add_comma = true -%}\n            {%- endif -%}\n            {%- if value['type'] | upper == 'STRING' -%}\n                {%- if value['enum'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    enum:{{ format_argument(value['enum']) }}\n                {%- endif -%}\n            {%- elif value['type'] | upper == 'ARRAY' -%}\n                {%- if value['items'] is mapping and value['items'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    items:{\n                    {%- set ns_items = namespace(found_first=false) -%}\n                    {%- for item_key, item_value in value['items'] | dictsort -%}\n                        {%- if item_value is not none -%}\n                            {%- if ns_items.found_first %},{% endif -%}\n                            {%- set ns_items.found_first = true -%}\n                            {%- if item_key == 'properties' -%}\n                                properties:{\n                                {%- if item_value is mapping -%}\n                                    {{- format_parameters(item_value, value['items']['required'] | default([])) -}}\n                                {%- endif -%}\n                                }\n                            {%- elif item_key == 'required' -%}\n                                required:[\n                                {%- for req_item in item_value -%}\n                                    <|\"|>{{- req_item -}}<|\"|>\n                                    {%- if not loop.last %},{% endif -%}\n                                {%- endfor -%}\n                                ]\n                            {%- elif item_key == 'type' -%}\n                                {%- if item_value is string -%}\n                                    type:{{ format_argument(item_value | upper) }}\n                                {%- else -%}\n                                    type:{{ format_argument(item_value | map('upper') | list) }}\n                                {%- endif -%}\n                            {%- else -%}\n                                {{ item_key }}:{{ format_argument(item_value) }}\n                            {%- endif -%}\n                        {%- endif -%}\n                    {%- endfor -%}\n                    }\n                {%- endif -%}\n            {%- endif -%}\n            {%- if value['nullable'] %}\n                {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                nullable:true\n            {%- endif -%}\n            {%- if value['type'] | upper == 'OBJECT' -%}\n                {%- if value['properties'] is defined and value['properties'] is mapping -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    properties:{\n                    {{- format_parameters(value['properties'], value['required'] | default([])) -}}\n                    }\n                {%- elif value is mapping -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    properties:{\n                    {{- format_parameters(value, value['required'] | default([]), filter_keys=true) -}}\n                    }\n                {%- endif -%}\n                {%- if value['required'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    required:[\n                    {%- for item in value['required'] | default([]) -%}\n                        <|\"|>{{- item -}}<|\"|>\n                        {%- if not loop.last %},{% endif -%}\n                    {%- endfor -%}\n                    ]\n                {%- endif -%}\n            {%- endif -%}\n            {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n            type:<|\"|>{{ value['type'] | upper }}<|\"|>}\n        {%- endif -%}\n    {%- endfor -%}\n{%- endmacro -%}\n{%- macro format_function_declaration(tool_data) -%}\n    declaration:{{- tool_data['function']['name'] -}}{description:<|\"|>{{- tool_data['function']['description'] -}}<|\"|>\n    {%- set params = tool_data['function']['parameters'] -%}\n    {%- if params -%}\n        ,parameters:{\n        {%- if params['properties'] -%}\n            properties:{ {{- format_parameters(params['properties'], params['required']) -}} },\n        {%- endif -%}\n        {%- if params['required'] -%}\n            required:[\n            {%- for item in params['required'] -%}\n                <|\"|>{{- item -}}<|\"|>\n                {{- ',' if not loop.last -}}\n            {%- endfor -%}\n            ],\n        {%- endif -%}\n        {%- if params['type'] -%}\n            type:<|\"|>{{- params['type'] | upper -}}<|\"|>}\n        {%- endif -%}\n    {%- endif -%}\n    {%- if 'response' in tool_data['function'] -%}\n        {%- set response_declaration = tool_data['function']['response'] -%}\n        ,response:{\n        {%- if response_declaration['description'] -%}\n            description:<|\"|>{{- response_declaration['description'] -}}<|\"|>,\n        {%- endif -%}\n        {%- if response_declaration['type'] | upper == 'OBJECT' -%}\n            type:<|\"|>{{- response_declaration['type'] | upper -}}<|\"|>}\n        {%- endif -%}\n    {%- endif -%}\n    }\n{%- endmacro -%}\n{%- macro format_argument(argument, escape_keys=True) -%}\n    {%- if argument is none -%}\n        {{- 'null' -}}\n    {%- elif argument is string -%}\n        {{- '<|\"|>' + argument + '<|\"|>' -}}\n    {%- elif argument is boolean -%}\n        {{- 'true' if argument else 'false' -}}\n    {%- elif argument is mapping -%}\n        {{- '{' -}}\n        {%- set ns = namespace(found_first=false) -%}\n        {%- for key, value in argument | dictsort -%}\n            {%- if ns.found_first %},{% endif -%}\n            {%- set ns.found_first = true -%}\n            {%- if escape_keys -%}\n                {{- '<|\"|>' + key + '<|\"|>' -}}\n            {%- else -%}\n                {{- key -}}\n            {%- endif -%}\n            :{{- format_argument(value, escape_keys=escape_keys) -}}\n        {%- endfor -%}\n        {{- '}' -}}\n    {%- elif argument is sequence -%}\n        {{- '[' -}}\n        {%- for item in argument -%}\n            {{- format_argument(item, escape_keys=escape_keys) -}}\n            {%- if not loop.last %},{% endif -%}\n        {%- endfor -%}\n        {{- ']' -}}\n    {%- else -%}\n        {{- argument -}}\n    {%- endif -%}\n{%- endmacro -%}\n{%- macro strip_thinking(text) -%}\n    {%- set ns = namespace(result='') -%}\n    {%- for part in text.split('<channel|>') -%}\n        {%- if '<|channel>' in part -%}\n            {%- set ns.result = ns.result + part.split('<|channel>')[0] -%}\n        {%- else -%}\n            {%- set ns.result = ns.result + part -%}\n        {%- endif -%}\n    {%- endfor -%}\n    {{- ns.result | trim -}}\n{%- endmacro -%}\n\n{%- macro format_tool_response_block(tool_name, response) -%}\n    {{- '<|tool_response>' -}}\n    {%- if response is mapping -%}\n        {{- 'response:' + tool_name + '{' -}}\n        {%- for key, value in response | dictsort -%}\n            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}\n            {%- if not loop.last %},{% endif -%}\n        {%- endfor -%}\n        {{- '}' -}}\n    {%- else -%}\n        {{- 'response:' + tool_name + '{value:' + format_argument(response, escape_keys=False) + '}' -}}\n    {%- endif -%}\n    {{- '<tool_response|>' -}}\n{%- endmacro -%}\n\n{#- ===== SETUP ===== -#}\n{%- set ns = namespace(prev_message_type=None, prev_non_tool_role=None) -%}\n{%- set loop_messages = messages -%}\n{%- set enable_thinking = enable_thinking | default(false) -%}\n{%- set preserve_thinking = preserve_thinking | default(false) -%}\n{{- bos_token -}}\n{#- Handle System/Tool Definitions Block -#}\n{%- if enable_thinking or tools or (messages and messages[0]['role'] in ['system', 'developer']) -%}\n    {{- '<|turn>system\\n' -}}\n    {#- Inject Thinking token at the very top of the FIRST system turn -#}\n    {%- if enable_thinking -%}\n        {{- '<|think|>\\n' -}}\n        {%- set ns.prev_message_type = 'think' -%}\n    {%- endif -%}\n    {%- if messages and messages[0]['role'] in ['system', 'developer'] -%}\n        {%- if messages[0]['content'] is string -%}\n            {{- messages[0]['content'] | trim -}}\n        {%- elif messages[0]['content'] is sequence -%}\n            {%- for item in messages[0]['content'] -%}\n                {{- item['text'] | trim + ' '-}}\n            {%- endfor -%}\n        {%- endif -%}\n        {%- set loop_messages = messages[1:] -%}\n    {%- endif -%}\n    {%- if tools -%}\n        {%- for tool in tools %}\n            {{- '<|tool>' -}}\n            {{- format_function_declaration(tool) | trim -}}\n            {{- '<tool|>' -}}\n        {%- endfor %}\n        {%- set ns.prev_message_type = 'tool' -%}\n    {%- endif -%}\n    {{- '<turn|>\\n' -}}\n{%- endif %}\n\n{#- Pre-scan: find last user message index for reasoning guard -#}\n{%- set ns_turn = namespace(last_user_idx=-1) -%}\n{%- for i in range(loop_messages | length) -%}\n    {%- if loop_messages[i]['role'] == 'user' -%}\n        {%- set ns_turn.last_user_idx = i -%}\n    {%- endif -%}\n{%- endfor -%}\n\n{#- Loop through messages -#}\n{%- for message in loop_messages -%}\n    {%- if message['role'] != 'tool' -%}\n    {%- set ns.prev_message_type = None -%}\n    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}\n    {#- Detect continuation using tracked state — O(1) instead of O(n) backward scan -#}\n    {%- set continue_same_model_turn = (role == 'model' and ns.prev_non_tool_role == 'assistant') -%}\n    {%- if not continue_same_model_turn -%}\n        {{- '<|turn>' + role + '\\n' }}\n\n    {%- endif -%}\n\n    {#- Render reasoning/reasoning_content as thinking channel -#}\n    {%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}\n    {%- set thinking_gate = (loop.index0 > ns_turn.last_user_idx) or (preserve_thinking and message.get('tool_calls')) -%}\n    {%- if thinking_text and thinking_gate -%}\n        {{- '<|channel>thought\\n' + thinking_text + '\\n<channel|>' -}}\n    {%- endif -%}\n\n            {%- if message.get('tool_calls') -%}\n                {%- for tool_call in message.get('tool_calls') -%}\n                    {%- set function = tool_call['function'] -%}\n                    {{- '<|tool_call>call:' + function['name'] + '{' -}}\n                    {%- if function['arguments'] is mapping -%}\n                        {%- set ns_args = namespace(found_first=false) -%}\n                        {%- for key, value in function['arguments'] | dictsort -%}\n                            {%- if ns_args.found_first %},{% endif -%}\n                            {%- set ns_args.found_first = true -%}\n                            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}\n                        {%- endfor -%}\n                    {%- elif function['arguments'] is none -%}\n                    {%- else -%}\n                        {{- raise_exception(\n                            \"chat_template: tool_calls[].function.arguments must be a \"\n                            \"JSON object (mapping), not a string. Deserialize arguments \"\n                            \"before passing to the template.\"\n                        ) -}}\n                    {%- endif -%}\n                    {{- '}<tool_call|>' -}}\n                {%- endfor -%}\n                {%- set ns.prev_message_type = 'tool_call' -%}\n            {%- endif -%}\n\n            {%- set ns_tr_out = namespace(flag=false) -%}\n            {%- if message.get('tool_responses') -%}\n                {#- Legacy: tool_responses embedded on the assistant message (Google/Gemma native) -#}\n                {%- for tool_response in message.get('tool_responses') -%}\n                    {{- format_tool_response_block(tool_response['name'] | default('unknown', true), tool_response['response']) -}}\n                    {%- set ns_tr_out.flag = true -%}\n                    {%- set ns.prev_message_type = 'tool_response' -%}\n                {%- endfor -%}\n            {%- elif message.get('tool_calls') -%}\n                {#- OpenAI Chat Completions: forward-scan consecutive role:tool messages -#}\n                {%- set ns_tool_scan = namespace(stopped=false) -%}\n                {%- for k in range(loop.index0 + 1, loop_messages | length) -%}\n                    {%- if ns_tool_scan.stopped -%}\n                    {%- elif loop_messages[k]['role'] != 'tool' -%}\n                        {%- set ns_tool_scan.stopped = true -%}\n                    {%- else -%}\n                        {%- set follow = loop_messages[k] -%}\n                        {#- Resolve tool_call_id to function name -#}\n                        {%- set ns_tname = namespace(name=follow.get('name') or 'unknown') -%}\n                        {%- for tc in message.get('tool_calls') -%}\n                            {%- if tc.get('id') == follow.get('tool_call_id') -%}\n                                {%- set ns_tname.name = tc['function']['name'] -%}\n                            {%- endif -%}\n                        {%- endfor -%}\n                        {#- Handle content as string or content-parts array -#}\n                        {%- set tool_body = follow.get('content') -%}\n                        {%- if tool_body is string -%}\n                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}\n                        {%- elif tool_body is sequence and tool_body is not string -%}\n                            {%- set ns_txt = namespace(s='') -%}\n                            {%- for part in tool_body -%}\n                                {%- if part.get('type') == 'text' -%}\n                                    {%- set ns_txt.s = ns_txt.s + (part.get('text') | default('')) -%}\n                                {%- endif -%}\n                            {%- endfor -%}\n                            {{- format_tool_response_block(ns_tname.name, ns_txt.s) -}}\n                            {%- for part in tool_body -%}\n                                {%- if part.get('type') in ['image', 'image_url'] -%}\n                                    {{- '<|image|>' -}}\n                                {%- elif part.get('type') in ['audio', 'input_audio'] -%}\n                                    {{- '<|audio|>' -}}\n                                {%- elif part.get('type') == 'video' -%}\n                                    {{- '<|video|>' -}}\n                                {%- endif -%}\n                            {%- endfor -%}\n                        {%- else -%}\n                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}\n                        {%- endif -%}\n                        {%- set ns_tr_out.flag = true -%}\n                        {%- set ns.prev_message_type = 'tool_response' -%}\n                    {%- endif -%}\n                {%- endfor -%}\n            {%- endif -%}\n\n            {%- set captured_content -%}\n            {%- if message.get('content') is string -%}\n                {%- if role == 'model' -%}\n                    {{- strip_thinking(message['content']) -}}\n                {%- else -%}\n                    {{- message['content'] | trim -}}\n                {%- endif -%}\n            {%- elif message.get('content') is sequence -%}\n                {%- for item in message['content'] -%}\n                    {%- if item.get('type') == 'text' -%}\n                        {%- if role == 'model' -%}\n                            {{- strip_thinking(item['text']) -}}\n                        {%- else -%}\n                            {{- item['text'] | trim -}}\n                        {%- endif -%}\n                    {%- elif item.get('type') in ['image', 'image_url'] -%}\n                        {{- '<|image|>' -}}\n                    {%- elif item.get('type') in ['audio', 'input_audio'] -%}\n                        {{- '<|audio|>' -}}\n                    {%- elif item.get('type') == 'video' -%}\n                        {{- '<|video|>' -}}\n                    {%- endif -%}\n                {%- endfor -%}\n            {%- endif -%}\n            {%- endset -%}\n\n            {{- captured_content -}}\n            {%- set has_content = captured_content | trim | length > 0 -%}\n\n        {#- Forward-scan: find next non-tool message role for continuation detection -#}\n        {%- set next_nt = namespace(role=None, found=false) -%}\n        {%- for j in range(loop.index0 + 1, loop_messages | length) -%}\n            {%- if not next_nt.found -%}\n                {%- if loop_messages[j]['role'] != 'tool' -%}\n                    {%- set next_nt.role = loop_messages[j]['role'] -%}\n                    {%- set next_nt.found = true -%}\n                {%- endif -%}\n            {%- endif -%}\n        {%- endfor -%}\n\n        {%- set continues_into_next = (\n            role == 'model'\n            and next_nt.role == 'assistant'\n            and (not message.get('tool_calls') or ns_tr_out.flag)\n        ) -%}\n\n        {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}\n            {{- '<|tool_response>' -}}\n        {%- elif continues_into_next -%}\n        {%- elif not (ns_tr_out.flag and not has_content and not next_nt.found) -%}\n            {{- '<turn|>\\n' -}}\n        {%- endif -%}\n\n    {#- Track previous non-tool role for next iteration (avoids O(n) backward scan) -#}\n    {%- set ns.prev_non_tool_role = message['role'] -%}\n    {%- endif -%}\n{%- endfor -%}\n\n{%- if add_generation_prompt -%}\n    {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}\n        {{- '<|turn>model\\n' -}}\n        {%- if not enable_thinking -%}\n            {{- '<|channel>thought\\n<channel|>' -}}\n        {%- endif -%}\n    {%- elif ns.prev_message_type == 'tool_response' and enable_thinking -%}\n        {{- '<|channel>thought\\n' -}}\n    {%- endif -%}\n{%- endif -%}",
+        "chat_template_caps": {
+          "supports_object_arguments": true,
+          "supports_parallel_tool_calls": true,
+          "supports_preserve_reasoning": false,
+          "supports_reasoning_effort": false,
+          "supports_string_content": true,
+          "supports_system_role": true,
+          "supports_tool_calls": true,
+          "supports_tools": true,
+          "supports_typed_content": false
+        },
+        "bos_token": "<bos>",
+        "eos_token": "<eos>",
+        "build_info": "b0-unknown",
+        "is_sleeping": false,
+        "cors_proxy_enabled": false
+      },
+      "slots": [
+        {
+          "id": 0,
+          "n_ctx": 131072,
+          "speculative": true,
+          "is_processing": false,
+          "id_task": 17,
+          "n_prompt_tokens": 19,
+          "n_prompt_tokens_processed": 0,
+          "n_prompt_tokens_cache": 0,
+          "params": {
+            "seed": 4294967295,
+            "temperature": 0.0,
+            "dynatemp_range": 0.0,
+            "dynatemp_exponent": 1.0,
+            "top_k": 64,
+            "top_p": 0.949999988079071,
+            "min_p": 0.05000000074505806,
+            "top_n_sigma": -1.0,
+            "xtc_probability": 0.0,
+            "xtc_threshold": 0.10000000149011612,
+            "typical_p": 1.0,
+            "repeat_last_n": 64,
+            "repeat_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+            "dry_multiplier": 0.0,
+            "dry_base": 1.75,
+            "dry_allowed_length": 2,
+            "dry_penalty_last_n": 64,
+            "mirostat": 0,
+            "mirostat_tau": 5.0,
+            "mirostat_eta": 0.10000000149011612,
+            "adaptive_target": -1.0,
+            "adaptive_decay": 0.8999999761581421,
+            "max_tokens": 32,
+            "n_predict": 32,
+            "n_keep": 0,
+            "n_discard": 0,
+            "ignore_eos": false,
+            "stream": false,
+            "n_probs": 0,
+            "min_keep": 0,
+            "chat_format": "peg-gemma4",
+            "reasoning_format": "deepseek",
+            "reasoning_in_content": false,
+            "generation_prompt": "<|turn>model\n<|channel>thought\n<channel|>",
+            "samplers": [
+              "penalties",
+              "dry",
+              "top_n_sigma",
+              "top_k",
+              "typ_p",
+              "top_p",
+              "min_p",
+              "xtc",
+              "temperature"
+            ],
+            "speculative.types": "none,draft-mtp",
+            "timings_per_token": false,
+            "post_sampling_probs": false,
+            "backend_sampling": false,
+            "lora": [
+
+            ]
+          },
+          "next_token": [
+            {
+              "has_next_token": false,
+              "has_new_line": false,
+              "n_remain": -1,
+              "n_decoded": 0
+            }
+          ]
+        }
+      ],
+      "cli_verified": {
+        "context_total": "131072",
+        "parallel": "1",
+        "spec_type": "draft-mtp",
+        "spec_draft_n_max": "2",
+        "draft_model": "/models/mtp-gemma-4-12B-it.gguf"
+      },
+      "binary": {
+        "path": "/llama/bin/llama-server",
+        "bytes": 75075352,
+        "mtime": "2026-09-22T04:25:43.806226470Z",
+        "device": 66312,
+        "inode": 2229984,
+        "sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901"
+      },
+      "model": {
+        "path": "/models/gemma-4-12b-it-qat-q4_0.gguf",
+        "bytes": 6975879296,
+        "mtime": "2026-11-04T14:59:16.601090961Z",
+        "device": 66312,
+        "inode": 4325511,
+        "sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b"
+      },
+      "mtp_model": {
+        "path": "/models/mtp-gemma-4-12B-it.gguf",
+        "bytes": 253708800,
+        "mtime": "2026-11-04T15:00:57.482241330Z",
+        "device": 66312,
+        "inode": 4325518,
+        "sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6"
+      },
+      "main_pid": 2322778,
+      "server_pid": 2322820,
+      "gpu": {
+        "at": "2026-11-04T17:36:57.400081Z",
+        "sampling": "endpoint point sample; not a peak",
+        "csv_columns": "index,name,memory.total MiB,memory.used MiB,utilization.gpu %,temperature.gpu C,power.draw W",
+        "csv": "0, NVIDIA GeForce RTX 5070 Ti, 16303, 8846, 9, 40, 17.36"
+      },
+      "status": "verified"
+    }
+  ],
+  "source_contract": {
+    "source_directory": "/home/ml-data/src/llama.cpp-b10549",
+    "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+    "timing_contract": "Pinned b10549: native integer prompts passed verbatim; tokens_evaluated is full input, prompt_n excludes cache_n; decoder rate uses output minus one.",
+    "files": [
+      {
+        "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-common.cpp",
+        "sha256": "6538982c60d639b5e5cb594825bcad4ae44327337e91b6f1f9e2b6e8f767f1c6",
+        "matching_lines": [
+          {
+            "line": 69,
+            "text": "{\"cache_n\",                n_prompt_cached},"
+          },
+          {
+            "line": 71,
+            "text": "{\"prompt_n\",               n_prompt_processed},"
+          },
+          {
+            "line": 79,
+            "text": "{\"predicted_per_second\",   n_gen_tps()},"
+          },
+          {
+            "line": 1423,
+            "text": "n_tokens += json_value(elem, \"tokens_evaluated\", 0);"
+          },
+          {
+            "line": 1456,
+            "text": "n_tokens += json_value(rank, \"tokens_evaluated\", 0);"
+          }
+        ]
+      },
+      {
+        "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-common.h",
+        "sha256": "470318bda7f2d4cee1f9334198f0ffe9a51116e96c8c469321627d5b0a48aad5",
+        "matching_lines": [
+          {
+            "line": 419,
+            "text": "double n_gen_tps() const {"
+          }
+        ]
+      },
+      {
+        "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-task.cpp",
+        "sha256": "004526bacda58f8b413166cf18c53bef3f472504c7db8d8df711dbc5c995b1f4",
+        "matching_lines": [
+          {
+            "line": 350,
+            "text": "{\"tokens_predicted\",    n_decoded},"
+          },
+          {
+            "line": 351,
+            "text": "{\"tokens_evaluated\",    n_prompt_tokens},"
+          },
+          {
+            "line": 1059,
+            "text": "{\"tokens_predicted\", n_decoded},"
+          },
+          {
+            "line": 1060,
+            "text": "{\"tokens_evaluated\", n_prompt_tokens},"
+          },
+          {
+            "line": 1485,
+            "text": "{\"tokens_evaluated\", n_tokens},"
+          },
+          {
+            "line": 1496,
+            "text": "{\"tokens_evaluated\", n_tokens},"
+          },
+          {
+            "line": 1540,
+            "text": "\"tokens_predicted_total\","
+          },
+          {
+            "line": 1544,
+            "text": "\"tokens_predicted_seconds_total\","
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/source-contract.json",
+      "sha256": "0e576d5f9f40921165b0cbdbf05a0e2c920bdf28ff3269389acbe99276bcb680",
+      "bytes": 1958
+    }
+  },
+  "fixture": {
+    "path": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k/artifacts/fixture.json",
+    "sha256": "111269493b378a521cd6a2f991bfb0c1c4b2ddafae26e2cb495c1dc772959039",
+    "bytes": 2806867
+  },
+  "fixture_token_ids_sha256": "5c9481a6dffa8a106f66ef8acd34e2f356fddd09856a9fc226b8b2cf09118f7c",
+  "paired_fixture_token_ids_sha256": "5a2d3bb28ad7709f80ae629238c254841f70723e42816a3fb8ea54e2e6b3e0f4",
+  "workloads": [
+    {
+      "input_tokens": 8192,
+      "token_ids_sha256": "3ac33ead414969340c005a80ccff3eb77f62aa1a4643116a2bd2214db3ac417e",
+      "paired_token_ids_sha256": "ab3d7914e8963951a85e128536920ae30c8ff9490d0c80693f3fa001fe5d8678",
+      "reusable_prefix_tokens": 0
+    },
+    {
+      "input_tokens": 73728,
+      "token_ids_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "paired_token_ids_sha256": "506ba0b5d253506ff0d0a83087e2c0f045f5c1d55cdc2a8182a8c2414a4ed0ec",
+      "reusable_prefix_tokens": 65536
+    },
+    {
+      "input_tokens": 126976,
+      "token_ids_sha256": "5c9481a6dffa8a106f66ef8acd34e2f356fddd09856a9fc226b8b2cf09118f7c",
+      "paired_token_ids_sha256": "5a2d3bb28ad7709f80ae629238c254841f70723e42816a3fb8ea54e2e6b3e0f4",
+      "reusable_prefix_tokens": 118784
+    }
+  ],
+  "cleanup": {
+    "status": "all_slots_idle",
+    "checked_at": "2026-11-04T17:37:13.630372Z",
+    "idle_quiet_seconds": 1.0052289720042609,
+    "workers_alive": 0
+  },
+  "error": {
+    "class": "Gemma128::Failure",
+    "message": "Failed sample group 8192-single_reset_cache_observed; raw evidence preserved",
+    "at": "2026-11-04T17:37:13.670711Z"
+  },
+  "finished_at": "2026-11-04T17:37:13.670719Z"
+}

@@ -1,0 +1,21 @@
+{
+  "downloader_pid": 2271955,
+  "stopped_at": "2026-11-04T15:55:33Z",
+  "archive": "/root/benchmarks/gemma4-96k-70043de5/download-26b-interrupted-20261104T155533Z",
+  "curl_pids": [
+    2271988,
+    2271965
+  ],
+  "partial_files_preserved": [
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T155533Z/0036.bin.download-20261104T154957Z-2271955-attempt1",
+      "bytes": 42000384
+    },
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T155533Z/0076.bin.download-20261104T154957Z-2271955-attempt1",
+      "bytes": 97824768
+    }
+  ],
+  "complete_segments_preserved": 76,
+  "status": "stopped_and_segments_preserved"
+}

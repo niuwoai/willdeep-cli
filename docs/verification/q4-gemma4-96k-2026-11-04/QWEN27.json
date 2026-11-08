@@ -1,0 +1,156 @@
+{
+  "generated_at": "2026-11-04T16:54:32Z",
+  "collector_version": "1.0.0",
+  "model": "Qwen3.8-27B",
+  "quantization": "UD-IQ3_XXS",
+  "context_tokens": 98304,
+  "parallel": 1,
+  "jinja": true,
+  "deployment": {
+    "model_alias": "qwen3.8-27b",
+    "legacy_aliases": [
+      "qwen3.8-27b-compat"
+    ],
+    "model_bytes": 10934860704,
+    "model_sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee",
+    "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+    "checks_rb_sha256": "125f9a67335256c2864715c73fb8f48ca6380200fc5b8a1aceeba17aea609f48"
+  },
+  "source_report": "raw/runs/qwen38-27b-coding-retry1/checks-20261104T165250Z-20261105-2305583-i9gtug/report.json",
+  "source_report_sha256": "4254651a2c29f727a2c369d7aed089d8e84506390f5c708b77427654c2a0b213",
+  "acceptance_summary": {
+    "passed": 11,
+    "failed": 2,
+    "not_run": 0
+  },
+  "checks": [
+    {
+      "name": "configuration",
+      "status": "passed"
+    },
+    {
+      "name": "authentication",
+      "status": "passed"
+    },
+    {
+      "name": "service_active",
+      "status": "passed"
+    },
+    {
+      "name": "health",
+      "status": "passed"
+    },
+    {
+      "name": "loaded_model",
+      "status": "passed"
+    },
+    {
+      "name": "chat_ok",
+      "status": "passed"
+    },
+    {
+      "name": "legacy_alias_1",
+      "status": "passed"
+    },
+    {
+      "name": "forced_tool_add",
+      "status": "passed"
+    },
+    {
+      "name": "tool_round_trip",
+      "status": "failed",
+      "error": "JSON::ParserError: unexpected token at '<tool_call>\n<function=add>\n<parameter=a>\n19\n</parameter>\n<parameter=b>\n23\n</parameter>\n</function>\n</tool_call>'"
+    },
+    {
+      "name": "json_object",
+      "status": "passed"
+    },
+    {
+      "name": "sandbox_availability",
+      "status": "passed"
+    },
+    {
+      "name": "programming_dedupe",
+      "status": "passed"
+    },
+    {
+      "name": "programming_decimal_refunds",
+      "status": "failed",
+      "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出"
+    }
+  ],
+  "programming": {
+    "programming_dedupe": {
+      "strict_json_parsed": true,
+      "source_unchanged": true,
+      "passed_methods": 8,
+      "total_methods": 8,
+      "failed_method_names": [],
+      "passed_method_names": [
+        "test_empty",
+        "test_generator",
+        "test_invalid_input",
+        "test_keep_first_and_order",
+        "test_many_records",
+        "test_repeated_calls_are_independent",
+        "test_shallow_copy_and_no_mutation",
+        "test_type_identity_and_boundary_ids"
+      ],
+      "unittest": {
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0,
+        "successful": true,
+        "tests_run": 8
+      },
+      "source_sha256": "06dbc9a08686ee456952040d5a410498e97e78e9379de68c0f6106a1deadb3ec",
+      "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+      "sandbox_exit_code": 0,
+      "timed_out": false,
+      "output_truncated": false
+    },
+    "programming_decimal_refunds": {
+      "strict_json_parsed": true,
+      "source_unchanged": true,
+      "passed_methods": 7,
+      "total_methods": 9,
+      "failed_method_names": [
+        "test_large_values_and_decimal_context",
+        "test_invalid_rows"
+      ],
+      "passed_method_names": [
+        "test_empty",
+        "test_fractional_accuracy",
+        "test_generator_and_no_mutation",
+        "test_multiple_currencies",
+        "test_refund_only_and_zero_balance",
+        "test_repeated_calls_are_independent",
+        "test_sales_and_refunds"
+      ],
+      "unittest": {
+        "errors": 1,
+        "failures": 1,
+        "skipped": 0,
+        "successful": false,
+        "tests_run": 9
+      },
+      "source_sha256": "39bdd465687401852189a314c33e47883e6e1b91b02c45744089e46490aa157f",
+      "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+      "sandbox_exit_code": 1,
+      "timed_out": false,
+      "output_truncated": false
+    }
+  },
+  "restoration": {
+    "status": "qwen_restored_and_healthy",
+    "completed_at": "2026-11-04T16:53:12Z",
+    "override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+    "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+    "model_alias": "qwen3.6-35b-a3b"
+  },
+  "limitations": [
+    "One response per task; not a general coding benchmark.",
+    "35B comparison used Jinja disabled; this 27B run enabled Jinja.",
+    "Method counts distinguish failed subTests from distinct test methods."
+  ]
+}

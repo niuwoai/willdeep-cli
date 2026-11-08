@@ -19,9 +19,7 @@ pub(super) fn record_runtime_result(app: &mut App, message: String) {
             .iter()
             .rposition(|row| row.starts_with(&error_prefix))
         {
-            app.transcript.remove(index);
-            app.message_times.remove(index);
-            app.refresh_transcript_height();
+            app.drop_transcript_row(index);
         }
     }
     app.append_transcript(message);

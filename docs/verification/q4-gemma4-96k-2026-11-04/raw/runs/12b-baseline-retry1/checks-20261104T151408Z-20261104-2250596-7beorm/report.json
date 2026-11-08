@@ -1,0 +1,350 @@
+{
+  "started_at": "2026-11-04T15:14:08Z",
+  "status": "failed",
+  "endpoint": "http://127.0.0.1:11435",
+  "run_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1",
+  "artifacts_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm",
+  "report_json": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/report.json",
+  "report_markdown": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/report.md",
+  "checks": [
+    {
+      "name": "configuration",
+      "status": "passed",
+      "evidence": {
+        "model_alias": "gemma-4-12b-qat",
+        "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+        "service": "llama-qwen38-cuda.service",
+        "legacy_aliases": [
+          "qwen3.6-35b-a3b",
+          "qwen3.8-27b"
+        ],
+        "sandbox_image": "python:3.12.12-slim-bookworm"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "authentication",
+      "status": "passed",
+      "evidence": {
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "service_active",
+      "status": "passed",
+      "evidence": {
+        "command": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "active\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.005
+        }
+      },
+      "elapsed_seconds": 0.005
+    },
+    {
+      "name": "health",
+      "status": "passed",
+      "evidence": {
+        "response": {
+          "status": "ok"
+        }
+      },
+      "elapsed_seconds": 0.001
+    },
+    {
+      "name": "loaded_model",
+      "status": "passed",
+      "evidence": {
+        "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+        "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf"
+      },
+      "elapsed_seconds": 0.001
+    },
+    {
+      "name": "chat_ok",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "gemma-4-12b-qat",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        }
+      },
+      "elapsed_seconds": 0.065
+    },
+    {
+      "name": "legacy_alias_1",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.6-35b-a3b",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 17
+          }
+        }
+      },
+      "elapsed_seconds": 0.044
+    },
+    {
+      "name": "legacy_alias_2",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.8-27b",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 17
+          }
+        }
+      },
+      "elapsed_seconds": 0.044
+    },
+    {
+      "name": "forced_tool_add",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 17,
+          "prompt_tokens": 96,
+          "total_tokens": 113,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "finish_reason": "tool_calls",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "add",
+              "arguments": "{\"a\":19,\"b\":23}"
+            },
+            "id": "3kaSYrYwzjlsMoO2VchyY0td30XQRYB1"
+          }
+        ],
+        "tool_result": 42
+      },
+      "elapsed_seconds": 0.268
+    },
+    {
+      "name": "tool_round_trip",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 37,
+          "prompt_tokens": 175,
+          "total_tokens": 212,
+          "prompt_tokens_details": {
+            "cached_tokens": 91
+          }
+        },
+        "content": "{\n  \"result\": 42,\n  \"receipt\": \"dad2864517cdee40\"\n}",
+        "expected_tool_response": {
+          "result": 42,
+          "receipt": "dad2864517cdee40"
+        }
+      },
+      "elapsed_seconds": 0.512
+    },
+    {
+      "name": "json_object",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 17,
+          "prompt_tokens": 32,
+          "total_tokens": 49,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "content": "{\n  \"result\": 42\n}"
+      },
+      "elapsed_seconds": 0.253
+    },
+    {
+      "name": "sandbox_availability",
+      "status": "passed",
+      "evidence": {
+        "image_inspect": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.011
+        },
+        "image": "python:3.12.12-slim-bookworm",
+        "image_id": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a",
+        "probe": {
+          "exit_code": 0,
+          "timed_out": false,
+          "stdout": "{\"sandbox_ready\": true, \"python\": \"3.12.12\"}\n",
+          "stderr": "",
+          "output_truncated": false,
+          "elapsed_seconds": 0.333,
+          "security_args": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--name",
+            "willdeep-accept-2250596-4e14e9c1530f",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "64",
+            "--memory",
+            "256m",
+            "--memory-swap",
+            "256m",
+            "--cpus",
+            "1",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+            "--ipc",
+            "none",
+            "--user",
+            "65534:65534",
+            "--workdir",
+            "/tmp",
+            "--env",
+            "HOME=/tmp",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--entrypoint",
+            "python3",
+            "python:3.12.12-slim-bookworm",
+            "-I",
+            "-c",
+            "import json,sys; assert sys.version_info.major == 3 and sys.flags.isolated; print(json.dumps({\"sandbox_ready\": True, \"python\": sys.version.split()[0]}))"
+          ],
+          "cleanup": {
+            "exit_code": 0,
+            "timed_out": false,
+            "stdout": "",
+            "stderr": "Error response from daemon: No such container: willdeep-accept-2250596-4e14e9c1530f\n",
+            "output_truncated": false,
+            "elapsed_seconds": 0.011
+          }
+        },
+        "python": "3.12.12"
+      },
+      "elapsed_seconds": 0.355
+    },
+    {
+      "name": "programming_dedupe",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 222,
+          "prompt_tokens": 275,
+          "total_tokens": 497,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_dedupe",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_dedupe/solution.py",
+        "source_bytes": 705,
+        "source_sha256": "6511a8393f50052b700a89d19789a114b85bab8bdc01c32bb9e178c5438f1349",
+        "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+        "expected_tests": 8,
+        "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/programming_dedupe.sandbox.json",
+        "exit_code": 0,
+        "unittest": {
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "successful": true,
+          "tests_run": 8
+        }
+      },
+      "elapsed_seconds": 3.193
+    },
+    {
+      "name": "programming_decimal_refunds",
+      "status": "failed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 632,
+          "prompt_tokens": 392,
+          "total_tokens": 1024,
+          "prompt_tokens_details": {
+            "cached_tokens": 24
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_decimal_refunds",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_decimal_refunds/solution.py",
+        "source_bytes": 2136,
+        "source_sha256": "6b7f1ab62b1cd67eeeabaa06e8f75bfdbb7370de192abe8e679886cd85eea069",
+        "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+        "expected_tests": 9,
+        "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/programming_decimal_refunds.sandbox.json",
+        "exit_code": 1,
+        "unittest": {
+          "errors": 1,
+          "failures": 1,
+          "skipped": 0,
+          "successful": false,
+          "tests_run": 9
+        }
+      },
+      "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出",
+      "elapsed_seconds": 8.38
+    }
+  ],
+  "deployment": {
+    "model_alias": "gemma-4-12b-qat",
+    "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+    "service": "llama-qwen38-cuda.service",
+    "legacy_aliases": [
+      "qwen3.6-35b-a3b",
+      "qwen3.8-27b"
+    ],
+    "sandbox_image": "python:3.12.12-slim-bookworm"
+  },
+  "completed_at": "2026-11-04T15:14:21Z",
+  "summary": {
+    "passed": 13,
+    "failed": 1,
+    "not_run": 0
+  }
+}

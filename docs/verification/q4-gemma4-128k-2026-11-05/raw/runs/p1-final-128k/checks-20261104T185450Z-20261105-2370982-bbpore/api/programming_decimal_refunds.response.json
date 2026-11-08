@@ -1,0 +1,38 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\n  \"path\": \"solution.py\",\n  \"source\": \"import re\\nfrom decimal import Decimal, localcontext, ROUND_HALF_UP\\n\\ndef aggregate_amounts(rows):\\n    \\\"\\\"\\\"\\n    Aggregates amounts by currency, handling sales and refunds with Decimal precision.\\n    \\\"\\\"\\\"\\n    totals = {}\\n    # Regex for non-negative decimal string: (0|[1-9][0-9]*)(\\\\.([0-9]{1,2}))?\\n    # We need to ensure no leading zeros (except 0.xx), no signs, no scientific notation.\\n    pattern = re.compile(r'^(0|\\\\d{1,})(\\\\.\\\\d{1,2})?$')\\n    \\n    for row in rows:\\n        if not isinstance(row, dict):\\n            raise TypeError(\\\"Row must be a dictionary.\\\")\\n        \\n        if not all(k in row for k in ('currency', 'kind', 'amount')):\\n            raise ValueError(\\\"Missing required fields.\\\")\\n        \\n        currency = row['currency']\\n        kind = row['kind']\\n        amount_str = row['amount']\\n        \\n        if not isinstance(currency, str) or len(currency) != 3 or not currency.isupper() or not currency.isascii():\\n            raise ValueError(\\\"Invalid currency format.\\\")\\n        \\n        if kind not in ('sale', 'refund'):\\n            raise ValueError(\\\"Kind must be 'sale' or 'refund'.\\\")\\n        \\n        if not isinstance(amount_str, str) or not pattern.match(amount_str):\\n            raise ValueError(\\\"Invalid amount format.\\\")\\n        \\n        # Convert to Decimal\\n        # We use a localcontext to ensure precision doesn't affect the global state\\n        # and to force the rounding/quantization behavior.\\n        with localcontext() as ctx:\\n            # Decimal(amount_str) is safe here because we validated the string format\\n            val = Decimal(amount_str)\\n            if val < 0: # Should not happen due to regex but for safety\\n                raise ValueError(\\\"Amount must be non-negative.\\\")\\n            \\n            if kind == 'sale':\\n                totals[currency] = totals.get(currency, Decimal('0.00')) + val\\n            else:\\n                totals[currency] = totals.get(currency, Decimal('0.00')) - val\\n\\n    # Final quantization to 2 decimal places\\n    result = {}\\n    for curr, total in totals.items():\\n        # Quantize to 2 decimal places using ROUND_HALF_UP\\n        # We use '0.00' to ensure exponent is -2\\n        result[curr] = total.quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)\\n        \\n    return result\"\n}"
+      }
+    }
+  ],
+  "created": 1793818497,
+  "model": "gemma-4-12b-qat",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 671,
+    "prompt_tokens": 392,
+    "total_tokens": 1063,
+    "prompt_tokens_details": {
+      "cached_tokens": 24
+    }
+  },
+  "id": "chatcmpl-jHobTU5zozSNj1dHHmjHTH4dxNXX4bjY",
+  "timings": {
+    "cache_n": 24,
+    "prompt_n": 368,
+    "prompt_ms": 150.591,
+    "prompt_per_token_ms": 0.4092146739130435,
+    "prompt_per_second": 2443.705135101035,
+    "predicted_n": 671,
+    "predicted_ms": 4128.992,
+    "predicted_per_token_ms": 6.162674626865672,
+    "predicted_per_second": 162.26720710526928,
+    "draft_n": 526,
+    "draft_n_accepted": 408
+  }
+}

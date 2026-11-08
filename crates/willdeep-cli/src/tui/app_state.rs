@@ -9,6 +9,7 @@ impl App {
             input: PromptEditor::default(),
             prompt_history: None,
             prompt_history_pending: VecDeque::new(),
+            transcript_attachments: vec![Vec::new(); transcript.len()],
             transcript,
             archive_floor: 0,
             message_times: message_time::MessageTimes::default(),
@@ -60,6 +61,7 @@ impl App {
             queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
+            pending_reasoning_level: None,
             display_model: None,
             pending_provider: None,
             local_turn: None,
@@ -251,6 +253,7 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        self.pending_reasoning_level = None;
         self.pending_provider = None;
         self.display_model = session.model.clone().filter(|model| !model.is_empty());
         let display = self
@@ -281,6 +284,7 @@ impl App {
         self.tools_expanded = false;
         self.attachments.clear();
         self.sent_attachments.clear();
+        self.publish_gallery();
         self.attachment_panel = None;
         self.selected_attachment = 0;
         self.composer_expanded = false;
@@ -1961,6 +1965,9 @@ impl App {
         {
             self.transcript.push(v);
         }
+        // 记录长了几行，附件槽就补几行空的，保持与记录逐行对齐。
+        self.transcript_attachments
+            .resize_with(self.transcript.len(), Vec::new);
         if self.transcript.len() > previous_len {
             self.message_times
                 .observe(&self.transcript, self.message_times.recording_time());
@@ -1979,9 +1986,19 @@ impl App {
         }
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
+    /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
+    /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
+    pub(super) fn paste_goes_inline(value: &str) -> bool {
+        const MAX_INLINE_LINES: usize = 3;
+        const MAX_INLINE_CHARS: usize = 2_000;
+        value.lines().count() <= MAX_INLINE_LINES && value.chars().count() <= MAX_INLINE_CHARS
+    }
+
     pub(super) fn handle_paste(&mut self, value: String) {
         self.prompt_history = None;
-        if value.contains('\n') || value.chars().count() > 200 {
+        if Self::paste_goes_inline(&value) {
+            self.input.insert(&value);
+        } else {
             let n = self.attachments.len() + 1;
             self.append_draft_attachment(DraftAttachment {
                 id: uuid::Uuid::new_v4(),
@@ -1990,8 +2007,6 @@ impl App {
                     content: value,
                 },
             });
-        } else {
-            self.input.insert(&value);
         }
     }
     pub(super) fn delete_selected_attachment(&mut self) {
@@ -2002,6 +2017,7 @@ impl App {
         self.attachments.remove(index);
         self.selected_attachment = index.saturating_sub(1);
         self.notice = Some("Attachment removed".to_owned());
+        self.publish_gallery();
     }
     pub(super) fn paste_clipboard_image(&mut self) {
         match clipboard_image() {
@@ -2156,6 +2172,7 @@ impl App {
                 | "/local"
                 | "/mobile"
                 | "/model"
+                | "/reasoning"
                 | "/new"
                 | "/routing"
                 | "/runtime"

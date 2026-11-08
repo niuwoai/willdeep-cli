@@ -90,6 +90,7 @@
 | [Provider 协议契约](PROVIDER_PROTOCOLS.md) | 三种线格式的请求/响应契约 |
 | [Runtime 控制 API](RUNTIME_CONTROL_API.md) | 统一控制协议的完整契约 |
 | [Runtime 会话协议](RUNTIME_SESSION_PROTOCOL.md) | Session / Turn 状态机与持久化 |
+| [完整子会话补齐方案](decisions/2026-11-04-child-sessions.md) | 设计提案：子会话与 Worker 边界、上下文交接、完成回报与分期验收 |
 | [进程内 Runtime Harness](IN_PROCESS_RUNTIME_HARNESS.md) | Daemon 进程内执行模型 |
 
 ## 路线与调研

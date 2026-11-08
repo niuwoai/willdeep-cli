@@ -270,9 +270,7 @@ impl App {
 
     pub(super) fn remove_queued_prompt_row(&mut self, selected: usize) {
         if let Some(index) = self.queued_transcript_index(selected) {
-            self.transcript.remove(index);
-            self.message_times.remove(index);
-            self.refresh_transcript_height();
+            self.drop_transcript_row(index);
         }
     }
 

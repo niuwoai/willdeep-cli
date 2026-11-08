@@ -1,0 +1,85 @@
+{
+  "status": "passed",
+  "verified_at": "2026-11-04T15:28:20Z",
+  "identity": {
+    "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf",
+    "model_alias": "gemma-4-12b-qat",
+    "context_tokens": 98304,
+    "total_slots": 1
+  },
+  "service": {
+    "ExecStartPost": "{ path=/usr/local/sbin/qwen38-warmup ; argv[]=/usr/local/sbin/qwen38-warmup ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+    "Description": "llama.cpp CUDA - Gemma4 12b mtp-n2 (96K single route, port 11435)",
+    "ActiveState": "active",
+    "SubState": "running",
+    "FragmentPath": "/etc/systemd/system/llama-qwen38-cuda.service",
+    "DropInPaths": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf"
+  },
+  "gpu": "NVIDIA GeForce RTX 5070 Ti, 16303, 8562, 85, 59, 125.78",
+  "model_metadata": {
+    "models": [
+      {
+        "name": "gemma-4-12b-qat",
+        "model": "gemma-4-12b-qat",
+        "modified_at": "",
+        "size": "",
+        "digest": "",
+        "type": "model",
+        "description": "",
+        "tags": [
+          ""
+        ],
+        "capabilities": [
+          "completion"
+        ],
+        "parameters": "",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "",
+          "families": [
+            ""
+          ],
+          "parameter_size": "",
+          "quantization_level": ""
+        }
+      }
+    ],
+    "object": "list",
+    "data": [
+      {
+        "id": "gemma-4-12b-qat",
+        "aliases": [
+          "gemma-4-12b-qat",
+          "qwen3.6-35b-a3b",
+          "qwen3.8-27b"
+        ],
+        "tags": [
+
+        ],
+        "object": "model",
+        "created": 1793806100,
+        "owned_by": "llamacpp",
+        "meta": {
+          "vocab_type": 2,
+          "n_vocab": 262144,
+          "n_ctx": 98304,
+          "n_ctx_train": 262144,
+          "n_embd": 3840,
+          "n_params": 11907350576,
+          "size": 6960054464,
+          "ftype": "Q4_0"
+        }
+      }
+    ]
+  },
+  "load_evidence": [
+    "0.00.639.859 W srv    load_model: [spec] failed to measure draft model memory: failed to create llama_context from model",
+    "0.02.310.112 I common_speculative_init_result: loading draft model '/models/mtp-gemma-4-12B-it.gguf'",
+    "0.42.718.091 I slot print_timing: id  0 | task 1 | draft acceptance = 0.56904 (  272 accepted /   478 generated), mean len =  2.14",
+    "1.22.209.120 I slot print_timing: id  0 | task 390 | draft acceptance = 0.56904 (  272 accepted /   478 generated), mean len =  2.14",
+    "2.02.504.576 I slot print_timing: id  0 | task 910 | draft acceptance = 0.50690 (  257 accepted /   507 generated), mean len =  2.01",
+    "2.08.595.996 I slot print_timing: id  0 | task 1183 | draft acceptance = 0.56133 (  270 accepted /   481 generated), mean len =  2.12"
+  ],
+  "temporary_override_absent": true
+}

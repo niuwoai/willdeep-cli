@@ -1,0 +1,18 @@
+{
+  "purpose": "Supplementary code-only evaluation; original strict-JSON failure is unchanged",
+  "original_response": "/root/benchmarks/gemma4-96k-70043de5/runs/qwen-coding-control/checks-20261104T153120Z-20261104-2262334-kteg5k/api/programming_decimal_refunds.response.json",
+  "original_response_sha256": "654972e172e11825c0383796846f2ce6a0361d234718d17d228737d3ce0630c0",
+  "source_sha256": "f20b7d46333ab2a17f6b1276b32fee24f156604926f001e59454f633b8dbc2e6",
+  "unchanged_source_after_removing_only_json_fence": true,
+  "new_model_requests": 0,
+  "unittest": {
+    "errors": 1,
+    "failures": 2,
+    "skipped": 0,
+    "successful": false,
+    "tests_run": 9
+  },
+  "sandbox_exit_code": 1,
+  "timed_out": false,
+  "output_truncated": false
+}

@@ -1,0 +1,26 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:11435/v1/chat/completions",
+  "body": {
+    "model": "qwen3.6-35b-a3b",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Return only a JSON object containing the complete requested Python source. Never call tools or run code."
+      },
+      {
+        "role": "user",
+        "content": "修复下面现有 Python 函数，返回完整 solution.py 源码。不要执行任何代码，不调用工具。\ndef aggregate_amounts(rows):\n    totals = {}\n    for row in rows:\n        currency = row['currency']\n        totals[currency] = totals.get(currency, 0.0) + float(row['amount'])\n    return totals\n\n契约：rows 是可迭代对象（含一次性 generator）；每项必须为 dict，含 currency/kind/amount。\ncurrency 为恰好三个 ASCII 大写字母；kind 只能为 sale 或 refund。\namount 必须为非负十进制 str，严格匹配 (0|[1-9][0-9]*)(\\.[0-9]{1,2})?。\n不接受空白、符号、前导零、指数、NaN/Infinity、float、int 或 bool。\nsale 加金额，refund 减金额；退款可以大于销售额，零余额币种必须保留。\n返回 dict[str, Decimal]，每个 Decimal 都精确到两位小数（exponent == -2）。\n不允许二进制浮点误差；很大的金额及调用方 decimal context.prec 很小时也必须精确，\n并且不改变调用方的 Decimal context。空输入返回 {}，不得修改输入或跨调用共享状态。\n非 dict 项抛 TypeError；缺字段或非法字段值抛 ValueError。只用 Python 标准库。\n\n只返回一个 JSON object，且只有 path 和 source 两个字段：\n{\"path\":\"solution.py\",\"source\":\"完整 Python 源码，正确转义换行\"}\n不要 Markdown，不要解释，不要测试源码，不要额外文件，不要工具调用。\n"
+      }
+    ],
+    "temperature": 0,
+    "max_tokens": 4096,
+    "stream": false,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "response_format": {
+      "type": "json_object"
+    }
+  }
+}

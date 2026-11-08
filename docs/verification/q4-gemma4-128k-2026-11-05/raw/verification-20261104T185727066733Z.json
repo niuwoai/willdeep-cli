@@ -1,0 +1,65 @@
+{
+  "status": "passed",
+  "tool_version": "1.0.0-rc2",
+  "verified_at": "2026-11-04T18:57:27Z",
+  "identity": {
+    "verified_at": "2026-11-04T18:57:26Z",
+    "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf",
+    "model_alias": "gemma-4-12b-qat",
+    "total_slots": 1,
+    "context_per_slot": 131072
+  },
+  "checks": [
+    {
+      "name": "local",
+      "status": "passed",
+      "model": "gemma-4-12b-qat"
+    },
+    {
+      "name": "public",
+      "status": "passed",
+      "model": "gemma-4-12b-qat"
+    }
+  ],
+  "gpu": "NVIDIA GeForce RTX 5070 Ti, 16303, 8850, 0, 40",
+  "load_evidence": [
+    "0.00.618.081 W srv    load_model: [spec] failed to measure draft model memory: failed to create llama_context from model",
+    "0.02.239.787 I common_speculative_init_result: loading draft model '/models/mtp-gemma-4-12B-it.gguf'",
+    "0.03.941.586 I slot print_timing: id  0 | task 0 | draft acceptance = 0.11111 (    1 accepted /     9 generated), mean len =  1.20",
+    "0.04.149.577 I slot print_timing: id  0 | task 12 | draft acceptance = 0.00000 (    0 accepted /     2 generated), mean len =  1.00",
+    "0.51.700.839 I slot print_timing: id  0 | task 17 | draft acceptance = 1.00000 (    2 accepted /     2 generated), mean len =  3.00",
+    "0.51.747.170 I slot print_timing: id  0 | task 21 | draft acceptance = 1.00000 (    2 accepted /     2 generated), mean len =  3.00",
+    "0.51.792.754 I slot print_timing: id  0 | task 25 | draft acceptance = 1.00000 (    2 accepted /     2 generated), mean len =  3.00",
+    "0.51.990.962 I slot print_timing: id  0 | task 29 | draft acceptance = 1.00000 (   12 accepted /    12 generated), mean len =  3.00",
+    "0.52.263.180 I slot print_timing: id  0 | task 39 | draft acceptance = 1.00000 (   26 accepted /    26 generated), mean len =  3.00",
+    "0.52.405.011 I slot print_timing: id  0 | task 56 | draft acceptance = 1.00000 (   12 accepted /    12 generated), mean len =  3.00",
+    "0.54.160.785 I slot print_timing: id  0 | task 65 | draft acceptance = 0.78571 (  132 accepted /   168 generated), mean len =  2.57",
+    "0.58.895.219 I slot print_timing: id  0 | task 154 | draft acceptance = 0.77567 (  408 accepted /   526 generated), mean len =  2.55",
+    "3.27.855.269 I slot print_timing: id  0 | task 424 | draft acceptance = 0.00000 (    0 accepted /     2 generated), mean len =  1.00",
+    "3.28.161.881 I slot print_timing: id  0 | task 428 | draft acceptance = 0.00000 (    0 accepted /     2 generated), mean len =  1.00"
+  ],
+  "active": {
+    "tool_version": "1.0.0-rc2",
+    "service": "llama-qwen38-cuda.service",
+    "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+    "model_alias": "gemma-4-12b-qat",
+    "legacy_aliases": [
+      "qwen3.6-35b-a3b",
+      "qwen3.8-27b"
+    ],
+    "mode": "12b-qat-mtp",
+    "parallel": 1,
+    "context_per_slot": 131072,
+    "context_total": 131072,
+    "container": "gemma4-12b-mtp-128k-p1",
+    "override_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+    "override_sha256": "437bcc929cc20d92551aeac604f07316d289058fd457ae95847c9cd70bc87191",
+    "sandbox_image": "python:3.12.12-slim-bookworm",
+    "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+    "mtp_sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+    "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+    "deployed_at": "2026-11-04T18:53:57Z",
+    "kind": "gemma128",
+    "run_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-final-128k"
+  }
+}

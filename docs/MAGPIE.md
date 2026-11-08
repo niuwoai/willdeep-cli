@@ -15,6 +15,8 @@ WillDeep 可通过 Magpie 的 OpenAI Chat Completions 或 Anthropic Messages 接
 
 本版本交付 CLI **0.142.0-rc1** / Desktop **1.427.0-rc1**（Build 941）与两个 `0.1.0-rc2` 本地可安装插件。组合验收在 macOS 完成，Linux/Windows 仅做 Windows GNU 目标交叉编译；未发布、未社区收录，正式发布和社区提交另行授权。
 
+Magpie Agents 页的社区插件接入方案见[需求契约](MAGPIE_AGENT_REQUIREMENTS.md)、[技术设计](MAGPIE_AGENT_DESIGN.md)和[执行台账](MAGPIE_AGENT_PLAN.md)，目前处于待评审阶段，尚未实现。Magpie 当前支持 Agent 插件；能力边界以[新版插件文档](https://usemagpie.ai/docs/plugins#agents)和实际源码为准，旧接入指南中“插件不能添加 Agents 条目”的说明已过时。
+
 ## 临时前台连接
 
 以下标准变量写法适用于没有显式 Provider 地址和 Key 的临时会话。已有 Profile 的地址和 Key 优先；日常使用已有配置时，请采用下一节的独立 Magpie Profile。Magpie 已在本机默认端口运行时，模型名从其 `/v1/models` 返回值中选择，替换下面的 `provider/model`：

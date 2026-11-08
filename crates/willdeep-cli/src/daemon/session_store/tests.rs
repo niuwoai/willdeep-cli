@@ -1661,6 +1661,7 @@ fn session_stop_targets_only_its_declared_active_turn() {
         workspace: None,
         profile: None,
         model: None,
+        reasoning_level: None,
         approval_mode: None,
         started_by: None,
         parent_session_id: None,

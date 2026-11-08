@@ -1,0 +1,253 @@
+{
+  "started_at": "2026-11-04T15:02:28Z",
+  "status": "failed",
+  "endpoint": "http://127.0.0.1:11435",
+  "run_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline",
+  "artifacts_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5",
+  "report_json": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/report.json",
+  "report_markdown": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/report.md",
+  "checks": [
+    {
+      "name": "configuration",
+      "status": "passed",
+      "evidence": {
+        "model_alias": "gemma-4-12b-qat",
+        "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+        "service": "llama-qwen38-cuda.service",
+        "legacy_aliases": [
+          "qwen3.6-35b-a3b",
+          "qwen3.8-27b"
+        ],
+        "sandbox_image": "python:3.12.12-slim-bookworm"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "authentication",
+      "status": "passed",
+      "evidence": {
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "service_active",
+      "status": "failed",
+      "evidence": {
+      },
+      "error": "FrozenError: can't modify frozen String: \"\"",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "name": "health",
+      "status": "passed",
+      "evidence": {
+        "response": {
+          "status": "ok"
+        }
+      },
+      "elapsed_seconds": 0.001
+    },
+    {
+      "name": "loaded_model",
+      "status": "failed",
+      "evidence": {
+      },
+      "error": "Encoding::UndefinedConversionError: \"\\xE2\" from ASCII-8BIT to UTF-8",
+      "elapsed_seconds": 0.003
+    },
+    {
+      "name": "chat_ok",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "gemma-4-12b-qat",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        }
+      },
+      "elapsed_seconds": 0.065
+    },
+    {
+      "name": "legacy_alias_1",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.6-35b-a3b",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 17
+          }
+        }
+      },
+      "elapsed_seconds": 0.044
+    },
+    {
+      "name": "legacy_alias_2",
+      "status": "passed",
+      "evidence": {
+        "requested_model": "qwen3.8-27b",
+        "content": "OK",
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 2,
+          "prompt_tokens": 22,
+          "total_tokens": 24,
+          "prompt_tokens_details": {
+            "cached_tokens": 17
+          }
+        }
+      },
+      "elapsed_seconds": 0.043
+    },
+    {
+      "name": "forced_tool_add",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 17,
+          "prompt_tokens": 96,
+          "total_tokens": 113,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "finish_reason": "tool_calls",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "add",
+              "arguments": "{\"a\":19,\"b\":23}"
+            },
+            "id": "4pUSCQgyR9JAr6jArYLiDtW9Gi6LyyHt"
+          }
+        ],
+        "tool_result": 42
+      },
+      "elapsed_seconds": 0.265
+    },
+    {
+      "name": "tool_round_trip",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 3,
+          "prompt_tokens": 148,
+          "total_tokens": 151,
+          "prompt_tokens_details": {
+            "cached_tokens": 91
+          }
+        },
+        "content": "42"
+      },
+      "elapsed_seconds": 0.092
+    },
+    {
+      "name": "json_object",
+      "status": "passed",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 17,
+          "prompt_tokens": 32,
+          "total_tokens": 49,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "content": "{\n  \"result\": 42\n}"
+      },
+      "elapsed_seconds": 0.246
+    },
+    {
+      "name": "sandbox_availability",
+      "status": "not_run",
+      "evidence": {
+      },
+      "error": "GemmaAcceptance::NotRun: sandbox 探针不可用：FrozenError: can't modify frozen String: \"\"",
+      "elapsed_seconds": 0.014
+    },
+    {
+      "name": "programming_dedupe",
+      "status": "not_run",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 222,
+          "prompt_tokens": 275,
+          "total_tokens": 497,
+          "prompt_tokens_details": {
+            "cached_tokens": 1
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_dedupe",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_dedupe/solution.py",
+        "source_bytes": 705,
+        "source_sha256": "6511a8393f50052b700a89d19789a114b85bab8bdc01c32bb9e178c5438f1349",
+        "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+        "expected_tests": 8
+      },
+      "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+      "elapsed_seconds": 2.809
+    },
+    {
+      "name": "programming_decimal_refunds",
+      "status": "not_run",
+      "evidence": {
+        "actual_response_model": "gemma-4-12b-qat",
+        "expected_response_model": "gemma-4-12b-qat",
+        "usage": {
+          "completion_tokens": 632,
+          "prompt_tokens": 392,
+          "total_tokens": 1024,
+          "prompt_tokens_details": {
+            "cached_tokens": 24
+          }
+        },
+        "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_decimal_refunds",
+        "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline/checks-20261104T150228Z-20261104-2242205-zdzrt5/fixture_programming_decimal_refunds/solution.py",
+        "source_bytes": 2136,
+        "source_sha256": "6b7f1ab62b1cd67eeeabaa06e8f75bfdbb7370de192abe8e679886cd85eea069",
+        "fixed_tests_sha256": "aa44997c8a90f0420af777c4268c1643e22e50878edc966a3d75250361751a0f",
+        "expected_tests": 9
+      },
+      "error": "GemmaAcceptance::NotRun: 源码已保存，但 sandbox 未可用：FrozenError: can't modify frozen String: \"\"",
+      "elapsed_seconds": 7.891
+    }
+  ],
+  "deployment": {
+    "model_alias": "gemma-4-12b-qat",
+    "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+    "service": "llama-qwen38-cuda.service",
+    "legacy_aliases": [
+      "qwen3.6-35b-a3b",
+      "qwen3.8-27b"
+    ],
+    "sandbox_image": "python:3.12.12-slim-bookworm"
+  },
+  "completed_at": "2026-11-04T15:02:40Z",
+  "summary": {
+    "passed": 9,
+    "failed": 2,
+    "not_run": 3
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "downloader_version": "1.1.1",
+  "model_key": "26b",
+  "workers": 8,
+  "status": "completed",
+  "started_at": "2026-11-04T15:55:43Z",
+  "files": [
+    {
+      "file": "gemma-4-26B-A4B-it-UD-Q3_K_M.gguf",
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf",
+      "bytes": 12728497888,
+      "sha256": "811882f6df81c8ea204a5d382f196d6bd601245091786912d4c70df41cdfa052",
+      "repository": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "status": "verified",
+      "completed_chunks": 95,
+      "chunk_errors": [
+
+      ],
+      "chunks": 95,
+      "verified_at": "2026-11-04T16:04:21Z"
+    }
+  ],
+  "completed_at": "2026-11-04T16:04:21Z"
+}

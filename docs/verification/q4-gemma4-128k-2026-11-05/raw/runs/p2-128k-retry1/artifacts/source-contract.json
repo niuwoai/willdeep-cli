@@ -1,0 +1,76 @@
+[
+  {
+    "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-common.cpp",
+    "sha256": "6538982c60d639b5e5cb594825bcad4ae44327337e91b6f1f9e2b6e8f767f1c6",
+    "matching_lines": [
+      {
+        "line": 69,
+        "text": "{\"cache_n\",                n_prompt_cached},"
+      },
+      {
+        "line": 71,
+        "text": "{\"prompt_n\",               n_prompt_processed},"
+      },
+      {
+        "line": 79,
+        "text": "{\"predicted_per_second\",   n_gen_tps()},"
+      },
+      {
+        "line": 1423,
+        "text": "n_tokens += json_value(elem, \"tokens_evaluated\", 0);"
+      },
+      {
+        "line": 1456,
+        "text": "n_tokens += json_value(rank, \"tokens_evaluated\", 0);"
+      }
+    ]
+  },
+  {
+    "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-common.h",
+    "sha256": "470318bda7f2d4cee1f9334198f0ffe9a51116e96c8c469321627d5b0a48aad5",
+    "matching_lines": [
+      {
+        "line": 419,
+        "text": "double n_gen_tps() const {"
+      }
+    ]
+  },
+  {
+    "path": "/home/ml-data/src/llama.cpp-b10549/tools/server/server-task.cpp",
+    "sha256": "004526bacda58f8b413166cf18c53bef3f472504c7db8d8df711dbc5c995b1f4",
+    "matching_lines": [
+      {
+        "line": 350,
+        "text": "{\"tokens_predicted\",    n_decoded},"
+      },
+      {
+        "line": 351,
+        "text": "{\"tokens_evaluated\",    n_prompt_tokens},"
+      },
+      {
+        "line": 1059,
+        "text": "{\"tokens_predicted\", n_decoded},"
+      },
+      {
+        "line": 1060,
+        "text": "{\"tokens_evaluated\", n_prompt_tokens},"
+      },
+      {
+        "line": 1485,
+        "text": "{\"tokens_evaluated\", n_tokens},"
+      },
+      {
+        "line": 1496,
+        "text": "{\"tokens_evaluated\", n_tokens},"
+      },
+      {
+        "line": 1540,
+        "text": "\"tokens_predicted_total\","
+      },
+      {
+        "line": 1544,
+        "text": "\"tokens_predicted_seconds_total\","
+      }
+    ]
+  }
+]

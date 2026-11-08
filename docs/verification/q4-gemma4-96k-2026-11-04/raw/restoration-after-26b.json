@@ -1,0 +1,11 @@
+{
+  "status": "qwen_restored_and_healthy",
+  "verified_at": "2026-11-04T16:12:35Z",
+  "identity": {
+    "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+    "model_alias": "qwen3.6-35b-a3b",
+    "context_tokens": 98304,
+    "total_slots": 1
+  },
+  "backup_dir": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original"
+}

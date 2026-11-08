@@ -1,0 +1,30 @@
+{
+  "model_key": "12b",
+  "status": "completed",
+  "started_at": "2026-11-04T13:25:12Z",
+  "files": [
+    {
+      "file": "gemma-4-12b-it-qat-q4_0.gguf",
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/12b/gemma-4-12b-it-qat-q4_0.gguf",
+      "bytes": 6975879296,
+      "sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+      "repository": "google/gemma-4-12B-it-qat-q4_0-gguf",
+      "status": "verified",
+      "completed_chunks": 52,
+      "chunks": 52,
+      "verified_at": "2026-11-04T14:59:40Z"
+    },
+    {
+      "file": "mtp-gemma-4-12B-it.gguf",
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/12b/mtp-gemma-4-12B-it.gguf",
+      "bytes": 253708800,
+      "sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+      "repository": "unsloth/gemma-4-12B-it-qat-GGUF",
+      "status": "verified",
+      "completed_chunks": 2,
+      "chunks": 2,
+      "verified_at": "2026-11-04T15:00:58Z"
+    }
+  ],
+  "completed_at": "2026-11-04T15:00:58Z"
+}

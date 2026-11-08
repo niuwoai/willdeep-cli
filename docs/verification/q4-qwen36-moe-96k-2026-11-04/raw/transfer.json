@@ -1,0 +1,107 @@
+{
+  "started_at": "2026-11-04T12:25:14Z",
+  "prefix_bytes": 3693502525,
+  "total_bytes": 12290628576,
+  "segments": [
+    {
+      "index": 0,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-00.bin",
+      "first": 3693502525,
+      "last": 4768143281,
+      "bytes": 1074640757,
+      "seconds": 922.664912,
+      "bytes_per_second": 1164714.0
+    },
+    {
+      "index": 1,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-01.bin",
+      "first": 4768143282,
+      "last": 5842784038,
+      "bytes": 1074640757,
+      "seconds": 345.000336,
+      "bytes_per_second": 3114897.0
+    },
+    {
+      "index": 2,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-02.bin",
+      "first": 5842784039,
+      "last": 6917424795,
+      "bytes": 1074640757,
+      "seconds": 428.176466,
+      "bytes_per_second": 2509808.0
+    },
+    {
+      "index": 3,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-03.bin",
+      "first": 6917424796,
+      "last": 7992065552,
+      "bytes": 1074640757,
+      "seconds": 311.335299,
+      "bytes_per_second": 3451715.0
+    },
+    {
+      "index": 4,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-04.bin",
+      "first": 7992065553,
+      "last": 9066706309,
+      "bytes": 1074640757,
+      "seconds": 361.181671,
+      "bytes_per_second": 2975346.0
+    },
+    {
+      "index": 5,
+      "error": "RuntimeError: Segment 5 transfer failed (exit 56): curl: (56) Recv failure: 连接被对方重置\n"
+    },
+    {
+      "index": 6,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-06.bin",
+      "first": 10141347067,
+      "last": 11215987823,
+      "bytes": 1074640757,
+      "seconds": 439.735548,
+      "bytes_per_second": 2443834.0
+    },
+    {
+      "index": 7,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/part-07.bin",
+      "first": 11215987824,
+      "last": 12290628575,
+      "bytes": 1074640752,
+      "seconds": 416.986673,
+      "bytes_per_second": 2577158.0
+    }
+  ],
+  "status": "completed_and_sha256_verified",
+  "repair_segments": [
+    {
+      "part": 5,
+      "index": 0,
+      "first": 9164105921,
+      "last": 9408416207,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/repair-20261104-1228/part-5-tail-0.bin"
+    },
+    {
+      "part": 5,
+      "index": 1,
+      "first": 9408416208,
+      "last": 9652726494,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/repair-20261104-1228/part-5-tail-1.bin"
+    },
+    {
+      "part": 5,
+      "index": 2,
+      "first": 9652726495,
+      "last": 9897036781,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/repair-20261104-1228/part-5-tail-2.bin"
+    },
+    {
+      "part": 5,
+      "index": 3,
+      "first": 9897036782,
+      "last": 10141347066,
+      "path": "/home/ml-data/opt-models/qwen3.6-35b-a3b-transfer-20261104-1140/repair-20261104-1228/part-5-tail-3.bin"
+    }
+  ],
+  "model_sha256": "96b9c0af5c77a4ecaabe3983175112b5ece763261c1ece12b2494b692a70dad7",
+  "completed_at": "2026-11-04T12:36:09Z"
+}

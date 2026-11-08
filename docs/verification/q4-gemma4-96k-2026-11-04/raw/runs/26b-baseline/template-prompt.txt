@@ -1,0 +1,9 @@
+<|turn>system
+You are a coding assistant. Follow the user's instructions and do not use tools.<turn|>
+<|turn>user
+The following records are synthetic test fixtures. Read them, then follow the instruction after the records.
+GEMMA_BENCH_CORPUS_874ec861aea23958b227b0f82c5773997d3d6965a4745cbc
+End of test fixtures. Continue a numbered list of concise observations about software testing. Keep generating until the output limit.<turn|>
+<|turn>model
+<|channel>thought
+<channel|>

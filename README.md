@@ -1,16 +1,106 @@
-# WillDeep
+# WillDeep — 自主跑，你放心
 
-**敢让它自己跑，因为跑完你能查账。**
+**你的 AI Agent，长任务真能跑完。**
 
-自托管的 AI Coding Agent。模型可以不出国，每一行改动能追溯到是哪个 Agent、哪次工具调用改的，小模型交上来的活由退出码裁决而不是自我声明，检查点回退把对话和文件一起退回去。目标（`/goal`）是带 token 预算和验收清单的长任务，跨轮次、跨重启累计，daemon 被打断会自己接着跑；每笔模型用量和每次人对 Agent 的纠正都留在本地账本里，跑完能逐条复盘。一个二进制，终端 / 浏览器 / 手机三种界面，关掉窗口任务照跑。
+用消费级显卡部署多智能体，5090 + 千问 3.8-27B 就能启动一整套 Worker 池。长上下文不是 PPT 能力——100K、200K token 的任务，实测验证过。关掉终端，任务照跑；退出客户端，Runtime 继续执行。
 
-> **WillDeep** is a self-hosted AI coding agent for people who have to answer for what the agent did: every changed line is attributed to the agent and tool call that wrote it, dangerous commands never reach the model for a verdict, sub-agent work is judged by exit codes, and sessions and goals outlive your terminal — token budgets and acceptance checklists survive a daemon restart too. Usage and feedback ledgers stay on your machine, so every model call and every correction the agent had to be given is reviewable later. Works with any OpenAI-compatible or Anthropic-style endpoint, including models that never leave your datacenter.
+> **WillDeep** lets you run AI agents on consumer hardware. Deploy a full worker pool with a 5090 and Qwen 3.8-27B. Long context isn't a slide deck feature — 100K, 200K token tasks are battle-tested. Close your terminal, the task keeps running; exit the client, the Runtime continues execution.
 
 [![CI](https://github.com/niuwoai/willdeep-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/niuwoai/willdeep-rs/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/niuwoai/willdeep-rs)](https://github.com/niuwoai/willdeep-rs/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.94%2B-orange.svg)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
+
+---
+
+## 为什么选 WillDeep
+
+### 长上下文，真能跑
+
+很多产品说"支持长上下文"。但真正 100K、200K token 时：
+
+- 响应变慢
+- 成本失控
+- 质量下降
+
+WillDeep 不是"支持"，是**能跑**。每轮执行都有验证证据，不是模型嘴上说完就算。
+
+### 消费级显卡，跑多智能体
+
+你不需要订阅云端大模型。
+
+- **主控 Agent** 做协调，长上下文用在刀刃上
+- **Worker 池** 分工干活，每个只处理一个窄任务
+- **本地部署**，5090 + 千问 3.8-27B 就能跑起来
+
+数据不出机房，API 费用为零。
+
+---
+
+## 三端互联，一个 Runtime
+
+```
+终端 TUI ───┐
+浏览器 Web ──┼──→ Runtime Daemon ──→ 任务执行 ──→ 结果验证
+安卓手机 ───┘         │
+                      └── 持久运行，关掉客户端也不中断
+```
+
+- **终端（TUI）**：Ratatui 界面，支持鼠标点击
+- **浏览器（Web）**：服务器部署后，网页访问
+- **手机**：扫码配对，随时随地查看进度、审批操作
+
+同一个任务，三端同步状态。终端起头，通勤路上手机批审批，回家浏览器看结果。
+
+---
+
+## 终端也能看多媒体
+
+配合 **MuseTerm** 终端软件：
+
+- 📄 看 PDF
+- 🌐 打网页
+- 🖼️ 查图片
+- 🖱️ 支持鼠标点击
+
+打破"终端 = 纯文本"的刻板印象。命令行工具，现代体验。
+
+---
+
+## 多机协作，算力共享
+
+通过 **MCP** 连接多台服务器：
+
+- 3 台机器，组成一个 Agent 集群
+- 分布式任务调度
+- 跨机器协作执行
+
+你的服务器农场，变成智能体工厂。
+
+---
+
+## Runtime 和客户端分离
+
+**客户端可以退出，任务不会中断。**
+
+- Runtime 以服务化方式在后台运行
+- 关掉终端、断开 SSH、刷新浏览器——任务继续执行
+- 回来时按事件游标续上，一条消息都不丢
+
+让 AI Agent 真正成为"可以放手让它干"的工具。
+
+---
+
+## 安全与审计
+
+每一行改动都有出处：
+
+- 精确到**哪个 Agent、哪次工具调用**改了这一行
+- `/rewind` 回到第 N 步，对话和文件一起回退
+- `willdeep audit export` 导出完整审计报告
+
+敢让它自己跑，因为跑完你能查账。
 
 ```bash
 willdeep --workspace . "检查当前仓库并修复测试"
@@ -64,36 +154,6 @@ willdeep run --output json "总结当前风险"        # 无头自动化：稳�
 ```
 
 `willdeep doctor` 不联系任何 Provider 就能检查配置、围栏和 Runtime 状态。更细的步骤见 [安装与构建](docs/INSTALL.md)、[配置指南](docs/CONFIGURATION.md)、[放进 CI](docs/CI_INTEGRATION.md)。
-
----
-
-## SWE-bench 公开评测
-
-截至 2026-10-30，[官网公开评测](https://willdeep.com/benchmarks/)中，每个模型最新已结算、解决率超过 70% 的结果如下。两项均使用 **WillDeep CLI 0.94.0-rc5**，在同一份覆盖 12 个项目的冻结题集 `verified-60-v1` 上运行，并使用 SWE-bench 官方评测器判定补丁。
-
-| 根模型 | 解决率 | 解决题数 | 完成日期（北京时间） | 批次与证据 |
-| --- | ---: | ---: | --- | --- |
-| DeepSeek V4 Flash | **75.0%** | **45/60** | 2026-10-14 | [故障补测组合 v2](https://willdeep.com/benchmarks/runs/cli-094rc5-deepseek-flash-60-20261013-8m-fault-adjusted-v2/summary.md) |
-| GLM-5 | **71.7%** | **43/60** | 2026-10-13 | [独立批次](https://willdeep.com/benchmarks/runs/cli-094rc5-glm-5-60-20261012-8m-v1/summary.md) |
-
-每题最多 60 轮、1200 秒，主 Agent、子 Agent 与辅助调用的已报告 Token 累计阈值为 800 万（末次及在途调用可超额）。DeepSeek 的原始结果为 41/60，故障题独立补测后组合为 45/60，**不是单次完整重跑或单次通过率**；GLM-5 的 60 题分母中保留了 1 道上游 502 故障题。
-
-### 与公开 coding agent 成绩对照
-
-以下摘录 [SWE-bench 官方 Verified 榜单](https://www.swebench.com/)的公开提交，核对日期为 2026-10-30；列出具体 Agent、模型与提交日期，作为公开成绩参考，不代表各产品当前版本的能力上限。
-
-**口径不同：WillDeep 是 Verified 的固定 60 题探索性子集，下表是完整 Verified 500 题。题目范围、模型、预算及重试方式不同，不能据此计算领先幅度或宣称排名、胜过某个 Agent。**
-
-| Coding agent | 模型 / 配置 | Verified 500 题解决率 | 提交日期 | 来源 |
-| --- | --- | ---: | --- | --- |
-| live-SWE-agent | Claude Opus 4.5，medium | 79.2% | 2025-12-15 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20251215_livesweagent_claude-opus-4-5) |
-| mini-SWE-agent 2.0.0 | Claude Opus 4.5，high | 76.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
-| mini-SWE-agent 2.0.0 | GLM-5，high | 72.8% | 2026-02-17 | [官方榜单](https://www.swebench.com/) |
-| OpenHands | GPT-5，high | 71.8% | 2025-08-07 | [公开提交](https://github.com/SWE-bench/experiments/tree/main/evaluation/verified/20250807_openhands_gpt5) |
-
-以上公开提交均标注单次尝试；官方榜单的收录不等于全部经榜单团队独立复核。WillDeep 成绩代表对应模型与 Agent 执行框架的组合，不是模型裸测，也不能直接沿用为 Mac 或 Android 版成绩。
-
-[官网评测页](https://willdeep.com/benchmarks/)提供逐题脱敏对话、工具调用、提交补丁、判定和证据包；[冻结题集](https://willdeep.com/benchmarks/taskset.json)可用于核对样本范围。历史批次保留，已被 v2 替代的 DeepSeek 补测 v1 不重复列入上述精选结果。
 
 ---
 

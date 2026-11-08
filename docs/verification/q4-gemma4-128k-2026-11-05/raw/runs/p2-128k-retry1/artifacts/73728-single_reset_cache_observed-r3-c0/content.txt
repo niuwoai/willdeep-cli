@@ -1,0 +1,23 @@
+1. Automated test fixtures allow for consistent and repeatable verification of software behavior.
+2. Regression testing ensures that new code changes do not introduce bugs into previously functional areas.
+3. Isolated test cases help pinpoint the exact location of a failure, reducing debugging time.
+4. Synthetic test data provides a controlled environment to test edge cases that might be difficult to replicate with real-world data.
+5. Parameterized testing, as seen in the records, allows for efficient coverage of a wide range of inputs using a single logic structure.
+6. Assertions serve as the primary mechanism for validating that the actual output matches the expected result.
+7. Modularizing tests into small, discrete functions improves maintainability and readability of the test suite.
+8. Systematic testing of mathematical operations (like modulo) helps identify off-by-one errors or sign-handling issues.
+9. High-volume test coverage is essential for identifying rare concurrency issues or memory leaks in complex systems.
+10. Clear naming conventions for test fixtures facilitate easier navigation of large-scale test repositories.
+11. Automated fixtures reduce the human error associated with manual test execution and data entry.
+12. Testing "happy paths" is necessary but insufficient; robust software requires testing invalid and boundary inputs.
+13. Continuous Integration (CI) pipelines can automatically run these fixtures every time code is committed.
+14. Test fixtures should be independent; the success or failure of one should not affect the execution of another.
+15. Documentation within the code (like comments in the records) helps developers understand the intent of specific test cases.
+16. Identifying "regression fixtures" specifically helps in tracking known historical bugs and ensuring they remain fixed.
+17. Unit testing at the function level provides the fastest feedback loop during the development cycle.
+18. Standardizing the input types (e.g., `i64`) ensures that the test suite handles the expected data precision.
+19. Testing the `rem_euclid` function specifically highlights the importance of verifying behavior with negative numbers.
+20. A comprehensive test suite acts as a safety net, allowing developers to refactor code with confidence.
+21. Test coverage metrics help teams identify "dark corners" of the application that lack sufficient verification.
+22. Mocking external dependencies allows tests to focus purely on the logic of the unit under test.
+23. Scalable test generation scripts can create thousands of fixtures to stress-test performance

@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"path\":\"solution.py\",\"source\":\"def dedupe_records(records):\\n    seen = set()\\n    result = []\\n    for record in records:\\n        if not isinstance(record, dict):\\n            raise TypeError(\\\"Each record must be a dict\\\")\\n        if 'id' not in record:\\n            raise ValueError(\\\"Record missing 'id'\\\")\\n        rid = record['id']\\n        if isinstance(rid, bool):\\n            raise ValueError(\\\"id must be int or str, not bool\\\")\\n        if not isinstance(rid, (int, str)):\\n            raise ValueError(\\\"id must be int or str\\\")\\n        if isinstance(rid, str) and rid == \\\"\\\":\\n            raise ValueError(\\\"id cannot be empty string\\\")\\n        if isinstance(rid, int) and rid == 0:\\n            raise ValueError(\\\"id cannot be 0\\\")\\n        if isinstance(rid, int) and rid < 0:\\n            raise ValueError(\\\"id cannot be negative\\\")\\n        if rid in seen:\\n            continue\\n        seen.add(rid)\\n        result.append(dict(record))\\n    return result\\n\"}"
+      }
+    }
+  ],
+  "created": 1793806283,
+  "model": "qwen3.6-35b-a3b",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 250,
+    "prompt_tokens": 272,
+    "total_tokens": 522,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "id": "chatcmpl-2GDsPhBYxkZgvyJFbygjeXC7U7Js0fMf",
+  "timings": {
+    "cache_n": 0,
+    "prompt_n": 272,
+    "prompt_ms": 186.527,
+    "prompt_per_token_ms": 0.6857610294117646,
+    "prompt_per_second": 1458.2339286001493,
+    "predicted_n": 250,
+    "predicted_ms": 1482.514,
+    "predicted_per_token_ms": 5.9538714859437745,
+    "predicted_per_second": 167.95794171252348
+  }
+}

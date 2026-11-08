@@ -122,6 +122,7 @@ impl RuntimeSessionStore {
                 workspace_mcp_servers: None,
                 profile: session.profile.clone(),
                 model: session.model.clone(),
+                reasoning_level: session.reasoning_level.clone(),
                 config: session.config.clone(),
                 session_id: Some(session.id),
                 turn_id: Some(turn.metadata.id),

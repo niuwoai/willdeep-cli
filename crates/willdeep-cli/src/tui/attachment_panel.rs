@@ -1,5 +1,6 @@
 use super::*;
 use ratatui::Frame;
+use std::io::Write;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Target {
@@ -47,7 +48,18 @@ impl App {
         }
         self.attachments.push(item);
         self.selected_attachment = self.attachments.len() - 1;
+        self.publish_gallery();
         true
+    }
+
+    /// Tells the terminal which images the column should show. Sent attachments stay out: the
+    /// column only offers a delete icon for a draft, and a sent image cannot be deleted.
+    pub(super) fn publish_gallery(&self) {
+        let images = crate::gallery::gallery_images(&self.attachments, &[]);
+        let mut out = std::io::stdout();
+        if crate::gallery::announce_list(&mut out, &images).is_ok() {
+            let _ = out.flush();
+        }
     }
     pub(super) fn open_attachments(&mut self, target: Target) {
         self.attachment_panel = Some(AttachmentPanel {
@@ -201,6 +213,9 @@ impl App {
                         && panel.selected < items.len()
                     {
                         items.remove(panel.selected);
+                        if panel.target == Target::Draft {
+                            self.publish_gallery();
+                        }
                     }
                 }
                 KeyCode::Char('c') => panel.confirm_clear = true,

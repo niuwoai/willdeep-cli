@@ -90,17 +90,55 @@ impl App {
         if self.has_visible_transcript() {
             return;
         }
-        self.transcript.retain(|row| !row.trim().is_empty());
+        // 空白行连同它的附件槽一起丢掉，两边始终逐行对齐。
+        let slots = std::mem::take(&mut self.transcript_attachments);
+        let kept = self
+            .transcript
+            .drain(..)
+            .zip(slots.into_iter().chain(std::iter::repeat(Vec::new())))
+            .filter(|(row, _)| !row.trim().is_empty())
+            .collect::<Vec<_>>();
+        self.transcript = kept.iter().map(|(row, _)| row.clone()).collect();
+        self.transcript_attachments = kept.into_iter().map(|(_, slot)| slot).collect();
         self.transcript
             .push(super::rendering::welcome_message(workspace, language));
+        self.transcript_attachments.push(Vec::new());
     }
 
     /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
     /// 只调 `session_transcript` 会漏掉首屏，daemon 的 display session 那条
     /// 路径就是这样把欢迎语又覆盖掉的——列表非空、屏幕空白。
     pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
-        self.transcript = super::plan_ui::session_transcript(session, self.language);
+        let (rows, attachments) = super::plan_ui::project_session(
+            &session.messages,
+            session.current_plan.as_ref(),
+            self.language,
+        );
+        self.transcript = rows;
+        self.transcript_attachments = attachments;
         self.ensure_welcome(&session.workspace, self.language);
+    }
+
+    /// 删掉记录里的一行，连同它的附件槽和时间一起，保持两边逐行对齐。
+    pub(super) fn drop_transcript_row(&mut self, index: usize) {
+        self.transcript.remove(index);
+        if index < self.transcript_attachments.len() {
+            self.transcript_attachments.remove(index);
+        }
+        self.message_times.remove(index);
+        self.refresh_transcript_height();
+    }
+
+    /// 把附件挂到最近一条用户消息上。发送时记录行已经写好（`You: 原文`），
+    /// 附件在这之后才对得上是哪一行。
+    pub(super) fn attach_to_latest_user_row(&mut self, attachments: Vec<MessageAttachment>) {
+        if attachments.is_empty() {
+            return;
+        }
+        if let Some(index) = self.transcript.iter().rposition(|row| row.starts_with("You: ")) {
+            self.transcript_attachments.resize_with(self.transcript.len(), Vec::new);
+            self.transcript_attachments[index] = attachments;
+        }
     }
 }
 
@@ -701,9 +739,7 @@ impl App {
         let mut sent_at = message_time::now();
         if let Some(index) = self.transcript.iter().position(|line| *line == queued) {
             sent_at = self.message_times.time_at(index).unwrap_or(sent_at);
-            self.transcript.remove(index);
-            self.message_times.remove(index);
-            self.refresh_transcript_height();
+            self.drop_transcript_row(index);
         }
         self.append_transcript_at(format!("You: {text}"), sent_at);
     }

@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"path\":\"solution.py\",\"source\":\"import re\\nfrom decimal import Decimal, ROUND_HALF_UP, localcontext\\n\\n_AMOUNT_RE = re.compile(r'^(0|[1-9][0-9]*)(\\\\.[0-9]{1,2})?$')\\n\\ndef aggregate_amounts(rows):\\n    totals = {}\\n    for row in rows:\\n        if not isinstance(row, dict):\\n            raise TypeError('row must be a dict')\\n        if 'currency' not in row or 'kind' not in row or 'amount' not in row:\\n            raise ValueError('missing required field')\\n        currency = row['currency']\\n        kind = row['kind']\\n        amount = row['amount']\\n        if not isinstance(currency, str) or len(currency) != 3 or not all('A' <= c <= 'Z' for c in currency):\\n            raise ValueError('invalid currency')\\n        if kind not in ('sale', 'refund'):\\n            raise ValueError('invalid kind')\\n        if not isinstance(amount, str):\\n            raise ValueError('amount must be a string')\\n        if not _AMOUNT_RE.match(amount):\\n            raise ValueError('invalid amount format')\\n        with localcontext() as ctx:\\n            ctx.prec = 50\\n            ctx.rounding = ROUND_HALF_UP\\n            dec = Decimal(amount)\\n            dec = dec.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)\\n            if kind == 'sale':\\n                totals[currency] = totals.get(currency, Decimal('0.00')) + dec\\n            else:\\n                totals[currency] = totals.get(currency, Decimal('0.00')) - dec\\n    for cur in totals:\\n        totals[cur] = totals[cur].quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)\\n    return totals\\n\"}"
+      }
+    }
+  ],
+  "created": 1793811184,
+  "model": "qwen3.8-27b",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 411,
+    "prompt_tokens": 387,
+    "total_tokens": 798,
+    "prompt_tokens_details": {
+      "cached_tokens": 24
+    }
+  },
+  "id": "chatcmpl-OR8bdEWx6KuUL4WDaGWKAvLVBEvJ2mha",
+  "timings": {
+    "cache_n": 24,
+    "prompt_n": 363,
+    "prompt_ms": 409.32,
+    "prompt_per_token_ms": 1.127603305785124,
+    "prompt_per_second": 886.8367047786572,
+    "predicted_n": 411,
+    "predicted_ms": 7279.289,
+    "predicted_per_token_ms": 17.754363414634145,
+    "predicted_per_second": 56.32418221065272
+  }
+}

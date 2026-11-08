@@ -1,0 +1,23 @@
+4. Automated regression testing ensures that new code changes do not break existing functionality.
+5. Synthetic test fixtures allow for the creation of predictable environments to isolate specific logic.
+6. Edge cases, such as boundary values in modular arithmetic, are critical for identifying off-by-one errors.
+7. Unit tests should be granular; each test should ideally validate a single, specific behavior.
+8. Consistent naming conventions in test records improve maintainability and readability for development teams.
+9. Mocking and stubbing can be used to replace complex dependencies with simplified, controlled inputs.
+10. Test coverage metrics help identify "dark corners" in the codebase that lack sufficient validation.
+11. Continuous Integration (CI) pipelines automate the execution of these fixtures on every commit.
+12. Deterministic testing is essential for debugging; tests should produce the same result every time given the same input.
+13. Data-driven testing allows the same test logic to be executed against a wide variety of input parameters.
+14. Integration tests verify that different modules interact correctly, whereas unit tests focus on individual components.
+15. Refactoring is safer when a robust suite of regression fixtures is in place to catch unintended side effects.
+16. Timeouts and resource limits should be enforced on tests to prevent hanging processes from blocking the pipeline.
+17. Error handling paths (e.g., null inputs, out-of-range values) require as much testing as "happy path" scenarios.
+18. Documentation within test fixtures (like comments) helps clarify the intent behind specific assertions.
+19. Property-based testing can automatically generate a vast range of inputs to find bugs that manual fixtures might miss.
+20. Test suites should be organized logically to allow developers to run only the relevant subset for a specific task.
+21. High-quality test fixtures reduce "flakiness," where tests fail intermittently due to environmental instability.
+22. Code review should include a review of the test logic to ensure the assertions actually validate the requirements.
+23. Performance testing ensures that the software meets latency and throughput requirements under load.
+24. Security testing must validate that inputs are sanitized and that unauthorized access is blocked.
+25. A "test-first" approach, such as Test-Driven Development (TDD), can lead to more modular and testable code architecture.
+26. Regression fixtures should be updated whenever the underlying business logic or requirements change

@@ -1,0 +1,24 @@
+{
+  "tool_version": "1.0.0-rc2",
+  "service": "llama-qwen38-cuda.service",
+  "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+  "model_alias": "gemma-4-12b-qat",
+  "legacy_aliases": [
+    "qwen3.6-35b-a3b",
+    "qwen3.8-27b"
+  ],
+  "mode": "12b-qat-mtp",
+  "parallel": 1,
+  "context_per_slot": 131072,
+  "context_total": 131072,
+  "container": "gemma4-12b-mtp-128k-p1",
+  "override_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+  "override_sha256": "437bcc929cc20d92551aeac604f07316d289058fd457ae95847c9cd70bc87191",
+  "sandbox_image": "python:3.12.12-slim-bookworm",
+  "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+  "mtp_sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+  "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+  "deployed_at": "2026-11-04T17:41:11Z",
+  "kind": "gemma128",
+  "run_directory": "/root/benchmarks/gemma4-128k-20261105-70043de5/runs/p1-128k-retry1"
+}

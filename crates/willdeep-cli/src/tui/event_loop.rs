@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 async fn handle_queue_action(
     key: KeyEvent,
@@ -397,6 +398,36 @@ async fn open_external_editor(
     Ok(())
 }
 
+/// Applies one request from the terminal's image column and tells the column what changed.
+fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
+    let mut out = io::stdout();
+    match request {
+        crate::gallery::GalleryRequest::Paste { nonce, png } => {
+            let Some(attachment) = crate::gallery::attachment_from_png(&png) else {
+                let _ = crate::gallery::reject(&mut out, &nonce, "not a png");
+                return;
+            };
+            let id = attachment.id;
+            if app.append_draft_attachment(attachment) {
+                let _ = crate::gallery::acknowledge(&mut out, &nonce, id);
+            } else {
+                let _ = crate::gallery::reject(&mut out, &nonce, "limit");
+            }
+        }
+        crate::gallery::GalleryRequest::Delete { id } => {
+            let Some(uuid) = uuid::Uuid::parse_str(&id).ok() else { return };
+            if let Some(index) = app.attachments.iter().position(|item| item.id == uuid) {
+                app.attachments.remove(index);
+                app.selected_attachment = app.selected_attachment.min(app.attachments.len().saturating_sub(1));
+                let _ = crate::gallery::confirm_removed(&mut out, &id);
+            }
+        }
+    }
+    let images = crate::gallery::gallery_images(&app.attachments, &[]);
+    let _ = crate::gallery::announce_list(&mut out, &images);
+    let _ = out.flush();
+}
+
 pub(super) async fn event_loop(
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     agent: Arc<Agent>,
@@ -471,12 +502,37 @@ pub(super) async fn event_loop(
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
     refresh_session_lineage(&mut app, session, store);
+    if let Err(error) = reasoning_commands::sync_session(session, runtime, &agent).await {
+        app.append_transcript(format!(
+            "Error: {}: {error:#}",
+            language.text(
+                "同步思考等级失败",
+                "Sync reasoning level failed",
+                "思考レベルの同期に失敗"
+            )
+        ));
+    }
     app.context_window = runtime.context_window.max(1);
     let (_update_worker, mut update_rx) =
         update_notice::spawn(runtime.home.clone(), app.ui.check_updates);
     app.background_tasks = runtime.background_tasks.snapshots();
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
+    // Sits in front of the terminal's own reader. The terminal sends gallery bytes only after it
+    // has seen the hello below, so a build that never reaches this line never has to filter them.
+    let gallery = crate::gallery::GalleryInput::install().ok();
+    if let Some((_, forwarder)) = gallery {
+        let tx = runtime.tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut forwarder = forwarder;
+            while let Ok(Some(request)) = forwarder.recv() {
+                if tx.send(UiMessage::Gallery(request)).is_err() {
+                    break;
+                }
+            }
+        });
+        let _ = crate::gallery::announce(&mut io::stdout(), "hello", &format!("willdeep {}", env!("CARGO_PKG_VERSION")));
+    }
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
     // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
@@ -590,7 +646,21 @@ pub(super) async fn event_loop(
                 session_commands::switch_from_picker(&mut app, session, store, runtime, target)
                     .await;
             match switched {
-                Ok(message) => app.notice = Some(message),
+                Ok(message) => {
+                    app.notice = Some(message);
+                    if let Err(error) =
+                        reasoning_commands::sync_session(session, runtime, &agent).await
+                    {
+                        app.notice = Some(format!(
+                            "{}: {error:#}",
+                            language.text(
+                                "同步思考等级失败",
+                                "Sync reasoning level failed",
+                                "思考レベルの同期に失敗"
+                            )
+                        ));
+                    }
+                }
                 Err(error) => {
                     app.notice = Some(format!(
                         "{}: {error}",
@@ -618,6 +688,19 @@ pub(super) async fn event_loop(
                 Err(error) => app.append_transcript(format!(
                     "Error: {}: {error:#}",
                     language.text("切换模型失败", "Model switch failed", "モデル切替に失敗")
+                )),
+            }
+        }
+        if !app.running && app.pending_reasoning_level.take().is_some() {
+            match reasoning_commands::sync_pending(session, runtime, &agent, language).await {
+                Ok(message) => app.append_transcript(format!("System: {message}")),
+                Err(error) => app.append_transcript(format!(
+                    "Error: {}: {error:#}",
+                    language.text(
+                        "切换思考等级失败",
+                        "Set reasoning level failed",
+                        "思考レベルの設定に失敗"
+                    )
                 )),
             }
         }
@@ -1631,6 +1714,10 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         if app.runtime_turn {
+                                            if !app.input.text().trim_start().starts_with('/')
+                                                && runtime_queue::retain_input_for_pending_gate(&mut app, &runtime.home, &runtime.tx) {
+                                                continue;
+                                            }
                                             if let Err(error) = runtime_queue::submit_input(&mut app,session,runtime,store,false,term).await {
                                                 app.notice = Some(format!("{}: {error}", language.text("提交失败，输入与附件已保留", "Submission failed; input and attachments retained", "送信失敗。入力と添付を保持しました")));
                                             }
@@ -1659,6 +1746,45 @@ pub(super) async fn event_loop(
                             // You 行与清空的输入框必须在任何慢操作前真正显示到终端。
                             if !narration::is_display_only_command(&prompt){
                                 redraw::redraw(term, &mut app, &runtime.skills, session)?;
+                            }
+                            if let Some(reasoning_command) = reasoning_commands::parse(&prompt) {
+                                match reasoning_command {
+                                    reasoning_commands::ReasoningCommand::Show => {
+                                        match reasoning_commands::show(&mut app, session, runtime, &agent).await {
+                                            Ok(message) => app.append_transcript(format!("System: {message}")),
+                                            Err(error) => app.append_transcript(format!(
+                                                "Error: {}: {error:#}",
+                                                language.text("读取思考等级失败", "Read reasoning level failed", "思考レベルの取得に失敗")
+                                            )),
+                                        }
+                                    }
+                                    reasoning_commands::ReasoningCommand::Default => {
+                                        match reasoning_commands::set(None, &mut app, session, store, runtime, &agent).await {
+                                            Ok(message) => app.append_transcript(format!("System: {message}")),
+                                            Err(error) => app.append_transcript(format!(
+                                                "Error: {}: {error:#}",
+                                                language.text("恢复默认思考等级失败", "Restore default reasoning level failed", "既定の思考レベルへの復帰に失敗")
+                                            )),
+                                        }
+                                    }
+                                    reasoning_commands::ReasoningCommand::Set(level) => {
+                                        match reasoning_commands::set(Some(level), &mut app, session, store, runtime, &agent).await {
+                                            Ok(message) => app.append_transcript(format!("System: {message}")),
+                                            Err(error) => app.append_transcript(format!(
+                                                "Error: {}: {error:#}",
+                                                language.text("切换思考等级失败", "Set reasoning level failed", "思考レベルの設定に失敗")
+                                            )),
+                                        }
+                                    }
+                                    reasoning_commands::ReasoningCommand::Usage => app.append_transcript(
+                                        language.text(
+                                            "用法：/reasoning [show|等级|set 等级|default|auto|reset]；选择与子命令同名的等级时使用 set",
+                                            "Usage: /reasoning [show|level|set level|default|auto|reset]; use set for levels named like subcommands",
+                                            "使用法: /reasoning [show|レベル|set レベル|default|auto|reset]。サブコマンドと同名のレベルには set を使用",
+                                        ).to_owned(),
+                                    ),
+                                }
+                                continue;
                             }
                             if let Some(model_command)=model_commands::parse(&prompt) {
                                 match model_command {
@@ -1848,6 +1974,7 @@ pub(super) async fn event_loop(
                 _=>{}
             }},
             Some(message)=runtime.rx.recv()=>match message {
+                UiMessage::Gallery(request)=>handle_gallery(&mut app, request),
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
                     willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),
                     willdeep_core::provider::ProviderEvent::TextDelta(text)=>app.stream_transient(StreamKind::Reply,&text),

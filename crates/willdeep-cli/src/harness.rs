@@ -199,6 +199,8 @@ pub(crate) enum HarnessFrontend {
         instruction_inbox: Option<Arc<willdeep_core::AgentInstructionInbox>>,
         allowed_skills: Vec<String>,
         allowed_mcp_servers: Vec<String>,
+        /// Runtime-session override captured when the turn was claimed.
+        reasoning_level: Option<String>,
         /// 这一轮在用量账本上的出处：在哪执行、谁提交、哪个回合。
         usage_origin: UsageOrigin,
     },
@@ -463,6 +465,7 @@ pub(crate) async fn execute_runtime(
             instruction_inbox: request.instruction_inbox.clone(),
             allowed_skills: request.workspace_skills.unwrap_or_default(),
             allowed_mcp_servers: request.workspace_mcp_servers.unwrap_or_default(),
+            reasoning_level: request.reasoning_level.clone(),
             usage_origin: UsageOrigin {
                 execution: willdeep_core::usage_ledger::Execution::Daemon,
                 origin_client: request.origin_client.clone(),
@@ -888,6 +891,18 @@ pub(crate) async fn build(
     if let Some(dialect) = gateway.dialect {
         provider_config.dialect = dialect;
     }
+    let mut primary_provider_config = provider_config.clone();
+    if let HarnessFrontend::Runtime {
+        reasoning_level: Some(level),
+        ..
+    } = &frontend
+    {
+        primary_provider_config.reasoning_level = primary_provider_config
+            .reasoning
+            .as_ref()
+            .filter(|reasoning| reasoning.levels.contains_key(level))
+            .map(|_| level.clone());
+    }
     let kind = provider_config.kind;
     let model = provider_config.model.clone();
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
@@ -956,7 +971,8 @@ pub(crate) async fn build(
     // 父模型只能走 Responses 不代表别的模型也是。
     let mut parent_provider_config = provider_config.clone();
     parent_provider_config.dialect = configured_dialect;
-    let provider = build_provider(provider_config).context("initialize provider")?;
+    let provider =
+        build_provider(primary_provider_config.clone()).context("initialize provider")?;
     // 主模型一格共享：凡是「定义为跟主模型一样」的兜底都拿 follower，`/model`
     // 一换全跟着换；显式配了模型的照旧是自己那一份。
     let main_model = willdeep_core::provider::MainModelHandle::new(provider.clone());
@@ -1580,7 +1596,7 @@ pub(crate) async fn build(
         kernel,
         kernel_store,
         context_window,
-        provider_config: parent_provider_config,
+        provider_config: primary_provider_config,
         provider_profile,
         notifier,
         _command_watcher: command_watcher,

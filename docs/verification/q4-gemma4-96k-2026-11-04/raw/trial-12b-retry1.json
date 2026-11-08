@@ -1,0 +1,165 @@
+{
+  "model_key": "12b",
+  "trial_name": "12b-retry1",
+  "status": "completed_with_failures",
+  "started_at": "2026-11-04T15:13:42Z",
+  "phases": [
+    {
+      "label": "baseline-deploy",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "deploy",
+        "12b",
+        "baseline",
+        "retry1"
+      ],
+      "started_at": "2026-11-04T15:13:42Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-baseline-deploy.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:14:08Z"
+    },
+    {
+      "label": "baseline-checks",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/checks.rb",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1"
+      ],
+      "started_at": "2026-11-04T15:14:08Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-baseline-checks.log",
+      "status": "failed",
+      "exit_code": 1,
+      "completed_at": "2026-11-04T15:14:21Z"
+    },
+    {
+      "label": "baseline-prepare",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "prepare",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1"
+      ],
+      "started_at": "2026-11-04T15:14:21Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-baseline-prepare.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:14:22Z"
+    },
+    {
+      "label": "baseline-benchmark",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "run",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1"
+      ],
+      "started_at": "2026-11-04T15:14:22Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-baseline-benchmark.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:21:11Z"
+    },
+    {
+      "label": "baseline-verify",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "verify",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1"
+      ],
+      "started_at": "2026-11-04T15:21:11Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-baseline-verify.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:21:11Z"
+    },
+    {
+      "label": "mtp-n2-deploy",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "deploy",
+        "12b",
+        "mtp-n2",
+        "retry1"
+      ],
+      "started_at": "2026-11-04T15:21:11Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-mtp-n2-deploy.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:21:41Z"
+    },
+    {
+      "label": "mtp-n2-checks",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/checks.rb",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1"
+      ],
+      "started_at": "2026-11-04T15:21:41Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-mtp-n2-checks.log",
+      "status": "failed",
+      "exit_code": 1,
+      "completed_at": "2026-11-04T15:21:49Z"
+    },
+    {
+      "label": "mtp-n2-prepare",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "prepare",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1"
+      ],
+      "started_at": "2026-11-04T15:21:49Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-mtp-n2-prepare.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:21:50Z"
+    },
+    {
+      "label": "mtp-n2-benchmark",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/benchmark.rb",
+        "run",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1"
+      ],
+      "started_at": "2026-11-04T15:21:50Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-mtp-n2-benchmark.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:28:20Z"
+    },
+    {
+      "label": "mtp-n2-verify",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "verify",
+        "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1"
+      ],
+      "started_at": "2026-11-04T15:28:20Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-mtp-n2-verify.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:28:20Z"
+    },
+    {
+      "label": "restore-qwen",
+      "command": [
+        "ruby",
+        "/root/benchmarks/gemma4-96k-70043de5/tools/service.rb",
+        "restore"
+      ],
+      "started_at": "2026-11-04T15:28:20Z",
+      "log_path": "/root/benchmarks/gemma4-96k-70043de5/phase-logs/12b-retry1-restore-qwen.log",
+      "status": "passed",
+      "exit_code": 0,
+      "completed_at": "2026-11-04T15:28:25Z"
+    }
+  ],
+  "qwen_restored": true,
+  "completed_at": "2026-11-04T15:28:25Z"
+}

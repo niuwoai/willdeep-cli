@@ -1,0 +1,26 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:11435/v1/chat/completions",
+  "body": {
+    "model": "qwen3.8-27b",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Return only a JSON object containing the complete requested Python source. Never call tools or run code."
+      },
+      {
+        "role": "user",
+        "content": "修复下面现有 Python 函数，返回完整 solution.py 源码。不要执行任何代码，不调用工具。\ndef dedupe_records(records):\n    return list({record['id']: record for record in records}.values())\n\n契约：records 是可迭代对象（含一次性 generator）；每项必须为 dict，含 id。\nid 只允许 int（不含 bool）或 str；空字符串、0、负整数均合法。\n整数 1 与字符串 \"1\" 是不同 id。按第一次出现顺序去重，保留首次记录全部字段。\n返回新 list，其中每个 dict 是相应首次记录的浅拷贝；不改动输入。\n每次调用的状态独立。非 dict 项抛 TypeError；缺 id 或非法 id 抛 ValueError。\n即使重复项也必须先验证它的 id。只用 Python 标准库。\n\n只返回一个 JSON object，且只有 path 和 source 两个字段：\n{\"path\":\"solution.py\",\"source\":\"完整 Python 源码，正确转义换行\"}\n不要 Markdown，不要解释，不要测试源码，不要额外文件，不要工具调用。\n"
+      }
+    ],
+    "temperature": 0,
+    "max_tokens": 4096,
+    "stream": false,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "response_format": {
+      "type": "json_object"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\n  \"path\": \"solution.py\",\n  \"source\": \"def dedupe_records(records):\\n    seen_ids = set()\\n    result = []\\n    for record in records:\\n        if not isinstance(record, dict):\\n            raise TypeError(\\\"Each item must be a dictionary.\\\")\\n        if 'id' not in record:\\n            raise ValueError(\\\"Record must contain an 'id' key.\\\")\\n        \\n        val = record['id']\\n        # Check if id is int (excluding bool) or str\\n        if isinstance(val, bool) or (not isinstance(val, (int, str))):\\n            raise ValueError(\\\"ID must be an int or str.\\\")\\n        \\n        if val not in seen_ids:\\n            seen_ids.add(val)\\n            # Use shallow copy to avoid modifying original input\\n            result.append(record.copy())\\n    return result\"\n}"
+      }
+    }
+  ],
+  "created": 1793804552,
+  "model": "gemma-4-12b-qat",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 222,
+    "prompt_tokens": 275,
+    "total_tokens": 497,
+    "prompt_tokens_details": {
+      "cached_tokens": 1
+    }
+  },
+  "id": "chatcmpl-AtxWN819CaE4jmXB6afv8XINcI0fgcZF",
+  "timings": {
+    "cache_n": 1,
+    "prompt_n": 274,
+    "prompt_ms": 110.426,
+    "prompt_per_token_ms": 0.403014598540146,
+    "prompt_per_second": 2481.2996939126656,
+    "predicted_n": 222,
+    "predicted_ms": 2690.141,
+    "predicted_per_token_ms": 12.17258371040724,
+    "predicted_per_second": 82.15182772947588
+  }
+}

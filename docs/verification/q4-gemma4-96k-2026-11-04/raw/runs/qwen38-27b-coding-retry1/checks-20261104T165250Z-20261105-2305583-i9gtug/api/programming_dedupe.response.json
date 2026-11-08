@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"path\":\"solution.py\",\"source\":\"def dedupe_records(records):\\n    seen = set()\\n    result = []\\n    for record in records:\\n        if not isinstance(record, dict):\\n            raise TypeError(\\\"record must be a dict\\\")\\n        if 'id' not in record:\\n            raise ValueError(\\\"record missing 'id'\\\")\\n        rid = record['id']\\n        if isinstance(rid, bool) or not isinstance(rid, (int, str)):\\n            raise ValueError(\\\"invalid id type\\\")\\n        if rid not in seen:\\n            seen.add(rid)\\n            result.append(dict(record))\\n    return result\\n\"}"
+      }
+    }
+  ],
+  "created": 1793811176,
+  "model": "qwen3.8-27b",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 146,
+    "prompt_tokens": 272,
+    "total_tokens": 418,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "id": "chatcmpl-qBQMpg2YSiWfRoBOQqNyIq9JNSD1T1ze",
+  "timings": {
+    "cache_n": 0,
+    "prompt_n": 272,
+    "prompt_ms": 318.848,
+    "prompt_per_token_ms": 1.172235294117647,
+    "prompt_per_second": 853.0710558008832,
+    "predicted_n": 146,
+    "predicted_ms": 2566.775,
+    "predicted_per_token_ms": 17.70189655172414,
+    "predicted_per_second": 56.49112212796213
+  }
+}

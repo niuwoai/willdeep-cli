@@ -101,10 +101,12 @@ pub(super) fn append_plan_result(entries: &mut Vec<String>, output: &str) -> boo
     let previous = entries
         .iter()
         .rposition(|entry| decode_plan_entry(entry).is_some());
-    if !receipt.replaced
-        && let Some(index) = previous
-    {
+    if let Some(index) = previous {
         let mut card = decode_plan_entry(&entries[index]).expect("plan entry");
+        let same_plan = card.plan.has_same_steps(&receipt.plan);
+        if receipt.replaced || !same_plan {
+            card.details.clear();
+        }
         card.plan = receipt.plan;
         entries[index] = plan_entry(&card);
     } else {
@@ -129,20 +131,19 @@ pub(super) fn append_plan_reply(entries: &mut Vec<String>, reply: &str) -> bool 
     ) else {
         return false;
     };
-    let mut card = if !is_new && let Some(previous) = previous {
-        previous
-    } else {
-        PlanTranscript {
-            plan: plan.clone(),
-            details: Vec::new(),
-            expanded: false,
-        }
-    };
+    let mut card = previous.unwrap_or_else(|| PlanTranscript {
+        plan: plan.clone(),
+        details: Vec::new(),
+        expanded: false,
+    });
+    if is_new {
+        card.details.clear();
+    }
     card.plan = plan;
     if !card.details.iter().any(|detail| detail == reply) {
         card.details.push(reply.to_owned());
     }
-    if let Some(index) = latest.filter(|_| !is_new) {
+    if let Some(index) = latest {
         entries[index] = plan_entry(&card);
     } else {
         entries.push(plan_entry(&card));
@@ -159,29 +160,35 @@ pub(super) fn projected_transcript(
     plan: Option<&Plan>,
     language: Language,
 ) -> Vec<String> {
-    willdeep_core::conversation::project(messages, plan)
-        .into_iter()
-        .flat_map(|item| {
-            if let Some(workflow) = item.workflow {
-                return vec![workflow_ui::entry(workflow, false)];
-            }
-            if let Some(plan) = item.plan {
-                return vec![plan_entry(&PlanTranscript {
-                    plan,
-                    details: item.details,
-                    expanded: false,
-                })];
-            }
+    project_session(messages, plan, language).0
+}
+
+/// 聊天记录和与之逐行对齐的附件。附件只挂在用户那一行上，其余行是空的。
+///
+/// 用户行不再把附件塞进 `[N attachment(s)]` 这种后缀：实时回显的是纯 `You: 原文`，
+/// 重开后必须长得一样，附件正文改由画的时候从对齐的槽里取。
+pub(super) fn project_session(
+    messages: &[Message],
+    plan: Option<&Plan>,
+    language: Language,
+) -> (Vec<String>, Vec<Vec<MessageAttachment>>) {
+    let mut rows = Vec::new();
+    let mut attachments = Vec::new();
+    // 投影会跳过一部分消息，所以不能按下标对齐，得跟着投影的顺序走。
+    let mut user_attachments = user_attachment_slots(messages);
+    for item in willdeep_core::conversation::project(messages, plan) {
+        let is_user = item.role == "user" && item.workflow.is_none() && item.plan.is_none();
+        let produced = if let Some(workflow) = item.workflow {
+            vec![workflow_ui::entry(workflow, false)]
+        } else if let Some(plan) = item.plan {
+            vec![plan_entry(&PlanTranscript {
+                plan,
+                details: item.details,
+                expanded: false,
+            })]
+        } else {
             match item.role {
-                "user" => vec![format!(
-                    "You: {}{}",
-                    item.content,
-                    if item.attachment_count == 0 {
-                        String::new()
-                    } else {
-                        format!(" [{} attachment(s)]", item.attachment_count)
-                    }
-                )],
+                "user" => vec![format!("You: {}", item.content)],
                 "system" => vec![format!(
                     "System: {}",
                     language.text(
@@ -200,7 +207,36 @@ pub(super) fn projected_transcript(
                     rows
                 }
             }
+        };
+        // 一条用户消息投影成一行，附件挂在这一行；它展开出的其余行没有附件。
+        // 对不上时给空槽而不是崩：重开历史不值得为一条附件对不齐就打不开。
+        let slot = if is_user && !user_attachments.is_empty() {
+            user_attachments.remove(0)
+        } else {
+            Vec::new()
+        };
+        for (index, row) in produced.into_iter().enumerate() {
+            rows.push(row);
+            attachments.push(if index == 0 { slot.clone() } else { Vec::new() });
+        }
+    }
+    (rows, attachments)
+}
+
+/// 按投影会保留的顺序，取出每条用户消息的附件。跳过规则与 `conversation::project`
+/// 一致：宿主指令算系统消息，没有可见正文也没有附件的用户消息不出现。
+fn user_attachment_slots(messages: &[Message]) -> Vec<Vec<MessageAttachment>> {
+    messages
+        .iter()
+        .filter(|message| message.role == willdeep_core::Role::User)
+        .filter(|message| message.source != Some(willdeep_core::MessageSource::HostInstruction))
+        .filter(|message| {
+            !willdeep_core::conversation::visible_user_text(&message.content)
+                .trim()
+                .is_empty()
+                || !message.attachments.is_empty()
         })
+        .map(|message| message.attachments.clone())
         .collect()
 }
 
@@ -217,27 +253,22 @@ pub(super) fn toggle_plan_details(entries: &mut [String]) {
 }
 
 pub(super) fn sync_persisted_plan(entries: &mut Vec<String>, plan: &Plan) {
-    for entry in entries.iter_mut().rev() {
-        let Some(mut card) = decode_plan_entry(entry) else {
-            continue;
-        };
-        if card.plan.steps.len() == plan.steps.len()
-            && card
-                .plan
-                .steps
-                .iter()
-                .zip(&plan.steps)
-                .all(|(a, b)| a.text == b.text)
-        {
-            card.plan = plan.clone();
-            *entry = plan_entry(&card);
-            return;
+    let latest = entries
+        .iter()
+        .rposition(|entry| decode_plan_entry(entry).is_some());
+    if let Some(index) = latest {
+        let mut card = decode_plan_entry(&entries[index]).expect("plan entry");
+        let same_plan = card.plan.has_same_steps(plan);
+        if !same_plan {
+            card.details.clear();
         }
+        card.plan = plan.clone();
+        entries[index] = plan_entry(&card);
+        return;
     }
     // The TUI can attach mid-turn, after the plan event was emitted, or the
     // event can arrive while the session is not yet marked runtime-managed.
-    // The persisted plan must still be visible in the output stream, so append
-    // a card when no matching one exists; later syncs update it in place.
+    // Keep one visible card for the current plan and append it only when none exists.
     entries.push(plan_entry(&PlanTranscript {
         plan: plan.clone(),
         details: Vec::new(),
@@ -332,6 +363,94 @@ mod tests {
         append_plan_reply(&mut live, PLAN);
         append_plan_reply(&mut live, PROGRESS);
         assert_eq!(live, projected_transcript(&history, None, Language::ZhCn));
+    }
+
+    #[test]
+    fn replacement_reply_keeps_card_position_and_expansion_without_old_details() {
+        let replacement = "```plan\n1. 新任务\n```";
+        let mut entries = vec!["You: 开始".into()];
+        assert!(append_plan_reply(&mut entries, PLAN));
+        assert!(append_plan_reply(&mut entries, PROGRESS));
+        toggle_plan_details(&mut entries);
+        entries.push("You: 继续".into());
+        assert!(append_plan_reply(&mut entries, replacement));
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0], "You: 开始");
+        assert_eq!(entries[2], "You: 继续");
+        let card = decode_plan_entry(&entries[1]).unwrap();
+        assert!(card.expanded);
+        assert_eq!(card.plan.steps[0].text, "新任务");
+        assert_eq!(card.details, vec![replacement]);
+    }
+
+    #[test]
+    fn structured_replacement_details_match_reopened_history() {
+        let call = willdeep_core::types::ToolCall {
+            id: "plan-update".into(),
+            name: "update_plan".into(),
+            arguments: "{}".into(),
+        };
+        for changed_steps in [false, true] {
+            for replaced in [false, true] {
+                let (mut plan, _) =
+                    willdeep_core::conversation::parse_plan_reply(PLAN, None).unwrap();
+                plan.steps[0].status = StepStatus::Done;
+                if changed_steps {
+                    plan.steps[1].text = "新任务".into();
+                }
+                let receipt = serde_json::to_string(&willdeep_core::planning::Receipt::new(
+                    plan.clone(),
+                    replaced,
+                ))
+                .unwrap();
+                let history = [
+                    Message::assistant(PLAN, vec![]),
+                    Message::assistant(PROGRESS, vec![]),
+                    Message::assistant("", vec![call.clone()]),
+                    Message::tool(&call, &receipt),
+                ];
+                let mut live = Vec::new();
+                assert!(append_plan_reply(&mut live, PLAN));
+                assert!(append_plan_reply(&mut live, PROGRESS));
+                assert!(append_plan_result(&mut live, &receipt));
+                let reopened = projected_transcript(&history, None, Language::ZhCn)
+                    .into_iter()
+                    .filter(|entry| decode_plan_entry(entry).is_some())
+                    .collect::<Vec<_>>();
+                assert_eq!(live, reopened);
+                assert_eq!(live.len(), 1);
+                let card = decode_plan_entry(&live[0]).unwrap();
+                assert_eq!(card.plan, plan);
+                let expected = if replaced || changed_steps {
+                    Vec::<&str>::new()
+                } else {
+                    vec![PLAN, PROGRESS]
+                };
+                assert_eq!(card.details, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_replacement_matches_reopened_history_with_one_card() {
+        let history = [
+            Message::assistant(PLAN, vec![]),
+            Message::assistant(PROGRESS, vec![]),
+            Message::user("继续"),
+        ];
+        let (mut plan, _) = willdeep_core::conversation::parse_plan_reply(PLAN, None).unwrap();
+        plan.steps[1].text = "新任务".into();
+        let mut live = projected_transcript(&history, None, Language::ZhCn);
+        sync_persisted_plan(&mut live, &plan);
+        assert_eq!(
+            live,
+            projected_transcript(&history, Some(&plan), Language::ZhCn)
+        );
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[1], "You: 继续");
+        let card = decode_plan_entry(&live[0]).unwrap();
+        assert_eq!(card.plan, plan);
+        assert!(card.details.is_empty());
     }
 
     #[test]

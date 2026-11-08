@@ -1,0 +1,42 @@
+{
+  "service": "llama-qwen38-cuda.service",
+  "original_path": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf",
+  "backup_dir": "/root/backups/gemma4-128k/20261104T172536Z-qwen35-20261105-2322194-o7nnqf",
+  "backup_override": "/root/backups/gemma4-128k/20261104T172536Z-qwen35-20261105-2322194-o7nnqf/override.conf",
+  "expected_model_file": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+  "original_override_sha256": "0b20cd577c3562f1215c78c56a6e3330e52566f9e990ef6c12b58d2748612b0e",
+  "binary_sha256": "31c3055dba9d550d9c8eb7f54d6a1e3a03d16925b434e10f5050dcf3cd34d901",
+  "verified_identity": {
+    "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+    "model_alias": "qwen3.6-35b-a3b",
+    "context_tokens": 98304,
+    "total_slots": 1
+  },
+  "saved_at": "2026-11-04T13:28:50Z",
+  "unit_path": "/etc/systemd/system/llama-qwen38-cuda.service",
+  "unit_sha256": "e5ec5d141bbeca961d1cbf3950c704534098dfe9fc9f7eb7e682c97c9b7375bb",
+  "tool_version": "1.0.0-rc2",
+  "previous_backup_dir": "/root/backups/gemma4-trial/20261104T132849Z-qwen36-original",
+  "prepared_at": "2026-11-04T17:25:36Z",
+  "initial_identity": {
+    "verified_at": "2026-11-04T17:25:15Z",
+    "model_path": "/models/Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+    "model_alias": "qwen3.6-35b-a3b",
+    "total_slots": 1,
+    "context_per_slot": 98304
+  },
+  "weights": [
+    {
+      "file": "gemma-4-12b-it-qat-q4_0.gguf",
+      "bytes": 6975879296,
+      "sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+      "host_path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/12b/gemma-4-12b-it-qat-q4_0.gguf"
+    },
+    {
+      "file": "mtp-gemma-4-12B-it.gguf",
+      "bytes": 253708800,
+      "sha256": "fcb35dea42c71333db904cee11baac525c9ef872818ee3753f6cb156f3c6f4f6",
+      "host_path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/12b/mtp-gemma-4-12B-it.gguf"
+    }
+  ]
+}

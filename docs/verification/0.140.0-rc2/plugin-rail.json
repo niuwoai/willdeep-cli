@@ -1,0 +1,39 @@
+{
+  "version": "0.140.0-rc2",
+  "date": "2026-11-05",
+  "result": "passed",
+  "scope": "Web fixed plugin navigation",
+  "unit_tests": {
+    "command": "yarn --cwd web test src/PluginRail.test.tsx src/plugins.test.ts src/PluginPageHeader.test.tsx",
+    "files": 3,
+    "passed": 17,
+    "failed": 0
+  },
+  "checks": {
+    "targeted_eslint": "passed",
+    "frontend_build": "passed",
+    "git_diff_check": "passed",
+    "version_sources": "passed"
+  },
+  "browser": {
+    "server": "http://localhost:19849/plugin-rail-preview.html",
+    "components": ["PluginRail", "PluginCenter"],
+    "fixture": "synthetic plugin data; no real daemon or API requests",
+    "checks": [
+      "five default or manually pinned destinations appear immediately below schedules",
+      "manual pin order zero is honored",
+      "ordinary and overflow destinations remain in the Plugins menu",
+      "selecting a pinned destination closes the menu and highlights only that destination",
+      "selecting an ordinary destination updates its qualified id and highlights Plugins",
+      "configuration and plugin menus are mutually exclusive",
+      "simulated manual unpin moves the destination into the menu while keeping it accessible",
+      "Escape and outside pointerdown close menus",
+      "375x812 dark viewport keeps the menu within the screen"
+    ]
+  },
+  "limitations": [
+    "No real plugin approval, installation or pin persistence was changed or exercised.",
+    "No backend or full Rust workspace test was run for this frontend navigation change.",
+    "Production build retains the existing bundle size warning."
+  ]
+}

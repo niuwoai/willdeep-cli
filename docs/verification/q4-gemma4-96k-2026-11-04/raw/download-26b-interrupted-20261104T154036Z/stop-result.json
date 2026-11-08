@@ -1,0 +1,30 @@
+{
+  "downloader_pid": 2194103,
+  "stopped_at": "2026-11-04T15:40:36Z",
+  "archive": "/root/benchmarks/gemma4-96k-70043de5/download-26b-interrupted-20261104T154036Z",
+  "curl_pids": [
+    2263701,
+    2265857,
+    2262275
+  ],
+  "partial_files_preserved": [
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T154036Z/0036.bin.download",
+      "bytes": 68047294
+    },
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T154036Z/0070.bin.download",
+      "bytes": 97206272
+    },
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T154036Z/0073.bin.download",
+      "bytes": 97566720
+    },
+    {
+      "path": "/home/ml-data/opt-models/gemma4-q4-trial-20261104/26b/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf.parts/interrupted-20261104T154036Z/0074.bin.download",
+      "bytes": 71307264
+    }
+  ],
+  "complete_segments_preserved": 71,
+  "status": "stopped_and_segments_preserved"
+}

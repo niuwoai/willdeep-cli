@@ -1,0 +1,48 @@
+{
+  "verified_at": "2026-11-04T10:33:39Z",
+  "status": "passed",
+  "service": {
+    "ExecStartPost": "{ path=/usr/local/sbin/qwen38-warmup ; argv[]=/usr/local/sbin/qwen38-warmup ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+    "Description": "llama.cpp CUDA — Qwen3.8-27B UD-IQ3_XXS (96K single route, port 11435)",
+    "ActiveState": "active",
+    "SubState": "running",
+    "DropInPaths": "/etc/systemd/system/llama-qwen38-cuda.service.d/override.conf"
+  },
+  "runtime_flags": {
+    "--model": "/models/Qwen3.8-27B-UD-IQ3_XXS.gguf",
+    "--alias": "qwen3.8-27b",
+    "--ctx-size": "98304",
+    "--parallel": "1",
+    "--cache-type-k": "q4_0",
+    "--cache-type-v": "q4_0",
+    "--n-gpu-layers": "99",
+    "--flash-attn": "on",
+    "--batch-size": "512",
+    "--ubatch-size": "128"
+  },
+  "slots": [
+    {
+      "id": 0,
+      "is_processing": false,
+      "n_ctx": 98304
+    }
+  ],
+  "model_metadata": [
+    {
+      "id": "qwen3.8-27b",
+      "meta": {
+        "vocab_type": 2,
+        "n_vocab": 248320,
+        "n_ctx": 98304,
+        "n_ctx_train": 262144,
+        "n_embd": 5120,
+        "n_params": 27320697856,
+        "size": 10923864064,
+        "ftype": "IQ3_XXS - 3.0625 bpw"
+      }
+    }
+  ],
+  "gpu": "NVIDIA GeForce RTX 5070 Ti, 16303, 12892, 0, 38, 17.20",
+  "backup_dir": "/root/backups/qwen38-27b/20261104T100426Z-before-96k",
+  "temporary_override_absent": true
+}

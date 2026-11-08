@@ -340,6 +340,44 @@ mod tool_row_style_tests {
         assert_eq!(rows.last().map(String::as_str), Some(""));
     }
 
+    /// 流式过程中的思维链正文必须按换行展开。模型写首页文案时会在一段里混用
+    /// 标题、列表和表格，换行一旦被吞掉，整段就会挤成截图里那种一行。
+    #[test]
+    fn streaming_copy_with_headings_lists_and_a_table_stays_on_separate_lines() {
+        let body = [
+            "好的，我帮你整理一个面向用户的产品首页文案。",
+            "# WillDeep — 自主跑，你放心",
+            "**你的 AI Agent，长任务真能跑完。**",
+            "- 用消费级显卡部署多智能体，5090 + 千问 3.8-27B 就能启动一整套 Worker 池。",
+            "- 长上下文不是 PPT 能力——100K、200K token 的任务，实测验证过。",
+            "",
+            "| 终端 | 能力 |",
+            "| --- | --- |",
+            "| TUI | Ratatui 界面 |",
+            "| Web | 网页访问 |",
+        ]
+        .join("\n");
+        let row = format!("· − Thought: 3.1s\n{body}");
+        let rendered = wrap_styled_text(colored_transcript_at_width(&[row], None, 80), 80);
+        let drawn = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        eprintln!("ROWS={}", drawn.len());
+        for line in &drawn {
+            eprintln!("| {line}");
+        }
+        assert!(
+            drawn.iter().any(|line| line.contains("WillDeep —")),
+            "heading lost: {drawn:?}"
+        );
+        assert!(
+            drawn.len() > 6,
+            "everything collapsed onto too few rows: {drawn:?}"
+        );
+    }
+
     /// 「轮到你」只属于最后一行。后面有了新输出，旧分隔线就不再说这话。
     #[test]
     fn your_turn_appears_only_on_the_last_divider() {

@@ -221,6 +221,7 @@ impl ProviderEnvironment {
             .and_then(|c| c.max_output_tokens)
             .or_else(|| profile.and_then(|p| p.max_output_tokens))
             .unwrap_or(16_384);
+        config.reasoning = profile.and_then(|profile| profile.reasoning.clone());
         Ok(config)
     }
 }

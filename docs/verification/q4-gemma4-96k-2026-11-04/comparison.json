@@ -1,0 +1,2596 @@
+{
+  "generated_at": "2026-11-04T16:16:36Z",
+  "context_tokens": 98304,
+  "parallel": 1,
+  "input_tokens": 73728,
+  "output_tokens": 512,
+  "formal_gemma_samples": 36,
+  "excluded_from_comparison": [
+    "12b-baseline",
+    "12b-mtp-n2"
+  ],
+  "models": {
+    "qwen36-35b-a3b": {
+      "quantization": "UD-Q2_K_XL",
+      "mtp": false,
+      "jinja": false,
+      "source": "../q4-qwen36-moe-96k-2026-11-04/raw/summary.json",
+      "source_sha256": "a2f552956e7fe41aaaa495e9f5e9f4cd9dfa6e1a5ff2becb47c42ce9b3462f7b",
+      "raw_results_sha256": "f337a96836c9c567160ae298bf943bac4a37e0e92358a01d3bebc750a440b2f0",
+      "observed_gpu_used_mib": {
+        "min": 12888,
+        "max": 12940
+      },
+      "groups": {
+        "cold_first_request_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "prefill_tps": {
+            "median": 1507.2112601241224,
+            "min": 1501.4088537425193,
+            "max": 1513.814574345906
+          },
+          "decode_tps": {
+            "median": 70.0077200294005,
+            "min": 69.9190184519163,
+            "max": 70.27788646476787
+          },
+          "server_prefill_seconds": {
+            "median": 48.916832,
+            "min": 48.703455000000005,
+            "max": 49.105878
+          },
+          "first_nonempty_content_seconds": {
+            "median": 48.92920135601889,
+            "min": 48.71479017700767,
+            "max": 49.116073541983496
+          },
+          "wall_seconds": {
+            "median": 56.202184607042,
+            "min": 56.01591311400989,
+            "max": 56.426323658030014
+          },
+          "raw_prefill_tps": [
+            1513.814574345906,
+            1507.2112601241224,
+            1501.4088537425193
+          ],
+          "raw_decode_tps": [
+            70.0077200294005,
+            70.27788646476787,
+            69.9190184519163
+          ]
+        },
+        "warm_gpu_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "prefill_tps": {
+            "median": 1508.3292289421718,
+            "min": 1506.643614169267,
+            "max": 1508.7369349925673
+          },
+          "decode_tps": {
+            "median": 69.90705234930105,
+            "min": 69.77358948114664,
+            "max": 69.92245312595784
+          },
+          "server_prefill_seconds": {
+            "median": 48.880575,
+            "min": 48.867366000000004,
+            "max": 48.935262
+          },
+          "first_nonempty_content_seconds": {
+            "median": 48.973191527999006,
+            "min": 48.961288871010765,
+            "max": 49.02518075401895
+          },
+          "wall_seconds": {
+            "median": 56.283292720036115,
+            "min": 56.27281657099957,
+            "max": 56.35070844902657
+          },
+          "raw_prefill_tps": [
+            1508.7369349925673,
+            1506.643614169267,
+            1508.3292289421718
+          ],
+          "raw_decode_tps": [
+            69.90705234930105,
+            69.77358948114664,
+            69.92245312595784
+          ]
+        },
+        "warm_64k_prefix_plus_8k": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            8192
+          ],
+          "cache_hit_tokens": [
+            65536
+          ],
+          "prefill_tps": {
+            "median": 1328.5118558979798,
+            "min": 1327.6489042844878,
+            "max": 1331.683251205822
+          },
+          "decode_tps": {
+            "median": 69.55132724620844,
+            "min": 69.34080639965435,
+            "max": 70.49607022346703
+          },
+          "server_prefill_seconds": {
+            "median": 6.166297999999999,
+            "min": 6.151613,
+            "max": 6.170305999999999
+          },
+          "first_nonempty_content_seconds": {
+            "median": 6.1793315460090525,
+            "min": 6.16396492999047,
+            "max": 6.183086537988856
+          },
+          "wall_seconds": {
+            "median": 13.532067296036985,
+            "min": 13.414568202977534,
+            "max": 13.550782452977728
+          },
+          "raw_prefill_tps": [
+            1327.6489042844878,
+            1331.683251205822,
+            1328.5118558979798
+          ],
+          "raw_decode_tps": [
+            69.55132724620844,
+            70.49607022346703,
+            69.34080639965435
+          ]
+        },
+        "warm_full_72k_prefix": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            4
+          ],
+          "cache_hit_tokens": [
+            73724
+          ],
+          "prefill_tps": {
+            "median": 99.58671513220138,
+            "min": 98.51488806245844,
+            "max": 100.55556952160687
+          },
+          "decode_tps": {
+            "median": 69.76695924189666,
+            "min": 69.52840691234822,
+            "max": 69.95280581251689
+          },
+          "server_prefill_seconds": {
+            "median": 0.04016599999999999,
+            "min": 0.039779,
+            "max": 0.040603
+          },
+          "first_nonempty_content_seconds": {
+            "median": 0.0531816590228118,
+            "min": 0.05193140899064019,
+            "max": 0.05588353000348434
+          },
+          "wall_seconds": {
+            "median": 7.379537058004644,
+            "min": 7.3628847929649055,
+            "max": 7.403461062989663
+          },
+          "raw_prefill_tps": [
+            100.55556952160687,
+            99.58671513220138,
+            98.51488806245844
+          ],
+          "raw_decode_tps": [
+            69.52840691234822,
+            69.76695924189666,
+            69.95280581251689
+          ]
+        }
+      }
+    },
+    "gemma4-12b-qat": {
+      "quantization": "QAT Q4_0",
+      "mtp": false,
+      "jinja": true,
+      "source": "raw/runs/12b-baseline-retry1/results.json",
+      "raw_results_sha256": "d07a7523ac465e9db1c321f9f86e5d9ac9a8bd59208531431c2fb451b5d9e769",
+      "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+      "prompt_tokens_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "observed_gpu_used_mib": {
+        "median": 8098.0,
+        "min": 8088.0,
+        "max": 8098.0,
+        "values": [
+          8088.0,
+          8088.0,
+          8088.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0,
+          8098.0
+        ]
+      },
+      "cold_restart_to_ready_seconds": {
+        "median": 3.483183225034736,
+        "min": 3.4825245299725793,
+        "max": 3.566345693951007,
+        "values": [
+          3.4825245299725793,
+          3.483183225034736,
+          3.566345693951007
+        ]
+      },
+      "groups": {
+        "cold_first_request_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2286.581890989702,
+            "min": 2282.704153609444,
+            "max": 2296.8077618195894,
+            "values": [
+              2282.704153609444,
+              2286.581890989702,
+              2296.8077618195894
+            ]
+          },
+          "decode_tps": {
+            "median": 60.03652711600854,
+            "min": 59.46823988673337,
+            "max": 60.384411179317,
+            "values": [
+              59.46823988673337,
+              60.03652711600854,
+              60.384411179317
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 32.243761,
+            "min": 32.100205,
+            "max": 32.298535,
+            "values": [
+              32.100205,
+              32.243761,
+              32.298535
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 8.511485,
+            "min": 8.462449000000001,
+            "max": 8.592822,
+            "values": [
+              8.462449000000001,
+              8.511485,
+              8.592822
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 32.25584955699742,
+            "min": 32.11232535802992,
+            "max": 32.31074583600275,
+            "values": [
+              32.11232535802992,
+              32.25584955699742,
+              32.31074583600275
+            ]
+          },
+          "wall_seconds": {
+            "median": 40.728159933001734,
+            "min": 40.715241670026444,
+            "max": 40.830008070974145,
+            "values": [
+              40.715241670026444,
+              40.728159933001734,
+              40.830008070974145
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 2286.581890989702,
+            "min": 2282.704153609444,
+            "max": 2296.8077618195894,
+            "values": [
+              2282.704153609444,
+              2286.581890989702,
+              2296.8077618195894
+            ]
+          }
+        },
+        "warm_gpu_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2277.3552284960006,
+            "min": 2269.1156093597815,
+            "max": 2293.6256445066906,
+            "values": [
+              2269.1156093597815,
+              2277.3552284960006,
+              2293.6256445066906
+            ]
+          },
+          "decode_tps": {
+            "median": 60.37443729783868,
+            "min": 60.255547195245775,
+            "max": 60.42682624709558,
+            "values": [
+              60.255547195245775,
+              60.37443729783868,
+              60.42682624709558
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 32.374396,
+            "min": 32.14474,
+            "max": 32.491954,
+            "values": [
+              32.14474,
+              32.374396,
+              32.491954
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 8.463847,
+            "min": 8.456509,
+            "max": 8.480547,
+            "values": [
+              8.456509,
+              8.463847,
+              8.480547
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 32.431901552015916,
+            "min": 32.211734118987806,
+            "max": 32.555799935013056,
+            "values": [
+              32.211734118987806,
+              32.431901552015916,
+              32.555799935013056
+            ]
+          },
+          "wall_seconds": {
+            "median": 40.92253902001539,
+            "min": 40.67821418697713,
+            "max": 41.02922623499762,
+            "values": [
+              40.67821418697713,
+              40.92253902001539,
+              41.02922623499762
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 2277.3552284960006,
+            "min": 2269.1156093597815,
+            "max": 2293.6256445066906,
+            "values": [
+              2269.1156093597815,
+              2277.3552284960006,
+              2293.6256445066906
+            ]
+          }
+        },
+        "warm_64k_prefix_plus_8k": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            8192
+          ],
+          "cache_hit_tokens": [
+            65536
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 1664.1064508095253,
+            "min": 1660.2047977729908,
+            "max": 1669.054522991063,
+            "values": [
+              1660.2047977729908,
+              1664.1064508095253,
+              1669.054522991063
+            ]
+          },
+          "decode_tps": {
+            "median": 60.009911617496115,
+            "min": 59.65330572704421,
+            "max": 60.65553319121817,
+            "values": [
+              59.65330572704421,
+              60.009911617496115,
+              60.65553319121817
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 4.922762,
+            "min": 4.908168,
+            "max": 4.934331,
+            "values": [
+              4.908168,
+              4.922762,
+              4.934331
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 8.51526,
+            "min": 8.424623,
+            "max": 8.566164,
+            "values": [
+              8.424623,
+              8.51526,
+              8.566164
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 4.933927011967171,
+            "min": 4.923965357011184,
+            "max": 4.945285787980538,
+            "values": [
+              4.923965357011184,
+              4.933927011967171,
+              4.945285787980538
+            ]
+          },
+          "wall_seconds": {
+            "median": 13.459132026997395,
+            "min": 13.377838024985977,
+            "max": 13.49659633700503,
+            "values": [
+              13.377838024985977,
+              13.459132026997395,
+              13.49659633700503
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 1664.1064508095253,
+            "min": 1660.2047977729908,
+            "max": 1669.054522991063,
+            "values": [
+              1660.2047977729908,
+              1664.1064508095253,
+              1669.054522991063
+            ]
+          }
+        },
+        "warm_full_72k_prefix": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            5
+          ],
+          "cache_hit_tokens": [
+            73723
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 56.570045029755846,
+            "min": 53.81204528821732,
+            "max": 59.56706656024018,
+            "values": [
+              53.81204528821732,
+              56.570045029755846,
+              59.56706656024018
+            ]
+          },
+          "decode_tps": {
+            "median": 59.71267569227849,
+            "min": 58.868119284550744,
+            "max": 60.62631611605276,
+            "values": [
+              58.868119284550744,
+              59.71267569227849,
+              60.62631611605276
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 0.08838599999999999,
+            "min": 0.083939,
+            "max": 0.092916,
+            "values": [
+              0.083939,
+              0.08838599999999999,
+              0.092916
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 8.557647000000001,
+            "min": 8.428683000000001,
+            "max": 8.68042,
+            "values": [
+              8.428683000000001,
+              8.557647000000001,
+              8.68042
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 0.09846390597522259,
+            "min": 0.09477424196666107,
+            "max": 0.10348874400369823,
+            "values": [
+              0.09477424196666107,
+              0.09846390597522259,
+              0.10348874400369823
+            ]
+          },
+          "wall_seconds": {
+            "median": 8.665873738005757,
+            "min": 8.540425959043205,
+            "max": 9.157353859976865,
+            "values": [
+              8.540425959043205,
+              8.665873738005757,
+              9.157353859976865
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps_note": "Too few newly evaluated tokens to estimate long-input prefill throughput; raw short-stage rates retained separately."
+        }
+      },
+      "checks": [
+        {
+          "path": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/report.json",
+          "status": "failed",
+          "summary": {
+            "passed": 13,
+            "failed": 1,
+            "not_run": 0
+          },
+          "checks": [
+            {
+              "name": "configuration",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {
+                "model_alias": "gemma-4-12b-qat",
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "service": "llama-qwen38-cuda.service",
+                "legacy_aliases": [
+                  "qwen3.6-35b-a3b",
+                  "qwen3.8-27b"
+                ],
+                "sandbox_image": "python:3.12.12-slim-bookworm"
+              }
+            },
+            {
+              "name": "authentication",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {}
+            },
+            {
+              "name": "service_active",
+              "status": "passed",
+              "elapsed_seconds": 0.005,
+              "evidence": {
+                "command": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "active\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.005
+                }
+              }
+            },
+            {
+              "name": "health",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "response": {
+                  "status": "ok"
+                }
+              }
+            },
+            {
+              "name": "loaded_model",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf"
+              }
+            },
+            {
+              "name": "chat_ok",
+              "status": "passed",
+              "elapsed_seconds": 0.065,
+              "evidence": {
+                "requested_model": "gemma-4-12b-qat",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_1",
+              "status": "passed",
+              "elapsed_seconds": 0.044,
+              "evidence": {
+                "requested_model": "qwen3.6-35b-a3b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_2",
+              "status": "passed",
+              "elapsed_seconds": 0.044,
+              "evidence": {
+                "requested_model": "qwen3.8-27b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "forced_tool_add",
+              "status": "passed",
+              "elapsed_seconds": 0.268,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 96,
+                  "total_tokens": 113,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "add",
+                      "arguments": "{\"a\":19,\"b\":23}"
+                    },
+                    "id": "3kaSYrYwzjlsMoO2VchyY0td30XQRYB1"
+                  }
+                ],
+                "tool_result": 42
+              }
+            },
+            {
+              "name": "tool_round_trip",
+              "status": "passed",
+              "elapsed_seconds": 0.512,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 37,
+                  "prompt_tokens": 175,
+                  "total_tokens": 212,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 91
+                  }
+                },
+                "content": "{\n  \"result\": 42,\n  \"receipt\": \"dad2864517cdee40\"\n}",
+                "expected_tool_response": {
+                  "result": 42,
+                  "receipt": "dad2864517cdee40"
+                }
+              }
+            },
+            {
+              "name": "json_object",
+              "status": "passed",
+              "elapsed_seconds": 0.253,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 32,
+                  "total_tokens": 49,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "content": "{\n  \"result\": 42\n}"
+              }
+            },
+            {
+              "name": "sandbox_availability",
+              "status": "passed",
+              "elapsed_seconds": 0.355,
+              "evidence": {
+                "image_inspect": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.011
+                },
+                "image": "python:3.12.12-slim-bookworm",
+                "image_id": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a",
+                "probe": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "{\"sandbox_ready\": true, \"python\": \"3.12.12\"}\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.333,
+                  "security_args": [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--pull",
+                    "never",
+                    "--name",
+                    "willdeep-accept-2250596-4e14e9c1530f",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--pids-limit",
+                    "64",
+                    "--memory",
+                    "256m",
+                    "--memory-swap",
+                    "256m",
+                    "--cpus",
+                    "1",
+                    "--tmpfs",
+                    "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+                    "--ipc",
+                    "none",
+                    "--user",
+                    "65534:65534",
+                    "--workdir",
+                    "/tmp",
+                    "--env",
+                    "HOME=/tmp",
+                    "--env",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "--entrypoint",
+                    "python3",
+                    "python:3.12.12-slim-bookworm",
+                    "-I",
+                    "-c",
+                    "import json,sys; assert sys.version_info.major == 3 and sys.flags.isolated; print(json.dumps({\"sandbox_ready\": True, \"python\": sys.version.split()[0]}))"
+                  ],
+                  "cleanup": {
+                    "exit_code": 0,
+                    "timed_out": false,
+                    "stdout": "",
+                    "stderr": "Error response from daemon: No such container: willdeep-accept-2250596-4e14e9c1530f\n",
+                    "output_truncated": false,
+                    "elapsed_seconds": 0.011
+                  }
+                },
+                "python": "3.12.12"
+              }
+            },
+            {
+              "name": "programming_dedupe",
+              "status": "passed",
+              "elapsed_seconds": 3.193,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 222,
+                  "prompt_tokens": 275,
+                  "total_tokens": 497,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_dedupe",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_dedupe/solution.py",
+                "source_bytes": 705,
+                "source_sha256": "6511a8393f50052b700a89d19789a114b85bab8bdc01c32bb9e178c5438f1349",
+                "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+                "expected_tests": 8,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/programming_dedupe.sandbox.json",
+                "exit_code": 0,
+                "unittest": {
+                  "errors": 0,
+                  "failures": 0,
+                  "skipped": 0,
+                  "successful": true,
+                  "tests_run": 8
+                }
+              }
+            },
+            {
+              "name": "programming_decimal_refunds",
+              "status": "failed",
+              "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出",
+              "elapsed_seconds": 8.38,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 632,
+                  "prompt_tokens": 392,
+                  "total_tokens": 1024,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 24
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_decimal_refunds",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/fixture_programming_decimal_refunds/solution.py",
+                "source_bytes": 2136,
+                "source_sha256": "6b7f1ab62b1cd67eeeabaa06e8f75bfdbb7370de192abe8e679886cd85eea069",
+                "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+                "expected_tests": 9,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-baseline-retry1/checks-20261104T151408Z-20261104-2250596-7beorm/programming_decimal_refunds.sandbox.json",
+                "exit_code": 1,
+                "unittest": {
+                  "errors": 1,
+                  "failures": 1,
+                  "skipped": 0,
+                  "successful": false,
+                  "tests_run": 9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "gemma4-12b-qat-mtp-n2": {
+      "quantization": "QAT Q4_0",
+      "mtp": true,
+      "jinja": true,
+      "source": "raw/runs/12b-mtp-n2-retry1/results.json",
+      "raw_results_sha256": "931c75f87aa75ac4277c322795d538e7eb1a5261afaa9dd83d8c5b7f31aa7852",
+      "model_sha256": "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+      "prompt_tokens_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "observed_gpu_used_mib": {
+        "median": 8562.0,
+        "min": 8552.0,
+        "max": 8562.0,
+        "values": [
+          8552.0,
+          8552.0,
+          8552.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0,
+          8562.0
+        ]
+      },
+      "cold_restart_to_ready_seconds": {
+        "median": 4.561732134025078,
+        "min": 4.558179375017062,
+        "max": 4.574017183040269,
+        "values": [
+          4.558179375017062,
+          4.561732134025078,
+          4.574017183040269
+        ]
+      },
+      "groups": {
+        "cold_first_request_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2225.4590975299725,
+            "min": 2219.1830993410717,
+            "max": 2229.42820434115,
+            "values": [
+              2219.1830993410717,
+              2225.4590975299725,
+              2229.42820434115
+            ]
+          },
+          "decode_tps": {
+            "median": 87.65351372232053,
+            "min": 86.58233107084044,
+            "max": 87.9965021820894,
+            "values": [
+              86.58233107084044,
+              87.65351372232053,
+              87.9965021820894
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 33.129343999999996,
+            "min": 33.070363,
+            "max": 33.223036,
+            "values": [
+              33.070363,
+              33.129343999999996,
+              33.223036
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.829772,
+            "min": 5.807049,
+            "max": 5.901897,
+            "values": [
+              5.807049,
+              5.829772,
+              5.901897
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.14132548501948,
+            "min": 33.08083867398091,
+            "max": 33.23499707999872,
+            "values": [
+              33.08083867398091,
+              33.14132548501948,
+              33.23499707999872
+            ]
+          },
+          "wall_seconds": {
+            "median": 38.9619811050361,
+            "min": 38.919690694019664,
+            "max": 39.14708917500684,
+            "values": [
+              38.919690694019664,
+              38.9619811050361,
+              39.14708917500684
+            ]
+          },
+          "drafted_tokens": [
+            478,
+            478,
+            478
+          ],
+          "accepted_draft_tokens": [
+            272,
+            272,
+            272
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5690376569037657,
+            "min": 0.5690376569037657,
+            "max": 0.5690376569037657,
+            "values": [
+              0.5690376569037657,
+              0.5690376569037657,
+              0.5690376569037657
+            ]
+          },
+          "prefill_tps": {
+            "median": 2225.4590975299725,
+            "min": 2219.1830993410717,
+            "max": 2229.42820434115,
+            "values": [
+              2219.1830993410717,
+              2225.4590975299725,
+              2229.42820434115
+            ]
+          }
+        },
+        "warm_gpu_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2221.943889889372,
+            "min": 2219.5385137256276,
+            "max": 2239.7603145385624,
+            "values": [
+              2219.5385137256276,
+              2221.943889889372,
+              2239.7603145385624
+            ]
+          },
+          "decode_tps": {
+            "median": 86.49233468031181,
+            "min": 85.93327743466128,
+            "max": 87.85216080211946,
+            "values": [
+              85.93327743466128,
+              86.49233468031181,
+              87.85216080211946
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 33.181756,
+            "min": 32.917807999999994,
+            "max": 33.217716,
+            "values": [
+              32.917807999999994,
+              33.181756,
+              33.217716
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.9080379999999995,
+            "min": 5.81659,
+            "max": 5.946474,
+            "values": [
+              5.81659,
+              5.9080379999999995,
+              5.946474
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.24320212897146,
+            "min": 32.97581865097163,
+            "max": 33.27495563199045,
+            "values": [
+              32.97581865097163,
+              33.24320212897146,
+              33.27495563199045
+            ]
+          },
+          "wall_seconds": {
+            "median": 39.069259834999684,
+            "min": 38.895097962988075,
+            "max": 39.23197208403144,
+            "values": [
+              38.895097962988075,
+              39.069259834999684,
+              39.23197208403144
+            ]
+          },
+          "drafted_tokens": [
+            478,
+            478,
+            478
+          ],
+          "accepted_draft_tokens": [
+            272,
+            272,
+            272
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5690376569037657,
+            "min": 0.5690376569037657,
+            "max": 0.5690376569037657,
+            "values": [
+              0.5690376569037657,
+              0.5690376569037657,
+              0.5690376569037657
+            ]
+          },
+          "prefill_tps": {
+            "median": 2221.943889889372,
+            "min": 2219.5385137256276,
+            "max": 2239.7603145385624,
+            "values": [
+              2219.5385137256276,
+              2221.943889889372,
+              2239.7603145385624
+            ]
+          }
+        },
+        "warm_64k_prefix_plus_8k": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            8192
+          ],
+          "cache_hit_tokens": [
+            65536
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 1629.3985506468066,
+            "min": 1628.5301302923501,
+            "max": 1638.4783192636608,
+            "values": [
+              1628.5301302923501,
+              1629.3985506468066,
+              1638.4783192636608
+            ]
+          },
+          "decode_tps": {
+            "median": 81.04191675076154,
+            "min": 80.99102584564696,
+            "max": 82.32522523843302,
+            "values": [
+              80.99102584564696,
+              81.04191675076154,
+              82.32522523843302
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 5.027622,
+            "min": 4.999761,
+            "max": 5.030303,
+            "values": [
+              4.999761,
+              5.027622,
+              5.030303
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.305379,
+            "min": 6.207089,
+            "max": 6.309341000000001,
+            "values": [
+              6.207089,
+              6.305379,
+              6.309341000000001
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 5.038939578982536,
+            "min": 5.012298709014431,
+            "max": 5.041031154978555,
+            "values": [
+              5.012298709014431,
+              5.038939578982536,
+              5.041031154978555
+            ]
+          },
+          "wall_seconds": {
+            "median": 11.355218715965748,
+            "min": 11.231025954999495,
+            "max": 11.357590877974872,
+            "values": [
+              11.231025954999495,
+              11.355218715965748,
+              11.357590877974872
+            ]
+          },
+          "drafted_tokens": [
+            507,
+            507,
+            507
+          ],
+          "accepted_draft_tokens": [
+            257,
+            257,
+            257
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5069033530571992,
+            "min": 0.5069033530571992,
+            "max": 0.5069033530571992,
+            "values": [
+              0.5069033530571992,
+              0.5069033530571992,
+              0.5069033530571992
+            ]
+          },
+          "prefill_tps": {
+            "median": 1629.3985506468066,
+            "min": 1628.5301302923501,
+            "max": 1638.4783192636608,
+            "values": [
+              1628.5301302923501,
+              1629.3985506468066,
+              1638.4783192636608
+            ]
+          }
+        },
+        "warm_full_72k_prefix": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            5
+          ],
+          "cache_hit_tokens": [
+            73723
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 51.46309581399179,
+            "min": 49.75867044832562,
+            "max": 52.107215807244984,
+            "values": [
+              49.75867044832562,
+              51.46309581399179,
+              52.107215807244984
+            ]
+          },
+          "decode_tps": {
+            "median": 85.99502810741603,
+            "min": 85.26173349951863,
+            "max": 86.99095396220814,
+            "values": [
+              85.26173349951863,
+              85.99502810741603,
+              86.99095396220814
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 0.097157,
+            "min": 0.095956,
+            "max": 0.100485,
+            "values": [
+              0.095956,
+              0.097157,
+              0.100485
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 5.942203999999999,
+            "min": 5.874174,
+            "max": 5.99331,
+            "values": [
+              5.874174,
+              5.942203999999999,
+              5.99331
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 0.10801740101305768,
+            "min": 0.10780240700114518,
+            "max": 0.11019936698721722,
+            "values": [
+              0.10780240700114518,
+              0.10801740101305768,
+              0.11019936698721722
+            ]
+          },
+          "wall_seconds": {
+            "median": 6.061215813038871,
+            "min": 5.992423458956182,
+            "max": 6.110464155033696,
+            "values": [
+              5.992423458956182,
+              6.061215813038871,
+              6.110464155033696
+            ]
+          },
+          "drafted_tokens": [
+            481,
+            481,
+            481
+          ],
+          "accepted_draft_tokens": [
+            270,
+            270,
+            270
+          ],
+          "draft_acceptance_ratio": {
+            "median": 0.5613305613305614,
+            "min": 0.5613305613305614,
+            "max": 0.5613305613305614,
+            "values": [
+              0.5613305613305614,
+              0.5613305613305614,
+              0.5613305613305614
+            ]
+          },
+          "prefill_tps_note": "Too few newly evaluated tokens to estimate long-input prefill throughput; raw short-stage rates retained separately."
+        }
+      },
+      "checks": [
+        {
+          "path": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/report.json",
+          "status": "failed",
+          "summary": {
+            "passed": 13,
+            "failed": 1,
+            "not_run": 0
+          },
+          "checks": [
+            {
+              "name": "configuration",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {
+                "model_alias": "gemma-4-12b-qat",
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "service": "llama-qwen38-cuda.service",
+                "legacy_aliases": [
+                  "qwen3.6-35b-a3b",
+                  "qwen3.8-27b"
+                ],
+                "sandbox_image": "python:3.12.12-slim-bookworm"
+              }
+            },
+            {
+              "name": "authentication",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {}
+            },
+            {
+              "name": "service_active",
+              "status": "passed",
+              "elapsed_seconds": 0.006,
+              "evidence": {
+                "command": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "active\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.006
+                }
+              }
+            },
+            {
+              "name": "health",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "response": {
+                  "status": "ok"
+                }
+              }
+            },
+            {
+              "name": "loaded_model",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "expected_model_file": "gemma-4-12b-it-qat-q4_0.gguf",
+                "model_path": "/models/gemma-4-12b-it-qat-q4_0.gguf"
+              }
+            },
+            {
+              "name": "chat_ok",
+              "status": "passed",
+              "elapsed_seconds": 0.067,
+              "evidence": {
+                "requested_model": "gemma-4-12b-qat",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_1",
+              "status": "passed",
+              "elapsed_seconds": 0.045,
+              "evidence": {
+                "requested_model": "qwen3.6-35b-a3b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_2",
+              "status": "passed",
+              "elapsed_seconds": 0.045,
+              "evidence": {
+                "requested_model": "qwen3.8-27b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "forced_tool_add",
+              "status": "passed",
+              "elapsed_seconds": 0.189,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 96,
+                  "total_tokens": 113,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "add",
+                      "arguments": "{\"a\":19,\"b\":23}"
+                    },
+                    "id": "pjgLt4FOtewyybZZPKMYXcwOdv2yzFex"
+                  }
+                ],
+                "tool_result": 42
+              }
+            },
+            {
+              "name": "tool_round_trip",
+              "status": "passed",
+              "elapsed_seconds": 0.289,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 40,
+                  "prompt_tokens": 178,
+                  "total_tokens": 218,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 91
+                  }
+                },
+                "content": "{\n  \"result\": 42,\n  \"receipt\": \"9abf9c0d3c78d764\"\n}",
+                "expected_tool_response": {
+                  "result": 42,
+                  "receipt": "9abf9c0d3c78d764"
+                }
+              }
+            },
+            {
+              "name": "json_object",
+              "status": "passed",
+              "elapsed_seconds": 0.136,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 32,
+                  "total_tokens": 49,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "content": "{\n  \"result\": 42\n}"
+              }
+            },
+            {
+              "name": "sandbox_availability",
+              "status": "passed",
+              "elapsed_seconds": 0.334,
+              "evidence": {
+                "image_inspect": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.01
+                },
+                "image": "python:3.12.12-slim-bookworm",
+                "image_id": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a",
+                "probe": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "{\"sandbox_ready\": true, \"python\": \"3.12.12\"}\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.312,
+                  "security_args": [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--pull",
+                    "never",
+                    "--name",
+                    "willdeep-accept-2255924-529b049451c0",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--pids-limit",
+                    "64",
+                    "--memory",
+                    "256m",
+                    "--memory-swap",
+                    "256m",
+                    "--cpus",
+                    "1",
+                    "--tmpfs",
+                    "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+                    "--ipc",
+                    "none",
+                    "--user",
+                    "65534:65534",
+                    "--workdir",
+                    "/tmp",
+                    "--env",
+                    "HOME=/tmp",
+                    "--env",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "--entrypoint",
+                    "python3",
+                    "python:3.12.12-slim-bookworm",
+                    "-I",
+                    "-c",
+                    "import json,sys; assert sys.version_info.major == 3 and sys.flags.isolated; print(json.dumps({\"sandbox_ready\": True, \"python\": sys.version.split()[0]}))"
+                  ],
+                  "cleanup": {
+                    "exit_code": 0,
+                    "timed_out": false,
+                    "stdout": "",
+                    "stderr": "Error response from daemon: No such container: willdeep-accept-2255924-529b049451c0\n",
+                    "output_truncated": false,
+                    "elapsed_seconds": 0.011
+                  }
+                },
+                "python": "3.12.12"
+              }
+            },
+            {
+              "name": "programming_dedupe",
+              "status": "passed",
+              "elapsed_seconds": 1.822,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 216,
+                  "prompt_tokens": 275,
+                  "total_tokens": 491,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/fixture_programming_dedupe",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/fixture_programming_dedupe/solution.py",
+                "source_bytes": 688,
+                "source_sha256": "f64174e27ad98a317faa2fa32300d84572c8febbdd45b44a5606babb56b3138d",
+                "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+                "expected_tests": 8,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/programming_dedupe.sandbox.json",
+                "exit_code": 0,
+                "unittest": {
+                  "errors": 0,
+                  "failures": 0,
+                  "skipped": 0,
+                  "successful": true,
+                  "tests_run": 8
+                }
+              }
+            },
+            {
+              "name": "programming_decimal_refunds",
+              "status": "failed",
+              "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出",
+              "elapsed_seconds": 4.75,
+              "evidence": {
+                "actual_response_model": "gemma-4-12b-qat",
+                "expected_response_model": "gemma-4-12b-qat",
+                "usage": {
+                  "completion_tokens": 671,
+                  "prompt_tokens": 392,
+                  "total_tokens": 1063,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 24
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/fixture_programming_decimal_refunds",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/fixture_programming_decimal_refunds/solution.py",
+                "source_bytes": 2253,
+                "source_sha256": "e84f2f055a1e5da9c41096abfed881059d48cfae4a089abc2c33cb3be39841ca",
+                "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+                "expected_tests": 9,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/12b-mtp-n2-retry1/checks-20261104T152141Z-20261104-2255924-2oy6l7/programming_decimal_refunds.sandbox.json",
+                "exit_code": 1,
+                "unittest": {
+                  "errors": 1,
+                  "failures": 3,
+                  "skipped": 0,
+                  "successful": false,
+                  "tests_run": 9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "gemma4-26b-a4b-q3": {
+      "quantization": "UD-Q3_K_M",
+      "mtp": false,
+      "jinja": true,
+      "source": "raw/runs/26b-baseline/results.json",
+      "raw_results_sha256": "9ae60920b184c42d8f0b4735cf91dcdd288d72b6526c5f176f97ba49320ab3c2",
+      "model_sha256": "811882f6df81c8ea204a5d382f196d6bd601245091786912d4c70df41cdfa052",
+      "prompt_tokens_sha256": "6276326b2ba89e96aa3f0bfb509100648dbc40da9c6218f8e9597dfed7e6a0c7",
+      "observed_gpu_used_mib": {
+        "median": 13886.0,
+        "min": 13834.0,
+        "max": 13886.0,
+        "values": [
+          13834.0,
+          13834.0,
+          13834.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0,
+          13886.0
+        ]
+      },
+      "cold_restart_to_ready_seconds": {
+        "median": 3.4845446990220807,
+        "min": 3.470979126985185,
+        "max": 3.5059555070474744,
+        "values": [
+          3.470979126985185,
+          3.4845446990220807,
+          3.5059555070474744
+        ]
+      },
+      "groups": {
+        "cold_first_request_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2223.077210684569,
+            "min": 2215.2851671863045,
+            "max": 2226.878802888334,
+            "values": [
+              2215.2851671863045,
+              2223.077210684569,
+              2226.878802888334
+            ]
+          },
+          "decode_tps": {
+            "median": 77.60711300324643,
+            "min": 76.99711840921242,
+            "max": 77.74492847466581,
+            "values": [
+              76.99711840921242,
+              77.60711300324643,
+              77.74492847466581
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 33.16484,
+            "min": 33.108222999999995,
+            "max": 33.281494,
+            "values": [
+              33.108222999999995,
+              33.16484,
+              33.281494
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.584448,
+            "min": 6.572776,
+            "max": 6.636612,
+            "values": [
+              6.572776,
+              6.584448,
+              6.636612
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.17518857802497,
+            "min": 33.11712297302438,
+            "max": 33.29296486196108,
+            "values": [
+              33.11712297302438,
+              33.17518857802497,
+              33.29296486196108
+            ]
+          },
+          "wall_seconds": {
+            "median": 39.829717135988176,
+            "min": 39.70015984401107,
+            "max": 39.88508221396478,
+            "values": [
+              39.70015984401107,
+              39.829717135988176,
+              39.88508221396478
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 2223.077210684569,
+            "min": 2215.2851671863045,
+            "max": 2226.878802888334,
+            "values": [
+              2215.2851671863045,
+              2223.077210684569,
+              2226.878802888334
+            ]
+          }
+        },
+        "warm_gpu_no_kv": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            73728
+          ],
+          "cache_hit_tokens": [
+            0
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 2226.4708748540547,
+            "min": 2222.916146512389,
+            "max": 2235.06541404217,
+            "values": [
+              2222.916146512389,
+              2226.4708748540547,
+              2235.06541404217
+            ]
+          },
+          "decode_tps": {
+            "median": 77.70525287509436,
+            "min": 77.38794044490646,
+            "max": 80.61653506661513,
+            "values": [
+              77.38794044490646,
+              77.70525287509436,
+              80.61653506661513
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 33.114289,
+            "min": 32.986954,
+            "max": 33.167243,
+            "values": [
+              32.986954,
+              33.114289,
+              33.167243
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.576131999999999,
+            "min": 6.3386499999999995,
+            "max": 6.603096,
+            "values": [
+              6.3386499999999995,
+              6.576131999999999,
+              6.603096
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 33.173856607987545,
+            "min": 33.06463397201151,
+            "max": 33.230900462018326,
+            "values": [
+              33.06463397201151,
+              33.173856607987545,
+              33.230900462018326
+            ]
+          },
+          "wall_seconds": {
+            "median": 39.65169169998262,
+            "min": 39.52269173000241,
+            "max": 39.84534639597405,
+            "values": [
+              39.52269173000241,
+              39.65169169998262,
+              39.84534639597405
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 2226.4708748540547,
+            "min": 2222.916146512389,
+            "max": 2235.06541404217,
+            "values": [
+              2222.916146512389,
+              2226.4708748540547,
+              2235.06541404217
+            ]
+          }
+        },
+        "warm_64k_prefix_plus_8k": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            8192
+          ],
+          "cache_hit_tokens": [
+            65536
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 1744.9007129768256,
+            "min": 1743.7656440278688,
+            "max": 1745.3356692537773,
+            "values": [
+              1743.7656440278688,
+              1744.9007129768256,
+              1745.3356692537773
+            ]
+          },
+          "decode_tps": {
+            "median": 78.01577934023078,
+            "min": 78.0105508125005,
+            "max": 79.13840424144678,
+            "values": [
+              78.0105508125005,
+              78.01577934023078,
+              79.13840424144678
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 4.694823,
+            "min": 4.693653,
+            "max": 4.6978789999999995,
+            "values": [
+              4.693653,
+              4.694823,
+              4.6978789999999995
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.549957,
+            "min": 6.457042,
+            "max": 6.550396,
+            "values": [
+              6.457042,
+              6.549957,
+              6.550396
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 4.705324527982157,
+            "min": 4.704047509003431,
+            "max": 4.707723575003911,
+            "values": [
+              4.704047509003431,
+              4.705324527982157,
+              4.707723575003911
+            ]
+          },
+          "wall_seconds": {
+            "median": 11.263225139991846,
+            "min": 11.175440397986677,
+            "max": 11.264090870972723,
+            "values": [
+              11.175440397986677,
+              11.263225139991846,
+              11.264090870972723
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps": {
+            "median": 1744.9007129768256,
+            "min": 1743.7656440278688,
+            "max": 1745.3356692537773,
+            "values": [
+              1743.7656440278688,
+              1744.9007129768256,
+              1745.3356692537773
+            ]
+          }
+        },
+        "warm_full_72k_prefix": {
+          "samples": 3,
+          "actual_prefill_tokens": [
+            5
+          ],
+          "cache_hit_tokens": [
+            73723
+          ],
+          "output_tokens": [
+            512
+          ],
+          "cache_condition_consistent": true,
+          "raw_prefill_tps": {
+            "median": 84.94300324482273,
+            "min": 82.05195529809475,
+            "max": 85.43941491088668,
+            "values": [
+              82.05195529809475,
+              84.94300324482273,
+              85.43941491088668
+            ]
+          },
+          "decode_tps": {
+            "median": 77.43620983849019,
+            "min": 77.332322413737,
+            "max": 77.73876640596036,
+            "values": [
+              77.332322413737,
+              77.43620983849019,
+              77.73876640596036
+            ]
+          },
+          "server_prefill_seconds": {
+            "median": 0.058863,
+            "min": 0.058521000000000004,
+            "max": 0.060937,
+            "values": [
+              0.058521000000000004,
+              0.058863,
+              0.060937
+            ]
+          },
+          "server_decode_seconds": {
+            "median": 6.598979999999999,
+            "min": 6.573296999999999,
+            "max": 6.607845,
+            "values": [
+              6.573296999999999,
+              6.598979999999999,
+              6.607845
+            ]
+          },
+          "first_nonempty_content_seconds": {
+            "median": 0.07013745798030868,
+            "min": 0.06925261399010196,
+            "max": 0.07527023402508348,
+            "values": [
+              0.06925261399010196,
+              0.07013745798030868,
+              0.07527023402508348
+            ]
+          },
+          "wall_seconds": {
+            "median": 6.685883866040967,
+            "min": 6.652059320011176,
+            "max": 6.688205090002157,
+            "values": [
+              6.652059320011176,
+              6.685883866040967,
+              6.688205090002157
+            ]
+          },
+          "drafted_tokens": [
+            null,
+            null,
+            null
+          ],
+          "accepted_draft_tokens": [
+            null,
+            null,
+            null
+          ],
+          "draft_acceptance_ratio": null,
+          "prefill_tps_note": "Too few newly evaluated tokens to estimate long-input prefill throughput; raw short-stage rates retained separately."
+        }
+      },
+      "checks": [
+        {
+          "path": "/Users/rocky/Sites/willdeep-rs/docs/verification/q4-gemma4-96k-2026-11-04/raw/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/report.json",
+          "status": "failed",
+          "summary": {
+            "passed": 13,
+            "failed": 1,
+            "not_run": 0
+          },
+          "checks": [
+            {
+              "name": "configuration",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {
+                "model_alias": "gemma-4-26b-a4b-q3",
+                "expected_model_file": "gemma-4-26B-A4B-it-UD-Q3_K_M.gguf",
+                "service": "llama-qwen38-cuda.service",
+                "legacy_aliases": [
+                  "qwen3.6-35b-a3b",
+                  "qwen3.8-27b"
+                ],
+                "sandbox_image": "python:3.12.12-slim-bookworm"
+              }
+            },
+            {
+              "name": "authentication",
+              "status": "passed",
+              "elapsed_seconds": 0.0,
+              "evidence": {}
+            },
+            {
+              "name": "service_active",
+              "status": "passed",
+              "elapsed_seconds": 0.007,
+              "evidence": {
+                "command": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "active\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.007
+                }
+              }
+            },
+            {
+              "name": "health",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "response": {
+                  "status": "ok"
+                }
+              }
+            },
+            {
+              "name": "loaded_model",
+              "status": "passed",
+              "elapsed_seconds": 0.001,
+              "evidence": {
+                "expected_model_file": "gemma-4-26B-A4B-it-UD-Q3_K_M.gguf",
+                "model_path": "/models/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf"
+              }
+            },
+            {
+              "name": "chat_ok",
+              "status": "passed",
+              "elapsed_seconds": 0.126,
+              "evidence": {
+                "requested_model": "gemma-4-26b-a4b-q3",
+                "content": "OK",
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_1",
+              "status": "passed",
+              "elapsed_seconds": 0.032,
+              "evidence": {
+                "requested_model": "qwen3.6-35b-a3b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "legacy_alias_2",
+              "status": "passed",
+              "elapsed_seconds": 0.031,
+              "evidence": {
+                "requested_model": "qwen3.8-27b",
+                "content": "OK",
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 2,
+                  "prompt_tokens": 22,
+                  "total_tokens": 24,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 17
+                  }
+                }
+              }
+            },
+            {
+              "name": "forced_tool_add",
+              "status": "passed",
+              "elapsed_seconds": 0.2,
+              "evidence": {
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 96,
+                  "total_tokens": 113,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "add",
+                      "arguments": "{\"a\":19,\"b\":23}"
+                    },
+                    "id": "SgDZ5G0wW0QmKTMpc45GR8oVooBKNoNK"
+                  }
+                ],
+                "tool_result": 42
+              }
+            },
+            {
+              "name": "tool_round_trip",
+              "status": "passed",
+              "elapsed_seconds": 0.353,
+              "evidence": {
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 39,
+                  "prompt_tokens": 177,
+                  "total_tokens": 216,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 91
+                  }
+                },
+                "content": "{\n  \"result\": 42,\n  \"receipt\": \"c09db447d60dbf50\"\n}",
+                "expected_tool_response": {
+                  "result": 42,
+                  "receipt": "c09db447d60dbf50"
+                }
+              }
+            },
+            {
+              "name": "json_object",
+              "status": "passed",
+              "elapsed_seconds": 0.17,
+              "evidence": {
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 17,
+                  "prompt_tokens": 32,
+                  "total_tokens": 49,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "content": "{\n  \"result\": 42\n}"
+              }
+            },
+            {
+              "name": "sandbox_availability",
+              "status": "passed",
+              "elapsed_seconds": 0.424,
+              "evidence": {
+                "image_inspect": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.015
+                },
+                "image": "python:3.12.12-slim-bookworm",
+                "image_id": "sha256:9cb180cb36bd45dc786105b834d3cb5f3b1d69a6a63c79ca10fc64f108aa649a",
+                "probe": {
+                  "exit_code": 0,
+                  "timed_out": false,
+                  "stdout": "{\"sandbox_ready\": true, \"python\": \"3.12.12\"}\n",
+                  "stderr": "",
+                  "output_truncated": false,
+                  "elapsed_seconds": 0.397,
+                  "security_args": [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--pull",
+                    "never",
+                    "--name",
+                    "willdeep-accept-2280303-c941657c4e05",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--pids-limit",
+                    "64",
+                    "--memory",
+                    "256m",
+                    "--memory-swap",
+                    "256m",
+                    "--cpus",
+                    "1",
+                    "--tmpfs",
+                    "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+                    "--ipc",
+                    "none",
+                    "--user",
+                    "65534:65534",
+                    "--workdir",
+                    "/tmp",
+                    "--env",
+                    "HOME=/tmp",
+                    "--env",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "--entrypoint",
+                    "python3",
+                    "python:3.12.12-slim-bookworm",
+                    "-I",
+                    "-c",
+                    "import json,sys; assert sys.version_info.major == 3 and sys.flags.isolated; print(json.dumps({\"sandbox_ready\": True, \"python\": sys.version.split()[0]}))"
+                  ],
+                  "cleanup": {
+                    "exit_code": 0,
+                    "timed_out": false,
+                    "stdout": "",
+                    "stderr": "Error response from daemon: No such container: willdeep-accept-2280303-c941657c4e05\n",
+                    "output_truncated": false,
+                    "elapsed_seconds": 0.011
+                  }
+                },
+                "python": "3.12.12"
+              }
+            },
+            {
+              "name": "programming_dedupe",
+              "status": "passed",
+              "elapsed_seconds": 2.467,
+              "evidence": {
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 251,
+                  "prompt_tokens": 275,
+                  "total_tokens": 526,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 1
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/fixture_programming_dedupe",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/fixture_programming_dedupe/solution.py",
+                "source_bytes": 846,
+                "source_sha256": "c47967037f1754b4bd579b964681e142fca6e8c087d76032dc5b2e1f9932bf04",
+                "fixed_tests_sha256": "7a4fdabf0a0d38ec7be8563375e0bbd398cb091ffe4483cf37cd30c61e853b80",
+                "expected_tests": 8,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/programming_dedupe.sandbox.json",
+                "exit_code": 0,
+                "unittest": {
+                  "errors": 0,
+                  "failures": 0,
+                  "skipped": 0,
+                  "successful": true,
+                  "tests_run": 8
+                }
+              }
+            },
+            {
+              "name": "programming_decimal_refunds",
+              "status": "failed",
+              "error": "GemmaAcceptance::CheckFailure: 固定 unittest 验收失败，详见 sandbox 输出",
+              "elapsed_seconds": 6.933,
+              "evidence": {
+                "actual_response_model": "gemma-4-26b-a4b-q3",
+                "expected_response_model": "gemma-4-26b-a4b-q3",
+                "usage": {
+                  "completion_tokens": 841,
+                  "prompt_tokens": 392,
+                  "total_tokens": 1233,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 24
+                  }
+                },
+                "fixture_dir": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/fixture_programming_decimal_refunds",
+                "source_file": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/fixture_programming_decimal_refunds/solution.py",
+                "source_bytes": 3099,
+                "source_sha256": "2c49f4c700bd15e86205d591d989065ede30bf828074b0ca0aceab97a630a25a",
+                "fixed_tests_sha256": "0ed63728cbd21a4f1cac6de2a4666679a71918d1b783b4b2bbb9daefebbfb0e8",
+                "expected_tests": 9,
+                "sandbox_output": "/root/benchmarks/gemma4-96k-70043de5/runs/26b-baseline/checks-20261104T160541Z-20261105-2280303-fmwn77/programming_decimal_refunds.sandbox.json",
+                "exit_code": 1,
+                "unittest": {
+                  "errors": 1,
+                  "failures": 2,
+                  "skipped": 0,
+                  "successful": false,
+                  "tests_run": 9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "relative_change_percent": {
+    "gemma4-26b-a4b-q3_vs_qwen36-35b-a3b": {
+      "cold_first_request_no_kv": {
+        "prefill_tps": 47.49605907943477,
+        "decode_tps": 10.855078512276183,
+        "first_nonempty_content_seconds": -32.19756779466826,
+        "wall_seconds": -29.131372001867682
+      },
+      "warm_gpu_no_kv": {
+        "prefill_tps": 47.61173039227871,
+        "decode_tps": 11.155098468218094,
+        "first_nonempty_content_seconds": -32.261191127351076,
+        "wall_seconds": -29.54980104448094
+      },
+      "warm_64k_prefix_plus_8k": {
+        "prefill_tps": 31.342502156098305,
+        "decode_tps": 12.170079895180974,
+        "first_nonempty_content_seconds": -23.853826373483543,
+        "wall_seconds": -16.766412007939056
+      },
+      "warm_full_72k_prefix": {
+        "prefill_tps": null,
+        "decode_tps": 10.992668563929575,
+        "first_nonempty_content_seconds": 31.88279431114369,
+        "wall_seconds": -9.399684377372497
+      }
+    },
+    "gemma4-12b-qat-mtp-n2_vs_gemma4-26b-a4b-q3": {
+      "cold_first_request_no_kv": {
+        "prefill_tps": 0.10714368506661298,
+        "decode_tps": 12.945206090392581,
+        "first_nonempty_content_seconds": -0.10207355091848003,
+        "wall_seconds": -2.178614595703543
+      },
+      "warm_gpu_no_kv": {
+        "prefill_tps": -0.20332558650603128,
+        "decode_tps": 11.308221104874416,
+        "first_nonempty_content_seconds": 0.20903665739973043,
+        "wall_seconds": -1.468870154115498
+      },
+      "warm_64k_prefix_plus_8k": {
+        "prefill_tps": -6.619411721883628,
+        "decode_tps": 3.878878652655149,
+        "first_nonempty_content_seconds": 7.090160285786862,
+        "wall_seconds": 0.8167605177957782
+      },
+      "warm_full_72k_prefix": {
+        "prefill_tps": null,
+        "decode_tps": 11.052733968742912,
+        "first_nonempty_content_seconds": 54.00814931642364,
+        "wall_seconds": -9.343088595584481
+      }
+    },
+    "gemma4-12b-qat-mtp-n2_vs_gemma4-12b-qat": {
+      "cold_first_request_no_kv": {
+        "prefill_tps": -2.6731075628904644,
+        "decode_tps": 46.00030670153139,
+        "first_nonempty_content_seconds": 2.745163870067624,
+        "wall_seconds": -4.3365053340760245
+      },
+      "warm_gpu_no_kv": {
+        "prefill_tps": -2.433144285673128,
+        "decode_tps": 43.259860549305884,
+        "first_nonempty_content_seconds": 2.501551059700713,
+        "wall_seconds": -4.528749264822651
+      },
+      "warm_64k_prefix_plus_8k": {
+        "prefill_tps": -2.08567788111359,
+        "decode_tps": 35.04755225657335,
+        "first_nonempty_content_seconds": 2.128376985728786,
+        "wall_seconds": -15.631864720633182
+      },
+      "warm_full_72k_prefix": {
+        "prefill_tps": null,
+        "decode_tps": 44.01469555740598,
+        "first_nonempty_content_seconds": 9.70253509975434,
+        "wall_seconds": -30.056495209983137
+      }
+    }
+  },
+  "limitations": [
+    "Three rounds per condition; no claim of statistical significance.",
+    "Qwen throughput is the previous verified baseline, not rerun in this trial.",
+    "Each model uses its own template/tokenizer; equal token counts do not guarantee equal text coverage.",
+    "All Gemma formal runs have the same prompt token-array hash.",
+    "First content is a client SSE observation, not strict GPU TTFT.",
+    "Cold means the first client inference after restart/readiness, with internal engine warmup still enabled.",
+    "Request time excludes weight loading and restart/readiness time.",
+    "Full-prefix reuse recomputes too few tokens to estimate long-input prefill.",
+    "GPU values are endpoint samples; full GPU layer offload is not proven by these records.",
+    "Two one-shot coding tasks cannot rank overall coding ability; Qwen and Gemma template settings differ."
+  ],
+  "restoration": "raw/restoration-after-26b.json",
+  "final_verification": "raw/final-verification.json"
+}
