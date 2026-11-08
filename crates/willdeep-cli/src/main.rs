@@ -32,6 +32,7 @@ mod favorites_plugin;
 mod federation;
 mod feedback_cmd;
 mod feedback_review_cmd;
+mod gallery;
 mod handoff_cmd;
 mod harness;
 mod i18n;

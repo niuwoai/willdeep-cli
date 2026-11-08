@@ -1,12 +1,6 @@
 {
-<<<<<<< origin/main
-  "version": "0.147.0-rc9",
+  "version": "0.147.0-rc10",
   "repository": "niuwoai/willdeep-cli",
-  "tag": "v0.147.0-rc9",
-=======
-  "version": "0.147.0-rc6",
-  "repository": "niuwoai/willdeep-cli",
-  "tag": "v0.147.0-rc6",
->>>>>>> a9331799
+  "tag": "v0.147.0-rc10",
   "assets": {}
 }

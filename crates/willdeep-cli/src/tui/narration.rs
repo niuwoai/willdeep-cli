@@ -106,8 +106,8 @@ impl App {
     }
 
     /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
-    /// 只调 `session_transcript` 会漏掉首屏，daemon 的 display session 那条
-    /// 路径就是这样把欢迎语又覆盖掉的——列表非空、屏幕空白。
+    /// 只投影消息会漏掉首屏，daemon 的 display session 那条路径就是这样把
+    /// 欢迎语又覆盖掉的——列表非空、屏幕空白。
     pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
         let (rows, attachments) = super::plan_ui::project_session(
             &session.messages,
@@ -228,7 +228,9 @@ impl App {
     ///
     /// 压缩发生在「轮次开始」之后、正文之前，期间聊天区一行都不长，用户会以为
     /// 卡住了。活动区那行照旧记（`record_progress`），这里只管聊天区这一行。
+    /// 这一行说的比等待动画具体，所以动画让位，不两行叠在一起。
     pub(super) fn note_compression_started(&mut self) {
+        self.dismiss_awaiting_reply();
         self.compression = Some(CompressionNotice {
             started: Instant::now(),
             done: false,
@@ -1209,6 +1211,91 @@ fn unshown_reply(final_text: &str, narrated: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 用户消息正下方那一行等待动画：第 0 秒一个点，之后每秒多一个，三个一轮。
+    fn waiting_dots(app: &mut App, elapsed: Duration) -> Option<String> {
+        app.awaiting_since = Some(Instant::now() - elapsed);
+        app.prepare_transcript_frame();
+        app.transcript_rows
+            .iter()
+            .find(|row| !row.is_empty() && row.chars().all(|character| character == '.'))
+            .cloned()
+    }
+
+    /// 发出去之后、模型开口之前，用户消息下面有一行 `.` `..` `...` 在转。
+    /// 思考行、正文、压缩行一到，它就消失，而且不写进记录。
+    #[test]
+    fn dots_cycle_under_the_user_message_until_the_model_speaks() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.transcript_width = 80;
+        app.viewport_height = 12;
+        app.input.insert("别磨叽了，直接合给 main，提交啊。");
+        app.take_prompt_for_submission();
+
+        for (elapsed, expected) in [
+            (Duration::from_millis(200), "."),
+            (Duration::from_secs(1), ".."),
+            (Duration::from_secs(2), "..."),
+            (Duration::from_secs(3), "."),
+        ] {
+            assert_eq!(waiting_dots(&mut app, elapsed).as_deref(), Some(expected));
+        }
+        // 同一轮不留空行，等待动画紧贴在用户消息正下方。
+        let rows = &app.transcript_rows;
+        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        assert_eq!(rows[user + 1], ".", "{rows:?}");
+
+        // 思考行一落进记录，动画就撤，记录里不留那几个点。
+        app.stream_transient(StreamKind::Reasoning, "先看分支");
+        app.prepare_transcript_frame();
+        assert!(app.awaiting_since.is_none());
+        assert!(
+            app.transcript_rows
+                .iter()
+                .all(|row| { row.is_empty() || row.chars().any(|character| character != '.') }),
+            "{:?}",
+            app.transcript_rows
+        );
+        assert!(app.transcript.iter().all(|row| row != "."));
+
+        // 正文是第一份可见输出时同样撤掉。
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.transcript_width = 80;
+        app.input.insert("继续");
+        app.take_prompt_for_submission();
+        assert!(waiting_dots(&mut app, Duration::ZERO).is_some());
+        app.note_narration("好的");
+        app.prepare_transcript_frame();
+        assert!(app.awaiting_since.is_none());
+        assert!(app.transcript_rows.iter().all(|row| row != "."));
+
+        // 压缩行说得更具体，动画给它让位，不两行叠着。
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.transcript_width = 80;
+        app.input.insert("再来");
+        app.take_prompt_for_submission();
+        app.note_compression_started();
+        app.prepare_transcript_frame();
+        assert!(app.awaiting_since.is_none());
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
+        );
+
+        // 轮次结束时还没等到回复，动画也不能一直转下去。
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.input.insert("停");
+        app.take_prompt_for_submission();
+        app.finish_turn();
+        assert!(app.awaiting_reply_row().is_none());
+
+        // 只改状态的斜杠命令不回显成用户消息，也就没有什么可等的。
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.input.insert("/model");
+        app.take_prompt_for_submission();
+        assert!(app.awaiting_since.is_none());
+    }
 
     /// 这一帧里某条工具记录对应的屏幕行。`collapse` 选「收起」那一行，否则选工具行本身。
     /// 读的是点击实际匹配的命中表，不是记录位置。

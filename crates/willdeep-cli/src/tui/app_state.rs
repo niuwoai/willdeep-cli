@@ -291,6 +291,7 @@ impl App {
         self.attachments.clear();
         self.sent_attachments.clear();
         self.viewed_attachment.clear();
+        self.publish_gallery();
         self.attachment_panel = None;
         self.selected_attachment = 0;
         self.composer_expanded = false;
@@ -2031,6 +2032,7 @@ impl App {
         self.attachments.remove(index);
         self.selected_attachment = index.saturating_sub(1);
         self.notice = Some("Attachment removed".to_owned());
+        self.publish_gallery();
     }
     pub(super) fn paste_clipboard_image(&mut self) {
         match clipboard_image() {

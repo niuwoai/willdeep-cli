@@ -348,6 +348,7 @@ pub(super) struct FoldedFrame {
     pub(super) attachment_hits: Vec<(usize, usize, usize)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_with_user_folds(
     rows: &[String],
     labels: &[Option<String>],
