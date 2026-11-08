@@ -416,7 +416,9 @@ fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
             }
         }
         crate::gallery::GalleryRequest::Delete { id } => {
-            let Ok(uuid) = uuid::Uuid::parse_str(&id) else { return };
+            let Ok(uuid) = uuid::Uuid::parse_str(&id) else {
+                return;
+            };
             if let Some(index) = app.attachments.iter().position(|item| item.id == uuid) {
                 app.attachments.remove(index);
                 app.selected_attachment = app

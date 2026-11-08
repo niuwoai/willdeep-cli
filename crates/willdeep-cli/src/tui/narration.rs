@@ -1250,9 +1250,9 @@ mod tests {
         app.prepare_transcript_frame();
         assert!(app.awaiting_since.is_none());
         assert!(
-            app.transcript_rows.iter().all(|row| {
-                row.is_empty() || row.chars().any(|character| character != '.')
-            }),
+            app.transcript_rows
+                .iter()
+                .all(|row| { row.is_empty() || row.chars().any(|character| character != '.') }),
             "{:?}",
             app.transcript_rows
         );
@@ -1277,7 +1277,11 @@ mod tests {
         app.note_compression_started();
         app.prepare_transcript_frame();
         assert!(app.awaiting_since.is_none());
-        assert!(app.transcript_rows.iter().any(|row| row.contains("正在压缩上下文")));
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
+        );
 
         // 轮次结束时还没等到回复，动画也不能一直转下去。
         let mut app = App::new(Vec::new(), Language::ZhCn);

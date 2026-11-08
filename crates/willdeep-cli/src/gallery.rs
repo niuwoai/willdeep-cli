@@ -45,7 +45,11 @@ pub(crate) fn announce_list(out: &mut impl Write, images: &[GalleryImage]) -> io
         .filter(|image| is_identifier(&image.id))
         .map(|image| serde_json::json!({"id": image.id, "name": image.name, "mutable": image.mutable}))
         .collect();
-    announce(out, "list", &serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned()))
+    announce(
+        out,
+        "list",
+        &serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned()),
+    )
 }
 
 /// Tells the terminal a paste became a draft attachment.
@@ -55,7 +59,11 @@ pub(crate) fn acknowledge(out: &mut impl Write, nonce: &str, id: Uuid) -> io::Re
 
 /// Tells the terminal a paste was refused, so it can drop the thumbnail it showed early.
 pub(crate) fn reject(out: &mut impl Write, nonce: &str, reason: &str) -> io::Result<()> {
-    let reason: String = reason.chars().filter(|ch| *ch >= ' ' && *ch != ';').take(80).collect();
+    let reason: String = reason
+        .chars()
+        .filter(|ch| *ch >= ' ' && *ch != ';')
+        .take(80)
+        .collect();
     announce(out, "reject", &format!("{nonce};{reason}"))
 }
 
@@ -82,7 +90,9 @@ pub(crate) fn announce_blob(out: &mut impl Write, id: &str, png: &[u8]) -> io::R
 
 fn is_identifier(value: &str) -> bool {
     (1..=64).contains(&value.len())
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 /// Bytes of one paste that have arrived so far.
@@ -100,7 +110,10 @@ pub(crate) struct GalleryFilter {
 
 impl GalleryFilter {
     pub(crate) fn new() -> Self {
-        Self { pending: Vec::new(), pastes: Vec::new() }
+        Self {
+            pending: Vec::new(),
+            pastes: Vec::new(),
+        }
     }
 
     /// Returns the bytes a key parser should see, plus any request that became complete.
@@ -158,12 +171,16 @@ impl GalleryFilter {
         }
     }
 
-    fn decode_drop<'a>(&mut self, fields: &mut impl Iterator<Item = &'a str>) -> Option<GalleryRequest> {
+    fn decode_drop<'a>(
+        &mut self,
+        fields: &mut impl Iterator<Item = &'a str>,
+    ) -> Option<GalleryRequest> {
         let nonce = fields.next()?;
         let index: usize = fields.next()?.parse().ok()?;
         let total: usize = fields.next()?.parse().ok()?;
         let piece = fields.collect::<Vec<_>>().join(";");
-        if !is_identifier(nonce) || piece.is_empty() || total == 0 || total > 999 || index >= total {
+        if !is_identifier(nonce) || piece.is_empty() || total == 0 || total > 999 || index >= total
+        {
             return None;
         }
         if !self.pastes.iter().any(|paste| paste.nonce == nonce) {
@@ -181,10 +198,16 @@ impl GalleryFilter {
         if paste.pieces.iter().any(Option::is_none) {
             return None;
         }
-        let joined: String = paste.pieces.iter().filter_map(|piece| piece.as_deref()).collect();
+        let joined: String = paste
+            .pieces
+            .iter()
+            .filter_map(|piece| piece.as_deref())
+            .collect();
         let nonce = paste.nonce.clone();
         self.pastes.retain(|paste| paste.nonce != nonce);
-        let png = base64::engine::general_purpose::STANDARD.decode(joined).ok()?;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(joined)
+            .ok()?;
         if png.is_empty() || png.len() > MAX_IMAGE_BYTES {
             return None;
         }
@@ -194,7 +217,10 @@ impl GalleryFilter {
 
 fn frame_end(bytes: &[u8]) -> Option<usize> {
     // Only BEL. The string terminator's second byte also occurs inside base64.
-    bytes.iter().position(|byte| *byte == 0x07).map(|index| index + 1)
+    bytes
+        .iter()
+        .position(|byte| *byte == 0x07)
+        .map(|index| index + 1)
 }
 
 /// Reads the terminal's input from the front of a pipe and writes everything that is not a
@@ -264,7 +290,11 @@ impl GalleryForwarder {
 
 fn duplicate(fd: RawFd) -> io::Result<RawFd> {
     let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
-    if copy < 0 { Err(io::Error::last_os_error()) } else { Ok(copy) }
+    if copy < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(copy)
+    }
 }
 
 /// The images currently on screen, in the order the column should show them.
@@ -313,9 +343,8 @@ mod tests {
     #[test]
     fn a_delete_between_keystrokes_never_reaches_the_parser() {
         let mut filter = GalleryFilter::new();
-        let (plain, requests) = filter.push(
-            b"ab\x1b]7771;v=1;delete;11111111-2222-3333-4444-555555555555\x07c",
-        );
+        let (plain, requests) =
+            filter.push(b"ab\x1b]7771;v=1;delete;11111111-2222-3333-4444-555555555555\x07c");
         assert_eq!(plain, b"abc");
         match requests.as_slice() {
             [GalleryRequest::Delete { id }] => {
@@ -344,7 +373,11 @@ mod tests {
         let mut filter = GalleryFilter::new();
         let frame = format!("\x1b]7771;v=1;drop;nonce1;0;2;{first}\x07");
         let (plain, requests) = filter.push(frame.as_bytes());
-        assert!(plain.is_empty(), "leaked {:?}", String::from_utf8_lossy(&plain));
+        assert!(
+            plain.is_empty(),
+            "leaked {:?}",
+            String::from_utf8_lossy(&plain)
+        );
         assert!(requests.is_empty(), "completed early: {requests:?}");
         let frame = format!("\x1b]7771;v=1;drop;nonce1;1;2;{second}\x07");
         let (plain, requests) = filter.push(frame.as_bytes());
