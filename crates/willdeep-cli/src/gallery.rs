@@ -5,15 +5,19 @@
 //! those bytes after it has seen `hello`, and `hello` is only written once this filter is
 //! installed in front of the terminal's own input reader.
 
-use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::{self, Write};
 
 use base64::Engine;
+#[cfg(unix)]
 use uuid::Uuid;
 use willdeep_core::MessageAttachment;
 
+#[cfg(unix)]
 const OSC: &[u8] = b"\x1b]7771;";
 const VERSION: &str = "v=1";
+#[cfg(unix)]
 const MAX_FRAME: usize = 120_000;
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -26,6 +30,8 @@ pub(crate) struct GalleryImage {
 }
 
 /// What the terminal asked for, pulled out of the input stream before any key parser sees it.
+/// Nothing constructs one on Windows: the input splice that produces them is unix-only.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Debug)]
 pub(crate) enum GalleryRequest {
     Paste { nonce: String, png: Vec<u8> },
@@ -52,12 +58,15 @@ pub(crate) fn announce_list(out: &mut impl Write, images: &[GalleryImage]) -> io
     )
 }
 
-/// Tells the terminal a paste became a draft attachment.
+/// Tells the terminal a paste became a draft attachment. Only the unix request handler calls it.
+#[cfg(unix)]
 pub(crate) fn acknowledge(out: &mut impl Write, nonce: &str, id: Uuid) -> io::Result<()> {
     announce(out, "ack", &format!("{nonce};{id}"))
 }
 
 /// Tells the terminal a paste was refused, so it can drop the thumbnail it showed early.
+/// Only the unix request handler calls it.
+#[cfg(unix)]
 pub(crate) fn reject(out: &mut impl Write, nonce: &str, reason: &str) -> io::Result<()> {
     let reason: String = reason
         .chars()
@@ -67,7 +76,8 @@ pub(crate) fn reject(out: &mut impl Write, nonce: &str, reason: &str) -> io::Res
     announce(out, "reject", &format!("{nonce};{reason}"))
 }
 
-/// Confirms that a draft attachment is gone.
+/// Confirms that a draft attachment is gone. Only the unix request handler calls it.
+#[cfg(unix)]
 pub(crate) fn confirm_removed(out: &mut impl Write, id: &str) -> io::Result<()> {
     announce(out, "remove", id)
 }
@@ -95,7 +105,9 @@ fn is_identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-/// Bytes of one paste that have arrived so far.
+/// Bytes of one paste that have arrived so far. Only the input filter reassembles pastes, and
+/// that filter is unix-only.
+#[cfg(unix)]
 struct PartialPaste {
     nonce: String,
     total: usize,
@@ -103,11 +115,13 @@ struct PartialPaste {
 }
 
 /// Pulls gallery frames out of the terminal's input and leaves every other byte untouched.
+#[cfg(unix)]
 pub(crate) struct GalleryFilter {
     pending: Vec<u8>,
     pastes: Vec<PartialPaste>,
 }
 
+#[cfg(unix)]
 impl GalleryFilter {
     pub(crate) fn new() -> Self {
         Self {
@@ -215,6 +229,7 @@ impl GalleryFilter {
     }
 }
 
+#[cfg(unix)]
 fn frame_end(bytes: &[u8]) -> Option<usize> {
     // Only BEL. The string terminator's second byte also occurs inside base64.
     bytes
@@ -229,12 +244,19 @@ fn frame_end(bytes: &[u8]) -> Option<usize> {
 /// The two ends trade places: the program's standard input becomes the filtered end, and this
 /// reads the original. A program that never installs the filter never receives gallery bytes,
 /// because the terminal waits for `hello` first.
+///
+/// Unix only. The splice uses `pipe` and `dup2`, and Windows keeps compiling without the column:
+/// `install` there returns an error, so the caller never writes `hello` and the terminal never
+/// sends gallery bytes.
+#[cfg(unix)]
 pub(crate) struct GalleryInput {
     _owned: std::fs::File,
 }
 
+#[cfg(unix)]
 impl GalleryInput {
     pub(crate) fn install() -> io::Result<(Self, GalleryForwarder)> {
+        use std::os::fd::{AsRawFd, FromRawFd};
         let mut ends = [0; 2];
         if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
@@ -257,6 +279,7 @@ impl GalleryInput {
     }
 }
 
+#[cfg(unix)]
 pub(crate) struct GalleryForwarder {
     input: std::fs::File,
     sink: std::fs::File,
@@ -266,6 +289,7 @@ pub(crate) struct GalleryForwarder {
     waiting: std::collections::VecDeque<GalleryRequest>,
 }
 
+#[cfg(unix)]
 impl GalleryForwarder {
     /// Blocks until the program produces a complete request or the input closes.
     pub(crate) fn recv(&mut self) -> io::Result<Option<GalleryRequest>> {
@@ -288,12 +312,36 @@ impl GalleryForwarder {
     }
 }
 
-fn duplicate(fd: RawFd) -> io::Result<RawFd> {
+#[cfg(unix)]
+fn duplicate(fd: std::os::fd::RawFd) -> io::Result<std::os::fd::RawFd> {
+    use std::os::fd::RawFd;
     let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
     if copy < 0 {
         Err(io::Error::last_os_error())
     } else {
-        Ok(copy)
+        Ok(copy as RawFd)
+    }
+}
+
+/// Windows has no image column. Reporting an error keeps the caller from writing `hello`, so the
+/// terminal never sends gallery bytes to a build that cannot filter them. The event loop only calls
+/// `install` on unix, so these stay unconstructed here.
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(crate) struct GalleryInput;
+
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(crate) struct GalleryForwarder;
+
+#[cfg(not(unix))]
+#[allow(dead_code)]
+impl GalleryInput {
+    pub(crate) fn install() -> io::Result<(Self, GalleryForwarder)> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the terminal image column needs a unix pipe",
+        ))
     }
 }
 
@@ -313,7 +361,8 @@ pub(crate) fn gallery_images(drafts: &[crate::editor::DraftAttachment]) -> Vec<G
 }
 
 /// Turns a pasted PNG into a draft image. The dimensions come from the file, not from anyone's
-/// word, and a file that is not a PNG is refused.
+/// word, and a file that is not a PNG is refused. Only the unix request handler calls it.
+#[cfg(unix)]
 pub(crate) fn attachment_from_png(png: &[u8]) -> Option<crate::editor::DraftAttachment> {
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
     Some(crate::editor::DraftAttachment {
@@ -328,7 +377,7 @@ pub(crate) fn attachment_from_png(png: &[u8]) -> Option<crate::editor::DraftAtta
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

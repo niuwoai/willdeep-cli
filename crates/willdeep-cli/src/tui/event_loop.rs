@@ -398,6 +398,8 @@ async fn open_external_editor(
 }
 
 /// Applies one request from the terminal's image column and tells the column what changed.
+/// Requests only arrive through the unix input splice.
+#[cfg(unix)]
 fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
     use std::io::Write;
     let mut out = io::stdout();
@@ -527,6 +529,8 @@ pub(super) async fn event_loop(
     let mut events = EventStream::new();
     // Sits in front of the terminal's own reader. The terminal sends gallery bytes only after it
     // has seen the hello below, so a build that never reaches this line never has to filter them.
+    // Windows has no pipe splice, so the column stays off there and no hello is written.
+    #[cfg(unix)]
     if let Ok((_, mut forwarder)) = crate::gallery::GalleryInput::install() {
         let tx = runtime.tx.clone();
         tokio::task::spawn_blocking(move || {
@@ -1995,6 +1999,7 @@ pub(super) async fn event_loop(
                 _=>{}
             }},
             Some(message)=runtime.rx.recv()=>match message {
+                #[cfg(unix)]
                 UiMessage::Gallery(request)=>handle_gallery(&mut app, request),
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
                     willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),

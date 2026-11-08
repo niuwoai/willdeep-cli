@@ -30,6 +30,14 @@ pub(in crate::daemon) fn spawn(state: Arc<ServerState>) {
 
 /// Repair projections from durable identities, never from an assistant's completion claim.
 pub(in crate::daemon) fn tick(state: &ServerState) -> Result<()> {
+    // 任务账本是整份读、整份解析的，空闲时每 250 毫秒来一遍会把 daemon 的 CPU
+    // 占住。账本里没有任务、槽位和唤醒批次时，后面每一步都是空转，这一次读取没有任何东西可修。
+    let busy = state.sessions.children.transaction(|ledger| {
+        Ok(!ledger.assignments.is_empty() || !ledger.slots.is_empty() || !ledger.wakes.is_empty())
+    })?;
+    if !busy {
+        return Ok(());
+    }
     let tasks = load_tasks(&state.tasks.path)?;
     state.sessions.children.transaction(|ledger| {
         control::sync_detachments(&state.sessions, ledger)?;
@@ -354,4 +362,26 @@ fn wake(state: &ServerState, ledger: &mut Ledger, parent: Uuid) -> Result<()> {
     state.sessions.children.persist(ledger)?;
     state.tasks.schedule_session(parent)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 没有任何子会话时，对账不该去读任务账本。那个文件是整份解析的，
+    /// 而这一轮每 250 毫秒跑一次。
+    #[test]
+    fn an_idle_ledger_skips_the_task_log() {
+        let root = std::env::temp_dir().join(format!("child-reconcile-{}", Uuid::new_v4()));
+        let sessions = crate::daemon::tests::test_runtime_session_store(&root);
+        let state = crate::daemon::tests::test_server_state(&root, sessions);
+        let tasks = root.join("tasks.json");
+        std::fs::write(&tasks, b"this is not valid json").unwrap();
+
+        tick(&state).unwrap();
+
+        // 读过就会在解析这里失败。文件原样留着，说明这一轮根本没打开它。
+        assert_eq!(std::fs::read(&tasks).unwrap(), b"this is not valid json");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
