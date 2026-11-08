@@ -923,14 +923,12 @@ async fn run() -> Result<()> {
     // place before the first reader touches stdin — the session picker below is one — so it is
     // installed here rather than in the event loop. A terminal that does not set either marker
     // never gets a hello, so it keeps an untouched stdin.
-    let _gallery_input = if interactive_tui
-        && std::io::stdout().is_terminal()
-        && crate::gallery::hosted()
-    {
-        crate::gallery::GalleryInput::install(tui_tx.clone()).ok()
-    } else {
-        None
-    };
+    let _gallery_input =
+        if interactive_tui && std::io::stdout().is_terminal() && crate::gallery::hosted() {
+            crate::gallery::GalleryInput::install(tui_tx.clone()).ok()
+        } else {
+            None
+        };
     let directory_approval = session_startup::prepare(
         &cli,
         &loaded,

@@ -82,8 +82,8 @@ pub(crate) fn confirm_removed(out: &mut impl Write, id: &str) -> io::Result<()> 
     announce(out, "remove", id)
 }
 
-/// Sends an image this process produced, such as a generated picture, so the column can show it.
-#[allow(dead_code)]
+/// Sends an image this process holds, such as a picture pasted from the TUI's own clipboard, so
+/// the column can draw a thumbnail even though it never saw the bytes itself.
 pub(crate) fn announce_blob(out: &mut impl Write, id: &str, png: &[u8]) -> io::Result<()> {
     if !is_identifier(id) || png.is_empty() || png.len() > MAX_IMAGE_BYTES {
         return Ok(());
@@ -265,9 +265,7 @@ impl GalleryFilter {
 
 #[cfg(unix)]
 fn marker_start(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .windows(OSC.len())
-        .position(|window| window == OSC)
+    bytes.windows(OSC.len()).position(|window| window == OSC)
 }
 
 /// The longest tail of `bytes` that is a proper prefix of the marker. Only that tail can begin a
@@ -629,6 +627,16 @@ mod tests {
         let (plain, requests) = filter.push(b"hello \x1b[A there");
         assert_eq!(plain, b"hello \x1b[A there");
         assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn a_blob_is_one_frame_per_piece() {
+        let mut out = Vec::new();
+        announce_blob(&mut out, "11111111-2222-3333-4444-555555555555", b"png").unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\x1b]7771;v=1;blob;11111111-2222-3333-4444-555555555555;0;1;cG5n\x07"
+        );
     }
 
     #[test]

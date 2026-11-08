@@ -33,6 +33,8 @@ impl App {
             activity_rect: Rect::default(),
             attachments: Vec::new(),
             sent_attachments: Vec::new(),
+            gallery_staged: HashSet::new(),
+            gallery_blobbed: HashSet::new(),
             viewed_attachment: Vec::new(),
             selected_attachment: 0,
             attachment_panel: None,

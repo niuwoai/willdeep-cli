@@ -411,9 +411,12 @@ fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
                 return;
             };
             let id = attachment.id;
+            // 终端从粘贴板拿到的图片它自己有像素，list 之后不必再回传。
+            app.gallery_staged.insert(id);
             if app.append_draft_attachment(attachment) {
                 let _ = crate::gallery::acknowledge(&mut out, &nonce, id);
             } else {
+                app.gallery_staged.remove(&id);
                 let _ = crate::gallery::reject(&mut out, &nonce, "limit");
             }
         }
