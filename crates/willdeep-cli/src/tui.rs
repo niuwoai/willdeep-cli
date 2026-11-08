@@ -169,6 +169,8 @@ pub enum UiMessage {
     },
     MediaResized(std::result::Result<ratatui_image::thread::ResizeResponse, String>),
     /// A paste or a delete click reported by the terminal's image column.
+    /// The input splice that sends these only exists on unix.
+    #[cfg(unix)]
     Gallery(crate::gallery::GalleryRequest),
     /// 标题摘要跑完了（`Some` 才是有结果）。摘要是一次网络往返，不能在
     /// 事件循环里直接 await——那会让整个界面在轮次收尾时卡住。
