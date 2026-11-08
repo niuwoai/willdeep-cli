@@ -453,6 +453,8 @@ pub(super) async fn event_loop(
     app.load_transcript(display.as_ref().unwrap_or(session));
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     app.transcript.extend(startup_notices(runtime, language));
+    app.transcript_attachments
+        .resize_with(app.transcript.len(), Vec::new);
     app.feedback = agent
         .feedback()
         .cloned()
@@ -720,7 +722,16 @@ pub(super) async fn event_loop(
             app.attachments = draft_attachments;
             app.selected_attachment = draft_selected_attachment;
             match result {
-                Ok(()) => app.mark_queued_prompt_sent(&queued.text),
+                Ok(()) => {
+                    app.mark_queued_prompt_sent(&queued.text);
+                    app.attach_to_latest_user_row(
+                        queued
+                            .attachments
+                            .iter()
+                            .map(|item| item.message.clone())
+                            .collect(),
+                    );
+                }
                 Err(error) => {
                     app.queued_prompts.push_front(queued);
                     app.open_prompt_queue();
@@ -1044,6 +1055,9 @@ pub(super) async fn event_loop(
                         && app.worktree_review.is_none()
                         && app.handle_chat_selection_mouse(mouse)
                     {
+                        if let Some(action) = app.pending_media_action.take() {
+                            dispatch_media_action(action, &mut app, runtime);
+                        }
                         continue;
                     }
                     match mouse.kind {

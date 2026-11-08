@@ -252,6 +252,8 @@ pub(super) async fn submit_input(
             submission_request_id(app, &prompt, &attachments, session.id, defer_until_released)?;
         // 空白会话在第一次真正提交时补写并登记，否则服务端不认这条会话。
         runtime_ui::persist_missing_core_session(session, store)?;
+        // 忙时提交走的是另一条路，归档会话同样要先解除，否则照样被拒。
+        runtime_ui::resume_archived_for_send(app, session, runtime).await?;
         crate::daemon::ensure_runtime_session(
             &runtime.home,
             session.id,
@@ -317,6 +319,11 @@ fn prepare_input_submission(app: &mut App, deferred: bool) -> (PromptEditor, boo
         app.language.text("正在提交", "submitting", "送信中")
     };
     let row = app.transcript.len();
+    // 占位行是 `You: [正在提交]`，要等提交结果回来才换成真正的回显。
+    // 这一段网络往返期间聊天区也得有动静，不能干等。
+    if !deferred {
+        app.note_awaiting_reply();
+    }
     app.append_transcript(if deferred {
         format!("System: {status}: {}", draft.text())
     } else {
@@ -340,7 +347,11 @@ fn finish_input_submission(
         Ok(()) => {
             app.runtime_queue_submission = None;
             let submitted = app.take_submitted_input();
-            app.attachments.clear();
+            // 先把附件拿出来：清掉草稿后回显那一行还要靠它们显示「附件 N」。
+            let sent_attachments = std::mem::take(&mut app.attachments)
+                .into_iter()
+                .map(|item| item.message)
+                .collect::<Vec<_>>();
             app.selected_attachment = 0;
             let message = app.language.text(
                 "已加入队列，暂不发送 · Ctrl+Q 里按 S 再发",
@@ -352,9 +363,9 @@ fn finish_input_submission(
                     terminal_safe_text(&format!("System: {message}: {submitted}"));
             } else {
                 // 串行提交期间没有其他记录插入；用既有的回显/事件认领路径替换占位。
-                app.transcript.remove(row);
-                app.message_times.remove(row);
+                app.drop_transcript_row(row);
                 app.echo_runtime_submission(&submitted);
+                app.attach_to_latest_user_row(sent_attachments);
             }
             let feedback = if deferred {
                 message.to_owned()

@@ -66,11 +66,12 @@ pub(super) fn render(
         height: app.transcript_rect.height,
     };
     app.viewport_height = app.transcript_rect.height.max(1) as usize;
-    let (transient, notice) = app.prepare_transcript_frame();
+    let (transient, notice, waiting) = app.prepare_transcript_frame();
     let max = app.max_scroll();
     app.scroll_from_bottom = app.scroll_from_bottom.min(max);
     let offset = max.saturating_sub(app.scroll_from_bottom);
-    let mut colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
+    let mut colored =
+        app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
     app.transcript_render_offset = offset;
     // 简洁 UI 同样画出选区：拖选时没有高亮，用户根本看不出选中了哪几行，
     // 只能靠松手后剪贴板里是不是真有字来猜。

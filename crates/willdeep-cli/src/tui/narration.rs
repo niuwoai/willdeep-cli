@@ -90,17 +90,62 @@ impl App {
         if self.has_visible_transcript() {
             return;
         }
-        self.transcript.retain(|row| !row.trim().is_empty());
+        // 空白行连同它的附件槽一起丢掉，两边始终逐行对齐。
+        let slots = std::mem::take(&mut self.transcript_attachments);
+        let kept = self
+            .transcript
+            .drain(..)
+            .zip(slots.into_iter().chain(std::iter::repeat(Vec::new())))
+            .filter(|(row, _)| !row.trim().is_empty())
+            .collect::<Vec<_>>();
+        self.transcript = kept.iter().map(|(row, _)| row.clone()).collect();
+        self.transcript_attachments = kept.into_iter().map(|(_, slot)| slot).collect();
         self.transcript
             .push(super::rendering::welcome_message(workspace, language));
+        self.transcript_attachments.push(Vec::new());
     }
 
     /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
     /// 只调 `session_transcript` 会漏掉首屏，daemon 的 display session 那条
     /// 路径就是这样把欢迎语又覆盖掉的——列表非空、屏幕空白。
     pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
-        self.transcript = super::plan_ui::session_transcript(session, self.language);
+        let (rows, attachments) = super::plan_ui::project_session(
+            &session.messages,
+            session.current_plan.as_ref(),
+            self.language,
+        );
+        self.transcript = rows;
+        self.transcript_attachments = attachments;
         self.ensure_welcome(&session.workspace, self.language);
+    }
+
+    /// 删掉记录里的一行，连同它的附件槽和时间一起，保持两边逐行对齐。
+    pub(super) fn drop_transcript_row(&mut self, index: usize) {
+        self.transcript.remove(index);
+        if index < self.transcript_attachments.len() {
+            self.transcript_attachments.remove(index);
+        }
+        self.message_times.remove(index);
+        self.refresh_transcript_height();
+    }
+
+    /// 把附件挂到最近一条用户消息上。发送时记录行已经写好（`You: 原文`），
+    /// 附件在这之后才对得上是哪一行。
+    pub(super) fn attach_to_latest_user_row(&mut self, attachments: Vec<MessageAttachment>) {
+        if attachments.is_empty() {
+            return;
+        }
+        if let Some(index) = self
+            .transcript
+            .iter()
+            .rposition(|row| row.starts_with("You: "))
+        {
+            self.transcript_attachments
+                .resize_with(self.transcript.len(), Vec::new);
+            self.transcript_attachments[index] = attachments;
+            // 附件不在记录文本里，渲染缓存的键感知不到，得主动作废。
+            self.transcript_render_cache = None;
+        }
     }
 }
 
@@ -202,6 +247,38 @@ impl App {
         self.compression = None;
     }
 
+    /// 用户消息已经回显、模型还一个字都没回来：记下这一刻。
+    ///
+    /// 从按下回车到 Runtime 回第一份事件之间，聊天区除了刚发出的那句什么都没有，
+    /// 看起来像卡住了。这只记起点，画面由 [`Self::awaiting_reply_row`] 每帧现画。
+    pub(super) fn note_awaiting_reply(&mut self) {
+        if self.awaiting_since.is_none() {
+            self.awaiting_since = Some(Instant::now());
+        }
+    }
+
+    /// 模型有了第一个可见动作（思考行、正文、工具、计划），等待动画到此为止。
+    pub(super) fn dismiss_awaiting_reply(&mut self) {
+        self.awaiting_since = None;
+    }
+
+    /// 挂在最后一条用户消息正下方的等待行：`.`、`..`、`...` 每秒轮换。
+    ///
+    /// 只在「最后一条是用户消息、模型还没开口」时画。思考行一落进记录，或流式
+    /// 预览已经在走，这行就不再出现。
+    pub(super) fn awaiting_reply_row(&self) -> Option<String> {
+        let started = self.awaiting_since?;
+        if !self
+            .transcript
+            .last()
+            .is_some_and(|row| row.starts_with("You: "))
+        {
+            return None;
+        }
+        let dots = started.elapsed().as_secs() % 3 + 1;
+        Some(".".repeat(dots as usize))
+    }
+
     /// 挂在最后一条用户消息正下方的压缩行。压缩中带已耗时，压完只留一句。
     /// 聊天区最后一条不是用户消息时不画：这行只回答「我刚发的那句怎么没反应」。
     pub(super) fn compression_notice_row(&self) -> Option<String> {
@@ -300,8 +377,9 @@ impl App {
             }
         }
         .to_owned();
-        // 流式输出一开始，压缩状态行就让位：用户已经看到 AI 在动了。
+        // 流式输出一开始，压缩状态行和等待动画都让位：用户已经看到 AI 在动了。
         self.dismiss_compression_notice();
+        self.dismiss_awaiting_reply();
         let mut content = self.transient_thought.take().unwrap_or_default();
         content.push_str(&text);
         if kind == StreamKind::Reply {
@@ -618,6 +696,8 @@ impl App {
         let visible = willdeep_core::conversation::visible_user_text(text);
         let row = format!("You: {}", terminal_safe_text(visible));
         self.append_transcript(row.clone());
+        // 忙时回显的这句同样是「已发出、还没人接」：本轮结束后它才被处理。
+        self.note_awaiting_reply();
         self.pending_runtime_echoes
             .push_back(runtime_queue::PendingRuntimeEcho {
                 text: visible.to_owned(),
@@ -682,8 +762,12 @@ impl App {
                 kept.push_back(echo);
                 continue;
             }
-            if let Some(row) = self.transcript.iter_mut().find(|row| **row == echo.row) {
-                *row = format!(
+            if let Some(index) = self.transcript.iter().position(|row| *row == echo.row) {
+                // 没发出去，附件也不该再挂在这行下面。
+                if let Some(slot) = self.transcript_attachments.get_mut(index) {
+                    slot.clear();
+                }
+                self.transcript[index] = format!(
                     "You: {}{}",
                     self.language
                         .text("［未发送］ ", "[not sent] ", "［未送信］ ",),
@@ -701,9 +785,7 @@ impl App {
         let mut sent_at = message_time::now();
         if let Some(index) = self.transcript.iter().position(|line| *line == queued) {
             sent_at = self.message_times.time_at(index).unwrap_or(sent_at);
-            self.transcript.remove(index);
-            self.message_times.remove(index);
-            self.refresh_transcript_height();
+            self.drop_transcript_row(index);
         }
         self.append_transcript_at(format!("You: {text}"), sent_at);
     }
@@ -988,8 +1070,9 @@ impl App {
         }
         self.finish_thought();
         self.transient_thought = None;
-        // 正文到了，压缩那一行就不用再解释「为什么还没动静」。
+        // 正文到了，压缩那一行和等待动画都不用再解释「为什么还没动静」。
         self.dismiss_compression_notice();
+        self.dismiss_awaiting_reply();
         self.activity_line = self
             .language
             .text("正在整理思路", "Working through it", "考えを整理中")
@@ -1024,8 +1107,9 @@ impl App {
     ) {
         self.finish_thought();
         self.transient_thought = None;
-        // 工具调用是这一轮的第一份可见输出，压缩状态行到此为止。
+        // 工具调用是这一轮的第一份可见输出，压缩状态行和等待动画到此为止。
         self.dismiss_compression_notice();
+        self.dismiss_awaiting_reply();
         self.append_transcript(tool_line(TOOL_PENDING, name, detail));
         self.remember_tool_expansion(expansion);
     }
@@ -1896,7 +1980,7 @@ mod tests {
         app.viewport_height = 12;
         app.note_compression_started();
 
-        let (_transient, _notice) = app.prepare_transcript_frame();
+        let (_transient, _notice, _waiting) = app.prepare_transcript_frame();
         let rows = app.transcript_rows.clone();
         let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
         let blank = rows[user..].iter().position(|row| row.is_empty()).unwrap();
@@ -1909,7 +1993,7 @@ mod tests {
 
         // 压完还是这一行，只是整行换了词。
         app.note_compression_completed();
-        let (transient, notice) = app.prepare_transcript_frame();
+        let (transient, notice, waiting) = app.prepare_transcript_frame();
         let rows = &app.transcript_rows;
         let shown = rows.iter().filter(|row| row.contains("压缩")).count();
         assert_eq!(shown, 1, "completion replaces the row: {rows:?}");
@@ -1917,7 +2001,8 @@ mod tests {
 
         // 贴底时这行在视口里，不会被算在屏幕外面。视口用的是压完之后那一帧。
         let offset = app.max_scroll();
-        let viewport = app.transcript_viewport(&transient, notice.as_ref(), offset);
+        let viewport =
+            app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
         assert!(
             viewport
                 .lines
@@ -1927,7 +2012,7 @@ mod tests {
         );
 
         // 往上翻时，压缩行后面的历史不能错位或丢行。
-        let earlier = app.transcript_viewport(&transient, notice.as_ref(), 0);
+        let earlier = app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), 0);
         assert_eq!(
             earlier.lines[0].to_string(),
             "WillDeep: 上一轮的结论",
@@ -1978,10 +2063,9 @@ mod tests {
     fn long_transcripts_archive_older_rounds_and_reveal_them_on_scroll() {
         fn push_rounds(app: &mut App, count: usize) {
             for round in 0..count {
-                app.transcript.push(format!("You: round {round}"));
-                app.transcript.push(format!("WillDeep: done {round}"));
-                app.transcript
-                    .push(format!("{TURN_DIVIDER_PREFIX}turn {round} ──"));
+                app.append_transcript(format!("You: round {round}"));
+                app.append_transcript(format!("WillDeep: done {round}"));
+                app.append_transcript(format!("{TURN_DIVIDER_PREFIX}turn {round} ──"));
             }
         }
 
@@ -2017,6 +2101,7 @@ mod tests {
         app.note_goal_completed();
         assert_eq!(app.transcript, vec!["System: ✓ 目标完成"]);
         app.transcript.clear();
+        app.transcript_attachments.clear();
         app.turn_started = Some(std::time::Instant::now());
         app.note_goal_completed();
         assert!(

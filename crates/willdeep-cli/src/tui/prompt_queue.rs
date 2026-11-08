@@ -139,10 +139,17 @@ impl App {
     pub(super) fn queue_submitted_prompt(&mut self) {
         let text = self.take_submitted_input();
         self.append_transcript(self.queued_prompt_row(&text));
+        let attachments = std::mem::take(&mut self.attachments);
+        self.attach_to_latest_user_row(
+            attachments
+                .iter()
+                .map(|item| item.message.clone())
+                .collect(),
+        );
         self.queued_prompts.push_back(QueuedPrompt {
             remote: None,
             text,
-            attachments: std::mem::take(&mut self.attachments),
+            attachments,
         });
         self.selected_attachment = 0;
         self.notice = Some(format!(
@@ -270,9 +277,7 @@ impl App {
 
     pub(super) fn remove_queued_prompt_row(&mut self, selected: usize) {
         if let Some(index) = self.queued_transcript_index(selected) {
-            self.transcript.remove(index);
-            self.message_times.remove(index);
-            self.refresh_transcript_height();
+            self.drop_transcript_row(index);
         }
     }
 

@@ -50,6 +50,9 @@ pub(super) async fn submit_turn(
         .collect();
     let prompt = app.enrich_prompt(&prompt, &runtime.skills);
     persist_missing_core_session(session, store)?;
+    // 发送本身就是「我还在用这条会话」：它若已经被归档，先解除再提交，
+    // 否则服务端会以 Runtime Session is archived 拒绝入队。
+    resume_archived_for_send(app, session, runtime).await?;
     let remote_session = crate::daemon::ensure_runtime_session(
         &runtime.home,
         session.id,
@@ -78,6 +81,36 @@ pub(super) async fn submit_turn(
     )
     .await?;
     begin_submitted_turn(app, submitted_at, event_head, turn.id, turn.active_task_id);
+    Ok(())
+}
+
+/// 用户正在这条会话里发消息，而 Runtime 侧它是归档状态时，先解除归档。
+///
+/// 归档是显式动作，服务端也仍拒绝向归档会话入队；但能走到这里说明用户正在
+/// 继续用它（启动续上一条会话时并不看归档状态）。只在提交时解除，光是打开
+/// 翻历史不会改状态。查不到 Runtime 或解除失败都把错误交回去，由提交路径
+/// 统一报告，不在这里吞掉。
+pub(super) async fn resume_archived_for_send(
+    app: &mut App,
+    session: &Session,
+    runtime: &TuiRuntime,
+) -> Result<()> {
+    let archived = crate::daemon::remote_session_states(&runtime.home)
+        .await?
+        .into_iter()
+        .any(|state| state.id == session.id && state.archived);
+    if !archived {
+        return Ok(());
+    }
+    crate::daemon::set_remote_session_archived(&runtime.home, session.id, false).await?;
+    app.append_transcript(format!(
+        "System: {}",
+        app.language.text(
+            "当前会话已取消归档",
+            "Current Session unarchived",
+            "現在のセッションのアーカイブを解除しました",
+        )
+    ));
     Ok(())
 }
 

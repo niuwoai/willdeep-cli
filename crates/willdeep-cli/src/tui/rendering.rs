@@ -19,7 +19,11 @@ pub(super) struct TranscriptRenderCache {
 impl App {
     pub(super) fn prepare_transcript_frame(
         &mut self,
-    ) -> (Text<'static>, Option<(usize, Text<'static>)>) {
+    ) -> (
+        Text<'static>,
+        Option<(usize, Text<'static>)>,
+        Option<(usize, Text<'static>)>,
+    ) {
         let time_labels =
             self.message_times
                 .labels(self.transcript.len(), self.language, message_time::now());
@@ -47,9 +51,11 @@ impl App {
                 text,
                 user_controls,
                 tool_controls,
+                attachment_hits,
             } = frame;
             self.user_message_controls = user_controls;
             self.tool_row_controls = tool_controls;
+            self.attachment_controls = attachment_hits;
             self.transcript_rows = text_rows(&text);
             self.transcript_render_cache = Some(TranscriptRenderCache {
                 source: self.transcript.clone(),
@@ -78,6 +84,15 @@ impl App {
             self.transcript_rows.splice(at..at, text_rows(&notice));
             (at, notice)
         });
+        // 等待动画同样每秒变一帧，也不进缓存。它和压缩行回答的是同一个问题
+        // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
+        // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
+        let waiting = self.awaiting_reply_row().map(|row| {
+            let waiting = self.compression_notice_lines(&row, search.as_deref());
+            let at = self.compression_notice_insert_at();
+            self.transcript_rows.splice(at..at, text_rows(&waiting));
+            (at, waiting)
+        });
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
@@ -88,7 +103,7 @@ impl App {
             });
         self.transcript_rows.extend(text_rows(&transient));
         self.transcript_height = self.transcript_rows.len();
-        (transient, notice)
+        (transient, notice, waiting)
     }
 
     /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行和后面那行空白。
@@ -125,6 +140,7 @@ impl App {
         &self,
         transient: &Text<'static>,
         notice: Option<&(usize, Text<'static>)>,
+        waiting: Option<&(usize, Text<'static>)>,
         offset: usize,
     ) -> Text<'static> {
         let history = &self
@@ -138,27 +154,46 @@ impl App {
         let rows = offset..self.transcript_rows.len();
         Text::from(
             rows.take(self.viewport_height)
-                .map(|index| match notice {
-                    Some((at, drawn)) if (*at..*at + drawn.lines.len()).contains(&index) => {
-                        drawn.lines[index - at].clone()
+                .map(|index| {
+                    if let Some(drawn) = styled_insert_at(notice, index) {
+                        return drawn;
                     }
-                    _ if index
-                        < history.lines.len()
-                            + notice.as_ref().map_or(0, |(_, drawn)| drawn.lines.len()) =>
-                    {
-                        let history_index =
-                            index - usize::from(notice.is_some_and(|(at, _)| index > *at));
-                        history.lines[history_index].clone()
+                    if let Some(drawn) = styled_insert_at(waiting, index) {
+                        return drawn;
                     }
-                    _ => {
-                        let tail = history.lines.len()
-                            + notice.as_ref().map_or(0, |(_, drawn)| drawn.lines.len());
+                    let inserted_before = styled_insert_rows_before(notice, index)
+                        + styled_insert_rows_before(waiting, index);
+                    let tail = history.lines.len()
+                        + notice.as_ref().map_or(0, |(_, drawn)| drawn.lines.len())
+                        + waiting.as_ref().map_or(0, |(_, drawn)| drawn.lines.len());
+                    if index < tail {
+                        history.lines[index - inserted_before].clone()
+                    } else {
                         transient.lines[index - tail].clone()
                     }
                 })
                 .collect::<Vec<_>>(),
         )
     }
+}
+
+/// 这一行落在临时插入段里时，返回它现画好的样式。
+fn styled_insert_at(
+    insert: Option<&(usize, Text<'static>)>,
+    index: usize,
+) -> Option<Line<'static>> {
+    let (at, drawn) = insert?;
+    (*at..*at + drawn.lines.len())
+        .contains(&index)
+        .then(|| drawn.lines[index - at].clone())
+}
+
+/// 这一行前面被临时插入段占掉了几行。
+fn styled_insert_rows_before(insert: Option<&(usize, Text<'static>)>, index: usize) -> usize {
+    insert
+        .filter(|(at, _)| index > *at)
+        .map(|(_, drawn)| drawn.lines.len())
+        .unwrap_or(0)
 }
 
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -340,6 +375,41 @@ mod tool_row_style_tests {
         assert_eq!(rows.last().map(String::as_str), Some(""));
     }
 
+    /// 一段里没有空格也要按标点断开。模型写首页文案时整句不留空白，只按空白分词
+    /// 会把整句当成一个词，超宽时从字中间硬切，屏幕上就是一大段挤在一行里。
+    #[test]
+    fn prose_without_spaces_breaks_at_punctuation_instead_of_mid_word() {
+        let sentence = "**你的 AI Agent，长任务真能跑完。** 用消费级显卡部署多智能体，5090 + 千问 3.8-27B 就能启动一整套 Worker 池。长上下文不是 PPT 能力——100K、200K token 的任务，实测验证过。";
+        let row = format!("WillDeep: {sentence}");
+        let rendered = wrap_styled_text(colored_transcript_at_width(&[row], None, 40), 40);
+        let drawn = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            drawn.len() > 3,
+            "the sentence stayed on too few rows: {drawn:?}"
+        );
+        assert!(
+            drawn
+                .iter()
+                .all(|line| UnicodeWidthStr::width(line.as_str()) <= 40),
+            "a row ran past the width: {drawn:?}"
+        );
+        // 断开落在标点后面，不把一个词切成两半。
+        assert!(
+            !drawn.iter().any(|line| line.ends_with('千')),
+            "broke inside a word: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|line| {
+                line.trim_end().ends_with('，') || line.trim_end().ends_with('。')
+            }),
+            "never broke after punctuation: {drawn:?}"
+        );
+    }
+
     /// 「轮到你」只属于最后一行。后面有了新输出，旧分隔线就不再说这话。
     #[test]
     fn your_turn_appears_only_on_the_last_divider() {
@@ -456,7 +526,16 @@ pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'stati
                 continue;
             }
             let word_start = index;
-            while index < cells.len() && !cells[index].character.is_whitespace() {
+            // 一段里没有空白也要能断开：中文句子和 markdown 行内符号都不靠空格分词，
+            // 只认空白的话，整句会被当成一个词，一旦超过宽度就从字符中间硬切，
+            // 看起来就是一整段挤在一行上。断点留在上一行末尾，不掂到下一行开头。
+            while index < cells.len()
+                && !cells[index].character.is_whitespace()
+                && !wrap_break_after(cells[index].character)
+            {
+                index += 1;
+            }
+            if index < cells.len() && wrap_break_after(cells[index].character) {
                 index += 1;
             }
             let word = &cells[word_start..index];
@@ -514,6 +593,47 @@ struct StyledCharacter {
     character: char,
     style: Style,
     width: usize,
+}
+
+/// 折行时可以在它后面断开的字符。
+///
+/// 空白由调用方单独处理，这里只管非空白的断点：中文标点，以及 markdown 行内常用的
+/// 分隔符。模型写首页文案时整句不留空格，没有这些断点就只能从字中间硬切。
+fn wrap_break_after(character: char) -> bool {
+    matches!(
+        character,
+        '\u{2014}'
+            | '\u{2013}'
+            | '-'
+            | '\u{00b7}'
+            | '\u{30fb}'
+            | '\u{3001}'
+            | '\u{3002}'
+            | '\u{ff0c}'
+            | '\u{ff01}'
+            | '\u{ff1f}'
+            | '\u{ff1a}'
+            | '\u{ff1b}'
+            | '\u{300a}'
+            | '\u{300b}'
+            | '\u{300c}'
+            | '\u{300d}'
+            | '\u{201c}'
+            | '\u{201d}'
+            | '\u{2018}'
+            | '\u{2019}'
+            | '('
+            | ')'
+            | '\u{ff08}'
+            | '\u{ff09}'
+            | '/'
+            | '|'
+            | '*'
+            | '#'
+            | '+'
+            | '='
+            | '\u{2026}'
+    )
 }
 
 fn append_styled_cells(spans: &mut Vec<Span<'static>>, cells: &[StyledCharacter]) {

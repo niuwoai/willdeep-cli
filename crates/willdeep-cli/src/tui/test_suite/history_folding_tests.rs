@@ -290,6 +290,8 @@ fn loading_the_display_session_before_notices_keeps_both() {
     display.messages.clear();
     app.load_transcript(&display);
     app.transcript.extend(notices.clone());
+    app.transcript_attachments
+        .resize_with(app.transcript.len(), Vec::new);
 
     assert!(app.has_visible_transcript());
     assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));

@@ -34,7 +34,7 @@ fn reference_frame(app: &App) -> Text<'static> {
 
 fn assert_cached_frame_matches_reference(app: &mut App) {
     let expected = reference_frame(app);
-    let (transient, notice) = app.prepare_transcript_frame();
+    let (transient, notice, waiting) = app.prepare_transcript_frame();
     assert_eq!(app.transcript_rows, text_rows(&expected));
     assert_eq!(app.transcript_height, expected.lines.len());
     for offset in [
@@ -43,7 +43,8 @@ fn assert_cached_frame_matches_reference(app: &mut App) {
         expected.lines.len().saturating_sub(4),
         expected.lines.len(),
     ] {
-        let viewport = app.transcript_viewport(&transient, notice.as_ref(), offset);
+        let viewport =
+            app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
         assert_eq!(
             viewport.lines,
             expected
@@ -74,7 +75,10 @@ fn cached_stream_render_preserves_layout_after_all_display_changes() {
     assert_cached_frame_matches_reference(&mut app);
     app.stream_transient(StreamKind::Reply, "不断流入的中文和 English 输出");
     assert_cached_frame_matches_reference(&mut app);
+    // 直接改记录，绕开 append_transcript 附带的时间戳：这条测试比的是
+    // 缓存与参考帧逐行一致，时间后缀会让两边对不上。
     app.transcript.push("WillDeep: new **answer**".into());
+    app.transcript_attachments.push(Vec::new());
     assert_cached_frame_matches_reference(&mut app);
     app.transcript[0] = "You: 修改已有内容".into();
     assert_cached_frame_matches_reference(&mut app);
@@ -90,6 +94,7 @@ fn cached_stream_render_preserves_layout_after_all_display_changes() {
     assert_cached_frame_matches_reference(&mut app);
     app.transient_thought = None;
     app.transcript.clear();
+    app.transcript_attachments.clear();
     assert_cached_frame_matches_reference(&mut app);
 }
 

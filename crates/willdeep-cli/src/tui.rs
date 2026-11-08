@@ -287,7 +287,15 @@ struct App {
     prompt_history: Option<prompt_history::PromptHistory>,
     /// 已提交、会话文件还没记下的输入。向上箭头在落盘前也要能找回。
     prompt_history_pending: VecDeque<String>,
+    /// 用户消息已经回显、模型还一个字都没回来的起点。聊天区在这句下面画
+    /// `.` `..` `...` 循环，第一个思考行或正文一到就清掉。
+    awaiting_since: Option<Instant>,
     transcript: Vec<String>,
+    /// 与 `transcript` 逐行对齐的附件。只有用户消息那一行有内容，其余是空的。
+    ///
+    /// 附件正文不写进记录字符串：图片的 base64 会把记录撑爆，也会改掉
+    /// `You: 原文` 这一行，而回显认领靠的正是整行比对。正文留在这里，画的时候再拼上去。
+    transcript_attachments: Vec<Vec<MessageAttachment>>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
     archive_floor: usize,
@@ -326,6 +334,8 @@ struct App {
     activity_rect: Rect,
     attachments: Vec<DraftAttachment>,
     sent_attachments: Vec<DraftAttachment>,
+    /// 从聊天区点开的单个文本附件，只供预览面板读。
+    viewed_attachment: Vec<DraftAttachment>,
     selected_attachment: usize,
     attachment_panel: Option<attachment_panel::AttachmentPanel>,
     prompt_rect: Rect,
@@ -479,6 +489,10 @@ struct App {
     expanded_user_messages: BTreeMap<usize, String>,
     user_message_controls: Vec<(usize, usize)>,
     user_message_hit_rows: Vec<(u16, usize)>,
+    /// 附件标签的点击位置：样式行号、记录位置、附件序号。
+    attachment_controls: Vec<(usize, usize, usize)>,
+    /// 这一帧里能点的附件标签：屏幕行号、记录位置、附件序号。
+    attachment_hit_rows: Vec<(u16, usize, usize)>,
     /// Runtime 已接收、等待下一次模型读取的插话；保留原始提交时间。
     deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
@@ -519,6 +533,8 @@ struct App {
     sidebar_wide: bool,
     help_visible: bool,
     media: MediaState,
+    /// 点击聊天区里的图片附件后，等事件循环去加载图片。
+    pending_media_action: Option<media_ui::MediaAction>,
     sidebar_hits: Vec<(u16, SidebarHit)>,
     sidebar_manual_scroll: bool,
     attention_selected: usize,
@@ -1511,7 +1527,7 @@ fn draw<B: ratatui::backend::Backend>(
             height: app.transcript_rect.height.saturating_sub(2),
         };
         app.viewport_height = app.transcript_rect.height.saturating_sub(2).max(1) as usize;
-        let (transient, notice) = app.prepare_transcript_frame();
+        let (transient, notice, waiting) = app.prepare_transcript_frame();
         let max = app.max_scroll();
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
         let offset = max.saturating_sub(app.scroll_from_bottom);
@@ -1566,7 +1582,8 @@ fn draw<B: ratatui::backend::Backend>(
                 format_elapsed_span(elapsed.as_secs_f32(), 0)
             ));
         }
-        let mut colored = app.transcript_viewport(&transient, notice.as_ref(), offset);
+        let mut colored =
+            app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
         app.transcript_render_offset = offset;
         app.update_user_message_hits(offset, areas[0].y.saturating_add(1));
         app.thought_hit_rows = colored

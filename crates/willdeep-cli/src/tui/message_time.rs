@@ -333,6 +333,7 @@ pub(super) fn render_with_times(
         language,
         &BTreeMap::new(),
         &BTreeMap::new(),
+        &[],
     )
     .text
 }
@@ -343,6 +344,8 @@ pub(super) struct FoldedFrame {
     pub(super) text: Text<'static>,
     pub(super) user_controls: Vec<(usize, usize)>,
     pub(super) tool_controls: Vec<(usize, usize, bool)>,
+    /// 附件标签所在的样式行：行号、记录位置、附件序号（从 0 起）。
+    pub(super) attachment_hits: Vec<(usize, usize, usize)>,
 }
 
 pub(super) fn render_with_user_folds(
@@ -353,11 +356,13 @@ pub(super) fn render_with_user_folds(
     language: Language,
     users: &BTreeMap<usize, (usize, bool)>,
     tools: &BTreeMap<usize, (usize, Option<String>)>,
+    attachments: &[Vec<MessageAttachment>],
 ) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
     let mut controls = Vec::new();
     let mut tool_controls = Vec::new();
+    let mut attachment_hits = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
         // 真正画整段聊天区的最后一行时才补上。
@@ -368,11 +373,29 @@ pub(super) fn render_with_user_folds(
             colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
             width,
         );
-        if let Some(&(source, expanded)) = users.get(&index)
+        // 附件接在这句话下面：标签行可点，文本附件把正文也摊出来（超长一起折叠）。
+        let user = users.get(&index).copied();
+        if let Some((source, _)) = user
+            && let Some(list) = attachments.get(source)
+        {
+            for (attachment_index, attachment) in list.iter().enumerate() {
+                let (lines, label_lines) =
+                    attachment_lines(attachment, attachment_index, language, width);
+                let label_at = text.lines.len() + entry.lines.len();
+                for offset in 0..label_lines {
+                    attachment_hits.push((label_at + offset, source, attachment_index));
+                }
+                entry.lines.extend(lines);
+            }
+        }
+        if let Some((source, expanded)) = user
             && entry.lines.len() > user_message::PREVIEW_LINES
         {
             if !expanded {
                 entry.lines.truncate(user_message::PREVIEW_LINES);
+                // 折掉的那部分里的附件标签看不见，也就点不了。
+                let visible_until = text.lines.len() + user_message::PREVIEW_LINES;
+                attachment_hits.retain(|(line, _, _)| *line < visible_until);
             }
             let label = if expanded {
                 language.text("− 收起", "− Show less", "− 折りたたむ")
@@ -458,7 +481,58 @@ pub(super) fn render_with_user_folds(
         text,
         user_controls: controls,
         tool_controls,
+        attachment_hits,
     }
+}
+
+/// 一个附件画出来的行，以及其中属于可点标签的行数（标签在最前）。
+fn attachment_lines(
+    attachment: &MessageAttachment,
+    index: usize,
+    language: Language,
+    width: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let number = index + 1;
+    let (name, dimensions, body) = match attachment {
+        MessageAttachment::Text { name, content } => (name.clone(), None, Some(content.clone())),
+        MessageAttachment::Image {
+            name,
+            width,
+            height,
+            ..
+        } => (name.clone(), Some((*width, *height)), None),
+    };
+    let mut label = format!(
+        "{} {number} · {name}",
+        language.text("附件", "Attachment", "添付")
+    );
+    if let Some((width, height)) = dimensions {
+        label.push_str(&format!(" · {width}×{height}"));
+    }
+    let label = wrap_styled_text(
+        Text::from(Line::styled(
+            label,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        width,
+    );
+    let label_lines = label.lines.len();
+    let mut lines = label.lines;
+    if let Some(content) = body {
+        let body = wrap_styled_text(
+            Text::from(
+                terminal_safe_text(&content)
+                    .lines()
+                    .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray)))
+                    .collect::<Vec<_>>(),
+            ),
+            width,
+        );
+        lines.extend(body.lines);
+    }
+    (lines, label_lines)
 }
 
 #[cfg(test)]

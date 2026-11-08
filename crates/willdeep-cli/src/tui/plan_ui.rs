@@ -160,29 +160,35 @@ pub(super) fn projected_transcript(
     plan: Option<&Plan>,
     language: Language,
 ) -> Vec<String> {
-    willdeep_core::conversation::project(messages, plan)
-        .into_iter()
-        .flat_map(|item| {
-            if let Some(workflow) = item.workflow {
-                return vec![workflow_ui::entry(workflow, false)];
-            }
-            if let Some(plan) = item.plan {
-                return vec![plan_entry(&PlanTranscript {
-                    plan,
-                    details: item.details,
-                    expanded: false,
-                })];
-            }
+    project_session(messages, plan, language).0
+}
+
+/// 聊天记录和与之逐行对齐的附件。附件只挂在用户那一行上，其余行是空的。
+///
+/// 用户行不再把附件塞进 `[N attachment(s)]` 这种后缀：实时回显的是纯 `You: 原文`，
+/// 重开后必须长得一样，附件正文改由画的时候从对齐的槽里取。
+pub(super) fn project_session(
+    messages: &[Message],
+    plan: Option<&Plan>,
+    language: Language,
+) -> (Vec<String>, Vec<Vec<MessageAttachment>>) {
+    let mut rows = Vec::new();
+    let mut attachments = Vec::new();
+    // 投影会跳过一部分消息，所以不能按下标对齐，得跟着投影的顺序走。
+    let mut user_attachments = user_attachment_slots(messages);
+    for item in willdeep_core::conversation::project(messages, plan) {
+        let is_user = item.role == "user" && item.workflow.is_none() && item.plan.is_none();
+        let produced = if let Some(workflow) = item.workflow {
+            vec![workflow_ui::entry(workflow, false)]
+        } else if let Some(plan) = item.plan {
+            vec![plan_entry(&PlanTranscript {
+                plan,
+                details: item.details,
+                expanded: false,
+            })]
+        } else {
             match item.role {
-                "user" => vec![format!(
-                    "You: {}{}",
-                    item.content,
-                    if item.attachment_count == 0 {
-                        String::new()
-                    } else {
-                        format!(" [{} attachment(s)]", item.attachment_count)
-                    }
-                )],
+                "user" => vec![format!("You: {}", item.content)],
                 "system" => vec![format!(
                     "System: {}",
                     language.text(
@@ -201,7 +207,38 @@ pub(super) fn projected_transcript(
                     rows
                 }
             }
+        };
+        // 一条用户消息投影成一行，附件挂在这一行；它展开出的其余行没有附件。
+        // 对不上时给空槽而不是崩：重开历史不值得为一条附件对不齐就打不开。
+        let slot = if is_user && !user_attachments.is_empty() {
+            user_attachments.remove(0)
+        } else {
+            Vec::new()
+        };
+        for (index, row) in produced.into_iter().enumerate() {
+            rows.push(row);
+            attachments.push(if index == 0 { slot.clone() } else { Vec::new() });
+        }
+    }
+    (rows, attachments)
+}
+
+/// 按投影会保留的顺序，取出每条用户消息的附件。跳过规则与 `conversation::project`
+/// 一致：宿主指令算系统消息，没有可见正文也没有附件的用户消息不出现。
+fn user_attachment_slots(messages: &[Message]) -> Vec<Vec<MessageAttachment>> {
+    messages
+        .iter()
+        .filter(|message| message.role == willdeep_core::Role::User)
+        .filter(|message| {
+            message.source != Some(willdeep_core::types::MessageSource::HostInstruction)
         })
+        .filter(|message| {
+            !willdeep_core::conversation::visible_user_text(&message.content)
+                .trim()
+                .is_empty()
+                || !message.attachments.is_empty()
+        })
+        .map(|message| message.attachments.clone())
         .collect()
 }
 
@@ -479,6 +516,58 @@ mod tests {
                 "WillDeep: done",
             ]
         );
+    }
+
+    /// 重开后附件挂在对的那句用户话下面：文本正文摊出来，图片只留可点的标签。
+    #[test]
+    fn reopened_history_shows_pasted_text_and_labels_attachments() {
+        let mut text = Message::user("看一下这段");
+        text.attachments = vec![
+            MessageAttachment::Text {
+                name: "paste-1.txt".to_owned(),
+                content: "第一行\n第二行".to_owned(),
+            },
+            MessageAttachment::Image {
+                name: "shot.png".to_owned(),
+                media_type: "image/png".to_owned(),
+                data: "AAAA".to_owned(),
+                width: 16,
+                height: 9,
+            },
+        ];
+        let mut session = Session::new(std::path::PathBuf::from("/tmp"), None, "");
+        session.messages = vec![text, Message::assistant("好的", Vec::new())];
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.load_transcript(&session);
+        assert_eq!(app.transcript[0], "You: 看一下这段");
+        assert_eq!(app.transcript_attachments.len(), app.transcript.len());
+        assert_eq!(app.transcript_attachments[0].len(), 2);
+        assert!(app.transcript_attachments[1].is_empty());
+
+        app.transcript_width = 60;
+        app.viewport_height = 40;
+        app.prepare_transcript_frame();
+        let drawn = app.transcript_rows.join("\n");
+        assert!(drawn.contains("看一下这段"), "{drawn}");
+        assert!(
+            drawn.contains("第一行") && drawn.contains("第二行"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("附件 1 · paste-1.txt"), "{drawn}");
+        assert!(drawn.contains("附件 2 · shot.png · 16×9"), "{drawn}");
+        // 图片的像素数据不进聊天区。
+        assert!(!drawn.contains("AAAA"), "{drawn}");
+
+        // 标签行可点，点文本附件直接开预览。
+        app.update_user_message_hits(0, 0);
+        let label = app
+            .attachment_hit_rows
+            .iter()
+            .find(|(_, _, index)| *index == 0)
+            .expect("text attachment label is clickable")
+            .0;
+        assert!(app.open_attachment_at(label).is_some());
+        assert!(app.attachment_panel.is_some());
     }
 
     #[test]
