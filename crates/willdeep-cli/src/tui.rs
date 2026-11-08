@@ -1463,7 +1463,8 @@ fn format_working_summary(
     )
 }
 
-fn draw<B: ratatui::backend::Backend>(
+#[allow(private_interfaces)]
+pub(super) fn draw<B: ratatui::backend::Backend>(
     term: &mut Terminal<B>,
     app: &mut App,
     skills: &SkillCatalog,

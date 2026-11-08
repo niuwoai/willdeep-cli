@@ -1212,6 +1212,27 @@ fn unshown_reply(final_text: &str, narrated: Option<&str>) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// 把聊天区真正画到内存里的终端上，读出用户消息下面那一行。
+    ///
+    /// 走完整的 `draw`，不走只拼记录的那条路径：动画是显示层每帧现插的，
+    /// 只有画出来的那一屏才能证明它的位置和内容。
+    fn drawn_lines(app: &mut App) -> Vec<String> {
+        let backend = ratatui::backend::TestBackend::new(100, 34);
+        let mut term = ratatui::Terminal::new(backend).unwrap();
+        let session = Session::new(std::path::PathBuf::from("/tmp"), None, "");
+        super::super::draw(&mut term, app, &SkillCatalog::default(), &session).unwrap();
+        let buffer = term.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
     /// 用户消息正下方那一行等待动画：第 0 秒一个点，之后每秒多一个，三个一轮。
     fn waiting_dots(app: &mut App, elapsed: Duration) -> Option<String> {
         app.awaiting_since = Some(Instant::now() - elapsed);
@@ -1295,6 +1316,47 @@ mod tests {
         app.input.insert("/model");
         app.take_prompt_for_submission();
         assert!(app.awaiting_since.is_none());
+    }
+
+    /// 动画在真正画出来的那一屏上：紧贴用户消息，每秒从 `.` 轮到 `...`，
+    /// 思考行一出现就整行消失。
+    #[test]
+    fn the_drawn_screen_shows_the_dots_then_drops_them_for_the_thought() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.ui.mode = crate::config::UiMode::Full;
+        app.input.insert("别磨叽了，直接合给 main，提交啊。");
+        app.take_prompt_for_submission();
+
+        let stage = |app: &mut App, elapsed: Duration| {
+            app.awaiting_since = Some(Instant::now() - elapsed);
+            drawn_lines(app)
+        };
+        for (elapsed, expected) in [
+            (Duration::from_millis(200), "."),
+            (Duration::from_secs(1), ".."),
+            (Duration::from_secs(2), "..."),
+        ] {
+            let lines = stage(&mut app, elapsed);
+            let message = lines.iter().position(|line| line.contains("You:")).unwrap();
+            // 边框是 `│`，中间那一格才是内容。紧贴消息的下一行应该只有那几个点。
+            let below = lines[message + 1]
+                .trim_matches(|ch: char| "│ ".contains(ch))
+                .to_owned();
+            assert_eq!(below, expected, "at {elapsed:?}: {lines:?}");
+        }
+
+        app.stream_transient(StreamKind::Reasoning, "先看分支");
+        let lines = drawn_lines(&mut app);
+        assert!(
+            lines.iter().any(|line| line.contains("Thought:")),
+            "the thought replaced the dots: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.trim().is_empty() || line.trim().chars().any(|ch| ch != '.')),
+            "dots stayed on screen: {lines:?}"
+        );
     }
 
     /// 这一帧里某条工具记录对应的屏幕行。`collapse` 选「收起」那一行，否则选工具行本身。
