@@ -6,6 +6,8 @@ pub(super) enum Target {
     Draft,
     Queued(usize),
     Sent,
+    /// 聊天区里点开的单个附件，只读预览。
+    Viewed,
 }
 pub(super) struct AttachmentPanel {
     target: Target,
@@ -49,6 +51,22 @@ impl App {
         self.selected_attachment = self.attachments.len() - 1;
         true
     }
+    /// 从聊天区点开一个文本附件，直接进入预览。
+    pub(super) fn open_text_attachment(&mut self, name: String, content: String) {
+        self.viewed_attachment = vec![DraftAttachment {
+            id: uuid::Uuid::new_v4(),
+            message: MessageAttachment::Text { name, content },
+        }];
+        self.attachment_panel = Some(AttachmentPanel {
+            target: Target::Viewed,
+            selected: 0,
+            editor: None,
+            preview: true,
+            scroll: 0,
+            confirm_clear: false,
+        });
+    }
+
     pub(super) fn open_attachments(&mut self, target: Target) {
         self.attachment_panel = Some(AttachmentPanel {
             target,
@@ -63,6 +81,7 @@ impl App {
         match target {
             Target::Draft => &self.attachments,
             Target::Sent => &self.sent_attachments,
+            Target::Viewed => &self.viewed_attachment,
             Target::Queued(index) => self
                 .queued_prompts
                 .get(index)
@@ -73,7 +92,7 @@ impl App {
     fn attachment_items_mut(&mut self, target: Target) -> Option<&mut Vec<DraftAttachment>> {
         match target {
             Target::Draft => Some(&mut self.attachments),
-            Target::Sent => None,
+            Target::Sent | Target::Viewed => None,
             Target::Queued(index) => self
                 .queued_prompts
                 .get_mut(index)
@@ -97,7 +116,7 @@ impl App {
         panel.selected = panel
             .selected
             .min(self.attachment_items(panel.target).len().saturating_sub(1));
-        if panel.target == Target::Sent {
+        if matches!(panel.target, Target::Sent | Target::Viewed) {
             if key.code == KeyCode::Char('r')
                 && let Some(item) = self.sent_attachments.get(panel.selected).cloned()
             {
@@ -280,6 +299,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &App) {
         Target::Sent => app
             .language
             .text("已发送附件", "Sent attachments", "送信済みの添付"),
+        Target::Viewed => app.language.text("附件", "Attachment", "添付"),
     };
     let hint = if panel.target == Target::Sent && !panel.preview {
         app.language.text("已发送附件只读 · ↑/↓ 选择 · Enter 预览 · r 引用到草稿 · Esc 返回", "Sent attachments are read-only · ↑/↓ select · Enter preview · r copy to draft · Esc back", "送信済み・読み取り専用 · ↑/↓ 選択 · Enter 表示 · r 下書きに引用 · Esc 戻る")

@@ -300,12 +300,25 @@ fn approval_actions_are_stacked_localized_and_selectable() {
     );
 }
 #[test]
-fn long_paste_is_attachment_and_deletable() {
+fn short_paste_lands_in_the_composer_and_long_paste_is_an_attachment() {
     let mut a = App::new(Vec::new(), Language::En);
-    a.handle_paste("one\ntwo".to_owned());
+    // 两三行还能改，直接进输入框。
+    a.handle_paste("one\ntwo\nthree".to_owned());
+    assert!(a.attachments.is_empty());
+    assert_eq!(a.input.text(), "one\ntwo\nthree");
+
+    // 第四行起就收成附件，并且可以删掉。
+    a.handle_paste("one\ntwo\nthree\nfour".to_owned());
     assert_eq!(a.attachments.len(), 1);
+    assert!(
+        matches!(&a.attachments[0].message, MessageAttachment::Text { name, .. } if name == "paste-1.txt")
+    );
     a.delete_selected_attachment();
     assert!(a.attachments.is_empty());
+
+    // 没有换行但特别长的单行也收成附件，免得把输入框撑爆。
+    a.handle_paste("x".repeat(2_001));
+    assert_eq!(a.attachments.len(), 1);
 }
 #[test]
 fn cjk_wraps() {

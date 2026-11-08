@@ -9,6 +9,17 @@ impl App {
         let prompt = self.take_submitted_input();
         if !narration::is_display_only_command(&prompt) {
             self.append_transcript(format!("You: {prompt}"));
+            // 斜杠命令不是发给模型的消息，附件还留在草稿里，不挂到这一行上。
+            if !prompt.trim_start().starts_with('/') {
+                let attachments = self
+                    .attachments
+                    .iter()
+                    .map(|item| item.message.clone())
+                    .collect();
+                self.attach_to_latest_user_row(attachments);
+            }
+            // 这句已经在屏幕上，模型还没开口：下面那行开始转 `.` `..` `...`。
+            self.note_awaiting_reply();
             self.note_prompt_submitted(&prompt);
             self.scroll_to_bottom();
         }
@@ -68,6 +79,7 @@ impl App {
             self.language,
             &users,
             &tools,
+            &self.transcript_attachments,
         )
     }
 
@@ -90,6 +102,47 @@ impl App {
                 )
             })
             .collect();
+        self.attachment_hit_rows = self
+            .attachment_controls
+            .iter()
+            .filter(|(line, _, _)| *line >= offset && *line < offset + self.viewport_height)
+            .map(|(line, source, attachment)| {
+                (
+                    top.saturating_add((line - offset) as u16),
+                    *source,
+                    *attachment,
+                )
+            })
+            .collect();
+    }
+
+    /// 点在某一行的附件标签上：文本附件打开预览，图片交给图片查看器。
+    /// 返回 `None` 表示这一行不是附件标签。
+    pub(super) fn open_attachment_at(&mut self, y: u16) -> Option<MediaAction> {
+        let (_, source, attachment_index) = self
+            .attachment_hit_rows
+            .iter()
+            .find(|(line, _, _)| *line == y)
+            .copied()?;
+        let attachment = self
+            .transcript_attachments
+            .get(source)?
+            .get(attachment_index)?;
+        match attachment {
+            MessageAttachment::Text { name, content } => {
+                self.open_text_attachment(name.clone(), content.clone());
+                Some(MediaAction::None)
+            }
+            MessageAttachment::Image {
+                name,
+                media_type,
+                data,
+                ..
+            } => {
+                let target = format!("data:{media_type};base64,{data}");
+                Some(self.media.open_attachment(name.clone(), target))
+            }
+        }
     }
 
     pub(super) fn toggle_user_message_at(&mut self, y: u16) -> bool {

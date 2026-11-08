@@ -91,11 +91,13 @@ impl App {
                     self.chat_selection = None;
                     // 没拖动就是一次单击：按下时先记下那一行，到松手才点开，
                     // 这样从用户消息或工具行上起手拖选不会被点开动作打断。
-                    if let Some(y) = self.pending_chat_click.take()
-                        && !self.toggle_user_message_at(y)
-                        && !self.toggle_thought_at(y)
-                    {
-                        self.toggle_tool_row_at(y);
+                    if let Some(y) = self.pending_chat_click.take() {
+                        // 附件标签优先：点它是查看，不是折叠。
+                        if let Some(action) = self.open_attachment_at(y) {
+                            self.pending_media_action = Some(action);
+                        } else if !self.toggle_user_message_at(y) && !self.toggle_thought_at(y) {
+                            self.toggle_tool_row_at(y);
+                        }
                     }
                     return false;
                 }

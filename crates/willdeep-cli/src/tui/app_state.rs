@@ -9,6 +9,8 @@ impl App {
             input: PromptEditor::default(),
             prompt_history: None,
             prompt_history_pending: VecDeque::new(),
+            awaiting_since: None,
+            transcript_attachments: vec![Vec::new(); transcript.len()],
             transcript,
             archive_floor: 0,
             message_times: message_time::MessageTimes::default(),
@@ -31,6 +33,7 @@ impl App {
             activity_rect: Rect::default(),
             attachments: Vec::new(),
             sent_attachments: Vec::new(),
+            viewed_attachment: Vec::new(),
             selected_attachment: 0,
             attachment_panel: None,
             prompt_rect: Rect::default(),
@@ -127,6 +130,8 @@ impl App {
             expanded_user_messages: BTreeMap::new(),
             user_message_controls: Vec::new(),
             user_message_hit_rows: Vec::new(),
+            attachment_controls: Vec::new(),
+            attachment_hit_rows: Vec::new(),
             deferred_steering: Vec::new(),
             turn_narration: None,
             held_narration: None,
@@ -161,6 +166,7 @@ impl App {
             sidebar_wide: false,
             help_visible: false,
             media: MediaState::default(),
+            pending_media_action: None,
             sidebar_hits: Vec::new(),
             sidebar_manual_scroll: false,
             attention_selected: 0,
@@ -267,6 +273,7 @@ impl App {
         self.input = PromptEditor::default();
         self.clear_input_suggestion();
         self.abandon_accepted_suggestion();
+        self.awaiting_since = None;
         self.running = false;
         self.waiting_background = false;
         self.turn_started = None;
@@ -283,6 +290,7 @@ impl App {
         self.tools_expanded = false;
         self.attachments.clear();
         self.sent_attachments.clear();
+        self.viewed_attachment.clear();
         self.attachment_panel = None;
         self.selected_attachment = 0;
         self.composer_expanded = false;
@@ -299,6 +307,8 @@ impl App {
         self.expanded_user_messages.clear();
         self.user_message_controls.clear();
         self.user_message_hit_rows.clear();
+        self.attachment_controls.clear();
+        self.attachment_hit_rows.clear();
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
@@ -1184,6 +1194,7 @@ impl App {
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
+        self.awaiting_since = None;
         self.running = false;
         self.last_progress_at = None;
         self.runtime_turn = false;
@@ -1954,6 +1965,11 @@ impl App {
         // 所有进记录的文字先过终端安全处理，制表符和控制字符不许碰终端光标。
         let v = terminal_safe_text(&v);
         let previous_len = self.transcript.len();
+        // 模型的第一份可见输出一落进记录，用户消息下面那行等待动画就该消失。
+        // 用户自己的消息、系统行和错误行不算模型开口。
+        if !v.starts_with("You: ") && !v.starts_with("System: ") && !v.starts_with("Error: ") {
+            self.dismiss_awaiting_reply();
+        }
         // 上一帧已经算好的高度就是「追加之前」的高度——再整段重排一遍纯属浪费，
         // 长会话里每落一行工具就重排两次，正是滚动和输出卡顿的来源。
         let previous_height = self.transcript_height;
@@ -1963,6 +1979,9 @@ impl App {
         {
             self.transcript.push(v);
         }
+        // 记录长了几行，附件槽就补几行空的，保持与记录逐行对齐。
+        self.transcript_attachments
+            .resize_with(self.transcript.len(), Vec::new);
         if self.transcript.len() > previous_len {
             self.message_times
                 .observe(&self.transcript, self.message_times.recording_time());
@@ -1981,9 +2000,19 @@ impl App {
         }
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
+    /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
+    /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
+    pub(super) fn paste_goes_inline(value: &str) -> bool {
+        const MAX_INLINE_LINES: usize = 3;
+        const MAX_INLINE_CHARS: usize = 2_000;
+        value.lines().count() <= MAX_INLINE_LINES && value.chars().count() <= MAX_INLINE_CHARS
+    }
+
     pub(super) fn handle_paste(&mut self, value: String) {
         self.prompt_history = None;
-        if value.contains('\n') || value.chars().count() > 200 {
+        if Self::paste_goes_inline(&value) {
+            self.input.insert(&value);
+        } else {
             let n = self.attachments.len() + 1;
             self.append_draft_attachment(DraftAttachment {
                 id: uuid::Uuid::new_v4(),
@@ -1992,8 +2021,6 @@ impl App {
                     content: value,
                 },
             });
-        } else {
-            self.input.insert(&value);
         }
     }
     pub(super) fn delete_selected_attachment(&mut self) {
@@ -2420,6 +2447,7 @@ impl App {
             "/clear" => {
                 self.message_times.clear_rows(&self.transcript);
                 self.transcript.clear();
+                self.transcript_attachments.clear();
                 self.expanded_user_messages.clear();
                 // 清空之后也是首屏：给回欢迎语，而不是留一整屏空白。
                 self.ensure_welcome(&self.workspace.clone().unwrap_or_default(), self.language);

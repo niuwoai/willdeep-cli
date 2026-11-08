@@ -3009,7 +3009,11 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "willdeep"
+<<<<<<< origin/main
 version = "0.147.0-rc9"
+=======
+version = "0.147.0-rc6"
+>>>>>>> a9331799
 dependencies = [
  "anyhow",
  "arboard",
@@ -3052,7 +3056,11 @@ dependencies = [
 
 [[package]]
 name = "willdeep-core"
+<<<<<<< origin/main
 version = "0.147.0-rc9"
+=======
+version = "0.147.0-rc6"
+>>>>>>> a9331799
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3079,7 +3087,11 @@ dependencies = [
 
 [[package]]
 name = "willdeep-runtime-client"
+<<<<<<< origin/main
 version = "0.147.0-rc9"
+=======
+version = "0.147.0-rc6"
+>>>>>>> a9331799
 dependencies = [
  "bytes",
  "futures-util",
@@ -3094,7 +3106,11 @@ dependencies = [
 
 [[package]]
 name = "willdeep-runtime-protocol"
+<<<<<<< origin/main
 version = "0.147.0-rc9"
+=======
+version = "0.147.0-rc6"
+>>>>>>> a9331799
 dependencies = [
  "chrono",
  "chrono-tz",

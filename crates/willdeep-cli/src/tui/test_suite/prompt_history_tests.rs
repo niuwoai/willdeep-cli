@@ -100,7 +100,7 @@ fn prompt_history_empty_session_and_inline_render_are_safe() {
 #[test]
 fn prompt_history_refill_preserves_existing_attachments() {
     let mut app = App::new(Vec::new(), Language::En);
-    app.handle_paste("attached\ncontext".to_owned());
+    app.handle_paste("attached\ncontext\nline three\nline four".to_owned());
     let attachment_id = app.attachments[0].id;
     let messages = vec![Message::user("previous request")];
     press(&mut app, KeyCode::Up, &messages);
