@@ -7,7 +7,7 @@
 
 #[cfg(unix)]
 use std::io::Read;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use base64::Engine;
 #[cfg(unix)]
@@ -524,6 +524,19 @@ pub(crate) fn hosted() -> bool {
     ["MUSETERM_AGENT_CONTEXT", "QTERM_AGENT_CONTEXT"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// Installs the filter on standard input when this really is a hosted interactive TUI. The filter
+/// must be in place before anything reads stdin — the session picker is one such reader — and a
+/// terminal without the markers keeps an untouched stdin and never sees a `hello`.
+pub(crate) fn install_hosted(
+    interactive: bool,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::tui::UiMessage>,
+) -> Option<GalleryInput> {
+    if !interactive || !std::io::stdout().is_terminal() || !hosted() {
+        return None;
+    }
+    GalleryInput::install(tx).ok()
 }
 
 /// True when the filtered pty is installed and `hello` may be written.
