@@ -235,7 +235,10 @@ fn recorded_model_is_projected_per_message_and_absent_models_stay_absent() {
     let user_json = serde_json::to_string(&items[0]).unwrap();
     assert!(!user_json.contains("model"), "{user_json}");
     let assistant_json = serde_json::to_string(&items[1]).unwrap();
-    assert!(assistant_json.contains("\"model\":\"glm-5\""), "{assistant_json}");
+    assert!(
+        assistant_json.contains("\"model\":\"glm-5\""),
+        "{assistant_json}"
+    );
 }
 
 #[test]

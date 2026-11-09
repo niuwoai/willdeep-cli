@@ -72,7 +72,9 @@ fn byte_limit_and_usage_force_a_durable_stream_boundary() {
     let sink = Saved::default();
     let mut recorder = CheckpointRecorder::new(Some(&sink));
     recorder.record(&[Message::user("work")], 1, 0, 0).unwrap();
-    recorder.record_stream(Some("first"), None, 1, 0, 0).unwrap();
+    recorder
+        .record_stream(Some("first"), None, 1, 0, 0)
+        .unwrap();
     recorder
         .record_stream(Some(&"x".repeat(STREAM_CHECKPOINT_BYTES)), None, 1, 0, 0)
         .unwrap();
@@ -92,8 +94,12 @@ fn dropping_an_unfinished_recorder_flushes_pending_text() {
     {
         let mut recorder = CheckpointRecorder::new(Some(&sink));
         recorder.record(&[Message::user("work")], 1, 0, 0).unwrap();
-        recorder.record_stream(Some("first"), None, 1, 0, 0).unwrap();
-        recorder.record_stream(Some(" tail"), None, 1, 0, 0).unwrap();
+        recorder
+            .record_stream(Some("first"), None, 1, 0, 0)
+            .unwrap();
+        recorder
+            .record_stream(Some(" tail"), None, 1, 0, 0)
+            .unwrap();
         assert_eq!(sink.0.lock().unwrap().len(), 2);
     }
     let saved = sink.0.lock().unwrap();

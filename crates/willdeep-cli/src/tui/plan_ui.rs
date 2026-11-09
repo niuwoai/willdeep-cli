@@ -170,7 +170,11 @@ pub(super) fn project_session(
     messages: &[Message],
     plan: Option<&Plan>,
     language: Language,
-) -> (Vec<String>, Vec<Vec<MessageAttachment>>, Vec<Option<String>>) {
+) -> (
+    Vec<String>,
+    Vec<Vec<MessageAttachment>>,
+    Vec<Option<String>>,
+) {
     let mut rows = Vec::new();
     let mut attachments = Vec::new();
     let mut models = Vec::new();
@@ -531,8 +535,7 @@ mod tests {
             Message::user("第一句"),
             Message::assistant("glm 的回答", Vec::new()).with_model(Some("glm-5".into())),
             Message::user("第二句"),
-            Message::assistant("qwen 的回答", Vec::new())
-                .with_model(Some("Qwen3.8-27B".into())),
+            Message::assistant("qwen 的回答", Vec::new()).with_model(Some("Qwen3.8-27B".into())),
             Message::assistant("旧消息，没记模型", Vec::new()),
         ];
         let mut session = Session::new(std::path::PathBuf::from("/tmp"), None, "");
@@ -553,10 +556,7 @@ mod tests {
         );
         // 删掉一行，章跟着走，不错位。
         app.drop_transcript_row(2);
-        assert_eq!(
-            app.transcript_models[2].as_deref(),
-            Some("Qwen3.8-27B")
-        );
+        assert_eq!(app.transcript_models[2].as_deref(), Some("Qwen3.8-27B"));
     }
 
     /// 重开后附件挂在对的那句用户话下面：文本正文摊出来，图片只留可点的标签。

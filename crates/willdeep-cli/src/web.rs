@@ -2685,7 +2685,10 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
             .filter(|model| !model.is_empty())
             && let Some(object) = event.as_object_mut()
         {
-            object.insert("model".to_owned(), serde_json::Value::String(model.to_owned()));
+            object.insert(
+                "model".to_owned(),
+                serde_json::Value::String(model.to_owned()),
+            );
         }
         return Some(event);
     }
@@ -2777,7 +2780,10 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
                 .filter(|model| !model.is_empty())
                 && let Some(object) = event.as_object_mut()
             {
-                object.insert("model".to_owned(), serde_json::Value::String(model.to_owned()));
+                object.insert(
+                    "model".to_owned(),
+                    serde_json::Value::String(model.to_owned()),
+                );
             }
             return Some(event);
         }

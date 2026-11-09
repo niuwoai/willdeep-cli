@@ -373,8 +373,7 @@ impl<'a> CheckpointRecorder<'a> {
             self.pending_stream_bytes = self.pending_stream_bytes.saturating_add(delta.len());
             if checkpoint.messages.len() == prefix {
                 checkpoint.messages.push(
-                    Message::assistant(delta, Vec::new())
-                        .with_model(model.map(str::to_owned)),
+                    Message::assistant(delta, Vec::new()).with_model(model.map(str::to_owned)),
                 );
             } else {
                 checkpoint.messages[prefix].content.push_str(delta);
