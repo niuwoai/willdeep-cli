@@ -58,6 +58,13 @@ pub(crate) fn announce_list(out: &mut impl Write, images: &[GalleryImage]) -> io
     )
 }
 
+/// Ends the conversation when the TUI exits, so the column folds away with the process instead
+/// of keeping the last draft's thumbnails. The empty body still writes its trailing `;`: the
+/// terminal's parser wants the version field, the operation and at least one field after it.
+pub(crate) fn announce_bye(out: &mut impl Write) -> io::Result<()> {
+    announce(out, "bye", "")
+}
+
 /// Tells the terminal a paste became a draft attachment. Only the unix request handler calls it.
 #[cfg(unix)]
 pub(crate) fn acknowledge(out: &mut impl Write, nonce: &str, id: Uuid) -> io::Result<()> {
@@ -650,6 +657,22 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "\x1b]7771;v=1;blob;11111111-2222-3333-4444-555555555555;0;1;cG5n\x07"
         );
+    }
+
+    /// 退出帧必须带末尾分号：终端的解析器要求版本、操作之外至少还有一个字段。
+    #[test]
+    fn a_bye_frame_keeps_the_trailing_semicolon() {
+        let mut out = Vec::new();
+        announce_bye(&mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b]7771;v=1;bye;\x07");
+    }
+
+    /// 空列表是「收起这一列」，新进程启动后靠它清掉上一轮残留的缩略图。
+    #[test]
+    fn an_empty_list_folds_the_column_away() {
+        let mut out = Vec::new();
+        announce_list(&mut out, &[]).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b]7771;v=1;list;[]\x07");
     }
 
     #[test]

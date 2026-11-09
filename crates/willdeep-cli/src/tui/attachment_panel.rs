@@ -58,16 +58,17 @@ impl App {
     /// Tells the terminal which images the column should show. Sent attachments stay out: the
     /// column only offers a delete icon for a draft, and a sent image cannot be deleted.
     pub(super) fn publish_gallery(&mut self) {
+        // 只有装了过滤的终端（MuseTerm / QTerm）才有图片列；别的终端一个私有序列都不写。
+        if !crate::gallery::active() {
+            return;
+        }
         let images = crate::gallery::gallery_images(&self.attachments);
         let mut out = std::io::stdout();
         if crate::gallery::announce_list(&mut out, &images).is_ok() {
             let _ = out.flush();
         }
         // 终端自己粘贴进来的图片它手里有像素；TUI 自己读剪贴板或恢复来的草稿只进过 list，
-        // 终端画不出缩略图，得把像素补给它一次。没装过滤的终端不发，免得白写几 MB。
-        if !crate::gallery::active() {
-            return;
-        }
+        // 终端画不出缩略图，得把像素补给它一次。
         for (id, png) in self.pending_gallery_blobs() {
             if crate::gallery::announce_blob(&mut out, &id.to_string(), &png).is_ok() {
                 self.gallery_blobbed.insert(id);

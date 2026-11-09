@@ -400,13 +400,15 @@ async fn open_external_editor(
 /// Applies one request from the terminal's image column and tells the column what changed.
 /// Requests only arrive through the filtered pty.
 #[cfg(unix)]
-fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
-    use std::io::Write;
-    let mut out = io::stdout();
+fn handle_gallery(
+    app: &mut App,
+    request: crate::gallery::GalleryRequest,
+    out: &mut impl std::io::Write,
+) {
     match request {
         crate::gallery::GalleryRequest::Paste { nonce, png } => {
             let Some(attachment) = crate::gallery::attachment_from_png(&png) else {
-                let _ = crate::gallery::reject(&mut out, &nonce, "not a png");
+                let _ = crate::gallery::reject(out, &nonce, "not a png");
                 let _ = out.flush();
                 return;
             };
@@ -414,10 +416,10 @@ fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
             // 终端从粘贴板拿到的图片它自己有像素，list 之后不必再回传。
             app.gallery_staged.insert(id);
             if app.append_draft_attachment(attachment) {
-                let _ = crate::gallery::acknowledge(&mut out, &nonce, id);
+                let _ = crate::gallery::acknowledge(out, &nonce, id);
             } else {
                 app.gallery_staged.remove(&id);
-                let _ = crate::gallery::reject(&mut out, &nonce, "limit");
+                let _ = crate::gallery::reject(out, &nonce, "limit");
             }
         }
         crate::gallery::GalleryRequest::Delete { id } => {
@@ -429,10 +431,12 @@ fn handle_gallery(app: &mut App, request: crate::gallery::GalleryRequest) {
                 app.selected_attachment = app
                     .selected_attachment
                     .min(app.attachments.len().saturating_sub(1));
-                let _ = crate::gallery::confirm_removed(&mut out, &id);
                 let images = crate::gallery::gallery_images(&app.attachments);
-                let _ = crate::gallery::announce_list(&mut out, &images);
+                let _ = crate::gallery::announce_list(out, &images);
             }
+            // 草稿里已经没有这张图也要回 `remove`：终端那一列可能挂着上一个进程留下的
+            // 缩略图，不回它就一直留着，点删除看起来毫无反应。
+            let _ = crate::gallery::confirm_removed(out, &id);
         }
     }
     let _ = out.flush();
@@ -539,6 +543,9 @@ pub(super) async fn event_loop(
             "hello",
             &format!("willdeep {}", env!("CARGO_PKG_VERSION")),
         );
+        // 新进程的草稿是空的：紧跟 hello 报一次列表，把上一个进程留在终端里的缩略图清掉。
+        // 终端只在收到 `bye` 或新的 `list` 时才重画这一列，进程被杀掉时只剩这条路。
+        app.publish_gallery();
     }
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
@@ -1994,7 +2001,7 @@ pub(super) async fn event_loop(
             }},
             Some(message)=runtime.rx.recv()=>match message {
                 #[cfg(unix)]
-                UiMessage::Gallery(request)=>handle_gallery(&mut app, request),
+                UiMessage::Gallery(request)=>handle_gallery(&mut app, request, &mut io::stdout()),
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
                     willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),
                     willdeep_core::provider::ProviderEvent::TextDelta(text)=>app.stream_transient(StreamKind::Reply,&text),
@@ -2091,6 +2098,12 @@ pub(super) async fn event_loop(
                 if !app.running {wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;}
             },
         }
+    }
+    // 干净退出时告诉终端这一轮结束了；没有 `bye`，终端会把草稿缩略图一直挂着。
+    if crate::gallery::active() {
+        let mut out = io::stdout();
+        let _ = crate::gallery::announce_bye(&mut out);
+        let _ = std::io::Write::flush(&mut out);
     }
     if app.runtime_event_cursor > session.runtime_event_cursor {
         runtime_ui::sync_runtime_session(&mut app, session, store)?;
@@ -2258,5 +2271,56 @@ mod scroll_coalesce_tests {
         apply_scroll(&mut app, scrolled);
         assert_eq!(app.focus, focus);
         assert!(app.follow_bottom);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod gallery_request_tests {
+    use super::*;
+
+    /// 草稿里已经没有这张图（比如上一个进程留下的缩略图）也要回 `remove`，
+    /// 否则终端那一列不会消失，点删除看起来毫无反应。
+    #[test]
+    fn deleting_an_unknown_id_still_confirms_the_removal() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let mut out = Vec::new();
+        handle_gallery(
+            &mut app,
+            crate::gallery::GalleryRequest::Delete {
+                id: "11111111-2222-3333-4444-555555555555".to_owned(),
+            },
+            &mut out,
+        );
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\x1b]7771;v=1;remove;11111111-2222-3333-4444-555555555555\x07"
+        );
+    }
+
+    /// 删除存在的草稿：附件消失，终端收到新的空列表和 remove。
+    #[test]
+    fn deleting_a_draft_clears_it_and_reports_the_list() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let id = uuid::Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        app.attachments.push(crate::editor::DraftAttachment {
+            id,
+            message: willdeep_core::MessageAttachment::Image {
+                name: "clipboard.png".to_owned(),
+                media_type: "image/png".to_owned(),
+                data: String::new(),
+                width: 1,
+                height: 1,
+            },
+        });
+        let mut out = Vec::new();
+        handle_gallery(
+            &mut app,
+            crate::gallery::GalleryRequest::Delete { id: id.to_string() },
+            &mut out,
+        );
+        assert!(app.attachments.is_empty());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("list;[]"), "{text:?}");
+        assert!(text.contains(&format!("remove;{id}")), "{text:?}");
     }
 }
