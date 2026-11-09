@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.147.0-rc22] - 2026-11-10
+
+### Fixed
+- `main.rs` 末尾内联单测抽到 `main_cli_tests.rs`，文件回到 3000 行以内，发行检查不再拦下。
+
 ## [0.147.0-rc21] - 2026-11-10
 
 ### Fixed
