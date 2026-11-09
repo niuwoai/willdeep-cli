@@ -64,6 +64,7 @@ impl Harness {
             local_transport: None,
             tools: tasks.tools.clone(),
             work_gate: Arc::new(RwLock::new(false)),
+            connections: crate::daemon::idle_exit::connection_counter(),
             kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
             mobile: Arc::new(MobileRelay::new(&root)),
             web_app: Arc::new(crate::daemon::web_app::WebAppService::new(&root)),
