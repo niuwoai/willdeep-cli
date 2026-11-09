@@ -14,7 +14,9 @@ jobs:
       # 各平台独立出结果：一个平台失败不连带取消其余平台，否则看不到它们各自的问题。
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        # Windows 不再发版，也不再跑 CI。windows-latest 的测试反复因 runner 上的进程枚举超时失败，
+        # 而发布步骤依赖整份验证，一次失败就把已经编好的 macOS 和 Linux 包也卡住。
+        os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # 卡住的测试 1 小时内失败，不空等 GitHub 缺省的 6 小时。
     timeout-minutes: 60
@@ -47,19 +49,8 @@ jobs:
       - name: Hand-maintained file size boundary
         if: runner.os == 'Linux'
         run: ruby scripts/check_source_size.rb
-      - name: Keep Git line endings byte-exact on Windows
-        # runner 镜像沿用 Git for Windows 的缺省 core.autocrlf=true：测试建的仓库（以及
-        # handoff 由产品代码 clone 出的接收端）检出时 LF 被改成 CRLF，逐字节比对恢复
-        # 结果的断言就失败。测试要的是不改行尾的 git，在这里给出这个环境。
-        if: runner.os == 'Windows'
-        run: git config --global core.autocrlf false
       - name: Test
-        if: runner.os != 'Windows'
         run: cargo test --workspace
-      - name: Test Windows
-        if: runner.os == 'Windows'
-        # 保留用例内部并发；减少真实进程启动与同步落盘用例之间的资源争用。
-        run: cargo test --workspace -- --test-threads=2
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Model eval task set self-check

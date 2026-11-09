@@ -6,6 +6,11 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.147.0-rc19] - 2026-11-10
+
+### Changed
+- CI 不再跑 Windows。Windows 本来就不发版，但 `windows-latest` 的测试反复因 runner 上的进程枚举超时失败，而发布步骤依赖整份验证，一次失败就把已经编好的 macOS 和 Linux 包也卡住。现在测试只跑 macOS 和 Linux。
+
 ## [0.147.0-rc18] - 2026-11-10
 
 ### Fixed
