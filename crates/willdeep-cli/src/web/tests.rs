@@ -237,6 +237,22 @@ fn streaming_client_events_preserve_text_and_localize_retry_wait() {
     let event = client_event(serde_json::json!({"type":"assistant_text_delta", "text":"正在生成正文", "internal":"hidden"}), Language::ZhCn).unwrap();
     assert_eq!(event["text"], "正在生成正文");
     assert!(event.get("internal").is_none());
+    // 旧 Runtime 的增量不带模型：转给前端时也不许凭空造一个。
+    assert!(event.get("model").is_none(), "{event}");
+    // 带了模型的才原样往下传，空白的不算。
+    let event = client_event(
+        serde_json::json!({"type":"assistant_text_delta", "text":"正文", "model":" glm-5 "}),
+        Language::ZhCn,
+    )
+    .unwrap();
+    assert_eq!(event["model"], "glm-5");
+    let event = client_event(
+        serde_json::json!({"type":"assistant_text", "text":"定稿", "model":"Qwen3.8-27B"}),
+        Language::ZhCn,
+    )
+    .unwrap();
+    assert_eq!(event["type"], "thought");
+    assert_eq!(event["model"], "Qwen3.8-27B");
     // 思维链增量同样只传文本和类型，前端据此画「思考中」尾巴行。
     let event = client_event(
         serde_json::json!({"type":"reasoning_delta", "text":"先看日志", "internal":"hidden"}),

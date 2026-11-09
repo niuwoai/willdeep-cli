@@ -357,6 +357,7 @@ impl<'a> CheckpointRecorder<'a> {
     pub fn record_stream(
         &mut self,
         delta: Option<&str>,
+        model: Option<&str>,
         turns: usize,
         input_tokens: u64,
         output_tokens: u64,
@@ -371,9 +372,9 @@ impl<'a> CheckpointRecorder<'a> {
         if let Some(delta) = delta.filter(|text| !text.is_empty()) {
             self.pending_stream_bytes = self.pending_stream_bytes.saturating_add(delta.len());
             if checkpoint.messages.len() == prefix {
-                checkpoint
-                    .messages
-                    .push(Message::assistant(delta, Vec::new()));
+                checkpoint.messages.push(
+                    Message::assistant(delta, Vec::new()).with_model(model.map(str::to_owned)),
+                );
             } else {
                 checkpoint.messages[prefix].content.push_str(delta);
             }

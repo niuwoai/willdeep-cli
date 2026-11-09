@@ -300,6 +300,10 @@ struct App {
     /// 附件正文不写进记录字符串：图片的 base64 会把记录撑爆，也会改掉
     /// `You: 原文` 这一行，而回显认领靠的正是整行比对。正文留在这里，画的时候再拼上去。
     transcript_attachments: Vec<Vec<MessageAttachment>>,
+    /// 与 `transcript` 逐行对齐的模型名：用户行是发送当时的会话模型，助手正文行
+    /// 是产出它的模型。没有记录的行（旧会话、工具行、系统行）是 `None`，
+    /// 显示时只留时间，不用会话当前模型去猜。
+    transcript_models: Vec<Option<String>>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
     archive_floor: usize,
@@ -399,9 +403,12 @@ struct App {
     pending_model: Option<String>,
     /// `Some(None)` 表示本轮结束后清除会话覆盖、恢复 Provider 默认。
     pending_reasoning_level: Option<Option<String>>,
-    /// 当前会话用的模型名，只给聊天区每条消息的时间后缀用。会话不记逐条模型，
-    /// 历史消息一律标会话当前的这个；切模型或换会话时更新。
+    /// 会话当前的模型名。用户消息落进记录时盖这个章（「这句话发给了哪个模型」），
+    /// 切模型或换会话时更新。它不参与助手消息的标注：助手消息只认记录里记下的模型。
     display_model: Option<String>,
+    /// 正在进行的这一轮产出文字的模型，由 `AssistantText` 事件带来。实时落进
+    /// 记录的助手行盖这个章；轮次结束即清空，不拿它去标下一轮。
+    reply_model: Option<String>,
     pending_provider: Option<String>,
     /// 进程内 Harness 当前轮次的句柄。Runtime 轮次由 Daemon 停，本地轮次只能靠
     /// 掐这个 Task——没有它，`/local` 跑飞了就只剩退出 TUI 一条路。

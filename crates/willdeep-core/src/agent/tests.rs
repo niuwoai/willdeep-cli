@@ -1595,6 +1595,7 @@ async fn persisted_orphan_tool_results_are_removed_before_provider_replay() {
             tool_call_id: None,
             tool_calls: Vec::new(),
             attachments: Vec::new(),
+            model: None,
         },
         Message::assistant("old answer", Vec::new()),
     ];

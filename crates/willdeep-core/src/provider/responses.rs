@@ -394,6 +394,19 @@ mod tests {
         assert_eq!(input[1].call_id.as_deref(), Some("call_1"));
     }
 
+    /// 记下的模型名只给界面看，出站的输入里不能出现。
+    #[test]
+    fn recorded_model_never_reaches_the_wire() {
+        let messages = vec![
+            Message::system("rules"),
+            Message::assistant("answer", Vec::new()).with_model(Some("glm-5".into())),
+        ];
+        let (_, input) = encode_input(&messages);
+        let wire = serde_json::to_string(&input).unwrap();
+        assert!(!wire.contains("glm-5"), "{wire}");
+        assert!(!wire.contains("\"model\""), "{wire}");
+    }
+
     #[test]
     fn image_attachment_becomes_input_image() {
         let message = Message::user_with_attachments(

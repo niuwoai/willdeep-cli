@@ -1908,7 +1908,7 @@ impl EventSink for TerminalSink {
             AgentEvent::GoalBudgetLimited { reason } => {
                 eprintln!("[goal] budget exhausted · wrapping up · {reason:?}")
             }
-            AgentEvent::AssistantText(_)
+            AgentEvent::AssistantText { .. }
             | AgentEvent::BackgroundWait { .. }
             | AgentEvent::TurnStarted { .. }
             | AgentEvent::RunScoped { .. } => {}
@@ -2075,8 +2075,8 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
         AgentEvent::TurnPreempted { turn } => {
             serde_json::json!({"type": "turn_preempted", "turn": turn})
         }
-        AgentEvent::AssistantText(text) => {
-            serde_json::json!({"type": "assistant_text", "text": text})
+        AgentEvent::AssistantText { text, model } => {
+            serde_json::json!({"type": "assistant_text", "text": text, "model": model})
         }
         AgentEvent::ProviderProgress(event) => match event {
             willdeep_core::provider::ProviderEvent::RetryStarted { attempt } => {
@@ -2910,8 +2910,11 @@ mod tests {
             serde_json::json!({"type": "turn_started", "turn": 3})
         );
         assert_eq!(
-            agent_event_json(AgentEvent::AssistantText("ready".to_string())),
-            serde_json::json!({"type": "assistant_text", "text": "ready"})
+            agent_event_json(AgentEvent::AssistantText {
+                text: "ready".to_string(),
+                model: None,
+            }),
+            serde_json::json!({"type": "assistant_text", "text": "ready", "model": null})
         );
         assert_eq!(
             agent_event_json(AgentEvent::RouteDecided {

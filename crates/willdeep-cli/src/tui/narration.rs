@@ -90,40 +90,48 @@ impl App {
         if self.has_visible_transcript() {
             return;
         }
-        // 空白行连同它的附件槽一起丢掉，两边始终逐行对齐。
+        // 空白行连同它的附件槽和模型章一起丢掉，三边始终逐行对齐。
         let slots = std::mem::take(&mut self.transcript_attachments);
+        let models = std::mem::take(&mut self.transcript_models);
         let kept = self
             .transcript
             .drain(..)
             .zip(slots.into_iter().chain(std::iter::repeat(Vec::new())))
-            .filter(|(row, _)| !row.trim().is_empty())
+            .zip(models.into_iter().chain(std::iter::repeat(None)))
+            .filter(|((row, _), _)| !row.trim().is_empty())
             .collect::<Vec<_>>();
-        self.transcript = kept.iter().map(|(row, _)| row.clone()).collect();
-        self.transcript_attachments = kept.into_iter().map(|(_, slot)| slot).collect();
+        self.transcript = kept.iter().map(|((row, _), _)| row.clone()).collect();
+        self.transcript_attachments = kept.iter().map(|((_, slot), _)| slot.clone()).collect();
+        self.transcript_models = kept.into_iter().map(|(_, model)| model).collect();
         self.transcript
             .push(super::rendering::welcome_message(workspace, language));
         self.transcript_attachments.push(Vec::new());
+        self.transcript_models.push(None);
     }
 
     /// 从会话重建聊天记录。所有「换一份记录」的路径都必须走这里：
     /// 只投影消息会漏掉首屏，daemon 的 display session 那条路径就是这样把
     /// 欢迎语又覆盖掉的——列表非空、屏幕空白。
     pub(super) fn load_transcript(&mut self, session: &willdeep_core::Session) {
-        let (rows, attachments) = super::plan_ui::project_session(
+        let (rows, attachments, models) = super::plan_ui::project_session(
             &session.messages,
             session.current_plan.as_ref(),
             self.language,
         );
         self.transcript = rows;
         self.transcript_attachments = attachments;
+        self.transcript_models = models;
         self.ensure_welcome(&session.workspace, self.language);
     }
 
-    /// 删掉记录里的一行，连同它的附件槽和时间一起，保持两边逐行对齐。
+    /// 删掉记录里的一行，连同它的附件槽、模型章和时间一起，保持逐行对齐。
     pub(super) fn drop_transcript_row(&mut self, index: usize) {
         self.transcript.remove(index);
         if index < self.transcript_attachments.len() {
             self.transcript_attachments.remove(index);
+        }
+        if index < self.transcript_models.len() {
+            self.transcript_models.remove(index);
         }
         self.message_times.remove(index);
         self.refresh_transcript_height();
@@ -2250,6 +2258,7 @@ mod tests {
         assert_eq!(app.transcript, vec!["System: ✓ 目标完成"]);
         app.transcript.clear();
         app.transcript_attachments.clear();
+        app.transcript_models.clear();
         app.turn_started = Some(std::time::Instant::now());
         app.note_goal_completed();
         assert!(
