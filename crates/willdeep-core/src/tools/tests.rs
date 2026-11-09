@@ -848,6 +848,62 @@ async fn subagent_write_target_rejects_every_other_file() {
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 
+/// `read_file` renders `"{line:>6}  {text}"`. A copied span carries those two
+/// spaces, so the exact joined text is absent even though each source line is
+/// present. The edit still has to land once, without eating real indentation.
+#[tokio::test]
+async fn edit_file_strips_a_copied_read_file_prefix() {
+    let root = workspace("edit-read-prefix");
+    let source = "fn point(coords: &[Expr]) {\n          if any(a.is_number && im(a) for a in coords) {\n              raise ValueError('Imaginary coordinates are not permitted.')\n          }\n}\n";
+    std::fs::write(root.join("point.py"), source).expect("fixture");
+    let registry = ToolRegistry::new(&root, ApprovalMode::WorkspaceAccess).expect("registry");
+    let read = registry
+        .read_file(ReadArgs {
+            path: "point.py".to_owned(),
+            offset: Some(2),
+            limit: Some(2),
+            max_bytes: None,
+        })
+        .await
+        .expect("read");
+    let rendered: Vec<&str> = read
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(rendered.len(), 2);
+    let copied_gap = rendered
+        .iter()
+        .map(|line| {
+            let (gutter, text) = line.split_at(8);
+            assert!(gutter[..6].trim().chars().all(|ch| ch.is_ascii_digit()));
+            assert!(gutter.ends_with("  "));
+            format!("  {text}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let copied_gutter = rendered.join("\n");
+    assert!(!source.contains(&copied_gap));
+    assert!(!source.contains(&copied_gutter));
+
+    for (name, copied) in [("gap.py", copied_gap), ("gutter.py", copied_gutter)] {
+        std::fs::write(root.join(name), source).expect("fixture copy");
+        registry
+            .edit_file(EditArgs {
+                path: name.to_owned(),
+                old_string: copied,
+                new_string: "          if any(a.is_number && im(a).is_zero is False for a in coords) {\n              raise ValueError('Imaginary coordinates are not permitted.')".to_owned(),
+                replace_all: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("{name} copied read prefix is one unique span: {error}"));
+        let updated = std::fs::read_to_string(root.join(name)).expect("updated");
+        assert!(updated.contains("im(a).is_zero is False"), "{name}");
+        assert!(updated.contains("\n          if any"), "{name}");
+        assert!(!updated.contains("\n            if any"), "{name}");
+    }
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
 /// The file-set write channel is the single-file channel generalized, so
 /// the same three gates have to hold for a set: every declared file is
 /// writable, and anything outside it is refused with a path back to the

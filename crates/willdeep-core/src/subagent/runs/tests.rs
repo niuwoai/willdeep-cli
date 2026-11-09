@@ -228,6 +228,45 @@ fn team_policy_and_cumulative_runs_survive_reopen_and_ledger_is_deduplicated() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Stopping a worker settles its in-flight model call as cancelled with no
+/// usage. That row is accounted (zero tokens), not an unpriced completed call,
+/// so it must not make the next parent turn unverifiable.
+#[test]
+fn cancelled_call_without_usage_does_not_block_the_team_budget() {
+    use crate::usage_ledger::{Execution, Outcome, UsageKind, UsageLedgerRecord, append_record};
+    let (store, root) = fixture();
+    store
+        .configure_team(super::super::scheduler::AgentTeamSettings {
+            token_budget: Some(8_000_000),
+            ..Default::default()
+        })
+        .unwrap();
+    let ledger = root.join("usage");
+    let mut known = UsageLedgerRecord::new(UsageKind::Subagent, Execution::InProcess);
+    known.session_id = Some(store.parent);
+    known.usage.input_tokens = Some(568_950);
+    known.usage.output_tokens = Some(5_346);
+    known.usage.total_tokens = Some(574_296);
+    append_record(&ledger, &known).unwrap();
+    let mut cancelled = UsageLedgerRecord::new(UsageKind::Subagent, Execution::InProcess);
+    cancelled.session_id = Some(store.parent);
+    cancelled.outcome = Outcome::Cancelled;
+    append_record(&ledger, &cancelled).unwrap();
+
+    store.budget_gate(&ledger).unwrap();
+    let summary = store.team_summary(&ledger).unwrap();
+    assert_eq!(summary.usage.model_calls, 2);
+    assert_eq!(summary.usage.unknown_usage_calls, 0);
+    assert_eq!(summary.usage.accounted_tokens, 574_296);
+
+    let mut unpriced = UsageLedgerRecord::new(UsageKind::Main, Execution::InProcess);
+    unpriced.session_id = Some(store.parent);
+    unpriced.outcome = Outcome::Ok;
+    append_record(&ledger, &unpriced).unwrap();
+    assert!(store.budget_gate(&ledger).unwrap_err().contains("unknown"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn team_budget_uses_all_call_kinds_and_stops_at_the_limit() {
     use crate::usage_ledger::{Execution, UsageKind, UsageLedgerRecord, append_record};
