@@ -918,6 +918,9 @@ async fn run() -> Result<()> {
         .unwrap_or_default();
 
     let interactive_tui = prompt.is_none() && std::io::stdin().is_terminal() && !cli.no_tui;
+    let (tui_tx, tui_rx) = tui::channel();
+    // MuseTerm 把图库帧和按键写在同一条输入流里；过滤层必须在任何读取之前装好。
+    let _gallery_input = crate::gallery::install_hosted(interactive_tui, tui_tx.clone());
     let directory_approval = session_startup::prepare(
         &cli,
         &loaded,
@@ -947,7 +950,6 @@ async fn run() -> Result<()> {
         )
         .await;
     }
-    let (tui_tx, tui_rx) = tui::channel();
     let frontend =
         if let Some(connection) = web_input.as_ref().and_then(|input| input.runtime.clone()) {
             harness::HarnessFrontend::Runtime {

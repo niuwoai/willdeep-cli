@@ -169,7 +169,7 @@ pub enum UiMessage {
     },
     MediaResized(std::result::Result<ratatui_image::thread::ResizeResponse, String>),
     /// A paste or a delete click reported by the terminal's image column.
-    /// The input splice that sends these only exists on unix.
+    /// The filtered pty that sends these only exists on unix.
     #[cfg(unix)]
     Gallery(crate::gallery::GalleryRequest),
     /// 标题摘要跑完了（`Some` 才是有结果）。摘要是一次网络往返，不能在
@@ -338,6 +338,10 @@ struct App {
     activity_rect: Rect,
     attachments: Vec<DraftAttachment>,
     sent_attachments: Vec<DraftAttachment>,
+    /// 终端已经拿到像素的草稿附件（终端自己粘贴进来的），列表之外不再回传像素。
+    gallery_staged: HashSet<uuid::Uuid>,
+    /// 已经向终端回传过像素的草稿附件，避免每次刷新列表都重发。
+    gallery_blobbed: HashSet<uuid::Uuid>,
     /// 从聊天区点开的单个文本附件，只供预览面板读。
     viewed_attachment: Vec<DraftAttachment>,
     selected_attachment: usize,
@@ -806,6 +810,8 @@ pub async fn run(
         rx: ui.1,
     };
     let result = event_loop(&mut term, agent, &mut session, &store, &mut runtime, ui.6).await;
+    // 收尾的三行要打在真实终端上：先把它的模式还回去，换行才会被正常处理。
+    crate::gallery::restore_terminal();
     terminal::disable_raw_mode()?;
     execute!(
         term.backend_mut(),

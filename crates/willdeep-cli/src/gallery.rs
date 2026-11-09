@@ -2,12 +2,12 @@
 //!
 //! MuseTerm draws the thumbnails. This process owns the attachments, so it announces them and
 //! answers when the terminal reports a paste or a click on a delete icon. The terminal only sends
-//! those bytes after it has seen `hello`, and `hello` is only written once this filter is
-//! installed in front of the terminal's own input reader.
+//! those bytes after it has seen `hello`, and `hello` is only written once the filtered pty is on
+//! standard input, installed before anything reads it.
 
 #[cfg(unix)]
 use std::io::Read;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 use base64::Engine;
 #[cfg(unix)]
@@ -30,7 +30,7 @@ pub(crate) struct GalleryImage {
 }
 
 /// What the terminal asked for, pulled out of the input stream before any key parser sees it.
-/// Nothing constructs one on Windows: the input splice that produces them is unix-only.
+/// Nothing constructs one on Windows: the input filter that produces them is unix-only.
 #[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Debug)]
 pub(crate) enum GalleryRequest {
@@ -58,6 +58,13 @@ pub(crate) fn announce_list(out: &mut impl Write, images: &[GalleryImage]) -> io
     )
 }
 
+/// Ends the conversation when the TUI exits, so the column folds away with the process instead
+/// of keeping the last draft's thumbnails. The empty body still writes its trailing `;`: the
+/// terminal's parser wants the version field, the operation and at least one field after it.
+pub(crate) fn announce_bye(out: &mut impl Write) -> io::Result<()> {
+    announce(out, "bye", "")
+}
+
 /// Tells the terminal a paste became a draft attachment. Only the unix request handler calls it.
 #[cfg(unix)]
 pub(crate) fn acknowledge(out: &mut impl Write, nonce: &str, id: Uuid) -> io::Result<()> {
@@ -82,8 +89,8 @@ pub(crate) fn confirm_removed(out: &mut impl Write, id: &str) -> io::Result<()> 
     announce(out, "remove", id)
 }
 
-/// Sends an image this process produced, such as a generated picture, so the column can show it.
-#[allow(dead_code)]
+/// Sends an image this process holds, such as a picture pasted from the TUI's own clipboard, so
+/// the column can draw a thumbnail even though it never saw the bytes itself.
 pub(crate) fn announce_blob(out: &mut impl Write, id: &str, png: &[u8]) -> io::Result<()> {
     if !is_identifier(id) || png.is_empty() || png.len() > MAX_IMAGE_BYTES {
         return Ok(());
@@ -119,6 +126,9 @@ struct PartialPaste {
 pub(crate) struct GalleryFilter {
     pending: Vec<u8>,
     pastes: Vec<PartialPaste>,
+    /// When the bytes now held back first arrived. A suffix is held only while it could still
+    /// become the marker, and a frame only while it could still finish.
+    held_since: Option<std::time::Instant>,
 }
 
 #[cfg(unix)]
@@ -127,6 +137,7 @@ impl GalleryFilter {
         Self {
             pending: Vec::new(),
             pastes: Vec::new(),
+            held_since: None,
         }
     }
 
@@ -135,26 +146,24 @@ impl GalleryFilter {
         self.pending.extend_from_slice(bytes);
         let mut plain = Vec::new();
         let mut requests = Vec::new();
-        while !self.pending.is_empty() {
-            // Only an ESC can begin the sequence. Holding back everything that merely lacks the
-            // marker would swallow the last few keystrokes of every read.
-            let Some(escape) = self.pending.iter().position(|byte| *byte == 0x1b) else {
-                plain.append(&mut self.pending);
+        loop {
+            let Some(start) = marker_start(&self.pending) else {
+                // Hold back only the tail that could still become the marker; a lone Esc is
+                // released by `flush_expired`. Everything before it is a keystroke, and making
+                // it wait for a frame that never comes swallows the arrow keys and Esc.
+                let keep = retained_suffix(&self.pending);
+                let drain = self.pending.len() - keep;
+                plain.extend(self.pending.drain(..drain));
                 break;
             };
-            if escape > 0 {
-                plain.extend(self.pending.drain(..escape));
-            }
-            if self.pending.len() < OSC.len() {
-                break;
-            }
-            if !self.pending.starts_with(OSC) {
-                plain.push(self.pending.remove(0));
-                continue;
+            if start > 0 {
+                plain.extend(self.pending.drain(..start));
             }
             let Some(end) = frame_end(&self.pending) else {
                 if self.pending.len() > MAX_FRAME {
-                    plain.extend(self.pending.drain(..OSC.len()));
+                    // Nothing this long can be a frame the terminal would send.
+                    self.pending.clear();
+                    self.pastes.clear();
                 }
                 break;
             };
@@ -163,7 +172,39 @@ impl GalleryFilter {
                 requests.push(request);
             }
         }
+        self.held_since = if self.pending.is_empty() {
+            None
+        } else {
+            Some(self.held_since.unwrap_or_else(std::time::Instant::now))
+        };
         (plain, requests)
+    }
+
+    /// True while bytes are held back waiting for the rest of a frame.
+    pub(crate) fn holding(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Releases what has been held too long: a bare marker prefix becomes a key again, and an
+    /// unterminated frame is abandoned. The forwarder calls this when its poll times out.
+    pub(crate) fn flush_expired(&mut self, now: std::time::Instant) -> Vec<u8> {
+        let Some(since) = self.held_since else {
+            return Vec::new();
+        };
+        let age = now.saturating_duration_since(since);
+        if self.pending.starts_with(OSC) {
+            if age >= INCOMPLETE_FRAME_TTL {
+                self.pending.clear();
+                self.pastes.clear();
+                self.held_since = None;
+            }
+            return Vec::new();
+        }
+        if age >= PARTIAL_MARKER_TTL {
+            self.held_since = None;
+            return std::mem::take(&mut self.pending);
+        }
+        Vec::new()
     }
 
     fn decode(&mut self, frame: &[u8]) -> Option<GalleryRequest> {
@@ -230,6 +271,22 @@ impl GalleryFilter {
 }
 
 #[cfg(unix)]
+fn marker_start(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(OSC.len()).position(|window| window == OSC)
+}
+
+/// The longest tail of `bytes` that is a proper prefix of the marker. Only that tail can begin a
+/// frame, so only that tail may wait for more bytes.
+#[cfg(unix)]
+fn retained_suffix(bytes: &[u8]) -> usize {
+    let limit = bytes.len().min(OSC.len() - 1);
+    (1..=limit)
+        .rev()
+        .find(|length| bytes.ends_with(&OSC[..*length]))
+        .unwrap_or(0)
+}
+
+#[cfg(unix)]
 fn frame_end(bytes: &[u8]) -> Option<usize> {
     // Only BEL. The string terminator's second byte also occurs inside base64.
     bytes
@@ -238,109 +295,312 @@ fn frame_end(bytes: &[u8]) -> Option<usize> {
         .map(|index| index + 1)
 }
 
-/// Reads the terminal's input from the front of a pipe and writes everything that is not a
-/// gallery frame to the back, where the terminal's own reader is attached.
+/// Reads the real terminal and writes everything that is not a gallery frame into a pty that
+/// the program treats as its stdin.
 ///
-/// The two ends trade places: the program's standard input becomes the filtered end, and this
-/// reads the original. A program that never installs the filter never receives gallery bytes,
-/// because the terminal waits for `hello` first.
+/// The filtered end must stay a terminal. crossterm asks `isatty` the first time it reads and
+/// registers that descriptor with its event source; swapping in a pipe afterwards leaves the
+/// source watching the real terminal while the reads go to the pipe, so keystrokes vanish. A
+/// pty keeps both sides terminals, and it is installed before anything reads stdin.
 ///
-/// Unix only. The splice uses `pipe` and `dup2`, and Windows keeps compiling without the column:
-/// `install` there returns an error, so the caller never writes `hello` and the terminal never
-/// sends gallery bytes.
+/// Unix only. On Windows `install` returns an error, the caller never writes `hello`, and the
+/// terminal never sends gallery bytes.
 #[cfg(unix)]
-pub(crate) struct GalleryInput {
-    _owned: std::fs::File,
-}
+pub(crate) struct GalleryInput;
 
 #[cfg(unix)]
 impl GalleryInput {
-    pub(crate) fn install() -> io::Result<(Self, GalleryForwarder)> {
+    pub(crate) fn install(
+        tx: tokio::sync::mpsc::UnboundedSender<crate::tui::UiMessage>,
+    ) -> io::Result<Self> {
         use std::os::fd::{AsRawFd, FromRawFd};
-        let mut ends = [0; 2];
-        if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
+
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "stdin is not a terminal",
+            ));
         }
-        let source = unsafe { std::fs::File::from_raw_fd(ends[0]) };
-        let sink = unsafe { std::fs::File::from_raw_fd(ends[1]) };
-        let saved = duplicate(io::stdin().as_raw_fd())?;
-        if unsafe { libc::dup2(source.as_raw_fd(), libc::STDIN_FILENO) } < 0 {
-            return Err(io::Error::last_os_error());
+
+        let (master, slave) = open_pty()?;
+        // The filtered side must deliver bytes as soon as they are written, without line
+        // buffering or a second echo.
+        let mut filtered_mode = terminal_attributes(slave.as_raw_fd())?;
+        unsafe { libc::cfmakeraw(&mut filtered_mode) };
+        set_terminal_attributes(slave.as_raw_fd(), &filtered_mode)?;
+
+        let input = duplicate(libc::STDIN_FILENO)?;
+        let restore = duplicate(libc::STDIN_FILENO)?;
+        let original = terminal_attributes(restore)?;
+        let mut raw = original;
+        unsafe { libc::cfmakeraw(&mut raw) };
+        set_terminal_attributes(restore, &raw)?;
+
+        // The pty slave becomes stdin, and the saved descriptors keep the real terminal.
+        if unsafe { libc::dup2(slave.as_raw_fd(), libc::STDIN_FILENO) } < 0 {
+            let error = io::Error::last_os_error();
+            let _ = set_terminal_attributes(restore, &original);
+            unsafe { libc::close(restore) };
+            return Err(error);
         }
-        Ok((
-            Self { _owned: source },
-            GalleryForwarder {
-                input: unsafe { std::fs::File::from_raw_fd(saved) },
-                sink,
-                filter: GalleryFilter::new(),
-                waiting: std::collections::VecDeque::new(),
-            },
-        ))
+        copy_window_size(restore, libc::STDIN_FILENO);
+        drop(slave);
+
+        let input = unsafe { std::fs::File::from_raw_fd(input) };
+        if let Err(error) = std::thread::Builder::new()
+            .name("gallery-input".into())
+            .spawn(move || forward(input, master, tx))
+        {
+            // Put the real terminal back on stdin; nothing else has changed yet.
+            if unsafe { libc::dup2(restore, libc::STDIN_FILENO) } < 0 {
+                let restore_error = io::Error::last_os_error();
+                unsafe { libc::close(restore) };
+                return Err(restore_error);
+            }
+            let _ = set_terminal_attributes(restore, &original);
+            unsafe { libc::close(restore) };
+            return Err(error);
+        }
+
+        if let Ok(mut saved) = SAVED_TERMINAL.lock() {
+            *saved = Some((restore, original));
+        } else {
+            unsafe { libc::close(restore) };
+        }
+        if let Ok(mut window) = WINDOW_SIZES.lock() {
+            *window = Some((restore, libc::STDIN_FILENO));
+        }
+        ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(Self)
     }
 }
 
 #[cfg(unix)]
-pub(crate) struct GalleryForwarder {
-    input: std::fs::File,
-    sink: std::fs::File,
-    filter: GalleryFilter,
-    /// Requests already decoded but not yet handed out. One read can finish several frames, and
-    /// dropping all but one would lose a paste or a delete.
-    waiting: std::collections::VecDeque<GalleryRequest>,
+impl Drop for GalleryInput {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
 }
 
 #[cfg(unix)]
-impl GalleryForwarder {
-    /// Blocks until the program produces a complete request or the input closes.
-    pub(crate) fn recv(&mut self) -> io::Result<Option<GalleryRequest>> {
-        if let Some(request) = self.waiting.pop_front() {
-            return Ok(Some(request));
-        }
-        let mut buffer = [0; 4096];
-        loop {
-            let read = self.input.read(&mut buffer)?;
-            if read == 0 {
-                return Ok(None);
+fn forward(
+    mut input: std::fs::File,
+    mut output: std::fs::File,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::tui::UiMessage>,
+) {
+    use std::os::fd::AsRawFd;
+
+    let mut filter = GalleryFilter::new();
+    let mut buffer = [0; 4096];
+    let mut poll_fd = libc::pollfd {
+        fd: input.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        poll_fd.revents = 0;
+        // A held marker prefix (a bare Esc, say) must not wait forever for bytes that are never
+        // coming. With nothing held there is no deadline, so an idle terminal costs no wakeups.
+        let timeout = if filter.holding() {
+            GALLERY_POLL_MILLIS
+        } else {
+            -1
+        };
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout) };
+        if ready < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
             }
-            let (plain, requests) = self.filter.push(&buffer[..read]);
-            self.sink.write_all(&plain)?;
-            self.waiting.extend(requests);
-            if let Some(request) = self.waiting.pop_front() {
-                return Ok(Some(request));
+            break;
+        }
+        if ready > 0 {
+            match input.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let (plain, requests) = filter.push(&buffer[..count]);
+                    for request in requests {
+                        if tx.send(crate::tui::UiMessage::Gallery(request)).is_err() {
+                            return;
+                        }
+                    }
+                    if !plain.is_empty() && output.write_all(&plain).is_err() {
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
         }
+        let plain = filter.flush_expired(std::time::Instant::now());
+        if !plain.is_empty() && output.write_all(&plain).is_err() {
+            break;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn open_pty() -> io::Result<(std::fs::File, std::fs::File)> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    const FLAGS: libc::c_int = libc::O_RDWR | libc::O_NOCTTY;
+    let master = unsafe { libc::posix_openpt(FLAGS) };
+    if master < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let master = unsafe { std::fs::File::from_raw_fd(master) };
+    if unsafe { libc::grantpt(master.as_raw_fd()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::unlockpt(master.as_raw_fd()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let name = unsafe { libc::ptsname(master.as_raw_fd()) };
+    if name.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let slave = unsafe { libc::open(name, FLAGS) };
+    if slave < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((master, unsafe { std::fs::File::from_raw_fd(slave) }))
+}
+
+#[cfg(unix)]
+fn terminal_attributes(fd: std::os::fd::RawFd) -> io::Result<libc::termios> {
+    let mut mode: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(fd, &mut mode) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(mode)
+}
+
+#[cfg(unix)]
+fn set_terminal_attributes(fd: std::os::fd::RawFd, mode: &libc::termios) -> io::Result<()> {
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, mode) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_window_size(from: std::os::fd::RawFd, to: std::os::fd::RawFd) {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(from, libc::TIOCGWINSZ, &mut size) } == 0 {
+        unsafe { libc::ioctl(to, libc::TIOCSWINSZ, &size) };
     }
 }
 
 #[cfg(unix)]
 fn duplicate(fd: std::os::fd::RawFd) -> io::Result<std::os::fd::RawFd> {
-    use std::os::fd::RawFd;
     let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
     if copy < 0 {
         Err(io::Error::last_os_error())
     } else {
-        Ok(copy as RawFd)
+        Ok(copy)
     }
 }
 
+/// How long a marker prefix waits for the rest of the sequence before it is treated as a key.
+/// The terminal writes a frame in one go, so a real frame never takes this long to arrive.
+#[cfg(unix)]
+const PARTIAL_MARKER_TTL: std::time::Duration = std::time::Duration::from_millis(50);
+/// An unterminated frame is abandoned rather than held forever.
+#[cfg(unix)]
+const INCOMPLETE_FRAME_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the forwarder wakes to expire what it is holding.
+#[cfg(unix)]
+const GALLERY_POLL_MILLIS: libc::c_int = 50;
+
+/// Set once the filtered pty sits on stdin. The event loop only writes `hello` when this is
+/// true, so a terminal never sends frames to a process that cannot filter them.
+static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The real terminal's saved mode, plus a descriptor to put it back with.
+#[cfg(unix)]
+static SAVED_TERMINAL: std::sync::Mutex<Option<(std::os::fd::RawFd, libc::termios)>> =
+    std::sync::Mutex::new(None);
+
+/// The real and filtered descriptors whose window sizes are kept in step.
+#[cfg(unix)]
+static WINDOW_SIZES: std::sync::Mutex<Option<(std::os::fd::RawFd, std::os::fd::RawFd)>> =
+    std::sync::Mutex::new(None);
+
+/// True when the terminal on the other end speaks the gallery protocol. Only MuseTerm sets either
+/// variable for a runtime session; every other terminal keeps an untouched stdin.
+pub(crate) fn hosted() -> bool {
+    ["MUSETERM_AGENT_CONTEXT", "QTERM_AGENT_CONTEXT"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// Installs the filter on standard input when this really is a hosted interactive TUI. The filter
+/// must be in place before anything reads stdin — the session picker is one such reader — and a
+/// terminal without the markers keeps an untouched stdin and never sees a `hello`.
+pub(crate) fn install_hosted(
+    interactive: bool,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::tui::UiMessage>,
+) -> Option<GalleryInput> {
+    if !interactive || !std::io::stdout().is_terminal() || !hosted() {
+        return None;
+    }
+    GalleryInput::install(tx).ok()
+}
+
+/// True when the filtered pty is installed and `hello` may be written.
+pub(crate) fn active() -> bool {
+    ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Puts the real terminal back the way it was. Idempotent; also called when the TUI ends, so
+/// the closing lines are printed with the terminal's normal output processing.
+pub(crate) fn restore_terminal() {
+    ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(unix)]
+    {
+        if let Ok(mut saved) = SAVED_TERMINAL.lock()
+            && let Some((fd, mode)) = saved.take()
+        {
+            unsafe {
+                libc::tcsetattr(fd, libc::TCSANOW, &mode);
+                libc::close(fd);
+            }
+        }
+        if let Ok(mut window) = WINDOW_SIZES.lock() {
+            *window = None;
+        }
+    }
+}
+
+/// Copies the real terminal's window size to the filtered pty, so a full-screen child such as
+/// the external editor sees the size of the terminal the user is looking at.
+#[cfg(unix)]
+pub(crate) fn sync_window_size() {
+    let Ok(window) = WINDOW_SIZES.lock() else {
+        return;
+    };
+    if let Some((real, filtered)) = *window {
+        copy_window_size(real, filtered);
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn sync_window_size() {}
+
 /// Windows has no image column. Reporting an error keeps the caller from writing `hello`, so the
-/// terminal never sends gallery bytes to a build that cannot filter them. The event loop only calls
-/// `install` on unix, so these stay unconstructed here.
+/// terminal never sends gallery bytes to a build that cannot filter them.
 #[cfg(not(unix))]
 #[allow(dead_code)]
 pub(crate) struct GalleryInput;
 
 #[cfg(not(unix))]
 #[allow(dead_code)]
-pub(crate) struct GalleryForwarder;
-
-#[cfg(not(unix))]
-#[allow(dead_code)]
 impl GalleryInput {
-    pub(crate) fn install() -> io::Result<(Self, GalleryForwarder)> {
+    pub(crate) fn install(
+        _tx: tokio::sync::mpsc::UnboundedSender<crate::tui::UiMessage>,
+    ) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "the terminal image column needs a unix pipe",
+            "the terminal image column needs a unix pty",
         ))
     }
 }
@@ -387,6 +647,32 @@ mod tests {
         let (plain, requests) = filter.push(b"hello \x1b[A there");
         assert_eq!(plain, b"hello \x1b[A there");
         assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn a_blob_is_one_frame_per_piece() {
+        let mut out = Vec::new();
+        announce_blob(&mut out, "11111111-2222-3333-4444-555555555555", b"png").unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\x1b]7771;v=1;blob;11111111-2222-3333-4444-555555555555;0;1;cG5n\x07"
+        );
+    }
+
+    /// 退出帧必须带末尾分号：终端的解析器要求版本、操作之外至少还有一个字段。
+    #[test]
+    fn a_bye_frame_keeps_the_trailing_semicolon() {
+        let mut out = Vec::new();
+        announce_bye(&mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b]7771;v=1;bye;\x07");
+    }
+
+    /// 空列表是「收起这一列」，新进程启动后靠它清掉上一轮残留的缩略图。
+    #[test]
+    fn an_empty_list_folds_the_column_away() {
+        let mut out = Vec::new();
+        announce_list(&mut out, &[]).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b]7771;v=1;list;[]\x07");
     }
 
     #[test]
@@ -443,10 +729,54 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_that_never_ends_does_not_swallow_the_input_forever() {
+    fn an_arrow_key_never_waits_for_a_frame() {
         let mut filter = GalleryFilter::new();
-        let chunk = vec![b'a'; MAX_FRAME];
+        let (plain, requests) = filter.push(b"\x1b[A");
+        assert_eq!(plain, b"\x1b[A");
+        assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn a_bare_escape_becomes_a_key_once_no_frame_follows() {
+        let mut filter = GalleryFilter::new();
+        let (plain, _) = filter.push(b"\x1b");
+        assert!(plain.is_empty(), "an Esc might still begin a frame");
+        let now = std::time::Instant::now();
+        assert!(filter.flush_expired(now).is_empty());
+        assert_eq!(filter.flush_expired(now + PARTIAL_MARKER_TTL), b"\x1b");
+    }
+
+    #[test]
+    fn a_marker_prefix_split_across_reads_is_held_and_completed() {
+        let mut filter = GalleryFilter::new();
+        let (plain, _) = filter.push(b"ab\x1b]77");
+        assert_eq!(plain, b"ab");
+        let (plain, requests) = filter.push(b"71;v=1;delete;abc\x07c");
+        assert_eq!(plain, b"c");
+        assert!(matches!(requests.as_slice(), [GalleryRequest::Delete { id }] if id == "abc"));
+    }
+
+    #[test]
+    fn an_unfinished_frame_is_abandoned() {
+        let mut filter = GalleryFilter::new();
+        let (plain, requests) = filter.push(b"\x1b]7771;v=1;drop;nonce1;0;2;AAAA");
+        assert!(plain.is_empty());
+        assert!(requests.is_empty());
+        let now = std::time::Instant::now();
+        assert!(filter.flush_expired(now + PARTIAL_MARKER_TTL).is_empty());
+        assert!(filter.flush_expired(now + INCOMPLETE_FRAME_TTL).is_empty());
+        let (plain, _) = filter.push(b"ok");
+        assert_eq!(plain, b"ok");
+    }
+
+    #[test]
+    fn an_oversized_frame_is_dropped_instead_of_growing_forever() {
+        let mut filter = GalleryFilter::new();
+        let mut chunk = b"\x1b]7771;v=1;drop;nonce1;0;2;".to_vec();
+        chunk.resize(MAX_FRAME + 1, b'a');
         let (plain, _) = filter.push(&chunk);
-        assert!(plain.len() > MAX_FRAME - 100);
+        assert!(plain.is_empty());
+        let (plain, _) = filter.push(b"ok");
+        assert_eq!(plain, b"ok");
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine;
 use ratatui::Frame;
 use std::io::Write;
 
@@ -56,12 +57,42 @@ impl App {
 
     /// Tells the terminal which images the column should show. Sent attachments stay out: the
     /// column only offers a delete icon for a draft, and a sent image cannot be deleted.
-    pub(super) fn publish_gallery(&self) {
+    pub(super) fn publish_gallery(&mut self) {
+        // 只有装了过滤的终端（MuseTerm / QTerm）才有图片列；别的终端一个私有序列都不写。
+        if !crate::gallery::active() {
+            return;
+        }
         let images = crate::gallery::gallery_images(&self.attachments);
         let mut out = std::io::stdout();
         if crate::gallery::announce_list(&mut out, &images).is_ok() {
             let _ = out.flush();
         }
+        // 终端自己粘贴进来的图片它手里有像素；TUI 自己读剪贴板或恢复来的草稿只进过 list，
+        // 终端画不出缩略图，得把像素补给它一次。
+        for (id, png) in self.pending_gallery_blobs() {
+            if crate::gallery::announce_blob(&mut out, &id.to_string(), &png).is_ok() {
+                self.gallery_blobbed.insert(id);
+            }
+        }
+        let _ = out.flush();
+    }
+
+    /// 像素还没有落到终端上的草稿图片。终端已经持有的、已经回传过的都跳过。
+    fn pending_gallery_blobs(&self) -> Vec<(uuid::Uuid, Vec<u8>)> {
+        let mut outgoing = Vec::new();
+        for attachment in &self.attachments {
+            let id = attachment.id;
+            if self.gallery_staged.contains(&id) || self.gallery_blobbed.contains(&id) {
+                continue;
+            }
+            let MessageAttachment::Image { data, .. } = &attachment.message else {
+                continue;
+            };
+            if let Ok(png) = base64::engine::general_purpose::STANDARD.decode(data) {
+                outgoing.push((id, png));
+            }
+        }
+        outgoing
     }
     /// 从聊天区点开一个文本附件，直接进入预览。
     pub(super) fn open_text_attachment(&mut self, name: String, content: String) {
@@ -434,6 +465,38 @@ mod tests {
                 content: content.to_owned(),
             },
         }
+    }
+    fn image(png: &[u8]) -> DraftAttachment {
+        DraftAttachment {
+            id: uuid::Uuid::new_v4(),
+            message: MessageAttachment::Image {
+                name: "clipboard.png".to_owned(),
+                media_type: "image/png".to_owned(),
+                data: base64::engine::general_purpose::STANDARD.encode(png),
+                width: 1,
+                height: 1,
+            },
+        }
+    }
+    #[test]
+    fn only_draft_images_the_terminal_lacks_are_sent_once() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let from_clipboard = image(b"png");
+        let clipboard_id = from_clipboard.id;
+        app.attachments.push(from_clipboard);
+        let blobs = app.pending_gallery_blobs();
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(blobs[0], (clipboard_id, b"png".to_vec()));
+        // 回传过一次就不再重复。
+        app.gallery_blobbed.insert(clipboard_id);
+        assert!(app.pending_gallery_blobs().is_empty());
+
+        // 终端自己粘贴进来的图片它手里有像素，不回传。
+        let from_terminal = image(b"png");
+        let terminal_id = from_terminal.id;
+        app.attachments.push(from_terminal);
+        app.gallery_staged.insert(terminal_id);
+        assert!(app.pending_gallery_blobs().is_empty());
     }
     #[test]
     fn moving_and_deleting_same_named_files_preserves_identity() {
