@@ -22,6 +22,9 @@ export type ConversationItem = {
   details?: string[];
   /// 这条助手消息发起的工具调用：名字、脱敏摘要、有无结果。原始参数不下发。
   tools?: { name: string; detail?: string; completed: boolean }[];
+  /// 产出这条消息的模型名。只有落进记录时记下的才有；旧会话和派生消息没有，
+  /// 没有就不显示，不用会话当前的模型补。
+  model?: string;
 };
 
 export function ConversationCard({ plan, details = [], messages: t }: { plan?: Plan; details?: string[]; messages: Messages }) {

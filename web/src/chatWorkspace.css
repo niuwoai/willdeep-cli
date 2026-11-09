@@ -70,6 +70,15 @@
 .chat-workspace .session-actions button { display: grid; place-items: center; }
 .chat-workspace .message.user { padding: 13px 19px; background: var(--bg-panel); border: 0; border-radius: 16px 16px 4px 16px; max-width: 86%; }
 .chat-workspace .message.assistant { padding: 2px; }
+
+/* 记下了模型名的消息才有这一行；没有记录的消息不渲染它。 */
+.chat-workspace .message-model {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-ghost);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .chat-workspace .composer-shell { border-color: var(--border); border-radius: 18px; box-shadow: 0 4px 22px var(--shadow-soft); }
 .chat-workspace .composer-shell:focus-within { border-color: var(--accent-dim); }
 .chat-workspace .composer-shell textarea { font-size: 14px; }

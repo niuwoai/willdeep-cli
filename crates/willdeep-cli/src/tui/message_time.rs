@@ -31,8 +31,8 @@ pub(super) fn relative_time(sent: u64, current: u64, language: Language) -> Stri
     format!("{count}{unit}")
 }
 
-/// 消息行尾的标注：相对时间后面跟产出这句的模型名。会话不记逐条模型，
-/// 所以历史消息一律用会话当前的模型；没有模型名时只留时间。
+/// 消息行尾的标注：相对时间后面跟这条消息落进记录时记下的模型名。
+/// 没有记下模型名时只留时间，不拿会话当前的模型去猜。
 fn message_label(time: String, model: Option<&str>) -> String {
     match model.map(str::trim).filter(|model| !model.is_empty()) {
         Some(model) => format!("{time} · {model}"),
@@ -309,7 +309,9 @@ impl App {
             {
                 *target = Some(message_label(
                     relative_time(*sent, current, self.language),
-                    self.display_model.as_deref(),
+                    self.transcript_models
+                        .get(index)
+                        .and_then(|model| model.as_deref()),
                 ));
             }
         }
@@ -642,16 +644,57 @@ mod tests {
             app.message_time_labels(&folded, 160),
             [Some("1分前".into())]
         );
-        // 会话有模型时，时间后面跟上模型名；没有就只留时间。
-        app.display_model = Some("claude-opus".into());
+        // 时间后面的模型名只认这条消息落进记录时记下的那个。会话当前的模型
+        // 变了也不回头改旧消息，没记下模型的消息只留时间。
+        app.transcript_models[0] = Some("glm-5".into());
+        app.display_model = Some("qwen".into());
         assert_eq!(
             app.message_time_labels(&folded, 160),
-            [Some("1分前 · claude-opus".into())]
+            [Some("1分前 · glm-5".into())]
         );
-        app.display_model = Some("  ".into());
+        app.transcript_models[0] = Some("  ".into());
         assert_eq!(
             app.message_time_labels(&folded, 160),
             [Some("1分前".into())]
+        );
+    }
+
+    #[test]
+    fn each_row_keeps_the_model_recorded_when_it_landed() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.display_model = Some("glm-5".into());
+        app.append_transcript("You: 第一句".into());
+        app.reply_model = Some("glm-5".into());
+        app.append_transcript("WillDeep: glm 的回答".into());
+        // 中途换成另一个模型：已经落下去的行不动，之后的行盖新的。
+        app.display_model = Some("Qwen3.8-27B".into());
+        app.reply_model = Some("Qwen3.8-27B".into());
+        app.append_transcript("You: 第二句".into());
+        app.append_transcript("WillDeep: qwen 的回答".into());
+        // 工具行、系统行不是模型的原话，不盖章。
+        app.append_transcript("· ✓ read_file · src/main.rs".into());
+        app.append_transcript("System: 已切换".into());
+        assert_eq!(
+            app.transcript_models,
+            vec![
+                Some("glm-5".into()),
+                Some("glm-5".into()),
+                Some("Qwen3.8-27B".into()),
+                Some("Qwen3.8-27B".into()),
+                None,
+                None,
+            ]
+        );
+        let folded = app.display_transcript();
+        let labels = app.message_time_labels(&folded, now());
+        assert_eq!(
+            labels.iter().flatten().collect::<Vec<_>>(),
+            vec![
+                &"刚刚 · glm-5".to_owned(),
+                &"刚刚 · glm-5".to_owned(),
+                &"刚刚 · Qwen3.8-27B".to_owned(),
+                &"刚刚 · Qwen3.8-27B".to_owned(),
+            ]
         );
     }
 

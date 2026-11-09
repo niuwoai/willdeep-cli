@@ -206,6 +206,54 @@ fn tool_only_assistant_messages_project_their_calls_with_results() {
     assert!(!json.contains("arguments"), "{json}");
 }
 
+#[test]
+fn recorded_model_is_projected_per_message_and_absent_models_stay_absent() {
+    let messages = [
+        Message::user("first"),
+        Message::assistant("from glm", Vec::new()).with_model(Some("glm-5".into())),
+        Message::user("second"),
+        Message::assistant("from qwen", Vec::new())
+            .with_model(Some("  tokenhub-tsingfly/Qwen3.8-27B  ".into())),
+        // 旧会话和派生消息没有模型：投影必须留空，不能拿别的消息的模型填。
+        Message::assistant("no model recorded", Vec::new()),
+        Message::assistant("blank model", Vec::new()).with_model(Some("   ".into())),
+    ];
+    let items = project(&messages, None);
+    let models: Vec<_> = items.iter().map(|item| item.model.as_deref()).collect();
+    assert_eq!(
+        models,
+        vec![
+            None,
+            Some("glm-5"),
+            None,
+            Some("tokenhub-tsingfly/Qwen3.8-27B"),
+            None,
+            None,
+        ]
+    );
+    // 用户消息不带模型，序列化时这个字段根本不出现。
+    let user_json = serde_json::to_string(&items[0]).unwrap();
+    assert!(!user_json.contains("model"), "{user_json}");
+    let assistant_json = serde_json::to_string(&items[1]).unwrap();
+    assert!(assistant_json.contains("\"model\":\"glm-5\""), "{assistant_json}");
+}
+
+#[test]
+fn message_without_a_model_field_still_loads() {
+    let legacy = r#"{"role":"assistant","content":"old reply"}"#;
+    let message: Message = serde_json::from_str(legacy).unwrap();
+    assert_eq!(message.model, None);
+    let stored = serde_json::to_string(&message).unwrap();
+    assert!(
+        !stored.contains("model"),
+        "unset model must not be written: {stored}"
+    );
+    let stamped = message.with_model(Some("glm-5".into()));
+    let restored: Message =
+        serde_json::from_str(&serde_json::to_string(&stamped).unwrap()).unwrap();
+    assert_eq!(restored.model.as_deref(), Some("glm-5"));
+}
+
 const PLAN: &str = "```plan\n1. A-TRACE-1: 核验接口\n2. D-REL-1: 发布\n```";
 const PROGRESS: &str = "全部步骤已结束。\n```progress\nA-TRACE-1: done\nD-REL-1: skipped\n```";
 

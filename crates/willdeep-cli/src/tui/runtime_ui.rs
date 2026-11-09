@@ -603,8 +603,18 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
             {
+                // 事件里带的是产出这段文字的模型。旧 Runtime 不带这个字段，
+                // 留空就是不知道，不拿会话当前模型补。
+                app.reply_model = value
+                    .get("model")
+                    .and_then(|model| model.as_str())
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_owned);
                 app.note_narration(text);
-                return Some(Message::assistant(text, Vec::new()));
+                return Some(
+                    Message::assistant(text, Vec::new()).with_model(app.reply_model.clone()),
+                );
             }
         }
         Some("queued_user_message") => {

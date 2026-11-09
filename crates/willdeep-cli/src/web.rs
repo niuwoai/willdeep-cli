@@ -2676,7 +2676,18 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
         );
     }
     if kind == "assistant_text_delta" {
-        return Some(serde_json::json!({"type":kind,"text":value.get("text")?.as_str()?}));
+        let mut event = serde_json::json!({"type":kind,"text":value.get("text")?.as_str()?});
+        // 模型名只在事件确实带了时才往下传；旧 Runtime 没有这个字段，留空。
+        if let Some(model) = value
+            .get("model")
+            .and_then(|model| model.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            && let Some(object) = event.as_object_mut()
+        {
+            object.insert("model".to_owned(), serde_json::Value::String(model.to_owned()));
+        }
+        return Some(event);
     }
     // 思维链增量与正文增量一样只带文本；前端做灰色「思考中」尾巴行，正文一来就隐藏。
     if kind == "reasoning_delta" {
@@ -2758,7 +2769,17 @@ fn client_event(value: serde_json::Value, language: Language) -> Option<serde_js
                 .get("text")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
-            return Some(serde_json::json!({"type":"thought","text":truncate(thought,240)}));
+            let mut event = serde_json::json!({"type":"thought","text":truncate(thought,240)});
+            if let Some(model) = value
+                .get("model")
+                .and_then(|model| model.as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                && let Some(object) = event.as_object_mut()
+            {
+                object.insert("model".to_owned(), serde_json::Value::String(model.to_owned()));
+            }
+            return Some(event);
         }
         _ => kind.to_owned(),
     };

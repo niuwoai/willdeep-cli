@@ -19,6 +19,9 @@ pub(super) struct StreamEvents<'a, 'b> {
     input: u64,
     output: u64,
     plan_tools: Option<&'a crate::tools::ToolRegistry>,
+    /// 这次请求打到的模型。流式落盘的 assistant 消息在第一次 push 时盖上，
+    /// 之后的增量只往 content 上追加，章不会丢。
+    model: Option<String>,
 }
 
 impl<'a, 'b> StreamEvents<'a, 'b> {
@@ -37,11 +40,19 @@ impl<'a, 'b> StreamEvents<'a, 'b> {
             input,
             output,
             plan_tools: None,
+            model: None,
         }
     }
 
     pub(super) fn with_plan_tools(mut self, tools: &'a crate::tools::ToolRegistry) -> Self {
         self.plan_tools = Some(tools);
+        self
+    }
+
+    pub(super) fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         self
     }
 
@@ -150,6 +161,7 @@ impl<'a, 'b> StreamEvents<'a, 'b> {
                             ProviderEvent::TextDelta(delta) => Some(delta.as_str()),
                             _ => None,
                         },
+                        self.model.as_deref(),
                         self.turn,
                         self.input.saturating_add(usage.input_tokens.unwrap_or(0)),
                         self.output.saturating_add(usage.output_tokens.unwrap_or(0)),

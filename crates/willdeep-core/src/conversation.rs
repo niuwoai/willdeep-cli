@@ -176,6 +176,10 @@ pub struct ConversationItem {
     /// 这条 assistant 消息发起的工具调用，按发起顺序；回放时逐条落成工具行。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolTrace>,
+    /// 产出这条消息的模型名。只有消息落盘时记下的才在这里，旧会话和派生
+    /// 消息（摘要、归档引用）是空，空着就别显示，不要拿会话当前模型填。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Both surfaces use exactly this projection when reopening or refreshing a
@@ -310,6 +314,7 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
             if entry.content.trim().is_empty() && message.tool_calls.is_empty() {
                 continue;
             }
+            entry.model.clone_from(&message.model);
             entry.tools = message
                 .tool_calls
                 .iter()
@@ -456,6 +461,7 @@ fn item(role: &'static str, content: String, attachment_count: usize) -> Convers
         workflow: None,
         details: Vec::new(),
         tools: Vec::new(),
+        model: None,
     }
 }
 

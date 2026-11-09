@@ -500,6 +500,8 @@ pub(super) async fn event_loop(
     app.transcript.extend(startup_notices(runtime, language));
     app.transcript_attachments
         .resize_with(app.transcript.len(), Vec::new);
+    app.transcript_models
+        .resize_with(app.transcript.len(), || None);
     app.feedback = agent
         .feedback()
         .cloned()
@@ -2011,7 +2013,7 @@ pub(super) async fn event_loop(
                 },
                 UiMessage::Agent(AgentEvent::BackgroundWait { waiting })=>{app.set_background_wait(waiting);},
                 UiMessage::Agent(AgentEvent::RunScoped { .. })=>{},
-                UiMessage::Agent(AgentEvent::AssistantText(v))=>app.note_narration(&v),
+                UiMessage::Agent(AgentEvent::AssistantText{text:v,model})=>{app.reply_model.clone_from(&model);app.note_narration(&v)},
                 UiMessage::Agent(AgentEvent::RouteDecided{tier,profile,confidence,auto_dispatched,model,..})=>app.record_progress(format!("{} {} · {}{} · {confidence}%{}",language.text("模型路由","Model route","モデルルート"),tier.as_str(),profile.as_deref().unwrap_or("root"),model.map(|model|format!(" · {model}")).unwrap_or_default(),if auto_dispatched{language.text(" · 已自动下发"," · auto-dispatched"," · 自動ディスパッチ済み")}else{""})),
                 UiMessage::Agent(AgentEvent::ModelFallback{purpose,used,reason,..})=>app.record_progress(format!("{} · {purpose} → {} · {reason}",language.text("模型已兜底","Model fallback","モデルをフォールバック"),used.as_deref().unwrap_or("-"))),
                 UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在思考 · 准备轮次","Thinking · preparing turn","思考中 · ターンを準備")));},

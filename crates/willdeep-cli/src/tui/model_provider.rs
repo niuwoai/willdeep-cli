@@ -392,6 +392,9 @@ pub(super) async fn switch(
     store.save(session)?;
     runtime.runtime_submit.profile = Some(profile.to_owned());
     runtime.runtime_submit.model = Some(model.to_owned());
+    // 跨 Provider 切换以前只改了 Runtime，聊天区还拿着旧模型名。会话文件里的
+    // 模型由上面的重载带回来，这里同步显示用的那一份。
+    app.display_model = session.model.clone().filter(|model| !model.is_empty());
     runtime.reasoning_level = selected_level;
     runtime.provider_config = config;
     app.clear_input_suggestion();
