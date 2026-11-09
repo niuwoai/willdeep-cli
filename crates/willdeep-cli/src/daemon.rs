@@ -26,6 +26,15 @@ const LOCK_STALE_AFTER_SECONDS: u64 = 10;
 const LOCK_HEARTBEAT_SECONDS: u64 = 2;
 const LOCK_RECOVERY_ATTEMPTS: usize = 120;
 const CONTROL_SERVER_SHUTDOWN_GRACE_SECONDS: u64 = 5;
+/// 多久看一次「还有没有人用这个 Runtime」。
+const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// 连续这么久既没有客户端连接、也没有任何活，daemon 自己退出。
+///
+/// 评测、一次性的 `willdeep run` 会给各自的临时 home 拉起一个 daemon，而它是脱离
+/// 进程组启动的，调用方的清理杀不到。没有这条退路，它会一直空转到机器重启，
+/// 还攥着那个临时目录不让人删。窗口必须长过一次正常的模型往返，免得一轮正在
+/// 进行的对话被当成没人用。
+const IDLE_EXIT_AFTER: Duration = Duration::from_secs(15 * 60);
 
 mod agent_control;
 mod agent_store;
@@ -45,6 +54,7 @@ mod event_stream;
 mod goal_resume;
 mod headless;
 mod herdr;
+mod idle_exit;
 mod internal_transport;
 mod local_transport;
 pub(crate) mod mcp_server;
@@ -305,6 +315,8 @@ struct ServerState {
     local_transport: Option<LocalTransportState>,
     tools: Arc<tool_store::ToolStore>,
     work_gate: Arc<RwLock<bool>>,
+    /// 控制端点上还没结束的请求数。空闲自退靠它判断有没有客户端还连着。
+    connections: idle_exit::ConnectionCounter,
     /// 事件内核的日志。控制面读它而不是读某个进程的内存——跑 Agent 的可能是
     /// 别的进程，日志是两者之间唯一的共享事实。代价是最多落后一次刷盘，这一
     /// 条写在 `RUNTIME_CONTROL_API.md` 里。
@@ -1738,6 +1750,7 @@ async fn run(home: &Path) -> Result<()> {
         local_transport: state.local_transport.clone(),
         tools: tasks.tools.clone(),
         work_gate: work_gate.clone(),
+        connections: idle_exit::connection_counter(),
         kernel_store: willdeep_core::kernel_store::KernelStore::new(home),
         mobile: Arc::new(mobile_gateway::MobileRelay::new(home)),
         web_app: Arc::new(web_app::WebAppService::new(home)),
@@ -1759,6 +1772,12 @@ async fn run(home: &Path) -> Result<()> {
     server_state
         .intake
         .watch_shutdown(shutdown_signal.subscribe());
+    // 没人用就自己退。评测和一次性运行拉起的 daemon 脱离了调用方的进程组，
+    // 调用方既杀不掉也删不掉它的目录；这里是唯一不依赖调用方的退路。
+    idle_exit::spawn(server_state.clone());
+    // 没人用就自己退。评测和一次性运行拉起的 daemon 脱离了调用方的进程组，
+    // 调用方既杀不掉也删不掉它的目录；这里是唯一不依赖调用方的退路。
+    idle_exit::spawn(server_state.clone());
     // 定时任务（willdeep-scheduler 内置插件）：插件启用时按点开新会话。
     child_sessions::spawn(server_state.clone());
     scheduler::spawn(server_state.clone());
@@ -1966,6 +1985,11 @@ async fn run(home: &Path) -> Result<()> {
         .route("/v1/internal/shutdown", post(shutdown_handler))
         .route("/v1/internal/drain", post(drain_handler))
         .layer(middleware::from_fn(server_version_header))
+        .layer(middleware::from_fn(idle_exit::track_connection))
+        .layer(middleware::from_fn_with_state(
+            server_state.connections.clone(),
+            idle_exit::attach_connection_counter,
+        ))
         .with_state(server_state);
     events.append(
         "daemon.started",
