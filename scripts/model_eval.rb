@@ -30,6 +30,7 @@ require 'tmpdir'
 require_relative 'lib/agent_eval_observation'
 require_relative 'lib/agent_eval_process'
 require_relative 'lib/runtime_parameters'
+require_relative 'lib/model_eval/cleanup'
 require_relative 'lib/model_eval/config'
 require_relative 'lib/model_eval/report'
 require_relative 'lib/model_eval/task'
@@ -137,7 +138,9 @@ module ModelEval
         if @options[:keep]
           warn "保留运行目录（含会话与日志，别提交）：#{@run_root}"
         else
-          FileUtils.remove_entry(@run_root)
+          # 先停掉任务拉起的 daemon 再删目录。删不掉只记一笔：清理失败不该
+          # 把已经跑完、已经归档的这一轮改判成「评测失败」。
+          Cleanup.release(@run_root, @binary).each { |problem| warn "运行目录没能清掉：#{problem}" }
         end
       end
     end

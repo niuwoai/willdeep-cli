@@ -227,9 +227,11 @@ async fn failed_worker_ack_keeps_committed_host_context_through_error_finish() {
         recorder
             .record(&[Message::user("existing task")], 1, 1, 0)
             .unwrap();
-        recorder.record_stream(Some("reply"), 1, 3, 1).unwrap();
         recorder
-            .record_stream(Some(" buffered delta"), 1, 3, 2)
+            .record_stream(Some("reply"), None, 1, 3, 1)
+            .unwrap();
+        recorder
+            .record_stream(Some(" buffered delta"), None, 1, 3, 2)
             .unwrap();
         assert!(recorder.stream_dirty && recorder.stream_prefix.is_some());
         let mut messages = recorder.latest.as_ref().unwrap().messages.clone();
@@ -348,10 +350,10 @@ fn uncertain_host_context_save_is_not_rewritten_by_finish_or_drop() {
                 .record(&[Message::user("existing task")], 1, 3, 0)
                 .unwrap();
             recorder
-                .record_stream(Some("saved reply"), 1, 3, 1)
+                .record_stream(Some("saved reply"), None, 1, 3, 1)
                 .unwrap();
             recorder
-                .record_stream(Some(" buffered delta"), 1, 3, 2)
+                .record_stream(Some(" buffered delta"), None, 1, 3, 2)
                 .unwrap();
             assert!(recorder.stream_dirty);
             let mut messages = recorder.latest.as_ref().unwrap().messages.clone();
@@ -447,9 +449,13 @@ fn streaming_reuses_history_and_appends_only_the_current_assistant_message() {
     let mut recorder = CheckpointRecorder::new(Some(&sink));
     let history = vec![Message::user("large history ".repeat(10000))];
     recorder.record(&history, 1, 0, 0).unwrap();
-    recorder.record_stream(Some("第一段"), 1, 10, 1).unwrap();
-    recorder.record_stream(Some("，第二段"), 1, 10, 2).unwrap();
-    recorder.record_stream(None, 1, 10, 3).unwrap();
+    recorder
+        .record_stream(Some("第一段"), None, 1, 10, 1)
+        .unwrap();
+    recorder
+        .record_stream(Some("，第二段"), None, 1, 10, 2)
+        .unwrap();
+    recorder.record_stream(None, None, 1, 10, 3).unwrap();
     let snapshots = sink.0.lock().unwrap();
     assert!(
         snapshots

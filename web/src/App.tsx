@@ -91,7 +91,14 @@ function settleActiveSteps(steps: RunStep[], now: number): RunStep[] {
     ? { ...step, status: "done" as const, elapsedMs: step.elapsedMs ?? now - step.startedAt }
     : step);
 }
-type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider" | "status"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[]; concise?: ConciseLine; workflow?: WorkflowRun };
+type ChatMessage = { id: string; role: ConversationItem["role"] | "activity" | "divider" | "status"; content: string; steps?: RunStep[]; thinking?: string; thought?: ThoughtRecord; attachmentReference?: string; plan?: Plan; details?: string[]; concise?: ConciseLine; workflow?: WorkflowRun; model?: string };
+/// 记下了模型名的消息才带这一小行；没记下的什么都不渲染，不用会话当前模型补。
+function messageModelLabel(model: string | undefined, t: Messages) {
+  const name = model?.trim();
+  if (!name) return null;
+  return <span className="message-model">{t.messageModel.replace("{model}", name)}</span>;
+}
+
 function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
   const chat: ChatMessage[] = [];
   conciseHistory(detail.messages, detail.response_style).forEach((message, index) => {
@@ -110,6 +117,7 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
     if (!message.content && !message.plan && !message.workflow && !message.details?.length) return;
     chat.push({
       id, role: message.role, attachmentReference: message.attachment_reference, plan: message.plan, workflow: message.workflow, details: message.details,
+      model: message.model,
       content: `${message.content}${message.attachment_count ? `\n[${message.attachment_count} ${t.attachmentCount}]` : ""}`,
     });
   });
@@ -142,6 +150,8 @@ type RuntimeStreamEvent = {
   session_id?: string;
   turn_id?: string;
   text?: string;
+  /// 产出这段文字的模型名，只有事件确实带了才有。
+  model?: string;
   label?: string;
   /// 这一步具体在干什么：命令的前几个词，或 Worker 的职责与标签。服务端已经
   /// 收敛并打码过，前端只负责淡色显示。
@@ -863,14 +873,16 @@ export function App() {
       return { terminal: true as const, error: runtimeFailureMessage(event, t) };
     }
     if (event.type === "assistant_text_delta") {
-      // 正文一开始，思维链尾巴就隐藏。
+      // 正文一开始，思维链尾巴就隐藏。模型名只在事件确实带来时才记下，
+      // 不拿会话当前的模型填。
       setChat((current) => current.map((message) => {
         if (message.id !== runId) return message;
         const now = Date.now();
         const thought = message.thought && !message.thought.elapsedMs
           ? { ...message.thought, elapsedMs: now - message.thought.startedAt }
           : message.thought;
-        return { ...message, content: message.content + (event.text || ""), thinking: "", thought };
+        const model = event.model?.trim() ? event.model.trim() : message.model;
+        return { ...message, content: message.content + (event.text || ""), thinking: "", thought, model };
       }));
     }
     else if (event.type === "reasoning_delta") {
@@ -894,7 +906,8 @@ export function App() {
           return [...without, { id: "concise-status", role: "status", content: "", concise: { text, startedAt } }];
         });
       } else if (narrationDecision(replyStyleRef.current, text) === "append") {
-        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: text }]);
+        const model = event.model?.trim() || undefined;
+        setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: text, model }]);
       }
       setActivity(event.text || t.thinking);
     }
@@ -1781,7 +1794,7 @@ export function App() {
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       {sessionId && childParentId && <ChildSessionOrigin key={`origin-${sessionId}`} parentId={childParentId} parentTitle={sessions.find((item) => item.id === childParentId)?.title} childId={sessionId} readOnly={childReadOnly} detached={childDetached} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant"><Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <Markdown content={message.content} copy={markdownCopy(t)} /> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant">{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <>{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {sessionId && !childParentId && !childReadOnly && <ChildSessions key={`children-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}

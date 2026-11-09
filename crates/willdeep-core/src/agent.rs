@@ -143,7 +143,12 @@ pub enum AgentEvent {
     TurnPreempted {
         turn: usize,
     },
-    AssistantText(String),
+    AssistantText {
+        text: String,
+        /// 产出这段文字的模型，请求发出时记下的那个。说不上来时为 `None`，
+        /// 界面不得用会话当前模型补上。
+        model: Option<String>,
+    },
     ProviderProgress(crate::provider::ProviderEvent),
     ToolRequested(ToolCall),
     ToolCompleted {
@@ -1295,10 +1300,16 @@ impl Agent {
                     .map_err(AgentError::TeamBudgetBlocked)?;
             }
             // Record only admitted requests, never a call refused by the budget.
-            let mut model_call = Some(match self.provider() {
-                Ok(provider) => self.begin_model_call(self.loop_usage_kind(), provider.as_ref()),
-                Err(_) => crate::usage_ledger::ModelCall::inert(),
-            });
+            // 同一时刻记下这一轮请求打到的模型：本轮产出的 assistant 消息都盖
+            // 这个章，中途切模型不影响已经在飞的这一轮。
+            let (model_call, reply_model) = match self.provider() {
+                Ok(provider) => (
+                    self.begin_model_call(self.loop_usage_kind(), provider.as_ref()),
+                    provider.ledger_identity().map(|identity| identity.model),
+                ),
+                Err(_) => (crate::usage_ledger::ModelCall::inert(), None),
+            };
+            let mut model_call = Some(model_call);
             let stream = streaming::StreamEvents::new(
                 checkpoint,
                 self.sink.as_ref(),
@@ -1306,7 +1317,8 @@ impl Agent {
                 input_tokens,
                 output_tokens,
             )
-            .with_plan_tools(&self.tools);
+            .with_plan_tools(&self.tools)
+            .with_model(reply_model.clone());
             let response = match stream
                 .wait(self.complete_or_preempt(&request_messages, &definitions, &stream))
                 .await
@@ -1339,7 +1351,10 @@ impl Agent {
             };
             if !matches!(&response, Ok(Some(_))) {
                 if !partial.content.is_empty() {
-                    messages.push(Message::assistant(&partial.content, Vec::new()));
+                    messages.push(
+                        Message::assistant(&partial.content, Vec::new())
+                            .with_model(reply_model.clone()),
+                    );
                 }
                 if let Some(usage) = &partial.usage {
                     input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
@@ -1420,13 +1435,19 @@ impl Agent {
                     .await;
                 let mut partial_history = messages.clone();
                 if !completion.content.is_empty() {
-                    partial_history.push(Message::assistant(&completion.content, Vec::new()));
+                    partial_history.push(
+                        Message::assistant(&completion.content, Vec::new())
+                            .with_model(reply_model.clone()),
+                    );
                 }
                 checkpoint.record(&partial_history, turn, input_tokens, output_tokens)?;
                 if let Some(budget) = self.config.token_budget
                     && used_tokens >= budget
                 {
-                    messages.push(Message::assistant(&completion.content, Vec::new()));
+                    messages.push(
+                        Message::assistant(&completion.content, Vec::new())
+                            .with_model(reply_model.clone()),
+                    );
                     messages.push(Message::host_instruction("[budget-limited] The token budget was exhausted after this provider response. None of the tool calls proposed in that response were executed. Resume from the saved results and outstanding work when more budget is available."));
                     checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
                     return Err(AgentError::TokenBudgetExceeded {
@@ -1454,13 +1475,17 @@ impl Agent {
             let content = completion.content.trim().to_owned();
             if !content.is_empty() {
                 self.sink
-                    .emit(AgentEvent::AssistantText(content.clone()))
+                    .emit(AgentEvent::AssistantText {
+                        text: content.clone(),
+                        model: reply_model.clone(),
+                    })
                     .await;
             }
             if response_incomplete {
                 incomplete_responses += 1;
                 // Truncated tool calls are not executable, even if their JSON happens to parse.
-                messages.push(Message::assistant(&content, Vec::new()));
+                messages
+                    .push(Message::assistant(&content, Vec::new()).with_model(reply_model.clone()));
                 if incomplete_responses >= MAX_INCOMPLETE_RESPONSES
                     || completion.finish_reason.as_deref() == Some("content_filter")
                 {
@@ -1483,7 +1508,8 @@ impl Agent {
                 if content.is_empty() {
                     return Err(AgentError::EmptyResponse);
                 }
-                messages.push(Message::assistant(&content, Vec::new()));
+                messages
+                    .push(Message::assistant(&content, Vec::new()).with_model(reply_model.clone()));
                 if self.append_pending_instructions(&mut messages)
                     || self
                         .tools
@@ -1604,7 +1630,8 @@ impl Agent {
             }
             messages.push(
                 Message::assistant(content, completion.tool_calls.clone())
-                    .with_reasoning(reasoning),
+                    .with_reasoning(reasoning)
+                    .with_model(reply_model),
             );
             checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             let all_reads = completion

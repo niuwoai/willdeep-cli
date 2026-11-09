@@ -79,6 +79,7 @@ fn cached_stream_render_preserves_layout_after_all_display_changes() {
     // 缓存与参考帧逐行一致，时间后缀会让两边对不上。
     app.transcript.push("WillDeep: new **answer**".into());
     app.transcript_attachments.push(Vec::new());
+    app.transcript_models.push(None);
     assert_cached_frame_matches_reference(&mut app);
     app.transcript[0] = "You: 修改已有内容".into();
     assert_cached_frame_matches_reference(&mut app);
@@ -95,6 +96,7 @@ fn cached_stream_render_preserves_layout_after_all_display_changes() {
     app.transient_thought = None;
     app.transcript.clear();
     app.transcript_attachments.clear();
+    app.transcript_models.clear();
     assert_cached_frame_matches_reference(&mut app);
 }
 

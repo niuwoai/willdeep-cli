@@ -939,6 +939,8 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
                 tool_call_id,
                 tool_calls,
                 attachments: Vec::new(),
+                // 桌面端会话不记逐条模型，导入后留空，不拿会话模型冒充。
+                model: None,
             })
         })
         .collect();

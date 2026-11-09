@@ -11,6 +11,7 @@ impl App {
             prompt_history_pending: VecDeque::new(),
             awaiting_since: None,
             transcript_attachments: vec![Vec::new(); transcript.len()],
+            transcript_models: vec![None; transcript.len()],
             transcript,
             archive_floor: 0,
             message_times: message_time::MessageTimes::default(),
@@ -67,6 +68,7 @@ impl App {
             pending_model: None,
             pending_reasoning_level: None,
             display_model: None,
+            reply_model: None,
             pending_provider: None,
             local_turn: None,
             latest_usage: Usage::default(),
@@ -263,6 +265,8 @@ impl App {
         self.pending_reasoning_level = None;
         self.pending_provider = None;
         self.display_model = session.model.clone().filter(|model| !model.is_empty());
+        // 换会话时上一轮的产出模型不再成立。
+        self.reply_model = None;
         let display = self
             .display_home
             .as_ref()
@@ -1213,6 +1217,8 @@ impl App {
         // 没被交回排队的插话已经送进了任务，收尾时补上，一句都不丢。
         self.flush_deferred_steering();
         self.turn_narration = None;
+        // 这一轮的产出模型只对这一轮的正文行有效，收尾即清空。
+        self.reply_model = None;
         self.activity_line = if self.queued_prompts.is_empty() {
             self.language.text("就绪", "Ready", "準備完了")
         } else {
@@ -1976,15 +1982,27 @@ impl App {
         // 上一帧已经算好的高度就是「追加之前」的高度——再整段重排一遍纯属浪费，
         // 长会话里每落一行工具就重排两次，正是滚动和输出卡顿的来源。
         let previous_height = self.transcript_height;
-        if !v
+        let added_row = if !v
             .strip_prefix("WillDeep: ")
             .is_some_and(|reply| append_plan_reply(&mut self.transcript, reply))
         {
-            self.transcript.push(v);
-        }
-        // 记录长了几行，附件槽就补几行空的，保持与记录逐行对齐。
+            self.transcript.push(v.clone());
+            Some(v)
+        } else {
+            // 计划卡片是原位替换，不新增行，也不盖章。
+            None
+        };
+        // 记录长了几行，附件槽和模型章就补几行空的，保持与记录逐行对齐。
         self.transcript_attachments
             .resize_with(self.transcript.len(), Vec::new);
+        self.transcript_models
+            .resize_with(self.transcript.len(), || None);
+        if let Some(row) = added_row.as_deref()
+            && let Some(model) = self.model_for_row(row)
+        {
+            let last = self.transcript_models.len() - 1;
+            self.transcript_models[last] = Some(model);
+        }
         if self.transcript.len() > previous_len {
             self.message_times
                 .observe(&self.transcript, self.message_times.recording_time());
@@ -2003,6 +2021,26 @@ impl App {
         }
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
+
+    /// 新落进记录的这一行该盖哪个模型的章。
+    ///
+    /// 只有说话的行才盖：用户行盖的是发送当时的会话模型（这句话发给了谁），
+    /// 助手正文行盖的是这一轮事件带来的产出模型。工具行、系统行和分隔线都不是
+    /// 模型的原话，留空。两个来源都可能是空，空着就是不知道，不互相顶替。
+    fn model_for_row(&self, row: &str) -> Option<String> {
+        let source = if row.starts_with("You: ") {
+            self.display_model.as_deref()
+        } else if row.starts_with("WillDeep: ") {
+            self.reply_model.as_deref()
+        } else {
+            None
+        };
+        source
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned)
+    }
+
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
     /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
     pub(super) fn paste_goes_inline(value: &str) -> bool {
@@ -2452,6 +2490,7 @@ impl App {
                 self.message_times.clear_rows(&self.transcript);
                 self.transcript.clear();
                 self.transcript_attachments.clear();
+                self.transcript_models.clear();
                 self.expanded_user_messages.clear();
                 // 清空之后也是首屏：给回欢迎语，而不是留一整屏空白。
                 self.ensure_welcome(&self.workspace.clone().unwrap_or_default(), self.language);

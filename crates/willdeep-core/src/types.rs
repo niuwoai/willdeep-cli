@@ -29,6 +29,13 @@ pub struct Message {
     pub tool_calls: Vec<ToolCall>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MessageAttachment>,
+    /// 产出这条消息的模型名，在请求发出时记下。
+    ///
+    /// 只覆盖模型真正回答的消息：压缩摘要、归档引用这类派生消息留空，
+    /// 旧会话文件里没有这个字段也留空。空着就是不知道，显示时不得用
+    /// 会话当前的模型去猜。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +96,16 @@ impl Message {
             tool_call_id: None,
             tool_calls,
             attachments: Vec::new(),
+            model: None,
         }
+    }
+
+    /// 记下产出这条消息的模型名。空串和纯空白视为「不知道」，不占字段。
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        self
     }
 
     /// 带上模型这一轮的思维链原文。空串视为「没有」，不占用协议字段。
@@ -123,6 +139,7 @@ impl Message {
             tool_call_id: Some(call.id.clone()),
             tool_calls: Vec::new(),
             attachments: Vec::new(),
+            model: None,
         }
     }
 
@@ -135,6 +152,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: Vec::new(),
             attachments: Vec::new(),
+            model: None,
         }
     }
 }
@@ -321,6 +339,7 @@ mod tests {
                 tool_call_id: None,
                 tool_calls: Vec::new(),
                 attachments: Vec::new(),
+                model: None,
             },
             Message::assistant("done", Vec::new()),
         ];

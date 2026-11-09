@@ -381,6 +381,29 @@ mod generation_limit_tests {
         assert_eq!(body["messages"][1]["reasoning_content"], "");
     }
 
+    /// 记下的模型名只给界面看，出站请求里不能出现。
+    #[test]
+    fn recorded_model_never_reaches_the_wire() {
+        let config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "https://example.test/v1",
+            "test-key",
+            "other-model",
+        );
+        let history = [
+            Message::user("topic"),
+            Message::assistant("answer", Vec::new()).with_model(Some("glm-5".into())),
+        ];
+        let body = ChatCompletionsProvider::new(config)
+            .unwrap()
+            .request_body(&history, &[], false)
+            .unwrap();
+        let wire = body.to_string();
+        assert!(!wire.contains("glm-5"), "{wire}");
+        assert!(body["messages"][1].get("model").is_none(), "{body}");
+    }
+
     #[test]
     fn remote_main_reasoning_is_unchanged_but_explicit_structured_calls_disable_it() {
         let mut config = ProviderConfig::new(

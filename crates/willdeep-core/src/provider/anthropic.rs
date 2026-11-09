@@ -376,6 +376,19 @@ mod tests {
         assert_eq!(encoded[1].role, "user");
     }
 
+    /// 记下的模型名只给界面看，出站的消息里不能出现。
+    #[test]
+    fn recorded_model_never_reaches_the_wire() {
+        let messages = vec![
+            Message::system("system"),
+            Message::assistant("answer", Vec::new()).with_model(Some("glm-5".into())),
+        ];
+        let (_, encoded) = encode_messages(&messages);
+        let wire = serde_json::to_string(&encoded).unwrap();
+        assert!(!wire.contains("glm-5"), "{wire}");
+        assert!(!wire.contains("\"model\""), "{wire}");
+    }
+
     /// The breakpoint lands on the stable prefix only. A per-turn change behind
     /// the boundary must not move the cached bytes, and a prompt with no
     /// boundary is cached whole.
