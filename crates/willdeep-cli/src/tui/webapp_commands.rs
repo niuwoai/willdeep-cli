@@ -120,16 +120,18 @@ mod tests {
 
     #[test]
     fn rejects_non_loopback_even_when_explicit() {
-        let root = std::env::temp_dir().join(format!("willdeep-webapp-parse-{}", uuid::Uuid::new_v4()));
-        let error = resolve_listen("0.0.0.0:9847", &root, None)
-            .expect_err("non-loopback must fail");
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-parse-{}", uuid::Uuid::new_v4()));
+        let error =
+            resolve_listen("0.0.0.0:9847", &root, None).expect_err("non-loopback must fail");
         assert!(error.to_string().contains("loopback"));
         assert!(!root.exists());
     }
 
     #[test]
     fn empty_argument_uses_config_default_when_service_is_off() {
-        let root = std::env::temp_dir().join(format!("willdeep-webapp-default-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-default-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let config = root.join("config.toml");
         std::fs::write(&config, "[web]\nlisten = \"127.0.0.1:9900\"\n").unwrap();
@@ -150,7 +152,8 @@ mod tests {
 
     #[test]
     fn explicit_argument_overrides_config() {
-        let root = std::env::temp_dir().join(format!("willdeep-webapp-explicit-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-explicit-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let config = root.join("config.toml");
         std::fs::write(&config, "[web]\nlisten = \"127.0.0.1:9900\"\n").unwrap();

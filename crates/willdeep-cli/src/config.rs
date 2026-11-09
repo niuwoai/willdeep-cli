@@ -2844,7 +2844,8 @@ secret = "inline-secret"
         let mut settings = WebSettings::default();
         for value in ["127.0.0.1:9900", "[::1]:9900"] {
             settings.listen = value.to_owned();
-            validate_web(&settings).unwrap_or_else(|error| panic!("{value} is a valid listen: {error}"));
+            validate_web(&settings)
+                .unwrap_or_else(|error| panic!("{value} is a valid listen: {error}"));
         }
         for value in ["localhost:9900", "127.0.0.1"] {
             settings.listen = value.to_owned();
@@ -2877,7 +2878,8 @@ secret = "inline-secret"
             "127.0.0.1:3".parse().unwrap(),
             "with no enabled service the config address is used"
         );
-        let error = resolve_web_listen(None, None, "localhost:3").expect_err("config must be IP:PORT");
+        let error =
+            resolve_web_listen(None, None, "localhost:3").expect_err("config must be IP:PORT");
         assert!(error.to_string().contains("web.listen"), "{error}");
     }
 
