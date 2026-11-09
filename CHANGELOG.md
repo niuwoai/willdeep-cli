@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- 评测和一次性运行不再留下空转的 Runtime Daemon。此前每个任务的 `willdeep run` 都会给自己的临时 home 拉起一个脱离进程组的 daemon，调用方的清理杀不到它，它又每几秒重写一次租约，攥着目录让 `rmdir` 报 `Directory not empty`，于是目录和进程一起留下。现在 daemon 在连续 15 分钟既没有客户端连接、也没有排队或执行中的轮次、也没有开启的服务时自己退出；评测收尾先逐个 home 执行 `daemon stop`，停不掉再按它自己写下的 pid 发信号，然后才删目录，删不掉只记一笔，不再把已经跑完的一轮判成评测失败。
+
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。

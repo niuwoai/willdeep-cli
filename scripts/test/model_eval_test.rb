@@ -15,6 +15,7 @@ require 'json'
 require 'minitest/autorun'
 require 'tmpdir'
 
+require_relative '../lib/model_eval/cleanup'
 require_relative '../lib/model_eval/config'
 require_relative '../lib/model_eval/report'
 require_relative '../lib/model_eval/task'
@@ -360,6 +361,87 @@ class ReportTest < Minitest::Test
       assert_equal 2, File.readlines(history).size
       assert_equal 'org/model', JSON.parse(File.readlines(history).first)['model']
       refute_includes File.read(markdown), 'api_key'
+    end
+  end
+end
+
+class CleanupTest < Minitest::Test
+  # `release` 成功时会把目录删掉，所以不能用 `mktmpdir`：它收尾时还要再删一次。
+  def own_root
+    root = File.join(Dir.tmpdir, "model-eval-cleanup-#{Process.pid}-#{rand(1_000_000)}")
+    FileUtils.mkdir_p(root)
+    root
+  end
+
+  def test_release_removes_a_run_root_without_a_daemon
+    root = own_root
+    FileUtils.mkdir_p(File.join(root, 'model', 'task', 'workspace'))
+    assert_empty ModelEval::Cleanup.release(root, 'willdeep-does-not-exist')
+    refute File.directory?(root)
+  end
+
+  def test_release_stops_the_daemon_before_removing_the_directory
+    root = own_root
+    begin
+      home = File.join(root, 'model', 'task', 'home')
+      runtime = File.join(home, 'runtime')
+      FileUtils.mkdir_p(runtime)
+      # 一个一直重写租约的进程，模拟 daemon 攥着目录不放。
+      holder = IO.popen([RbConfig.ruby, '-e', <<~RUBY, runtime])
+        loop { File.write(File.join(ARGV.fetch(0), 'daemon.lock'), Time.now.to_s); sleep 0.05 }
+      RUBY
+      File.write(File.join(runtime, 'daemon.json'), JSON.generate({ 'pid' => holder.pid }))
+      seen = []
+      # `daemon stop` 不去真的执行：只记录它被要求停哪个 home，并假装没停掉，
+      # 好让收尾走到按 pid 发信号的那一步。
+      ModelEval::Cleanup.stub(:run_cli, lambda { |_binary, home, args|
+        seen << [home, args]
+        ['', nil]
+      }) do
+        ModelEval::Cleanup.stub(:owns_home?, ->(_pid, _home) { true }) do
+          assert_empty ModelEval::Cleanup.release(root, 'willdeep-does-not-exist')
+        end
+      end
+      assert_equal [[home, %w[daemon stop]]], seen
+      refute File.directory?(root)
+      # 信号是异步的：等到进程真的没了，而不是发完立刻查。
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.1 while ModelEval::Cleanup.process_alive?(holder.pid) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+      refute ModelEval::Cleanup.process_alive?(holder.pid)
+    ensure
+      if defined?(holder) && holder
+        begin
+          Process.kill('KILL', holder.pid)
+        rescue Errno::ESRCH
+          nil
+        end
+        begin
+          Process.waitpid(holder.pid, Process::WNOHANG)
+        rescue Errno::ECHILD
+          nil
+        end
+      end
+      FileUtils.remove_entry(root) if File.directory?(root)
+    end
+  end
+
+  def test_a_removal_failure_is_reported_instead_of_raised
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, 'model', 'task', 'home'))
+      FileUtils.stub(:remove_entry, ->(_path) { raise Errno::ENOTEMPTY, root }) do
+        problems = ModelEval::Cleanup.release(root, 'willdeep-does-not-exist')
+        assert_equal 1, problems.size
+        assert_includes problems.first, root
+      end
+      assert File.directory?(root)
+    end
+  end
+
+  def test_daemon_homes_ignore_a_task_file_of_the_same_name
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, 'model', 'task', 'workspace', 'runtime'))
+      File.write(File.join(root, 'model', 'task', 'workspace', 'runtime', 'daemon.json'), '{}')
+      assert_empty ModelEval::Cleanup.daemon_homes(root)
     end
   end
 end
