@@ -327,7 +327,7 @@ impl SessionUsage {
         if !self.seen.insert(record.id) {
             return;
         }
-        let usage = counted(&record.usage);
+        let usage = counted(&record);
         if let Some(turn) = record.turn_id {
             merge(self.turns.entry(turn).or_default(), &usage);
         }

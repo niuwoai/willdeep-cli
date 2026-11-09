@@ -1,4 +1,5 @@
 use super::*;
+use crate::usage_ledger::UsageLedgerRecord;
 use std::collections::BTreeMap;
 use willdeep_runtime_protocol::agent_team::{
     AgentTeamPolicy, AgentTeamSummary, AgentUsageSummary, AgentWorkerSummary,
@@ -226,16 +227,21 @@ fn merge(target: &mut AgentUsageSummary, source: &AgentUsageSummary) {
     add(&mut target.total_tokens, source.total_tokens);
 }
 
-fn counted(usage: &Usage) -> AgentUsageSummary {
+fn counted(record: &UsageLedgerRecord) -> AgentUsageSummary {
+    let usage = &record.usage;
     let total = usage.total_tokens.or_else(|| {
         usage
             .input_tokens
             .zip(usage.output_tokens)
             .map(|(input, output)| input.saturating_add(output))
     });
+    // A cancelled in-flight call is settled with no usage because the provider
+    // never returned one. That is not an unpriced completed call: the budget
+    // gate treats the latter as unverifiable and would block the whole family.
+    let unknown = total.is_none() && record.outcome != crate::usage_ledger::Outcome::Cancelled;
     AgentUsageSummary {
         model_calls: 1,
-        unknown_usage_calls: u64::from(total.is_none()),
+        unknown_usage_calls: u64::from(unknown),
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cache_read_tokens: usage.cache_read_tokens,
