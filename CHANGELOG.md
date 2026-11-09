@@ -6,6 +6,17 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.147.0-rc20] - 2026-11-10
+
+### Added
+- `config.toml` 支持 `[web] listen`，给内嵌 Web UI 一个持久默认监听地址；配置工作台也能改。必须写成 `IP:PORT`，不能写 `localhost`。
+
+### Changed
+- Web 监听地址统一按这个顺序取：显式 `--listen` / `/webapp IP:PORT`，已启用的 `webapp-service.json`，`[web] listen`，最后才是 `127.0.0.1:9847`。前台 `willdeep --web` 不读服务状态文件。已经启用的服务不会因为改配置自动换端口，要先停再启。
+
+### Fixed
+- `willdeep web` 不再无视 `--listen` 硬编码 `9847`；省略时也会走上面的统一解析。
+
 ## [0.147.0-rc19] - 2026-11-10
 
 ### Changed
@@ -15,7 +26,6 @@
 
 ### Fixed
 - 行号匹配从 `tools.rs` 拆到 `tools/edit_match.rs`。rc17 把这段放进 `tools.rs` 后该文件到了 3075 行，超过 3000 行的上限，发行检查因此失败；匹配行为不变。
-
 ## [0.147.0-rc17] - 2026-11-09
 
 ### Fixed

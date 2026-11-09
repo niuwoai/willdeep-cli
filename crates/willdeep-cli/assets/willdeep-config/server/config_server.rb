@@ -31,7 +31,7 @@ require "rule_library"
 module WilldeepConfig
   PROTOCOL_VERSION = "2025-06-18"
   SERVER_NAME = "config"
-  SERVER_VERSION = "0.6.0-rc7"
+  SERVER_VERSION = "0.6.0-rc8"
   MASK = "••••"
   ABSENT = :__absent__
   OCTAL_FILE_MODE = 0o600

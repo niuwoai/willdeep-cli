@@ -193,9 +193,10 @@ struct Cli {
     #[arg(long)]
     web: bool,
 
-    /// Web server listen address. Authentication belongs at the reverse proxy.
-    #[arg(long, default_value = "127.0.0.1:9847")]
-    listen: std::net::SocketAddr,
+    /// Web listen address (`IP:PORT`). When omitted: enabled webapp-service.json,
+    /// then `[web] listen`, then `127.0.0.1:9847`. Auth belongs at the reverse proxy.
+    #[arg(long)]
+    listen: Option<std::net::SocketAddr>,
 
     /// UI language: zh-CN, en, or ja. Overrides agent.language.
     #[arg(long, env = "WILLDEEP_LANGUAGE", global = true)]
@@ -595,10 +596,19 @@ async fn open_web_app(cli: &Cli) -> Result<()> {
             .with_context(|| format!("invalid Web workspace: {}", workspace.display()))?;
         let config =
             std::path::absolute(cli.config.clone().unwrap_or(config::default_config_path()?))?;
+        let loaded = LoadedConfig::load(cli.config.as_deref())?;
+        let listen = config::resolve_web_listen(
+            cli.listen,
+            daemon::web_app::enabled_listen(&home)?,
+            &loaded.file.web.listen,
+        )?;
+        if !listen.ip().is_loopback() {
+            bail!("Runtime Web App only accepts a loopback address");
+        }
         status = daemon::web_app::remote_start(
             &home,
             &WebAppStartParams {
-                listen: "127.0.0.1:9847".parse().expect("valid Web App address"),
+                listen,
                 workspace,
                 config: Some(config),
                 profile: cli.profile.clone(),
@@ -834,8 +844,9 @@ async fn run() -> Result<()> {
                 workspaces.push(canonical);
             }
         }
+        let listen = config::resolve_web_listen(cli.listen, None, &loaded.file.web.listen)?;
         return web::serve(web::WebConfig {
-            listen: cli.listen,
+            listen,
             config_path: std::path::absolute(
                 cli.config.clone().unwrap_or(config::default_config_path()?),
             )?,

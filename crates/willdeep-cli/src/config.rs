@@ -241,6 +241,9 @@ pub struct ConfigFile {
     /// webhook 是反方向的两件事。
     #[serde(default)]
     pub intake: IntakeSettings,
+    /// Web 监听地址。显式 `--listen` 和已启用的服务记录优先于它。
+    #[serde(default)]
+    pub web: WebSettings,
     /// 实例联邦：两台公网可达的 willdeep 互发消息。挂在入口监听上。
     #[serde(default)]
     pub federation: FederationSettings,
@@ -279,6 +282,26 @@ impl Default for LocalModelSettings {
             prefer_for_titles: true,
             deprecated_prefer_for_context_summaries: false,
             prefer_for_worker_routing: true,
+        }
+    }
+}
+
+pub(crate) const DEFAULT_WEB_LISTEN: &str = "127.0.0.1:9847";
+
+/// Web 监听地址。缺省 `127.0.0.1:9847`：不写这一段就听本机。
+///
+/// 只接受 IP:PORT。主机名（`localhost`）不行，否则同一份配置在 IPv4 与 IPv6
+/// 环境下会解析成不同的地址。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebSettings {
+    pub listen: String,
+}
+
+impl Default for WebSettings {
+    fn default() -> Self {
+        Self {
+            listen: DEFAULT_WEB_LISTEN.to_owned(),
         }
     }
 }
@@ -970,12 +993,40 @@ pub(crate) fn validate_federation(
     Ok(())
 }
 
+/// 监听地址只认 IP:PORT。主机名交给调用方自己解析，不在这里做 DNS。
+pub(crate) fn parse_listen_addr(field: &str, value: &str) -> Result<std::net::SocketAddr> {
+    value
+        .parse()
+        .with_context(|| format!("{field} must be IP:PORT"))
+}
+
+/// Web 监听地址的语义校验。`config check` 走这里，启动时再校一遍。
+pub(crate) fn validate_web(settings: &WebSettings) -> Result<()> {
+    parse_listen_addr("web.listen", &settings.listen)?;
+    Ok(())
+}
+
+/// Web 监听地址的三级优先级：显式指定，然后是已启用服务记下的地址，
+/// 最后才是配置里的 `web.listen`。
+///
+/// 已停用的服务不该在这里赢：调用方只在服务启用时才传入它的地址。
+pub(crate) fn resolve_web_listen(
+    explicit: Option<std::net::SocketAddr>,
+    enabled_service_listen: Option<std::net::SocketAddr>,
+    config_listen: &str,
+) -> Result<std::net::SocketAddr> {
+    if let Some(listen) = explicit {
+        return Ok(listen);
+    }
+    if let Some(listen) = enabled_service_listen {
+        return Ok(listen);
+    }
+    parse_listen_addr("web.listen", config_listen)
+}
+
 /// 公网入口的语义校验。`config check` 和入口启动都走这里，规则只写一份。
 pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
-    settings
-        .listen
-        .parse::<std::net::SocketAddr>()
-        .context("intake.listen must be IP:PORT")?;
+    parse_listen_addr("intake.listen", &settings.listen)?;
     if !settings.public_url.trim().is_empty() {
         check_intake_public_url(&settings.public_url)?;
     }
@@ -1606,6 +1657,7 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     }
     validate_intake(&file.intake)?;
+    validate_web(&file.web)?;
     validate_federation(&file.federation, &file.intake)?;
     for root in &file.agent.sandbox_writable_roots {
         // 相对路径相对谁？工作区、家目录、当前目录都说得通，所以谁都不算——
@@ -2783,6 +2835,50 @@ secret = "inline-secret"
         federation.max_auto_turns = 6;
         validate_federation(&federation, &intake)
             .expect("a complete federation section is accepted");
+    }
+
+    #[test]
+    fn web_listen_defaults_and_only_accepts_an_ip_and_port() {
+        assert_eq!(WebSettings::default().listen, DEFAULT_WEB_LISTEN);
+
+        let mut settings = WebSettings::default();
+        for value in ["127.0.0.1:9900", "[::1]:9900"] {
+            settings.listen = value.to_owned();
+            validate_web(&settings).unwrap_or_else(|error| panic!("{value} is a valid listen: {error}"));
+        }
+        for value in ["localhost:9900", "127.0.0.1"] {
+            settings.listen = value.to_owned();
+            let error = validate_web(&settings).expect_err("not IP:PORT");
+            assert!(
+                error.to_string().contains("web.listen must be IP:PORT"),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn web_listen_resolution_prefers_explicit_then_the_enabled_service_then_config() {
+        let explicit: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let enabled: std::net::SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let config = "127.0.0.1:3";
+
+        assert_eq!(
+            resolve_web_listen(Some(explicit), Some(enabled), config).unwrap(),
+            explicit,
+            "an explicit address wins over everything"
+        );
+        assert_eq!(
+            resolve_web_listen(None, Some(enabled), config).unwrap(),
+            enabled,
+            "an enabled service wins over the config"
+        );
+        assert_eq!(
+            resolve_web_listen(None, None, config).unwrap(),
+            "127.0.0.1:3".parse().unwrap(),
+            "with no enabled service the config address is used"
+        );
+        let error = resolve_web_listen(None, None, "localhost:3").expect_err("config must be IP:PORT");
+        assert!(error.to_string().contains("web.listen"), "{error}");
     }
 
     #[test]

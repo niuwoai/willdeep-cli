@@ -39,7 +39,7 @@ impl Cli {
             no_tui: false,
             onboarding: false,
             web: false,
-            listen: std::net::SocketAddr::from(([127, 0, 0, 1], 9847)),
+            listen: None,
             language: variable("WILLDEEP_LANGUAGE"),
             web_input_json: false,
         }

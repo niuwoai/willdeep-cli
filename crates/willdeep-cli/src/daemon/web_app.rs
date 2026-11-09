@@ -327,6 +327,14 @@ impl Drop for WebAppService {
     }
 }
 
+/// 已启用服务记下的监听地址。没有记录或已停用时返回 `None`，
+/// 让调用方回退到配置里的 `web.listen`。
+pub(crate) fn enabled_listen(home: &Path) -> Result<Option<std::net::SocketAddr>> {
+    Ok(load(home)?
+        .filter(|settings| settings.enabled)
+        .map(|settings| settings.request.listen))
+}
+
 fn load(home: &Path) -> Result<Option<Settings>> {
     use std::io::Read;
     let mut options = OpenOptions::new();

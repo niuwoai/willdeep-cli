@@ -423,7 +423,7 @@ pub(crate) async fn execute_runtime(
         no_tui: true,
         onboarding: false,
         web: false,
-        listen: "127.0.0.1:9847".parse().expect("static listen address"),
+        listen: None,
         language: None,
         web_input_json: false,
     };

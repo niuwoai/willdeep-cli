@@ -98,18 +98,20 @@ pub(crate) async fn configure_in_browser(cli: &crate::Cli) -> Result<SetupServer
     if !io::stdin().is_terminal() {
         bail!("first-use setup needs an interactive terminal; pass --config or provider flags");
     }
-    if !cli.listen.ip().is_loopback() {
-        bail!("Provider setup requires a loopback listen address");
-    }
     let config_path =
         std::path::absolute(cli.config.clone().unwrap_or(config::default_config_path()?))?;
+    let loaded = config::LoadedConfig::load(cli.config.as_deref())?;
+    // Setup only needs a loopback IP; the port is forced ephemeral below.
+    let mut listen = config::resolve_web_listen(cli.listen, None, &loaded.file.web.listen)?;
+    if !listen.ip().is_loopback() {
+        bail!("Provider setup requires a loopback listen address");
+    }
     let workspace = cli
         .workspace
         .clone()
         .unwrap_or(std::env::current_dir()?)
         .canonicalize()?;
     // A dedicated ephemeral port avoids taking over an existing user's WebApp.
-    let mut listen = cli.listen;
     listen.set_port(0);
     let (started, ready) = tokio::sync::oneshot::channel();
     let server = SetupServer(tokio::spawn(crate::web::serve(crate::web::WebConfig {
