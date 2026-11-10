@@ -27,6 +27,7 @@ impl App {
             transcript_width: 78,
             transcript_content: Rect::default(),
             pending_chat_click: None,
+            code_copy: code_copy::CodeCopyState::new(crate::gallery::hosted()),
             transcript_height: 0,
             viewport_height: 10,
             tools: ToolActivity::default(),

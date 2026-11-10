@@ -168,9 +168,15 @@ impl App {
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
+        self.code_copy.clear();
     }
 
     pub(super) fn selected_chat_text(&self) -> String {
+        // 双击整块选中时返回去掉围栏的原文，而不是屏幕上折过行的样式行；
+        // 这样 Ctrl+C、Q 和复制成功的字数提示拿到的都是可粘贴的代码。
+        if let Some(content) = self.code_copy.selected_content() {
+            return content;
+        }
         let Some(selection) = self.chat_selection else {
             return String::new();
         };
@@ -256,6 +262,7 @@ impl App {
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
+        self.code_copy.clear_selection();
         self.focus = FocusPane::Prompt;
         self.notice = Some(
             self.language

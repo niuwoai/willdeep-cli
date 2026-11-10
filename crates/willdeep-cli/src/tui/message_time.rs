@@ -348,6 +348,8 @@ pub(super) struct FoldedFrame {
     pub(super) tool_controls: Vec<(usize, usize, bool)>,
     /// 附件标签所在的样式行：行号、记录位置、附件序号（从 0 起）。
     pub(super) attachment_hits: Vec<(usize, usize, usize)>,
+    /// 代码块范围，行号相对 `text`。复制和徽标都按它落点。
+    pub(super) code_blocks: Vec<rendering::CodeBlockLines>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -366,16 +368,25 @@ pub(super) fn render_with_user_folds(
     let mut controls = Vec::new();
     let mut tool_controls = Vec::new();
     let mut attachment_hits = Vec::new();
+    let mut code_blocks = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
         // 真正画整段聊天区的最后一行时才补上。
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
         let displayed = divider_without_your_turn(row, language);
-        let mut entry = wrap_styled_text(
-            colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
-            width,
-        );
+        // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
+        let (mut entry, mut row_code_blocks) = if displayed.starts_with("WillDeep: ") {
+            rendering::render_assistant_entry_with_code_blocks(&displayed, search, width)
+        } else {
+            (
+                wrap_styled_text(
+                    colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
+                    width,
+                ),
+                Vec::new(),
+            )
+        };
         // 附件接在这句话下面：标签行可点，文本附件把正文也摊出来（超长一起折叠）。
         let user = users.get(&index).copied();
         if let Some((source, _)) = user
@@ -466,7 +477,18 @@ pub(super) fn render_with_user_folds(
                 if entry.lines[last].width() + suffix_width <= width {
                     entry.lines[last].spans.push(span);
                 } else {
-                    entry.lines.insert(last + 1, Line::from(span));
+                    // 时间标签另起一行时插在块内还是块后：块内的行号要跟着 +1，
+                    // 否则双击范围会少最后一行、徽标也会错位。
+                    let at = last + 1;
+                    entry.lines.insert(at, Line::from(span));
+                    for block in &mut row_code_blocks {
+                        if block.start >= at {
+                            block.start += 1;
+                            block.end += 1;
+                        } else if block.end > at {
+                            block.end += 1;
+                        }
+                    }
                 }
             }
         }
@@ -478,6 +500,16 @@ pub(super) fn render_with_user_folds(
                 line.push_span(Span::raw(label));
             }
         }
+        let block_base = text.lines.len();
+        code_blocks.extend(
+            row_code_blocks
+                .into_iter()
+                .map(|block| rendering::CodeBlockLines {
+                    start: block_base + block.start,
+                    end: block_base + block.end,
+                    content: block.content,
+                }),
+        );
         text.lines.extend(entry.lines);
         // 空行只属于分隔线与下一条用户消息之间。逐条上色看不到下一条是什么，
         // 所以留在这里：后面没有用户消息时（最后一行、或后面是 Thought）不留。
@@ -493,6 +525,7 @@ pub(super) fn render_with_user_folds(
         user_controls: controls,
         tool_controls,
         attachment_hits,
+        code_blocks,
     }
 }
 

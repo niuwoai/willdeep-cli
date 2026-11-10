@@ -1118,12 +1118,23 @@ pub(super) async fn event_loop(
                         && app.task_detail.is_none()
                         && app.attention_detail.is_none()
                         && app.worktree_review.is_none()
-                        && app.handle_chat_selection_mouse(mouse)
                     {
-                        if let Some(action) = app.pending_media_action.take() {
-                            dispatch_media_action(action, &mut app, runtime);
+                        // 代码块徽标比选区先接鼠标：点右上角是复制，不是起手拖选。
+                        if let Some(action) = app.handle_code_copy_mouse(mouse, Instant::now()) {
+                            match action {
+                                code_copy::CodeCopyAction::Copy(block) => {
+                                    app.copy_code_block(block);
+                                }
+                                code_copy::CodeCopyAction::Consume => {}
+                            }
+                            continue;
                         }
-                        continue;
+                        if app.handle_chat_selection_mouse(mouse) {
+                            if let Some(action) = app.pending_media_action.take() {
+                                dispatch_media_action(action, &mut app, runtime);
+                            }
+                            continue;
+                        }
                     }
                     match mouse.kind {
                     MouseEventKind::Down(_)=>{
@@ -1149,6 +1160,9 @@ pub(super) async fn event_loop(
                 Event::Key(key) if key.kind==KeyEventKind::Press=>{
                     if key.code != KeyCode::Esc {
                         interrupt_esc_deadline = None;
+                    } else {
+                        // Esc 也收起代码块徽标；选区模式下面还会再清一次，幂等。
+                        app.code_copy.clear();
                     }
                     if app.native_selection_mode {
                         // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
