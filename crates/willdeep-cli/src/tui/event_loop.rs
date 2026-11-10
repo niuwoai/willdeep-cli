@@ -515,12 +515,19 @@ pub(super) async fn event_loop(
     app.display_model = session.model.clone().filter(|model| !model.is_empty());
     app.runtime_event_cursor = session.runtime_event_cursor;
     app.workspace = Some(session.workspace.clone());
-    app.workspace_status = workspace_status(&session.workspace, language);
-    app.workspace_attention = workspace_attention(&session.workspace);
+    app.workspace_status = workspace_status_placeholder(&session.workspace, language);
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
+    app.context_window = runtime.context_window.max(1);
+    app.background_tasks = runtime.background_tasks.snapshots();
     refresh_session_lineage(&mut app, session, store);
-    if let Err(error) = reasoning_commands::sync_session(session, runtime, &agent).await {
+    // 先把首帧（含蓝鲸欢迎面与可交互输入区）画上屏，再在后台补齐 Git 侧栏状态、
+    // 升级检查、事件跟随器与已持久化会话的思考等级同步。
+    redraw::redraw(term, &mut app, &runtime.skills, session)?;
+    spawn_workspace_git_refresh(session.workspace.clone(), language, runtime.tx.clone());
+    if reasoning_commands::should_sync_on_startup(session, store)
+        && let Err(error) = reasoning_commands::sync_session(session, runtime, &agent).await
+    {
         app.append_transcript(format!(
             "Error: {}: {error:#}",
             language.text(
@@ -530,10 +537,8 @@ pub(super) async fn event_loop(
             )
         ));
     }
-    app.context_window = runtime.context_window.max(1);
     let (_update_worker, mut update_rx) =
         update_notice::spawn(runtime.home.clone(), app.ui.check_updates);
-    app.background_tasks = runtime.background_tasks.snapshots();
     let mut background_rx = runtime.background_tasks.subscribe();
     let mut events = EventStream::new();
     // The terminal sends gallery bytes only after it has seen this hello. The filtered pty that
@@ -2075,6 +2080,12 @@ pub(super) async fn event_loop(
                 UiMessage::MediaResized(result)=>{
                     if let Some(error)=app.media.finish_resize(result){
                         app.notice=Some(format!("{}: {error}",language.text("图片协议已降级","Image protocol downgraded","画像プロトコルをフォールバックしました")));
+                    }
+                },
+                UiMessage::WorkspaceGitLoaded{workspace,status,attention}=>{
+                    if app.workspace.as_deref()==Some(workspace.as_path()){
+                        app.workspace_status=status;
+                        app.workspace_attention=attention;
                     }
                 },
                 // 摘要失败是静默的：列表里还留着 L1 派生的标题，为一行装饰

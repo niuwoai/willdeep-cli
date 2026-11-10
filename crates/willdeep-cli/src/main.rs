@@ -961,6 +961,15 @@ async fn run() -> Result<()> {
         )
         .await;
     }
+    let startup_splash = if interactive_tui && std::io::stdout().is_terminal() {
+        let splash_workspace = harness::resolve_workspace(&cli, resumed.as_ref())?;
+        let splash_approval = directory_approval
+            .or_else(|| cli.full_auto.then_some(willdeep_core::ApprovalMode::Smart))
+            .or_else(|| harness::configured_approval_mode(&loaded.file.agent).ok());
+        tui::StartupSplash::show(&splash_workspace, loaded.file.ui, splash_approval, language).ok()
+    } else {
+        None
+    };
     let frontend =
         if let Some(connection) = web_input.as_ref().and_then(|input| input.runtime.clone()) {
             harness::HarnessFrontend::Runtime {
@@ -1046,7 +1055,8 @@ async fn run() -> Result<()> {
     if interactive_tui {
         let runtime_profile = session.profile.clone().or_else(|| cli.profile.clone());
         let runtime_model = session.model.clone();
-        return tui::run(
+        return tui::run_with_splash(
+            startup_splash,
             agent,
             session,
             store,

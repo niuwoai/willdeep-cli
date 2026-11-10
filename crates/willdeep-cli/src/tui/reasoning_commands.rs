@@ -213,6 +213,10 @@ fn restored_level(
     }
 }
 
+pub(super) fn should_sync_on_startup(session: &Session, store: &SessionStore) -> bool {
+    session.runtime_managed || !session.messages.is_empty() || store.load(session.id).is_ok()
+}
+
 pub(super) async fn sync_session(
     session: &Session,
     runtime: &mut TuiRuntime,
@@ -281,6 +285,18 @@ mod tests {
         assert_eq!(restored_level(&session, &states).unwrap(), None);
         session.runtime_managed = true;
         assert!(restored_level(&session, &states).is_err());
+    }
+
+    #[test]
+    fn brand_new_unpersisted_session_skips_startup_sync_until_saved() {
+        let root = std::env::temp_dir().join(format!("reasoning-startup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "");
+        assert!(!should_sync_on_startup(&session, &store));
+        store.save(&mut session).unwrap();
+        assert!(should_sync_on_startup(&session, &store));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -13,6 +13,70 @@ mod runtime_streaming;
 mod stream_performance;
 
 #[cfg(test)]
+mod queue_later_tests {
+    use super::*;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn super_or_ctrl_enter_queues_for_later() {
+        assert!(is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::SUPER
+        )));
+        assert!(is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL
+        )));
+        // 换行的键位（含带 Shift/Alt 的组合）不能被误认成入队。
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::ALT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL
+        )));
+        // 普通回车仍是立即发送。
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::NONE
+        )));
+    }
+
+    #[test]
+    fn stashing_sets_input_aside_and_toggles_it_back() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.input.insert("稍后发");
+        app.stash_input_for_queue();
+        assert!(app.input.is_empty());
+        assert_eq!(app.queue_draft.text(), "稍后发");
+
+        // 输入框空着再按一次，是取回而不是再存一份。
+        app.stash_input_for_queue();
+        assert_eq!(app.input.text(), "稍后发");
+        assert!(app.queue_draft.is_empty());
+
+        // 已经暂存了一份时，新输入不会把它覆盖掉。
+        app.stash_input_for_queue();
+        app.input.insert("另一句");
+        app.stash_input_for_queue();
+        assert_eq!(app.input.text(), "另一句");
+        assert_eq!(app.queue_draft.text(), "稍后发");
+    }
+}
+
+#[cfg(test)]
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

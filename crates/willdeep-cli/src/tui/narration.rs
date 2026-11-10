@@ -599,9 +599,9 @@ impl App {
         } else {
             (
                 self.language.text(
-                    "轮到你 · Enter 发送 · Cmd+Enter 入队",
-                    "Your turn · Enter sends · Cmd+Enter queues for later",
-                    "あなたの番 · Enter で送信 · Cmd+Enter でキューに追加",
+                    "轮到你 · Enter 发送 · Cmd/Ctrl+Enter 入队",
+                    "Your turn · Enter sends · Cmd/Ctrl+Enter queues for later",
+                    "あなたの番 · Enter で送信 · Cmd/Ctrl+Enter でキューに追加",
                 ),
                 Color::Green,
             )
