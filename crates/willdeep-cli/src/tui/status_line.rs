@@ -86,9 +86,9 @@ impl App {
                     self.language.text("上下文", "context", "コンテキスト"),
                     self.language.text("最近", "latest", "直近"),
                     self.language.text(
-                        "Enter 发送 · Cmd+Enter 入队",
-                        "Enter sends · Cmd+Enter queues",
-                        "Enter で送信 · Cmd+Enter で追加",
+                        "Enter 发送 · Cmd/Ctrl+Enter 入队",
+                        "Enter sends · Cmd/Ctrl+Enter queues",
+                        "Enter で送信 · Cmd/Ctrl+Enter で追加",
                     ),
                     self.language.text("选择", "select", "選択")
                 )

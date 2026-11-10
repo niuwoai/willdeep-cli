@@ -10,6 +10,7 @@
 
 ### Fixed
 - 交互式 TUI 选择「新建会话」（或直接进入新会话）后不再退回空白终端等待数秒才画出蓝鲸欢迎面：会话选择与目录审批引导结束后立即进入 Alternate Screen 绘制桥接蓝鲸屏并复用同一终端句柄进入正式事件循环；移除启动路径上 `Picker::from_query_stdio` 的 2 秒标准输入图形协议阻塞查询；工作区 Git 分支与变更扫描改为首帧绘出后异步补齐；尚未落盘的新建空会话跳过启动时无收益的 `remote_session_states` 思考等级同步；`harness::build` 中外部 MCP 连接与本地技能扫描、沙箱探测并行重叠。
+- TUI 补齐 `Ctrl+Enter` 入队快捷键，与 Web 端的 `⌘Enter / Ctrl+Enter` 对齐（此前 `is_queue_for_later_key` 仅识别 `Cmd+Enter`）。
 
 ## [0.147.0-rc22] - 2026-11-10
 

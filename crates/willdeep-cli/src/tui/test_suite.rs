@@ -21,15 +21,27 @@ mod queue_later_tests {
     }
 
     #[test]
-    fn only_super_enter_queues_for_later() {
+    fn super_or_ctrl_enter_queues_for_later() {
         assert!(is_queue_for_later_key(key(
             KeyCode::Enter,
             KeyModifiers::SUPER
         )));
-        // 换行的两个键不能被误认成入队。
+        assert!(is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL
+        )));
+        // 换行的键位（含带 Shift/Alt 的组合）不能被误认成入队。
         assert!(!is_queue_for_later_key(key(
             KeyCode::Enter,
             KeyModifiers::SHIFT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::ALT
+        )));
+        assert!(!is_queue_for_later_key(key(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
         )));
         assert!(!is_queue_for_later_key(key(
             KeyCode::Char('j'),
@@ -39,10 +51,6 @@ mod queue_later_tests {
         assert!(!is_queue_for_later_key(key(
             KeyCode::Enter,
             KeyModifiers::NONE
-        )));
-        assert!(!is_queue_for_later_key(key(
-            KeyCode::Enter,
-            KeyModifiers::CONTROL
         )));
     }
 

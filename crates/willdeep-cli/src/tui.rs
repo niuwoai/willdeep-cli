@@ -945,10 +945,16 @@ fn is_selection_copy_key(key: KeyEvent) -> bool {
         || (key.code == KeyCode::Char('y') && key.modifiers == KeyModifiers::NONE)
 }
 
-/// 空闲时把当前输入先放进队列、以后再发。Cmd+Enter 是主入口；部分终端
-/// 报不出 SUPER 修饰键，所以还有 `/queue add` 这条命令兜底。
+/// 空闲时把当前输入先放进队列、以后再发（忙时有待确认项时也用它明确入队）。
+/// Cmd+Enter 与 Ctrl+Enter 对齐 Web 端；部分终端报不出修饰键，所以还有 `/queue add` 兜底。
 fn is_queue_for_later_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SUPER)
+    key.code == KeyCode::Enter
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+        && key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL)
 }
 
 fn is_clipboard_image_paste_key(key: KeyEvent) -> bool {
@@ -2871,6 +2877,18 @@ fn help_content(language: Language) -> String {
         .replace(
             "Ctrl+S テキスト選択モード",
             "Ctrl+S テキスト選択モード       Ctrl+L リンクと画像",
+        )
+        .replace(
+            "Enter 发送                    Shift/Alt+Enter 或 Ctrl+J 换行",
+            "Enter 发送（Cmd/Ctrl+Enter 入队） Shift/Alt+Enter 或 Ctrl+J 换行",
+        )
+        .replace(
+            "Enter Send                 Shift/Alt+Enter or Ctrl+J Newline",
+            "Enter Send (Cmd/Ctrl+Enter Queue) Shift/Alt+Enter or Ctrl+J Newline",
+        )
+        .replace(
+            "Enter 送信                     Shift/Alt+Enter または Ctrl+J 改行",
+            "Enter 送信（Cmd/Ctrl+Enter 追加） Shift/Alt+Enter または Ctrl+J 改行",
         )
 }
 
