@@ -35,7 +35,7 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | `completions` | 生成 Shell 补全脚本 |
 | `man` | 输出 roff man page |
 
-`willdeep web` 复用已运行的 Runtime Web App；如果服务未运行，则在当前工作区以 `127.0.0.1:9847` 启动。每次执行都会尝试打开浏览器并打印地址。`willdeep qr` 会启用手机中继并打印配对码；二维码包含配对凭据，只应由自己的 WillDeep Mobile 扫描。
+`willdeep web` 复用已运行的 Runtime Web App；如果服务未运行，则在当前工作区启动。监听地址按 `--listen`、已启用的 Runtime Web（`webapp-service.json`）、`[web] listen`、`127.0.0.1:9847` 依次取，且只接受回环。每次执行都会尝试打开浏览器并打印地址。服务已在跑时改 `[web] listen` 不会换端口，要先停掉再启动。`willdeep qr` 会启用手机中继并打印配对码；二维码包含配对凭据，只应由自己的 WillDeep Mobile 扫描。
 
 `willdeep identity` 打印实例名与 UUID；`willdeep identity rename <名字>` 改名（UUID 不变），`willdeep identity names` 列出首次运行会用的名字池。身份存于 `$WILLDEEP_HOME/identity.json`（0600），TUI 的 `/name [新名字]` 与 Web 侧栏的实例徽标是同一件事。
 
@@ -82,7 +82,7 @@ willdeep --profile some-im --workspace .
 |---|---|
 | `--no-tui` | 无 Prompt 时也不进入 TUI |
 | `--web` | 启动内嵌浏览器 UI 与 JSON API，见 [Web 端指南](WEB_GUIDE.md) |
-| `--listen <ADDR>` | Web 监听地址，默认 `127.0.0.1:9847` |
+| `--listen <ADDR>` | Web 监听地址（`IP:PORT`，不能写 `localhost`）。省略时：`willdeep --web` 取 `[web] listen`，再取 `127.0.0.1:9847`；`willdeep web` 与 `/webapp` 还会先看已启用的 Runtime Web 地址 |
 | `--web-workspace <PATH>` | Web 模式额外允许的工作区，可重复 |
 | `--onboarding` | 重新运行首次设置：默认打开 WebApp / willdeep-config，也可选择 some.im 登录或终端手动配置；见 [首次配置指南](FIRST_USE_SETUP.md) |
 | `--json` | 在 stdout 输出 NDJSON 事件 |

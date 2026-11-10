@@ -237,6 +237,48 @@ Dir.mktmpdir("willdeep-config-test") do |dir|
     raise "version = 1 was refused: #{accepted['message']}" unless accepted["ok"]
   end
 
+  check(failures, "web is a known editable section") do
+    with_web = File.join(dir, "web.toml")
+    File.write(with_web, SAMPLE + "\n[web]\nlisten = \"127.0.0.1:9900\"\n")
+    snapshot = box.call("config.snapshot", { "path" => with_web })
+    assert_equal([], snapshot["unknownKeys"], "web is not unknown")
+    section = snapshot["sections"].find { |item| item["name"] == "web" }
+    raise "no web section" unless section
+    assert_equal("static", section["kind"], "web kind")
+    assert_equal(true, section["editable"], "web editable")
+    assert_equal(%w[listen], section["fields"].map { |field| field["key"] }, "web fields")
+    listen = section["fields"].find { |field| field["key"] == "listen" }
+    assert_equal("127.0.0.1:9900", listen["value"], "listen value")
+
+    absent = box.call("config.snapshot", args)
+    default_card = absent["sections"].find { |item| item["name"] == "web" }
+    default_listen = default_card["fields"].find { |field| field["key"] == "listen" }
+    assert_equal("127.0.0.1:9847", default_listen["value"], "listen default")
+  end
+
+  check(failures, "web listen is validated before writing") do
+    target = File.join(dir, "web-format.toml")
+    File.write(target, SAMPLE)
+    before = File.read(target)
+    [
+      ["listen", "localhost:9847"],
+      ["listen", "127.0.0.1"]
+    ].each do |key, value|
+      result = box.call("config.apply", {
+        "path" => target, "confirm" => true,
+        "edits" => [{ "op" => "set", "section" => "web", "key" => key, "value" => value }]
+      })
+      raise "#{key}=#{value.inspect} was accepted" if result["ok"]
+    end
+    raise "a refused edit was written" unless File.read(target) == before
+
+    result = box.call("config.apply", {
+      "path" => target, "confirm" => true,
+      "edits" => [{ "op" => "set", "section" => "web", "key" => "listen", "value" => "127.0.0.1:9900" }]
+    })
+    raise "listen=127.0.0.1:9900 was refused: #{result['message']}" unless result["ok"]
+  end
+
   check(failures, "intake is a known editable section") do
     with_intake = File.join(dir, "intake.toml")
     File.write(with_intake, SAMPLE + "\n[intake]\nenabled = true\nlisten = \"127.0.0.1:9857\"\n")

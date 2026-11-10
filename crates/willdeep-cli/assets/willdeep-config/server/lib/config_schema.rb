@@ -157,6 +157,14 @@ module ConfigSchema
       ]
     },
     {
+      id: "web", section: "web", title: "Web App",
+      description: "内嵌 Web UI 的默认监听；未显式指定 --listen / /webapp 地址时使用。已启用的 Runtime Web 服务地址优先于本项。",
+      fields: [
+        { key: "listen", label: "监听地址", type: "string", default: "127.0.0.1:9847", format: "socket_addr",
+          description: "必须是 IP:PORT（如 127.0.0.1:9847、[::1]:9847），不能写 localhost。Runtime /webapp 只接受回环；willdeep --web 可用非回环。" }
+      ]
+    },
+    {
       id: "intake", section: "intake", title: "公网入口",
       description: "站点、表单与 webhook 的对外监听；这几组数组表在 Web 的「公网入口」页维护，这里只改三个标量。",
       fields: [

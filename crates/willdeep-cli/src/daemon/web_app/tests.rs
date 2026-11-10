@@ -30,6 +30,30 @@ async fn disabling_an_offline_runtime_persists_intent_without_starting_it() {
 }
 
 #[tokio::test]
+async fn enabled_listen_only_reports_an_enabled_service() {
+    let root = std::env::temp_dir().join(format!("web-app-listen-{}", uuid::Uuid::new_v4()));
+    assert!(enabled_listen(&root).unwrap().is_none());
+    let address: std::net::SocketAddr = "127.0.0.1:9847".parse().unwrap();
+    let mut params = request(&root);
+    params.listen = address;
+    save(
+        &root,
+        &Settings {
+            enabled: true,
+            request: params,
+        },
+    )
+    .unwrap();
+    assert_eq!(enabled_listen(&root).unwrap(), Some(address));
+    remote_stop(&root).await.unwrap();
+    assert!(
+        enabled_listen(&root).unwrap().is_none(),
+        "a disabled service must not win over the config"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn runtime_service_rejects_non_loopback_before_any_service_is_started() {
     let root = std::env::temp_dir().join(format!("web-app-reject-{}", uuid::Uuid::new_v4()));
     let service = WebAppService::new(&root);

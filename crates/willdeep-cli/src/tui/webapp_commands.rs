@@ -4,8 +4,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use willdeep_runtime_protocol::web_app::{WebAppStartParams, WebAppStatus};
 
-const DEFAULT_WEBAPP_LISTEN: &str = "127.0.0.1:9847";
-
 pub(super) async fn handle_webapp_command(
     prompt: &str,
     home: &Path,
@@ -24,7 +22,7 @@ pub(super) async fn handle_webapp_command(
     } else if argument.eq_ignore_ascii_case("stop") {
         crate::daemon::web_app::remote_stop(home).await?
     } else {
-        let listen = parse_listen(argument)?;
+        let listen = resolve_listen(argument, home, config)?;
         let existing = crate::daemon::web_app::remote_status(home).await?;
         if existing.running {
             if !argument.is_empty()
@@ -62,16 +60,22 @@ pub(super) async fn handle_webapp_command(
     Ok(Some(status_message(&status, language)))
 }
 
-fn parse_listen(argument: &str) -> Result<SocketAddr> {
-    let listen: SocketAddr = if argument.is_empty() || argument.eq_ignore_ascii_case("start") {
-        DEFAULT_WEBAPP_LISTEN
-            .parse()
-            .expect("valid default address")
+fn resolve_listen(argument: &str, home: &Path, config: Option<&Path>) -> Result<SocketAddr> {
+    let explicit = if argument.is_empty() || argument.eq_ignore_ascii_case("start") {
+        None
     } else {
-        argument
-            .parse()
-            .context("usage: /webapp [status|start|stop|127.0.0.1:PORT]")?
+        Some(
+            argument
+                .parse()
+                .context("usage: /webapp [status|start|stop|127.0.0.1:PORT]")?,
+        )
     };
+    let loaded = crate::config::LoadedConfig::load(config)?;
+    let listen = crate::config::resolve_web_listen(
+        explicit,
+        crate::daemon::web_app::enabled_listen(home)?,
+        &loaded.file.web.listen,
+    )?;
     if !listen.ip().is_loopback() {
         bail!("/webapp only accepts a loopback address");
     }
@@ -115,15 +119,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_loopback_and_uses_runtime_owned_status() {
-        assert_eq!(parse_listen("").unwrap().to_string(), DEFAULT_WEBAPP_LISTEN);
-        assert!(parse_listen("0.0.0.0:9847").is_err());
-        assert!(parse_listen("127.0.0.1:bad").is_err());
+    fn rejects_non_loopback_even_when_explicit() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-parse-{}", uuid::Uuid::new_v4()));
+        let error =
+            resolve_listen("0.0.0.0:9847", &root, None).expect_err("non-loopback must fail");
+        assert!(error.to_string().contains("loopback"));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn empty_argument_uses_config_default_when_service_is_off() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-default-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        std::fs::write(&config, "[web]\nlisten = \"127.0.0.1:9900\"\n").unwrap();
+        assert_eq!(
+            resolve_listen("", &root, Some(&config))
+                .unwrap()
+                .to_string(),
+            "127.0.0.1:9900"
+        );
+        assert_eq!(
+            resolve_listen("start", &root, Some(&config))
+                .unwrap()
+                .to_string(),
+            "127.0.0.1:9900"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_argument_overrides_config() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-webapp-explicit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        std::fs::write(&config, "[web]\nlisten = \"127.0.0.1:9900\"\n").unwrap();
+        assert_eq!(
+            resolve_listen("127.0.0.1:9910", &root, Some(&config))
+                .unwrap()
+                .to_string(),
+            "127.0.0.1:9910"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_message_mentions_runtime_ownership() {
         let message = status_message(
             &WebAppStatus {
                 enabled: true,
                 running: true,
-                listen: Some(parse_listen("").unwrap()),
+                listen: Some("127.0.0.1:9847".parse().unwrap()),
                 error: None,
             },
             Language::ZhCn,

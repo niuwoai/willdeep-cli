@@ -9,18 +9,27 @@ WillDeep 内嵌了一套 React 前端和 JSON API，编译进同一个二进制�
 willdeep --web --workspace /path/to/project
 ```
 
-浏览器打开 `http://127.0.0.1:9847`。
+浏览器打开 `http://127.0.0.1:9847`（或你配置的地址）。
 
 | 参数 | 说明 |
 |---|---|
 | `--web` | 启动 Web UI 与 JSON API，取代 TUI |
-| `--listen <IP:PORT>` | 监听地址，默认 `127.0.0.1:9847`。必须写成完整的 `IP:PORT` |
+| `--listen <IP:PORT>` | 监听地址。前台 `--web` 省略时取 `[web] listen`，再默认 `127.0.0.1:9847`（不读服务状态）。必须写成完整的 `IP:PORT`，不能写 `localhost` |
 | `-w`, `--workspace <PATH>` | 首选工作区（排在候选列表第一位） |
 | `--web-workspace <PATH>` | 额外允许的工作区，可重复。只能写在顶层，不能跟在子命令后 |
 | `--project <名称或UUID>` | macOS 上一次载入某个 Swift Project 的全部文件夹 |
 | `--language <L>` | 服务端默认语言 |
 
 **没有 `--port` 或 `--host` 参数**，只有 `--listen`。
+
+监听地址按这个顺序取，前面有值就不再往后看：
+
+1. 命令行显式的 `--listen`，或 `/webapp` 后面写的 `IP:PORT`
+2. 已启用的 Runtime Web 服务（`webapp-service.json` 里 `enabled` 为真时记下的地址）。`/webapp stop` 之后这一档不再算；`willdeep --web` 是单独进程，不读这份服务状态
+3. 配置里的 `[web] listen`
+4. `127.0.0.1:9847`
+
+`[web] listen` 只决定下一次启动听哪里。服务已经在跑时改配置不会换端口：先 `/webapp stop`，再启动。`willdeep --web` 可以监听非回环；`willdeep web` 和 `/webapp` 只接受回环。
 
 多工作区：
 
@@ -38,16 +47,14 @@ willdeep --web \
 TUI 中可以用 `/webapp` 拉起一个 Web 子进程：
 
 ```text
-/webapp               # 默认 127.0.0.1:9847
+/webapp               # 按上面的优先级解析地址
 /webapp start         # 同上
 /webapp 127.0.0.1:9900
 /webapp status
-/webapp stop          # 停止本 TUI 启动的 Web App
+/webapp stop          # 关闭 Runtime 托管的 Web App
 ```
 
-`/webapp` **只接受回环地址**，比 `--listen` 更严格。日志写入 `~/.willdeep/webapp.log`。
-
-`/webapp stop` 只对**本 TUI 启动并记录在案**的进程发 `SIGTERM`，且先确认它记录的地址仍在应答——状态文件过期时只清理文件，不会误杀继承了同一 pid 的无关进程。
+`/webapp` **只接受回环地址**，比 `--listen` 更严格。启停走 Runtime API，退出 CLI 后服务仍可继续；`/webapp stop` 才会关掉。
 
 ## 界面使用
 
@@ -345,7 +352,7 @@ willdeep --web --workspace /path/to/project
 cd web && yarn dev
 ```
 
-Vite 把 `/api` 和 `/health` 代理到 `http://127.0.0.1:9847`。**代理目标端口硬编码为 9847**，如果用 `--listen` 改了后端端口，需要同步修改 `web/vite.config.ts`。
+Vite 把 `/api` 和 `/health` 代理到 `http://127.0.0.1:9847`。**代理目标端口硬编码为 9847**，不读 `[web] listen`。用 `--listen` 或配置把后端换到别的端口时，要同步改 `web/vite.config.ts`，否则前端热更新仍然打到 9847。
 
 技术栈：React + TypeScript + Chakra UI v3 + Vite，纯客户端渲染。Markdown 走 `react-markdown` + `remark-gfm`，不渲染原始 HTML。
 

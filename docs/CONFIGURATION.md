@@ -358,6 +358,7 @@ Web 左栏可直接切换语言，选择保存在当前浏览器的 localStorage
 - `[skills]` 的 `roots` — 额外的 Skill 搜索根目录，见 [Skills 与 MCP](SKILLS_AND_MCP.md)；
 - `[feedback]` — 本机反馈账本：`enabled`（默认 `true`）、`store_text`（默认 `false`，只记 hash 与长度）与 `retain_months`（默认 12，0 表示不清理），见 [本机反馈账本](FEEDBACK_LEDGER.md)；
 - `[notifications]` — 出站通知：旧的 `webhook_*` 仍然有效，`[[notifications.channels]]` 可追加飞书、邮件（SMTP / Resend）等多条渠道，见 [出站通知渠道](NOTIFICATIONS.md)；
+- `[web]` — 内嵌 Web UI 的默认监听：`listen` 必须是 `IP:PORT`（默认 `127.0.0.1:9847`，不能写 `localhost`）。没有显式 `--listen` / `/webapp` 地址、也没有已启用的 Runtime Web 时才用它，见 [Web 端使用指南](WEB_GUIDE.md)。
 - `[intake]` — 公网入口：`enabled`、`listen`、`public_url` 三个标量可在配置工作台编辑，站点、表单与 webhook 的数组表在 Web「公网入口」页维护，见 [公网入口](PUBLIC_INTAKE.md)。
 
 ## 配置命令
