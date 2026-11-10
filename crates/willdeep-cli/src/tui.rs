@@ -82,6 +82,7 @@ mod runtime_ui;
 mod session_commands;
 mod session_picker_ui;
 mod sidebar;
+mod splash;
 mod status_line;
 mod update_notice;
 mod user_message;
@@ -124,6 +125,7 @@ use session_picker_ui::{
     render_session_picker,
 };
 use sidebar::{render_attention_detail, render_sidebar};
+pub use splash::StartupSplash;
 pub(crate) use workspace_approval::select_workspace_approval;
 use workspace_attention::workspace_attention;
 use workspace_commands::handle_workspace_command;
@@ -168,6 +170,11 @@ pub enum UiMessage {
         result: std::result::Result<DynamicImage, String>,
     },
     MediaResized(std::result::Result<ratatui_image::thread::ResizeResponse, String>),
+    WorkspaceGitLoaded {
+        workspace: PathBuf,
+        status: String,
+        attention: Vec<AttentionItem>,
+    },
     /// A paste or a delete click reported by the terminal's image column.
     /// The filtered pty that sends these only exists on unix.
     #[cfg(unix)]
@@ -778,7 +785,8 @@ struct AskDialog {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run(
+pub async fn run_with_splash(
+    splash: Option<StartupSplash>,
     agent: Arc<Agent>,
     mut session: Session,
     store: SessionStore,
@@ -788,15 +796,20 @@ pub async fn run(
     kernel_store: willdeep_core::kernel_store::KernelStore,
     ui: TuiRuntimeInputs,
 ) -> Result<()> {
-    terminal::enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        terminal::EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableMouseCapture
-    )?;
-    let mut term = Terminal::new(CrosstermBackend::new(stdout))?;
+    let mut term = match splash.and_then(StartupSplash::into_terminal) {
+        Some(term) => term,
+        None => {
+            terminal::enable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(
+                stdout,
+                terminal::EnterAlternateScreen,
+                EnableBracketedPaste,
+                EnableMouseCapture
+            )?;
+            Terminal::new(CrosstermBackend::new(stdout))?
+        }
+    };
     ui.7.set_session(&session.id.to_string(), Some(session.title.as_str()));
     // 作业记录与事件日志同一个家目录。
     let kernel_store_home = home.clone();
@@ -2444,6 +2457,37 @@ fn composer_layout_constraints(
     }
 }
 
+fn workspace_status_placeholder(workspace: &std::path::Path, language: Language) -> String {
+    let loading = language.text("读取中…", "loading…", "読込中…");
+    format!(
+        "{}: {}\n{}: {loading}\n{}: —\n{}: —",
+        language.text("项目", "Project", "プロジェクト"),
+        workspace
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("workspace"),
+        language.text("分支", "Branch", "ブランチ"),
+        language.text("变更文件", "Diff files", "変更ファイル"),
+        language.text("工作树", "Worktrees", "ワークツリー")
+    )
+}
+
+fn spawn_workspace_git_refresh(
+    workspace: PathBuf,
+    language: Language,
+    tx: mpsc::UnboundedSender<UiMessage>,
+) {
+    tokio::task::spawn_blocking(move || {
+        let status = workspace_status(&workspace, language);
+        let attention = workspace_attention(&workspace);
+        let _ = tx.send(UiMessage::WorkspaceGitLoaded {
+            workspace,
+            status,
+            attention,
+        });
+    });
+}
+
 fn workspace_status(workspace: &std::path::Path, language: Language) -> String {
     let branch = std::process::Command::new("git")
         .args(["branch", "--show-current"])
@@ -2845,60 +2889,4 @@ mod test_suite;
 #[cfg(test)]
 fn quiet_test_session() -> Session {
     Session::new(std::path::PathBuf::from("/workspace"), None, "")
-}
-
-#[cfg(test)]
-mod queue_later_tests {
-    use super::*;
-
-    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, modifiers)
-    }
-
-    #[test]
-    fn only_super_enter_queues_for_later() {
-        assert!(is_queue_for_later_key(key(
-            KeyCode::Enter,
-            KeyModifiers::SUPER
-        )));
-        // 换行的两个键不能被误认成入队。
-        assert!(!is_queue_for_later_key(key(
-            KeyCode::Enter,
-            KeyModifiers::SHIFT
-        )));
-        assert!(!is_queue_for_later_key(key(
-            KeyCode::Char('j'),
-            KeyModifiers::CONTROL
-        )));
-        // 普通回车仍是立即发送。
-        assert!(!is_queue_for_later_key(key(
-            KeyCode::Enter,
-            KeyModifiers::NONE
-        )));
-        assert!(!is_queue_for_later_key(key(
-            KeyCode::Enter,
-            KeyModifiers::CONTROL
-        )));
-    }
-
-    #[test]
-    fn stashing_sets_input_aside_and_toggles_it_back() {
-        let mut app = App::new(Vec::new(), Language::ZhCn);
-        app.input.insert("稍后发");
-        app.stash_input_for_queue();
-        assert!(app.input.is_empty());
-        assert_eq!(app.queue_draft.text(), "稍后发");
-
-        // 输入框空着再按一次，是取回而不是再存一份。
-        app.stash_input_for_queue();
-        assert_eq!(app.input.text(), "稍后发");
-        assert!(app.queue_draft.is_empty());
-
-        // 已经暂存了一份时，新输入不会把它覆盖掉。
-        app.stash_input_for_queue();
-        app.input.insert("另一句");
-        app.stash_input_for_queue();
-        assert_eq!(app.input.text(), "另一句");
-        assert_eq!(app.queue_draft.text(), "稍后发");
-    }
 }

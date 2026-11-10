@@ -95,8 +95,7 @@ impl MediaState {
     }
 
     pub(super) fn detect(resize_tx: mpsc::UnboundedSender<ResizeRequest>) -> Self {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-        Self::with_picker(picker, resize_tx)
+        Self::with_picker(Picker::halfblocks(), resize_tx)
     }
 
     fn with_picker(picker: Picker, resize_tx: mpsc::UnboundedSender<ResizeRequest>) -> Self {
@@ -862,6 +861,14 @@ mod tests {
             state.fallback_reason.as_deref(),
             Some("kitty encode failed")
         );
+    }
+
+    #[test]
+    fn default_media_state_starts_on_halfblocks_without_blocking_stdio() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let state = MediaState::detect(tx);
+        assert_eq!(state.picker.protocol_type(), ProtocolType::Halfblocks);
+        assert_eq!(state.protocol_name, "Unicode halfblocks");
     }
 
     #[test]
