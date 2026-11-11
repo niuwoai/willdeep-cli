@@ -467,11 +467,11 @@ mod generation_limit_tests {
         config.max_output_tokens = 16_384;
         config.context_window = Some(16_384);
         // 12K token 的提示词（48K ASCII 字符）加上原来的 16K 输出必然超窗。
-        let prompt = Message::user(&"a".repeat(48 * 1024));
+        let prompt = Message::user("a".repeat(48 * 1024));
         for stream in [false, true] {
             let body = ChatCompletionsProvider::new(config.clone())
                 .unwrap()
-                .request_body(&[prompt.clone()], &[], stream)
+                .request_body(std::slice::from_ref(&prompt), &[], stream)
                 .unwrap();
             let limit = body["max_tokens"].as_u64().unwrap();
             assert!(limit < 16_384, "max_tokens was {limit}");
