@@ -67,6 +67,7 @@ impl App {
             queue_draft_attachments: Vec::new(),
             prompt_queue: None,
             pending_model: None,
+            pending_notice_rows: BTreeMap::new(),
             pending_reasoning_level: None,
             display_model: None,
             reply_model: None,
@@ -263,6 +264,8 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        // 过程行属于上一份记录，换了会话就没有可替的了。
+        self.pending_notice_rows.clear();
         self.pending_reasoning_level = None;
         self.pending_provider = None;
         self.display_model = session.model.clone().filter(|model| !model.is_empty());
@@ -2493,6 +2496,7 @@ impl App {
                 self.transcript_attachments.clear();
                 self.transcript_models.clear();
                 self.expanded_user_messages.clear();
+                self.pending_notice_rows.clear();
                 // 清空之后也是首屏：给回欢迎语，而不是留一整屏空白。
                 self.ensure_welcome(&self.workspace.clone().unwrap_or_default(), self.language);
                 self.scroll_to_bottom();

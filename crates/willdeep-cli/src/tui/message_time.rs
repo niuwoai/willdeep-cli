@@ -40,7 +40,9 @@ fn message_label(time: String, model: Option<&str>) -> String {
     }
 }
 
-fn is_message(row: &str) -> bool {
+/// 用户或助手说的话。系统行、工具行、分隔线都不算：它们不记时间，也不算
+/// 「又聊了几句」。
+pub(super) fn is_message(row: &str) -> bool {
     row.starts_with("You: ") || row.starts_with("WillDeep: ")
 }
 

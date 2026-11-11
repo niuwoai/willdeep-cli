@@ -71,6 +71,66 @@ fn is_thought_row(line: &str) -> bool {
     line.starts_with(THOUGHT_ENTRY_PREFIX) || line.starts_with(THOUGHT_EXPANDED_PREFIX)
 }
 
+/// 系统回执行（`System: ` 开头：模型已切换、工具行已展开、开屏提示这些）只在刚发生
+/// 时有用。它后面又落了这么多条用户/助手消息之后就不再画：记录本身不动，只是
+/// 不占屏幕。三条是「下一次问答里还看得见、再下一句发出就收」：用户问一句、模型答一句还在，
+/// 用户再开口才收——正好是聊天区本来就要滚动的时刻，不会在用户看着的时候消失。
+pub(super) const SYSTEM_NOTICE_FADE_MESSAGES: usize = 3;
+
+/// 这行是不是系统回执。错误行（`Error: `）不算：失败要一直看得见。
+fn is_system_notice_row(line: &str) -> bool {
+    line.starts_with("System: ")
+}
+
+/// 可见区里哪些系统回执已经过时：它后面落了至少 `SYSTEM_NOTICE_FADE_MESSAGES` 条消息。
+/// 从后往前数一遍就行，不用每行再往后扫。
+fn faded_system_rows(rows: &[String]) -> Vec<bool> {
+    let mut faded = vec![false; rows.len()];
+    let mut messages_after = 0;
+    for (index, row) in rows.iter().enumerate().rev() {
+        if counts_as_fade_message(row) {
+            messages_after += 1;
+        } else if is_system_notice_row(row) {
+            faded[index] = messages_after >= SYSTEM_NOTICE_FADE_MESSAGES;
+        }
+    }
+    faded
+}
+
+/// 淡出计数只认已经落地的对话轮次：用户消息（真正发出去的）、助手回复，以及
+/// 代替回复出现在记录里的计划卡。还挂在输入队列上的占位行不算——消息根本没发
+/// 出去，不该把回执提前收走。
+fn counts_as_fade_message(row: &str) -> bool {
+    if row.starts_with(super::plan_ui::PLAN_PREFIX) || row.starts_with("WillDeep: ") {
+        return true;
+    }
+    let Some(rest) = row.strip_prefix("You: ") else {
+        return false;
+    };
+    !UNSENT_ROW_PREFIXES
+        .iter()
+        .any(|prefix| rest.starts_with(prefix))
+}
+
+/// 还没发出去的用户行前缀（三种界面语言）。`[正在提交]` 是网络往返期间的占位，
+/// `［待发］` 是排队等本轮结束的插话。
+const UNSENT_ROW_PREFIXES: &[&str] = &[
+    "[正在提交]",
+    "[submitting]",
+    "[送信中]",
+    "［待发］",
+    "[queued]",
+    "［送信待ち］",
+];
+
+/// 还没出结果的切换过程行，按事项分开记：换模型和调思考等级可以同时在等本轮结束，
+/// 各自的结果只替自己的过程行。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PendingNotice {
+    ModelSwitch,
+    ReasoningLevel,
+}
+
 impl App {
     /// 屏幕上还有没有一条看得见的记录。
     ///
@@ -134,7 +194,83 @@ impl App {
             self.transcript_models.remove(index);
         }
         self.message_times.remove(index);
+        // 展开状态按记录位置记，删了一行后面的都得前移一格，不然点开的那条会
+        // 落到邻居身上（用户消息的展开还比对行文，工具行和已点开的工具行只认位置）。
+        self.shift_row_keyed_state_after_removal(index);
         self.refresh_transcript_height();
+    }
+
+    fn shift_row_keyed_state_after_removal(&mut self, removed: usize) {
+        fn shift_map<V>(map: &mut BTreeMap<usize, V>, removed: usize) {
+            let tail = map.split_off(&removed);
+            for (key, value) in tail {
+                if key != removed {
+                    map.insert(key - 1, value);
+                }
+            }
+        }
+        shift_map(&mut self.expanded_user_messages, removed);
+        shift_map(&mut self.tool_expansions, removed);
+        let tail = self.expanded_tool_rows.split_off(&removed);
+        self.expanded_tool_rows.extend(
+            tail.into_iter()
+                .filter(|key| *key != removed)
+                .map(|key| key - 1),
+        );
+        if self.archive_floor > removed {
+            self.archive_floor -= 1;
+        }
+        // 搜索命中也按位置记；不跟着前移的话，删行后按 Enter 会跳到邻居身上。
+        if let Some(search) = &mut self.search {
+            let selected_row = search.matches.get(search.selected).copied();
+            search.matches.retain(|index| *index != removed);
+            for index in &mut search.matches {
+                if *index > removed {
+                    *index -= 1;
+                }
+            }
+            search.selected = match selected_row {
+                Some(row) if row == removed => {
+                    search.selected.min(search.matches.len().saturating_sub(1))
+                }
+                Some(row) => {
+                    let row = if row > removed { row - 1 } else { row };
+                    search
+                        .matches
+                        .iter()
+                        .position(|index| *index == row)
+                        .unwrap_or(0)
+                }
+                None => 0,
+            };
+        }
+    }
+
+    /// 一次切换的过程行（「正在切换」「本轮结束后切换到」）：落进记录并记住原文，
+    /// 等结果回来替掉。同一件事只留一句话：「正在」不该和「已」并排占两行；
+    /// 同一轮里再来一次，上一次的过程行也让位。
+    pub(super) fn note_switch_in_progress(&mut self, kind: PendingNotice, row: String) {
+        self.settle_pending_notice(kind);
+        self.append_transcript(row.clone());
+        self.pending_notice_rows
+            .insert(kind, terminal_safe_text(&row));
+    }
+
+    /// 一次切换的结果：换掉还在记录里的过程行，然后落结果。过程行找不到
+    /// （换过会话、`/clear` 清过）就只落结果，不动别的行。
+    pub(super) fn note_switch_settled(&mut self, kind: PendingNotice, row: String) {
+        self.settle_pending_notice(kind);
+        self.append_transcript(row);
+    }
+
+    fn settle_pending_notice(&mut self, kind: PendingNotice) {
+        let Some(previous) = self.pending_notice_rows.remove(&kind) else {
+            return;
+        };
+        if let Some(index) = self.transcript.iter().rposition(|row| *row == previous) {
+            self.drop_transcript_row(index);
+            self.transcript_render_cache = None;
+        }
     }
 
     /// 把附件挂到最近一条用户消息上。发送时记录行已经写好（`You: 原文`），
@@ -945,6 +1081,52 @@ pub(super) fn fold_tool_rows(
     FoldedTranscript { rows, index_of }
 }
 
+/// 折叠完成后把淡出的回执行从视图里删掉。它们折叠时仍占着位置、充当工具行的
+/// 分段边界，所以只能最后删；删完把每条记录的落点重映射到它后面第一条还活着
+/// 的输出行（没有就落到最后一行），搜索跳转仍然落得上。
+fn remove_faded_rows(folded: &mut FoldedTranscript, faded: &[bool]) {
+    let mut removed = vec![false; folded.rows.len()];
+    for (entry, faded) in faded.iter().enumerate() {
+        if *faded && let Some(&row) = folded.index_of.get(entry) {
+            removed[row] = true;
+        }
+    }
+    // 一条都不删（平时就是这样）时保持原样，连一次克隆都不做。
+    if !removed.iter().any(|row| *row) {
+        return;
+    }
+    let kept = removed.iter().filter(|row| !**row).count();
+    if kept == 0 {
+        return;
+    }
+    let mut placed = vec![usize::MAX; removed.len()];
+    let mut next = 0;
+    for (row, removed) in removed.iter().enumerate() {
+        if !removed {
+            placed[row] = next;
+            next += 1;
+        }
+    }
+    let mut after = None;
+    for row in (0..removed.len()).rev() {
+        if removed[row] {
+            placed[row] = after.unwrap_or(next - 1);
+        } else {
+            after = Some(placed[row]);
+        }
+    }
+    for target in &mut folded.index_of {
+        *target = placed[*target];
+    }
+    folded.rows = folded
+        .rows
+        .iter()
+        .zip(removed.iter())
+        .filter(|(_, removed)| !**removed)
+        .map(|(row, _)| row.clone())
+        .collect();
+}
+
 /// `· ⋯ 已收起 12 条工具调用 · 2 失败 · /tools 展开`
 /// 只报条数和失败数，不列具体工具；具体是哪些 `/tools` 展开后逐条看。
 fn fold_summary(hidden: &[String], language: Language) -> String {
@@ -971,6 +1153,14 @@ fn fold_summary(hidden: &[String], language: Language) -> String {
 }
 
 impl App {
+    /// 搜索框里正在用的词：去掉首尾空白，空的不算。渲染缓存的键和折叠视图都认这一份。
+    pub(super) fn active_search_query(&self) -> Option<String> {
+        self.search
+            .as_ref()
+            .map(|search| search.editor.text().trim().to_owned())
+            .filter(|query| !query.is_empty())
+    }
+
     fn visible_thought_start(&self) -> usize {
         self.transcript
             .iter()
@@ -979,13 +1169,24 @@ impl App {
             .max(self.archive_floor)
     }
 
-    /// 聊天区实际画出来的记录：工具行按规则收起，其余原样。
+    /// 聊天区实际画出来的记录：工具行按规则收起，过时的系统回执不画，其余原样。
     pub(super) fn display_transcript(&self) -> FoldedTranscript {
         // 归档区不进渲染循环：只折叠还可见的那一段，顶上补一行说明。
         // 记录本身没动，`archive_floor` 只是渲染起点。
         let floor = self.archive_floor.min(self.transcript.len());
         let live = &self.transcript[floor..];
         let thought_start = self.visible_thought_start();
+        // 系统回执过时与否按整份记录算，不按可见区：归档线在哪不该影响一条提示还显不显。
+        // 正在搜索时全部放回来：搜索匹配的是整份记录，命中了却看不见那行就是坐进了黑屋。
+        // 按「有没有搜索词」判，和渲染缓存的键一致：只开面板不打字，缓存不会重算。
+        let faded = if self.active_search_query().is_some() {
+            vec![false; self.transcript.len()]
+        } else {
+            faded_system_rows(&self.transcript)
+        };
+        // 淡出的回执先留在 entries 里：它虽然不画，但仍是工具行之间的分段边界。
+        // 先删再折叠会让夹在两条工具行中间的回执把两段并成一段，而旧轮次里整段
+        // 工具行都不显示——回执过期不该顺带藏掉别的记录。折叠完再删这些行。
         let visible_indices = live
             .iter()
             .enumerate()
@@ -998,10 +1199,16 @@ impl App {
             .iter()
             .map(|&index| live[index].clone())
             .collect::<Vec<_>>();
+        let mut entry_faded = visible_indices
+            .iter()
+            .map(|&index| faded[floor + index])
+            .collect::<Vec<_>>();
         if floor > 0 {
             entries.insert(0, self.archive_placeholder());
+            entry_faded.insert(0, false);
         }
         let mut folded = fold_tool_rows(&entries, self.tool_rows_expanded, self.language);
+        remove_faded_rows(&mut folded, &entry_faded);
         let shift = usize::from(floor > 0);
         let mut index_of = Vec::with_capacity(live.len() + shift);
         if floor > 0 {
@@ -2266,5 +2473,280 @@ mod tests {
             "{}",
             app.transcript[0]
         );
+    }
+
+    /// 系统回执后面落了三条消息就不再画；记录本身一条不动。工具行、分隔线、别的
+    /// 系统行都不算「消息」，错误行永远不收。
+    #[test]
+    fn system_notices_fade_after_three_messages_but_errors_stay() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.append_transcript("System: Model switched: qwen".into());
+        app.append_transcript("Error: Switch failed: boom".into());
+        app.append_transcript("You: one".into());
+        app.append_transcript("· ✓ read_file · a.rs".into());
+        app.append_transcript("WillDeep: two".into());
+        app.append_transcript(format!("{TURN_DIVIDER_PREFIX}turn 1 ──"));
+        // 两条消息：还在。
+        let rows = app.display_transcript().rows;
+        assert!(
+            rows.iter().any(|row| row.contains("Model switched")),
+            "{rows:?}"
+        );
+
+        app.append_transcript("You: three".into());
+        // 第三条消息落下：系统行收起，错误行留着，记录不动。
+        let folded = app.display_transcript();
+        assert!(
+            !folded.rows.iter().any(|row| row.contains("Model switched")),
+            "{:?}",
+            folded.rows
+        );
+        assert!(folded.rows.iter().any(|row| row.contains("Switch failed")));
+        assert!(app.transcript[0].contains("Model switched"));
+        // 收起的行在折叠视图里指向它后面的第一行，搜索跳转仍落得上。
+        assert_eq!(folded.index_of.len(), app.transcript.len());
+        assert_eq!(folded.index_of[0], folded.index_of[1]);
+
+        // 打开搜索并输入词：全部放回来，命中的行看得见。
+        app.search = Some(SearchState::default());
+        app.search.as_mut().unwrap().editor.insert("switched");
+        let rows = app.display_transcript().rows;
+        assert!(
+            rows.iter().any(|row| row.contains("Model switched")),
+            "{rows:?}"
+        );
+        app.search = None;
+        assert!(
+            !app.display_transcript()
+                .rows
+                .iter()
+                .any(|row| row.contains("Model switched"))
+        );
+    }
+
+    /// 过时与否按整份记录算：归档线后面的系统行，计数不因归档而改变。
+    #[test]
+    fn faded_rows_are_computed_over_the_whole_transcript() {
+        let rows = vec![
+            "System: a".to_owned(),
+            "You: 1".to_owned(),
+            "WillDeep: 1".to_owned(),
+            "System: b".to_owned(),
+            "You: 2".to_owned(),
+            "Error: keep".to_owned(),
+            "WillDeep: 2".to_owned(),
+        ];
+        assert_eq!(
+            faded_system_rows(&rows),
+            vec![true, false, false, false, false, false, false]
+        );
+        let mut app = App::new(rows, Language::En);
+        app.archive_floor = 1;
+        let folded = app.display_transcript();
+        // 归档说明行 + 可见区六行（记录 1..7）；记录 0 在归档区本来就不画。
+        assert_eq!(folded.rows.len(), 1 + 6, "{:?}", folded.rows);
+        assert!(folded.rows.iter().any(|row| row.contains("System: b")));
+    }
+
+    /// 切换的过程行在结果出来时被换掉，聊天区只留一句；两个事项互不干扰。
+    #[test]
+    fn switch_notices_replace_their_own_in_progress_row() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.append_transcript("You: hi".into());
+        app.note_switch_in_progress(
+            PendingNotice::ModelSwitch,
+            "System: Switching model: qwen".into(),
+        );
+        app.note_switch_in_progress(
+            PendingNotice::ReasoningLevel,
+            "System: Reasoning level set to high for the next task".into(),
+        );
+        assert_eq!(app.transcript.len(), 3);
+        // 同一轮里再换一次模型：上一条「正在切换」让位，思考等级那条不动。
+        app.note_switch_in_progress(
+            PendingNotice::ModelSwitch,
+            "System: Switching model: glm".into(),
+        );
+        assert_eq!(
+            app.transcript,
+            vec![
+                "You: hi",
+                "System: Reasoning level set to high for the next task",
+                "System: Switching model: glm",
+            ]
+        );
+        app.note_switch_settled(
+            PendingNotice::ModelSwitch,
+            "System: Model switched: glm".into(),
+        );
+        app.note_switch_settled(
+            PendingNotice::ReasoningLevel,
+            "System: Reasoning level switched: high".into(),
+        );
+        assert_eq!(
+            app.transcript,
+            vec![
+                "You: hi",
+                "System: Model switched: glm",
+                "System: Reasoning level switched: high",
+            ]
+        );
+        assert!(app.pending_notice_rows.is_empty());
+        // 边表与记录始终逐行对齐。
+        assert_eq!(app.transcript_attachments.len(), app.transcript.len());
+        assert_eq!(app.transcript_models.len(), app.transcript.len());
+        // 过程行已经不在（比如 /clear 过）：只落结果，不动别的行。
+        app.note_switch_in_progress(
+            PendingNotice::ModelSwitch,
+            "System: Switching model: x".into(),
+        );
+        app.transcript.clear();
+        app.transcript_attachments.clear();
+        app.transcript_models.clear();
+        app.note_switch_settled(
+            PendingNotice::ModelSwitch,
+            "System: Model switched: x".into(),
+        );
+        assert_eq!(app.transcript, vec!["System: Model switched: x"]);
+    }
+
+    /// 删掉一行后，按记录位置记的展开状态跟着前移，不落到邻居身上。
+    #[test]
+    fn dropping_a_row_shifts_position_keyed_expansions() {
+        let mut app = App::new(
+            vec![
+                "System: Switching model: a".to_owned(),
+                "You: long".to_owned(),
+                "· ✓ run_command · ls".to_owned(),
+            ],
+            Language::En,
+        );
+        app.expanded_user_messages.insert(1, "You: long".to_owned());
+        app.expanded_tool_rows.insert(2);
+        app.tool_expansions.insert(2, "ls -la".to_owned());
+        app.drop_transcript_row(0);
+        assert_eq!(
+            app.expanded_user_messages.get(&0).map(String::as_str),
+            Some("You: long")
+        );
+        assert!(app.expanded_tool_rows.contains(&1) && !app.expanded_tool_rows.contains(&2));
+        assert_eq!(
+            app.tool_expansions.get(&1).map(String::as_str),
+            Some("ls -la")
+        );
+        // 删的就是展开的那行：它的状态一起丢，后面的照常前移。
+        app.drop_transcript_row(0);
+        assert!(app.expanded_user_messages.is_empty());
+        assert!(app.expanded_tool_rows.contains(&0));
+        assert_eq!(
+            app.tool_expansions.get(&0).map(String::as_str),
+            Some("ls -la")
+        );
+    }
+
+    /// 淡出的回执只是不画，仍要当工具行的分段边界：夹在两条工具行中间的回执
+    /// 过期后，两侧的单工具行不能被并成一段（旧轮次里那样会两条一起消失）。
+    #[test]
+    fn fading_a_notice_between_tool_rows_keeps_both_visible() {
+        let app = App::new(
+            vec![
+                "You: q".to_owned(),
+                "· ✓ run_command · ls".to_owned(),
+                "System: Waiting command moved to background".to_owned(),
+                "· ✓ read_file · a.rs".to_owned(),
+                "WillDeep: a".to_owned(),
+                "You: q2".to_owned(),
+                "WillDeep: b".to_owned(),
+            ],
+            Language::En,
+        );
+        // 回执后面落了三条消息：回执收起，但两条工具行各自成段，都得留着。
+        let folded = app.display_transcript();
+        assert!(
+            !folded
+                .rows
+                .iter()
+                .any(|row| row.contains("moved to background")),
+            "{:?}",
+            folded.rows
+        );
+        assert!(
+            folded.rows.iter().any(|row| row.contains("run_command")),
+            "{:?}",
+            folded.rows
+        );
+        assert!(
+            folded.rows.iter().any(|row| row.contains("read_file")),
+            "{:?}",
+            folded.rows
+        );
+    }
+
+    /// 计划卡代替回复出现在记录里，淡出计数要把它算成一条助手消息。
+    #[test]
+    fn plan_cards_count_as_messages_for_notice_fade() {
+        let app = App::new(
+            vec![
+                "System: Model switched: qwen".to_owned(),
+                "You: one".to_owned(),
+                "Plan: {\"summary\":\"a\"}".to_owned(),
+                "You: two".to_owned(),
+                "Plan: {\"summary\":\"b\"}".to_owned(),
+            ],
+            Language::En,
+        );
+        assert!(
+            !app.display_transcript()
+                .rows
+                .iter()
+                .any(|row| row.contains("Model switched")),
+            "{:?}",
+            app.display_transcript().rows
+        );
+    }
+
+    /// 还挂在待发队列上的用户行不算「落了新消息」，不提前把回执收走。
+    #[test]
+    fn queued_prompts_do_not_count_for_notice_fade() {
+        let app = App::new(
+            vec![
+                "System: Model switched: qwen".to_owned(),
+                "You: ［待发］ a".to_owned(),
+                "You: ［待发］ b".to_owned(),
+                "You: ［待发］ c".to_owned(),
+            ],
+            Language::En,
+        );
+        assert!(
+            app.display_transcript()
+                .rows
+                .iter()
+                .any(|row| row.contains("Model switched")),
+            "{:?}",
+            app.display_transcript().rows
+        );
+    }
+
+    /// 删行时搜索命中跟着前移，Enter 不会跳到邻居身上。
+    #[test]
+    fn dropping_a_row_shifts_search_matches() {
+        let mut app = App::new(
+            vec![
+                "System: Switching model: a".to_owned(),
+                "You: ls".to_owned(),
+                "WillDeep: ls".to_owned(),
+            ],
+            Language::En,
+        );
+        app.search = Some(SearchState::default());
+        app.search.as_mut().unwrap().editor.insert("ls");
+        app.refresh_search_matches();
+        assert_eq!(app.search.as_ref().unwrap().matches, vec![1, 2]);
+        app.drop_transcript_row(0);
+        assert_eq!(app.search.as_ref().unwrap().matches, vec![0, 1]);
+        // 删的就是当前命中的行：选中位置顺延到后面的那条。
+        app.drop_transcript_row(0);
+        assert_eq!(app.search.as_ref().unwrap().matches, vec![0]);
+        assert_eq!(app.search.as_ref().unwrap().selected, 0);
     }
 }
