@@ -936,10 +936,8 @@ pub(crate) async fn build(
     } = &frontend
     {
         primary_provider_config.reasoning_level = primary_provider_config
-            .reasoning
-            .as_ref()
-            .filter(|reasoning| reasoning.levels.contains_key(level))
-            .map(|_| level.clone());
+            .accepts_reasoning_level(level)
+            .then(|| level.clone());
     }
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
     let workspace = resolve_workspace(cli, resumed)?;

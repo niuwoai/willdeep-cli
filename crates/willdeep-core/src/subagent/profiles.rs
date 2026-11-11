@@ -303,7 +303,7 @@ pub fn builtin_profiles(worker: Arc<dyn Provider>) -> Vec<SubagentProfile> {
                 // `judge` 与 `security_guard` 继续路由到这里。
                 id: "reviewer",
                 shell: SubagentShell::None,
-                purpose: "Review correctness, risk, and policy boundaries without shell or writes.",
+                purpose: "Review a change for correctness, security, data, concurrency and compatibility; evidence only, no shell or writes.",
                 tools: &[
                     "search_files",
                     "grep_files",
@@ -311,8 +311,22 @@ pub fn builtin_profiles(worker: Arc<dyn Provider>) -> Vec<SubagentProfile> {
                     "read_file",
                     "git_status",
                     "git_diff",
+                    "git_log",
                 ],
-                prompt: "Your trade is INDEPENDENT JUDGMENT. Audit the proposed behavior and evidence, identify concrete correctness or safety risks, and distinguish proven facts from uncertainty. You have no shell and make no changes.",
+                prompt: r#"Your trade is INDEPENDENT CODE REVIEW. You have no shell and you make no changes.
+
+Review the change named in the task. Read the diff, then read the surrounding code that the changed lines depend on; a finding that ignores the caller is not a finding. If no diff is available, review the files and behavior named in the task and state exactly what you could not see.
+
+Look for, in this order:
+1. Correctness: a concrete input, state, or ordering that reaches the changed code and yields a wrong result, crash, hang, or corrupted state.
+2. Security: an authorization or permission bypass, secret exposure, injection, unsafe deserialization, or a destructive/irreversible action.
+3. Data and compatibility: data loss, a non-idempotent or irreversible migration, a broken wire contract, or a client/daemon version that cannot read the new shape.
+4. Concurrency and lifecycle: a race, deadlock, leaked task/process/file handle, or cancellation/timeout that is not honored.
+5. Tests and evidence: a claimed verification that does not exercise the change, or a risky branch with no failure case.
+
+For each finding give severity (blocker / major / minor), file:line, the exact trigger (inputs, state, order), and the wrong result. Mark it CONFIRMED when you proved the path by reading the code, PLAUSIBLE when a missing piece prevents proof. Rank findings by severity. Do not report style, naming, or formatting preferences unless they cause a behavioral defect. Do not write a patch; the parent decides the fix. You cannot run commands or tests — never claim that you did. If nothing survives scrutiny, say "No findings" and name what you checked.
+
+Whether to block, and the top risks, belong in CONCLUSION; exact file:line evidence belongs in EVIDENCE; anything you could not verify belongs in OPEN QUESTIONS."#,
                 max_turns: 12,
                 context_window: WORKER_WINDOW_BALANCED,
                 tool_output_limit: Some(PAYLOAD_LIMIT_BALANCED),
@@ -424,6 +438,54 @@ mod tests {
         // 而窄的写工种仍然必须先声明。
         assert!(SubagentWriteScope::FileSet.requires_declared_targets());
         assert!(SubagentWriteScope::SingleFile.requires_declared_targets());
+    }
+
+    /// reviewer 的审查协议属于产品行为：它要按可复现的故障场景下结论，
+    /// 而不是笼统地说「可能有风险」。工具面仍只读，且没有 Shell。
+    #[test]
+    fn reviewer_ships_a_structured_code_review_protocol() {
+        let provider: Arc<dyn Provider> = Arc::new(ReportProvider);
+        let reviewer = builtin_profiles(provider)
+            .into_iter()
+            .find(|profile| profile.id == "reviewer")
+            .expect("reviewer ships");
+        assert_eq!(reviewer.shell, SubagentShell::None);
+        assert_eq!(reviewer.write_scope, SubagentWriteScope::None);
+        let tools = reviewer
+            .tool_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tools,
+            [
+                "search_files",
+                "grep_files",
+                "list_directory",
+                "read_file",
+                "git_status",
+                "git_diff",
+                "git_log",
+            ]
+        );
+        for required in [
+            "file:line",
+            "severity",
+            "CONFIRMED",
+            "PLAUSIBLE",
+            "No findings",
+            "Do not write a patch",
+            "Correctness",
+            "Security",
+            "Data and compatibility",
+            "Concurrency and lifecycle",
+            "Tests and evidence",
+        ] {
+            assert!(
+                reviewer.capability_prompt.contains(required),
+                "reviewer prompt lost {required}"
+            );
+        }
     }
 
     #[test]

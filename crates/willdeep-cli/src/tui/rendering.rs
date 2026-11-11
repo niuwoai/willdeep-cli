@@ -1,5 +1,14 @@
 use super::*;
 
+/// 一个 Markdown 代码块在聊天区样式行里的范围，以及去掉围栏后的原文。
+/// `start` 含、`end` 不含；`content` 是复制时真正要拿走的正文。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CodeBlockLines {
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) content: String,
+}
+
 /// Completed history is immutable during a text delta. Keep its styled,
 /// wrapped rows instead of parsing Markdown twice for every token.
 pub(super) struct TranscriptRenderCache {
@@ -13,7 +22,24 @@ pub(super) struct TranscriptRenderCache {
     language: Language,
     search: Option<String>,
     time_labels: Vec<Option<String>>,
+    /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
+    code_blocks: Vec<CodeBlockLines>,
     text: Text<'static>,
+}
+
+/// 在 `at` 处插入 `inserted` 行后，平移代码块的行号。
+fn shift_code_block_rows(blocks: &mut [CodeBlockLines], at: usize, inserted: usize) {
+    if inserted == 0 {
+        return;
+    }
+    for block in blocks {
+        if block.start >= at {
+            block.start += inserted;
+            block.end += inserted;
+        } else if block.end > at {
+            block.end += inserted;
+        }
+    }
 }
 
 impl App {
@@ -53,6 +79,7 @@ impl App {
                 user_controls,
                 tool_controls,
                 attachment_hits,
+                code_blocks,
             } = frame;
             self.user_message_controls = user_controls;
             self.tool_row_controls = tool_controls;
@@ -67,6 +94,7 @@ impl App {
                 language: self.language,
                 search: search.clone(),
                 time_labels,
+                code_blocks,
                 text,
             });
         }
@@ -75,6 +103,12 @@ impl App {
             .as_ref()
             .expect("prepared history")
             .text;
+        let cached_code_blocks = self
+            .transcript_render_cache
+            .as_ref()
+            .expect("prepared history")
+            .code_blocks
+            .clone();
         self.transcript_rows.truncate(history.lines.len());
         // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
         // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
@@ -94,6 +128,22 @@ impl App {
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
         });
+        // 压缩行和等待行每帧现插，缓存的代码块行号要跟着平移，否则徽标和双击
+        // 会落在这两行上，或者错开一行。插在块中间时只把块尾延长。
+        let mut code_blocks = cached_code_blocks;
+        for (at, drawn) in [notice.as_ref(), waiting.as_ref()].into_iter().flatten() {
+            shift_code_block_rows(&mut code_blocks, *at, drawn.lines.len());
+        }
+        self.code_copy.set_blocks(
+            code_blocks
+                .into_iter()
+                .map(|block| code_copy::CodeBlock {
+                    start: block.start,
+                    end: block.end,
+                    content: block.content,
+                })
+                .collect(),
+        );
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
@@ -762,18 +812,37 @@ pub(super) fn highlight_text_selection_at_offset(
 }
 
 pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line<'static>> {
+    render_assistant_markdown_annotated(content, width).0
+}
+
+/// 和 `render_assistant_markdown` 画得完全一样，额外报出每个代码块落在哪些输出行。
+/// 输出行号是折行前的；调用方按每行折出来的高度累加，才能对上屏幕行号。
+fn render_assistant_markdown_annotated(
+    content: &str,
+    width: usize,
+) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
     let mut output = Vec::new();
+    let mut blocks = Vec::new();
     let mut code_block = false;
+    let mut code_start = 0;
+    let mut code_content = Vec::new();
     let lines = content.lines().collect::<Vec<_>>();
     let mut index = 0;
     while index < lines.len() {
         let raw = lines[index];
         if raw.trim_start().starts_with("```") {
+            if code_block {
+                push_code_block(&mut blocks, code_start, output.len(), &code_content);
+            } else {
+                code_start = output.len();
+                code_content.clear();
+            }
             code_block = !code_block;
             index += 1;
             continue;
         }
         if code_block {
+            code_content.push(raw.to_owned());
             let mut spans = assistant_prefix(index == 0);
             spans.push(Span::styled(
                 raw.to_owned(),
@@ -812,10 +881,75 @@ pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line
         }
         index += 1;
     }
+    // 没闭合的围栏一直画到记录末尾，复制也照这个范围来。
+    if code_block {
+        push_code_block(&mut blocks, code_start, output.len(), &code_content);
+    }
     if output.is_empty() {
         output.push(Line::styled("WillDeep:", Style::default().fg(Color::Green)));
     }
-    output
+    (output, blocks)
+}
+
+fn push_code_block(blocks: &mut Vec<CodeBlockLines>, start: usize, end: usize, content: &[String]) {
+    let body = content.join("\n");
+    // 只有空白的块画出来也是空的，不给它一个可复制的徽标。
+    if body.trim().is_empty() {
+        return;
+    }
+    blocks.push(CodeBlockLines {
+        start,
+        end,
+        content: body,
+    });
+}
+
+/// 画一条 `WillDeep: ` 记录，同时给出代码块折行后的行号范围。
+/// 每个输出行单独折行（空行也占一行），所以行号可以逐行累加，不需要再解析一遍。
+pub(super) fn render_assistant_entry_with_code_blocks(
+    row: &str,
+    search: Option<&str>,
+    width: usize,
+) -> (Text<'static>, Vec<CodeBlockLines>) {
+    let Some(content) = row.strip_prefix("WillDeep: ") else {
+        let rows = [row.to_owned()];
+        let text = wrap_styled_text(colored_transcript_at_width(&rows, search, width), width);
+        return (text, Vec::new());
+    };
+    let (lines, blocks) = render_assistant_markdown_annotated(content, width);
+    let mut text = Text::from(lines);
+    if let Some(query) = search {
+        highlight_matches(&mut text, query);
+    }
+    let heights = text
+        .lines
+        .iter()
+        .map(|line| {
+            wrap_styled_text(Text::from(vec![line.clone()]), width)
+                .lines
+                .len()
+        })
+        .collect::<Vec<_>>();
+    let wrapped = wrap_styled_text(text, width);
+    let mut offsets = Vec::with_capacity(heights.len() + 1);
+    offsets.push(0);
+    for height in heights {
+        offsets.push(offsets.last().copied().unwrap_or_default() + height);
+    }
+    debug_assert_eq!(
+        offsets.last().copied().unwrap_or_default(),
+        wrapped.lines.len(),
+        "code block row mapping must cover the wrapped entry exactly"
+    );
+    let blocks = blocks
+        .into_iter()
+        .map(|block| CodeBlockLines {
+            start: offsets[block.start],
+            end: offsets[block.end],
+            content: block.content,
+        })
+        .collect();
+    (wrapped, blocks)
 }
 
 fn assistant_prefix(show: bool) -> Vec<Span<'static>> {
@@ -1292,5 +1426,108 @@ pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -
         Language::Ja => format!(
             "{header}\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
+    }
+}
+
+#[cfg(test)]
+mod code_block_tests {
+    use super::*;
+
+    #[test]
+    fn code_blocks_report_their_wrapped_rows_and_source() {
+        let row = "WillDeep: intro\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nafter";
+        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        let rows = text_rows(&text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].content, "fn main() {\n    println!(\"hi\");\n}");
+        let body = rows[blocks[0].start..blocks[0].end]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(body, vec!["fn main() {", "    println!(\"hi\");", "}"]);
+        assert_eq!(rows[blocks[0].start - 1], "WillDeep: intro");
+        assert_eq!(rows[blocks[0].end], "after");
+    }
+
+    /// 长代码行要在块内折行，块的行数按折行后的屏幕行算，复制内容仍是原始一行。
+    #[test]
+    fn long_code_lines_wrap_inside_the_block() {
+        let long = "x".repeat(40);
+        let row = format!("WillDeep: ```\n{long}\n```");
+        let (text, blocks) = render_assistant_entry_with_code_blocks(&row, None, 10);
+        let rows = text_rows(&text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].start, 0);
+        assert_eq!(blocks[0].end, rows.len());
+        assert_eq!(rows[blocks[0].start..blocks[0].end].len(), 4);
+        assert_eq!(blocks[0].content, long);
+        assert!(
+            rows.iter()
+                .all(|row| UnicodeWidthStr::width(row.as_str()) <= 10)
+        );
+    }
+
+    #[test]
+    fn an_unclosed_fence_reports_the_body_to_the_end() {
+        let row = "WillDeep: ```\nlet x = 1;";
+        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].content, "let x = 1;");
+        assert_eq!(blocks[0].start, 0);
+        assert_eq!(blocks[0].end, text.lines.len());
+    }
+
+    #[test]
+    fn every_block_in_a_message_is_reported_in_order() {
+        let row = "WillDeep: ```\na\n```\ntext\n```\nb\n```";
+        let (_, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].content, "a");
+        assert_eq!(blocks[1].content, "b");
+        assert!(blocks[0].end <= blocks[1].start);
+    }
+
+    /// 时间标签另起一行且落在块内时，块尾要跟着加一，不能少高亮最后一行。
+    #[test]
+    fn a_time_label_inserted_inside_a_block_extends_its_range() {
+        let rows = vec!["WillDeep: ```\nlet x = 1;\n\n```".to_owned()];
+        let frame = message_time::render_with_user_folds(
+            &rows,
+            &[Some("now".to_owned())],
+            None,
+            12,
+            Language::En,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+        );
+        assert_eq!(frame.code_blocks.len(), 1);
+        assert_eq!(frame.code_blocks[0].start, 0);
+        assert_eq!(frame.code_blocks[0].end, 3);
+        assert_eq!(frame.code_blocks[0].content, "let x = 1;\n");
+        let drawn = text_rows(&frame.text);
+        assert_eq!(drawn.len(), 3, "{drawn:?}");
+        assert_eq!(drawn[0], "let x = 1;");
+        assert!(drawn[1].contains("now"), "{drawn:?}");
+        assert_eq!(drawn[2], "");
+    }
+
+    #[test]
+    fn insertions_shift_blocks_below_or_straddling_them() {
+        let mut blocks = vec![
+            CodeBlockLines {
+                start: 1,
+                end: 3,
+                content: "a".to_owned(),
+            },
+            CodeBlockLines {
+                start: 4,
+                end: 5,
+                content: "b".to_owned(),
+            },
+        ];
+        shift_code_block_rows(&mut blocks, 2, 1);
+        assert_eq!((blocks[0].start, blocks[0].end), (1, 4));
+        assert_eq!((blocks[1].start, blocks[1].end), (5, 6));
     }
 }

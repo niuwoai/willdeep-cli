@@ -6,7 +6,14 @@ export type ModelProviderCatalog = { default_provider: string; providers: ModelP
 export type ProviderModels = { models: string[]; warning: string | null };
 export type ReasoningValue = string | number | boolean;
 export type ReasoningProfile = { default_level: string | null; parameter: string | null; levels: Record<string, ReasoningValue> };
-export type ReasoningProvider = { id: string; reasoning?: ReasoningProfile | null };
+export type ReasoningProvider = {
+  id: string;
+  reasoning?: ReasoningProfile | null;
+  /** 界面可选档位：配置映射的键，或未配置映射时的内置档位。旧 daemon 不返回。 */
+  reasoning_levels?: string[];
+  /** `reasoning_levels` 来自内置阶梯而不是配置映射。 */
+  reasoning_builtin?: boolean;
+};
 export type ReasoningProviderCatalog = { providers: ReasoningProvider[] };
 export type SessionReasoningState = { reasoning_level: string | null; provider_id: string | null };
 

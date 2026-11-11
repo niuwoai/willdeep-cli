@@ -533,6 +533,34 @@ pub(crate) fn hosted() -> bool {
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
+/// 把文本写进终端自己的剪贴板（OSC 52）。MuseTerm 在本机实现这条序列，
+/// 所以 SSH 远端的 willdeep 也能写对用户 Mac 的剪贴板；不支持的终端由调用方
+/// 回落到 arboard，不会因为这里返回错误就宣称复制成功。
+/// tmux 里必须套 DCS passthrough，并把它内部的 ESC 加倍，否则序列会被 tmux 吞掉。
+pub(crate) fn write_osc52(text: &str) -> io::Result<()> {
+    if !io::stdout().is_terminal() {
+        return Err(io::Error::other("stdout is not a terminal"));
+    }
+    // GNU screen 没有可靠的 passthrough，交给调用方回落，别发一串被吞掉的字节。
+    if std::env::var_os("STY").is_some() && std::env::var_os("TMUX").is_none() {
+        return Err(io::Error::other("OSC 52 is not supported under GNU screen"));
+    }
+    let mut out = io::stdout().lock();
+    write_osc52_to(&mut out, text, std::env::var_os("TMUX").is_some())?;
+    out.flush()
+}
+
+fn write_osc52_to(out: &mut impl Write, text: &str, tmux: bool) -> io::Result<()> {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    if tmux {
+        // ESC P tmux ; <inner, every ESC doubled> ESC \
+        write!(out, "\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\")
+    } else {
+        // BEL 结束：base64 里可能出现 0x5c，ESC ST 会被它提前截断。
+        write!(out, "\x1b]52;c;{encoded}\x07")
+    }
+}
+
 /// Installs the filter on standard input when this really is a hosted interactive TUI. The filter
 /// must be in place before anything reads stdin — the session picker is one such reader — and a
 /// terminal without the markers keeps an untouched stdin and never sees a `hello`.
@@ -665,6 +693,25 @@ mod tests {
         let mut out = Vec::new();
         announce_bye(&mut out).unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), "\x1b]7771;v=1;bye;\x07");
+    }
+
+    /// OSC 52 用 BEL 结束、正文是 base64：MuseTerm 据此把远端代码写进本机剪贴板。
+    #[test]
+    fn an_osc52_frame_carries_base64_clipboard_text() {
+        let mut out = Vec::new();
+        write_osc52_to(&mut out, "hi", false).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\x1b]52;c;aGk=\x07");
+    }
+
+    /// tmux 只认 DCS passthrough，且内层 ESC 必须写两遍，否则序列到不了外层终端。
+    #[test]
+    fn an_osc52_frame_inside_tmux_is_dcs_wrapped() {
+        let mut out = Vec::new();
+        write_osc52_to(&mut out, "hi", true).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\"
+        );
     }
 
     /// 空列表是「收起这一列」，新进程启动后靠它清掉上一轮残留的缩略图。

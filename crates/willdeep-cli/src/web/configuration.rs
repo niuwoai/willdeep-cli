@@ -228,6 +228,10 @@ struct ProviderSummary {
     model: String,
     api_key_configured: bool,
     reasoning: Option<willdeep_core::provider::ReasoningProfile>,
+    /// 界面可选档位：配置映射的键，或未配置映射时的内置档位。
+    reasoning_levels: Vec<String>,
+    /// `reasoning_levels` 来自内置阶梯而不是配置映射。
+    reasoning_builtin: bool,
 }
 
 fn deserialize_present_reasoning<'de, D>(
@@ -306,24 +310,33 @@ fn read_settings(path: &std::path::Path) -> anyhow::Result<ProviderSettings> {
     let providers = file
         .providers
         .iter()
-        .map(|(id, profile)| ProviderSummary {
-            id: id.clone(),
-            provider: profile
-                .provider
-                .clone()
-                .unwrap_or_else(|| "openai-compatible".to_owned()),
-            api: profile
-                .api
-                .clone()
-                .unwrap_or_else(|| "chat-completions".to_owned()),
-            api_base: profile.api_base.clone().unwrap_or_default(),
-            model: profile.model.clone().unwrap_or_default(),
-            api_key_configured: profile.api_key.as_ref().is_some_and(|key| !key.is_empty())
-                || profile
-                    .api_key_env
-                    .as_ref()
-                    .is_some_and(|key| !key.is_empty()),
-            reasoning: profile.reasoning.clone(),
+        .map(|(id, profile)| {
+            let reasoning = profile.reasoning.clone();
+            let reasoning_levels = willdeep_core::provider::reasoning_levels(reasoning.as_ref());
+            let reasoning_builtin = reasoning
+                .as_ref()
+                .is_none_or(|reasoning| reasoning.levels.is_empty());
+            ProviderSummary {
+                id: id.clone(),
+                provider: profile
+                    .provider
+                    .clone()
+                    .unwrap_or_else(|| "openai-compatible".to_owned()),
+                api: profile
+                    .api
+                    .clone()
+                    .unwrap_or_else(|| "chat-completions".to_owned()),
+                api_base: profile.api_base.clone().unwrap_or_default(),
+                model: profile.model.clone().unwrap_or_default(),
+                api_key_configured: profile.api_key.as_ref().is_some_and(|key| !key.is_empty())
+                    || profile
+                        .api_key_env
+                        .as_ref()
+                        .is_some_and(|key| !key.is_empty()),
+                reasoning,
+                reasoning_levels,
+                reasoning_builtin,
+            }
         })
         .collect();
     Ok(ProviderSettings {

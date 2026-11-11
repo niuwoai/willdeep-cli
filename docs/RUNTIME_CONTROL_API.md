@@ -161,7 +161,7 @@ diff.revert
 }
 ```
 
-`reasoning_level` 为 `null` 时清除覆盖并跟随 Provider 默认；非空值必须是当前 Session Provider 已配置的等级，名称为 1–64 个 ASCII 字母、数字、`_` 或 `-`。未知字段或非法等级返回 `invalid_request`，不存在的 Session 返回 `not_found`。操作按统一写请求处理幂等，成功返回含可选 `reasoning_level` 的 `RuntimeSession`，先持久化再发布 `session.reasoning_level_updated` 事件。
+`reasoning_level` 为 `null` 时清除覆盖并跟随 Provider 默认；非空值必须是当前 Session Provider 可用的等级（配置映射里的名字，或未配置映射时的内置 `low` / `medium` / `high` / `xhigh`），名称为 1–64 个 ASCII 字母、数字、`_` 或 `-`。未知字段或非法等级返回 `invalid_request`，不存在的 Session 返回 `not_found`。操作按统一写请求处理幂等，成功返回含可选 `reasoning_level` 的 `RuntimeSession`，先持久化再发布 `session.reasoning_level_updated` 事件。
 
 等级只作用于保存后领取的任务，已领取的 `SubmitTask` 保持原快照；重开空会话也从 Runtime 元数据恢复。清除覆盖不要求当前 Provider 仍有等级映射。旧 Runtime 缺少该可选字段时按 `null` 读取。Web 的回环适配端点为 `POST /api/sessions/{id}/reasoning-level`，请求体为 `{ "reasoning_level": "deep" }` 或 `{ "reasoning_level": null }`，成功返回 HTTP 204，并校验会话工作区访问范围。
 
