@@ -33,7 +33,14 @@ pub(super) async fn response(
         ),
         4 | 8 => {
             let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            let content = request["messages"].as_array().unwrap().last().unwrap()["content"]
+            // 实时宿主指令挂在请求末尾，工具回执要从后往前按角色找。
+            let content = request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "tool")
+                .expect("the recovery tool call must have a result")["content"]
                 .as_str()
                 .unwrap();
             let list: serde_json::Value = serde_json::from_str(content).unwrap();
