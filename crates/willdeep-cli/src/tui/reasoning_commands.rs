@@ -185,6 +185,20 @@ fn applied_message(level: Option<&str>, language: Language) -> String {
     }
 }
 
+/// `/reasoning` 的结果落进记录。本轮还在跑时 `set` 返回的是「下一任务生效」，
+/// 还是过程：轮次结束时 `sync_pending` 落的「已切换」会把它换掉，不占两行。
+/// 失败单独一行，不去动上一条仍在等待本轮结束的「已设为 X」——那次切换没有失败。
+pub(super) fn record_outcome(app: &mut App, result: Result<String>, failure: &str) {
+    let kind = narration::PendingNotice::ReasoningLevel;
+    match result {
+        Ok(message) if app.pending_reasoning_level.is_some() => {
+            app.note_switch_in_progress(kind, format!("System: {message}"));
+        }
+        Ok(message) => app.note_switch_settled(kind, format!("System: {message}")),
+        Err(error) => app.append_transcript(format!("Error: {failure}: {error:#}")),
+    }
+}
+
 pub(super) async fn sync_pending(
     session: &Session,
     runtime: &mut TuiRuntime,
