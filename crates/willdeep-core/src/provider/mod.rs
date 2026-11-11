@@ -6,6 +6,7 @@ mod error_detail;
 pub use error_detail::safe_error_detail;
 pub mod magpie;
 mod main_model;
+pub mod model_metadata;
 mod responses;
 pub mod sse;
 #[cfg(test)]
@@ -24,6 +25,12 @@ pub use anthropic::AnthropicMessagesProvider;
 pub use chat_completions::ChatCompletionsProvider;
 pub use main_model::{MainModelHandle, provider_model};
 pub use responses::ResponsesProvider;
+
+/// 请求体积估算与窗口之间留的余量：估算按字符比例算，不是真 tokenizer，
+/// 越贴近窗口越要留一点，免得「刚好等于」被服务端算成超出。
+const WINDOW_MARGIN_DIVISOR: u64 = 64;
+const MIN_WINDOW_MARGIN_TOKENS: u64 = 128;
+const MAX_WINDOW_MARGIN_TOKENS: u64 = 4_096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiDialect {
@@ -138,6 +145,9 @@ pub struct ProviderConfig {
     pub workspace_id: String,
     pub request_timeout_secs: u64,
     pub max_output_tokens: u32,
+    /// 端点接受的总窗口（提示词 + 回复）。知道时，请求里的 `max_tokens` 会被
+    /// 收进剩余空间，免得自己把请求顶出窗口；不知道就只发配置值。
+    pub context_window: Option<u64>,
     /// Per-profile logical-level to provider-value mapping.
     pub reasoning: Option<ReasoningProfile>,
     /// Per-session override; `None` selects the profile's configured default.
@@ -175,6 +185,7 @@ impl ProviderConfig {
             workspace_id: Uuid::new_v4().to_string(),
             request_timeout_secs: 600,
             max_output_tokens: 16_384,
+            context_window: None,
             reasoning: None,
             reasoning_level: None,
             non_thinking: false,
@@ -182,6 +193,25 @@ impl ProviderConfig {
             allow_unauthenticated: false,
             magpie_integration: false,
         }
+    }
+
+    /// 这次请求真正填进 `max_tokens` 的数。
+    ///
+    /// `max_output_tokens` 是上限而不是承诺：端点窗口已知时，回复只能占提示词
+    /// 之外剩下的那点空间。以前无论窗口多大都原样发 16384，窗口配成 16K 时
+    /// 任何非空请求都必然超限，而 400 不重试——整轮直接失败。
+    pub fn output_token_limit(&self, prompt_tokens: u64) -> u32 {
+        let configured = self.max_output_tokens.max(1);
+        let Some(window) = self.context_window.filter(|window| *window > 0) else {
+            return configured;
+        };
+        let margin = (window / WINDOW_MARGIN_DIVISOR)
+            .clamp(MIN_WINDOW_MARGIN_TOKENS, MAX_WINDOW_MARGIN_TOKENS);
+        let available = window.saturating_sub(prompt_tokens).saturating_sub(margin);
+        u32::try_from(available)
+            .unwrap_or(u32::MAX)
+            .min(configured)
+            .max(1)
     }
 
     pub fn validate(&self) -> Result<(), ProviderError> {
@@ -392,6 +422,72 @@ pub enum ProviderError {
     },
 }
 
+impl ProviderError {
+    /// 端点因为窗口装不下而拒绝了这个请求。外层 `Some` 表示「这是窗口问题」，
+    /// 内层是错误正文里引用的上限（说不上来就是 `None`）。
+    ///
+    /// 只认 400/413/422 且正文带窗口关键词的错误。参数写错、模型不存在这类
+    /// 400 收窗重试只会白烧一次调用，还可能把真正的错误盖掉。
+    pub fn context_overflow(&self) -> Option<Option<u64>> {
+        let Self::Http { status, body, .. } = self else {
+            return None;
+        };
+        if !matches!(status.as_u16(), 400 | 413 | 422) {
+            return None;
+        }
+        const MARKERS: [&str; 11] = [
+            "context length",
+            "context_length",
+            "context window",
+            "context_window",
+            "context size",
+            "maximum context",
+            "prompt is too long",
+            "too many tokens",
+            "reduce the length of the messages",
+            "max_model_len",
+            "exceeds the available context",
+        ];
+        let lower = body.to_ascii_lowercase();
+        MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+            .then(|| context_limit_from(body))
+    }
+}
+
+/// 从错误正文里摘出服务端声明的上下文上限。
+///
+/// 各家的说法不一样，按可信度顺序试：
+/// - Anthropic：`prompt is too long: 213431 tokens > 200000 maximum`
+/// - vLLM / OpenAI：`maximum context length is 32768 tokens`
+/// - 其他：`context window (8192 tokens) exceeded`、`... exceeds the maximum (8192)`
+///
+/// 只取第一个命中的数字。vLLM 的正文里同时有上限和「你请求了 N 个」，
+/// 先匹配上限的说法，才不会把请求体积当成窗口。
+fn context_limit_from(body: &str) -> Option<u64> {
+    use std::sync::LazyLock;
+    static PATTERNS: LazyLock<Vec<regex::Regex>> = LazyLock::new(|| {
+        [
+            r"(?i)>\s*(\d{3,9})\s*maximum",
+            r"(?i)maximum\s+(?:context\s+)?(?:length|window|size)[^0-9\n]{0,32}(\d{3,9})",
+            r"(?i)exceed\w*[^0-9\n]{0,48}(\d{3,9})",
+            r"(?i)context\s+(?:length|window|size)[^0-9\n]{0,32}(\d{3,9})",
+            r"(?i)max_model_len[^0-9\n]{0,32}(\d{3,9})",
+        ]
+        .into_iter()
+        .map(|pattern| regex::Regex::new(pattern).expect("valid context limit pattern"))
+        .collect()
+    });
+    PATTERNS.iter().find_map(|pattern| {
+        pattern
+            .captures(body)
+            .and_then(|captures| captures.get(1))
+            .and_then(|value| value.as_str().parse::<u64>().ok())
+            .filter(|limit| (1_000..=10_000_000).contains(limit))
+    })
+}
+
 #[async_trait]
 pub trait ProviderEventSink: Send + Sync {
     async fn emit(&self, event: ProviderEvent);
@@ -427,6 +523,12 @@ pub trait Provider: Send + Sync {
     /// Test doubles and wrappers that do not know leave it `None`; the ledger
     /// then records `provider`/`model` as null instead of guessing.
     fn ledger_identity(&self) -> Option<ProviderIdentity> {
+        None
+    }
+
+    /// 这个 Provider 会请求的回复上限。Agent 用它给提示词预算预留同等空间；
+    /// 测试替身和包装器不知道时留 `None`，调用方回落到窗口的 1/8。
+    fn max_output_tokens(&self) -> Option<u32> {
         None
     }
 
@@ -602,5 +704,88 @@ mod tests {
         }
         assert!(!is_magpie_gateway("https://example.com/v1", "magpie"));
         assert!(!is_magpie_gateway("http://localhost:11434/v1", "ollama"));
+    }
+
+    fn config_with_window(window: Option<u64>, output: u32) -> ProviderConfig {
+        let mut config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "http://127.0.0.1:8000/v1",
+            "local",
+            "qwen3.8-27b",
+        );
+        config.context_window = window;
+        config.max_output_tokens = output;
+        config
+    }
+
+    #[test]
+    fn output_limit_is_untouched_without_a_declared_window() {
+        let config = config_with_window(None, 16_384);
+        assert_eq!(config.output_token_limit(100_000), 16_384);
+    }
+
+    #[test]
+    fn output_limit_shrinks_so_prompt_plus_completion_fits_the_window() {
+        let config = config_with_window(Some(16_384), 16_384);
+        // 提示词 12K 时只剩 4K 左右；正是「窗口 16K、max_tokens 16K」以前
+        // 必然超限的场景。
+        let limit = config.output_token_limit(12_288);
+        assert!(limit <= 4_096, "limit was {limit}");
+        assert!(limit > 0);
+        // 空提示词也保留估算余量，但仍贴着配置上限。
+        assert_eq!(config.output_token_limit(0), 16_128);
+        // 提示词已经超出窗口时只保留最小值，让服务端的 400 说明问题，
+        // 而不是再叠加一个我们自己造的超限。
+        assert_eq!(config.output_token_limit(20_000), 1);
+    }
+
+    #[test]
+    fn output_limit_never_exceeds_the_configured_ceiling() {
+        let config = config_with_window(Some(128_000), 8_192);
+        assert_eq!(config.output_token_limit(10_000), 8_192);
+    }
+
+    #[test]
+    fn context_overflow_is_recognised_and_its_limit_extracted() {
+        let cases = [
+            (
+                r#"{"error":{"message":"This model's maximum context length is 32768 tokens. However, you requested 40000 tokens (8000 in the messages, 32000 in the completion).","code":"context_length_exceeded"}}"#,
+                Some(32_768),
+            ),
+            (
+                r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 213431 tokens > 200000 maximum"}}"#,
+                Some(200_000),
+            ),
+            (
+                "the request exceeds the available context size, try increasing it",
+                None,
+            ),
+            (
+                r#"{"error":{"message":"context window (8192 tokens) exceeded"}}"#,
+                Some(8_192),
+            ),
+        ];
+        for (body, limit) in cases {
+            let error = ProviderError::Http {
+                status: reqwest::StatusCode::BAD_REQUEST,
+                body: body.to_owned(),
+                retry_after: None,
+            };
+            assert_eq!(error.context_overflow(), Some(limit), "{body}");
+        }
+        // 参数错误不是窗口问题：收窗重试只会白烧调用。
+        let invalid = ProviderError::Http {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            body: r#"{"error":{"message":"unknown parameter: tools"}}"#.to_owned(),
+            retry_after: None,
+        };
+        assert_eq!(invalid.context_overflow(), None);
+        let server_error = ProviderError::Http {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "maximum context length is 32768 tokens".to_owned(),
+            retry_after: None,
+        };
+        assert_eq!(server_error.context_overflow(), None);
     }
 }

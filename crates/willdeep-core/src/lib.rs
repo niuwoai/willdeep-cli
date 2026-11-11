@@ -48,6 +48,7 @@ pub mod session_title;
 pub mod skills;
 pub mod subagent;
 mod subagent_worktree;
+pub(crate) mod token_estimate;
 pub mod tool_output;
 pub mod tools;
 pub mod types;

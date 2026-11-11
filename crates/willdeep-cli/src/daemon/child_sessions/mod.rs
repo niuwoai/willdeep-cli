@@ -286,11 +286,18 @@ pub(in crate::daemon) async fn preflight(
     }
     let Some(capability) = capability else {
         // The profile may point at an endpoint without a capability catalog.
-        // Use the same name-based default the Harness would, never the parent's
+        // Ask the endpoint's own model list before falling back to the
+        // name-based default the Harness would use; never reuse the parent's
         // explicit window for a different model.
+        let server_window = willdeep_core::provider::model_metadata::load_server_context_window(
+            &state.home,
+            &provider,
+        )
+        .await;
         return Ok(Some(ChildModelPreflight {
             model: model.clone(),
-            context_window: Some(crate::model_defaults::default_context_window(&model)),
+            context_window: server_window
+                .or_else(|| Some(crate::model_defaults::default_context_window(&model))),
         }));
     };
     if capability.verified_without_tools(provider.dialect) {
@@ -329,10 +336,17 @@ pub(in crate::daemon) async fn preflight(
             }
         }
     }
+    let context_window = match capability.context_window() {
+        Some(window) => Some(window),
+        None => willdeep_core::provider::model_metadata::load_server_context_window(
+            &state.home,
+            &provider,
+        )
+        .await
+        .or_else(|| Some(crate::model_defaults::default_context_window(&model))),
+    };
     Ok(Some(ChildModelPreflight {
-        context_window: capability
-            .context_window()
-            .or_else(|| Some(crate::model_defaults::default_context_window(&model))),
+        context_window,
         model,
     }))
 }

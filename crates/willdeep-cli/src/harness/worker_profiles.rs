@@ -42,6 +42,9 @@ impl Provider for FollowingWorker {
     fn ledger_identity(&self) -> Option<willdeep_core::provider::ProviderIdentity> {
         self.current().ok()?.ledger_identity()
     }
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.current().ok()?.max_output_tokens()
+    }
     fn with_model(
         &self,
         model: &str,

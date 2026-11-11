@@ -43,7 +43,13 @@ async fn manual_compression_removes_accumulated_duplicate_host_instructions() {
     assert_eq!(result.iter().filter(|m| m.content == steering).count(), 1);
     assert!(result.iter().any(|m| m.content == "actual request"));
     assert!(
-        estimate_tokens(&result) <= message_capacity(WINDOW, &agent.tools.definitions()).unwrap()
+        estimate_tokens(&result)
+            <= message_capacity(
+                WINDOW,
+                &agent.request_definitions(),
+                agent.completion_reserve()
+            )
+            .unwrap()
     );
 }
 
@@ -82,7 +88,12 @@ async fn automatic_compression_handles_a_recent_thinking_response() {
     let snapshot = serde_json::to_string(&original).unwrap();
     let mut cache = None;
     let result = agent.request_messages(&original, &mut cache).await.unwrap();
-    let capacity = message_capacity(WINDOW, &agent.tools.definitions()).unwrap();
+    let capacity = message_capacity(
+        WINDOW,
+        &agent.request_definitions(),
+        agent.completion_reserve(),
+    )
+    .unwrap();
     assert!(estimate_tokens(&result) <= capacity);
     assert!(result.iter().any(|m| m.content == original[1].content));
     assert!(result.iter().any(|m| m.content == "continue"));
@@ -103,7 +114,13 @@ async fn manual_compression_handles_short_but_oversized_history() {
     ];
     let result = agent.compress_history(original).await.unwrap();
     assert!(
-        estimate_tokens(&result) < message_capacity(WINDOW, &agent.tools.definitions()).unwrap()
+        estimate_tokens(&result)
+            < message_capacity(
+                WINDOW,
+                &agent.request_definitions(),
+                agent.completion_reserve()
+            )
+            .unwrap()
     );
     assert!(
         result
@@ -119,7 +136,13 @@ async fn manual_compression_folds_oversized_recent_tail_too() {
     original.push(Message::assistant("tail", vec![]).with_reasoning(Some("r".repeat(80_000))));
     let result = agent.compress_history(original).await.unwrap();
     assert!(
-        estimate_tokens(&result) <= message_capacity(WINDOW, &agent.tools.definitions()).unwrap()
+        estimate_tokens(&result)
+            <= message_capacity(
+                WINDOW,
+                &agent.request_definitions(),
+                agent.completion_reserve()
+            )
+            .unwrap()
     );
     assert_pairs(&result);
 }

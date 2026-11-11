@@ -315,6 +315,10 @@ impl Provider for LedgeredProvider {
         self.inner.ledger_identity()
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.inner.max_output_tokens()
+    }
+
     fn with_model(&self, model: &str) -> Result<Arc<dyn Provider>, ProviderError> {
         Ok(Arc::new(Self {
             inner: self.inner.with_model(model)?,

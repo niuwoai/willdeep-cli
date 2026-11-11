@@ -3,7 +3,7 @@ use crate::{
     Message, Role,
     agent_definition::{AgentPackage, digest, store::private_write},
     provider::{Provider, ProviderError, ProviderIdentity},
-    types::{Completion, ToolCall, ToolDefinition, Usage},
+    types::{Completion, MessageSource, ToolCall, ToolDefinition, Usage},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -135,10 +135,18 @@ impl Provider for ReviewMock {
                 .first()
                 .map(|message| message.content.clone())
                 .unwrap_or_default();
+            // 每轮的实时状态（轮次预算、计划、目标）是请求末尾的宿主指令；
+            // 系统消息逐轮保持字节一致，所以两者分别记录，逐轮上下文仍可重算。
+            let live_context = messages
+                .last()
+                .filter(|message| message.source == Some(MessageSource::HostInstruction))
+                .map(|message| message.content.clone())
+                .unwrap_or_default();
             state.prompt.get_or_insert_with(|| prompt.clone());
             state.receipts.push(
                 json!({"request_index":index + 1,"mode":"offline_mock_only","status":"in_flight",
                 "usage":null,"usage_kind":"synthetic","delivered_to_model":delivered,"system_prompt_sha256":digest(prompt.as_bytes()),"system_prompt":prompt,
+                "live_context_sha256":digest(live_context.as_bytes()),"live_context":live_context,
                 "tool_message_sha256":tool.map(|message|digest(message.content.as_bytes()))}),
             );
             index
@@ -496,8 +504,14 @@ mod tests {
                 .iter()
                 .map(|receipt| {
                     let prompt = receipt["system_prompt"].as_str().unwrap();
-                    let hash = digest(prompt.as_bytes());
-                    assert_eq!(receipt["system_prompt_sha256"], hash);
+                    assert_eq!(receipt["system_prompt_sha256"], digest(prompt.as_bytes()));
+                    let live = receipt["live_context"].as_str().unwrap();
+                    let hash = digest(live.as_bytes());
+                    assert_eq!(receipt["live_context_sha256"], hash);
+                    assert!(
+                        live.contains("[execution-budget]"),
+                        "each admitted round must carry its own live budget context"
+                    );
                     hash
                 })
                 .collect::<std::collections::BTreeSet<_>>();

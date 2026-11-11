@@ -1628,6 +1628,8 @@ type ScriptStep = (String, Option<(String, String)>);
 struct ScriptedGoalProvider {
     script: Mutex<std::collections::VecDeque<ScriptStep>>,
     systems: Mutex<Vec<String>>,
+    /// 每条请求最后一条消息；计划、目标、预算等实时状态挂在这里。
+    tails: Mutex<Vec<String>>,
     tool_names: Mutex<Vec<Vec<String>>>,
 }
 
@@ -1642,6 +1644,12 @@ impl Provider for ScriptedGoalProvider {
             .lock()
             .expect("systems")
             .push(messages[0].content.clone());
+        self.tails.lock().expect("tails").push(
+            messages
+                .last()
+                .map(|message| message.content.clone())
+                .unwrap_or_default(),
+        );
         self.tool_names
             .lock()
             .expect("tools")
@@ -1678,9 +1686,41 @@ impl Provider for ScriptedGoalProvider {
     }
 }
 
+#[test]
+fn context_overflow_tightening_only_ever_shrinks() {
+    let provider = Arc::new(ScriptedGoalProvider {
+        script: Mutex::new(std::collections::VecDeque::new()),
+        systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
+        tool_names: Mutex::new(Vec::new()),
+    });
+    let agent = Agent::new(
+        provider,
+        registry("tighten"),
+        AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    );
+    assert_eq!(agent.effective_context_window(), 128_000);
+    // 服务端报出更小的上限：直接采纳。
+    assert!(agent.tighten_context_window(Some(32_000)));
+    assert_eq!(agent.effective_context_window(), 32_000);
+    // 报出的值不小于当前配置：数字没有新信息，按四分之三收缩。
+    assert!(agent.tighten_context_window(Some(32_000)));
+    assert_eq!(agent.effective_context_window(), 24_000);
+    assert!(agent.tighten_context_window(None));
+    assert_eq!(agent.effective_context_window(), 18_000);
+    // 退到零就停下，把原始错误抛给调用方。
+    assert!(!agent.tighten_context_window(Some(0)));
+    std::fs::remove_dir_all(agent.tools.workspace()).unwrap();
+}
+
 /// 有验收清单的目标：先定标准，虚报完成被门禁拒绝（点名缺哪条），不带证据
-/// 标完成被工具拒绝，带证据标完成后才真正收口。目标块每轮钉在 system 消息里，
-/// 反馈账本记下「完成被拒」与「完成」。
+/// 标完成被工具拒绝，带证据标完成后才真正收口。目标块每轮钉在请求末尾的宿主
+/// 指令里（不进 system，也不进 durable 历史），反馈账本记下「完成被拒」与「完成」。
 #[tokio::test]
 async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
     let complete = || {
@@ -1708,6 +1748,7 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
             .collect(),
         ),
         systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
         tool_names: Mutex::new(Vec::new()),
     });
     let dir = std::env::temp_dir().join(format!("willdeep-goal-feedback-{}", uuid::Uuid::new_v4()));
@@ -1753,8 +1794,14 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
         "marking done without evidence is a tool error"
     );
     let systems = provider.systems.lock().expect("systems");
-    assert!(systems.iter().all(|system| system.contains("<goal-state>")));
-    assert!(systems.last().unwrap().contains("1. [x] tests pass"));
+    assert!(
+        systems
+            .iter()
+            .all(|system| !system.contains("<goal-state>"))
+    );
+    let tails = provider.tails.lock().expect("tails");
+    assert!(tails.iter().all(|tail| tail.contains("<goal-state>")));
+    assert!(tails.last().unwrap().contains("1. [x] tests pass"));
     assert!(
         provider
             .tool_names
@@ -1793,6 +1840,7 @@ async fn update_plan_is_available_without_a_goal() {
     let provider = Arc::new(ScriptedGoalProvider {
         script: Mutex::new([("done".to_owned(), None)].into_iter().collect()),
         systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
         tool_names: Mutex::new(Vec::new()),
     });
     let agent = Agent::new(
@@ -1813,6 +1861,7 @@ async fn update_plan_is_available_without_a_goal() {
             .any(|name| name == "update_plan")
     );
     assert!(!provider.systems.lock().expect("systems")[0].contains("<goal-state>"));
+    assert!(!provider.tails.lock().expect("tails")[0].contains("<goal-state>"));
 }
 
 #[tokio::test]
@@ -1836,7 +1885,7 @@ async fn dependency_plan_survives_checkpoint_and_rejects_premature_start() {
             call(serde_json::json!({"merge":true,"steps":[{"id":"ci","status":"done"}]})),
             ("Release ready".into(), None),
         ].into_iter().collect()),
-        systems: Mutex::new(Vec::new()), tool_names: Mutex::new(Vec::new()),
+        systems: Mutex::new(Vec::new()), tails: Mutex::new(Vec::new()), tool_names: Mutex::new(Vec::new()),
     });
     let root = std::env::temp_dir().join(format!("dependency-plan-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
@@ -1874,7 +1923,8 @@ async fn dependency_plan_survives_checkpoint_and_rejects_premature_start() {
         crate::planning::Receipt::new(plan, false).running,
         ["ci", "local"]
     );
-    // Simulate compressed history: the durable plan must remain in the system pin.
+    // Simulate compressed history: the plan is restored from checkpoint state and
+    // re-attached to each request tail, never to the durable system message.
     let resumed = agent
         .run_checkpointed(
             vec![Message::user("Compressed history")],
@@ -1887,8 +1937,9 @@ async fn dependency_plan_survives_checkpoint_and_rejects_premature_start() {
     let state = crate::planning::Receipt::new(stored, false);
     assert_eq!(state.ready, ["brew"]);
     assert_eq!(state.running, ["local"]);
-    assert!(provider.systems.lock().unwrap()[4].contains("\"running\":[\"ci\",\"local\"]"));
-    assert!(resumed.messages[0].content.contains("<session-plan>"));
+    assert!(provider.tails.lock().unwrap()[4].contains("\"running\":[\"ci\",\"local\"]"));
+    // 实时计划挂在请求末尾，不写进 durable 历史；恢复靠会话状态里的 current_plan。
+    assert!(!resumed.messages[0].content.contains("<session-plan>"));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -1897,6 +1948,7 @@ async fn restricted_workers_do_not_gain_session_planning_tools() {
     let provider = Arc::new(ScriptedGoalProvider {
         script: Mutex::new([("done".into(), None)].into_iter().collect()),
         systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
         tool_names: Mutex::new(Vec::new()),
     });
     let agent = Agent::new(
@@ -1931,6 +1983,7 @@ async fn plan_command_binding_survives_snapshots_and_blocks_early_side_effects()
         Arc::new(ScriptedGoalProvider {
             script: Mutex::new(VecDeque::new()),
             systems: Mutex::new(Vec::new()),
+            tails: Mutex::new(Vec::new()),
             tool_names: Mutex::new(Vec::new()),
         }),
         ToolRegistry::new(&root, ApprovalMode::FullAccess).unwrap(),

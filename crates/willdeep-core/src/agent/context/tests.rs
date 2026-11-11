@@ -284,14 +284,18 @@ fn estimates_include_tool_arguments_text_attachments_and_non_ascii() {
         description: "x".repeat(8_000),
         parameters: serde_json::json!({}),
     };
-    assert!(message_capacity(1_000, &[definition]).is_err());
+    assert!(message_capacity(1_000, &[definition], None).is_err());
 }
 
 #[tokio::test]
 async fn compression_starts_at_the_reserved_capacity_watermark_even_for_short_histories() {
     let (agent, provider) = agent(WINDOW);
-    let capacity =
-        message_capacity(agent.config.context_window, &agent.tools.definitions()).unwrap();
+    let capacity = message_capacity(
+        agent.effective_context_window(),
+        &agent.request_definitions(),
+        agent.completion_reserve(),
+    )
+    .unwrap();
     let payload_tokens = capacity * COMPRESSION_TRIGGER_PERCENT / 100;
     let messages = vec![
         Message::system("system"),
@@ -447,8 +451,12 @@ fn push_batch(messages: &mut Vec<Message>, index: usize) {
 async fn consecutive_steps_above_the_watermark_summarize_incrementally() {
     const STEPS: usize = 30;
     let (agent, provider) = agent(WINDOW);
-    let capacity =
-        message_capacity(agent.config.context_window, &agent.tools.definitions()).unwrap();
+    let capacity = message_capacity(
+        agent.effective_context_window(),
+        &agent.request_definitions(),
+        agent.completion_reserve(),
+    )
+    .unwrap();
     let mut messages = history();
     let mut cache = None;
     for step in 0..STEPS {
@@ -598,7 +606,8 @@ async fn repeated_host_instruction_keeps_the_persisted_summary() {
     let mut cache = None;
     agent.request_messages(&messages, &mut cache).await.unwrap();
     // 本轮继续干活，把 wake prompt 推到 6 条尾巴之外，再触发一次增量压缩。
-    for index in 0..16 {
+    // 90% 水位下投影要长得更远才会越过 watermark，批次数按水位留足余量。
+    for index in 0..20 {
         push_batch(&mut messages, 200 + index);
     }
     agent.request_messages(&messages, &mut cache).await.unwrap();
@@ -615,8 +624,12 @@ async fn repeated_host_instruction_keeps_the_persisted_summary() {
 
     // 下一次 wake：同一条 host instruction 再追加一次，分页投影少一条。
     messages.push(Message::host_instruction(WAKE));
-    let capacity =
-        message_capacity(agent.config.context_window, &agent.tools.definitions()).unwrap();
+    let capacity = message_capacity(
+        agent.effective_context_window(),
+        &agent.request_definitions(),
+        agent.completion_reserve(),
+    )
+    .unwrap();
     let projection = agent.page_tool_outputs(&messages, capacity).unwrap();
     assert_eq!(
         projection.messages.len(),

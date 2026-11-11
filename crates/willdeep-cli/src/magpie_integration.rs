@@ -366,6 +366,7 @@ fn integration_config(
             .context("Magpie model")?,
     );
     config.magpie_integration = true;
+    config.context_window = profile.context_window;
     config.max_output_tokens = output
         .or(profile.max_output_tokens)
         .unwrap_or(16_384)

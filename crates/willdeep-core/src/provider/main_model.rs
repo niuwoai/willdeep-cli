@@ -80,6 +80,10 @@ impl Provider for FollowMainModel {
         self.handle.current().ok()?.ledger_identity()
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.handle.current().ok()?.max_output_tokens()
+    }
+
     /// 显式换模型（例如 Runtime 给某个 Worker 指定模型）就不再跟随：返回的是
     /// 按当前主模型端点配好的一份独立 Provider。
     fn with_model(&self, model: &str) -> Result<Arc<dyn Provider>, ProviderError> {

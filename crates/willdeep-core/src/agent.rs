@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
@@ -26,6 +27,9 @@ mod streaming;
 mod uncertain;
 
 const MAX_INCOMPLETE_RESPONSES: usize = 3;
+/// 服务端报窗口不足后最多自动收窗重试几次。一次用来采纳它说的准确值，
+/// 另一次留给估算误差；再失败就说明提示词本身就放不下，压缩也救不了。
+const MAX_CONTEXT_OVERFLOW_RETRIES: usize = 2;
 
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
@@ -478,6 +482,9 @@ pub struct Agent {
     feedback: Option<crate::feedback::FeedbackRecorder>,
     time_budget: Option<std::time::Duration>,
     inherited_deadline: Option<tokio::time::Instant>,
+    /// 服务端实际接受的窗口。从 `config.context_window` 起步，只降不升：
+    /// 400 明确说窗口更小时，它的数字比我们的配置权威。
+    learned_context_window: AtomicU64,
 }
 
 impl Agent {
@@ -488,6 +495,7 @@ impl Agent {
             })
     }
     pub fn new(provider: Arc<dyn Provider>, tools: ToolRegistry, config: AgentConfig) -> Self {
+        let learned_context_window = AtomicU64::new(config.context_window);
         Self {
             provider: crate::provider::MainModelHandle::new(provider),
             tools,
@@ -511,6 +519,7 @@ impl Agent {
             feedback: None,
             time_budget: None,
             inherited_deadline: None,
+            learned_context_window,
         }
     }
 
@@ -600,6 +609,50 @@ impl Agent {
 
     fn provider(&self) -> Result<Arc<dyn Provider>, ProviderError> {
         self.provider.current()
+    }
+
+    /// 本轮请求真正能用的窗口：配置值，或服务端 400 报出的更小值。
+    fn effective_context_window(&self) -> u64 {
+        self.learned_context_window.load(Ordering::Relaxed)
+    }
+
+    /// 采纳一个更小的窗口。`reported` 是错误里引用的上限；没有数字、或数字
+    /// 不比当前配置更小时，按四分之三保守收缩——服务端都没指出更小的窗口，
+    /// 溢出多半来自估算偏低或输出预留不足。窗口只能变小：返回 `false` 表示
+    /// 已经无处可退，调用方应当把原始错误抛出去，而不是无限重试。
+    fn tighten_context_window(&self, reported: Option<u64>) -> bool {
+        loop {
+            let current = self.learned_context_window.load(Ordering::Relaxed);
+            let candidate = match reported {
+                Some(limit) if limit < current => limit,
+                _ => current * 3 / 4,
+            };
+            if candidate == 0 || candidate >= current {
+                return false;
+            }
+            if self
+                .learned_context_window
+                .compare_exchange(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    /// 真正随请求发出的工具定义：注册表之外还有宿主单独追加的 `update_plan`。
+    /// 容量核算必须用同一份，否则每轮都漏算一份 schema。
+    fn request_definitions(&self) -> Vec<crate::types::ToolDefinition> {
+        let mut definitions = self.tools.definitions();
+        if self.tools.allows_agent_tool("update_plan") {
+            definitions.push(crate::tools::update_plan_definition());
+        }
+        definitions
+    }
+
+    /// 当前 Provider 会请求的回复上限；问不出来时由容量核算回落到窗口的 1/8。
+    fn completion_reserve(&self) -> Option<u32> {
+        self.provider().ok()?.max_output_tokens()
     }
 
     pub fn with_image_fallback(
@@ -1128,10 +1181,7 @@ impl Agent {
         // destructive one is permitted.
         self.tools.set_task_context(&user_message.content);
         messages.push(user_message);
-        let mut definitions = self.tools.definitions();
-        if self.tools.allows_agent_tool("update_plan") {
-            definitions.push(crate::tools::update_plan_definition());
-        }
+        let definitions = self.request_definitions();
         let mut plan = checkpoint.restore_plan()?.or_else(|| {
             crate::conversation::project(&messages, None)
                 .into_iter()
@@ -1157,6 +1207,7 @@ impl Agent {
         let run_started = std::time::Instant::now();
         preparation.mark("rules_and_definitions");
         let mut preparation = Some(preparation);
+        let mut overflow_retries = 0_usize;
         for turn in 1..=self.config.max_turns {
             let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
             checkpoint.plan = plan.clone();
@@ -1170,8 +1221,10 @@ impl Agent {
             );
             self.append_instance_identity(&mut messages[0].content)?;
             // Only stable rules enter summary input and its system fingerprint.
-            // Live state is reattached verbatim after compression; including a
-            // round number here would invalidate the cache on every tool turn.
+            // Live state is attached to the request tail after compression: it never
+            // enters durable history or the system message, so the provider's
+            // automatic prefix cache keeps the whole history between turns instead
+            // of breaking at messages[0] every round.
             let mut runtime_context = String::new();
             if self.tools.allows_agent_tool("update_plan") {
                 messages[0].content.push_str("\n\n");
@@ -1186,8 +1239,8 @@ impl Agent {
                     ));
                 }
             }
-            // 目标状态钉在 system 消息里：每轮重建、不进压缩摘要，所以目标、
-            // 验收清单与在飞 Worker 永远不会被摘要掉。
+            // 目标状态每轮重建、只随请求末尾的实时状态发出，不进压缩摘要，
+            // 所以目标、验收清单与在飞 Worker 永远不会被摘要掉。
             if let Some(pin) = self
                 .goal_continuation
                 .as_ref()
@@ -1213,7 +1266,6 @@ impl Agent {
                 }
             }
             let stable_system = messages[0].clone();
-            messages[0].content.push_str(&runtime_context);
             self.append_pending_instructions(&mut messages);
             let workflow_reports = self.append_workflow_reports(&mut messages)?;
             if let Some(preparation) = preparation.as_mut() {
@@ -1293,7 +1345,12 @@ impl Agent {
                     return Err(error);
                 }
             };
-            request_messages[0].content.push_str(&runtime_context);
+            // 每轮的实时状态（计划、目标、预算、时间）作为请求末尾的宿主指令，
+            // 只随这次请求发出，不写进 durable 历史。放在 system 消息末尾会让
+            // 自动前缀缓存从第一段就断开，后面整段历史每轮重算。
+            if !runtime_context.is_empty() {
+                request_messages.push(Message::host_instruction(&runtime_context));
+            }
             if let Some(scope) = &self.usage_ledger {
                 scope
                     .check_budget()
@@ -1406,9 +1463,22 @@ impl Agent {
                     continue;
                 }
                 Err(error) => {
-                    // 这一轮的 messages 会随着错误一起丢掉，事件也就没人看过。
-                    self.settle_leases(&leases, LeaseOutcome::Failed);
-                    return Err(error.into());
+                    // 服务端说窗口不够：它的数字比我们的配置权威。收窗后重来
+                    // 一轮，下一轮的容量核算会压到真正的窗口以内。事件已经随
+                    // durable 历史记下，下一轮照样发得出去，按投递成功处理。
+                    let Some(reported) = error.context_overflow() else {
+                        // 这一轮的 messages 会随着错误一起丢掉，事件也就没人看过。
+                        self.settle_leases(&leases, LeaseOutcome::Failed);
+                        return Err(error.into());
+                    };
+                    self.settle_leases(&leases, LeaseOutcome::Delivered);
+                    if overflow_retries >= MAX_CONTEXT_OVERFLOW_RETRIES
+                        || !self.tighten_context_window(reported)
+                    {
+                        return Err(error.into());
+                    }
+                    overflow_retries += 1;
+                    continue;
                 }
             };
             let response_incomplete = completion.is_incomplete();

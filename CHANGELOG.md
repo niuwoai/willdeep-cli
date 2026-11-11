@@ -6,6 +6,14 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.147.0-rc24] - 2026-11-11
+
+### Fixed
+- 请求里的 `max_tokens` 不再无条件发满 `max_output_tokens`：`context_window` 已知时按提示词体积收窄，保证提示词 + 回复不超出窗口；16K 窗口下不再任何非空请求都超限。
+- OpenAI 兼容端点未显式配置窗口时，启动读 `/v1/models` 自报的 `max_model_len`、`context_length`、`meta.n_ctx` 等字段并取较小值，daemon 子会话 preflight 同样兜底；服务端以 400 报出更小窗口时，Agent 自动收窗重试，最多两次。
+- 容量核算改用与实际请求一致的工具 schema（含宿主追加的 `update_plan`）与真实输出预留；压缩水位从 75% 提到 90%，128K 窗口不再约 80K 就开始压缩。
+- 每轮的计划、目标、预算与剩余时间改为请求末尾的宿主指令，不再拼进 system 消息：OpenAI 兼容端点（vLLM 等）的自动前缀缓存不会因首条消息每轮变化而整段历史重算。实时状态仍每轮重建、不进压缩摘要，也不写进 durable 历史。
+
 ## [0.147.0-rc23] - 2026-11-10
 
 ### Fixed

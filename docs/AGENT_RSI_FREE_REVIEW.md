@@ -11,7 +11,7 @@ willdeep agents rsi free-review --offline-mock-only --fixture clean --output-dir
 
 输出目录必须不存在。其中 `raw-report.json` 是真实 Worker 返回的唯一四字段 JSON，`evidence.json` 是供独立宿主评分读取的文件证据；`observation.json` 包含 Mock 请求回执、Worker 事件、实际定义与提示词哈希；`effective-prompt.txt` 用于核对共享输出指令。独立宿主执行评分另行记录，本入口不会执行模型提交的代码。
 
-`worker_context` 完整保留原生 Worker 证据；其中历史字段 `effective_prompt_sha256` 对编译的提示词前缀取哈希。Agent 还会追加运行时预算上下文，因此每个已准入请求的实际系统消息原文与哈希分别记录在 Mock 回执的 `system_prompt` 和 `system_prompt_sha256` 中，可逐轮独立重算；首个实际请求另外保存在 `effective-prompt.txt` 与观察记录 `effective_prompt_sha256` 中。`request_context_projection` 明确标为 `derived: true`，供关联首个已准入请求使用，不能冒充原生 Worker 自行记录的证据；零准入时它为空，不保存请求捕获。
+`worker_context` 完整保留原生 Worker 证据；其中历史字段 `effective_prompt_sha256` 对编译的提示词前缀取哈希。Agent 的 system 消息逐轮保持字节一致（保住服务端前缀缓存），运行时预算上下文作为请求末尾的宿主指令单独发送。因此每个已准入请求的两段原文与哈希分别记录在 Mock 回执的 `system_prompt` / `system_prompt_sha256` 和 `live_context` / `live_context_sha256` 中，可逐轮独立重算；首个实际请求另外保存在 `effective-prompt.txt` 与观察记录 `effective_prompt_sha256` 中。`request_context_projection` 明确标为 `derived: true`，供关联首个已准入请求使用，不能冒充原生 Worker 自行记录的证据；零准入时它为空，不保存请求捕获。
 
 共享格式来自 `bench/agent-rsi/review-output-v2/contract.json`，样例来自同目录 `golden.json`。公共文件来自 `bench/agent-rsi/reproduction-free-v1/fixtures/count-zero-{bug,clean}.js`。基线定义修订固定为 `51b79a923ceceeae80a7cc6e20f2f0dbdfdb136f1bc516b895450ea633273bdd`；格式覆盖只改变本次离线 Worker 提示词，不修改定义。
 
