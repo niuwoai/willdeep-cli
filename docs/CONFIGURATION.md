@@ -173,8 +173,8 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `api_key` | 内联明文 Key（触发 `0600` 权限强制） |
 | `model` | 模型 ID |
 | `vision_model` | some.im 纯文本模型的视觉回退模型 |
-| `context_window` | 上下文窗口，用于状态栏占比显示；被 `[agent] compressor_profile` 选中时，还决定压缩摘要器能吃下的原料上限 |
-| `max_output_tokens` | 单次回复的输出上限，三种协议都会带上。上下文压缩、会话标题和跟主模型的 Worker 都沿用它，思考 token 占同一额度。写小了，长会话的压缩会因为摘要被截断而失败，报「provider response did not include a completion」。不写时缺省 16384，不是模型的真实上限 |
+| `context_window` | 上下文窗口（提示词 + 回复）。用于状态栏占比、压缩水位，以及把每次请求的 `max_tokens` 收进剩余空间。`provider = "openai-compatible"` 且没有显式配置时，启动会读 `/v1/models` 的自报窗口（vLLM 的 `max_model_len`、OpenRouter 的 `context_length`、llama.cpp 的 `meta.n_ctx`）并取较小值，结果按「端点 + Key」缓存 1 小时；运行中服务端若以 400 报出更小的窗口，会自动收窗重试，最多两次。被 `[agent] compressor_profile` 选中时，还决定压缩摘要器能吃下的原料上限 |
+| `max_output_tokens` | 单次回复的输出上限，三种协议都会带上。它是上限而不是承诺：`context_window` 已知时，实际发送的 `max_tokens` 会按提示词体积收窄，保证提示词 + 回复不超出窗口。上下文压缩、会话标题和跟主模型的 Worker 都沿用它，思考 token 占同一额度。写小了，长会话的压缩会因为摘要被截断而失败，报「provider response did not include a completion」。不写时缺省 16384，不是模型的真实上限 |
 | `reasoning` | 可选的思考等级映射，配置字段见下文；逻辑名称不要求是 `low` / `medium` / `high` |
 
 `api_key` 与 `api_key_env` 不能同时定义，也不允许为空字符串。
@@ -194,7 +194,9 @@ balanced = "medium"
 deep = "high"
 ```
 
-`default_level` 必须对应 `levels` 中的一项。映射值可为字符串、数字或布尔值；逻辑名称允许 1–64 位 ASCII 字母、数字、`_` 和 `-`，不限定为 `low` / `medium` / `high`。省略 `parameter` 时，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。没有等级映射时不向请求添加该字段。
+`default_level` 必须对应 `levels` 中的一项。映射值可为字符串、数字或布尔值；逻辑名称允许 1–64 位 ASCII 字母、数字、`_` 和 `-`，不限定为 `low` / `medium` / `high`。省略 `parameter` 时，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。
+
+没有配置非空映射时，默认不向请求添加该字段；用户在 Web 或 TUI 里显式选择的 `low` / `medium` / `high` / `xhigh` 属于内置档位，会原样写到该协议的默认参数路径，不选则什么都不发。上游是否接受由模型决定（老模型可能拒绝 `xhigh`），失败会明确报在那一轮，不会静默降级。一旦配置了非空映射，内置档位即关闭，只认映射里的名字。
 
 也可在 `[providers.openai.reasoning]` 内写 `levels = { economy = "low", balanced = "medium", deep = "high" }`；Web 配置页支持这种内联映射的更新与清空。思考等级专用表单仅修改映射，不改写该 Provider 的隐藏连接字段、环境变量引用或隐式协议设置。
 

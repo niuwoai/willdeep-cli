@@ -75,8 +75,10 @@
 | `generalist` | 跨文件与仓库状态的调查，以及没有更窄工种可选时的兜底 | search / grep / read / list / git status / reviewed shell / MCP 网关 /（带写集合时）create / edit | 128K |
 | `implementer` | 有界多文件功能、重构和新文件实现 | search / grep / list / read / create / edit / reviewed shell | 256K |
 | `tester` | 测试与行为审核，不改源码 | search / grep / read / git / reviewed shell | 64K |
-| `reviewer` | 独立正确性与安全边界审核 | search / grep / read / git diff，无 Shell | 48K |
+| `reviewer` | 独立代码审查：正确性 / 安全 / 数据与兼容 / 并发 / 测试证据 | search / grep / read / git status / git diff / git log，无 Shell | 48K |
 | `ops_runner` | 有界运维与命令执行 | read / git status / reviewed shell | 48K，最多 32 轮 |
+
+`reviewer` 不是「再看一眼」的同义词。它按固定协议审查五类问题，每条发现必须给出严重级别、`file:line`、可复现的触发条件（输入、状态、顺序）和错误结果，并区分 `CONFIRMED`（读代码证明了路径）与 `PLAUSIBLE`（缺一块无法证明）。它不报纯风格、命名或格式问题，不写补丁，也不声称跑过命令或测试；没有发现问题时明确写 `No findings` 并说明检查了什么。结论仍由父 Agent 决定，reviewer 只提供证据。
 
 | `worker_tier`（模型档） | 预算 | some.im 默认模型 | 准入 |
 |---|---:|---|---|

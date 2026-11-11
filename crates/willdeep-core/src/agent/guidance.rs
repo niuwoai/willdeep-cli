@@ -203,8 +203,11 @@ mod tests {
             final_request[checkpoint - 1].tool_call_id.as_deref(),
             Some("read-4")
         );
+        // 实时预算挂在请求末尾的宿主指令上，不再写进 system 消息。
         assert!(
-            final_request[0]
+            final_request
+                .last()
+                .unwrap()
                 .content
                 .contains("tokens: 800/1100; remaining: 300")
         );

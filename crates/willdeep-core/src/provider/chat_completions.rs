@@ -38,6 +38,10 @@ impl Provider for ChatCompletionsProvider {
         Some(super::ProviderIdentity::from_config(&self.config))
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        Some(self.config.max_output_tokens.max(1))
+    }
+
     fn with_model(&self, model: &str) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
         let mut config = self.config.clone();
         config.model = model.to_owned();
@@ -80,14 +84,10 @@ impl ChatCompletionsProvider {
             }
         }
         let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
-        let configured_reasoning = !self.config.non_thinking
-            && self
-                .config
-                .reasoning
-                .as_ref()
-                .is_some_and(|profile| !profile.levels.is_empty());
-        // Explicit profile mappings also apply to local/credential-free providers.
-        // Preserve their legacy non-thinking default only without such a mapping.
+        let configured_reasoning = self.config.will_apply_reasoning();
+        // Explicit profile mappings and explicitly chosen built-in levels also apply
+        // to local/credential-free providers. Preserve their legacy non-thinking
+        // default only when the request would not carry a reasoning field at all.
         let local_non_thinking = self.is_auxiliary_or_loopback() && !configured_reasoning;
         let body = ChatRequest {
             model: &self.config.model,
@@ -100,14 +100,16 @@ impl ChatCompletionsProvider {
         };
         let mut body = serde_json::to_value(body)
             .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
-        self.apply_output_limit(&mut body);
+        let prompt_tokens = crate::token_estimate::estimate_tokens(messages)
+            .saturating_add(crate::token_estimate::tool_schema_tokens(tools));
+        self.apply_output_limit(&mut body, prompt_tokens);
         self.config.apply_reasoning(&mut body, "reasoning_effort")?;
         Ok(body)
     }
 }
 
 impl ChatCompletionsProvider {
-    fn apply_output_limit(&self, body: &mut serde_json::Value) {
+    fn apply_output_limit(&self, body: &mut serde_json::Value, prompt_tokens: u64) {
         let model = self.config.model.to_ascii_lowercase();
         let modern = ["gpt-5", "o1", "o3", "o4"]
             .iter()
@@ -117,7 +119,7 @@ impl ChatCompletionsProvider {
         } else {
             "max_tokens"
         };
-        body[key] = serde_json::json!(self.config.max_output_tokens.max(1));
+        body[key] = serde_json::json!(self.config.output_token_limit(prompt_tokens));
     }
 
     fn is_auxiliary_or_loopback(&self) -> bool {
@@ -452,6 +454,30 @@ mod generation_limit_tests {
             assert!(body.get("max_tokens").is_none());
         }
     }
+
+    #[test]
+    fn declared_window_shrinks_max_tokens_before_the_request_is_sent() {
+        let mut config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "http://127.0.0.1:8000/v1",
+            "local",
+            "qwen3.8-27b",
+        );
+        config.max_output_tokens = 16_384;
+        config.context_window = Some(16_384);
+        // 12K token 的提示词（48K ASCII 字符）加上原来的 16K 输出必然超窗。
+        let prompt = Message::user("a".repeat(48 * 1024));
+        for stream in [false, true] {
+            let body = ChatCompletionsProvider::new(config.clone())
+                .unwrap()
+                .request_body(std::slice::from_ref(&prompt), &[], stream)
+                .unwrap();
+            let limit = body["max_tokens"].as_u64().unwrap();
+            assert!(limit < 16_384, "max_tokens was {limit}");
+            assert!(limit > 0);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -497,6 +523,23 @@ mod reasoning_level_tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn builtin_level_on_a_local_endpoint_overrides_the_legacy_non_thinking_default() {
+        for stream in [false, true] {
+            let mut config = configured("http://localhost:11434/v1", Some("think"), json!(true));
+            config.reasoning = None;
+            config.reasoning_level = Some("high".into());
+            config.validate().unwrap();
+            let body = ChatCompletionsProvider::new(config)
+                .unwrap()
+                .request_body(&[Message::user("check")], &[], stream)
+                .unwrap();
+            assert_eq!(body["reasoning_effort"], "high");
+            // 显式选了等级就不该再叠一层「本地默认关思考」。
+            assert!(body.get("think").is_none());
         }
     }
 

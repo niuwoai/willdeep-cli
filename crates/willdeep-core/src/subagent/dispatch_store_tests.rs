@@ -9,6 +9,15 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+/// 请求末尾现在是运行时预算上下文，工具结果要从后往前按角色找。
+fn last_tool_result(messages: &[Message]) -> &Message {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == Role::Tool)
+        .expect("the previous tool call must have a result")
+}
+
 struct RecoveryProvider {
     calls: AtomicUsize,
     started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
@@ -37,7 +46,7 @@ impl Provider for RecoveryParent {
             }),
             1 => {
                 let list: serde_json::Value =
-                    serde_json::from_str(&messages.last().unwrap().content).unwrap();
+                    serde_json::from_str(&last_tool_result(messages).content).unwrap();
                 assert_eq!(list["agents"][0]["agent_id"], self.id.to_string());
                 assert_eq!(list["agents"][0]["completed_report_available"], self.cached);
                 Some(ToolCall {
@@ -49,9 +58,7 @@ impl Provider for RecoveryParent {
             _ => {
                 if self.cached {
                     assert!(
-                        messages
-                            .last()
-                            .unwrap()
+                        last_tool_result(messages)
                             .content
                             .contains("tools and verifier were not rerun")
                     );

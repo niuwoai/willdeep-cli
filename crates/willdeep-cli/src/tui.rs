@@ -409,6 +409,10 @@ struct App {
     prompt_queue: Option<prompt_queue::QueuePanel>,
     /// 本轮进行中收到的 `/model`：本轮结束、排队的提示词发出之前切过去。
     pending_model: Option<String>,
+    /// 切模型、调思考等级的过程行（「正在切换」「本轮结束后切换到」）在记录里的原文，
+    /// 按事项分开记。结果出来时把它拿掉再落结果，聊天区只留最后一句，不把
+    /// 「正在」和「已」叠成两行。
+    pending_notice_rows: BTreeMap<narration::PendingNotice, String>,
     /// `Some(None)` 表示本轮结束后清除会话覆盖、恢复 Provider 默认。
     pending_reasoning_level: Option<Option<String>>,
     /// 会话当前的模型名。用户消息落进记录时盖这个章（「这句话发给了哪个模型」），
@@ -896,10 +900,7 @@ impl TuiRuntime {
             .reasoning_level
             .as_ref()
             .filter(|level| {
-                config
-                    .reasoning
-                    .as_ref()
-                    .is_some_and(|profile| profile.levels.contains_key(*level))
+                willdeep_core::provider::accepts_reasoning_level(config.reasoning.as_ref(), level)
             })
             .cloned();
         config.reasoning_level = selected_level.clone();

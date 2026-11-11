@@ -32,9 +32,10 @@ pub(super) async fn set_session_reasoning_level(
         let profile = loaded
             .select_provider(runtime_session.profile.as_deref())
             .map_err(WebError::from_anyhow)?;
-        let configured = profile
-            .and_then(|profile| profile.reasoning.as_ref())
-            .is_some_and(|reasoning| reasoning.levels.contains_key(level));
+        let configured = willdeep_core::provider::accepts_reasoning_level(
+            profile.and_then(|profile| profile.reasoning.as_ref()),
+            level,
+        );
         if !configured {
             return Err(WebError::bad_request(
                 "reasoning level is not configured for this Session Provider",

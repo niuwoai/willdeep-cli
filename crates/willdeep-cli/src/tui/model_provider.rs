@@ -150,7 +150,11 @@ fn prepare_selection(app: &mut App, model: &str) -> Option<String> {
         }
     );
     app.notice = Some(message.clone());
-    app.append_transcript(format!("System: {message}"));
+    // 过程行只活到结果出来：当场切的当场换成「已切换」，排队的到本轮结束再换。
+    app.note_switch_in_progress(
+        narration::PendingNotice::ModelSwitch,
+        format!("System: {message}"),
+    );
     app.scroll_to_bottom();
     profile
 }
@@ -159,7 +163,14 @@ fn finish_selection(app: &mut App, result: Result<String>) {
     match result {
         Ok(message) => {
             app.notice = Some(message.clone());
-            app.append_transcript(format!("System: {message}"));
+            // 排队的切换这里回来的是「本轮结束后切换到 X」，还是过程；真正的
+            // 「已切换」由事件循环在轮次结束时落，到时再把这行换掉。
+            let row = format!("System: {message}");
+            if app.pending_model.is_some() {
+                app.note_switch_in_progress(narration::PendingNotice::ModelSwitch, row);
+            } else {
+                app.note_switch_settled(narration::PendingNotice::ModelSwitch, row);
+            }
         }
         Err(error) => {
             // TOML diagnostics quote source lines, including inline credentials.
@@ -191,7 +202,11 @@ fn finish_selection(app: &mut App, result: Result<String>) {
                 app.language.text("切换失败", "Switch failed", "切替失敗")
             );
             app.notice = Some(message.clone());
-            app.append_transcript(format!("Error: {message}"));
+            // 失败也是结果：「正在切换」让位给错误行，错误行本身不会过期。
+            app.note_switch_settled(
+                narration::PendingNotice::ModelSwitch,
+                format!("Error: {message}"),
+            );
         }
     }
 }
@@ -348,10 +363,7 @@ pub(super) async fn switch(
         .reasoning_level
         .as_ref()
         .filter(|level| {
-            config
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| reasoning.levels.contains_key(*level))
+            willdeep_core::provider::accepts_reasoning_level(config.reasoning.as_ref(), level)
         })
         .cloned();
     let clear_reasoning_level = runtime.reasoning_level.is_some() && selected_level.is_none();
@@ -597,11 +609,43 @@ mod tests {
             "System: Switching model: manual-model"
         );
         finish_selection(&mut app, Ok("Model switched: manual-model".into()));
-        assert_eq!(
-            app.transcript.last().unwrap(),
-            "System: Model switched: manual-model"
-        );
+        // 「正在切换」让位给「已切换」：同一件事只占一行。
+        assert_eq!(app.transcript, vec!["System: Model switched: manual-model"]);
         assert_eq!(app.notice.as_deref(), Some("Model switched: manual-model"));
+        assert!(app.pending_notice_rows.is_empty());
+    }
+
+    /// 本轮在跑时选模型：「正在安排」→「本轮结束后切换到」→「已切换」，三步始终只留一行。
+    #[test]
+    fn deferred_model_selection_keeps_a_single_row_through_the_turn() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.begin_turn(true, "in flight".into());
+        prepare_selection(&mut app, "later-model");
+        assert_eq!(app.transcript.len(), 1);
+        assert!(app.transcript[0].contains("after this turn"));
+        let message = model_commands::defer_model_switch(&mut app, "later-model").unwrap();
+        finish_selection(&mut app, Ok(message));
+        assert_eq!(app.transcript.len(), 1, "{:?}", app.transcript);
+        assert!(app.transcript[0].contains("Switches to later-model"));
+        // 还在等轮次结束，过程行的指针还在。
+        assert!(
+            app.pending_notice_rows
+                .contains_key(&narration::PendingNotice::ModelSwitch)
+        );
+        app.append_transcript("WillDeep: still working".into());
+        app.running = false;
+        app.pending_model.take();
+        app.note_switch_settled(
+            narration::PendingNotice::ModelSwitch,
+            "System: Model switched: later-model".into(),
+        );
+        assert_eq!(
+            app.transcript,
+            vec![
+                "WillDeep: still working",
+                "System: Model switched: later-model"
+            ]
+        );
     }
 
     #[test]
@@ -615,10 +659,10 @@ mod tests {
             )),
         );
         assert!(app.model_picker.is_none());
-        assert_eq!(app.transcript.len(), 2);
+        // 失败也是结果：「正在切换」让位，只剩错误行。
         assert_eq!(
-            app.transcript[1],
-            "Error: Switch failed: unavailable-model: Runtime rejected request"
+            app.transcript,
+            vec!["Error: Switch failed: unavailable-model: Runtime rejected request"]
         );
         assert_eq!(
             app.notice.as_deref(),

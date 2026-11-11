@@ -18,6 +18,8 @@ pub(super) async fn complete(
     events: &dyn ProviderEventSink,
 ) -> Result<Completion, ProviderError> {
     let (instructions, input) = encode_input(messages);
+    let prompt_tokens = crate::token_estimate::estimate_tokens(messages)
+        .saturating_add(crate::token_estimate::tool_schema_tokens(tools));
     let body = ResponsesRequest {
         model: &provider.config.model,
         instructions: (!instructions.is_empty()).then_some(instructions),
@@ -25,7 +27,7 @@ pub(super) async fn complete(
         tools: tools.iter().map(ResponseTool::from).collect(),
         stream: true,
         store: false,
-        max_output_tokens: provider.config.max_output_tokens.max(1),
+        max_output_tokens: provider.config.output_token_limit(prompt_tokens),
         reasoning: provider
             .config
             .non_thinking

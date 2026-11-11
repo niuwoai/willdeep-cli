@@ -13,10 +13,12 @@ pub(super) async fn complete(
     tools: &[ToolDefinition],
     events: &dyn ProviderEventSink,
 ) -> Result<Completion, ProviderError> {
+    let prompt_tokens = crate::token_estimate::estimate_tokens(messages)
+        .saturating_add(crate::token_estimate::tool_schema_tokens(tools));
     let (system, messages) = encode_messages(messages);
     let body = AnthropicRequest {
         model: &provider.config.model,
-        max_tokens: max_output_tokens(&provider.config.model, provider.config.max_output_tokens),
+        max_tokens: provider.request_max_tokens(prompt_tokens),
         system: cached_system(&system),
         messages,
         tools: tools.iter().map(AnthropicTool::from).collect(),

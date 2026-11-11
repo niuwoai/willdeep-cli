@@ -1508,9 +1508,10 @@ fn session_update_reasoning_level(state: &ServerState, request: &ApiRequest) -> 
             .map_err(|error| {
                 ApiFailure::invalid(format!("cannot resolve Session Provider: {error}"))
             })?;
-        let configured = profile
-            .and_then(|profile| profile.reasoning.as_ref())
-            .is_some_and(|reasoning| reasoning.levels.contains_key(level));
+        let configured = willdeep_core::provider::accepts_reasoning_level(
+            profile.and_then(|profile| profile.reasoning.as_ref()),
+            level,
+        );
         if !configured {
             return Err(ApiFailure::invalid(
                 "reasoning level is not configured for this Session Provider",

@@ -1,8 +1,13 @@
 use super::*;
+use crate::token_estimate::{estimate_tokens, text_tokens, tool_schema_tokens};
 use crate::types::{MessageAttachment, MessageSource, Role, ToolDefinition};
 use std::collections::HashSet;
 
-const COMPRESSION_TRIGGER_PERCENT: u64 = 75;
+/// 压缩水位。以前是 75%：容量按 `窗口 − 工具 − 窗口/8` 算，再乘 75%，
+/// 128K 窗口实际 80K 就开始压缩，服务端的 128K 永远用不满。上下文的估算
+/// 本身已经偏保守，水位再压到 75% 等于把窗口打折两次；90% 给估算误差留的
+/// 余量足够，压缩后仍远低于容量。
+const COMPRESSION_TRIGGER_PERCENT: u64 = 90;
 const KEEP_RECENT_MESSAGES: usize = 6;
 const OUTPUT_RESERVE_DIVISOR: u64 = 8;
 const TOOL_MESSAGE_WINDOW_DIVISOR: u64 = 8;
@@ -35,7 +40,11 @@ impl Agent {
         let settings = self.compression_settings()?;
         // Manual compression can precede the next Agent run after a crash.
         uncertain::UncertainCalls::recover(&mut messages);
-        let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
+        let capacity = message_capacity(
+            self.effective_context_window(),
+            &self.request_definitions(),
+            self.completion_reserve(),
+        )?;
         let target = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
         messages = self.page_tool_outputs(&messages, capacity)?.messages;
         if messages.len() < KEEP_RECENT_MESSAGES + 2 && estimate_tokens(&messages) < target {
@@ -104,10 +113,19 @@ impl Agent {
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
         let settings = self.compression_settings()?;
-        let capacity = message_capacity(self.config.context_window, &self.tools.definitions())?;
-        // The caller appends live plan/goal/budget state after compression. Reserve
-        // its full cost here, but never summarize it or use it as a cache key.
-        let reserved = text_tokens(runtime_context);
+        let capacity = message_capacity(
+            self.effective_context_window(),
+            &self.request_definitions(),
+            self.completion_reserve(),
+        )?;
+        // The caller appends live plan/goal/budget state as one host message after
+        // compression. Reserve its full cost here (content plus message overhead),
+        // but never summarize it or use it as a cache key.
+        let reserved = if runtime_context.is_empty() {
+            0
+        } else {
+            text_tokens(runtime_context).saturating_add(8)
+        };
         let capacity = capacity
             .checked_sub(reserved)
             .filter(|capacity| *capacity > 0)
@@ -344,7 +362,7 @@ impl Agent {
     /// 摘要器一次能吃下的原料上限。
     ///
     /// 口径和 [`message_capacity`] 一致：窗口减去输出预留，再减去摘要指令本身。
-    /// 不敢取得更小——正常会话的待压缩前缀就在水位线（窗口的 75%）附近，预算
+    /// 不敢取得更小——正常会话的待压缩前缀就在水位线（可用容量的 90%）附近，预算
     /// 若低于它，每次压缩都要白白多切一刀。
     ///
     /// 窗口取压缩器自己声明的那个与会话窗口的较小值（[`Agent::with_compressor_window`]）：
@@ -357,11 +375,10 @@ impl Agent {
     }
 
     fn summary_input_budget_for(&self, settings: &CompressionSettings) -> u64 {
+        let session = self.effective_context_window();
         let window = settings
             .context_window
-            .map_or(self.config.context_window, |window| {
-                window.min(self.config.context_window)
-            });
+            .map_or(session, |window| window.min(session));
         window
             .saturating_sub(window / OUTPUT_RESERVE_DIVISOR)
             .saturating_sub(SUMMARY_OVERHEAD_TOKENS)
@@ -845,59 +862,21 @@ fn token_excerpt(characters: impl Iterator<Item = char>, budget: u64) -> String 
     result
 }
 
-fn text_tokens(text: &str) -> u64 {
-    let ascii = text.bytes().filter(u8::is_ascii).count() as u64;
-    let non_ascii = text
-        .chars()
-        .filter(|character| !character.is_ascii())
-        .count() as u64;
-    ascii
-        .div_ceil(4)
-        .saturating_add(non_ascii.saturating_mul(2))
-}
-
-pub(super) fn estimate_tokens(messages: &[Message]) -> u64 {
-    messages
-        .iter()
-        .map(|message| {
-            text_tokens(&message.content)
-                + message.reasoning.as_deref().map(text_tokens).unwrap_or(0)
-                + 8
-                + message
-                    .tool_calls
-                    .iter()
-                    .map(|call| {
-                        text_tokens(&call.arguments)
-                            + text_tokens(&call.name)
-                            + text_tokens(&call.id)
-                            + 8
-                    })
-                    .sum::<u64>()
-                + message
-                    .attachments
-                    .iter()
-                    .map(|attachment| match attachment {
-                        MessageAttachment::Text { name, content } => {
-                            text_tokens(name) + text_tokens(content) + 16
-                        }
-                        MessageAttachment::Image { .. } => 1_024,
-                    })
-                    .sum::<u64>()
-        })
-        .sum()
-}
-
-fn message_capacity(window: u64, tools: &[ToolDefinition]) -> Result<u64, AgentError> {
-    let tools = tools
-        .iter()
-        .map(|tool| {
-            text_tokens(&tool.name)
-                + text_tokens(&tool.description)
-                + text_tokens(&tool.parameters.to_string())
-                + 8
-        })
-        .sum::<u64>();
-    let reserved = tools.saturating_add(window / OUTPUT_RESERVE_DIVISOR);
+fn message_capacity(
+    window: u64,
+    tools: &[ToolDefinition],
+    max_output_tokens: Option<u32>,
+) -> Result<u64, AgentError> {
+    let tools = tool_schema_tokens(tools);
+    // 输出预留必须与请求真正携带的 `max_tokens` 对齐。以前固定按窗口的
+    // 1/8 预留，实际发出去的却是配置值：32K 窗口只留 4K、却要求 16K 输出，
+    // 提示词一过 16K，请求必然超窗——预留算得再漂亮也拦不住。
+    let output = max_output_tokens
+        .map(u64::from)
+        .unwrap_or(window / OUTPUT_RESERVE_DIVISOR);
+    // 输出再多也不能吃掉工具 schema 之外的一半：那是留给对话和压缩的空间。
+    let output = output.min(window.saturating_sub(tools) / 2).max(1);
+    let reserved = tools.saturating_add(output);
     window
         .checked_sub(reserved)
         .filter(|capacity| *capacity > 0)

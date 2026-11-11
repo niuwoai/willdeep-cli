@@ -23,6 +23,8 @@ willdeep --profile some-im --workspace .
 
 长会话会收拢渲染范围：可见轮次超过 100 时，聊天区只排版最近 50 轮，更早的在顶部折成一行「⋯ 更早的 N 轮已归档 · 翻到顶部继续载入」。滚动到顶自动放回一批（50 轮），记录本身一条不丢，会话文件也不受影响；这是渲染窗口，不是截断。
 
+`System:` 开头的系统回执（模型已切换、工具行已展开、开屏配置提示这类）只在刚发生时有用：它后面再落 3 条用户/助手消息，就不再画。和工具行折叠一样是显示层的事，记录不动，`Ctrl+F` 搜索时全部放回来；`Error:` 行不收，失败要一直看得见。切模型、调思考等级的「正在切换」「本轮结束后切换到 X」是过程行，结果出来时原位换成「已切换」，同一件事只占一行。
+
 状态栏**默认隐藏**——它是查阅面板而非常驻面板，聊天区才是主体。`/sidebar` 或 `Ctrl+B` 随时调出；宽终端会在右侧额外显示 Agent、待发队列、手机中继状态和工具完成情况，窄终端下改为打开覆盖层。隐藏时焦点自动回到输入框。
 
 Attention Inbox 会自动回收陈旧条目：顺利完成的后台任务停留 60 秒，失败/超时/被杀的保留 24 小时——那些需要人处理，但一天前失败的命令只是噪音，会把真正待办的挤出视野。运行中的任务永不回收。要复盘去任务详情与历史里找。
@@ -379,7 +381,7 @@ tmux set -g mouse on
 | `/uistyle [full|compact|status|no-status]` | 裸命令在完整 UI 与简洁 UI 间切换；`full` / `compact` 显式指定。`status` / `no-status` 显示或隐藏简洁 UI 底部状态栏，不改变当前布局；仅对当前 TUI 生效 |
 | `/clear` | 清空聊天显示（会话与上下文原样保留；要换上下文用 `/new`） |
 
-`/reasoning` 显示当前等级、Provider 默认值和可选等级；`/reasoning <等级>` 设置会话覆盖，`/reasoning default`、`/reasoning auto` 或 `/reasoning reset` 清除覆盖。`/reasoning set <等级>` 显式选择逻辑名称，例如 `/reasoning set default` 会选择名为 `default` 的等级，而不是清除覆盖。
+`/reasoning` 显示当前等级、Provider 默认值和可选等级；没有配置映射时显示内置 `low` / `medium` / `high` / `xhigh`。`/reasoning <等级>` 设置会话覆盖，`/reasoning default`、`/reasoning auto` 或 `/reasoning reset` 清除覆盖。`/reasoning set <等级>` 显式选择逻辑名称，例如 `/reasoning set default` 会选择名为 `default` 的等级，而不是清除覆盖。
 
 运行中切换会先校验并保存到 Runtime，只影响保存后领取的任务，当前任务沿用领取时的等级；非法等级不会覆盖此前有效选择。重开会话会恢复等级，即使会话尚未发送首条消息。`/thinking show|hide` 仍只控制 TUI 是否显示已有思维内容，与模型请求等级无关。
 

@@ -21,6 +21,14 @@ impl AnthropicMessagesProvider {
             config,
         })
     }
+
+    /// 模型自己的输出上限，再收进端点窗口留给提示词之外的空间。
+    fn request_max_tokens(&self, prompt_tokens: u64) -> u32 {
+        max_output_tokens(
+            &self.config.model,
+            self.config.output_token_limit(prompt_tokens),
+        )
+    }
 }
 
 fn apply_reasoning(
@@ -28,13 +36,12 @@ fn apply_reasoning(
     body: &mut serde_json::Value,
 ) -> Result<(), ProviderError> {
     if !config.non_thinking
-        && config.reasoning.as_ref().is_some_and(|reasoning| {
-            !reasoning.levels.is_empty()
-                && reasoning
-                    .parameter
-                    .as_deref()
-                    .is_none_or(|parameter| parameter == "output_config.effort")
-        })
+        && config.will_apply_reasoning()
+        && config
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.parameter.as_deref())
+            .is_none_or(|parameter| parameter == "output_config.effort")
     {
         body["thinking"] = serde_json::json!({ "type": "adaptive" });
     }
@@ -56,6 +63,10 @@ impl Provider for AnthropicMessagesProvider {
         Some(super::ProviderIdentity::from_config(&self.config))
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        Some(self.config.max_output_tokens.max(1))
+    }
+
     fn with_model(&self, model: &str) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
         let mut config = self.config.clone();
         config.model = model.to_owned();
@@ -69,9 +80,11 @@ impl Provider for AnthropicMessagesProvider {
     ) -> Result<Completion, ProviderError> {
         let (system, wire_messages) = encode_messages(messages);
         let wire_tools = tools.iter().map(AnthropicTool::from).collect::<Vec<_>>();
+        let prompt_tokens = crate::token_estimate::estimate_tokens(messages)
+            .saturating_add(crate::token_estimate::tool_schema_tokens(tools));
         let body = AnthropicRequest {
             model: &self.config.model,
-            max_tokens: max_output_tokens(&self.config.model, self.config.max_output_tokens),
+            max_tokens: self.request_max_tokens(prompt_tokens),
             system: cached_system(&system),
             messages: wire_messages,
             tools: wire_tools,
@@ -139,10 +152,7 @@ fn encode_messages(messages: &[Message]) -> (String, Vec<AnthropicMessage>) {
                             },
                         }),
                 );
-                output.push(AnthropicMessage {
-                    role: "user",
-                    content,
-                });
+                push_user_content(&mut output, content);
             }
             Role::Assistant => {
                 flush_tool_results(&mut output, &mut pending_tool_results);
@@ -180,6 +190,21 @@ fn flush_tool_results(messages: &mut Vec<AnthropicMessage>, pending: &mut Vec<An
     messages.push(AnthropicMessage {
         role: "user",
         content: std::mem::take(pending),
+    });
+}
+
+/// 连续两条 user 消息在 Anthropic 上是非法的：请求末尾的实时宿主指令
+/// 必须并进紧挨着的那条 user 消息，而不是另起一条。
+fn push_user_content(messages: &mut Vec<AnthropicMessage>, content: Vec<AnthropicContent>) {
+    if let Some(last) = messages.last_mut()
+        && last.role == "user"
+    {
+        last.content.extend(content);
+        return;
+    }
+    messages.push(AnthropicMessage {
+        role: "user",
+        content,
     });
 }
 
@@ -376,6 +401,32 @@ mod tests {
         assert_eq!(encoded[1].role, "user");
     }
 
+    /// 连续两条 user 消息在 Anthropic 上是非法的。请求末尾的实时宿主指令
+    /// 紧跟在用户消息或工具结果之后时，必须并进同一条 user 消息。
+    #[test]
+    fn adjacent_user_turns_merge_into_one_message() {
+        let call = ToolCall {
+            id: "tool_1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: "{}".to_owned(),
+        };
+        let messages = vec![
+            Message::system("system"),
+            Message::user("task"),
+            Message::host_instruction("[execution-budget] round 1"),
+            Message::assistant("", vec![call.clone()]),
+            Message::tool(&call, "result"),
+            Message::host_instruction("[execution-budget] round 2"),
+        ];
+        let (_, encoded) = encode_messages(&messages);
+        let roles: Vec<_> = encoded.iter().map(|message| message.role).collect();
+        assert_eq!(roles, ["user", "assistant", "user"]);
+        let first = serde_json::to_string(&encoded[0]).unwrap();
+        assert!(first.contains("task") && first.contains("[execution-budget] round 1"));
+        let last = serde_json::to_string(&encoded[2]).unwrap();
+        assert!(last.contains("tool_1") && last.contains("[execution-budget] round 2"));
+    }
+
     /// 记下的模型名只给界面看，出站的消息里不能出现。
     #[test]
     fn recorded_model_never_reaches_the_wire() {
@@ -451,5 +502,36 @@ mod tests {
         let silent: AnthropicUsage =
             serde_json::from_str(r#"{"input_tokens":1200,"output_tokens":80}"#).expect("usage");
         assert_eq!(silent.cache_read_input_tokens, None);
+    }
+
+    /// 没配映射时也能显式选内置档位：沿用仓库里唯一已知的联动，
+    /// adaptive thinking 与 effort 一起发。
+    #[test]
+    fn builtin_level_without_a_mapping_enables_adaptive_thinking() {
+        let mut config = ProviderConfig::new(
+            crate::provider::ProviderKind::Anthropic,
+            crate::provider::ApiDialect::AnthropicMessages,
+            "https://api.anthropic.com",
+            "key",
+            "claude-opus",
+        );
+        config.reasoning_level = Some("high".into());
+        let mut body = serde_json::json!({});
+        apply_reasoning(&config, &mut body).unwrap();
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(body["output_config"]["effort"], "high");
+
+        // 没选等级：两个字段都不出现，保持既有契约。
+        let mut idle = ProviderConfig::new(
+            crate::provider::ProviderKind::Anthropic,
+            crate::provider::ApiDialect::AnthropicMessages,
+            "https://api.anthropic.com",
+            "key",
+            "claude-opus",
+        );
+        idle.reasoning_level = None;
+        let mut empty = serde_json::json!({});
+        apply_reasoning(&idle, &mut empty).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
     }
 }

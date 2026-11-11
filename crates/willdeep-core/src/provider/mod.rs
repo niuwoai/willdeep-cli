@@ -6,6 +6,7 @@ mod error_detail;
 pub use error_detail::safe_error_detail;
 pub mod magpie;
 mod main_model;
+pub mod model_metadata;
 mod responses;
 pub mod sse;
 #[cfg(test)]
@@ -24,6 +25,12 @@ pub use anthropic::AnthropicMessagesProvider;
 pub use chat_completions::ChatCompletionsProvider;
 pub use main_model::{MainModelHandle, provider_model};
 pub use responses::ResponsesProvider;
+
+/// 请求体积估算与窗口之间留的余量：估算按字符比例算，不是真 tokenizer，
+/// 越贴近窗口越要留一点，免得「刚好等于」被服务端算成超出。
+const WINDOW_MARGIN_DIVISOR: u64 = 64;
+const MIN_WINDOW_MARGIN_TOKENS: u64 = 128;
+const MAX_WINDOW_MARGIN_TOKENS: u64 = 4_096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiDialect {
@@ -114,6 +121,43 @@ impl ReasoningProfile {
     }
 }
 
+/// 没有配置 `[providers.X.reasoning]` 映射时可直接指定的内置档位。按协议默认
+/// 参数路径原样发送（Chat Completions `reasoning_effort`、Responses
+/// `reasoning.effort`、Anthropic `output_config.effort`）；顺序就是界面上的档位顺序。
+/// 上游是否接受由模型决定：老模型可能拒绝 `xhigh`，失败会明确报在那一轮。
+pub const BUILTIN_REASONING_LEVELS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+
+/// 界面可选的等级：Provider 配了非空映射就只认映射里的名字，否则用内置档位。
+pub fn reasoning_levels(profile: Option<&ReasoningProfile>) -> Vec<String> {
+    match profile.filter(|profile| !profile.levels.is_empty()) {
+        Some(profile) => profile.levels.keys().cloned().collect(),
+        None => BUILTIN_REASONING_LEVELS
+            .iter()
+            .map(|level| (*level).to_owned())
+            .collect(),
+    }
+}
+
+/// 这个等级名在当前 Provider 上是否可用。有非空映射时映射是唯一集合；
+/// 没有映射时才认内置档位。
+pub fn accepts_reasoning_level(profile: Option<&ReasoningProfile>, level: &str) -> bool {
+    match profile.filter(|profile| !profile.levels.is_empty()) {
+        Some(profile) => profile.levels.contains_key(level),
+        None => BUILTIN_REASONING_LEVELS.contains(&level),
+    }
+}
+
+/// 一次请求实际会写进 body 的思考设置。
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectiveReasoning {
+    pub level: String,
+    pub value: serde_json::Value,
+    /// `None` 用方言默认参数路径。
+    pub parameter: Option<String>,
+    /// 等级来自内置阶梯而不是配置映射。
+    pub builtin: bool,
+}
+
 impl ProviderKind {
     pub fn infer(base_url: &str) -> Self {
         let host = Url::parse(base_url)
@@ -138,6 +182,9 @@ pub struct ProviderConfig {
     pub workspace_id: String,
     pub request_timeout_secs: u64,
     pub max_output_tokens: u32,
+    /// 端点接受的总窗口（提示词 + 回复）。知道时，请求里的 `max_tokens` 会被
+    /// 收进剩余空间，免得自己把请求顶出窗口；不知道就只发配置值。
+    pub context_window: Option<u64>,
     /// Per-profile logical-level to provider-value mapping.
     pub reasoning: Option<ReasoningProfile>,
     /// Per-session override; `None` selects the profile's configured default.
@@ -175,6 +222,7 @@ impl ProviderConfig {
             workspace_id: Uuid::new_v4().to_string(),
             request_timeout_secs: 600,
             max_output_tokens: 16_384,
+            context_window: None,
             reasoning: None,
             reasoning_level: None,
             non_thinking: false,
@@ -182,6 +230,25 @@ impl ProviderConfig {
             allow_unauthenticated: false,
             magpie_integration: false,
         }
+    }
+
+    /// 这次请求真正填进 `max_tokens` 的数。
+    ///
+    /// `max_output_tokens` 是上限而不是承诺：端点窗口已知时，回复只能占提示词
+    /// 之外剩下的那点空间。以前无论窗口多大都原样发 16384，窗口配成 16K 时
+    /// 任何非空请求都必然超限，而 400 不重试——整轮直接失败。
+    pub fn output_token_limit(&self, prompt_tokens: u64) -> u32 {
+        let configured = self.max_output_tokens.max(1);
+        let Some(window) = self.context_window.filter(|window| *window > 0) else {
+            return configured;
+        };
+        let margin = (window / WINDOW_MARGIN_DIVISOR)
+            .clamp(MIN_WINDOW_MARGIN_TOKENS, MAX_WINDOW_MARGIN_TOKENS);
+        let available = window.saturating_sub(prompt_tokens).saturating_sub(margin);
+        u32::try_from(available)
+            .unwrap_or(u32::MAX)
+            .min(configured)
+            .max(1)
     }
 
     pub fn validate(&self) -> Result<(), ProviderError> {
@@ -218,43 +285,84 @@ impl ProviderConfig {
                 .map_err(ProviderError::InvalidReasoningProfile)?;
         }
         if let Some(level) = self.reasoning_level.as_deref()
-            && !self
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| reasoning.levels.contains_key(level))
+            && !self.accepts_reasoning_level(level)
         {
             return Err(ProviderError::InvalidReasoningLevel(level.to_owned()));
         }
         Ok(())
     }
 
+    /// 有非空映射时映射是唯一集合；没有映射时内置档位可用。
+    pub fn accepts_reasoning_level(&self, level: &str) -> bool {
+        accepts_reasoning_level(self.reasoning.as_ref(), level)
+    }
+
+    /// 下一次请求会不会带思考等级。
+    pub fn will_apply_reasoning(&self) -> bool {
+        self.resolve_reasoning().ok().flatten().is_some()
+    }
+
+    /// 实际会写进请求的等级：会话显式选择优先，其次映射里的默认档。没有映射时
+    /// 只有显式选中的内置档位才会写——不选就什么都不发，保持既有契约。
+    pub fn effective_reasoning(&self) -> Option<EffectiveReasoning> {
+        self.resolve_reasoning().ok().flatten()
+    }
+
+    fn resolve_reasoning(&self) -> Result<Option<EffectiveReasoning>, ProviderError> {
+        if self.non_thinking {
+            return Ok(None);
+        }
+        if let Some(profile) = self
+            .reasoning
+            .as_ref()
+            .filter(|profile| !profile.levels.is_empty())
+        {
+            let Some(level) = self
+                .reasoning_level
+                .as_deref()
+                .or(profile.default_level.as_deref())
+            else {
+                return Ok(None);
+            };
+            let value = profile
+                .levels
+                .get(level)
+                .cloned()
+                .ok_or_else(|| ProviderError::InvalidReasoningLevel(level.to_owned()))?;
+            return Ok(Some(EffectiveReasoning {
+                level: level.to_owned(),
+                value,
+                parameter: profile.parameter.clone(),
+                builtin: false,
+            }));
+        }
+        let Some(level) = self.reasoning_level.as_deref() else {
+            return Ok(None);
+        };
+        if !BUILTIN_REASONING_LEVELS.contains(&level) {
+            return Err(ProviderError::InvalidReasoningLevel(level.to_owned()));
+        }
+        Ok(Some(EffectiveReasoning {
+            level: level.to_owned(),
+            value: serde_json::Value::String(level.to_owned()),
+            parameter: None,
+            builtin: true,
+        }))
+    }
+
     /// Apply the selected logical level using the configured request path, or
     /// the protocol's conventional path when the profile leaves it unspecified.
+    /// Without a profile mapping, only an explicitly chosen built-in level is sent.
     pub fn apply_reasoning(
         &self,
         body: &mut serde_json::Value,
         default_parameter: &str,
     ) -> Result<(), ProviderError> {
-        if self.non_thinking {
-            return Ok(());
-        }
-        let Some(reasoning) = self.reasoning.as_ref() else {
+        let Some(effective) = self.resolve_reasoning()? else {
             return Ok(());
         };
-        let Some(level) = self
-            .reasoning_level
-            .as_deref()
-            .or(reasoning.default_level.as_deref())
-        else {
-            return Ok(());
-        };
-        let value = reasoning
-            .levels
-            .get(level)
-            .cloned()
-            .ok_or_else(|| ProviderError::InvalidReasoningLevel(level.to_owned()))?;
-        let parameter = reasoning.parameter.as_deref().unwrap_or(default_parameter);
-        set_json_path(body, parameter, value)
+        let parameter = effective.parameter.as_deref().unwrap_or(default_parameter);
+        set_json_path(body, parameter, effective.value)
     }
 }
 
@@ -392,6 +500,72 @@ pub enum ProviderError {
     },
 }
 
+impl ProviderError {
+    /// 端点因为窗口装不下而拒绝了这个请求。外层 `Some` 表示「这是窗口问题」，
+    /// 内层是错误正文里引用的上限（说不上来就是 `None`）。
+    ///
+    /// 只认 400/413/422 且正文带窗口关键词的错误。参数写错、模型不存在这类
+    /// 400 收窗重试只会白烧一次调用，还可能把真正的错误盖掉。
+    pub fn context_overflow(&self) -> Option<Option<u64>> {
+        let Self::Http { status, body, .. } = self else {
+            return None;
+        };
+        if !matches!(status.as_u16(), 400 | 413 | 422) {
+            return None;
+        }
+        const MARKERS: [&str; 11] = [
+            "context length",
+            "context_length",
+            "context window",
+            "context_window",
+            "context size",
+            "maximum context",
+            "prompt is too long",
+            "too many tokens",
+            "reduce the length of the messages",
+            "max_model_len",
+            "exceeds the available context",
+        ];
+        let lower = body.to_ascii_lowercase();
+        MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+            .then(|| context_limit_from(body))
+    }
+}
+
+/// 从错误正文里摘出服务端声明的上下文上限。
+///
+/// 各家的说法不一样，按可信度顺序试：
+/// - Anthropic：`prompt is too long: 213431 tokens > 200000 maximum`
+/// - vLLM / OpenAI：`maximum context length is 32768 tokens`
+/// - 其他：`context window (8192 tokens) exceeded`、`... exceeds the maximum (8192)`
+///
+/// 只取第一个命中的数字。vLLM 的正文里同时有上限和「你请求了 N 个」，
+/// 先匹配上限的说法，才不会把请求体积当成窗口。
+fn context_limit_from(body: &str) -> Option<u64> {
+    use std::sync::LazyLock;
+    static PATTERNS: LazyLock<Vec<regex::Regex>> = LazyLock::new(|| {
+        [
+            r"(?i)>\s*(\d{3,9})\s*maximum",
+            r"(?i)maximum\s+(?:context\s+)?(?:length|window|size)[^0-9\n]{0,32}(\d{3,9})",
+            r"(?i)exceed\w*[^0-9\n]{0,48}(\d{3,9})",
+            r"(?i)context\s+(?:length|window|size)[^0-9\n]{0,32}(\d{3,9})",
+            r"(?i)max_model_len[^0-9\n]{0,32}(\d{3,9})",
+        ]
+        .into_iter()
+        .map(|pattern| regex::Regex::new(pattern).expect("valid context limit pattern"))
+        .collect()
+    });
+    PATTERNS.iter().find_map(|pattern| {
+        pattern
+            .captures(body)
+            .and_then(|captures| captures.get(1))
+            .and_then(|value| value.as_str().parse::<u64>().ok())
+            .filter(|limit| (1_000..=10_000_000).contains(limit))
+    })
+}
+
 #[async_trait]
 pub trait ProviderEventSink: Send + Sync {
     async fn emit(&self, event: ProviderEvent);
@@ -427,6 +601,12 @@ pub trait Provider: Send + Sync {
     /// Test doubles and wrappers that do not know leave it `None`; the ledger
     /// then records `provider`/`model` as null instead of guessing.
     fn ledger_identity(&self) -> Option<ProviderIdentity> {
+        None
+    }
+
+    /// 这个 Provider 会请求的回复上限。Agent 用它给提示词预算预留同等空间；
+    /// 测试替身和包装器不知道时留 `None`，调用方回落到窗口的 1/8。
+    fn max_output_tokens(&self) -> Option<u32> {
         None
     }
 
@@ -602,5 +782,88 @@ mod tests {
         }
         assert!(!is_magpie_gateway("https://example.com/v1", "magpie"));
         assert!(!is_magpie_gateway("http://localhost:11434/v1", "ollama"));
+    }
+
+    fn config_with_window(window: Option<u64>, output: u32) -> ProviderConfig {
+        let mut config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            ApiDialect::ChatCompletions,
+            "http://127.0.0.1:8000/v1",
+            "local",
+            "qwen3.8-27b",
+        );
+        config.context_window = window;
+        config.max_output_tokens = output;
+        config
+    }
+
+    #[test]
+    fn output_limit_is_untouched_without_a_declared_window() {
+        let config = config_with_window(None, 16_384);
+        assert_eq!(config.output_token_limit(100_000), 16_384);
+    }
+
+    #[test]
+    fn output_limit_shrinks_so_prompt_plus_completion_fits_the_window() {
+        let config = config_with_window(Some(16_384), 16_384);
+        // 提示词 12K 时只剩 4K 左右；正是「窗口 16K、max_tokens 16K」以前
+        // 必然超限的场景。
+        let limit = config.output_token_limit(12_288);
+        assert!(limit <= 4_096, "limit was {limit}");
+        assert!(limit > 0);
+        // 空提示词也保留估算余量，但仍贴着配置上限。
+        assert_eq!(config.output_token_limit(0), 16_128);
+        // 提示词已经超出窗口时只保留最小值，让服务端的 400 说明问题，
+        // 而不是再叠加一个我们自己造的超限。
+        assert_eq!(config.output_token_limit(20_000), 1);
+    }
+
+    #[test]
+    fn output_limit_never_exceeds_the_configured_ceiling() {
+        let config = config_with_window(Some(128_000), 8_192);
+        assert_eq!(config.output_token_limit(10_000), 8_192);
+    }
+
+    #[test]
+    fn context_overflow_is_recognised_and_its_limit_extracted() {
+        let cases = [
+            (
+                r#"{"error":{"message":"This model's maximum context length is 32768 tokens. However, you requested 40000 tokens (8000 in the messages, 32000 in the completion).","code":"context_length_exceeded"}}"#,
+                Some(32_768),
+            ),
+            (
+                r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 213431 tokens > 200000 maximum"}}"#,
+                Some(200_000),
+            ),
+            (
+                "the request exceeds the available context size, try increasing it",
+                None,
+            ),
+            (
+                r#"{"error":{"message":"context window (8192 tokens) exceeded"}}"#,
+                Some(8_192),
+            ),
+        ];
+        for (body, limit) in cases {
+            let error = ProviderError::Http {
+                status: reqwest::StatusCode::BAD_REQUEST,
+                body: body.to_owned(),
+                retry_after: None,
+            };
+            assert_eq!(error.context_overflow(), Some(limit), "{body}");
+        }
+        // 参数错误不是窗口问题：收窗重试只会白烧调用。
+        let invalid = ProviderError::Http {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            body: r#"{"error":{"message":"unknown parameter: tools"}}"#.to_owned(),
+            retry_after: None,
+        };
+        assert_eq!(invalid.context_overflow(), None);
+        let server_error = ProviderError::Http {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "maximum context length is 32768 tokens".to_owned(),
+            retry_after: None,
+        };
+        assert_eq!(server_error.context_overflow(), None);
     }
 }

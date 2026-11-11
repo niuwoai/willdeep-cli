@@ -704,26 +704,30 @@ pub(super) async fn event_loop(
             } else {
                 switch_model(&model, &mut app, session, store, runtime, &agent).await
             };
-            match result {
-                Ok(message) => app.append_transcript(format!("System: {message}")),
-                Err(error) => app.append_transcript(format!(
+            // 「本轮结束后切换到 X」那行到此完成使命，换成结果，不两行并排。
+            let row = match result {
+                Ok(message) => format!("System: {message}"),
+                Err(error) => format!(
                     "Error: {}: {error:#}",
                     language.text("切换模型失败", "Model switch failed", "モデル切替に失敗")
-                )),
-            }
+                ),
+            };
+            app.note_switch_settled(narration::PendingNotice::ModelSwitch, row);
         }
         if !app.running && app.pending_reasoning_level.take().is_some() {
-            match reasoning_commands::sync_pending(session, runtime, &agent, language).await {
-                Ok(message) => app.append_transcript(format!("System: {message}")),
-                Err(error) => app.append_transcript(format!(
-                    "Error: {}: {error:#}",
-                    language.text(
-                        "切换思考等级失败",
-                        "Set reasoning level failed",
-                        "思考レベルの設定に失敗"
-                    )
-                )),
-            }
+            let row =
+                match reasoning_commands::sync_pending(session, runtime, &agent, language).await {
+                    Ok(message) => format!("System: {message}"),
+                    Err(error) => format!(
+                        "Error: {}: {error:#}",
+                        language.text(
+                            "切换思考等级失败",
+                            "Set reasoning level failed",
+                            "思考レベルの設定に失敗"
+                        )
+                    ),
+                };
+            app.note_switch_settled(narration::PendingNotice::ReasoningLevel, row);
         }
         // 用户已提交的队列本身就是启动下一轮的理由。待处理内核事件会在模型
         // 边界投递，不能要求它们先被另一个自动唤醒消费；Runtime 终态、恢复的
@@ -1806,22 +1810,12 @@ pub(super) async fn event_loop(
                                         }
                                     }
                                     reasoning_commands::ReasoningCommand::Default => {
-                                        match reasoning_commands::set(None, &mut app, session, store, runtime, &agent).await {
-                                            Ok(message) => app.append_transcript(format!("System: {message}")),
-                                            Err(error) => app.append_transcript(format!(
-                                                "Error: {}: {error:#}",
-                                                language.text("恢复默认思考等级失败", "Restore default reasoning level failed", "既定の思考レベルへの復帰に失敗")
-                                            )),
-                                        }
+                                        let result = reasoning_commands::set(None, &mut app, session, store, runtime, &agent).await;
+                                        reasoning_commands::record_outcome(&mut app, result, language.text("恢复默认思考等级失败", "Restore default reasoning level failed", "既定の思考レベルへの復帰に失敗"));
                                     }
                                     reasoning_commands::ReasoningCommand::Set(level) => {
-                                        match reasoning_commands::set(Some(level), &mut app, session, store, runtime, &agent).await {
-                                            Ok(message) => app.append_transcript(format!("System: {message}")),
-                                            Err(error) => app.append_transcript(format!(
-                                                "Error: {}: {error:#}",
-                                                language.text("切换思考等级失败", "Set reasoning level failed", "思考レベルの設定に失敗")
-                                            )),
-                                        }
+                                        let result = reasoning_commands::set(Some(level), &mut app, session, store, runtime, &agent).await;
+                                        reasoning_commands::record_outcome(&mut app, result, language.text("切换思考等级失败", "Set reasoning level failed", "思考レベルの設定に失敗"));
                                     }
                                     reasoning_commands::ReasoningCommand::Usage => app.append_transcript(
                                         language.text(

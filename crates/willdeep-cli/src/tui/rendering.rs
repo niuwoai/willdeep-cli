@@ -54,11 +54,7 @@ impl App {
         let time_labels =
             self.message_times
                 .labels(self.transcript.len(), self.language, message_time::now());
-        let search = self
-            .search
-            .as_ref()
-            .map(|s| s.editor.text().trim().to_owned())
-            .filter(|s| !s.is_empty());
+        let search = self.active_search_query();
         let valid = self.transcript_render_cache.as_ref().is_some_and(|cache| {
             cache.width == self.transcript_width
                 && cache.expanded == self.tool_rows_expanded

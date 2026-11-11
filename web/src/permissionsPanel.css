@@ -37,6 +37,17 @@
 .permissions-footer .permissions-apply { background: var(--accent-strong); color: var(--on-accent); padding: 8px 14px; font-weight: 600; }
 .permissions-footer .permissions-apply:hover { background: var(--accent-strong); filter: brightness(1.1); color: var(--on-accent); }
 
+/* 思考等级拉杆：0 档是「跟随默认」，其余按档位排开；松手才提交。 */
+.reasoning-slider { display: grid; gap: 8px; padding: 2px 2px 6px; }
+.reasoning-slider-ticks { display: flex; justify-content: space-between; gap: 4px; font-size: 11px; line-height: 1.4; color: var(--text-dim); }
+.reasoning-slider-ticks span { flex: 1 1 0; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reasoning-slider-ticks span.current { color: var(--text); font-weight: 600; }
+.reasoning-slider input[type="range"] { width: 100%; height: 44px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.reasoning-slider input[type="range"]:disabled { cursor: default; opacity: .55; }
+.reasoning-slider input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+.reasoning-slider-current { margin: 0; font-size: 12px; color: var(--text-muted); }
+.reasoning-slider-hint { margin: 0; font-size: 11px; line-height: 1.6; color: var(--text-faint); }
+
 /* `/model` 选择器：先选档案，再在该档案的模型目录里搜索。 */
 .model-inspector { width: min(460px, calc(100vw - 24px)); max-height: min(80vh, 740px); overflow-y: auto; }
 .model-cascade-controls { display: grid; gap: 12px; margin-bottom: 14px; }

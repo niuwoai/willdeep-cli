@@ -1,7 +1,7 @@
 use super::*;
 use willdeep_core::conversation::{Plan, StepStatus};
 
-const PLAN_PREFIX: &str = "Plan: ";
+pub(super) const PLAN_PREFIX: &str = "Plan: ";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct PlanTranscript {

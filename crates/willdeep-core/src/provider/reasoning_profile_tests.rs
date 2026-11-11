@@ -113,6 +113,75 @@ fn invalid_selection_and_conflicting_paths_fail_without_replacing_existing_data(
 }
 
 #[test]
+fn builtin_ladder_applies_only_when_a_level_is_explicitly_selected() {
+    for (path, pointer) in [
+        ("reasoning_effort", "/reasoning_effort"),
+        ("reasoning.effort", "/reasoning/effort"),
+        ("output_config.effort", "/output_config/effort"),
+    ] {
+        let mut config = configured();
+        config.reasoning = None;
+        let mut body = json!({"model": "demo"});
+        // 没选等级：和以前一样，什么都不发。
+        config.apply_reasoning(&mut body, path).unwrap();
+        assert_eq!(body, json!({"model": "demo"}), "{path}");
+        assert!(!config.will_apply_reasoning(), "{path}");
+        // 显式选中内置档位：按方言默认参数路径原样发送。
+        config.reasoning_level = Some("xhigh".into());
+        config.validate().unwrap();
+        assert!(config.will_apply_reasoning(), "{path}");
+        assert!(config.accepts_reasoning_level("high"), "{path}");
+        assert!(!config.accepts_reasoning_level("unknown"), "{path}");
+        let effective = config.effective_reasoning().unwrap();
+        assert!(effective.builtin, "{path}");
+        assert_eq!(effective.level, "xhigh");
+        config.apply_reasoning(&mut body, path).unwrap();
+        assert_eq!(body.pointer(pointer), Some(&json!("xhigh")), "{path}");
+        assert_eq!(body["model"], json!("demo"), "{path}");
+    }
+}
+
+#[test]
+fn configured_mapping_rejects_builtin_names_it_does_not_define() {
+    let mut config = configured();
+    assert!(config.accepts_reasoning_level("deep"));
+    assert!(!config.accepts_reasoning_level("high"));
+    config.reasoning_level = Some("high".into());
+    assert!(matches!(
+        config.validate(),
+        Err(ProviderError::InvalidReasoningLevel(_))
+    ));
+}
+
+#[test]
+fn non_thinking_wins_over_a_selected_builtin_level() {
+    let mut config = configured();
+    config.reasoning = None;
+    config.reasoning_level = Some("high".into());
+    config.non_thinking = true;
+    let mut body = json!({"model": "demo"});
+    config
+        .apply_reasoning(&mut body, "reasoning_effort")
+        .unwrap();
+    assert_eq!(body, json!({"model": "demo"}));
+    assert!(!config.will_apply_reasoning());
+}
+
+#[test]
+fn an_empty_profile_behaves_like_an_unmapped_provider() {
+    let mut config = configured();
+    config.reasoning = Some(ReasoningProfile::default());
+    config.reasoning_level = Some("low".into());
+    config.validate().unwrap();
+    assert!(config.accepts_reasoning_level("low"));
+    let mut body = json!({});
+    config
+        .apply_reasoning(&mut body, "reasoning.effort")
+        .unwrap();
+    assert_eq!(body["reasoning"]["effort"], "low");
+}
+
+#[test]
 fn profile_validation_accepts_custom_names_and_rejects_invalid_maps() {
     for name in [
         "auto",

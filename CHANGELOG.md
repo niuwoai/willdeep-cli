@@ -6,6 +6,32 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.148.0-rc1] - 2026-11-11
+
+### Added
+- 思考等级内置四档 `low` / `medium` / `high` / `xhigh`：Provider 没有配置 `[providers.X.reasoning]` 映射时也能在 TUI `/reasoning`、移动端控制 API 和 Web 端显式指定，值写到各协议的默认参数路径（Chat Completions `reasoning_effort`、Responses `reasoning.effort`、Anthropic Messages `output_config.effort`，Anthropic 同时沿用 adaptive thinking）。未显式选择时不发送任何思考字段，与旧版本请求保持一致；配置了非空映射时映射仍是唯一集合，内置档位关闭。
+- Web 端思考等级选择器改为拉杆：第 0 档是「跟随 Provider 默认」，其余档位来自配置映射或内置阶梯；指针松手或失焦提交，键盘调整停 350ms 再提交；保存期间控件保持可用，请求串行化并只保留最后一次选择，失败回滚并显示上游原因。映射为数字或标准 effort 词表时按数值/词表排序，自定义且无序的名字仍保留下拉。切 Provider 后当前 Provider 不接受的旧等级会标为「不可用」并提示下一轮不生效，拉到其他档位或默认即可清除。
+- Provider 摘要接口新增 `reasoning_levels` 与 `reasoning_builtin`，Web 端据此渲染档位；旧 daemon 不返回时回退到原有下拉行为。
+- 内置 `reviewer` 子 Agent 改为结构化代码审查协议：按正确性、安全、数据与兼容、并发与生命周期、测试证据五类检查，每条发现必须给出严重级别、`file:line`、可复现的触发条件和错误结果，并区分 `CONFIRMED` 与 `PLAUSIBLE`；不报纯风格问题、不写补丁、不声称跑过命令或测试，没有发现时明确写 `No findings`。工具面保持只读并新增 `git log`，仍无 Shell 与写工具。设计与边界见[reviewer：内置代码审查协议](docs/decisions/2026-11-11-reviewer-code-review-protocol.md)。
+- 新增决策记录[思考等级：内置档位与 Web 拉杆](docs/decisions/2026-11-11-reasoning-slider.md)。
+
+### Changed
+- 思考等级校验收敛到 Core 的 `accepts_reasoning_level` / `reasoning_levels`：TUI、控制 API、Web 适配器、harness、切 Provider 与 fork 继承共用同一判定。
+- 配置映射里的等级名与内置档位互不越界：配了映射的 Provider 不再接受内置名，没配映射的 Provider 只接受内置四档。
+- TUI 切模型、调思考等级时聊天区只留一行回执：「正在切换模型」「本轮结束后切换到 X」这类过程行在结果（「模型已切换」或错误）出来时被原位换掉，不再和结果并排占两行；同一轮里连换多次也只留最后一句。换模型与换思考等级各替各的，互不干扰。
+- TUI 的 `System:` 回执行（模型已切换、工具行已展开、开屏配置提示等）在它后面又落了 3 条用户/助手消息之后不再显示：记录本身一条不动，只是不再占屏，与工具行折叠同一套显示层规则；`Ctrl+F` 搜索时全部放回来，`Error:` 行永远不收。
+
+### Fixed
+- Anthropic 适配器在未配置映射、但显式选择内置档位时不再漏发 adaptive thinking：判断依据从「有映射」改为「本次请求确实会应用思考等级」。
+- 请求里的 `max_tokens` 不再无条件发满 `max_output_tokens`：`context_window` 已知时按提示词体积收窄，保证提示词 + 回复不超出窗口；16K 窗口下不再任何非空请求都超限。
+- OpenAI 兼容端点未显式配置窗口时，启动读 `/v1/models` 自报的 `max_model_len`、`context_length`、`meta.n_ctx` 等字段并取较小值，daemon 子会话 preflight 同样兜底；服务端以 400 报出更小窗口时，Agent 自动收窗重试，最多两次。
+- 容量核算改用与实际请求一致的工具 schema（含宿主追加的 `update_plan`）与真实输出预留；压缩水位从 75% 提到 90%，128K 窗口不再约 80K 就开始压缩。
+- 每轮的计划、目标、预算与剩余时间改为请求末尾的宿主指令，不再拼进 system 消息：OpenAI 兼容端点（vLLM 等）的自动前缀缓存不会因首条消息每轮变化而整段历史重算。实时状态仍每轮重建、不进压缩摘要，也不写进 durable 历史。Anthropic 会把末尾宿主指令并进相邻的 user 消息，避免连续同角色消息。
+- TUI 删掉一行记录（替换过程行、队列占位行发出）后，按记录位置记的用户消息展开、工具行展开状态跟着前移，不再落到邻居行上；`Ctrl+F` 的命中下标同步前移，按 Enter 不会跳到邻居。
+- 淡出的 `System:` 回执仍参与工具行分段：夹在两条工具行中间的回执过期后不再把两侧并成一段（旧轮次里会连带两条工具行一起不显示）；计划卡算作一条助手消息，还挂在待发队列上的用户行不计入淡出计数。
+- 修复 headless 恢复夹具：实时宿主指令挂到请求末尾后，mock Provider 仍用最后一条消息当工具回执，`foreground_recovery` 因此在 CI 上确定性失败；改为从后往前找最后一条 `role=tool` 的消息。
+- 修正上下文窗口测试里的两处 Clippy 告警：`chat_completions.rs` 测试去掉多余借用，单条切片改用 `std::slice::from_ref`。
+
 ## [0.147.0-rc24] - 2026-11-10
 
 ### Added

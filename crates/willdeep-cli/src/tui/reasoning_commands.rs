@@ -47,15 +47,17 @@ pub(super) async fn show(
         .reasoning_level
         .as_deref()
         .unwrap_or_else(|| app.language.text("默认", "default", "既定"));
-    let Some(profile) = profile else {
+    let levels = willdeep_core::provider::reasoning_levels(profile).join(", ");
+    let Some(profile) = profile.filter(|profile| !profile.levels.is_empty()) else {
         return Ok(format!(
-            "{}: {current} · {}",
+            "{}: {current} · {}: {levels} · {}",
             app.language
                 .text("思考等级", "Reasoning level", "思考レベル"),
+            app.language.text("内置", "built-in", "組み込み"),
             app.language.text(
-                "当前 Provider 未配置等级映射",
-                "No reasoning levels are configured for this Provider",
-                "この Provider に思考レベルの設定がありません",
+                "当前 Provider 未配置映射，等级按协议默认字段直发",
+                "No mapping is configured for this Provider; levels go on the protocol's default field",
+                "この Provider にはマッピングがなく、レベルはプロトコルの既定フィールドで送信されます",
             )
         ));
     };
@@ -63,24 +65,13 @@ pub(super) async fn show(
         .default_level
         .as_deref()
         .unwrap_or_else(|| app.language.text("未设置", "unset", "未設定"));
-    let levels = profile
-        .levels
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
     Ok(format!(
-        "{}: {current} · {}: {default} · {}: {}",
+        "{}: {current} · {}: {default} · {}: {levels}",
         app.language
             .text("思考等级", "Reasoning level", "思考レベル"),
         app.language
             .text("Provider 默认", "Provider default", "Provider の既定"),
         app.language.text("可选", "available", "選択可能"),
-        if levels.is_empty() {
-            app.language.text("无", "none", "なし").to_owned()
-        } else {
-            levels
-        }
     ))
 }
 
@@ -126,11 +117,11 @@ async fn apply_with_persistence(
     persist: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
     if let Some(level) = &level {
-        let mapped = runtime
-            .provider_config
-            .reasoning
-            .as_ref()
-            .is_some_and(|profile| profile.levels.contains_key(level));
+        // 有映射只认映射键；没有映射时内置档位（low/medium/high/xhigh）可用。
+        let mapped = willdeep_core::provider::accepts_reasoning_level(
+            runtime.provider_config.reasoning.as_ref(),
+            level,
+        );
         anyhow::ensure!(
             mapped,
             "reasoning level `{level}` is not configured for the current Provider"
@@ -185,6 +176,20 @@ fn applied_message(level: Option<&str>, language: Language) -> String {
     }
 }
 
+/// `/reasoning` 的结果落进记录。本轮还在跑时 `set` 返回的是「下一任务生效」，
+/// 还是过程：轮次结束时 `sync_pending` 落的「已切换」会把它换掉，不占两行。
+/// 失败单独一行，不去动上一条仍在等待本轮结束的「已设为 X」——那次切换没有失败。
+pub(super) fn record_outcome(app: &mut App, result: Result<String>, failure: &str) {
+    let kind = narration::PendingNotice::ReasoningLevel;
+    match result {
+        Ok(message) if app.pending_reasoning_level.is_some() => {
+            app.note_switch_in_progress(kind, format!("System: {message}"));
+        }
+        Ok(message) => app.note_switch_settled(kind, format!("System: {message}")),
+        Err(error) => app.append_transcript(format!("Error: {failure}: {error:#}")),
+    }
+}
+
 pub(super) async fn sync_pending(
     session: &Session,
     runtime: &mut TuiRuntime,
@@ -235,10 +240,7 @@ fn sync_from_states(
     let level = restored_level(session, states)?;
     let mut config = runtime.provider_config.clone();
     let configured_level = level.as_ref().filter(|level| {
-        config
-            .reasoning
-            .as_ref()
-            .is_some_and(|profile| profile.levels.contains_key(*level))
+        willdeep_core::provider::accepts_reasoning_level(config.reasoning.as_ref(), level)
     });
     config.reasoning_level = configured_level.cloned();
     let provider = willdeep_core::provider::build_provider(config.clone())?;
@@ -509,6 +511,33 @@ mod tests {
         assert_eq!(
             fixture.sessions.level().unwrap().as_deref(),
             Some("balanced")
+        );
+    }
+
+    /// 没配映射时内置档位也认：存进 Runtime，下一任务生效。
+    #[tokio::test]
+    async fn builtin_level_is_accepted_without_a_mapping() {
+        let mut fixture = Fixture::new();
+        fixture.runtime.provider_config.reasoning = None;
+        let mut app = App::new(Vec::new(), Language::En);
+        let sessions = &fixture.sessions;
+        apply_with_persistence(
+            Some("high".into()),
+            &mut app,
+            &mut fixture.runtime,
+            &fixture.agent,
+            async {
+                sessions.set(Some("high"))?;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sessions.level().unwrap().as_deref(), Some("high"));
+        assert_eq!(fixture.runtime.reasoning_level.as_deref(), Some("high"));
+        assert_eq!(
+            fixture.runtime.provider_config.reasoning_level.as_deref(),
+            Some("high")
         );
     }
 }

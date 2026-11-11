@@ -893,6 +893,42 @@ pub(crate) async fn build(
     if let Some(dialect) = gateway.dialect {
         provider_config.dialect = dialect;
     }
+    let kind = provider_config.kind;
+    let model = provider_config.model.clone();
+    // 普通 OpenAI 兼容端点没有能力表扩展，但 vLLM / OpenRouter 会在
+    // `/v1/models` 里报每个模型的真实窗口。用户没显式钉死窗口时用它兜底，
+    // 免得启动时按 128K 估算、第一次请求就吃服务端的 400。
+    let server_window = if kind == ProviderKind::OpenAiCompatible
+        && provider_config.context_window.is_none()
+        && gateway.context_window.is_none()
+        && resumed
+            .and_then(|session| session.model_context_window)
+            .is_none()
+    {
+        willdeep_core::provider::model_metadata::load_server_context_window(home, &provider_config)
+            .await
+    } else {
+        None
+    };
+    preparation.mark("server_models");
+    let context_window = resumed
+        .and_then(|session| session.model_context_window)
+        .unwrap_or_else(|| {
+            session_context_window(
+                provider_config.context_window,
+                gateway.context_window,
+                &model,
+            )
+        });
+    // 服务端自报的窗口是上限：用户没写、网关没报时以它为准；写了更大的值也
+    // 不能发出去——那个 400 不重试，整轮直接失败。
+    let context_window = server_window.map_or(context_window, |server| {
+        context_window.min(server.clamp(
+            willdeep_core::CONTEXT_WINDOW_MIN,
+            willdeep_core::CONTEXT_WINDOW_MAX,
+        ))
+    });
+    provider_config.context_window = Some(context_window);
     let mut primary_provider_config = provider_config.clone();
     if let HarnessFrontend::Runtime {
         reasoning_level: Some(level),
@@ -900,13 +936,9 @@ pub(crate) async fn build(
     } = &frontend
     {
         primary_provider_config.reasoning_level = primary_provider_config
-            .reasoning
-            .as_ref()
-            .filter(|reasoning| reasoning.levels.contains_key(level))
-            .map(|_| level.clone());
+            .accepts_reasoning_level(level)
+            .then(|| level.clone());
     }
-    let kind = provider_config.kind;
-    let model = provider_config.model.clone();
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
     let workspace = resolve_workspace(cli, resumed)?;
     let delegation_read_only = resumed.is_some_and(|session| session.delegation_read_only);
@@ -1336,15 +1368,6 @@ pub(crate) async fn build(
         willdeep_core::prompt::CACHE_BOUNDARY,
         willdeep_core::prompt::dynamic_workspace_context(&workspace)
     );
-    let context_window = resumed
-        .and_then(|session| session.model_context_window)
-        .unwrap_or_else(|| {
-            session_context_window(
-                profile.and_then(|value| value.context_window),
-                gateway.context_window,
-                &model,
-            )
-        });
     // These inert values support frontend projections without restoring or installing a team.
     let (tools, subagents, goal_continuation, base_profiles) = if delegation_read_only {
         (
@@ -1727,7 +1750,11 @@ pub(crate) fn build_compression_settings(
     follow_main: Arc<dyn willdeep_core::provider::Provider>,
 ) -> Result<willdeep_core::agent::CompressionSettings> {
     let mut candidates = Vec::new();
-    for (config, hosted_prompt) in compressor_candidate_configs(loaded, parent, parent.kind)? {
+    let window = compressor_context_window(&loaded.file);
+    for (mut config, hosted_prompt) in compressor_candidate_configs(loaded, parent, parent.kind)? {
+        // 显式的压缩器窗口优先；否则沿用档案/父 Provider 已知的窗口，
+        // 好让请求里的 max_tokens 与实际收得下的原料对齐。
+        config.context_window = window.or(config.context_window);
         let context = if hosted_prompt {
             "initialize hosted context compressor"
         } else {

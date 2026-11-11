@@ -41,6 +41,10 @@ impl Provider for ResponsesProvider {
         Some(super::ProviderIdentity::from_config(&self.config))
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        Some(self.config.max_output_tokens.max(1))
+    }
+
     fn with_model(&self, model: &str) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
         let mut config = self.config.clone();
         config.model = model.to_owned();
@@ -54,6 +58,8 @@ impl Provider for ResponsesProvider {
     ) -> Result<Completion, ProviderError> {
         let (instructions, input) = encode_input(messages);
         let wire_tools = tools.iter().map(ResponseTool::from).collect::<Vec<_>>();
+        let prompt_tokens = crate::token_estimate::estimate_tokens(messages)
+            .saturating_add(crate::token_estimate::tool_schema_tokens(tools));
         let body = ResponsesRequest {
             model: &self.config.model,
             instructions: (!instructions.is_empty()).then_some(instructions),
@@ -61,7 +67,7 @@ impl Provider for ResponsesProvider {
             tools: wire_tools,
             stream: false,
             store: false,
-            max_output_tokens: self.config.max_output_tokens.max(1),
+            max_output_tokens: self.config.output_token_limit(prompt_tokens),
             reasoning: self
                 .config
                 .non_thinking

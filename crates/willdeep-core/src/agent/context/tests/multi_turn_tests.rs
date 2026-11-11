@@ -150,11 +150,16 @@ async fn real_agent_tool_turns_reuse_the_compressed_prefix() {
             }));
         }
         let turn = if index <= TOOL_TURNS { index + 1 } else { 1 };
-        assert!(request[0].content.contains(&format!(
+        assert!(request.last().unwrap().content.contains(&format!(
             "Current provider round: {turn}/{}.",
             TOOL_TURNS + 1
         )));
-        let capacity = message_capacity(WINDOW, &agent.tools.definitions()).unwrap();
+        let capacity = message_capacity(
+            WINDOW,
+            &agent.request_definitions(),
+            agent.completion_reserve(),
+        )
+        .unwrap();
         assert!(estimate_tokens(request) <= capacity);
     }
     assert!(
@@ -235,17 +240,40 @@ async fn live_plan_goal_and_deadline_survive_compression_without_invalidating_it
     assert!(counts[0] > 0);
     assert_eq!(*counts, vec![counts[0]; TOOL_TURNS + 1]);
     let requests = provider.requests.lock().unwrap();
+    let baseline_system = requests[0][0].content.clone();
     for request in requests.iter() {
         assert_pairs(request);
-        assert!(request[0].content.contains("<goal-state>"));
-        assert!(request[0].content.contains("[run-time-budget]"));
+        assert_eq!(
+            request[0].content, baseline_system,
+            "the system message must stay byte-identical between turns for prefix caching"
+        );
+        let live = &request.last().unwrap().content;
+        assert!(live.contains("<goal-state>"));
+        assert!(live.contains("[run-time-budget]"));
+        assert!(
+            !request[0].content.contains("<goal-state>"),
+            "live state must stay out of the cached system prefix"
+        );
         assert!(
             estimate_tokens(request)
-                <= message_capacity(WINDOW, &agent.tools.definitions()).unwrap()
+                <= message_capacity(
+                    WINDOW,
+                    &agent.request_definitions(),
+                    agent.completion_reserve()
+                )
+                .unwrap()
         );
     }
-    assert!(requests[1][0].content.contains("\"running\":[\"inspect\"]"));
-    let plan_json = requests[2][0]
+    assert!(
+        requests[1]
+            .last()
+            .unwrap()
+            .content
+            .contains("\"running\":[\"inspect\"]")
+    );
+    let plan_json = requests[2]
+        .last()
+        .unwrap()
         .content
         .split_once("<session-plan>")
         .unwrap()
@@ -299,9 +327,21 @@ async fn deadline_outcome_and_checkpoint_keep_the_full_system_pin() {
     let requests = root.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     let system = &requests[0][0].content;
-    assert!(system.contains("[execution-budget]"));
-    assert!(system.contains("[run-time-budget]"));
+    let live = &requests[0].last().unwrap().content;
+    assert!(live.contains("[execution-budget]"));
+    assert!(live.contains("[run-time-budget]"));
+    assert!(
+        !system.contains("[execution-budget]"),
+        "live budgets stay out of the durable system pin"
+    );
     assert_eq!(&result.messages[0].content, system);
+    assert!(
+        result
+            .messages
+            .iter()
+            .all(|message| !message.content.contains("[run-time-budget]")),
+        "live state must never enter durable history"
+    );
     let saved = checkpoints.0.lock().unwrap();
     assert_eq!(&saved.last().unwrap().messages[0].content, system);
 }
@@ -309,7 +349,12 @@ async fn deadline_outcome_and_checkpoint_keep_the_full_system_pin() {
 #[tokio::test]
 async fn live_context_reserves_capacity_without_entering_summary_input() {
     let (agent, compressor) = agent(WINDOW);
-    let capacity = message_capacity(WINDOW, &agent.tools.definitions()).unwrap();
+    let capacity = message_capacity(
+        WINDOW,
+        &agent.request_definitions(),
+        agent.completion_reserve(),
+    )
+    .unwrap();
     let live_context = format!("\nLIVE_STATE_CANARY{}", "x".repeat(capacity as usize * 2));
     let messages = vec![
         Message::system("stable rules"),
@@ -319,13 +364,13 @@ async fn live_context_reserves_capacity_without_entering_summary_input() {
     ];
     assert!(estimate_tokens(&messages) < capacity * COMPRESSION_TRIGGER_PERCENT / 100);
     let mut uncompressed = messages.clone();
-    uncompressed[0].content.push_str(&live_context);
+    uncompressed.push(Message::host_instruction(&live_context));
     assert!(estimate_tokens(&uncompressed) > capacity);
     let mut result = agent
         .request_messages_accounted(&messages, &mut None, None, &live_context, &mut |_| Ok(()))
         .await
         .unwrap();
-    result[0].content.push_str(&live_context);
+    result.push(Message::host_instruction(&live_context));
     assert!(estimate_tokens(&result) <= capacity);
     assert_pairs(&result);
     assert!(!compressor.requests.lock().unwrap().is_empty());

@@ -247,10 +247,13 @@ mod tests {
                 messages: &[Message],
                 _tools: &[ToolDefinition],
             ) -> Result<Completion, ProviderError> {
-                self.0
-                    .lock()
-                    .unwrap()
-                    .push(messages.last().unwrap().content.clone());
+                // 请求末尾还有运行时预算上下文，brief 不等于最后一条消息。
+                let prompt = messages
+                    .iter()
+                    .map(|message| message.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                self.0.lock().unwrap().push(prompt);
                 Ok(Completion {
                     reasoning: None,
                     content: "report".to_owned(),
@@ -322,7 +325,12 @@ mod tests {
                 messages: &[Message],
                 _tools: &[ToolDefinition],
             ) -> Result<Completion, ProviderError> {
-                let content = messages.last().unwrap().content.clone();
+                // 摘要分块请求只有一条消息；brief 请求末尾则是运行时预算上下文。
+                let content = messages
+                    .iter()
+                    .map(|message| message.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
                 self.0.lock().unwrap().push(content.clone());
                 Ok(Completion {
                     reasoning: None,
