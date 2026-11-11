@@ -114,6 +114,43 @@ impl ReasoningProfile {
     }
 }
 
+/// 没有配置 `[providers.X.reasoning]` 映射时可直接指定的内置档位。按协议默认
+/// 参数路径原样发送（Chat Completions `reasoning_effort`、Responses
+/// `reasoning.effort`、Anthropic `output_config.effort`）；顺序就是界面上的档位顺序。
+/// 上游是否接受由模型决定：老模型可能拒绝 `xhigh`，失败会明确报在那一轮。
+pub const BUILTIN_REASONING_LEVELS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+
+/// 界面可选的等级：Provider 配了非空映射就只认映射里的名字，否则用内置档位。
+pub fn reasoning_levels(profile: Option<&ReasoningProfile>) -> Vec<String> {
+    match profile.filter(|profile| !profile.levels.is_empty()) {
+        Some(profile) => profile.levels.keys().cloned().collect(),
+        None => BUILTIN_REASONING_LEVELS
+            .iter()
+            .map(|level| (*level).to_owned())
+            .collect(),
+    }
+}
+
+/// 这个等级名在当前 Provider 上是否可用。有非空映射时映射是唯一集合；
+/// 没有映射时才认内置档位。
+pub fn accepts_reasoning_level(profile: Option<&ReasoningProfile>, level: &str) -> bool {
+    match profile.filter(|profile| !profile.levels.is_empty()) {
+        Some(profile) => profile.levels.contains_key(level),
+        None => BUILTIN_REASONING_LEVELS.contains(&level),
+    }
+}
+
+/// 一次请求实际会写进 body 的思考设置。
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectiveReasoning {
+    pub level: String,
+    pub value: serde_json::Value,
+    /// `None` 用方言默认参数路径。
+    pub parameter: Option<String>,
+    /// 等级来自内置阶梯而不是配置映射。
+    pub builtin: bool,
+}
+
 impl ProviderKind {
     pub fn infer(base_url: &str) -> Self {
         let host = Url::parse(base_url)
@@ -218,43 +255,84 @@ impl ProviderConfig {
                 .map_err(ProviderError::InvalidReasoningProfile)?;
         }
         if let Some(level) = self.reasoning_level.as_deref()
-            && !self
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| reasoning.levels.contains_key(level))
+            && !self.accepts_reasoning_level(level)
         {
             return Err(ProviderError::InvalidReasoningLevel(level.to_owned()));
         }
         Ok(())
     }
 
+    /// 有非空映射时映射是唯一集合；没有映射时内置档位可用。
+    pub fn accepts_reasoning_level(&self, level: &str) -> bool {
+        accepts_reasoning_level(self.reasoning.as_ref(), level)
+    }
+
+    /// 下一次请求会不会带思考等级。
+    pub fn will_apply_reasoning(&self) -> bool {
+        self.resolve_reasoning().ok().flatten().is_some()
+    }
+
+    /// 实际会写进请求的等级：会话显式选择优先，其次映射里的默认档。没有映射时
+    /// 只有显式选中的内置档位才会写——不选就什么都不发，保持既有契约。
+    pub fn effective_reasoning(&self) -> Option<EffectiveReasoning> {
+        self.resolve_reasoning().ok().flatten()
+    }
+
+    fn resolve_reasoning(&self) -> Result<Option<EffectiveReasoning>, ProviderError> {
+        if self.non_thinking {
+            return Ok(None);
+        }
+        if let Some(profile) = self
+            .reasoning
+            .as_ref()
+            .filter(|profile| !profile.levels.is_empty())
+        {
+            let Some(level) = self
+                .reasoning_level
+                .as_deref()
+                .or(profile.default_level.as_deref())
+            else {
+                return Ok(None);
+            };
+            let value = profile
+                .levels
+                .get(level)
+                .cloned()
+                .ok_or_else(|| ProviderError::InvalidReasoningLevel(level.to_owned()))?;
+            return Ok(Some(EffectiveReasoning {
+                level: level.to_owned(),
+                value,
+                parameter: profile.parameter.clone(),
+                builtin: false,
+            }));
+        }
+        let Some(level) = self.reasoning_level.as_deref() else {
+            return Ok(None);
+        };
+        if !BUILTIN_REASONING_LEVELS.contains(&level) {
+            return Err(ProviderError::InvalidReasoningLevel(level.to_owned()));
+        }
+        Ok(Some(EffectiveReasoning {
+            level: level.to_owned(),
+            value: serde_json::Value::String(level.to_owned()),
+            parameter: None,
+            builtin: true,
+        }))
+    }
+
     /// Apply the selected logical level using the configured request path, or
     /// the protocol's conventional path when the profile leaves it unspecified.
+    /// Without a profile mapping, only an explicitly chosen built-in level is sent.
     pub fn apply_reasoning(
         &self,
         body: &mut serde_json::Value,
         default_parameter: &str,
     ) -> Result<(), ProviderError> {
-        if self.non_thinking {
-            return Ok(());
-        }
-        let Some(reasoning) = self.reasoning.as_ref() else {
+        let Some(effective) = self.resolve_reasoning()? else {
             return Ok(());
         };
-        let Some(level) = self
-            .reasoning_level
-            .as_deref()
-            .or(reasoning.default_level.as_deref())
-        else {
-            return Ok(());
-        };
-        let value = reasoning
-            .levels
-            .get(level)
-            .cloned()
-            .ok_or_else(|| ProviderError::InvalidReasoningLevel(level.to_owned()))?;
-        let parameter = reasoning.parameter.as_deref().unwrap_or(default_parameter);
-        set_json_path(body, parameter, value)
+        let parameter = effective.parameter.as_deref().unwrap_or(default_parameter);
+        set_json_path(body, parameter, effective.value)
     }
 }
 

@@ -28,13 +28,12 @@ fn apply_reasoning(
     body: &mut serde_json::Value,
 ) -> Result<(), ProviderError> {
     if !config.non_thinking
-        && config.reasoning.as_ref().is_some_and(|reasoning| {
-            !reasoning.levels.is_empty()
-                && reasoning
-                    .parameter
-                    .as_deref()
-                    .is_none_or(|parameter| parameter == "output_config.effort")
-        })
+        && config.will_apply_reasoning()
+        && config
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.parameter.as_deref())
+            .is_none_or(|parameter| parameter == "output_config.effort")
     {
         body["thinking"] = serde_json::json!({ "type": "adaptive" });
     }
@@ -451,5 +450,36 @@ mod tests {
         let silent: AnthropicUsage =
             serde_json::from_str(r#"{"input_tokens":1200,"output_tokens":80}"#).expect("usage");
         assert_eq!(silent.cache_read_input_tokens, None);
+    }
+
+    /// 没配映射时也能显式选内置档位：沿用仓库里唯一已知的联动，
+    /// adaptive thinking 与 effort 一起发。
+    #[test]
+    fn builtin_level_without_a_mapping_enables_adaptive_thinking() {
+        let mut config = ProviderConfig::new(
+            crate::provider::ProviderKind::Anthropic,
+            crate::provider::ApiDialect::AnthropicMessages,
+            "https://api.anthropic.com",
+            "key",
+            "claude-opus",
+        );
+        config.reasoning_level = Some("high".into());
+        let mut body = serde_json::json!({});
+        apply_reasoning(&config, &mut body).unwrap();
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(body["output_config"]["effort"], "high");
+
+        // 没选等级：两个字段都不出现，保持既有契约。
+        let mut idle = ProviderConfig::new(
+            crate::provider::ProviderKind::Anthropic,
+            crate::provider::ApiDialect::AnthropicMessages,
+            "https://api.anthropic.com",
+            "key",
+            "claude-opus",
+        );
+        idle.reasoning_level = None;
+        let mut empty = serde_json::json!({});
+        apply_reasoning(&idle, &mut empty).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
     }
 }

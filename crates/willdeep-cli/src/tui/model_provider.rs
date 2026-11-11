@@ -348,10 +348,7 @@ pub(super) async fn switch(
         .reasoning_level
         .as_ref()
         .filter(|level| {
-            config
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| reasoning.levels.contains_key(*level))
+            willdeep_core::provider::accepts_reasoning_level(config.reasoning.as_ref(), level)
         })
         .cloned();
     let clear_reasoning_level = runtime.reasoning_level.is_some() && selected_level.is_none();

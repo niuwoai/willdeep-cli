@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-10 | 当前版本：v0.147.0-rc24
+> 最后更新：2026-11-11 | 当前版本：v0.148.0-rc1
+
+0.148.0-rc1 让思考等级不再依赖 Provider 映射：没有 `[providers.X.reasoning]` 的档案也能在 TUI、控制 API 和 Web 端显式指定 `low` / `medium` / `high` / `xhigh`，值按各协议默认字段直发（Chat Completions `reasoning_effort`、Responses `reasoning.effort`、Anthropic `output_config.effort` 并联动 adaptive thinking）；不选就不发，与旧请求逐字节一致，配了映射时映射仍是唯一集合。Web 端选择器改为拉杆：第 0 档「跟随默认」，松手才提交，拖动期间请求串行化，失败回滚并显示上游原因。内置 `reviewer` 子 Agent 同时改为结构化代码审查协议：按正确性、安全、数据与兼容、并发、测试证据五类检查，每条发现给出严重级别、`file:line` 与可复现的触发条件，区分 `CONFIRMED` / `PLAUSIBLE`，不报纯风格问题、不写补丁、不声称跑过命令或测试，工具面仍只读并新增 `git log`。设计与边界见[思考等级：内置档位与 Web 拉杆](docs/decisions/2026-11-11-reasoning-slider.md)与[reviewer：内置代码审查协议](docs/decisions/2026-11-11-reviewer-code-review-protocol.md)。本次改动尚未安装或发布。
 
 0.147.0-rc24 让 TUI 能整块复制代码：双击任意围栏代码块即选中并复制围栏之间的原始正文（窄屏折行还原、围栏和语言标记不进入剪贴板），状态行回报行数；MuseTerm 里单击代码块会在右上角浮出 `⧉ 复制` 徽标，成功显示 `✓ 已复制` 两秒，失败显示 `✗ 失败`。MuseTerm 与 SSH 优先用 OSC 52 把正文交给终端写本机剪贴板（tmux 自动 DCS 透传），只能发送、拿不到回执时明确说「已发送」；其他终端不画徽标，只保留双击。设计与边界见[代码块整块复制](docs/decisions/2026-11-10-code-block-copy.md)。本次改动尚未安装或发布。
 

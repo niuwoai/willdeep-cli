@@ -194,7 +194,9 @@ balanced = "medium"
 deep = "high"
 ```
 
-`default_level` 必须对应 `levels` 中的一项。映射值可为字符串、数字或布尔值；逻辑名称允许 1–64 位 ASCII 字母、数字、`_` 和 `-`，不限定为 `low` / `medium` / `high`。省略 `parameter` 时，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。没有等级映射时不向请求添加该字段。
+`default_level` 必须对应 `levels` 中的一项。映射值可为字符串、数字或布尔值；逻辑名称允许 1–64 位 ASCII 字母、数字、`_` 和 `-`，不限定为 `low` / `medium` / `high`。省略 `parameter` 时，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。
+
+没有配置非空映射时，默认不向请求添加该字段；用户在 Web 或 TUI 里显式选择的 `low` / `medium` / `high` / `xhigh` 属于内置档位，会原样写到该协议的默认参数路径，不选则什么都不发。上游是否接受由模型决定（老模型可能拒绝 `xhigh`），失败会明确报在那一轮，不会静默降级。一旦配置了非空映射，内置档位即关闭，只认映射里的名字。
 
 也可在 `[providers.openai.reasoning]` 内写 `levels = { economy = "low", balanced = "medium", deep = "high" }`；Web 配置页支持这种内联映射的更新与清空。思考等级专用表单仅修改映射，不改写该 Provider 的隐藏连接字段、环境变量引用或隐式协议设置。
 

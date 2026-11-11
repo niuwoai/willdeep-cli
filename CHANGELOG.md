@@ -6,6 +6,22 @@
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
+## [0.148.0-rc1] - 2026-11-11
+
+### Added
+- 思考等级内置四档 `low` / `medium` / `high` / `xhigh`：Provider 没有配置 `[providers.X.reasoning]` 映射时也能在 TUI `/reasoning`、移动端控制 API 和 Web 端显式指定，值写到各协议的默认参数路径（Chat Completions `reasoning_effort`、Responses `reasoning.effort`、Anthropic Messages `output_config.effort`，Anthropic 同时沿用 adaptive thinking）。未显式选择时不发送任何思考字段，与旧版本请求保持一致；配置了非空映射时映射仍是唯一集合，内置档位关闭。
+- Web 端思考等级选择器改为拉杆：第 0 档是「跟随 Provider 默认」，其余档位来自配置映射或内置阶梯；指针松手或失焦提交，键盘调整停 350ms 再提交；保存期间控件保持可用，请求串行化并只保留最后一次选择，失败回滚并显示上游原因。映射为数字或标准 effort 词表时按数值/词表排序，自定义且无序的名字仍保留下拉。切 Provider 后当前 Provider 不接受的旧等级会标为「不可用」并提示下一轮不生效，拉到其他档位或默认即可清除。
+- Provider 摘要接口新增 `reasoning_levels` 与 `reasoning_builtin`，Web 端据此渲染档位；旧 daemon 不返回时回退到原有下拉行为。
+- 内置 `reviewer` 子 Agent 改为结构化代码审查协议：按正确性、安全、数据与兼容、并发与生命周期、测试证据五类检查，每条发现必须给出严重级别、`file:line`、可复现的触发条件和错误结果，并区分 `CONFIRMED` 与 `PLAUSIBLE`；不报纯风格问题、不写补丁、不声称跑过命令或测试，没有发现时明确写 `No findings`。工具面保持只读并新增 `git log`，仍无 Shell 与写工具。设计与边界见[reviewer：内置代码审查协议](docs/decisions/2026-11-11-reviewer-code-review-protocol.md)。
+- 新增决策记录[思考等级：内置档位与 Web 拉杆](docs/decisions/2026-11-11-reasoning-slider.md)。
+
+### Changed
+- 思考等级校验收敛到 Core 的 `accepts_reasoning_level` / `reasoning_levels`：TUI、控制 API、Web 适配器、harness、切 Provider 与 fork 继承共用同一判定。
+- 配置映射里的等级名与内置档位互不越界：配了映射的 Provider 不再接受内置名，没配映射的 Provider 只接受内置四档。
+
+### Fixed
+- Anthropic 适配器在未配置映射、但显式选择内置档位时不再漏发 adaptive thinking：判断依据从「有映射」改为「本次请求确实会应用思考等级」。
+
 ## [0.147.0-rc24] - 2026-11-10
 
 ### Added

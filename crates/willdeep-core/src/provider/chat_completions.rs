@@ -80,14 +80,10 @@ impl ChatCompletionsProvider {
             }
         }
         let wire_tools = tools.iter().map(WireTool::from).collect::<Vec<_>>();
-        let configured_reasoning = !self.config.non_thinking
-            && self
-                .config
-                .reasoning
-                .as_ref()
-                .is_some_and(|profile| !profile.levels.is_empty());
-        // Explicit profile mappings also apply to local/credential-free providers.
-        // Preserve their legacy non-thinking default only without such a mapping.
+        let configured_reasoning = self.config.will_apply_reasoning();
+        // Explicit profile mappings and explicitly chosen built-in levels also apply
+        // to local/credential-free providers. Preserve their legacy non-thinking
+        // default only when the request would not carry a reasoning field at all.
         let local_non_thinking = self.is_auxiliary_or_loopback() && !configured_reasoning;
         let body = ChatRequest {
             model: &self.config.model,
@@ -497,6 +493,23 @@ mod reasoning_level_tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn builtin_level_on_a_local_endpoint_overrides_the_legacy_non_thinking_default() {
+        for stream in [false, true] {
+            let mut config = configured("http://localhost:11434/v1", Some("think"), json!(true));
+            config.reasoning = None;
+            config.reasoning_level = Some("high".into());
+            config.validate().unwrap();
+            let body = ChatCompletionsProvider::new(config)
+                .unwrap()
+                .request_body(&[Message::user("check")], &[], stream)
+                .unwrap();
+            assert_eq!(body["reasoning_effort"], "high");
+            // 显式选了等级就不该再叠一层「本地默认关思考」。
+            assert!(body.get("think").is_none());
         }
     }
 

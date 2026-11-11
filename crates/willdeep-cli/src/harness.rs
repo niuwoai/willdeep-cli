@@ -900,10 +900,8 @@ pub(crate) async fn build(
     } = &frontend
     {
         primary_provider_config.reasoning_level = primary_provider_config
-            .reasoning
-            .as_ref()
-            .filter(|reasoning| reasoning.levels.contains_key(level))
-            .map(|_| level.clone());
+            .accepts_reasoning_level(level)
+            .then(|| level.clone());
     }
     let kind = provider_config.kind;
     let model = provider_config.model.clone();

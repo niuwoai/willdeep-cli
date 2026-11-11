@@ -896,10 +896,7 @@ impl TuiRuntime {
             .reasoning_level
             .as_ref()
             .filter(|level| {
-                config
-                    .reasoning
-                    .as_ref()
-                    .is_some_and(|profile| profile.levels.contains_key(*level))
+                willdeep_core::provider::accepts_reasoning_level(config.reasoning.as_ref(), level)
             })
             .cloned();
         config.reasoning_level = selected_level.clone();

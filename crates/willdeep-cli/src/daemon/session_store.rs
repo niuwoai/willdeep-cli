@@ -729,11 +729,12 @@ impl RuntimeSessionStore {
             source.reasoning_level.clone()
         } else if let Some(level) = source.reasoning_level.as_deref() {
             let loaded = crate::config::LoadedConfig::load(source.config.as_deref())?;
-            loaded
-                .select_provider(target_profile.as_deref())?
-                .and_then(|profile| profile.reasoning.as_ref())
-                .filter(|reasoning| reasoning.levels.contains_key(level))
-                .map(|_| level.to_owned())
+            let profile = loaded.select_provider(target_profile.as_deref())?;
+            willdeep_core::provider::accepts_reasoning_level(
+                profile.and_then(|profile| profile.reasoning.as_ref()),
+                level,
+            )
+            .then(|| level.to_owned())
         } else {
             None
         };
