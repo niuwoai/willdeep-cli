@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- 新增 [Multica 适配器](docs/MULTICA_ADAPTER.md)：`scripts/multica_claude_adapter.rb` 把 Multica daemon 的 Claude Code stream-json 调用翻译成 `willdeep run`，回传 `system`、`assistant`、`tool_result` 与 `result` 事件，支持 `--resume` 续跑。MCP、思考等级、追加系统提示词与工具白名单会被丢弃并记入 stderr；非 `bypassPermissions` 的权限模式直接拒绝。
+
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
