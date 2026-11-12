@@ -18,6 +18,7 @@ import { BuiltinConfigurationWorkspace } from "./BuiltinConfigurationWorkspace";
 import { PluginPage } from "./PluginPage";
 import { ScheduleManager } from "./ScheduleManager";
 import { IntakeManager } from "./IntakeManager";
+import { FederationPanel } from "./FederationPanel";
 import { McpPage } from "./McpAccess";
 import { ConversationSchedules } from "./ConversationSchedules";
 import { SessionCollaboration } from "./SessionCollaboration";
@@ -211,6 +212,7 @@ function railFromHash(): RailSelection {
   if (hash === "agents") return { kind: "agents" };
   if (hash === "agent-experiments") return { kind: "agent-experiments" };
   if (hash === "schedules") return { kind: "schedules" };
+  if (hash === "federation") return { kind: "federation" };
   if (hash === "intake") return { kind: "intake" };
   if (hash === "mcp") return { kind: "mcp" };
   if (hash === "configuration") return { kind: "configuration" };
@@ -223,6 +225,7 @@ function hashForRail(selection: RailSelection): string {
   if (selection.kind === "agents") return "#agents";
   if (selection.kind === "agent-experiments") return "#agent-experiments";
   if (selection.kind === "schedules") return "#schedules";
+  if (selection.kind === "federation") return "#federation";
   if (selection.kind === "intake") return "#intake";
   if (selection.kind === "mcp") return "#mcp";
   if (selection.kind === "configuration") return "#configuration";
@@ -1611,6 +1614,10 @@ export function App() {
 
   if (rail.kind === "schedules") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<ScheduleManager onDirty={(value) => { scheduleDirtyRef.current = value; }} workspaces={workspaces} workspace={workspace} language={language} messages={t} onOpenSession={(id, turnId) => { if (busy) { setError(scheduleText("sessionSwitchBusy", language)); setRail({ kind: "conversation" }); return; } setRail({ kind: "conversation" }); void loadSessionRef.current(id, turnId ?? null); }} />{pluginOverlays}</Flex></Box>;
+  }
+
+  if (rail.kind === "federation") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<FederationPanel language={language} onOpenSession={(id) => { setRail({ kind: "conversation" }); void loadSessionRef.current(id); }} />{pluginOverlays}</Flex></Box>;
   }
 
   if (rail.kind === "intake") {
