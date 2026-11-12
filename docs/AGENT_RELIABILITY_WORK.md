@@ -16,6 +16,11 @@
 
 ## 验证记录
 
+### web 抓取边界拆出 tools.rs（0.148.0-rc11，2026-11-12）
+
+- 现场：`crates/willdeep-core/src/tools.rs` 到 3056 行，超过 3000 行的手写文件上限，CI 的文件大小检查因此失败。
+- 判定：从 0.148.0-rc11 起，web 抓取的边界放在 `tools/web.rs`：公网地址判定、重定向处理、响应体上限和 HTML 转文本。`tools.rs` 降到 2817 行。行为不变，TUI 的媒体下载仍走同一个 `validate_public_url`。
+
 ### doctor 的网络说明与围栏一致（0.148.0-rc10，2026-11-12）
 
 - 现场：`sandbox_network` 未设置时，`harness::sandbox_network` 只有 read-only 档返回 Deny，workspace-write 与 strict、smart 都是 Allow。`willdeep doctor` 写成 workspace-write 也断网。

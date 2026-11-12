@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-12 | 当前版本：v0.148.0-rc10
+> 最后更新：2026-11-12 | 当前版本：v0.148.0-rc11
+
+0.148.0-rc11 把 `crates/willdeep-core/src/tools.rs` 里 web 抓取的边界拆到 `tools/web.rs`：公网判定、重定向、响应体上限和 HTML 转文本。`tools.rs` 从 3056 行降到 2817 行，回到 3000 行的手写文件上限以内。行为不变，TUI 的媒体下载仍走同一个 `validate_public_url`。本次改动尚未安装或发布。
 
 0.148.0-rc10 改了 `willdeep doctor` 的一句说明。`sandbox_network` 未设置时，只有 read-only 档断网，workspace-write 与 strict、smart 一样放行网络；此前 doctor 写成 workspace-write 也断网。围栏行为本身没有变。本次改动尚未安装或发布。
 

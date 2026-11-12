@@ -8,6 +8,11 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc11] - 2026-11-12
+
+### Fixed
+- `crates/willdeep-core/src/tools.rs` 超出 3000 行的手写文件上限（3056 行），CI 的文件大小检查因此失败。web 抓取的边界拆到 `tools/web.rs`：公网地址判定、重定向处理、响应体上限和 HTML 转文本。`tools.rs` 降到 2817 行。行为不变。
+
 ## [0.148.0-rc10] - 2026-11-12
 
 ### Fixed
