@@ -375,6 +375,7 @@ fn decode_completion(bytes: &[u8]) -> Result<Completion, ProviderError> {
                 _ => None,
             },
             cache_read_tokens: usage.cache_read_input_tokens,
+            ..Usage::default()
         }),
     })
 }

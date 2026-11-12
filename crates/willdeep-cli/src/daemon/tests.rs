@@ -1741,6 +1741,7 @@ async fn daemon_turns_link_ledger_lines_to_their_usage_events() {
                     output_tokens: Some(20),
                     total_tokens: Some(1_020 + call as u64),
                     cache_read_tokens: Some(512),
+                    ..willdeep_core::types::Usage::default()
                 }),
                 finish_reason: Some("stop".to_owned()),
             })

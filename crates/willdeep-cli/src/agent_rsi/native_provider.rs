@@ -229,6 +229,7 @@ impl Provider for BrokerProvider {
                     cache_read_tokens: usage["prompt_tokens_details"]["cached_tokens"]
                         .as_u64()
                         .or_else(|| usage["prompt_cache_hit_tokens"].as_u64()),
+                    ..Usage::default()
                 });
             Ok(Completion {
                 content,

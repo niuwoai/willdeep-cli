@@ -186,6 +186,7 @@ impl State {
                 cache_read_tokens: usage
                     .input_tokens_details
                     .and_then(|details| details.cached_tokens),
+                ..Usage::default()
             };
             self.usage = Some(usage.clone());
             updates.push(ProviderEvent::Usage(usage));

@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
@@ -485,6 +485,12 @@ pub struct Agent {
     /// 服务端实际接受的窗口。从 `config.context_window` 起步，只降不升：
     /// 400 明确说窗口更小时，它的数字比我们的配置权威。
     learned_context_window: AtomicU64,
+    /// 本次运行里窗口被收小的次数。随下一次带用量的调用落账后清零，所以一次
+    /// 收窗只进一行账。
+    context_window_tightens: AtomicU32,
+    /// 下一轮请求的前缀与上一轮不同：刚复用了一份新摘要，或把已发过的超长工具
+    /// 输出换成了摘录。只记一轮，落账后清零。
+    prefix_break: std::sync::atomic::AtomicBool,
 }
 
 impl Agent {
@@ -520,6 +526,8 @@ impl Agent {
             time_budget: None,
             inherited_deadline: None,
             learned_context_window,
+            context_window_tightens: AtomicU32::new(0),
+            prefix_break: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -570,8 +578,18 @@ impl Agent {
         usage: Option<&Usage>,
         outcome: crate::usage_ledger::Outcome,
     ) {
-        call.settle(usage, outcome);
-        let sequence = match usage {
+        let mut recorded = usage.cloned();
+        if let Some(usage) = recorded.as_mut() {
+            let tightens = self.context_window_tightens.swap(0, Ordering::Relaxed);
+            if tightens > 0 {
+                usage.context_window_tightens = Some(tightens);
+            }
+            if self.prefix_break.swap(false, Ordering::Relaxed) {
+                usage.prefix_cache_break = Some(true);
+            }
+        }
+        call.settle(recorded.as_ref(), outcome);
+        let sequence = match &recorded {
             Some(usage) => {
                 self.sink
                     .emit_sequenced(AgentEvent::Usage(usage.clone()))
@@ -619,8 +637,9 @@ impl Agent {
     /// 采纳一个更小的窗口。`reported` 是错误里引用的上限；没有数字、或数字
     /// 不比当前配置更小时，按四分之三保守收缩——服务端都没指出更小的窗口，
     /// 溢出多半来自估算偏低或输出预留不足。窗口只能变小：返回 `false` 表示
-    /// 已经无处可退，调用方应当把原始错误抛出去，而不是无限重试。
-    fn tighten_context_window(&self, reported: Option<u64>) -> bool {
+    /// 已经无处可退，调用方应当把原始错误抛出去，而不是无限重试。收成一次
+    /// 就记一笔，随下一次带用量的调用写进账本。
+    pub(crate) fn tighten_context_window(&self, reported: Option<u64>) -> bool {
         loop {
             let current = self.learned_context_window.load(Ordering::Relaxed);
             let candidate = match reported {
@@ -635,6 +654,7 @@ impl Agent {
                 .compare_exchange(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                self.context_window_tightens.fetch_add(1, Ordering::Relaxed);
                 return true;
             }
         }

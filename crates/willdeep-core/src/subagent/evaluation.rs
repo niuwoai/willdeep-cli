@@ -37,6 +37,7 @@ impl Provider for OfflineProvider {
             output_tokens: Some(10),
             total_tokens: Some(50),
             cache_read_tokens: Some(0),
+            ..Usage::default()
         });
         if call == 0 {
             return Ok(Completion {

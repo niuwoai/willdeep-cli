@@ -466,6 +466,7 @@ impl Provider for UsageProvider {
                 output_tokens: Some(300),
                 total_tokens: Some(1_100),
                 cache_read_tokens: None,
+                ..crate::types::Usage::default()
             }),
         })
     }
@@ -1498,6 +1499,7 @@ impl Provider for TokenHungryProvider {
                 output_tokens: Some(100),
                 total_tokens: Some(600),
                 cache_read_tokens: None,
+                ..crate::types::Usage::default()
             }),
             ..Completion::default()
         })
@@ -1729,8 +1731,14 @@ fn context_overflow_tightening_only_ever_shrinks() {
     assert_eq!(agent.effective_context_window(), 24_000);
     assert!(agent.tighten_context_window(None));
     assert_eq!(agent.effective_context_window(), 18_000);
-    // 退到零就停下，把原始错误抛给调用方。
+    // 退到零就停下，把原始错误抛给调用方。失败的这一次不计数。
     assert!(!agent.tighten_context_window(Some(0)));
+    assert_eq!(
+        agent
+            .context_window_tightens
+            .load(std::sync::atomic::Ordering::Relaxed),
+        3
+    );
     std::fs::remove_dir_all(agent.tools.workspace()).unwrap();
 }
 

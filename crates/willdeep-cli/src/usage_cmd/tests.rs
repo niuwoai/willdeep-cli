@@ -155,7 +155,11 @@ fn dry_run_reports_per_day_totals() {
     let home = fixture_home();
     let plan = plan_backfill(&home).unwrap();
     let report = render_report(&plan, true);
-    assert!(report.contains("\t3\t1\t17357\t16000\t316\n"), "{report}");
+    assert!(report.contains("\t3\t1\t17357\t16000\t1\t"), "{report}");
+    assert!(
+        report.contains("context window tightened 0 time(s)"),
+        "{report}"
+    );
     assert!(report.contains("would backfill 3 of 4 usage events"));
     assert!(!ledger_dir(&home).exists(), "dry run writes nothing");
     std::fs::remove_dir_all(home).unwrap();

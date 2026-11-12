@@ -5,6 +5,14 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc3] - 2026-11-12
+
+### Added
+- 用量账本每行新增 `context_window_tightens` 与 `prefix_cache_break`：前者记录这一轮请求发出前窗口被收小的次数，后者为 `true` 表示这一轮请求前缀与上一轮不同（首次复用一份新的压缩摘要，或已发过的超长工具输出被换成摘录），自动前缀缓存从这里断开。没发生写 `null`、不省略键；这两个键加进来之前的旧行按未知读取，不补 0。收窗失败（候选为 0）不计，从磁盘恢复的旧摘要不算新断开。
+
+### Fixed
+- `willdeep usage backfill --dry-run` 的缓存命中率不再把 Provider 没报 `cache_read_tokens` 的轮次算进分母：没报的轮次显示 `n/a`，报告末尾另列窗口收紧次数和前缀断开次数。
+
 ## [0.148.0-rc2] - 2026-11-12
 
 ### Fixed

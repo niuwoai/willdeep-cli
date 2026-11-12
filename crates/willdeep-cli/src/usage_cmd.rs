@@ -292,6 +292,7 @@ pub(crate) fn plan_backfill(home: &Path) -> Result<BackfillPlan> {
             output_tokens: usage.output_tokens,
             total_tokens: usage.total_tokens,
             cache_read_tokens: usage.cache_read_tokens,
+            ..Usage::default()
         };
         record.outcome = Outcome::Ok;
         record.event_sequence = Some(event.sequence);
@@ -332,8 +333,15 @@ struct DayTotals {
     calls: u64,
     subagent_calls: u64,
     input: u64,
+    /// 只累加 Provider 报了 `cache_read_tokens` 的轮次。没报的不进分母。
+    reported_input: u64,
     cached: u64,
+    /// 报了缓存数的调用次数。
+    reported_calls: u64,
     output: u64,
+    /// 窗口被收小的次数合计，以及请求前缀与上一轮断开的轮次。
+    window_tightens: u64,
+    prefix_breaks: u64,
 }
 
 pub(crate) fn render_report(plan: &BackfillPlan, dry_run: bool) -> String {
@@ -345,26 +353,56 @@ pub(crate) fn render_report(plan: &BackfillPlan, dry_run: bool) -> String {
             totals.subagent_calls += 1;
         }
         totals.input += record.usage.input_tokens.unwrap_or(0);
-        totals.cached += record.usage.cache_read_tokens.unwrap_or(0);
+        if let Some(cached) = record.usage.cache_read_tokens {
+            totals.cached += cached;
+            totals.reported_input += record.usage.input_tokens.unwrap_or(0);
+            totals.reported_calls += 1;
+        }
         totals.output += record.usage.output_tokens.unwrap_or(0);
+        totals.window_tightens += u64::from(record.usage.context_window_tightens.unwrap_or(0));
+        if record.usage.prefix_cache_break == Some(true) {
+            totals.prefix_breaks += 1;
+        }
     }
     let mut out = String::new();
-    out.push_str("day (local)\tcalls\tsubagent\tinput\tcached\toutput\n");
+    out.push_str(
+        "day (local)\tcalls\tsubagent\tinput\tcached\tcache-reported\tcache-rate\toutput\n",
+    );
     let mut total = DayTotals::default();
     for (day, totals) in &days {
         out.push_str(&format!(
-            "{day}\t{}\t{}\t{}\t{}\t{}\n",
-            totals.calls, totals.subagent_calls, totals.input, totals.cached, totals.output
+            "{day}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            totals.calls,
+            totals.subagent_calls,
+            totals.input,
+            totals.cached,
+            totals.reported_calls,
+            cache_rate(totals),
+            totals.output
         ));
         total.calls += totals.calls;
         total.subagent_calls += totals.subagent_calls;
         total.input += totals.input;
+        total.reported_input += totals.reported_input;
         total.cached += totals.cached;
+        total.reported_calls += totals.reported_calls;
         total.output += totals.output;
+        total.window_tightens += totals.window_tightens;
+        total.prefix_breaks += totals.prefix_breaks;
     }
     out.push_str(&format!(
-        "total\t{}\t{}\t{}\t{}\t{}\n",
-        total.calls, total.subagent_calls, total.input, total.cached, total.output
+        "total\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        total.calls,
+        total.subagent_calls,
+        total.input,
+        total.cached,
+        total.reported_calls,
+        cache_rate(&total),
+        total.output
+    ));
+    out.push_str(&format!(
+        "context window tightened {} time(s); prefix broke on {} call(s)\n",
+        total.window_tightens, total.prefix_breaks
     ));
     out.push_str(&format!(
         "{} {} of {} usage events; skipped {} already in the ledger, {} recorded live, {} from unfinished tasks\n",
@@ -376,6 +414,18 @@ pub(crate) fn render_report(plan: &BackfillPlan, dry_run: bool) -> String {
         plan.task_active,
     ));
     out
+}
+
+/// 命中 token 占「报了缓存数的轮次」输入 token 的百分比。没有一轮上报时写
+/// `n/a`，不写 0%——没报和确实没命中不是一回事。
+fn cache_rate(totals: &DayTotals) -> String {
+    if totals.reported_calls == 0 || totals.reported_input == 0 {
+        return "n/a".to_owned();
+    }
+    format!(
+        "{:.1}%",
+        totals.cached as f64 / totals.reported_input as f64 * 100.0
+    )
 }
 
 /// Unix 秒 → 本机时区的 `YYYY-MM-DD`。取不到本地偏移（非 Unix）时按 UTC。

@@ -298,6 +298,16 @@ pub struct Usage {
     /// 「确实一条没命中」——两者不是一回事，界面只在知道时展示命中率。
     #[serde(default)]
     pub cache_read_tokens: Option<u64>,
+    /// 这一轮请求发出前，服务端报窗口不够、客户端把窗口收小的次数。`None` 是
+    /// 「这一轮没有用量，计数没处可写」，账本行里输出 `null`，不省略键；这个字段
+    /// 加进来之前的旧行没有它，读出时按未知处理。
+    #[serde(default)]
+    pub context_window_tightens: Option<u32>,
+    /// 这一轮的请求前缀与上一轮不同：刚复用了一份新的压缩摘要，或已发过的
+    /// 超长工具输出被换成了摘录。自动前缀缓存从这里断开。账本行里 `null` 表示
+    /// 没断开，不省略键；旧行缺这个字段时按未知读出。
+    #[serde(default)]
+    pub prefix_cache_break: Option<bool>,
 }
 
 impl Usage {

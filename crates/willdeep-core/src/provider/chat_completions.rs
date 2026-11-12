@@ -672,6 +672,7 @@ fn decode_completion(bytes: &[u8]) -> Result<Completion, ProviderError> {
             output_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens,
             cache_read_tokens: usage.cache_read_tokens(),
+            ..Usage::default()
         }),
     })
 }

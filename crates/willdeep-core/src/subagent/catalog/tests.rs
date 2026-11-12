@@ -433,6 +433,7 @@ impl crate::provider::Provider for MeteredProvider {
                 output_tokens: Some(100),
                 total_tokens: None,
                 cache_read_tokens: None,
+                ..crate::types::Usage::default()
             }),
             ..Default::default()
         })

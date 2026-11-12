@@ -173,6 +173,46 @@ async fn automatic_compression_counts_in_outcome_and_durable_usage() {
     assert_eq!(ledger.usage.lock().unwrap().len(), 2);
 }
 
+/// 一份刚算出来的摘要，第一次被复用时请求前缀与上一轮不同，记一次断开；
+/// 同一份再复用就不再记。从会话恢复的旧摘要不算刚算出来的，不记。
+#[tokio::test]
+async fn the_first_turn_reusing_a_fresh_summary_is_marked_as_a_prefix_break() {
+    let (agent, _) = agent(WINDOW);
+    let ledger = Arc::new(Ledger::default());
+    let agent = agent.with_event_sink(ledger.clone());
+    let messages = history();
+    let system = system_fingerprint(&messages);
+    let fresh = SummaryCache::new(&messages, 10, "fresh summary".to_owned(), &system);
+    let mut cache = Some(fresh);
+    agent
+        .request_messages_accounted(&messages, &mut cache, None, "", &mut |_| Ok(()))
+        .await
+        .unwrap();
+    assert!(
+        agent.prefix_break.load(Ordering::Relaxed),
+        "the first reuse of a fresh summary changes the prefix"
+    );
+    agent.prefix_break.store(false, Ordering::Relaxed);
+    agent
+        .request_messages_accounted(&messages, &mut cache, None, "", &mut |_| Ok(()))
+        .await
+        .unwrap();
+    assert!(
+        !agent.prefix_break.load(Ordering::Relaxed),
+        "reusing the same summary again does not break the prefix a second time"
+    );
+
+    let restored = Some(SummaryCache::restore(cache.unwrap().persist()));
+    agent
+        .request_messages_accounted(&messages, &mut { restored }, None, "", &mut |_| Ok(()))
+        .await
+        .unwrap();
+    assert!(
+        !agent.prefix_break.load(Ordering::Relaxed),
+        "a summary restored from the session was already sent before"
+    );
+}
+
 #[tokio::test]
 async fn compression_exhausting_budget_prevents_root_request_and_keeps_bill() {
     let (mut agent, _) = agent(WINDOW);

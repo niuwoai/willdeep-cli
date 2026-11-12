@@ -238,6 +238,7 @@ mod command_tests {
             output_tokens: Some(200),
             total_tokens: Some(1_200),
             cache_read_tokens: None,
+            ..willdeep_core::types::Usage::default()
         });
         // 第二次请求：账目累加，而不是被最后一次覆盖。
         app.record_turn_usage(&willdeep_core::types::Usage {
@@ -245,6 +246,7 @@ mod command_tests {
             output_tokens: Some(300),
             total_tokens: Some(1_800),
             cache_read_tokens: None,
+            ..willdeep_core::types::Usage::default()
         });
         app.append_turn_stats(None);
 
