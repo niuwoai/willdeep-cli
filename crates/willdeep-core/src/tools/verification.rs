@@ -415,6 +415,14 @@ pub(super) fn verification_status(status: &BackgroundTaskStatus) -> Verification
     }
 }
 
+/// 验证失效用来收窄范围的材料：命令跑之前和之后与 HEAD 不一致的路径，
+/// 以及 cargo 目标名到目录的映射。任何一项缺了，判定退回整库快照比较。
+pub(super) struct VerificationCoverage {
+    pub dirty_before: Option<Vec<String>>,
+    pub dirty_after: Option<Vec<String>>,
+    pub package_dirs: Option<std::collections::BTreeMap<String, String>>,
+}
+
 pub(super) struct FinishedVerification {
     pub status: VerificationStatus,
     /// 结束后复核到的快照，仅在它和起始快照不同时给出。
@@ -423,10 +431,11 @@ pub(super) struct FinishedVerification {
 
 pub(super) fn finish_verification(
     capture: Option<&VerificationSnapshot>,
-    _command: &str,
+    command: &str,
     before: &Option<String>,
     status: VerificationStatus,
     output: &mut String,
+    coverage: Option<&VerificationCoverage>,
 ) -> FinishedVerification {
     let unchanged = FinishedVerification {
         status,
@@ -441,6 +450,18 @@ pub(super) fn finish_verification(
     match capture() {
         Ok(observed) if observed == *before => unchanged,
         Ok(observed) => {
+            // 整库快照变了，但变的都是这条命令覆盖不到的文件：另一个会话改了
+            // 无关文件，不该把一次退出码 0 的检查判成失效。两边的脏文件列表
+            // 缺任何一边，就退回整库比较，不猜。
+            if let Some(coverage) = coverage
+                && let (Some(earlier), Some(later)) = (
+                    coverage.dirty_before.as_deref(),
+                    coverage.dirty_after.as_deref(),
+                )
+                && !covered_paths_changed(command, earlier, later, coverage.package_dirs.as_ref())
+            {
+                return unchanged;
+            }
             output.push_str("\n[verification-invalidated] The workspace changed while this check ran, so exit code 0 is not evidence for the original files. This is not a test failure: another process or session may be writing to this workspace, or the check itself changed version-controlled files. Rerun once the workspace is stable.");
             FinishedVerification {
                 status: VerificationStatus::Invalidated,
@@ -455,6 +476,106 @@ pub(super) fn finish_verification(
             }
         }
     }
+}
+
+/// 这条命令覆盖的路径里，有没有在两次快照之间发生变化的。
+///
+/// 覆盖范围从命令本身读：`cargo test -p 某包` 只覆盖宿主给出的该包目录，带路径的
+/// 脚本只覆盖那个文件。读不出来（裸 `cargo test`、`pytest`、`npm test`，或宿主没给
+/// 目标名到目录的映射）就覆盖整个工作区，维持原来的整库比较。宁可多判失效，不多放行。
+pub(crate) fn covered_paths_changed(
+    command: &str,
+    before: &[String],
+    after: &[String],
+    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+) -> bool {
+    let Some(roots) = coverage_roots(command, package_dirs) else {
+        return true;
+    };
+    let covers = |path: &str| {
+        roots.iter().any(|root| {
+            path == root.as_str()
+                || path
+                    .strip_prefix(root.as_str())
+                    .is_some_and(|rest| root.ends_with('/') || rest.starts_with('/'))
+        })
+    };
+    let earlier = before
+        .iter()
+        .filter(|path| covers(path))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut later = after
+        .iter()
+        .filter(|path| covers(path))
+        .collect::<std::collections::BTreeSet<_>>();
+    earlier.len() != later.len() || earlier.iter().any(|path| !later.remove(path))
+}
+
+/// 命令显式点名的覆盖根。`None` 表示命令没有把范围收窄到具体路径，或点了
+/// cargo 目标但宿主没给出它的目录，两种都按整库算。
+fn coverage_roots(
+    command: &str,
+    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+) -> Option<Vec<String>> {
+    let words = verification_words(command)?;
+    let mut roots = Vec::new();
+    let mut narrowed = false;
+    let mut words = words.iter().map(String::as_str).peekable();
+    while let Some(word) = words.next() {
+        let target = match word {
+            "-p" | "--package" | "--bin" | "--test" | "--example" | "--bench" => {
+                words.next().filter(|name| valid_target_name(name))
+            }
+            "--lib" => Some("lib"),
+            _ => None,
+        };
+        if let Some(name) = target {
+            narrowed = true;
+            match package_dirs.and_then(|dirs| dirs.get(name)) {
+                Some(dir) => roots.push(dir.clone()),
+                // 点了目标却不知道它在哪：不能假设它没被改到。
+                None => return None,
+            }
+            continue;
+        }
+        if let Some(root) = workspace_relative_path(word) {
+            narrowed = true;
+            roots.push(root);
+        }
+    }
+    narrowed.then_some(roots)
+}
+
+/// 命令里显式点名的脚本文件才算覆盖根：`ruby checks.rb`、`python tests/run.py`。
+/// 目录（`pytest tests/`）和过滤参数（`cargo test -p x tools::`）不算——它们只是
+/// 命令的参数，不能据此把覆盖范围收窄到一处。绝对路径和 `..` 也不算。
+fn workspace_relative_path(word: &str) -> Option<String> {
+    if word.starts_with('-') || word.ends_with('/') || word.contains(':') {
+        return None;
+    }
+    let path = std::path::Path::new(word);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return None;
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    name.contains('.').then(|| word.to_owned())
+}
+
+fn valid_target_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
 #[cfg(test)]
@@ -523,6 +644,25 @@ pub(super) fn capture_accepted_snapshot(
     } else {
         None
     }
+}
+
+/// 当前快照里与 HEAD 不一致的路径。不是验证命令、或宿主没接这个能力时不拍。
+pub(super) fn dirty_paths_for(
+    list: Option<&VerificationDirtyPaths>,
+    accepted: bool,
+) -> Option<Vec<String>> {
+    if accepted {
+        list.and_then(|list| list().dirty_paths)
+    } else {
+        None
+    }
+}
+
+/// cargo 目标名到工作区相对目录的映射。宿主没接时按整库比较。
+pub(super) fn package_dirs_for(
+    list: Option<&VerificationDirtyPaths>,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    list.and_then(|list| list().package_dirs)
 }
 
 fn is_project_test_entry(command: &str) -> bool {
@@ -764,6 +904,7 @@ mod tests {
                 &Some("original".into()),
                 VerificationStatus::Passed,
                 &mut output,
+                None,
             );
             assert_eq!(finished.status, VerificationStatus::Invalidated);
             assert_eq!(finished.observed_snapshot_id, observed);
@@ -781,10 +922,129 @@ mod tests {
             &Some("original".into()),
             VerificationStatus::Passed,
             &mut output,
+            None,
         );
         assert_eq!(finished.status, VerificationStatus::Passed);
         assert_eq!(finished.observed_snapshot_id, None);
         assert_eq!(output, "exit_code: 0");
+    }
+
+    /// 整库快照变了，但变的文件不在命令覆盖范围内：退出码 0 仍然算通过。
+    /// 覆盖不到具体路径的命令（裸 `cargo test`）、点了未知目标的命令、以及覆盖
+    /// 范围内真有文件变化的，都维持失效。
+    #[test]
+    fn a_change_outside_the_command_coverage_does_not_invalidate_a_passing_check() {
+        let dirs = std::collections::BTreeMap::from([
+            ("willdeep".to_owned(), "crates/willdeep-cli/".to_owned()),
+            (
+                "willdeep-core".to_owned(),
+                "crates/willdeep-core/".to_owned(),
+            ),
+        ]);
+        let judge = |command: &str, before: &[&str], after: &[&str]| {
+            let capture: VerificationSnapshot = Arc::new(|| Ok(Some("changed".into())));
+            let mut output = "exit_code: 0".to_owned();
+            let owned = |paths: &[&str]| {
+                paths
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect::<Vec<_>>()
+            };
+            let coverage = VerificationCoverage {
+                dirty_before: Some(owned(before)),
+                dirty_after: Some(owned(after)),
+                package_dirs: Some(dirs.clone()),
+            };
+            finish_verification(
+                Some(&capture),
+                command,
+                &Some("original".into()),
+                VerificationStatus::Passed,
+                &mut output,
+                Some(&coverage),
+            )
+            .status
+        };
+
+        // 另一个会话改了 core，这条命令只覆盖 CLI 包。
+        assert_eq!(
+            judge(
+                "cargo test -p willdeep --bin willdeep",
+                &["crates/willdeep-core/src/lib.rs"],
+                &[
+                    "crates/willdeep-core/src/lib.rs",
+                    "crates/willdeep-core/src/agent.rs"
+                ],
+            ),
+            VerificationStatus::Passed
+        );
+        // 带路径的脚本只覆盖那个文件，别处的改动不算。
+        assert_eq!(
+            judge("ruby checks.rb", &["notes.md"], &["notes.md", "README.md"],),
+            VerificationStatus::Passed
+        );
+        // 覆盖范围内的文件变了，照旧失效。
+        assert_eq!(
+            judge(
+                "cargo test -p willdeep-core",
+                &["crates/willdeep-core/src/lib.rs"],
+                &[
+                    "crates/willdeep-core/src/lib.rs",
+                    "crates/willdeep-core/src/agent.rs"
+                ],
+            ),
+            VerificationStatus::Invalidated
+        );
+        // 裸命令覆盖整个工作区：任何一个文件变了都失效。
+        assert_eq!(
+            judge("cargo test", &["README.md"], &["README.md", "notes.md"]),
+            VerificationStatus::Invalidated
+        );
+        // 目录参数和过滤参数不是覆盖根：不能据此把范围收窄到一处。
+        assert_eq!(
+            judge(
+                "pytest tests/",
+                &["src/app.py"],
+                &["src/app.py", "pyproject.toml"],
+            ),
+            VerificationStatus::Invalidated
+        );
+        assert_eq!(
+            judge(
+                "cargo test -p willdeep tools::",
+                &["crates/willdeep-cli/src/lib.rs"],
+                &[
+                    "crates/willdeep-cli/src/lib.rs",
+                    "crates/willdeep-cli/src/main.rs"
+                ],
+            ),
+            VerificationStatus::Invalidated
+        );
+        // 点了宿主没给目录的目标：不能假设它没被改到。
+        assert_eq!(
+            judge("cargo test -p unknown", &["README.md"], &["README.md"]),
+            VerificationStatus::Invalidated
+        );
+        // 脏文件列表缺一边：退回整库比较。
+        let capture: VerificationSnapshot = Arc::new(|| Ok(Some("changed".into())));
+        let mut output = "exit_code: 0".to_owned();
+        let coverage = VerificationCoverage {
+            dirty_before: Some(Vec::new()),
+            dirty_after: None,
+            package_dirs: Some(dirs),
+        };
+        assert_eq!(
+            finish_verification(
+                Some(&capture),
+                "cargo test -p willdeep",
+                &Some("original".into()),
+                VerificationStatus::Passed,
+                &mut output,
+                Some(&coverage),
+            )
+            .status,
+            VerificationStatus::Invalidated
+        );
     }
 
     #[tokio::test]

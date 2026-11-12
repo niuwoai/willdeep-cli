@@ -76,6 +76,14 @@ pub enum VerificationStatus {
 
 type VerificationReporter = Arc<dyn Fn(CommandVerification) + Send + Sync>;
 type VerificationSnapshot = Arc<dyn Fn() -> Result<Option<String>, String> + Send + Sync>;
+/// 拍下当前快照里与 HEAD 不一致的路径，以及 `cargo -p/--bin/--test` 这类
+/// 目标名到工作区相对目录的映射。两个都是 `None` 表示列不出来（不是 Git 仓库、
+/// 读失败，或宿主没接），验证失效退回整库快照比较，不猜。
+pub struct VerificationWorkspaceView {
+    pub dirty_paths: Option<Vec<String>>,
+    pub package_dirs: Option<std::collections::BTreeMap<String, String>>,
+}
+type VerificationDirtyPaths = Arc<dyn Fn() -> VerificationWorkspaceView + Send + Sync>;
 
 const DEFAULT_WEB_MAX_CHARS: usize = 20_000;
 const MAX_WEB_MAX_CHARS: usize = 100_000;
@@ -244,6 +252,7 @@ pub struct ToolRegistry {
     always_allow_path: Option<PathBuf>,
     verification_reporter: Option<VerificationReporter>,
     verification_snapshot: Option<VerificationSnapshot>,
+    verification_dirty_paths: Option<VerificationDirtyPaths>,
     verification_records: Arc<Mutex<verification::EvidenceRecords>>,
     safety_judge: Option<Arc<dyn SafetyJudge>>,
     task_context: Arc<Mutex<String>>,
@@ -374,6 +383,7 @@ impl ToolRegistry {
             always_allow_path: None,
             verification_reporter: None,
             verification_snapshot: None,
+            verification_dirty_paths: None,
             verification_records: Arc::new(Mutex::new(verification::EvidenceRecords::default())),
             safety_judge: None,
             task_context: Arc::new(Mutex::new(String::new())),
@@ -506,6 +516,16 @@ impl ToolRegistry {
         F: Fn() -> Result<Option<String>, String> + Send + Sync + 'static,
     {
         self.verification_snapshot = Some(Arc::new(capture));
+        self
+    }
+    /// 列出当前快照里与 HEAD 不一致的路径，以及 cargo 目标名到目录的映射。
+    /// 验证失效据此收窄：命令覆盖不到的文件变了，不把一次退出码 0 的检查判成
+    /// 失效。不接时维持整库快照比较。
+    pub fn with_verification_dirty_paths<F>(mut self, list: F) -> Self
+    where
+        F: Fn() -> VerificationWorkspaceView + Send + Sync + 'static,
+    {
+        self.verification_dirty_paths = Some(Arc::new(list));
         self
     }
     pub fn with_always_allow_store(mut self, path: PathBuf) -> Result<Self, ToolError> {
@@ -1805,6 +1825,7 @@ impl ToolRegistry {
             let sandbox = sandbox.clone();
             let verification_reporter = self.verification_reporter.clone();
             let verification_snapshot = self.verification_snapshot.clone();
+            let verification_dirty_paths = self.verification_dirty_paths.clone();
             let id = self.background.start_retriable(
                 BackgroundTaskKind::Shell,
                 description,
@@ -1815,20 +1836,36 @@ impl ToolRegistry {
                     let sandbox = sandbox.clone();
                     let verification_reporter = verification_reporter.clone();
                     let verification_snapshot = verification_snapshot.clone();
+                    let verification_dirty_paths = verification_dirty_paths.clone();
                     async move {
                         let snapshot_id = verification::capture_accepted_snapshot(
                             verification_snapshot.as_ref(),
                             accepted_verification,
                         );
+                        let dirty_before = verification::dirty_paths_for(
+                            verification_dirty_paths.as_ref(),
+                            accepted_verification,
+                        );
                         let mut result =
                             run_background_shell(command.clone(), workspace, timeout, sandbox)
                                 .await;
+                        let coverage = verification::VerificationCoverage {
+                            dirty_before,
+                            dirty_after: verification::dirty_paths_for(
+                                verification_dirty_paths.as_ref(),
+                                accepted_verification,
+                            ),
+                            package_dirs: verification::package_dirs_for(
+                                verification_dirty_paths.as_ref(),
+                            ),
+                        };
                         let finished = verification::finish_verification(
                             verification_snapshot.as_ref(),
                             &command,
                             &snapshot_id,
                             verification_status(&result.status),
                             &mut result.output,
+                            Some(&coverage),
                         );
                         verification::report_accepted_verification(
                             verification_reporter
@@ -1854,6 +1891,10 @@ impl ToolRegistry {
         }
         let snapshot_id = verification::capture_accepted_snapshot(
             self.verification_snapshot.as_ref(),
+            accepted_verification,
+        );
+        let dirty_before = verification::dirty_paths_for(
+            self.verification_dirty_paths.as_ref(),
             accepted_verification,
         );
         let output = match crate::execution::run_capture(
@@ -1904,6 +1945,14 @@ impl ToolRegistry {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let coverage = verification::VerificationCoverage {
+            dirty_before,
+            dirty_after: verification::dirty_paths_for(
+                self.verification_dirty_paths.as_ref(),
+                accepted_verification,
+            ),
+            package_dirs: verification::package_dirs_for(self.verification_dirty_paths.as_ref()),
+        };
         let finished = verification::finish_verification(
             self.verification_snapshot.as_ref(),
             &args.command,
@@ -1914,6 +1963,7 @@ impl ToolRegistry {
                 VerificationStatus::Failed
             },
             &mut text,
+            Some(&coverage),
         );
         verification::report_accepted_verification(
             self.verification_reporter
@@ -2264,6 +2314,15 @@ use background_shell::run_background_shell;
 pub use background_shell::run_background_supervisor;
 pub(crate) use delegation::PARENT_ONLY_TOOLS;
 pub use verification::RunVerification;
+/// 命令覆盖范围内的脏路径有没有变化。验证失效据此收窄，宿主测试也用它核对。
+pub fn covered_paths_changed(
+    command: &str,
+    before: &[String],
+    after: &[String],
+    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+) -> bool {
+    verification::covered_paths_changed(command, before, after, package_dirs)
+}
 mod edit_match;
 use edit_match::match_edit_text;
 mod patch_contract;

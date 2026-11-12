@@ -5,6 +5,11 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc5] - 2026-11-12
+
+### Fixed
+- 退出码 0 的验证不再因为工作区任何一处变了就记成失效。`cargo test -p`、`--bin`、`--test`、`--example`、`--bench`、`--lib` 只覆盖 `cargo metadata` 给出的该目标目录，`ruby checks.rb`、`python tests/run.py` 这类点名脚本文件的命令只覆盖那个文件；变的路径都不在覆盖范围内，结果仍然算通过。裸 `cargo test`、`pytest`、`npm test` 读不出覆盖范围，维持整库比较。目录参数（`pytest tests/`）和过滤参数（`cargo test tools::`）不当成覆盖根。脏路径或目标目录读不出来时退回整库比较，不猜。覆盖范围内的文件变了照旧失效，`invalidated` 仍不能通过完成门禁。
+
 ## [0.148.0-rc4] - 2026-11-12
 
 ### Added
