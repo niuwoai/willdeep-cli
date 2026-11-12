@@ -135,6 +135,22 @@ impl Ledger {
             })
     }
 
+    /// 本父会话派出、还没到终态的子会话。目标完成门用它拦住过早收口。
+    /// 以 Link 的当前控制态为准，不看任务上那份可能过期的投影。
+    pub fn delegated_in_flight(&self, parent: Uuid) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in self.assignments.values() {
+            let task = &entry.task;
+            if task.parent_session_id == parent
+                && !task.status.is_terminal()
+                && self.is_delegated(task)
+            {
+                seen.insert(task.child_session_id.to_string());
+            }
+        }
+        seen.into_iter().collect()
+    }
+
     pub fn pending(&self, parent: Uuid) -> Vec<(Uuid, String)> {
         self.assignments
             .values()
@@ -290,6 +306,25 @@ impl ChildStore {
     #[cfg(test)]
     pub fn host_context(&self, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
         self.host_context_for_turn(parent, None)
+    }
+
+    /// 本父会话派出、还没到终态的子会话。只读：不改账本、不建文件。
+    /// 读不出来返回错误，调用方决定是拦下还是放行。
+    pub fn delegated_in_flight(&self, parent: Uuid) -> Result<Vec<String>> {
+        match std::fs::read(&self.path) {
+            Ok(data) => {
+                let ledger =
+                    serde_json::from_slice::<Ledger>(&data).context("decode child session ledger")?;
+                anyhow::ensure!(
+                    ledger.schema == CHILD_SESSION_SCHEMA,
+                    "unsupported child session ledger schema {}",
+                    ledger.schema
+                );
+                Ok(ledger.delegated_in_flight(parent))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error).context("read child session ledger"),
+        }
     }
 
     pub fn host_context_for_turn(

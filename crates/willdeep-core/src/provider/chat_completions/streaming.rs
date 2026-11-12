@@ -105,6 +105,7 @@ impl State {
                 output_tokens: usage.completion_tokens,
                 total_tokens: usage.total_tokens,
                 cache_read_tokens: usage.cache_read_tokens(),
+                ..Usage::default()
             };
             self.usage = Some(usage.clone());
             updates.push(ProviderEvent::Usage(usage));

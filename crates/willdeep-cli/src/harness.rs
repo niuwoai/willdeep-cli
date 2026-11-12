@@ -1265,8 +1265,13 @@ pub(crate) async fn build(
         // 要不要唤醒。Runtime（daemon）前端暂时没有接唤醒，事件在下一个回合
         // 边界照常交付。
         .with_monitor_events(kernel.clone(), session_id, home.join("monitors"))
-        .with_fallible_verification_snapshot(move || {
-            verification::snapshot(&verification_snapshot_workspace)
+        .with_fallible_verification_snapshot({
+            let workspace = verification_snapshot_workspace.clone();
+            move || verification::snapshot(&workspace)
+        })
+        // 失效判定据此收窄：命令覆盖不到的文件变了，不把退出码 0 判成失效。
+        .with_verification_dirty_paths(move || {
+            verification::workspace_view(&verification_snapshot_workspace)
         })
         .with_verification_reporter(move |verification| {
             let home = verification_home.clone();

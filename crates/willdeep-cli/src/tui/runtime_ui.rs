@@ -742,6 +742,7 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 cache_read_tokens: value
                     .get("cache_read_tokens")
                     .and_then(|value| value.as_u64()),
+                ..Usage::default()
             };
             // 本轮账目要累计，状态栏要最后一次，两者不能互相顶替。
             // 首答已在恢复运行态前处理，回放 usage 只累计用量。

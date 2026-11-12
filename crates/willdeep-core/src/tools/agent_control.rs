@@ -43,7 +43,7 @@ The goal can only be declared complete when every acceptance criterion is marked
 Define concrete, checkable criteria early; mark one done only with proof (command output, test name, file path, commit). \
 All fields are optional; only the fields you pass change. No approval is needed.",
         json!({"type":"object","properties":{
-            "criteria":{"type":"array","maxItems":24,"items":{"type":"string"},"description":"Replace the full list of acceptance criteria. Criteria whose text is unchanged keep their done state and evidence."},
+            "criteria":{"type":"array","maxItems":24,"items":{"type":"string"},"description":"Replace the full list of acceptance criteria. A criterion keeps its done state and evidence only when its text is unchanged; any change in wording starts that criterion over as not done."},
             "checklist":{"type":"array","items":{"type":"object","properties":{
                 "index":{"type":"integer","minimum":1,"description":"1-based criterion number."},
                 "done":{"type":"boolean"},

@@ -36,6 +36,7 @@ impl Provider for HistoryProvider {
                 output_tokens: Some(5),
                 total_tokens: Some(15),
                 cache_read_tokens: Some(2),
+                ..Usage::default()
             }),
         })
     }

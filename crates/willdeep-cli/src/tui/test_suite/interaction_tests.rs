@@ -145,6 +145,7 @@ fn cache_rate_is_hidden_unless_the_provider_reported_it() {
         output_tokens: Some(10),
         total_tokens: Some(1_010),
         cache_read_tokens: None,
+        ..Usage::default()
     };
     assert_eq!(cache_hit_rate(&silent), None);
 

@@ -184,6 +184,7 @@ fn team_policy_and_cumulative_runs_survive_reopen_and_ledger_is_deduplicated() {
         output_tokens: Some(5),
         total_tokens: Some(15),
         cache_read_tokens: Some(4),
+        ..Usage::default()
     };
     store.usage(run.id, &usage).unwrap();
     store
@@ -381,6 +382,7 @@ fn usage_and_delivery_survive_new_store_and_new_runs_do_not_reset_previous_usage
                 output_tokens: Some(30),
                 total_tokens: Some(10),
                 cache_read_tokens: Some(20),
+                ..Usage::default()
             },
         )
         .unwrap();

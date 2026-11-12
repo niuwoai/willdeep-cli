@@ -79,6 +79,17 @@ pub(super) fn budget_context(
     context
 }
 
+/// 服务端把窗口收到比配置更小之后的提示。容量核算走 `effective_context_window`，
+/// 这里只告诉模型这件事，不改任何数字。窗口没变小就什么都不加。
+pub(super) fn context_window_notice(learned: u64, configured: u64) -> Option<String> {
+    if learned == 0 || learned >= configured {
+        return None;
+    }
+    Some(format!(
+        "\n[context-window] The provider refused an earlier request: its context window is {learned} tokens, smaller than the configured {configured}. This request is already being fitted to that window. Wrap up the results you already have; do not open new large outputs or new delegation. This is an advisory, not permission to weaken tests, skip verification, or claim unverified completion."
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

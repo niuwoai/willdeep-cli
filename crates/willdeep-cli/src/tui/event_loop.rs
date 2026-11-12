@@ -776,7 +776,7 @@ pub(super) async fn event_loop(
                         &mut app,
                         session,
                         store,
-                        &runtime.skills,
+                        runtime,
                         &agent,
                         &runtime.tx,
                         prompt,
@@ -1961,7 +1961,7 @@ pub(super) async fn event_loop(
                             if let PromptExecution::Local(local_prompt)=prompt_execution(&prompt) {
                                 if local_prompt.is_empty(){app.append_transcript(format!("System: {}",language.text("用法：/local <任务>","Usage: /local <task>","使用法: /local <タスク>")));continue;}
                                 if session.workspace.canonicalize()?!=runtime.local_workspace.canonicalize()?{app.append_transcript(format!("System: {}",language.text("切换工作区后 /local 已禁用；请使用 Runtime，或从目标目录重新启动 TUI","/local is disabled after switching Workspace; use Runtime or restart the TUI from the target directory","ワークスペース切替後は /local を使用できません。Runtime を使うか対象ディレクトリから TUI を再起動してください")));continue;}
-                                dispatch_prompt(&mut app,session,store,&runtime.skills,&agent,&runtime.tx,local_prompt)?;
+                                dispatch_prompt(&mut app,session,store,runtime,&agent,&runtime.tx,local_prompt)?;
                                 continue;
                             }
                             let runtime_alias=prompt.trim()=="/runtime"||prompt.trim().starts_with("/runtime ");

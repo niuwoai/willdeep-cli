@@ -61,6 +61,25 @@ pub(crate) enum AttributionConfidence {
     ToolWindow,
 }
 
+/// 归属记录里一条路径在工具调用结束时的状态。
+///
+/// 快照本身不落盘，只留一个整库哈希；`git restore` 已跟踪文件也不进回收区。
+/// 没有这份状态，事后就分不出「改动还在工作区里」和「已经被还原」。旧记录没有
+/// 这个字段，按未知读出，不补成已跟踪。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AttributedPathState {
+    /// 相对 HEAD 有差异，已跟踪（含新增后暂存、改名、冲突）。
+    TrackedDirty,
+    /// 没进索引，工作区里的新文件。
+    Untracked,
+    /// 工具把文件删了，HEAD 里还有。
+    Deleted,
+    /// 调用结束时与 HEAD 一致：工具改过又还原了，或只动了索引。工作区里
+    /// 本来就没有可还原的内容。
+    Clean,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct DiffAttributionRecord {
     pub id: uuid::Uuid,
@@ -73,6 +92,10 @@ pub(crate) struct DiffAttributionRecord {
     pub agent_id: uuid::Uuid,
     pub tool: String,
     pub paths: Vec<String>,
+    /// 与 `paths` 一一对应的调用结束时状态。0.148.0-rc4 起写入；更早的记录
+    /// 没有，缺省为空，不能据此判断改动还在不在。
+    #[serde(default)]
+    pub path_states: Vec<AttributedPathState>,
     pub confidence: AttributionConfidence,
     pub created_at: u64,
 }
@@ -440,9 +463,22 @@ fn local_attribution(
         agent_id: record.agent_id,
         tool: record.tool,
         paths: record.paths,
+        // 线上协议不带每个路径的状态，从 Runtime 读回的记录按旧记录处理。
+        path_states: Vec::new(),
         confidence: AttributionConfidence::ToolWindow,
         created_at: record.created_at,
     })
+}
+
+/// 工具调用结束时这条路径处在什么状态。快照里没有它，说明调用把它还原干净了。
+fn path_state_after(snapshot: &DiffSnapshot, path: &str) -> AttributedPathState {
+    match snapshot.files.iter().find(|file| file.path == path) {
+        Some(file) if file.kind == DiffFileKind::Untracked => AttributedPathState::Untracked,
+        Some(file) if file.kind == DiffFileKind::Deleted => AttributedPathState::Deleted,
+        Some(_) => AttributedPathState::TrackedDirty,
+        // 指纹变了但快照里没有：调用结束时这条路径与 HEAD 一致。
+        None => AttributedPathState::Clean,
+    }
 }
 
 fn public_finding(finding: SensitiveFinding) -> willdeep_runtime_protocol::SensitiveFinding {
@@ -1808,6 +1844,12 @@ pub(crate) async fn record_tool_attribution(
     if paths.is_empty() {
         return Ok(None);
     }
+    // 调用结束时的状态跟着路径一起留下：快照不落盘，事后只能靠它判断
+    // 这份改动还在不在工作区里。
+    let path_states = paths
+        .iter()
+        .map(|path| path_state_after(&after.snapshot, path))
+        .collect();
     let record = DiffAttributionRecord {
         id: uuid::Uuid::new_v4(),
         before_snapshot_id: before.snapshot.id,
@@ -1819,6 +1861,7 @@ pub(crate) async fn record_tool_attribution(
         agent_id: context.agent_id,
         tool: context.tool,
         paths,
+        path_states,
         confidence: AttributionConfidence::ToolWindow,
         created_at: now(),
     };
@@ -2775,6 +2818,8 @@ mod tests {
         .expect("changed workspace");
 
         assert_eq!(record.paths, vec!["created-by-agent.txt"]);
+        // 调用结束时的状态跟着路径留下，导出时据此判断改动还在不在。
+        assert_eq!(record.path_states, vec![AttributedPathState::Untracked]);
         assert_eq!(record.session_id, Some(session_id));
         assert_eq!(record.turn_id, Some(turn_id));
         assert_eq!(record.task_id, task_id);

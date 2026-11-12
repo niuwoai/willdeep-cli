@@ -2,6 +2,7 @@ use super::*;
 use crate::token_estimate::{estimate_tokens, text_tokens, tool_schema_tokens};
 use crate::types::{MessageAttachment, MessageSource, Role, ToolDefinition};
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 
 /// 压缩水位。以前是 75%：容量按 `窗口 − 工具 − 窗口/8` 算，再乘 75%，
 /// 128K 窗口实际 80K 就开始压缩，服务端的 128K 永远用不满。上下文的估算
@@ -156,19 +157,28 @@ impl Agent {
         //
         // `through` 和前缀指纹始终锚定 durable 历史；system 指纹来自稳定规则。
         // 分页去重、工具摘录及实时状态变化不会失效；真实前缀或规则改写才会。
-        let cached = cache
+        let mut cached = cache
             .take()
             .filter(|entry| entry.matches(messages, &system))
             .map(|entry| {
                 let through = paged.projected_index(entry.through);
                 (through, entry)
             });
-        if let Some((through, entry)) = &cached {
+        if let Some((through, entry)) = cached.as_mut() {
             let reused = compact_prefix(&paged.messages, *through, &entry.summary);
             if estimate_tokens(&reused) < watermark {
+                // 摘要刚算出来的那一轮，请求前缀与上一轮不同；复用它的第一轮
+                // 才是自动前缀缓存断开的地方。只记一次。
+                if entry.fresh {
+                    self.prefix_break.store(true, Ordering::Relaxed);
+                    entry.fresh = false;
+                }
                 *cache = cached.map(|(_, entry)| entry);
                 return Ok(reused);
             }
+        }
+        if paged.abbreviated {
+            self.prefix_break.store(true, Ordering::Relaxed);
         }
         self.sink
             .emit(AgentEvent::CompressionStarted {
@@ -284,6 +294,7 @@ impl Agent {
         let mut paged = PagedHistory {
             messages: Vec::with_capacity(messages.len()),
             durable: Vec::with_capacity(messages.len()),
+            abbreviated: false,
         };
         for (index, message) in messages.iter().enumerate() {
             if !keep[index] {
@@ -309,6 +320,7 @@ impl Agent {
                 result.content = format!(
                     "{head}\n[Tool output abbreviated; use read_tool_output with id={id:?} and character offset to retrieve the full result.]\n{tail}"
                 );
+                paged.abbreviated = true;
             }
             paged.messages.push(result);
             paged.durable.push(index);
@@ -624,6 +636,9 @@ pub(super) struct PagedHistory {
     messages: Vec<Message>,
     /// 严格递增的 durable 下标。
     durable: Vec<usize>,
+    /// 这次投影把超长工具输出换成了摘录。摘录改了已经发过的前缀，下一轮的
+    /// 自动前缀缓存从这里断开。
+    abbreviated: bool,
 }
 
 impl PagedHistory {
@@ -655,6 +670,9 @@ pub(super) struct SummaryCache {
     fingerprint: String,
     system: String,
     summary: String,
+    /// 这份摘要是这一轮刚算出来的，还没被后续请求复用过。复用的第一轮前缀
+    /// 与上一轮不同，自动前缀缓存会断开。
+    fresh: bool,
 }
 
 impl SummaryCache {
@@ -663,6 +681,7 @@ impl SummaryCache {
             through,
             fingerprint: prefix_fingerprint(&messages[..through]),
             system: system.to_owned(),
+            fresh: true,
             // 分块合并那条路按 token 预算截断，按字节算仍可能超上限；入缓存时
             // 统一封顶，保证落盘的东西一定能通过 `matches` 的长度校验。
             summary: clamp_summary(summary),
@@ -677,6 +696,8 @@ impl SummaryCache {
             fingerprint: entry.fingerprint,
             system: entry.system_fingerprint,
             summary: entry.summary,
+            // 落盘的摘要上一轮已经发过，恢复它不再记一次前缀断开。
+            fresh: false,
         }
     }
 

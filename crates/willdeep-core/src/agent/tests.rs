@@ -466,6 +466,7 @@ impl Provider for UsageProvider {
                 output_tokens: Some(300),
                 total_tokens: Some(1_100),
                 cache_read_tokens: None,
+                ..crate::types::Usage::default()
             }),
         })
     }
@@ -691,6 +692,99 @@ async fn exhausting_turns_returns_the_partial_result_instead_of_failing() {
     assert_eq!(
         tool_results, 3,
         "every tool round trip stays in the history"
+    );
+}
+
+/// 每一轮都调工具、同时报用量，用来证明目标预算不能被「一直调工具」绕开。
+struct ToolAndUsageProvider {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl Provider for ToolAndUsageProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> Result<Completion, ProviderError> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        Ok(Completion {
+            reasoning: None,
+            content: format!("still working, step {call}"),
+            tool_calls: vec![crate::types::ToolCall {
+                id: format!("call-{call}"),
+                name: "list_directory".to_owned(),
+                arguments: r#"{"path":"."}"#.to_owned(),
+            }],
+            finish_reason: Some("tool_calls".to_owned()),
+            usage: Some(crate::types::Usage {
+                input_tokens: Some(400),
+                output_tokens: Some(200),
+                total_tokens: Some(600),
+                cache_read_tokens: None,
+                ..crate::types::Usage::default()
+            }),
+        })
+    }
+}
+
+/// 目标的 token 预算在模型还在调工具时也生效：超限那一轮的工具调用不执行，
+/// 改走收尾引导，停机原因是预算耗尽而不是轮次上限。
+#[tokio::test]
+async fn a_goal_token_budget_wraps_up_even_while_the_model_keeps_calling_tools() {
+    let continuation = Arc::new(GoalContinuation::with_default_budget(
+        crate::goal::GoalBudget {
+            max_tokens: Some(1_000),
+            ..crate::goal::GoalBudget::default()
+        },
+    ));
+    continuation.activate("ship rc7", continuation.default_budget());
+    let agent = Agent::new(
+        Arc::new(ToolAndUsageProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        registry("goal-tool-budget"),
+        AgentConfig {
+            max_turns: 12,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation.clone());
+
+    let outcome = agent.run("keep going").await.expect("run");
+
+    let state = continuation.snapshot().expect("goal state");
+    assert_eq!(
+        outcome.stop_reason,
+        AgentStopReason::BudgetLimited,
+        "tokens used {} after {} turns",
+        state.tokens_used,
+        outcome.turns
+    );
+    let tool_results = outcome
+        .messages
+        .iter()
+        .filter(|message| message.role == crate::types::Role::Tool)
+        .count();
+    assert_eq!(
+        tool_results, 1,
+        "only the round before the budget was spent may execute its tool"
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-budget-limited]")),
+        "the overrun round must carry the handover steering instead of its tool call"
+    );
+    let state = continuation.snapshot().expect("finished goal state");
+    assert_eq!(state.status, crate::goal::GoalStatus::BudgetLimited);
+    assert!(
+        state.tokens_used >= 1_000,
+        "the spent budget must be what stopped the run, got {}",
+        state.tokens_used
     );
 }
 
@@ -1167,13 +1261,15 @@ async fn goal_envelope_activates_continuation_in_the_core_runtime() {
     let provider = RecordingProvider::new(&[
         "I have only inspected the first part.",
         "<goal-status>complete</goal-status> Everything is verified.",
+        "<goal-status>complete</goal-status> Everything is verified.",
+        "<goal-status>complete</goal-status> Everything is verified.",
     ]);
     let continuation = Arc::new(GoalContinuation::new());
     let agent = Agent::new(
         provider.clone(),
         registry("goal-envelope"),
         AgentConfig {
-            max_turns: 3,
+            max_turns: 4,
             system_prompt: "system".to_owned(),
             context_window: 128_000,
             token_budget: None,
@@ -1184,12 +1280,19 @@ async fn goal_envelope_activates_continuation_in_the_core_runtime() {
     let outcome = agent
         .run("<goal>\nship the runtime\n</goal>\nContinue until this goal is genuinely complete.\n\ninspect the queue")
         .await
-        .expect("goal should continue until the marker");
+        .expect("an empty checklist cannot close the goal");
 
-    assert_eq!(outcome.turns, 2);
-    assert_eq!(outcome.stop_reason, AgentStopReason::GoalComplete);
-    assert!(!continuation.is_active());
-    assert_eq!(provider.requests.lock().expect("requests").len(), 2);
+    assert_eq!(outcome.turns, 4);
+    assert_eq!(outcome.stop_reason, AgentStopReason::MaxTurns);
+    assert!(continuation.is_active());
+    let requests = provider.requests.lock().expect("requests");
+    assert_eq!(requests.len(), 4);
+    assert!(
+        requests[2]
+            .iter()
+            .any(|message| message.content.contains("[goal-completion-rejected]")),
+        "declaring completion without criteria must be rejected"
+    );
 }
 
 #[tokio::test]
@@ -1402,17 +1505,24 @@ async fn active_goal_refuses_implicit_stop_until_the_marker_appears() {
         "Here is a summary of what I did.",
         "<goal-status>complete</goal-status> rc7 shipped and verified.",
     ]);
-    let agent = goal_agent(provider.clone(), crate::goal::GoalBudget::default());
+    let mut agent = goal_agent(provider.clone(), crate::goal::GoalBudget::default());
+    agent.config.max_turns = 3;
 
     let outcome = agent.run("ship it").await.expect("run");
 
-    assert_eq!(outcome.stop_reason, AgentStopReason::GoalComplete);
-    assert!(outcome.final_text.contains("rc7 shipped"));
+    assert_eq!(outcome.stop_reason, AgentStopReason::MaxTurns);
     let requests = provider.requests.lock().expect("requests");
     assert_eq!(
         requests.len(),
         3,
-        "harness should refuse the first two stops"
+        "a completion marker without criteria is refused, not accepted"
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-completion-rejected]")),
+        "declaring completion without criteria must be rejected"
     );
     assert!(
         requests[1]
@@ -1420,6 +1530,90 @@ async fn active_goal_refuses_implicit_stop_until_the_marker_appears() {
             .any(|message| message.content.contains("[goal-continuation]")),
         "the second request must carry the injected steering"
     );
+}
+
+/// 连续三轮无进展后落到对账档：写文件不执行，磁盘上的文件一个字节不变。
+/// 停在对账档而不是退避档，所以这一轮没有真实的等待。
+#[tokio::test]
+async fn a_reconcile_round_refuses_a_write_without_touching_the_file() {
+    struct WriteAfterStalling {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait]
+    impl Provider for WriteAfterStalling {
+        async fn complete(
+            &self,
+            _: &[Message],
+            _: &[ToolDefinition],
+        ) -> Result<Completion, ProviderError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            // 前三轮一句空话，第四轮（对账档）才动手写。
+            let tool_calls = if call <= 3 {
+                Vec::new()
+            } else {
+                vec![ToolCall {
+                    id: format!("call-{call}"),
+                    name: "edit_file".to_owned(),
+                    arguments:
+                        r#"{"path":"notes.txt","old_string":"original","new_string":"rewritten"}"#
+                            .to_owned(),
+                }]
+            };
+            Ok(Completion {
+                content: format!("round {call}"),
+                tool_calls,
+                finish_reason: Some("stop".to_owned()),
+                ..Completion::default()
+            })
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("willdeep-reconcile-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("workspace");
+    let notes = root.join("notes.txt");
+    std::fs::write(&notes, "original").expect("seed file");
+
+    let continuation = Arc::new(GoalContinuation::new());
+    continuation.activate("ship rc7", crate::goal::GoalBudget::default());
+    let agent = Agent::new(
+        Arc::new(WriteAfterStalling {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        ToolRegistry::new(&root, ApprovalMode::FullAccess).expect("registry"),
+        AgentConfig {
+            max_turns: 4,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation);
+
+    let outcome = agent.run("ship it").await.expect("run");
+
+    assert_eq!(
+        std::fs::read_to_string(&notes).expect("notes"),
+        "original",
+        "a reconcile round must not write"
+    );
+    let refusal = outcome
+        .messages
+        .iter()
+        .find(|message| message.role == crate::types::Role::Tool)
+        .expect("the refused call is still recorded");
+    assert!(
+        refusal.content.contains("was not executed"),
+        "the model must be told the write did not happen, got: {}",
+        refusal.content
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-continuation]")),
+        "the stalled rounds must still inject steering"
+    );
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[tokio::test]
@@ -1482,6 +1676,7 @@ impl Provider for TokenHungryProvider {
                 output_tokens: Some(100),
                 total_tokens: Some(600),
                 cache_read_tokens: None,
+                ..crate::types::Usage::default()
             }),
             ..Completion::default()
         })
@@ -1620,6 +1815,77 @@ async fn persisted_orphan_tool_results_are_removed_before_provider_replay() {
     assert_eq!(outcome.final_text, "recovered");
 }
 
+/// 服务端报窗口不够、收窗成功后，下一轮请求末尾的实时状态写明收到的窗口，
+/// 并要求先收口。第一次请求没有这句，容量核算本身不在这里测。
+#[tokio::test]
+async fn a_tightened_context_window_is_named_in_the_next_request() {
+    struct OverflowOnce {
+        calls: std::sync::atomic::AtomicUsize,
+        tails: Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl Provider for OverflowOnce {
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolDefinition],
+        ) -> Result<Completion, ProviderError> {
+            self.tails.lock().expect("tails").push(
+                messages
+                    .last()
+                    .map(|message| message.content.clone())
+                    .unwrap_or_default(),
+            );
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Err(ProviderError::Http {
+                    status: reqwest::StatusCode::BAD_REQUEST,
+                    body: "maximum context length is 32000 tokens".to_owned(),
+                    retry_after: None,
+                });
+            }
+            Ok(Completion {
+                reasoning: None,
+                content: "wrapped up".to_owned(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_owned()),
+            })
+        }
+    }
+
+    let provider = Arc::new(OverflowOnce {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        tails: Mutex::new(Vec::new()),
+    });
+    let agent = Agent::new(
+        provider.clone(),
+        registry("window-notice"),
+        AgentConfig {
+            max_turns: 3,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    );
+    let outcome = agent.run("go").await.expect("recovers after one overflow");
+    assert_eq!(outcome.final_text, "wrapped up");
+    let tails = provider.tails.lock().expect("tails");
+    assert_eq!(tails.len(), 2);
+    assert!(
+        !tails[0].contains("[context-window]"),
+        "the notice appears only after the window was tightened"
+    );
+    assert!(
+        tails[1].contains("[context-window]")
+            && tails[1].contains("32000 tokens")
+            && tails[1].contains("128000")
+            && tails[1].contains("do not open new large outputs or new delegation"),
+        "the next request names the learned window, got:\n{}",
+        tails[1]
+    );
+    assert_eq!(agent.effective_context_window(), 32_000);
+}
+
 /// 按脚本回复：每步要么是一段文字，要么是一次工具调用。顺带记下每次请求的
 /// system 消息与提供的工具名。
 /// 一步脚本：回复文字，以及可选的一次工具调用（工具名，参数 JSON）。
@@ -1713,8 +1979,14 @@ fn context_overflow_tightening_only_ever_shrinks() {
     assert_eq!(agent.effective_context_window(), 24_000);
     assert!(agent.tighten_context_window(None));
     assert_eq!(agent.effective_context_window(), 18_000);
-    // 退到零就停下，把原始错误抛给调用方。
+    // 退到零就停下，把原始错误抛给调用方。失败的这一次不计数。
     assert!(!agent.tighten_context_window(Some(0)));
+    assert_eq!(
+        agent
+            .context_window_tightens
+            .load(std::sync::atomic::Ordering::Relaxed),
+        3
+    );
     std::fs::remove_dir_all(agent.tools.workspace()).unwrap();
 }
 
@@ -1832,6 +2104,116 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
         ]
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 清单全部带证据勾完、进程内 Worker 为零，但协作客户端报告还有一个未终态的
+/// 委派子会话：完成声明被拒，拒绝说明点名那个子会话。它到终态之后，同一声明
+/// 才被接受。
+#[tokio::test]
+async fn a_goal_waits_for_a_delegated_session_before_completing() {
+    struct Delegated {
+        in_flight: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait]
+    impl crate::tools::SessionCollaboration for Delegated {
+        fn delegated_sessions_in_flight(&self) -> Result<Vec<String>, ToolError> {
+            if self.in_flight.load(std::sync::atomic::Ordering::SeqCst) {
+                Ok(vec!["session child-7".to_owned()])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        async fn execute(&self, name: &str, _: serde_json::Value) -> Result<String, ToolError> {
+            Err(ToolError::UnknownTool(name.to_owned()))
+        }
+    }
+
+    let delegated = Arc::new(Delegated {
+        in_flight: std::sync::atomic::AtomicBool::new(true),
+    });
+    let provider = Arc::new(ScriptedGoalProvider {
+        script: Mutex::new(
+            [
+                ("<goal-status>complete</goal-status> FIRST".to_owned(), None),
+                ("SECOND still waiting".to_owned(), None),
+                ("THIRD acknowledged".to_owned(), None),
+                ("FOURTH still waiting".to_owned(), None),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
+        tool_names: Mutex::new(Vec::new()),
+    });
+    let continuation = Arc::new(GoalContinuation::new());
+    continuation.activate("ship rc7", crate::goal::GoalBudget::default());
+    continuation
+        .update_plan(
+            serde_json::from_value(serde_json::json!({
+                "criteria": ["tests pass"],
+                "checklist": [{"index": 1, "done": true, "evidence": "cargo test: 42 passed"}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let tools = registry("goal-delegated").with_session_collaboration(delegated.clone());
+    let agent = Agent::new(
+        provider.clone(),
+        tools,
+        AgentConfig {
+            max_turns: 4,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation.clone());
+
+    let outcome = agent.run("go").await.expect("first claim");
+    assert_ne!(
+        outcome.stop_reason,
+        AgentStopReason::GoalComplete,
+        "a child session still running keeps the goal open"
+    );
+    assert!(continuation.is_active());
+    let rejected = outcome
+        .messages
+        .iter()
+        .find(|message| message.content.starts_with("[goal-completion-rejected]"))
+        .expect("the claim is refused while the child session is still running");
+    assert!(
+        rejected.content.contains("session child-7"),
+        "the refusal names the session still running, got:\n{}",
+        rejected.content
+    );
+    let first_tail = provider.tails.lock().expect("tails")[0].clone();
+    assert!(
+        first_tail.contains("DELEGATED WORKERS STILL RUNNING: 1"),
+        "the pin reports the child session before the first claim"
+    );
+
+    delegated
+        .in_flight
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    provider
+        .script
+        .lock()
+        .expect("script")
+        .push_back(("<goal-status>complete</goal-status> FIFTH".to_owned(), None));
+    let outcome = agent.run("go").await.expect("second claim");
+    assert_eq!(
+        outcome.stop_reason,
+        AgentStopReason::GoalComplete,
+        "second run ended as {:?}; tail: {}",
+        outcome.stop_reason,
+        outcome
+            .messages
+            .last()
+            .map(|message| message.content.as_str())
+            .unwrap_or("(none)")
+    );
+    assert!(!continuation.is_active());
 }
 
 /// 普通会话同样有计划工具，但不钉目标块。

@@ -34,6 +34,91 @@ pub(super) fn snapshot(workspace: &Path) -> Result<Option<String>, String> {
         })
 }
 
+/// 验证失效用来收窄范围的工作区视图：当前与 HEAD 不一致的路径，以及 cargo
+/// 目标名到清单所在目录的映射。任何一步读不了都给 `None`，判定退回整库比较，
+/// 不拿残缺的列表当「没变化」。只读，不改索引也不改工作区。
+pub(super) fn workspace_view(workspace: &Path) -> willdeep_core::VerificationWorkspaceView {
+    let dirty_paths = crate::daemon::diff_review::snapshot(workspace)
+        .ok()
+        .map(|snapshot| {
+            snapshot
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect()
+        });
+    willdeep_core::VerificationWorkspaceView {
+        dirty_paths,
+        package_dirs: package_dirs(workspace),
+    }
+}
+
+/// `cargo metadata` 给出的包名与目标名到清单目录的映射。`--lib` 记在 `lib` 下，
+/// 指向根包的清单目录。读不了（不是 cargo 工作区、cargo 不在）时返回 `None`，
+/// 点名目标的命令因此维持整库比较。
+fn package_dirs(workspace: &Path) -> Option<std::collections::BTreeMap<String, String>> {
+    let output = Command::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .env("LC_ALL", "C")
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let root = metadata.get("workspace_root")?.as_str()?;
+    let mut dirs = std::collections::BTreeMap::new();
+    for package in metadata.get("packages")?.as_array()? {
+        let name = package.get("name")?.as_str()?;
+        let manifest = package.get("manifest_path")?.as_str()?;
+        let dir = std::path::Path::new(manifest).parent()?;
+        let relative = dir.strip_prefix(root).ok()?;
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let prefix = if relative.is_empty() {
+            String::new()
+        } else {
+            format!("{relative}/")
+        };
+        dirs.insert(name.to_owned(), prefix.clone());
+        if package
+            .get("targets")?
+            .as_array()?
+            .iter()
+            .any(target_is_lib)
+            && !dirs.contains_key("lib")
+        {
+            dirs.insert("lib".to_owned(), prefix.clone());
+        }
+        for target in package.get("targets")?.as_array()? {
+            let Some(target_name) = target.get("name").and_then(|name| name.as_str()) else {
+                continue;
+            };
+            if target_name != name {
+                dirs.insert(target_name.to_owned(), prefix.clone());
+            }
+        }
+    }
+    Some(dirs)
+}
+
+fn target_is_lib(target: &serde_json::Value) -> bool {
+    target
+        .get("kind")
+        .and_then(|kind| kind.as_array())
+        .is_some_and(|kinds| {
+            kinds
+                .iter()
+                .any(|kind| matches!(kind.as_str(), Some("lib") | Some("proc-macro")))
+        })
+}
+
 fn repository_is_absent(stderr: &str) -> bool {
     // Git stops discovery at a filesystem boundary unless explicitly configured
     // otherwise. Both diagnostics mean absence; a broken gitfile is still an error.
@@ -152,6 +237,81 @@ mod tests {
         assert!(error.contains(&reason), "{error}");
         assert!(error.starts_with("Git verification snapshot could not be captured:"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 另一个会话改了命令覆盖不到的文件：工作区视图能把两边的脏路径分开，
+    /// 判定据此放行。覆盖范围内的文件变了，或工作区不是 cargo 工作区时，不放行。
+    #[test]
+    fn a_concurrent_edit_outside_coverage_is_visible_as_such() {
+        let root = std::env::temp_dir().join(format!("willdeep-coverage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("crates/cli/src")).unwrap();
+        std::fs::create_dir_all(root.join("crates/core/src")).unwrap();
+        // cargo metadata 拒绝没有目标的清单，所以各放一个空 lib。
+        std::fs::write(root.join("crates/cli/src/lib.rs"), "").unwrap();
+        std::fs::write(root.join("crates/core/src/lib.rs"), "").unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/cli\", \"crates/core\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/cli/Cargo.toml"),
+            "[package]\nname = \"cli\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/core/Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+        run_git(&root, &["init"]);
+        run_git(&root, &["config", "user.email", "test@willdeep.invalid"]);
+        run_git(&root, &["config", "user.name", "WillDeep Test"]);
+        run_git(&root, &["add", "."]);
+        run_git(&root, &["commit", "-m", "seed"]);
+
+        let before = workspace_view(&root);
+        assert_eq!(before.dirty_paths.as_deref(), Some(&[][..]));
+        let dirs = before.package_dirs.expect("cargo metadata");
+        assert_eq!(dirs.get("cli").map(String::as_str), Some("crates/cli/"));
+        assert_eq!(dirs.get("core").map(String::as_str), Some("crates/core/"));
+
+        // 另一个会话改了 core，这条命令只跑 cli。
+        std::fs::write(root.join("crates/core/src/lib.rs"), "// touched\n").unwrap();
+        let after = workspace_view(&root);
+        assert!(
+            !willdeep_core::tools::covered_paths_changed(
+                "cargo test -p cli",
+                before.dirty_paths.as_deref().unwrap(),
+                after.dirty_paths.as_deref().unwrap(),
+                Some(&dirs),
+            ),
+            "cli 的测试不覆盖 core 的改动"
+        );
+        assert!(
+            willdeep_core::tools::covered_paths_changed(
+                "cargo test -p core",
+                before.dirty_paths.as_deref().unwrap(),
+                after.dirty_paths.as_deref().unwrap(),
+                Some(&dirs),
+            ),
+            "core 自己的改动仍算数"
+        );
+
+        // 清单读不了：映射给 None，点名目标的命令因此维持整库比较。
+        std::fs::write(root.join("Cargo.toml"), "this is not toml [[[").unwrap();
+        let view = workspace_view(&root);
+        assert!(view.package_dirs.is_none(), "坏掉的清单给不出映射");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn run_git(workspace: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(workspace)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {} failed", args.join(" "));
     }
 
     #[test]

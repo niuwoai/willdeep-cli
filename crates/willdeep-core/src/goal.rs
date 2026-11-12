@@ -20,6 +20,12 @@ pub const GOAL_COMPLETE_MARKER: &str = "<goal-status>complete</goal-status>";
 const GUIDANCE_ROUNDS: u32 = 2;
 /// 连续无进展轮次达到该值前，做只读对账；之后进入退避档。
 const RECONCILE_ROUNDS: u32 = 4;
+/// 退避档的真实等待：1 分钟、5 分钟，之后封顶 15 分钟。
+const BACKOFF_DELAYS: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(15 * 60),
+];
 
 /// 默认 wall-clock 预算：4 小时一段（设计文档 §7 假设 1）。
 pub const DEFAULT_WALL_CLOCK_BUDGET: Duration = Duration::from_secs(4 * 60 * 60);
@@ -51,7 +57,7 @@ pub enum ContinuationRung {
     Guidance,
     /// 3-4 轮无进展：只读对账，要求用实际状态核对而不是继续猜。
     Reconcile,
-    /// 5+ 轮无进展：退避，要求先确认在等什么外部条件。
+    /// 5+ 轮无进展：退避，要求先确认在等什么外部条件，并真的等。
     Backoff,
 }
 
@@ -70,6 +76,8 @@ pub enum ContinuationDecision {
     Continue {
         steering: String,
         rung: ContinuationRung,
+        /// 退避档的真实等待。引导档与对账档为 `None`。
+        delay: Option<Duration>,
     },
     /// 预算耗尽：注入收尾引导，产出状态快照后有序停止。
     SoftStop {
@@ -86,7 +94,7 @@ pub enum ContinuationDecision {
 }
 
 /// 判定所需的一轮观察结果。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RoundObservation {
     /// 本轮（自上次判定以来）是否有工具成功执行。
     pub tools_executed: usize,
@@ -94,6 +102,9 @@ pub struct RoundObservation {
     pub background_active: bool,
     /// 还在跑的委派 Worker 数。完成门禁要求它为 0：报告还没回来的目标不算完成。
     pub workers_in_flight: usize,
+    /// 还没到终态的委派子会话标识。只用于拒绝说明里点名；计数已经含在
+    /// `workers_in_flight` 里，完成判定不单独看它。
+    pub delegated_sessions: Vec<String>,
 }
 
 impl RoundObservation {
@@ -220,6 +231,7 @@ impl GoalState {
         {
             self.elapsed_ms = self.elapsed_ms.max(previous.elapsed_ms);
             self.continuations = self.continuations.max(previous.continuations);
+            self.tokens_used = self.tokens_used.max(previous.tokens_used);
         }
         self
     }
@@ -541,6 +553,17 @@ impl GoalContinuation {
             .unwrap_or(false)
     }
 
+    /// 下一轮会落在哪一档。没有激活目标，或收尾引导已经注入过，返回 `None`：
+    /// 那一轮不再收窄工具面。
+    pub fn current_rung(&self) -> Option<ContinuationRung> {
+        let slots = self.slots.lock().ok()?;
+        let goal = slots.active.as_ref()?;
+        if goal.state.wrap_up_injected {
+            return None;
+        }
+        Some(rung_for(goal.state.consecutive_no_progress))
+    }
+
     /// `update_plan` 工具：改清单、步骤、阻塞原因。返回给模型的回执。
     ///
     /// 校验失败返回 `Err`，什么都不改，也不消耗续推预算。
@@ -560,6 +583,7 @@ impl GoalContinuation {
                 ));
             }
             let mut replaced = Vec::with_capacity(criteria.len());
+            let mut claimed = vec![false; next.criteria.len()];
             for text in criteria {
                 let text = text.trim().to_owned();
                 if text.is_empty() || text.chars().count() > MAX_PLAN_TEXT_CHARS {
@@ -567,12 +591,18 @@ impl GoalContinuation {
                         "each acceptance criterion must contain 1 to {MAX_PLAN_TEXT_CHARS} characters"
                     ));
                 }
-                // 同一条标准换了位置也保留它的完成状态与证据。
+                // 只有文本逐字相同才保留完成状态与证据：改一个字就是一条新标准，
+                // 旧证据证明的是旧文本，不能跟着走。同一条原句重复出现时，每条旧
+                // 记录只被认领一次，第二条按新标准从零开始。
                 let kept = next
                     .criteria
                     .iter()
-                    .find(|existing| existing.text == text)
-                    .cloned()
+                    .zip(claimed.iter_mut())
+                    .find(|(existing, taken)| !**taken && existing.text == text)
+                    .map(|(existing, taken)| {
+                        *taken = true;
+                        existing.clone()
+                    })
                     .unwrap_or(GoalCriterion {
                         text,
                         done: false,
@@ -652,13 +682,29 @@ impl GoalContinuation {
         ))
     }
 
+    /// 预算是否已经耗尽：壁钟、续推次数或 token 任一维超限就算。
+    ///
+    /// 与 [`Self::evaluate`] 里的预算判定用同一套阈值。这里只读不改：
+    /// 调工具的轮次也要先问一句，否则模型一直调工具就永远走不到「没调工具」那条收尾路径。
+    /// 没有激活目标，或收尾引导已经注入过，返回 `None`。
+    pub fn budget_exhausted(&self) -> Option<SoftStopReason> {
+        let Ok(guard) = self.slots.lock() else {
+            return None;
+        };
+        let goal = guard.active.as_ref()?;
+        if goal.state.wrap_up_injected {
+            return None;
+        }
+        budget_reason(goal, goal.elapsed())
+    }
+
     /// 对一次「模型没有调用工具」的候选停止点做判定。
     ///
     /// 返回 `None` 表示当前没有激活的目标，调用方按原有逻辑正常收口。
     pub fn evaluate(
         &self,
         reply: &str,
-        observation: RoundObservation,
+        observation: &RoundObservation,
     ) -> Option<ContinuationDecision> {
         let Ok(mut guard) = self.slots.lock() else {
             return None;
@@ -677,9 +723,17 @@ impl GoalContinuation {
         }
 
         let elapsed = goal.elapsed();
+        if let Some(reason) = budget_reason(goal, elapsed) {
+            goal.state.wrap_up_injected = true;
+            return Some(ContinuationDecision::SoftStop {
+                steering: wrap_up_steering(&goal.state.statement, reason, elapsed),
+                reason,
+            });
+        }
         if declares_complete(reply) {
             let open = goal.state.open_criteria().len();
-            if open == 0 && observation.workers_in_flight == 0 {
+            // 空清单不是「全过」：没写过可核对条目时，完成标记只是自报。
+            if !goal.state.criteria.is_empty() && open == 0 && observation.workers_in_flight == 0 {
                 let mut finished = goal.snapshot();
                 finished.status = GoalStatus::Complete;
                 slots.finished = Some(finished);
@@ -690,43 +744,9 @@ impl GoalContinuation {
             goal.state.continuations = goal.state.continuations.saturating_add(1);
             goal.plan_changed = false;
             return Some(ContinuationDecision::CompletionRejected {
-                steering: rejection_steering(&goal.state, observation.workers_in_flight),
+                steering: rejection_steering(&goal.state, observation),
                 open_criteria: open,
                 workers_in_flight: observation.workers_in_flight,
-            });
-        }
-
-        if let Some(limit) = goal.budget.wall_clock
-            && elapsed >= limit
-        {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(
-                    &goal.state.statement,
-                    SoftStopReason::WallClock,
-                    elapsed,
-                ),
-                reason: SoftStopReason::WallClock,
-            });
-        }
-        if goal.state.continuations >= goal.budget.max_continuations {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(
-                    &goal.state.statement,
-                    SoftStopReason::Continuations,
-                    elapsed,
-                ),
-                reason: SoftStopReason::Continuations,
-            });
-        }
-        if let Some(limit) = goal.budget.max_tokens
-            && goal.state.tokens_used >= limit
-        {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(&goal.state.statement, SoftStopReason::Tokens, elapsed),
-                reason: SoftStopReason::Tokens,
             });
         }
 
@@ -745,19 +765,28 @@ impl GoalContinuation {
             elapsed,
             (goal.state.continuations, goal.state.tokens_used),
             goal.budget,
-            observation,
+            observation.clone(),
         );
-        Some(ContinuationDecision::Continue { steering, rung })
+        Some(ContinuationDecision::Continue {
+            steering,
+            rung,
+            delay: backoff_delay(rung, goal.state.consecutive_no_progress),
+        })
     }
 }
 
 /// 模型声明完成、门禁不认时的引导：点名还缺什么。
-fn rejection_steering(state: &GoalState, workers_in_flight: usize) -> String {
+fn rejection_steering(state: &GoalState, observation: &RoundObservation) -> String {
     let mut steering = String::from(
         "[goal-completion-rejected] This is an automated harness message, not a user reply.\n\n",
     );
     steering.push_str(&format!("GOAL: {}\n\n", state.statement));
     steering.push_str("You declared the goal complete, but the harness cannot accept that yet:\n");
+    if state.criteria.is_empty() {
+        steering.push_str(
+            "- No acceptance criteria are recorded. Use `update_plan` to record the concrete, checkable criteria this goal must meet before declaring completion.\n",
+        );
+    }
     let open = state.open_criteria();
     if !open.is_empty() {
         steering.push_str("- These acceptance criteria are not marked done with evidence:\n");
@@ -765,10 +794,19 @@ fn rejection_steering(state: &GoalState, workers_in_flight: usize) -> String {
             steering.push_str(&format!("  {index}. {}\n", criterion.text));
         }
     }
-    if workers_in_flight > 0 {
+    if observation.workers_in_flight > 0 {
         steering.push_str(&format!(
-            "- {workers_in_flight} delegated worker(s) are still running. Wait for their reports with `await_agents` (or stop them deliberately) before declaring completion.\n"
+            "- {} delegated worker(s) are still running. Wait for their reports with `await_agents` (or stop them deliberately) before declaring completion.\n",
+            observation.workers_in_flight
         ));
+        if !observation.delegated_sessions.is_empty() {
+            steering.push_str(
+                "  These delegated sessions have not reached a terminal state; their result is not in your history yet:\n",
+            );
+            for session in &observation.delegated_sessions {
+                steering.push_str(&format!("  - {session}\n"));
+            }
+        }
     }
     steering.push_str(
         "\nEither finish the open work, or, if a criterion is already met, verify it now and record the evidence with `update_plan` (checklist index, done=true, evidence). \
@@ -776,6 +814,24 @@ If a criterion turned out to be wrong or impossible, say so explicitly and repla
 Then declare completion again.\n",
     );
     steering
+}
+
+/// 壁钟、续推次数、token 三道预算，按这个顺序取第一道超限的。都没超返回 `None`。
+fn budget_reason(goal: &ActiveGoal, elapsed: Duration) -> Option<SoftStopReason> {
+    if let Some(limit) = goal.budget.wall_clock
+        && elapsed >= limit
+    {
+        return Some(SoftStopReason::WallClock);
+    }
+    if goal.state.continuations >= goal.budget.max_continuations {
+        return Some(SoftStopReason::Continuations);
+    }
+    if let Some(limit) = goal.budget.max_tokens
+        && goal.state.tokens_used >= limit
+    {
+        return Some(SoftStopReason::Tokens);
+    }
+    None
 }
 
 fn rung_for(consecutive_no_progress: u32) -> ContinuationRung {
@@ -786,6 +842,61 @@ fn rung_for(consecutive_no_progress: u32) -> ContinuationRung {
     } else {
         ContinuationRung::Backoff
     }
+}
+
+/// 退避档第 1、2、3 次起分别等 1、5、15 分钟，之后封顶 15 分钟。
+/// 其他档不等。
+fn backoff_delay(rung: ContinuationRung, consecutive_no_progress: u32) -> Option<Duration> {
+    if rung != ContinuationRung::Backoff {
+        return None;
+    }
+    let step = usize::try_from(consecutive_no_progress.saturating_sub(RECONCILE_ROUNDS + 1))
+        .unwrap_or(BACKOFF_DELAYS.len());
+    Some(BACKOFF_DELAYS[step.min(BACKOFF_DELAYS.len() - 1)])
+}
+
+/// 对账档与退避档只留只读核对：写文件、跑命令、派工、建工作区、
+/// 调外部工具和问用户都不执行。引导档不收窄。
+///
+/// 白名单对着 `ToolRegistry::definitions` 来：只放不产生新动作的工具。
+/// 查状态（`get_session_task`、`list_workspace_sessions`、`read_session_messages`、
+/// `workflow_read`、`agent_library_read`、`configuration_read`）也在其中。
+/// `await_agents` 是在收已经派出的工人，`update_plan` 是在改清单，都不算新动作。
+/// 没有名字的工具按拦下处理：新工具默认不能绕过这一档。
+pub fn rung_blocks_tool(rung: ContinuationRung, tool: &str) -> bool {
+    if !matches!(
+        rung,
+        ContinuationRung::Reconcile | ContinuationRung::Backoff
+    ) {
+        return false;
+    }
+    !matches!(
+        tool,
+        "read_file"
+            | "read_tool_output"
+            | "grep_files"
+            | "search_files"
+            | "list_directory"
+            | "list_skills"
+            | "read_skill"
+            | "git_status"
+            | "git_diff"
+            | "git_log"
+            | "git_blame"
+            | "list_worktrees"
+            | "get_job_output"
+            | "list_agent_recoveries"
+            | "list_mcp_tools"
+            | "board_read"
+            | "get_session_task"
+            | "list_workspace_sessions"
+            | "read_session_messages"
+            | "workflow_read"
+            | "agent_library_read"
+            | "configuration_read"
+            | "update_plan"
+            | "await_agents"
+    )
 }
 
 fn declares_complete(reply: &str) -> bool {
@@ -854,6 +965,29 @@ named below). Do not redo steps that are already done; continue from what is act
         }
     }
     prompt.push_str("\nContinue until this goal is genuinely complete.");
+    prompt
+}
+
+/// 重启后续推只接还在进行、没进入收尾的目标。预算是否用尽由调用方另判。
+pub fn accepts_restart_resume(state: &GoalState) -> bool {
+    state.status == GoalStatus::Active
+        && !state.statement.trim().is_empty()
+        && !state.wrap_up_injected
+}
+
+/// 用户那一句还没写进历史时，续推提示要带上它，不能只剩目标声明。
+pub fn resume_after_restart_prompt_for_unrecorded_request(
+    state: &GoalState,
+    request: &str,
+) -> String {
+    let mut prompt = resume_after_restart_prompt(state);
+    let request = request.trim();
+    if !request.is_empty() {
+        prompt.push_str(
+            "\n\nThe interrupted turn had not recorded this request yet. Honor it while continuing the goal:\n",
+        );
+        prompt.push_str(request);
+    }
     prompt
 }
 
@@ -981,7 +1115,7 @@ mod tests {
         assert!(!continuation.is_active());
         continuation.activate("ship the release", continuation.default_budget());
         continuation.record_tokens(600);
-        let decision = continuation.evaluate("one", progressed()).unwrap();
+        let decision = continuation.evaluate("one", &progressed()).unwrap();
         let ContinuationDecision::Continue { steering, .. } = decision else {
             panic!("under budget keeps going: {decision:?}");
         };
@@ -996,14 +1130,14 @@ mod tests {
         let resumed = GoalContinuation::with_default_budget(continuation.default_budget());
         resumed.restore(saved, resumed.default_budget());
         resumed.record_tokens(400);
-        let decision = resumed.evaluate("two", progressed()).unwrap();
+        let decision = resumed.evaluate("two", &progressed()).unwrap();
         let ContinuationDecision::SoftStop { reason, steering } = decision else {
             panic!("expected a soft stop: {decision:?}");
         };
         assert_eq!(reason, SoftStopReason::Tokens);
         assert!(steering.contains("token budget"));
         assert_eq!(
-            resumed.evaluate("STATE: …", stalled()),
+            resumed.evaluate("STATE: …", &stalled()),
             Some(ContinuationDecision::Complete)
         );
         assert_eq!(
@@ -1048,21 +1182,34 @@ mod tests {
         assert!(prompt.contains("port the grammar"));
         assert!(!prompt.contains("port the lexer"));
         assert!(prompt.ends_with("Continue until this goal is genuinely complete."));
+        assert!(accepts_restart_resume(&state));
+        let mut wrapping = state.clone();
+        wrapping.wrap_up_injected = true;
+        assert!(!accepts_restart_resume(&wrapping));
+        let carried =
+            resume_after_restart_prompt_for_unrecorded_request(&state, "  port the rest  ");
+        assert!(carried.contains("had not recorded this request yet"));
+        assert!(carried.ends_with("port the rest"));
+        assert_eq!(
+            resume_after_restart_prompt_for_unrecorded_request(&state, "  "),
+            prompt,
+            "a blank request adds nothing"
+        );
     }
 
     #[test]
     fn no_active_goal_leaves_stopping_untouched() {
         let continuation = GoalContinuation::new();
-        assert!(continuation.evaluate("all done", progressed()).is_none());
+        assert!(continuation.evaluate("all done", &progressed()).is_none());
     }
 
     #[test]
     fn plain_reply_is_refused_and_continued() {
         let continuation = goal_with(GoalBudget::default());
         let decision = continuation
-            .evaluate("I have finished the first part.", progressed())
+            .evaluate("I have finished the first part.", &progressed())
             .expect("goal active");
-        let ContinuationDecision::Continue { steering, rung } = decision else {
+        let ContinuationDecision::Continue { steering, rung, .. } = decision else {
             panic!("expected continue, got {decision:?}");
         };
         assert_eq!(rung, ContinuationRung::Guidance);
@@ -1072,17 +1219,111 @@ mod tests {
         assert!(continuation.is_active());
     }
 
+    /// 退避档的等待跟着无进展轮数走：第 5 轮 1 分钟、第 6 轮 5 分钟、第 7 轮起 15 分钟封顶。
+    /// 引导档与对账档不等。
     #[test]
-    fn explicit_marker_completes_and_clears() {
+    fn backoff_waits_one_then_five_then_fifteen_minutes() {
+        let continuation = goal_with(GoalBudget::default());
+        let mut delays = Vec::new();
+        for round in 1..=8 {
+            let decision = continuation
+                .evaluate("still thinking", &stalled())
+                .expect("goal active");
+            let ContinuationDecision::Continue { rung, delay, .. } = decision else {
+                panic!("round {round} expected continue, got {decision:?}");
+            };
+            assert_eq!(rung, rung_for(round), "round {round}");
+            delays.push(delay);
+        }
+        assert_eq!(
+            delays,
+            vec![
+                None,
+                None,
+                None,
+                None,
+                Some(Duration::from_secs(60)),
+                Some(Duration::from_secs(5 * 60)),
+                Some(Duration::from_secs(15 * 60)),
+                Some(Duration::from_secs(15 * 60)),
+            ]
+        );
+    }
+
+    /// 对账档与退避档只留只读核对。引导档一个都不拦，没名字的工具按拦下处理。
+    #[test]
+    fn reconcile_and_backoff_keep_only_read_only_checks() {
+        for tool in [
+            "read_file",
+            "git_status",
+            "git_diff",
+            "update_plan",
+            "await_agents",
+            "get_session_task",
+            "workflow_read",
+            "board_read",
+        ] {
+            assert!(
+                !rung_blocks_tool(ContinuationRung::Reconcile, tool),
+                "{tool} is a check, not a new action"
+            );
+        }
+        for tool in [
+            "edit_file",
+            "create_file",
+            "run_command",
+            "spawn_agent",
+            "create_worktree",
+            "web_search",
+            "web_fetch",
+            "ask_user",
+            "call_mcp_tool",
+            "kill_job",
+            "resume_agent",
+            "monitor",
+            "board_post",
+            "start_session",
+            "configuration_write",
+            "workflow_control",
+            "stop_agent",
+            "a_tool_added_later",
+        ] {
+            assert!(
+                rung_blocks_tool(ContinuationRung::Reconcile, tool),
+                "{tool} must not run during reconciliation"
+            );
+            assert!(
+                rung_blocks_tool(ContinuationRung::Backoff, tool),
+                "{tool} must not run while backing off"
+            );
+            assert!(
+                !rung_blocks_tool(ContinuationRung::Guidance, tool),
+                "guidance narrows nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_marker_without_criteria_is_rejected() {
         let continuation = goal_with(GoalBudget::default());
         let decision = continuation
             .evaluate(
                 "<goal-status>complete</goal-status> Everything is verified. Shipped rc7.",
-                progressed(),
+                &progressed(),
             )
             .expect("goal active");
-        assert_eq!(decision, ContinuationDecision::Complete);
-        assert!(!continuation.is_active());
+        let ContinuationDecision::CompletionRejected {
+            steering,
+            open_criteria,
+            workers_in_flight,
+        } = decision
+        else {
+            panic!("expected rejection, got {decision:?}");
+        };
+        assert_eq!((open_criteria, workers_in_flight), (0, 0));
+        assert!(steering.contains("No acceptance criteria are recorded"));
+        assert!(steering.contains("`update_plan`"));
+        assert!(continuation.is_active());
     }
 
     #[test]
@@ -1093,7 +1334,7 @@ mod tests {
             ..RoundObservation::default()
         };
         for round in 1..=6 {
-            let decision = continuation.evaluate("waiting for CI", waiting).unwrap();
+            let decision = continuation.evaluate("waiting for CI", &waiting).unwrap();
             let ContinuationDecision::Continue { rung, .. } = decision else {
                 panic!("expected continue while waiting on background work");
             };
@@ -1106,7 +1347,7 @@ mod tests {
         let continuation = goal_with(GoalBudget::default());
         let rungs = (0..6)
             .map(
-                |_| match continuation.evaluate("still thinking", stalled()) {
+                |_| match continuation.evaluate("still thinking", &stalled()) {
                     Some(ContinuationDecision::Continue { rung, .. }) => rung,
                     other => panic!("expected continue, got {other:?}"),
                 },
@@ -1129,10 +1370,10 @@ mod tests {
     fn progress_resets_the_ladder() {
         let continuation = goal_with(GoalBudget::default());
         for _ in 0..3 {
-            continuation.evaluate("thinking", stalled());
+            continuation.evaluate("thinking", &stalled());
         }
         let decision = continuation
-            .evaluate("did the thing", progressed())
+            .evaluate("did the thing", &progressed())
             .unwrap();
         let ContinuationDecision::Continue { rung, .. } = decision else {
             panic!("expected continue");
@@ -1147,9 +1388,9 @@ mod tests {
             max_continuations: 2,
             max_tokens: None,
         });
-        continuation.evaluate("one", progressed());
-        continuation.evaluate("two", progressed());
-        let decision = continuation.evaluate("three", progressed()).unwrap();
+        continuation.evaluate("one", &progressed());
+        continuation.evaluate("two", &progressed());
+        let decision = continuation.evaluate("three", &progressed()).unwrap();
         let ContinuationDecision::SoftStop { steering, reason } = decision else {
             panic!("expected soft stop, got {decision:?}");
         };
@@ -1159,6 +1400,39 @@ mod tests {
         assert!(continuation.wrap_up_pending());
     }
 
+    /// 预算超限时，哪怕这一轮有工具证据，也先收尾、不计续推、不判完成。
+    #[test]
+    fn an_exhausted_budget_wraps_up_before_counting_progress_or_completion() {
+        let continuation = goal_with(GoalBudget {
+            wall_clock: None,
+            max_continuations: 1,
+            max_tokens: None,
+        });
+        continuation.evaluate("one", &progressed());
+        assert_eq!(
+            continuation.budget_exhausted(),
+            Some(SoftStopReason::Continuations)
+        );
+        let decision = continuation
+            .evaluate(
+                "<goal-status>complete</goal-status> all done",
+                &progressed(),
+            )
+            .unwrap();
+        let ContinuationDecision::SoftStop { reason, .. } = decision else {
+            panic!("budget comes before the completion marker, got {decision:?}");
+        };
+        assert_eq!(reason, SoftStopReason::Continuations);
+        let state = continuation
+            .snapshot()
+            .expect("still active while wrapping up");
+        assert_eq!(
+            state.continuations, 1,
+            "the wrap-up round is not another continuation"
+        );
+        assert_eq!(state.status, GoalStatus::Active);
+    }
+
     #[test]
     fn wall_clock_exhaustion_soft_stops() {
         let continuation = goal_with(GoalBudget {
@@ -1166,7 +1440,7 @@ mod tests {
             max_continuations: 100,
             max_tokens: None,
         });
-        let decision = continuation.evaluate("anything", progressed()).unwrap();
+        let decision = continuation.evaluate("anything", &progressed()).unwrap();
         let ContinuationDecision::SoftStop { reason, .. } = decision else {
             panic!("expected soft stop");
         };
@@ -1181,11 +1455,11 @@ mod tests {
             max_tokens: None,
         });
         assert!(matches!(
-            continuation.evaluate("anything", progressed()),
+            continuation.evaluate("anything", &progressed()),
             Some(ContinuationDecision::SoftStop { .. })
         ));
         assert_eq!(
-            continuation.evaluate("STATE: branch main …", stalled()),
+            continuation.evaluate("STATE: branch main …", &stalled()),
             Some(ContinuationDecision::Complete)
         );
         assert!(!continuation.is_active());
@@ -1198,7 +1472,7 @@ mod tests {
             max_continuations: 2,
             max_tokens: None,
         });
-        continuation.evaluate("one", progressed());
+        continuation.evaluate("one", &progressed());
         continuation.activate(
             "ship the release",
             GoalBudget {
@@ -1207,9 +1481,9 @@ mod tests {
                 max_tokens: None,
             },
         );
-        continuation.evaluate("two", progressed());
+        continuation.evaluate("two", &progressed());
         assert!(matches!(
-            continuation.evaluate("three", progressed()),
+            continuation.evaluate("three", &progressed()),
             Some(ContinuationDecision::SoftStop { .. })
         ));
     }
@@ -1233,7 +1507,7 @@ mod tests {
         )
         .unwrap();
         let decision = continuation
-            .evaluate("<goal-status>complete</goal-status> done", progressed())
+            .evaluate("<goal-status>complete</goal-status> done", &progressed())
             .unwrap();
         let ContinuationDecision::CompletionRejected {
             steering,
@@ -1270,7 +1544,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            continuation.evaluate("<goal-status>complete</goal-status> done", progressed()),
+            continuation.evaluate("<goal-status>complete</goal-status> done", &progressed()),
             Some(ContinuationDecision::Complete)
         );
         let finished = continuation
@@ -1278,6 +1552,94 @@ mod tests {
             .expect("finished state is kept for persistence");
         assert_eq!(finished.status, GoalStatus::Complete);
         assert!(!continuation.is_active());
+    }
+
+    /// 改写一条标准就是一条新标准：旧证据证明的是旧文本，不能跟着走。
+    /// 纯重排、重复原句不重置。
+    #[test]
+    fn rewording_a_criterion_drops_its_recorded_evidence() {
+        let continuation = goal_with(GoalBudget::default());
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["tests pass", "changelog updated"]}),
+        )
+        .unwrap();
+        update(
+            &continuation,
+            serde_json::json!({"checklist": [
+                {"index": 1, "done": true, "evidence": "cargo test: 612 passed"}
+            ]}),
+        )
+        .unwrap();
+
+        // 改一个字：这条回到未完成，证据清空，完成标记被拒。
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["tests pass now", "changelog updated"]}),
+        )
+        .unwrap();
+        let snapshot = continuation.snapshot().expect("goal still active");
+        let reworded = &snapshot.criteria[0];
+        assert!(!reworded.done, "a reworded criterion starts over");
+        assert_eq!(reworded.evidence, None);
+        assert!(matches!(
+            continuation.evaluate("<goal-status>complete</goal-status> done", &progressed()),
+            Some(ContinuationDecision::CompletionRejected {
+                open_criteria: 2,
+                ..
+            })
+        ));
+
+        // 删掉没勾的那条、只留改写过的：旧证据同样不跟着走。
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["tests pass now"]}),
+        )
+        .unwrap();
+        assert!(matches!(
+            continuation.evaluate("<goal-status>complete</goal-status> done", &progressed()),
+            Some(ContinuationDecision::CompletionRejected {
+                open_criteria: 1,
+                ..
+            })
+        ));
+
+        // 原句重排：已勾的那条连证据一起保留，换到新位置也算满足。
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["tests pass", "changelog updated"]}),
+        )
+        .unwrap();
+        update(
+            &continuation,
+            serde_json::json!({"checklist": [
+                {"index": 1, "done": true, "evidence": "cargo test: 612 passed"}
+            ]}),
+        )
+        .unwrap();
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["changelog updated", "tests pass"]}),
+        )
+        .unwrap();
+        let snapshot = continuation.snapshot().expect("goal still active");
+        assert!(!snapshot.criteria[0].done);
+        assert!(snapshot.criteria[1].satisfied());
+        assert_eq!(
+            snapshot.criteria[1].evidence.as_deref(),
+            Some("cargo test: 612 passed")
+        );
+
+        // 同一句出现两次：只有第一条继承旧证据，第二条从零开始。
+        update(
+            &continuation,
+            serde_json::json!({"criteria": ["tests pass", "tests pass"]}),
+        )
+        .unwrap();
+        let snapshot = continuation.snapshot().expect("goal still active");
+        assert!(snapshot.criteria[0].satisfied());
+        assert!(!snapshot.criteria[1].done);
+        assert_eq!(snapshot.criteria[1].evidence, None);
     }
 
     #[test]
@@ -1288,7 +1650,7 @@ mod tests {
             ..progressed()
         };
         let decision = continuation
-            .evaluate("<goal-status>complete</goal-status>", busy)
+            .evaluate("<goal-status>complete</goal-status>", &busy)
             .unwrap();
         assert!(matches!(
             decision,
@@ -1297,21 +1659,32 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(
-            continuation.evaluate("<goal-status>complete</goal-status>", progressed()),
-            Some(ContinuationDecision::Complete)
+        let idle = continuation
+            .evaluate("<goal-status>complete</goal-status>", &progressed())
+            .unwrap();
+        assert!(
+            matches!(
+                idle,
+                ContinuationDecision::CompletionRejected {
+                    open_criteria: 0,
+                    workers_in_flight: 0,
+                    ..
+                }
+            ),
+            "workers finishing does not close a goal that still has no criteria, got {idle:?}"
         );
+        assert!(continuation.is_active());
     }
 
     #[test]
     fn a_plan_update_counts_as_progress() {
         let continuation = goal_with(GoalBudget::default());
         for _ in 0..3 {
-            continuation.evaluate("thinking", stalled());
+            continuation.evaluate("thinking", &stalled());
         }
         update(&continuation, serde_json::json!({"criteria": ["ship it"]})).unwrap();
         let Some(ContinuationDecision::Continue { rung, .. }) =
-            continuation.evaluate("recorded the plan", stalled())
+            continuation.evaluate("recorded the plan", &stalled())
         else {
             panic!("expected continue");
         };
@@ -1331,8 +1704,8 @@ mod tests {
             }),
         )
         .unwrap();
-        continuation.evaluate("one", progressed());
-        continuation.evaluate("two", progressed());
+        continuation.evaluate("one", &progressed());
+        continuation.evaluate("two", &progressed());
         let snapshot = continuation.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         let decoded: GoalState = serde_json::from_str(&json).unwrap();
@@ -1407,8 +1780,13 @@ mod tests {
         let mut newer = GoalState::new("g");
         newer.continuations = 3;
         newer.elapsed_ms = 60_000;
+        older.tokens_used = 4_000;
+        newer.tokens_used = 1_000;
         let merged = newer.merged_over(Some(&older));
-        assert_eq!((merged.continuations, merged.elapsed_ms), (9, 60_000));
+        assert_eq!(
+            (merged.continuations, merged.elapsed_ms, merged.tokens_used),
+            (9, 60_000, 4_000)
+        );
         let different = GoalState::new("h").merged_over(Some(&older));
         assert_eq!(different.continuations, 0);
     }
@@ -1420,8 +1798,8 @@ mod tests {
             max_continuations: 100,
             max_tokens: None,
         });
-        continuation.evaluate("anything", progressed());
-        continuation.evaluate("STATE: …", stalled());
+        continuation.evaluate("anything", &progressed());
+        continuation.evaluate("STATE: …", &stalled());
         let state = continuation.snapshot().unwrap();
         assert_eq!(state.status, GoalStatus::BudgetLimited);
     }

@@ -14,7 +14,9 @@
 //!
 //! 只读磁盘上的状态文件：不需要 Runtime 在跑，不调 Provider，不走
 //! `AgentStore::open`（它会把运行中的 Agent 标成中断——审计不能有副作用）。
-//! 报告里命令已脱敏、路径是工作区相对路径、不含提示词和模型正文。
+//! 唯一读工作区的地方是判断改动还在不在：对会话工作区跑一次只读的
+//! `git status`，不写、不暂存、不还原。报告里命令已脱敏、路径是工作区相对路径、
+//! 不含提示词和模型正文。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -27,7 +29,7 @@ use willdeep_core::session::{Session, SessionStore, format_iso8601, parse_iso860
 use willdeep_core::types::Role;
 
 use crate::daemon::diff_review::{
-    self, DiffAttributionRecord, DiffReviewRecord, DiffVerificationRecord,
+    self, AttributedPathState, DiffAttributionRecord, DiffReviewRecord, DiffVerificationRecord,
 };
 use crate::daemon::{
     DaemonPaths, InteractionKind, InteractionResolution, RuntimeInteraction, RuntimeTask,
@@ -455,6 +457,28 @@ pub(crate) struct ChangeEntry {
     pub tool: String,
     pub paths: Vec<String>,
     pub after_snapshot_id: String,
+    /// 这些路径的改动现在还在不在工作区里。见 [`ChangePresence`]。
+    pub presence: ChangePresence,
+}
+
+/// 一次工具调用改过的路径，导出时对照工作区得出的现状。
+///
+/// 归属记录只留路径和调用结束时的状态，快照本身不落盘；已跟踪文件被
+/// `git restore` 之后回收区也没有痕迹。所以这里只回答「还在不在」，不回答
+/// 「是不是当初那一版」。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ChangePresence {
+    /// 每条路径都还带着调用结束时的那种改动。
+    Present,
+    /// 一条都不剩：已跟踪的与 HEAD 一致，未跟踪的文件不在了。
+    Gone,
+    /// 有的还在，有的没了。
+    Partial,
+    /// 记录是 0.148.0-rc4 之前写的，没有每个路径的状态，判断不了。
+    Unknown,
+    /// 工作区不是 Git 仓库、读不了，或路径已经逃出工作区。
+    Unreadable,
 }
 
 #[derive(Debug, Serialize)]
@@ -838,12 +862,18 @@ fn audit_session(session: &Session, sources: &Sources) -> SessionAudit {
             ]
         })
         .collect::<BTreeSet<_>>();
+    // 一次只读的 git status 管整个会话：记录里的工作区各不相同（子 Agent 的
+    // worktree），按工作区各问一次。
+    let mut workspace_status = HashMap::<PathBuf, Option<BTreeSet<String>>>::new();
     let changes = attributions
         .iter()
         .map(|record| {
             let stored = agents_by_id.get(&record.agent_id).copied();
             let is_root = root_agents.contains(&record.agent_id)
                 || stored.is_some_and(|agent| agent.parent_id.is_none());
+            let dirty = workspace_status
+                .entry(record.workspace.clone())
+                .or_insert_with(|| dirty_paths(&record.workspace));
             ChangeEntry {
                 at: format_iso8601(record.created_at),
                 agent_id: record.agent_id,
@@ -854,6 +884,7 @@ fn audit_session(session: &Session, sources: &Sources) -> SessionAudit {
                 tool: record.tool.clone(),
                 paths: record.paths.clone(),
                 after_snapshot_id: record.after_snapshot_id.clone(),
+                presence: change_presence(record, dirty.as_ref()),
             }
         })
         .collect::<Vec<_>>();
@@ -1014,6 +1045,108 @@ fn audit_session(session: &Session, sources: &Sources) -> SessionAudit {
             summary.label_followups(&rows);
             summary
         },
+    }
+}
+
+/// 工作区里当前与 HEAD 不一致的路径。`None` 表示读不了：不是 Git 仓库、
+/// git 不在、或命令失败。只读，不改索引也不改工作区。
+fn dirty_paths(workspace: &Path) -> Option<BTreeSet<String>> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .env("LC_ALL", "C")
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut paths = BTreeSet::new();
+    let mut records = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        // porcelain v1 -z：`XY <路径>`，改名和复制后面再跟一条旧路径。
+        if record.len() < 4 {
+            continue;
+        }
+        let code = record[0] as char;
+        let renamed = matches!(code, 'R' | 'C') || matches!(record[1] as char, 'R' | 'C');
+        paths.insert(String::from_utf8_lossy(&record[3..]).into_owned());
+        if renamed {
+            records.next();
+        }
+    }
+    Some(paths)
+}
+
+/// 这条归属记录里的改动现在还在不在。
+///
+/// `dirty` 是 [`dirty_paths`] 的结果：`None` 表示工作区读不了。记录没有
+/// `path_states`（0.148.0-rc4 之前写的）时给 `Unknown`，不拿「路径现在脏着」
+/// 冒充「当初那份改动还在」。
+fn change_presence(
+    record: &DiffAttributionRecord,
+    dirty: Option<&BTreeSet<String>>,
+) -> ChangePresence {
+    if record.path_states.is_empty() || record.path_states.len() != record.paths.len() {
+        return ChangePresence::Unknown;
+    }
+    let Some(dirty) = dirty else {
+        return ChangePresence::Unreadable;
+    };
+    let mut present = 0usize;
+    let mut answered = 0usize;
+    for (path, state) in record.paths.iter().zip(&record.path_states) {
+        // 路径必须是工作区相对路径。逃出去的既不能问 git，也不能拿来判断。
+        if !is_workspace_relative(path) {
+            continue;
+        }
+        answered += 1;
+        let still_there = match state {
+            // 脏改动、被删的文件、未跟踪文件，只要还在 git status 里就没被还原。
+            // 未跟踪文件的还原是直接挪走，不进回收区以外的任何记录。
+            AttributedPathState::TrackedDirty
+            | AttributedPathState::Deleted
+            | AttributedPathState::Untracked => dirty.contains(path),
+            // 调用结束时就已经和 HEAD 一致，工作区里没有可还原的内容。
+            AttributedPathState::Clean => true,
+        };
+        if still_there {
+            present += 1;
+        }
+    }
+    if answered == 0 {
+        return ChangePresence::Unreadable;
+    }
+    match present {
+        0 => ChangePresence::Gone,
+        n if n == answered => ChangePresence::Present,
+        _ => ChangePresence::Partial,
+    }
+}
+
+/// 拒绝绝对路径和 `..`：归属记录来自磁盘上的 JSON，不能拿来读工作区之外。
+fn is_workspace_relative(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+fn presence_label(presence: &ChangePresence, language: Language) -> &'static str {
+    let t = |zh: &'static str, en: &'static str, ja: &'static str| language.text(zh, en, ja);
+    match presence {
+        ChangePresence::Present => t("还在", "present", "残存"),
+        ChangePresence::Gone => t("已不在", "gone", "消失"),
+        ChangePresence::Partial => t("部分还在", "partial", "一部残存"),
+        ChangePresence::Unknown => t("记录太旧，未知", "unknown (old record)", "記録が古く不明"),
+        ChangePresence::Unreadable => t("工作区读不了", "workspace unreadable", "読めない"),
     }
 }
 
@@ -1692,6 +1825,7 @@ fn render_session(out: &mut String, audit: &SessionAudit, language: Language, no
             "Agent",
             t("工具", "Tool", "ツール"),
             t("文件", "Files", "ファイル"),
+            t("还在工作区", "Still in workspace", "ワークスペースに残存"),
             t("快照", "Snapshot", "スナップショット"),
         ],
         audit
@@ -1711,6 +1845,7 @@ fn render_session(out: &mut String, audit: &SessionAudit, language: Language, no
                         .map(|path| format!("`{}`", cell(path)))
                         .collect::<Vec<_>>()
                         .join(", "),
+                    presence_label(&entry.presence, language).to_owned(),
                     entry.after_snapshot_id.clone(),
                 ]
             })
@@ -1951,6 +2086,7 @@ mod tests {
             agent_id: root,
             tool: "edit_file".to_owned(),
             paths: vec![path.to_owned()],
+            path_states: Vec::new(),
             confidence: AttributionConfidence::ToolWindow,
             created_at: 15,
         };
@@ -2060,6 +2196,8 @@ mod tests {
 
         assert_eq!(audit.changes.len(), 1);
         assert_eq!(audit.changes[0].agent, "root");
+        // 夹具是旧记录：没有每个路径的状态，不能判断改动还在不在。
+        assert_eq!(audit.changes[0].presence, ChangePresence::Unknown);
         assert_eq!(audit.files_changed, vec!["src/lib.rs"]);
         assert_eq!(audit.reviews.len(), 1);
         assert_eq!(
@@ -2087,6 +2225,113 @@ mod tests {
         assert_eq!(audit.input_tokens, Some(100));
         assert_eq!(report.summary.input_tokens, 100);
         assert_eq!(audit.status.as_deref(), Some("completed"));
+    }
+
+    /// 改动还在不在要对照真实工作区：已跟踪文件 `git restore` 之后报告要说「已不在」，
+    /// 没还原的说「还在」，两者都有说「部分还在」。未跟踪文件挪走也算不在。
+    #[test]
+    fn restored_tracked_changes_are_reported_gone_and_the_rest_present() {
+        let (home, session, workspace) = seeded_home();
+        run_git(&workspace, &["init"]);
+        run_git(
+            &workspace,
+            &["config", "user.email", "test@willdeep.invalid"],
+        );
+        run_git(&workspace, &["config", "user.name", "WillDeep Test"]);
+        std::fs::write(workspace.join("kept.txt"), "one\n").unwrap();
+        std::fs::write(workspace.join("restored.txt"), "one\n").unwrap();
+        run_git(&workspace, &["add", "."]);
+        run_git(&workspace, &["commit", "-m", "seed"]);
+        // 工具改完时的样子：两个已跟踪文件都脏，一个未跟踪文件在。
+        std::fs::write(workspace.join("kept.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(workspace.join("restored.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(workspace.join("draft.txt"), "new\n").unwrap();
+
+        let record = |paths: Vec<&str>, states: Vec<AttributedPathState>| DiffAttributionRecord {
+            id: Uuid::new_v4(),
+            before_snapshot_id: "snap-a".to_owned(),
+            after_snapshot_id: "snap-b".to_owned(),
+            workspace: workspace.clone(),
+            session_id: Some(session.id),
+            turn_id: None,
+            task_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            tool: "edit_file".to_owned(),
+            paths: paths.into_iter().map(str::to_owned).collect(),
+            path_states: states,
+            confidence: AttributionConfidence::ToolWindow,
+            created_at: 15,
+        };
+        // 盖掉夹具里的旧记录：这一份是带状态的新记录。
+        home.write(
+            "runtime/diff-attributions.json",
+            &serde_json::to_string(&vec![
+                record(
+                    vec!["kept.txt", "restored.txt"],
+                    vec![
+                        AttributedPathState::TrackedDirty,
+                        AttributedPathState::TrackedDirty,
+                    ],
+                ),
+                record(vec!["draft.txt"], vec![AttributedPathState::Untracked]),
+                record(
+                    vec!["../outside.txt"],
+                    vec![AttributedPathState::TrackedDirty],
+                ),
+            ])
+            .unwrap(),
+        );
+
+        let presence = |index: usize| {
+            let report = build_report(
+                &home.0,
+                &Scope {
+                    session: Some(session.id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            report.sessions[0].changes[index].presence.clone()
+        };
+        assert_eq!(presence(0), ChangePresence::Present, "两个文件都还脏着");
+        assert_eq!(presence(1), ChangePresence::Present, "未跟踪文件还在");
+        assert_eq!(
+            presence(2),
+            ChangePresence::Unreadable,
+            "逃出工作区的路径不能拿来判断"
+        );
+
+        // 还原其中一个已跟踪文件，并挪走未跟踪文件：一个部分还在，一个已不在。
+        run_git(&workspace, &["restore", "--worktree", "--", "restored.txt"]);
+        std::fs::remove_file(workspace.join("draft.txt")).unwrap();
+        assert_eq!(presence(0), ChangePresence::Partial);
+        assert_eq!(presence(1), ChangePresence::Gone);
+
+        // 剩下的也还原：整条记录已不在。
+        run_git(&workspace, &["restore", "--worktree", "--", "kept.txt"]);
+        assert_eq!(presence(0), ChangePresence::Gone);
+
+        let markdown = render_markdown(
+            &build_report(
+                &home.0,
+                &Scope {
+                    session: Some(session.id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+            Language::ZhCn,
+        );
+        assert!(markdown.contains("已不在"), "{markdown}");
+    }
+
+    fn run_git(workspace: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(workspace)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {} failed", args.join(" "));
     }
 
     #[test]

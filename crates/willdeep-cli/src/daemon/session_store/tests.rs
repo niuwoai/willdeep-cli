@@ -1331,6 +1331,80 @@ fn safely_requeues_active_turn_without_deleting_a_persisted_user_message() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 目标还在进行的轮次，哪怕没动过工具、用户那一句已经落盘，也不按原句重放：
+/// 标成同一种重启中断，原句留在历史里，交给续推去核对。
+#[test]
+fn an_active_goal_turn_is_interrupted_instead_of_replayed_verbatim() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-runtime-goal-turn-restart-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let session = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace,
+            profile: None,
+            model: None,
+            config: None,
+            title: Some("Goal restart".to_owned()),
+        })
+        .unwrap();
+    let prompt = "keep migrating the parser";
+    let (turn, _) = store
+        .enqueue_turn(
+            session.id,
+            CreateRuntimeTurn {
+                team_control: None,
+                origin_client: None,
+                request_id: uuid::Uuid::new_v4(),
+                prompt: prompt.to_owned(),
+                attachments: Vec::new(),
+                defer_until_released: false,
+            },
+        )
+        .unwrap();
+    store.claim_next(session.id).unwrap().unwrap();
+    assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
+    let core_store = willdeep_core::SessionStore::new(&root);
+    let mut core = core_store.load_baselined(session.id).unwrap();
+    core.messages
+        .push(willdeep_core::Message::user("an earlier question"));
+    core.goal_state = Some(willdeep_core::GoalState::new("migrate the parser"));
+    core_store.save(&mut core).unwrap();
+    drop(store);
+
+    let restored = RuntimeSessionStore::open(path, &root).unwrap();
+    let turn = restored.get_turn(turn.id).unwrap().unwrap();
+    assert_eq!(turn.status, RuntimeTurnStatus::Interrupted);
+    assert_eq!(
+        turn.error.as_deref(),
+        Some(super::RESTART_INTERRUPTED_ERROR)
+    );
+    assert!(restored.schedulable_sessions().unwrap().is_empty());
+    let candidates = restored.goal_resume_candidates("goal-resume:").unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].session_id, session.id);
+    assert_eq!(
+        candidates[0].unrecorded_request.as_deref(),
+        Some(prompt),
+        "the request was never written, so the resume has to carry it"
+    );
+    assert_eq!(core_store.load(session.id).unwrap().messages.len(), 1);
+
+    // 用户那一句已经落盘：续推不再重复它。
+    let mut core = core_store.load_baselined(session.id).unwrap();
+    core.messages.push(willdeep_core::Message::user(prompt));
+    core_store.save(&mut core).unwrap();
+    let candidates = restored.goal_resume_candidates("goal-resume:").unwrap();
+    assert_eq!(candidates[0].unrecorded_request, None);
+    assert_eq!(core_store.load(session.id).unwrap().messages.len(), 2);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn ambiguous_partial_turn_history_is_preserved_and_not_requeued() {
     let root = std::env::temp_dir().join(format!(

@@ -1741,6 +1741,7 @@ async fn daemon_turns_link_ledger_lines_to_their_usage_events() {
                     output_tokens: Some(20),
                     total_tokens: Some(1_020 + call as u64),
                     cache_read_tokens: Some(512),
+                    ..willdeep_core::types::Usage::default()
                 }),
                 finish_reason: Some("stop".to_owned()),
             })
@@ -2011,6 +2012,10 @@ async fn interrupted_goals_resume_once_after_a_restart() {
             .starts_with("<goal>\nmigrate the parser\n</goal>\n[goal-resume]")
     );
     assert!(claimed.request.prompt.contains("1. parser tests pass"));
+    assert!(
+        claimed.request.prompt.contains("keep going"),
+        "the interrupted turn never recorded its request, so the resume carries it"
+    );
     for skipped in [done, wrap, budget, plain] {
         assert!(sessions.claim_next(skipped).unwrap().is_none());
     }
@@ -2052,6 +2057,7 @@ fn repeated_restart_interruptions_of_resume_turns_stop_resuming() {
             root_agent_id: sessions.get(session).unwrap().unwrap().root_agent_id,
             interrupted_turn_id: turn,
             consecutive_resumes: 1,
+            unrecorded_request: Some("keep going".to_owned()),
         }]
     );
     let _ = std::fs::remove_dir_all(&root);

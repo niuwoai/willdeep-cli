@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
@@ -485,6 +485,12 @@ pub struct Agent {
     /// 服务端实际接受的窗口。从 `config.context_window` 起步，只降不升：
     /// 400 明确说窗口更小时，它的数字比我们的配置权威。
     learned_context_window: AtomicU64,
+    /// 本次运行里窗口被收小的次数。随下一次带用量的调用落账后清零，所以一次
+    /// 收窗只进一行账。
+    context_window_tightens: AtomicU32,
+    /// 下一轮请求的前缀与上一轮不同：刚复用了一份新摘要，或把已发过的超长工具
+    /// 输出换成了摘录。只记一轮，落账后清零。
+    prefix_break: std::sync::atomic::AtomicBool,
 }
 
 impl Agent {
@@ -520,6 +526,8 @@ impl Agent {
             time_budget: None,
             inherited_deadline: None,
             learned_context_window,
+            context_window_tightens: AtomicU32::new(0),
+            prefix_break: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -570,8 +578,18 @@ impl Agent {
         usage: Option<&Usage>,
         outcome: crate::usage_ledger::Outcome,
     ) {
-        call.settle(usage, outcome);
-        let sequence = match usage {
+        let mut recorded = usage.cloned();
+        if let Some(usage) = recorded.as_mut() {
+            let tightens = self.context_window_tightens.swap(0, Ordering::Relaxed);
+            if tightens > 0 {
+                usage.context_window_tightens = Some(tightens);
+            }
+            if self.prefix_break.swap(false, Ordering::Relaxed) {
+                usage.prefix_cache_break = Some(true);
+            }
+        }
+        call.settle(recorded.as_ref(), outcome);
+        let sequence = match &recorded {
             Some(usage) => {
                 self.sink
                     .emit_sequenced(AgentEvent::Usage(usage.clone()))
@@ -619,8 +637,9 @@ impl Agent {
     /// 采纳一个更小的窗口。`reported` 是错误里引用的上限；没有数字、或数字
     /// 不比当前配置更小时，按四分之三保守收缩——服务端都没指出更小的窗口，
     /// 溢出多半来自估算偏低或输出预留不足。窗口只能变小：返回 `false` 表示
-    /// 已经无处可退，调用方应当把原始错误抛出去，而不是无限重试。
-    fn tighten_context_window(&self, reported: Option<u64>) -> bool {
+    /// 已经无处可退，调用方应当把原始错误抛出去，而不是无限重试。收成一次
+    /// 就记一笔，随下一次带用量的调用写进账本。
+    pub(crate) fn tighten_context_window(&self, reported: Option<u64>) -> bool {
         loop {
             let current = self.learned_context_window.load(Ordering::Relaxed);
             let candidate = match reported {
@@ -635,6 +654,7 @@ impl Agent {
                 .compare_exchange(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                self.context_window_tightens.fetch_add(1, Ordering::Relaxed);
                 return true;
             }
         }
@@ -922,12 +942,19 @@ impl Agent {
     }
 
     /// 还在跑的委派 Worker 数，目标完成门禁用。
-    fn workers_in_flight(&self) -> usize {
-        self.background_tasks
+    ///
+    /// 除了进程内的子 Agent 和未结束的 workflow，还加上本会话派出、还没到终态的
+    /// 子会话：它们的结果要等终态通知进历史才算回来，在此之前目标不能收口。
+    fn workers_in_flight(&self) -> (usize, Vec<String>) {
+        let delegated = self.tools.delegated_sessions_in_flight();
+        let count = self
+            .background_tasks
             .as_ref()
             .map(|tasks| tasks.running_subagents())
             .unwrap_or(0)
             .saturating_add(usize::from(self.workflows_pending()))
+            .saturating_add(delegated.len());
+        (count, delegated)
     }
 
     fn background_active(&self) -> bool {
@@ -1244,7 +1271,7 @@ impl Agent {
             if let Some(pin) = self
                 .goal_continuation
                 .as_ref()
-                .and_then(|goal| goal.pin(self.workers_in_flight()))
+                .and_then(|goal| goal.pin(self.workers_in_flight().0))
             {
                 runtime_context.push_str("\n\n");
                 runtime_context.push_str(&pin);
@@ -1256,6 +1283,14 @@ impl Agent {
                 turn,
                 self.config.max_turns,
             ));
+            // 收窗只改容量核算，模型看不到。窗口比配置小，说明上一轮被服务端拒过，
+            // 这里补一句，让它先收口而不是按原来的大窗口继续拉大输出、派工。
+            if let Some(notice) = guidance::context_window_notice(
+                self.effective_context_window(),
+                self.config.context_window,
+            ) {
+                runtime_context.push_str(&notice);
+            }
             if let Some(remaining) = self.tools.remaining_execution_time() {
                 runtime_context.push_str(&format!("\n[run-time-budget] Remaining wall clock: {} ms. Model waits and tools consume this same budget; worker deadlines reserve the final 20% for parent integration.", remaining.as_millis()));
                 if self
@@ -1574,7 +1609,14 @@ impl Agent {
                 continue;
             }
             incomplete_responses = 0;
-            if completion.tool_calls.is_empty() {
+            // 预算耗尽，或收尾引导已经注入：这一轮的工具调用都不执行。收尾引导
+            // 注入后 `budget_exhausted` 不再报，只看它会把收尾那一轮的工具放行。
+            if completion.tool_calls.is_empty()
+                || self
+                    .goal_continuation
+                    .as_ref()
+                    .is_some_and(|goal| goal.budget_exhausted().is_some() || goal.wrap_up_pending())
+            {
                 if content.is_empty() {
                     return Err(AgentError::EmptyResponse);
                 }
@@ -1619,21 +1661,34 @@ impl Agent {
                     messages.push(Message::host_instruction(format!("[completion-verification-required] {feedback} Continue the outstanding task. Do not weaken checks or claim completion. If verification is unavailable, explain the limitation; the runtime will retain a partial result.")));
                     continue;
                 }
-                // 长程续推：目标未达且预算未尽时，这里不是终点。
+                // 长程续推：目标未达且预算未尽时，这里不是终点。预算已经耗尽的工具轮
+                // 也从这里走：先记成普通 assistant 回复、不执行这一轮的工具调用，再由
+                // 下面的 SoftStop 注入收尾引导。
                 if let Some(continuation) = self.goal_continuation.clone() {
+                    let (workers_in_flight, delegated_sessions) = self.workers_in_flight();
                     let observation = RoundObservation {
                         tools_executed: tools_since_check,
                         background_active: self.background_active(),
-                        workers_in_flight: self.workers_in_flight(),
+                        workers_in_flight,
+                        delegated_sessions,
                     };
                     let was_wrapping_up = continuation.wrap_up_pending();
-                    match continuation.evaluate(&content, observation) {
-                        Some(ContinuationDecision::Continue { steering, rung }) => {
+                    match continuation.evaluate(&content, &observation) {
+                        Some(ContinuationDecision::Continue {
+                            steering,
+                            rung,
+                            delay,
+                        }) => {
                             self.sink
                                 .emit(AgentEvent::GoalContinuationInjected { rung })
                                 .await;
                             messages.push(Message::host_instruction(steering));
                             tools_since_check = 0;
+                            // 退避档真的等：1、5、15 分钟。用户取消是拿掉这个任务，等待跟着一起结束。
+                            // 宿主抢占提前结束等待，下一轮照常开始，不把没等完的时间补上。
+                            if let Some(delay) = delay {
+                                self.wait_backoff(delay).await;
+                            }
                             continue;
                         }
                         Some(ContinuationDecision::SoftStop { steering, reason }) => {
@@ -1708,6 +1763,18 @@ impl Agent {
                 .tool_calls
                 .iter()
                 .all(guidance::is_exploration_read);
+            // 对账档与退避档只留只读核对。拦在执行前：写、跑命令、派工都不发生，
+            // 结果按工具错误记进历史，模型下一轮看得到为什么没执行。
+            let blocked_rung = self
+                .goal_continuation
+                .as_ref()
+                .and_then(|goal| goal.current_rung())
+                .filter(|rung| {
+                    completion
+                        .tool_calls
+                        .iter()
+                        .any(|call| crate::goal::rung_blocks_tool(*rung, &call.name))
+                });
             let mut novel_read = false;
             let mut rules_changed = false;
             let mut parallel_results = self
@@ -1722,7 +1789,15 @@ impl Agent {
                         .await;
                 }
                 let execution = async {
-                    if blockers.refuses(&call) && parallel_results.is_none() {
+                    if blocked_rung
+                        .is_some_and(|rung| crate::goal::rung_blocks_tool(rung, &call.name))
+                    {
+                        let rung = blocked_rung.expect("checked above");
+                        Err(ToolError::HookDenied(format!(
+                            "No progress has been made for several rounds, so this round is {rung:?} and only read-only checks run. `{call_name}` was not executed. Reconcile against the files and git state first; a write, command or delegation runs again once a round produces new evidence.",
+                            call_name = call.name
+                        )))
+                    } else if blockers.refuses(&call) && parallel_results.is_none() {
                         Err(ToolError::HookDenied("This unchanged action failed three times without new successful evidence. It was not executed again. Diagnose the cause with a different bounded check, address the cause, or report the blocker; do not bypass approval or weaken verification.".into()))
                     } else if let Some(results) = parallel_results.as_mut() {
                         results.pop_front().expect("one result per parallel read")
@@ -1900,6 +1975,18 @@ impl Agent {
             LeaseOutcome::Delivered => kernel.ack(leases),
             LeaseOutcome::Failed => kernel.release(leases),
         };
+    }
+
+    /// 退避档的真实等待。等满，或等到宿主签发抢占。没挂内核时只等时间。
+    async fn wait_backoff(&self, delay: std::time::Duration) {
+        let Some(kernel) = &self.kernel else {
+            tokio::time::sleep(delay).await;
+            return;
+        };
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = kernel.preempted() => {}
+        }
     }
 
     /// 发一次 provider 请求，除非中途被宿主签发的抢占事件打断。

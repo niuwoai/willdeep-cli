@@ -112,6 +112,14 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
         }
         Ok(())
     }
+    fn delegated_sessions_in_flight(
+        &self,
+    ) -> std::result::Result<Vec<String>, willdeep_core::tools::ToolError> {
+        child_sessions::ChildStore::new(&self.home)
+            .delegated_in_flight(self.session_id)
+            .map_err(|error| willdeep_core::tools::ToolError::Network(error.to_string()))
+    }
+
     fn host_context(
         &self,
     ) -> std::result::Result<Vec<(uuid::Uuid, String)>, willdeep_core::tools::ToolError> {

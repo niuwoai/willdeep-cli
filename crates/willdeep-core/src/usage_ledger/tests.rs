@@ -37,6 +37,9 @@ const SPEC_KEYS: &[&str] = &[
     "cache_read_tokens",
     "output_tokens",
     "total_tokens",
+    // 0.148.0-rc3：窗口收紧次数与前缀是否断开，未发生也输出 null；旧行缺省按未知读。
+    "context_window_tightens",
+    "prefix_cache_break",
     "latency_ms",
     "outcome",
     "event_sequence",
@@ -88,6 +91,7 @@ fn full_record() -> UsageLedgerRecord {
         output_tokens: Some(1_036),
         total_tokens: Some(22_378),
         cache_read_tokens: Some(20_864),
+        ..Usage::default()
     };
     record.latency_ms = Some(5_820);
     record.event_sequence = Some(80_756);
@@ -361,6 +365,7 @@ impl Provider for TwoStepProvider {
             output_tokens: Some(10),
             total_tokens: Some(110 + call as u64),
             cache_read_tokens: Some(64),
+            ..Usage::default()
         });
         Ok(if call == 0 {
             Completion {
@@ -462,6 +467,32 @@ async fn an_agent_run_writes_one_line_per_provider_request() {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+/// 窗口在两次请求之间被收小：计数只进下一次带用量的账本行，且只进一行。
+#[tokio::test]
+async fn a_tightened_window_is_recorded_on_the_next_billed_call() {
+    let root = temp_root("window");
+    let (scope, sink) = scope_at(root.join("usage"), Execution::InProcess);
+    let agent = Agent::new(
+        Arc::new(TwoStepProvider {
+            calls: AtomicUsize::new(0),
+        }),
+        ToolRegistry::new(&root, ApprovalMode::ReadOnly).unwrap(),
+        agent_config(),
+    )
+    .with_usage_ledger(scope);
+    assert!(agent.tighten_context_window(Some(8_000)));
+    let outcome = agent.run("list and finish").await.unwrap();
+    assert_eq!(outcome.final_text, "done");
+    assert!(sink.flush(Duration::from_secs(10)));
+    let lines = read_lines(&root.join("usage"));
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["context_window_tightens"], 1);
+    // 下一行没有收窗：键仍在，值是 null，而不是省略键或补 0。
+    assert!(lines[1]["context_window_tightens"].is_null());
+    assert!(lines[1]["prefix_cache_break"].is_null());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

@@ -159,6 +159,7 @@ impl Provider for ReviewMock {
             output_tokens: Some(10),
             total_tokens: Some(SYNTHETIC_TOKENS),
             cache_read_tokens: Some(0),
+            ..Usage::default()
         };
         let completion = if index < self.read_rounds {
             Completion {

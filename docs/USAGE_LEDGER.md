@@ -1,10 +1,12 @@
 # 本机用量账本（willdeep.usage-ledger.v1）
 
+从 0.148.0-rc3 起，新增可选 `context_window_tightens` 与 `prefix_cache_break`：前者是这一轮请求发出前窗口被收小的次数，后者为 `true` 表示这一轮的请求前缀与上一轮不同（刚复用一份新的压缩摘要，或已发过的超长工具输出被换成摘录）。两键与其余可选键一样，没发生时写 `null`、不省略；这两个键加进来之前的旧行没有它们，读出时按未知处理，不据此补 0。
+
 从 0.99.0-rc1 起，新增可选 `run_id`：子 Agent 每次新建、续做或重试都记录独立 Run UUID，Agent UUID 继续表示同一个会话身份。旧行没有该字段时按未知读取；不会根据当前 Run 猜历史归属。此字段不包含提示词、回复或工具参数。
 
 同一计量路径同步更新私有 Run 统计，包含正常、失败、取消和压缩调用。输入/缓存/输出与 Provider 报告总量分别保存，预算计量采用 `Usage::billable_tokens()`，不重复加缓存命中。Provider 缺失用量时记录未知调用；宿主突然退出的执行额外标记用量可能不完整。P1 已把家族预算门禁接入 Worker 入队与模型请求；客户端展示和严格在途封顶仍未完成，不能据记录存在宣称预算不会被突破。
 
-> 最后更新：2026-11-04 | 起始版本：v0.81.0-rc1
+> 最后更新：2026-11-12 | 起始版本：v0.81.0-rc1
 > **Canonical 规范：Xedit 仓库 `docs/USAGE_LEDGER_DESIGN.md`（`~/Sites/Xedit`）**（行格式 §5.2、实时写入 §6.1、回填 §6.2、不变量 §7、已拍板决策 §16）。本文只写 rs 侧怎么落地、每个字段由哪段代码填，不另立一份规范；两边说法不一致时以 Xedit 那份为准并回头改这里。P1 的 `family_session_id` 是本仓先行增补，Xedit canonical 的字段同步仍待跨仓完成。
 
 ## 为什么有它
@@ -16,7 +18,7 @@ rs 的会话文件没有时间戳、没有逐条用量，`runtime/events.ndjson`
 - 位置：`$WILLDEEP_HOME/usage/YYYY-MM.jsonl`（默认 `~/.willdeep/usage/`），按记录的 **UTC** 月份分片，文件权限 0600。
 - 每行一个 JSON 对象，`\n` 结尾，整行小于 4096 字节；以 `O_APPEND|O_CREAT` 打开、一次 `write` 写完，daemon 与多个进程内 CLI 并发写同一文件不会交错。超长时按 `workspace` → 实例与回合 id → `task_id` → `provider`/`model` 的顺序置空再写，计数字段永不丢。
 - 只追加，永不改写旧行，不删除、不压缩。
-- **可选字段一律输出，未知即 `null`，从不省略键。** 键集为 §5.2 的 23 个，P1 再增补可选 `family_session_id`；旧行缺省为 `null`，Xedit 的 Swift 读取端按未知键忽略。rs 侧单测 `serialized_keys_are_exactly_the_spec_set_and_carry_no_content` 钉死这 24 个键，且断言没有 `content / prompt / messages / arguments / reasoning` 之类的内容字段。
+- **可选字段一律输出，未知即 `null`，从不省略键。** 键集为 §5.2 的 23 个，P1 增补可选 `family_session_id`，0.148.0-rc3 再增补 `context_window_tightens` 与 `prefix_cache_break`；旧行缺省为 `null`，Xedit 的 Swift 读取端按未知键忽略。rs 侧单测 `serialized_keys_are_exactly_the_spec_set_and_carry_no_content` 钉死这 26 个键，且断言没有 `content / prompt / messages / arguments / reasoning` 之类的内容字段。
 - 记账是旁路：写线程遇到任何 IO 错误只在 stderr 打一条警告（每个写入器只打一次，免得把 TUI 刷花），不上抛、不重试、不让回合失败或变慢。
 
 ## 字段来源（rs 代码映射）
@@ -35,6 +37,8 @@ rs 的会话文件没有时间戳、没有逐条用量，`runtime/events.ndjson`
 | `workspace` | harness 解析出的工作区绝对路径 | |
 | `provider` / `model` / `local` | `Provider::ledger_identity()` → `ProviderIdentity::from_config`：some.im / anthropic / OpenAI 兼容端点的 host；`local` = 回环地址或显式配置的免鉴权辅助模型（Ollama 等） | 回填拿不到 Provider，`provider` 为 `null`；`model` 取任务 → Runtime 会话 → `agents.json`（子 Agent），都没有就 `null`，不拿当前配置猜历史；`local` 回填记 `false` |
 | `input_tokens` / `cache_read_tokens` / `output_tokens` / `total_tokens` | 协议原样上报的 `Usage` | 没报就是 `null`，不估算；`input_tokens` 含缓存命中；回填的 `subagent_usage` 事件本来就不带 `cache_read_tokens` |
+| `context_window_tightens` | `Agent::settle_model_call`：自上次落账以来 `tighten_context_window` 成功收小窗口的次数 | 0.148.0-rc3 新增；没发生写 `null`（不是 0），收窗失败（候选为 0）不计；没有 usage 的调用没处可写，计数留到下一次带用量的行 |
+| `prefix_cache_break` | `Agent::request_messages_accounted`：首次复用一份新压缩摘要，或已发过的超长工具输出被换成摘录 | 0.148.0-rc3 新增；`true` 表示这一轮前缀与上一轮不同、自动前缀缓存从这里断开，没断开写 `null`；从磁盘恢复的旧摘要不算新断开 |
 | `latency_ms` | `ModelCall`：`begin` 到 `settle` | 回填为 `null` |
 | `outcome` | `ok` / `error`（含带着部分 usage 的流中断）/ `cancelled`（被抢占，或调用进行中整个 future 被丢弃，由 `ModelCall` 的 `Drop` 补记） | 回填全为 `ok` |
 | `event_sequence` | daemon 回合：`RuntimeEventSink::emit_sequenced` 返回的那条 usage 事件在 `events.ndjson` 里的序号；子 Agent 经 `ChildEventSink::emit_sequenced` 转发拿到；进程内为 `null` | 回填为源事件序号 |
