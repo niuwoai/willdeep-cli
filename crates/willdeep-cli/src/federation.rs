@@ -28,6 +28,8 @@ pub const DEFAULT_MAX_AUTO_TURNS: u32 = 6;
 pub const INVITE_TTL_SECONDS: u64 = 10 * 60;
 /// 一个群最多几位成员，含建群的一方。人和 Agent 都还能跟上的上限，不是技术上限。
 pub const MAX_GROUP_MEMBERS: usize = 8;
+/// Agent 之间靠 @ 互相点名，最多再传几次。人的发言不计入，到顶后只有人再开口才重新计数。
+pub const DEFAULT_MAX_MENTION_DEPTH: u32 = 3;
 
 type SignatureMac = Hmac<Sha256>;
 
@@ -325,12 +327,52 @@ pub fn pause_group(home: &Path, query: &str) -> Result<Group> {
     Ok(paused)
 }
 
-/// 这一轮要不要自动回。
+/// 正文里有没有用 `@名字` 点到这些名字中的一个。
 ///
-/// `from_agent` 为真表示这条消息本身是某台 Agent 的回复。它会进房间让人看见，
-/// 但不再触发下一轮：两台 Agent 互相应答正是无休止讨论的来源。
-pub fn group_should_auto_reply(group: &Group, from_agent: bool, max_auto_turns: u32) -> bool {
-    !from_agent && !group.paused && group.auto_turns < max_auto_turns
+/// 名字后面必须是结尾或非字母数字，避免 `@alex` 误中 `@alexander`。大小写按名字本身比较。
+pub fn mentions_any(text: &str, names: &[String]) -> bool {
+    names.iter().any(|name| mentions(text, name))
+}
+
+fn mentions(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let needle = format!("@{name}");
+    let mut rest = text;
+    while let Some(index) = rest.find(&needle) {
+        let after = &rest[index + needle.len()..];
+        let boundary = after
+            .chars()
+            .next()
+            .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-');
+        if boundary {
+            return true;
+        }
+        rest = &rest[index + 1..];
+    }
+    false
+}
+
+/// 群里这一轮要不要自动回。
+///
+/// 人发的话总是开一轮。Agent 的回复默认不再被回答，除非它用 `@名字` 点到了某位成员，
+/// 并且这条 @ 链还没到 [`DEFAULT_MAX_MENTION_DEPTH`] 所限的次数。
+pub fn group_should_auto_reply(
+    group: &Group,
+    from_agent: bool,
+    addressed: bool,
+    mention_depth: u32,
+    max_auto_turns: u32,
+    max_mention_depth: u32,
+) -> bool {
+    if group.paused || group.auto_turns >= max_auto_turns {
+        return false;
+    }
+    if !from_agent {
+        return true;
+    }
+    addressed && mention_depth < max_mention_depth
 }
 
 pub fn note_session(home: &Path, id: uuid::Uuid, session_id: uuid::Uuid) -> Result<()> {
@@ -447,9 +489,12 @@ struct Outgoing<'a> {
     /// 群里真正的发言人。转发时 `from` 是转发方，这个字段才是开口的那一台。
     #[serde(skip_serializing_if = "Option::is_none")]
     origin: Option<String>,
-    /// 发言人是一台 Agent，不是坐在机器前的人。接收方据此不再自动回。
+    /// 发言人是一台 Agent，不是坐在机器前的人。接收方据此不再自动回，除非被 @ 到。
     #[serde(default, skip_serializing_if = "is_false")]
     from_agent: bool,
+    /// 这条消息已经经过几次 Agent 之间的 @ 传递。人的发言是 0。
+    #[serde(default, skip_serializing_if = "is_zero")]
+    mention_depth: u32,
     client_message_id: &'a str,
 }
 
@@ -457,11 +502,16 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 /// 一条出站消息的群属性。1:1 传 [`GroupEnvelope::direct`]。
 pub struct GroupEnvelope {
     pub group_id: Option<uuid::Uuid>,
     pub origin: Option<uuid::Uuid>,
     pub from_agent: bool,
+    pub mention_depth: u32,
 }
 
 impl GroupEnvelope {
@@ -470,6 +520,7 @@ impl GroupEnvelope {
             group_id: None,
             origin: None,
             from_agent: false,
+            mention_depth: 0,
         }
     }
 }
@@ -514,6 +565,7 @@ async fn deliver(
         group_id: envelope.group_id.map(|id| id.to_string()),
         origin: envelope.origin.map(|id| id.to_string()),
         from_agent: envelope.from_agent,
+        mention_depth: envelope.mention_depth,
         client_message_id: &message_id,
     })
     .context("encode the federation message")?;
@@ -924,34 +976,52 @@ mod tests {
         let group = create_group(&root, "room", std::slice::from_ref(&other.name)).unwrap();
         assert_eq!(group.members, vec![other.id]);
 
-        // 人发的话开一轮；Agent 的回复进房间，但不再触发下一轮。
+        let decide = |group: &Group, from_agent: bool, addressed: bool, depth: u32| {
+            group_should_auto_reply(group, from_agent, addressed, depth, 6, 3)
+        };
+        // 人发的话开一轮。Agent 的回复默认不再触发下一轮，除非它 @ 了某个人。
         let stored = find_group(&load(&root).unwrap(), "room").unwrap().clone();
-        assert!(group_should_auto_reply(&stored, false, 6));
-        assert!(!group_should_auto_reply(&stored, true, 6));
+        assert!(decide(&stored, false, false, 0));
+        assert!(!decide(&stored, true, false, 0));
+        assert!(
+            decide(&stored, true, true, 0),
+            "being mentioned earns one more reply"
+        );
+        // @ 带来的传递有次数上限：到顶后即使再被点名也不回。
+        assert!(decide(&stored, true, true, 2));
+        assert!(!decide(&stored, true, true, 3));
 
-        // 连续自动回复到上限就停，不管是谁发的。
+        // 连续自动回复到上限就停，不管是谁发的、有没有被点名。
         for _ in 0..6 {
             note_group_auto_reply(&root, group.id).unwrap();
         }
         let stored = find_group(&load(&root).unwrap(), &group.id.to_string())
             .unwrap()
             .clone();
-        assert!(!group_should_auto_reply(&stored, false, 6));
+        assert!(!decide(&stored, false, true, 0));
 
         // 人再发一条，计数清零，自动回复重新打开。
         note_group_manual(&root, group.id).unwrap();
         let stored = find_group(&load(&root).unwrap(), "room").unwrap().clone();
         assert_eq!(stored.auto_turns, 0);
-        assert!(group_should_auto_reply(&stored, false, 6));
+        assert!(decide(&stored, false, false, 0));
 
         // 任何人都可以立刻停掉，停了之后只有人发言才恢复。
         pause_group(&root, "room").unwrap();
         let stored = find_group(&load(&root).unwrap(), "room").unwrap().clone();
         assert!(stored.paused);
-        assert!(!group_should_auto_reply(&stored, false, 6));
+        assert!(!decide(&stored, false, true, 0));
         note_group_manual(&root, group.id).unwrap();
         let stored = find_group(&load(&root).unwrap(), "room").unwrap().clone();
         assert!(!stored.paused);
+
+        // `@名字` 只在名字后面是边界时算点到，避免短名字误中长名字。
+        let names = vec!["alex".to_owned(), "lin".to_owned()];
+        assert!(mentions_any("@alex 看一下", &names));
+        assert!(mentions_any("ask @lin.", &names));
+        assert!(!mentions_any("@alexander 不是 alex", &names));
+        assert!(!mentions_any("email me at lin@example.com", &names));
+        assert!(!mentions_any("没有点名", &names));
 
         // 成员超过上限直接拒绝，重名的群要求用 UUID。
         let mut extras = Vec::new();

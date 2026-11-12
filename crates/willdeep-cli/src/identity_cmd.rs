@@ -167,6 +167,7 @@ async fn say_to_group(home: &std::path::Path, query: &str, text: &str) -> Result
         group_id: Some(group.id),
         origin: Some(identity.id),
         from_agent: false,
+        mention_depth: 0,
     };
     let mut delivered = 0usize;
     for member in &group.members {

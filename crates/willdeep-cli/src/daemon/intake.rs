@@ -1006,6 +1006,8 @@ async fn federation_message(
         #[serde(default)]
         from_agent: bool,
         #[serde(default)]
+        mention_depth: u32,
+        #[serde(default)]
         client_message_id: Option<String>,
     }
     let Ok(incoming) = serde_json::from_slice::<Incoming>(&body) else {
@@ -1091,18 +1093,30 @@ async fn federation_message(
                     &group,
                     speaker_id,
                     incoming.from_agent,
+                    incoming.mention_depth,
                     text,
                 )
                 .await;
+                // 被 @ 到才算被点名。名字取自己的实例名和联系人表里的名字。
+                let addressed = federation::mentions_any(text, &mention_names(home, &identity));
                 if federation::group_should_auto_reply(
                     &group,
                     incoming.from_agent,
+                    addressed,
+                    incoming.mention_depth,
                     reply_policy.max_auto_turns,
+                    federation::DEFAULT_MAX_MENTION_DEPTH,
                 ) {
                     let state = Arc::clone(&state);
                     let group_id = group.id;
+                    // 人的发言从 0 计；Agent 点名一次，链就深一层。
+                    let depth = if incoming.from_agent {
+                        incoming.mention_depth.saturating_add(1)
+                    } else {
+                        0
+                    };
                     tokio::spawn(async move {
-                        watch_group_reply(state, group_id, session_id, turn_id).await;
+                        watch_group_reply(state, group_id, session_id, turn_id, depth).await;
                     });
                 }
             } else {
@@ -1141,6 +1155,7 @@ async fn forward_group_message(
     group: &federation::Group,
     speaker: uuid::Uuid,
     from_agent: bool,
+    mention_depth: u32,
     text: &str,
 ) {
     let Ok(store) = federation::load(home) else {
@@ -1150,6 +1165,7 @@ async fn forward_group_message(
         group_id: Some(group.id),
         origin: Some(speaker),
         from_agent,
+        mention_depth,
     };
     for member in &group.members {
         if *member == speaker {
@@ -1172,11 +1188,21 @@ async fn forward_group_message(
 
 /// 等群里这一轮跑完，把回复转发给每个成员，并记一轮自动回复。
 /// 回复标成来自 Agent，成员收到后不会再自动回，所以一轮到此为止。
+/// `@` 能点到的名字：自己的实例名，加上联系人表里的名字。
+fn mention_names(home: &Path, identity: &crate::identity::Identity) -> Vec<String> {
+    let mut names = vec![identity.name.clone()];
+    if let Ok(store) = federation::load(home) {
+        names.extend(store.contacts.into_iter().map(|contact| contact.name));
+    }
+    names
+}
+
 async fn watch_group_reply(
     state: Arc<IntakeState>,
     group_id: uuid::Uuid,
     session_id: uuid::Uuid,
     turn_id: uuid::Uuid,
+    mention_depth: u32,
 ) {
     let home = state.service.home.clone();
     let deadline = tokio::time::Instant::now()
@@ -1226,7 +1252,16 @@ async fn watch_group_reply(
         let Ok(identity) = crate::identity::load(&home) else {
             return;
         };
-        forward_group_message(&home, &identity, &group, identity.id, true, &reply).await;
+        forward_group_message(
+            &home,
+            &identity,
+            &group,
+            identity.id,
+            true,
+            mention_depth,
+            &reply,
+        )
+        .await;
         if let Err(error) = federation::note_group_auto_reply(&home, group_id) {
             eprintln!("Intake: cannot record the group auto reply: {error:#}");
         }
