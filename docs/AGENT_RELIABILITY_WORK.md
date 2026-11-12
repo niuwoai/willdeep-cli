@@ -16,6 +16,11 @@
 
 ## 验证记录
 
+### doctor 的网络说明与围栏一致（0.148.0-rc10，2026-11-12）
+
+- 现场：`sandbox_network` 未设置时，`harness::sandbox_network` 只有 read-only 档返回 Deny，workspace-write 与 strict、smart 都是 Allow。`willdeep doctor` 写成 workspace-write 也断网。
+- 判定：从 0.148.0-rc10 起，doctor 的这句改为只有 read-only 断网。围栏行为没有改，显式设置 `allow` 或 `deny` 时的说明也没有改。
+
 ### TUI 的目标改用配置预算（0.148.0-rc9，2026-11-12）
 
 - 现场：`[agent] goal_token_budget`、`goal_wall_clock_minutes`、`goal_max_continuations` 只在 daemon 和无头运行里生效。TUI 建会话时用 `GoalContinuation::new()`，发消息时又用 `GoalBudget::default()` 激活目标，所以配了 30 分钟、10 次续推的用户，在 TUI 里仍是 4 小时、64 次、token 不限。

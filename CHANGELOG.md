@@ -5,6 +5,11 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc10] - 2026-11-12
+
+### Fixed
+- `willdeep doctor` 在 `sandbox_network` 未设置时的说明与实际行为一致：只有 read-only 档断网，workspace-write、strict、smart 都放行网络。此前写成 workspace-write 也断网。
+
 ## [0.148.0-rc9] - 2026-11-12
 
 ### Fixed

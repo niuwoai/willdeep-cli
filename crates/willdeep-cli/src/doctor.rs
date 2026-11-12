@@ -489,7 +489,7 @@ fn check_sandbox(options: &DoctorOptions, checks: &mut Vec<DoctorCheck>) {
     let network = match agent.sandbox_network {
         Some(crate::config::SandboxNetwork::Deny) => "network denied for every fenced command",
         Some(crate::config::SandboxNetwork::Allow) => "network allowed in every tier",
-        None => "network denied under workspace-write and read-only, allowed under strict/smart",
+        None => "network denied under read-only, allowed under workspace-write, strict and smart",
     };
     let unresolved = agent
         .sandbox_writable_roots

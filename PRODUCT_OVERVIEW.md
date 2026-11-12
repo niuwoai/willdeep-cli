@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-12 | 当前版本：v0.148.0-rc9
+> 最后更新：2026-11-12 | 当前版本：v0.148.0-rc10
+
+0.148.0-rc10 改了 `willdeep doctor` 的一句说明。`sandbox_network` 未设置时，只有 read-only 档断网，workspace-write 与 strict、smart 一样放行网络；此前 doctor 写成 workspace-write 也断网。围栏行为本身没有变。本次改动尚未安装或发布。
 
 0.148.0-rc9 让 TUI 里 `/goal` 开的目标用上配置里的预算。`goal_token_budget`、`goal_wall_clock_minutes`、`goal_max_continuations` 此前只对 daemon 和无头运行生效，TUI 一律用默认预算（4 小时、64 次续推、token 不限）。从这一版起三处读同一份配置；配置读不到时退回默认预算。不配这些项时行为不变。本次改动尚未安装或发布。
 
