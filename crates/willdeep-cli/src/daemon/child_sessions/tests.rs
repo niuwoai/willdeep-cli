@@ -1054,16 +1054,16 @@ fn delegated_in_flight_counts_only_open_delegated_children() {
 
     store
         .transaction(|ledger| {
-            let link = ledger
-                .links
-                .get_mut(&running.link_id)
-                .expect("link");
+            let link = ledger.links.get_mut(&running.link_id).expect("link");
             link.control_state = ChildSessionControlState::UserOwned;
             Ok(())
         })
         .unwrap();
     assert!(
-        store.delegated_in_flight(fixture.parent).unwrap().is_empty(),
+        store
+            .delegated_in_flight(fixture.parent)
+            .unwrap()
+            .is_empty(),
         "a session handed back to the user no longer blocks the goal"
     );
     assert!(

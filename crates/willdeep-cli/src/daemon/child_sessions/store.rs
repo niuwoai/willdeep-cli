@@ -313,8 +313,8 @@ impl ChildStore {
     pub fn delegated_in_flight(&self, parent: Uuid) -> Result<Vec<String>> {
         match std::fs::read(&self.path) {
             Ok(data) => {
-                let ledger =
-                    serde_json::from_slice::<Ledger>(&data).context("decode child session ledger")?;
+                let ledger = serde_json::from_slice::<Ledger>(&data)
+                    .context("decode child session ledger")?;
                 anyhow::ensure!(
                     ledger.schema == CHILD_SESSION_SCHEMA,
                     "unsupported child session ledger schema {}",
