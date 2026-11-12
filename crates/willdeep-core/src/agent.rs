@@ -942,12 +942,19 @@ impl Agent {
     }
 
     /// 还在跑的委派 Worker 数，目标完成门禁用。
-    fn workers_in_flight(&self) -> usize {
-        self.background_tasks
+    ///
+    /// 除了进程内的子 Agent 和未结束的 workflow，还加上本会话派出、还没到终态的
+    /// 子会话：它们的结果要等终态通知进历史才算回来，在此之前目标不能收口。
+    fn workers_in_flight(&self) -> (usize, Vec<String>) {
+        let delegated = self.tools.delegated_sessions_in_flight();
+        let count = self
+            .background_tasks
             .as_ref()
             .map(|tasks| tasks.running_subagents())
             .unwrap_or(0)
             .saturating_add(usize::from(self.workflows_pending()))
+            .saturating_add(delegated.len());
+        (count, delegated)
     }
 
     fn background_active(&self) -> bool {
@@ -1264,7 +1271,7 @@ impl Agent {
             if let Some(pin) = self
                 .goal_continuation
                 .as_ref()
-                .and_then(|goal| goal.pin(self.workers_in_flight()))
+                .and_then(|goal| goal.pin(self.workers_in_flight().0))
             {
                 runtime_context.push_str("\n\n");
                 runtime_context.push_str(&pin);
@@ -1650,13 +1657,15 @@ impl Agent {
                 // 也从这里走：先记成普通 assistant 回复、不执行这一轮的工具调用，再由
                 // 下面的 SoftStop 注入收尾引导。
                 if let Some(continuation) = self.goal_continuation.clone() {
+                    let (workers_in_flight, delegated_sessions) = self.workers_in_flight();
                     let observation = RoundObservation {
                         tools_executed: tools_since_check,
                         background_active: self.background_active(),
-                        workers_in_flight: self.workers_in_flight(),
+                        workers_in_flight,
+                        delegated_sessions,
                     };
                     let was_wrapping_up = continuation.wrap_up_pending();
-                    match continuation.evaluate(&content, observation) {
+                    match continuation.evaluate(&content, &observation) {
                         Some(ContinuationDecision::Continue {
                             steering,
                             rung,

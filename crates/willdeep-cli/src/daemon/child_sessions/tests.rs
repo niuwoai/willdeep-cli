@@ -1038,3 +1038,38 @@ fn fork_keeps_a_context_summary_only_when_it_covers_the_copied_prefix() {
     let child = store.load(task.child_session_id).unwrap();
     assert!(child.context_summary.is_none());
 }
+
+/// 完成门只数还没到终态、且控制态仍是委派的子会话。终态的、已交还用户的、
+/// 别的父会话派出的都不算。
+#[test]
+fn delegated_in_flight_counts_only_open_delegated_children() {
+    let fixture = Fixture::new();
+    let finished = fixture.start();
+    fixture.finish(&finished, RuntimeTaskStatus::Completed);
+    let running = fixture.start();
+
+    let store = store::ChildStore::new(&fixture.root);
+    let open = store.delegated_in_flight(fixture.parent).unwrap();
+    assert_eq!(open, vec![running.child_session_id.to_string()]);
+
+    store
+        .transaction(|ledger| {
+            let link = ledger
+                .links
+                .get_mut(&running.link_id)
+                .expect("link");
+            link.control_state = ChildSessionControlState::UserOwned;
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        store.delegated_in_flight(fixture.parent).unwrap().is_empty(),
+        "a session handed back to the user no longer blocks the goal"
+    );
+    assert!(
+        store
+            .delegated_in_flight(Uuid::new_v4())
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -2035,6 +2035,116 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 清单全部带证据勾完、进程内 Worker 为零，但协作客户端报告还有一个未终态的
+/// 委派子会话：完成声明被拒，拒绝说明点名那个子会话。它到终态之后，同一声明
+/// 才被接受。
+#[tokio::test]
+async fn a_goal_waits_for_a_delegated_session_before_completing() {
+    struct Delegated {
+        in_flight: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait]
+    impl crate::tools::SessionCollaboration for Delegated {
+        fn delegated_sessions_in_flight(&self) -> Result<Vec<String>, ToolError> {
+            if self.in_flight.load(std::sync::atomic::Ordering::SeqCst) {
+                Ok(vec!["session child-7".to_owned()])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        async fn execute(&self, name: &str, _: serde_json::Value) -> Result<String, ToolError> {
+            Err(ToolError::UnknownTool(name.to_owned()))
+        }
+    }
+
+    let delegated = Arc::new(Delegated {
+        in_flight: std::sync::atomic::AtomicBool::new(true),
+    });
+    let provider = Arc::new(ScriptedGoalProvider {
+        script: Mutex::new(
+            [
+                ("<goal-status>complete</goal-status> FIRST".to_owned(), None),
+                ("SECOND still waiting".to_owned(), None),
+                ("THIRD acknowledged".to_owned(), None),
+                ("FOURTH still waiting".to_owned(), None),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        systems: Mutex::new(Vec::new()),
+        tails: Mutex::new(Vec::new()),
+        tool_names: Mutex::new(Vec::new()),
+    });
+    let continuation = Arc::new(GoalContinuation::new());
+    continuation.activate("ship rc7", crate::goal::GoalBudget::default());
+    continuation
+        .update_plan(
+            serde_json::from_value(serde_json::json!({
+                "criteria": ["tests pass"],
+                "checklist": [{"index": 1, "done": true, "evidence": "cargo test: 42 passed"}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let tools = registry("goal-delegated").with_session_collaboration(delegated.clone());
+    let agent = Agent::new(
+        provider.clone(),
+        tools,
+        AgentConfig {
+            max_turns: 4,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation.clone());
+
+    let outcome = agent.run("go").await.expect("first claim");
+    assert_ne!(
+        outcome.stop_reason,
+        AgentStopReason::GoalComplete,
+        "a child session still running keeps the goal open"
+    );
+    assert!(continuation.is_active());
+    let rejected = outcome
+        .messages
+        .iter()
+        .find(|message| message.content.starts_with("[goal-completion-rejected]"))
+        .expect("the claim is refused while the child session is still running");
+    assert!(
+        rejected.content.contains("session child-7"),
+        "the refusal names the session still running, got:\n{}",
+        rejected.content
+    );
+    let first_tail = provider.tails.lock().expect("tails")[0].clone();
+    assert!(
+        first_tail.contains("DELEGATED WORKERS STILL RUNNING: 1"),
+        "the pin reports the child session before the first claim"
+    );
+
+    delegated
+        .in_flight
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    provider
+        .script
+        .lock()
+        .expect("script")
+        .push_back(("<goal-status>complete</goal-status> FIFTH".to_owned(), None));
+    let outcome = agent.run("go").await.expect("second claim");
+    assert_eq!(
+        outcome.stop_reason,
+        AgentStopReason::GoalComplete,
+        "second run ended as {:?}; tail: {}",
+        outcome.stop_reason,
+        outcome
+            .messages
+            .last()
+            .map(|message| message.content.as_str())
+            .unwrap_or("(none)")
+    );
+    assert!(!continuation.is_active());
+}
+
 /// 普通会话同样有计划工具，但不钉目标块。
 #[tokio::test]
 async fn update_plan_is_available_without_a_goal() {

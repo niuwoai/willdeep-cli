@@ -32,6 +32,12 @@ pub trait SessionCollaboration: Send + Sync {
     ) -> Result<(), crate::AgentError> {
         commit(candidates)
     }
+    /// 本会话派出、还没到终态的子会话。目标完成门用它判断报告是不是都回来了。
+    /// 默认没有：进程内的 Worker 由别处计数，没接子会话的宿主返回空。
+    /// 只读账本，不发起网络请求，也不拿执行锁。
+    fn delegated_sessions_in_flight(&self) -> Result<Vec<String>, ToolError> {
+        Ok(Vec::new())
+    }
     async fn execute(&self, name: &str, arguments: serde_json::Value) -> Result<String, ToolError>;
     /// Keep the tool call identity available for host-bound idempotency keys.
     async fn execute_call(&self, call: &ToolCall) -> Result<String, ToolError> {
@@ -163,6 +169,14 @@ impl ToolRegistry {
     pub fn with_session_collaboration(mut self, client: Arc<dyn SessionCollaboration>) -> Self {
         self.session_collaboration = Some(client);
         self
+    }
+
+    /// 本会话派出、还没到终态的子会话标识。没有协作客户端时为空。
+    pub(crate) fn delegated_sessions_in_flight(&self) -> Vec<String> {
+        self.session_collaboration
+            .as_ref()
+            .and_then(|client| client.delegated_sessions_in_flight().ok())
+            .unwrap_or_default()
     }
     pub(super) async fn session_tool(&self, call: &ToolCall) -> Result<String, ToolError> {
         let client = self
