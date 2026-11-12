@@ -12,6 +12,9 @@ pub(super) fn routes() -> Router<Arc<WebState>> {
         .route("/api/federation/join", post(join))
         .route("/api/federation/{id}/message", post(say))
         .route("/api/federation/{id}", axum::routing::delete(remove))
+        .route("/api/federation/groups", post(create_group))
+        .route("/api/federation/groups/{id}/message", post(group_say))
+        .route("/api/federation/groups/{id}/pause", post(group_pause))
 }
 
 #[derive(Serialize)]
@@ -37,6 +40,18 @@ struct FederationView {
     /// 邀请链接的前缀；空串表示 [intake] public_url 还没配。
     invite_base: String,
     contacts: Vec<ContactView>,
+    groups: Vec<GroupView>,
+}
+
+#[derive(Serialize)]
+struct GroupView {
+    id: String,
+    name: String,
+    /// 含建群的一方。
+    members: usize,
+    session_id: Option<String>,
+    auto_turns: u32,
+    paused: bool,
 }
 
 #[derive(Serialize)]
@@ -55,6 +70,13 @@ struct JoinRequest {
 #[serde(deny_unknown_fields)]
 struct SayRequest {
     text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupRequest {
+    name: String,
+    members: Vec<String>,
 }
 
 fn settings(state: &WebState) -> crate::config::FederationSettings {
@@ -96,6 +118,18 @@ async fn list(State(state): State<Arc<WebState>>) -> Result<Json<FederationView>
         reply: settings.reply,
         max_auto_turns: settings.max_auto_turns,
         invite_base: invite_base(&state),
+        groups: store
+            .groups
+            .iter()
+            .map(|group| GroupView {
+                id: group.id.to_string(),
+                name: group.name.clone(),
+                members: group.members.len() + 1,
+                session_id: group.session_id.map(|id| id.to_string()),
+                auto_turns: group.auto_turns,
+                paused: group.paused,
+            })
+            .collect(),
         contacts: store
             .contacts
             .into_iter()
@@ -177,6 +211,68 @@ async fn say(
     crate::federation::note_manual_message(&state.home, contact.id)
         .map_err(WebError::from_anyhow)?;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn create_group(
+    State(state): State<Arc<WebState>>,
+    Json(request): Json<GroupRequest>,
+) -> Result<Json<FederationView>, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "federation is available only from a loopback Web server",
+        ));
+    }
+    crate::federation::create_group(&state.home, &request.name, &request.members)
+        .map_err(WebError::from_anyhow)?;
+    list(State(state)).await
+}
+
+async fn group_say(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<String>,
+    Json(request): Json<SayRequest>,
+) -> Result<StatusCode, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "federation is available only from a loopback Web server",
+        ));
+    }
+    let store = crate::federation::load(&state.home).map_err(WebError::from_anyhow)?;
+    let group = crate::federation::find_group(&store, &id)
+        .map_err(|error| WebError::bad_request(error.to_string()))?
+        .clone();
+    let identity = crate::identity::load(&state.home).map_err(WebError::from_anyhow)?;
+    let envelope = crate::federation::GroupEnvelope {
+        group_id: Some(group.id),
+        origin: Some(identity.id),
+        from_agent: false,
+        mention_depth: 0,
+        host_note: false,
+    };
+    for member in &group.members {
+        let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
+            continue;
+        };
+        crate::federation::send_group_message(identity.id, contact, &request.text, &envelope)
+            .await
+            .map_err(WebError::from_anyhow)?;
+    }
+    // 人接手了：自动回复重新打开，计数清零。
+    crate::federation::note_group_manual(&state.home, group.id).map_err(WebError::from_anyhow)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn group_pause(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<String>,
+) -> Result<Json<FederationView>, WebError> {
+    if !state.settings_writable {
+        return Err(WebError::forbidden(
+            "federation is available only from a loopback Web server",
+        ));
+    }
+    crate::federation::pause_group(&state.home, &id).map_err(WebError::from_anyhow)?;
+    list(State(state)).await
 }
 
 async fn remove(

@@ -47,6 +47,7 @@ impl ToolRegistry {
         self.workflow_host = None;
         self.agent_definition_host = None;
         self.configuration_host = None;
+        self.group_conversation_host = None;
         self
     }
 

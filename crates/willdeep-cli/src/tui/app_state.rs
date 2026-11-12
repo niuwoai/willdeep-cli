@@ -2548,9 +2548,9 @@ impl App {
                     lines.push(format!(
                         "  {}",
                         self.language.text(
-                            "发言：/fed say <名字> <内容>；移除：/fed remove <名字>",
-                            "Say: /fed say <name> <text>; remove: /fed remove <name>",
-                            "送信: /fed say <名前> <本文>。削除: /fed remove <名前>",
+                            "发言：/fed say <名字> <内容>；群：/fed group <群名> <成员...>；停自动回复：/fed stop <群名>",
+                            "Say: /fed say <name> <text>; group: /fed group <name> <member...>; pause: /fed stop <group>",
+                            "送信: /fed say <名前> <本文>。グループ: /fed group <名前> <メンバー...>。停止: /fed stop <名前>",
                         )
                     ));
                     self.append_transcript(lines.join("\n"));
@@ -2666,8 +2666,32 @@ impl App {
                     }));
                 });
             }
+            "group" => {
+                let home = home.to_path_buf();
+                let args = args.to_owned();
+                let ui = ui.clone();
+                tokio::spawn(async move {
+                    let message = federation_group_command(&home, &args).await;
+                    let _ = ui.send(UiMessage::Federation(match message {
+                        Ok(line) => format!("System: {line}"),
+                        Err(error) => format!("Error: {error:#}"),
+                    }));
+                });
+            },
+            "stop" => match crate::federation::pause_group(home, args) {
+                Ok(group) => self.append_transcript(format!(
+                    "System: #{} {}",
+                    group.name,
+                    self.language.text(
+                        "的自动回复已暂停，有人发言后恢复",
+                        "automatic replies paused until someone speaks",
+                        "の自動返信を停止しました。誰かが発言するまで再開しません",
+                    )
+                )),
+                Err(error) => self.append_transcript(format!("Error: {error:#}")),
+            },
             other => self.append_transcript(format!(
-                "Error: {} /fed list|invite|join <url>|say <name> <text>|remove <name> (got `{other}`)",
+                "Error: {} /fed list|invite|join <url>|say <name> <text>|group <name> <member...>|stop <group>|remove <name> (got `{other}`)",
                 self.language.text("用法：", "usage:", "使い方:")
             )),
         }
@@ -2839,6 +2863,51 @@ async fn join_peer(
     }
     let contact = crate::federation::join(url, &identity, &public_url).await?;
     crate::federation::upsert_contact(home, contact)
+}
+
+/// `/fed group`：建群，或在已有的群里发言。`say` 开头是发言，否则第一个词是群名。
+async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow::Result<String> {
+    let mut parts = args.split_whitespace();
+    let Some(first) = parts.next() else {
+        anyhow::bail!("/fed group <name> <member...> | /fed group say <name> <text>");
+    };
+    if first == "say" {
+        let Some(name) = parts.next() else {
+            anyhow::bail!("/fed group say <name> <text>");
+        };
+        let text = parts.collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            anyhow::bail!("/fed group say <name> <text>");
+        }
+        let store = crate::federation::load(home)?;
+        let group = crate::federation::find_group(&store, name)?.clone();
+        let identity = crate::identity::load(home)?;
+        let envelope = crate::federation::GroupEnvelope {
+            group_id: Some(group.id),
+            origin: Some(identity.id),
+            from_agent: false,
+            mention_depth: 0,
+            host_note: false,
+        };
+        let mut delivered = 0usize;
+        for member in &group.members {
+            let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
+                continue;
+            };
+            crate::federation::send_group_message(identity.id, contact, &text, &envelope).await?;
+            delivered += 1;
+        }
+        crate::federation::note_group_manual(home, group.id)?;
+        return Ok(format!("#{}, delivered to {delivered}", group.name));
+    }
+    let members = parts.map(str::to_owned).collect::<Vec<_>>();
+    let group = crate::federation::create_group(home, first, &members)?;
+    Ok(format!(
+        "#{} ({}) with {} members",
+        group.name,
+        group.id,
+        group.members.len() + 1
+    ))
 }
 
 /// `/fed say` 的后台部分。手动发言会把自动回复计数清零。

@@ -26,7 +26,9 @@ mod delegation;
 mod host_tools;
 mod peer_sessions;
 mod plan_jobs;
-pub use host_tools::{AgentDefinitionHost, ConfigurationHost, WorkflowHost, WorkflowNotice};
+pub use host_tools::{
+    AgentDefinitionHost, ConfigurationHost, GroupConversationHost, WorkflowHost, WorkflowNotice,
+};
 pub use peer_sessions::{HostContextCommit, SessionCollaboration};
 
 const DEFAULT_MAX_RESULTS: usize = 60;
@@ -195,6 +197,7 @@ pub struct ToolRegistry {
     agent_definition_host: Option<Arc<dyn AgentDefinitionHost>>,
     configuration_host: Option<Arc<dyn ConfigurationHost>>,
     workflow_host: Option<Arc<dyn WorkflowHost>>,
+    group_conversation_host: Option<Arc<dyn GroupConversationHost>>,
     session_collaboration: Option<Arc<dyn SessionCollaboration>>,
     completion_contract: Option<CompletionContract>,
     execution_deadline: Mutex<Option<tokio::time::Instant>>,
@@ -345,6 +348,7 @@ impl ToolRegistry {
             agent_definition_host: None,
             configuration_host: None,
             workflow_host: None,
+            group_conversation_host: None,
             session_collaboration: None,
             delegation_read_only: false,
             completion_contract: None,
@@ -951,6 +955,7 @@ impl ToolRegistry {
         }
         tools.extend(agent_control::definitions());
         tools.extend(self.host_definitions());
+        tools.extend(self.group_conversation_definitions());
         if self.session_collaboration.is_some() {
             tools.extend(peer_sessions::definitions());
             tools.extend(child_sessions::definitions());
@@ -1019,6 +1024,7 @@ impl ToolRegistry {
             | "workflow_control"
             | "configuration_read"
             | "configuration_write" => self.host_tool(call).await,
+            "set_group_mention_limit" => self.group_conversation_tool(call).await,
             "list_workspace_sessions"
             | "send_session_message"
             | "read_session_messages"

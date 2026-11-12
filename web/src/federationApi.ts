@@ -23,6 +23,16 @@ export type FederationView = {
   /// 邀请链接的前缀；空串表示 [intake] public_url 还没配。
   invite_base: string;
   contacts: FederationContact[];
+  groups: FederationGroup[];
+};
+
+export type FederationGroup = {
+  id: string;
+  name: string;
+  members: number;
+  session_id: string | null;
+  auto_turns: number;
+  paused: boolean;
 };
 
 export type InviteView = { url: string; expires_at: number };
@@ -62,6 +72,31 @@ export async function sendToPeer(id: string, text: string): Promise<void> {
     body: JSON.stringify({ text }),
   });
   if (!response.ok) throw await failure(response);
+}
+
+export async function createGroup(name: string, members: string[]): Promise<FederationView> {
+  const response = await fetch("/api/federation/groups", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, members }),
+  });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as FederationView;
+}
+
+export async function sendToGroup(id: string, text: string): Promise<void> {
+  const response = await fetch(`/api/federation/groups/${encodeURIComponent(id)}/message`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) throw await failure(response);
+}
+
+export async function pauseGroup(id: string): Promise<FederationView> {
+  const response = await fetch(`/api/federation/groups/${encodeURIComponent(id)}/pause`, { method: "POST" });
+  if (!response.ok) throw await failure(response);
+  return await response.json() as FederationView;
 }
 
 export async function removePeer(id: string): Promise<FederationView> {

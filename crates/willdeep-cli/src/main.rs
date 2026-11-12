@@ -33,6 +33,7 @@ mod federation;
 mod feedback_cmd;
 mod feedback_review_cmd;
 mod gallery;
+mod group_conversation;
 mod handoff_cmd;
 mod harness;
 mod i18n;
