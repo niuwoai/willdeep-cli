@@ -20,6 +20,12 @@ pub const GOAL_COMPLETE_MARKER: &str = "<goal-status>complete</goal-status>";
 const GUIDANCE_ROUNDS: u32 = 2;
 /// 连续无进展轮次达到该值前，做只读对账；之后进入退避档。
 const RECONCILE_ROUNDS: u32 = 4;
+/// 退避档的真实等待：1 分钟、5 分钟，之后封顶 15 分钟。
+const BACKOFF_DELAYS: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(15 * 60),
+];
 
 /// 默认 wall-clock 预算：4 小时一段（设计文档 §7 假设 1）。
 pub const DEFAULT_WALL_CLOCK_BUDGET: Duration = Duration::from_secs(4 * 60 * 60);
@@ -51,7 +57,7 @@ pub enum ContinuationRung {
     Guidance,
     /// 3-4 轮无进展：只读对账，要求用实际状态核对而不是继续猜。
     Reconcile,
-    /// 5+ 轮无进展：退避，要求先确认在等什么外部条件。
+    /// 5+ 轮无进展：退避，要求先确认在等什么外部条件，并真的等。
     Backoff,
 }
 
@@ -70,6 +76,8 @@ pub enum ContinuationDecision {
     Continue {
         steering: String,
         rung: ContinuationRung,
+        /// 退避档的真实等待。引导档与对账档为 `None`。
+        delay: Option<Duration>,
     },
     /// 预算耗尽：注入收尾引导，产出状态快照后有序停止。
     SoftStop {
@@ -542,6 +550,17 @@ impl GoalContinuation {
             .unwrap_or(false)
     }
 
+    /// 下一轮会落在哪一档。没有激活目标，或收尾引导已经注入过，返回 `None`：
+    /// 那一轮不再收窄工具面。
+    pub fn current_rung(&self) -> Option<ContinuationRung> {
+        let slots = self.slots.lock().ok()?;
+        let goal = slots.active.as_ref()?;
+        if goal.state.wrap_up_injected {
+            return None;
+        }
+        Some(rung_for(goal.state.consecutive_no_progress))
+    }
+
     /// `update_plan` 工具：改清单、步骤、阻塞原因。返回给模型的回执。
     ///
     /// 校验失败返回 `Err`，什么都不改，也不消耗续推预算。
@@ -738,7 +757,11 @@ impl GoalContinuation {
             goal.budget,
             observation,
         );
-        Some(ContinuationDecision::Continue { steering, rung })
+        Some(ContinuationDecision::Continue {
+            steering,
+            rung,
+            delay: backoff_delay(rung, goal.state.consecutive_no_progress),
+        })
     }
 }
 
@@ -800,6 +823,61 @@ fn rung_for(consecutive_no_progress: u32) -> ContinuationRung {
     } else {
         ContinuationRung::Backoff
     }
+}
+
+/// 退避档第 1、2、3 次起分别等 1、5、15 分钟，之后封顶 15 分钟。
+/// 其他档不等。
+fn backoff_delay(rung: ContinuationRung, consecutive_no_progress: u32) -> Option<Duration> {
+    if rung != ContinuationRung::Backoff {
+        return None;
+    }
+    let step = usize::try_from(consecutive_no_progress.saturating_sub(RECONCILE_ROUNDS + 1))
+        .unwrap_or(BACKOFF_DELAYS.len());
+    Some(BACKOFF_DELAYS[step.min(BACKOFF_DELAYS.len() - 1)])
+}
+
+/// 对账档与退避档只留只读核对：写文件、跑命令、派工、建工作区、
+/// 调外部工具和问用户都不执行。引导档不收窄。
+///
+/// 白名单对着 `ToolRegistry::definitions` 来：只放不产生新动作的工具。
+/// 查状态（`get_session_task`、`list_workspace_sessions`、`read_session_messages`、
+/// `workflow_read`、`agent_library_read`、`configuration_read`）也在其中。
+/// `await_agents` 是在收已经派出的工人，`update_plan` 是在改清单，都不算新动作。
+/// 没有名字的工具按拦下处理：新工具默认不能绕过这一档。
+pub fn rung_blocks_tool(rung: ContinuationRung, tool: &str) -> bool {
+    if !matches!(
+        rung,
+        ContinuationRung::Reconcile | ContinuationRung::Backoff
+    ) {
+        return false;
+    }
+    !matches!(
+        tool,
+        "read_file"
+            | "read_tool_output"
+            | "grep_files"
+            | "search_files"
+            | "list_directory"
+            | "list_skills"
+            | "read_skill"
+            | "git_status"
+            | "git_diff"
+            | "git_log"
+            | "git_blame"
+            | "list_worktrees"
+            | "get_job_output"
+            | "list_agent_recoveries"
+            | "list_mcp_tools"
+            | "board_read"
+            | "get_session_task"
+            | "list_workspace_sessions"
+            | "read_session_messages"
+            | "workflow_read"
+            | "agent_library_read"
+            | "configuration_read"
+            | "update_plan"
+            | "await_agents"
+    )
 }
 
 fn declares_complete(reply: &str) -> bool {
@@ -1112,7 +1190,7 @@ mod tests {
         let decision = continuation
             .evaluate("I have finished the first part.", progressed())
             .expect("goal active");
-        let ContinuationDecision::Continue { steering, rung } = decision else {
+        let ContinuationDecision::Continue { steering, rung, .. } = decision else {
             panic!("expected continue, got {decision:?}");
         };
         assert_eq!(rung, ContinuationRung::Guidance);
@@ -1120,6 +1198,90 @@ mod tests {
         assert!(steering.contains("GOAL (still active)"));
         assert!(steering.contains("WHAT TO DO NOW"));
         assert!(continuation.is_active());
+    }
+
+    /// 退避档的等待跟着无进展轮数走：第 5 轮 1 分钟、第 6 轮 5 分钟、第 7 轮起 15 分钟封顶。
+    /// 引导档与对账档不等。
+    #[test]
+    fn backoff_waits_one_then_five_then_fifteen_minutes() {
+        let continuation = goal_with(GoalBudget::default());
+        let mut delays = Vec::new();
+        for round in 1..=8 {
+            let decision = continuation
+                .evaluate("still thinking", stalled())
+                .expect("goal active");
+            let ContinuationDecision::Continue { rung, delay, .. } = decision else {
+                panic!("round {round} expected continue, got {decision:?}");
+            };
+            assert_eq!(rung, rung_for(round), "round {round}");
+            delays.push(delay);
+        }
+        assert_eq!(
+            delays,
+            vec![
+                None,
+                None,
+                None,
+                None,
+                Some(Duration::from_secs(60)),
+                Some(Duration::from_secs(5 * 60)),
+                Some(Duration::from_secs(15 * 60)),
+                Some(Duration::from_secs(15 * 60)),
+            ]
+        );
+    }
+
+    /// 对账档与退避档只留只读核对。引导档一个都不拦，没名字的工具按拦下处理。
+    #[test]
+    fn reconcile_and_backoff_keep_only_read_only_checks() {
+        for tool in [
+            "read_file",
+            "git_status",
+            "git_diff",
+            "update_plan",
+            "await_agents",
+            "get_session_task",
+            "workflow_read",
+            "board_read",
+        ] {
+            assert!(
+                !rung_blocks_tool(ContinuationRung::Reconcile, tool),
+                "{tool} is a check, not a new action"
+            );
+        }
+        for tool in [
+            "edit_file",
+            "create_file",
+            "run_command",
+            "spawn_agent",
+            "create_worktree",
+            "web_search",
+            "web_fetch",
+            "ask_user",
+            "call_mcp_tool",
+            "kill_job",
+            "resume_agent",
+            "monitor",
+            "board_post",
+            "start_session",
+            "configuration_write",
+            "workflow_control",
+            "stop_agent",
+            "a_tool_added_later",
+        ] {
+            assert!(
+                rung_blocks_tool(ContinuationRung::Reconcile, tool),
+                "{tool} must not run during reconciliation"
+            );
+            assert!(
+                rung_blocks_tool(ContinuationRung::Backoff, tool),
+                "{tool} must not run while backing off"
+            );
+            assert!(
+                !rung_blocks_tool(ContinuationRung::Guidance, tool),
+                "guidance narrows nothing"
+            );
+        }
     }
 
     #[test]

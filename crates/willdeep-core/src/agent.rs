@@ -1657,12 +1657,21 @@ impl Agent {
                     };
                     let was_wrapping_up = continuation.wrap_up_pending();
                     match continuation.evaluate(&content, observation) {
-                        Some(ContinuationDecision::Continue { steering, rung }) => {
+                        Some(ContinuationDecision::Continue {
+                            steering,
+                            rung,
+                            delay,
+                        }) => {
                             self.sink
                                 .emit(AgentEvent::GoalContinuationInjected { rung })
                                 .await;
                             messages.push(Message::host_instruction(steering));
                             tools_since_check = 0;
+                            // 退避档真的等：1、5、15 分钟。用户取消是拿掉这个任务，等待跟着一起结束。
+                            // 宿主抢占提前结束等待，下一轮照常开始，不把没等完的时间补上。
+                            if let Some(delay) = delay {
+                                self.wait_backoff(delay).await;
+                            }
                             continue;
                         }
                         Some(ContinuationDecision::SoftStop { steering, reason }) => {
@@ -1737,6 +1746,18 @@ impl Agent {
                 .tool_calls
                 .iter()
                 .all(guidance::is_exploration_read);
+            // 对账档与退避档只留只读核对。拦在执行前：写、跑命令、派工都不发生，
+            // 结果按工具错误记进历史，模型下一轮看得到为什么没执行。
+            let blocked_rung = self
+                .goal_continuation
+                .as_ref()
+                .and_then(|goal| goal.current_rung())
+                .filter(|rung| {
+                    completion
+                        .tool_calls
+                        .iter()
+                        .any(|call| crate::goal::rung_blocks_tool(*rung, &call.name))
+                });
             let mut novel_read = false;
             let mut rules_changed = false;
             let mut parallel_results = self
@@ -1751,7 +1772,15 @@ impl Agent {
                         .await;
                 }
                 let execution = async {
-                    if blockers.refuses(&call) && parallel_results.is_none() {
+                    if blocked_rung
+                        .is_some_and(|rung| crate::goal::rung_blocks_tool(rung, &call.name))
+                    {
+                        let rung = blocked_rung.expect("checked above");
+                        Err(ToolError::HookDenied(format!(
+                            "No progress has been made for several rounds, so this round is {rung:?} and only read-only checks run. `{call_name}` was not executed. Reconcile against the files and git state first; a write, command or delegation runs again once a round produces new evidence.",
+                            call_name = call.name
+                        )))
+                    } else if blockers.refuses(&call) && parallel_results.is_none() {
                         Err(ToolError::HookDenied("This unchanged action failed three times without new successful evidence. It was not executed again. Diagnose the cause with a different bounded check, address the cause, or report the blocker; do not bypass approval or weaken verification.".into()))
                     } else if let Some(results) = parallel_results.as_mut() {
                         results.pop_front().expect("one result per parallel read")
@@ -1929,6 +1958,18 @@ impl Agent {
             LeaseOutcome::Delivered => kernel.ack(leases),
             LeaseOutcome::Failed => kernel.release(leases),
         };
+    }
+
+    /// 退避档的真实等待。等满，或等到宿主签发抢占。没挂内核时只等时间。
+    async fn wait_backoff(&self, delay: std::time::Duration) {
+        let Some(kernel) = &self.kernel else {
+            tokio::time::sleep(delay).await;
+            return;
+        };
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = kernel.preempted() => {}
+        }
     }
 
     /// 发一次 provider 请求，除非中途被宿主签发的抢占事件打断。

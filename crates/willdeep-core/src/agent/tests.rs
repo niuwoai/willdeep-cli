@@ -1532,6 +1532,90 @@ async fn active_goal_refuses_implicit_stop_until_the_marker_appears() {
     );
 }
 
+/// 连续三轮无进展后落到对账档：写文件不执行，磁盘上的文件一个字节不变。
+/// 停在对账档而不是退避档，所以这一轮没有真实的等待。
+#[tokio::test]
+async fn a_reconcile_round_refuses_a_write_without_touching_the_file() {
+    struct WriteAfterStalling {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait]
+    impl Provider for WriteAfterStalling {
+        async fn complete(
+            &self,
+            _: &[Message],
+            _: &[ToolDefinition],
+        ) -> Result<Completion, ProviderError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            // 前三轮一句空话，第四轮（对账档）才动手写。
+            let tool_calls = if call <= 3 {
+                Vec::new()
+            } else {
+                vec![ToolCall {
+                    id: format!("call-{call}"),
+                    name: "edit_file".to_owned(),
+                    arguments:
+                        r#"{"path":"notes.txt","old_string":"original","new_string":"rewritten"}"#
+                            .to_owned(),
+                }]
+            };
+            Ok(Completion {
+                content: format!("round {call}"),
+                tool_calls,
+                finish_reason: Some("stop".to_owned()),
+                ..Completion::default()
+            })
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("willdeep-reconcile-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("workspace");
+    let notes = root.join("notes.txt");
+    std::fs::write(&notes, "original").expect("seed file");
+
+    let continuation = Arc::new(GoalContinuation::new());
+    continuation.activate("ship rc7", crate::goal::GoalBudget::default());
+    let agent = Agent::new(
+        Arc::new(WriteAfterStalling {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        ToolRegistry::new(&root, ApprovalMode::FullAccess).expect("registry"),
+        AgentConfig {
+            max_turns: 4,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation);
+
+    let outcome = agent.run("ship it").await.expect("run");
+
+    assert_eq!(
+        std::fs::read_to_string(&notes).expect("notes"),
+        "original",
+        "a reconcile round must not write"
+    );
+    let refusal = outcome
+        .messages
+        .iter()
+        .find(|message| message.role == crate::types::Role::Tool)
+        .expect("the refused call is still recorded");
+    assert!(
+        refusal.content.contains("was not executed"),
+        "the model must be told the write did not happen, got: {}",
+        refusal.content
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-continuation]")),
+        "the stalled rounds must still inject steering"
+    );
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
 #[tokio::test]
 async fn exhausted_budget_wraps_up_instead_of_looping_forever() {
     let provider = RecordingProvider::new(&[
