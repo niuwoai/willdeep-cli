@@ -4,7 +4,7 @@ pub(super) fn dispatch_prompt(
     app: &mut App,
     session: &mut Session,
     store: &SessionStore,
-    skills: &SkillCatalog,
+    runtime: &TuiRuntime,
     agent: &Arc<Agent>,
     tx: &mpsc::UnboundedSender<UiMessage>,
     prompt: String,
@@ -16,10 +16,11 @@ pub(super) fn dispatch_prompt(
     .claim()?;
     store.refresh_execution(session)?;
     // `/goal` 是长程续推的开关：目标在场时，宿主会拒绝模型的隐式收口（long-horizon.v1 RA1）。
+    // 预算读 `[agent] goal_*`，与 daemon、无头运行同一份配置；读不到时退回默认预算。
     if let Some(continuation) = agent.goal_continuation() {
         match app.goal.as_deref() {
             Some(goal) => {
-                continuation.activate(goal, willdeep_core::GoalBudget::default());
+                continuation.activate(goal, goal_budget(runtime));
             }
             None => continuation.clear(),
         }
@@ -47,7 +48,7 @@ pub(super) fn dispatch_prompt(
         .into_iter()
         .map(|value| value.message)
         .collect::<Vec<_>>();
-    let enriched = app.enrich_prompt(&prompt, skills);
+    let enriched = app.enrich_prompt(&prompt, &runtime.skills);
     // L1 用**原始**提示词，不用 enrich 之后的：enrich 会把技能清单之类的
     // 系统素材拼进去，那些东西当标题毫无意义。
     crate::titling::apply_derived_title(session, &prompt, !attachments.is_empty());
@@ -132,6 +133,18 @@ pub(super) fn dispatch_compress(
         ));
     }));
     Ok(())
+}
+
+/// 这一轮目标用的预算：读 `[agent] goal_*`，与 daemon、无头运行同一份配置。
+/// 配置读不到时退回默认预算，不让发一条消息失败。
+fn goal_budget(runtime: &TuiRuntime) -> willdeep_core::GoalBudget {
+    configured_goal_budget(runtime.runtime_submit.config.as_deref())
+}
+
+fn configured_goal_budget(config_path: Option<&std::path::Path>) -> willdeep_core::GoalBudget {
+    crate::config::LoadedConfig::load(config_path)
+        .map(|loaded| loaded.file.agent.goal_budget())
+        .unwrap_or_default()
 }
 
 /// 队列里有待投递事件时，开一轮把它们交给模型。
@@ -359,6 +372,36 @@ mod tests {
                 usage: None,
             })
         }
+    }
+
+    /// TUI 的 `/goal` 用配置里的预算，不再一律用默认预算。配置读不到时退回默认，
+    /// 不让发一条消息失败。
+    #[test]
+    fn a_local_goal_uses_the_configured_budget() {
+        let root = std::env::temp_dir().join(format!("tui-goal-budget-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        std::fs::write(
+            &config,
+            "version = 1\n[agent]\ngoal_token_budget = 2000000\ngoal_wall_clock_minutes = 30\ngoal_max_continuations = 10\n",
+        )
+        .unwrap();
+
+        let budget = configured_goal_budget(Some(&config));
+        assert_eq!(budget.max_tokens, Some(2_000_000));
+        assert_eq!(budget.max_continuations, 10);
+        assert_eq!(
+            budget.wall_clock,
+            Some(std::time::Duration::from_secs(30 * 60))
+        );
+
+        let missing = root.join("missing.toml");
+        assert_eq!(
+            configured_goal_budget(Some(&missing)),
+            willdeep_core::GoalBudget::default(),
+            "an unreadable config falls back to the default budget"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

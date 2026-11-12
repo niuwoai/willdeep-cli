@@ -5,6 +5,11 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc9] - 2026-11-12
+
+### Fixed
+- TUI 里 `/goal` 开的目标改用 `[agent] goal_*` 配置的预算，与 daemon、无头运行同一份：`goal_token_budget`、`goal_wall_clock_minutes`、`goal_max_continuations` 此前只对后两者生效，TUI 一律用默认预算（4 小时、64 次续推、token 不限）。配置读不到时退回默认预算，不让发一条消息失败。不配这些项时行为不变。
+
 ## [0.148.0-rc8] - 2026-11-12
 
 ### Fixed

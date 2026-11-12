@@ -90,7 +90,7 @@ rs 侧目前**没有立场**——`crates/willdeep-core/src/agent.rs:275` 一旦
 - **RA3 token 预算**：
   - **记账**：`GoalState.tokens_used` 累计为这个目标用掉的 token，主 Agent 和它派出的 Worker（前台、后台）都算；每次调用优先取 `total_tokens`，否则取输入 + 输出（`Usage::billable_tokens`）。它随检查点落盘，跨轮次、跨重启累计。
   - **收尾**：超过 `GoalBudget.max_tokens` 时，与 wall-clock、续推次数用同一条收尾路径（`SoftStopReason::Tokens` → 交接快照 → `BudgetLimited`）。从 0.148.0-rc6 起三道预算在每个模型轮次开始执行工具前都查一次，不再只挂在「这一轮没有工具调用」的分支上：超限那一轮的工具调用不执行，收尾引导注入后的轮次同样不执行。
-  - **配置**：`[agent] goal_token_budget`（缺省不限）、`goal_wall_clock_minutes`（缺省 240）、`goal_max_continuations`（缺省 64）。预算显示在 `<goal-state>` 与续推引导的“态势”一段里。
+  - **配置**：`[agent] goal_token_budget`（缺省不限）、`goal_wall_clock_minutes`（缺省 240）、`goal_max_continuations`（缺省 64）。预算显示在 `<goal-state>` 与续推引导的“态势”一段里。从 0.148.0-rc9 起 TUI 的 `/goal` 也读这一份，不再一律用默认预算；配置读不到时退回默认。
 - **RA4 重启后自动续推**：`daemon/goal_resume.rs` 在 daemon 启动时跑一次。
   - **续推谁**：最后一轮被重启打断（`Runtime restarted after Turn history became ambiguous`）、没有排队轮次、core 会话里目标仍在进行且预算未尽的会话。从 0.148.0-rc7 起，目标还在进行、没进入收尾的轮次，哪怕重启时没动过工具，也标成这一种中断、不按原句重放：用户那一句已经落盘的留在历史里，还没落盘的由续推提示带上。没有目标的轮次仍按原判定重放。
   - **续推轮次**：各排一轮续推，`origin_client` 为 `goal-resume:<被打断轮次>`。提示词开头带 `<goal>` 信封，这样才能接回停放的状态；随后要求先用只读工具核对实际状态、不要重做已完成的步骤，并列出未完成的验收项与步骤。
