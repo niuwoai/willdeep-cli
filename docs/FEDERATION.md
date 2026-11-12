@@ -1,6 +1,6 @@
 # 实例联邦：两台（或多台）willdeep 互相聊天
 
-> 状态：**P0（身份与命名）与 P1（1:1 联邦）已实现**，P2 起未实现。P1 随 0.138.0-rc1 发布。
+> 状态：**P0（身份与命名）、P1（1:1 联邦）与 P2（群聊）已实现**，P3 起未实现。P2 随 0.148.0-rc15 发布。
 > 相关现有能力：`docs/PUBLIC_INTAKE.md`（公网入口）、`docs/ARCHITECTURE.md`（Mobile Relay、插件宿主）。
 
 ## 一句话
@@ -140,14 +140,14 @@ TUI 里是同一组：`/fed invite`、`/fed join <链接>`、`/fed list`、`/fed
 | --- | --- | --- | --- |
 | P0 ✅ | 实例身份：`identity.json`、名字池、`/name` 改名、TUI/Web 显示、`willdeep identity` | 无 | 是，纯本地 |
 | P1 ✅ | 1:1 联邦：配对、`/p/v1/message`、入站成轮次、自动回复、HMAC + 防重放 + 限流 | P0、intake 监听 | 是 |
-| P2 | 群聊：host 星形转发、成员表、预算与 `/peer stop` | P1 | 是 |
+| P2 ✅ | 群聊：host 星形转发、成员表、自动回复上限与 `group-stop`。群级 token 预算未做 | P1 | 是 |
 | P3 | Ed25519 身份、中继回退、E2E 加密 | P2 | 否 |
 
 已落地：`crates/willdeep-cli/src/identity.rs`（P0）、`federation.rs`（联系人、邀请、签名、出站）、`daemon/intake.rs` 的 `/p/v1/join` 与 `/p/v1/message`（入站、限流、自动回复）、`web/federation.rs`（回环只读/发送接口）、TUI `/fed`、CLI `willdeep fed`、Web 左侧导航的「联邦」入口与公网入口页的「联邦」标签。
 
 ### P1 与本文设计稿的差异
 
-- **没有群聊**（P2 才做），所以 `group_id` 字段没进协议；消息只发给单个实例。
+- 群聊在 0.148.0-rc15 补上：协议增加 `group_id`、`origin`、`from_agent`。1:1 消息这三个字段都不带。
 - `reply_to` 与 `client_message_id` 已在协议里带上，但 P1 只用 `client_message_id` 做发送端幂等键，回复按「一轮结束后的最后一条助手消息」整体回传，不做逐条引用。
 - 共享密钥是配对时由被邀请方（host）生成并回传的对称密钥，不是每实例一对非对称密钥；改名不需要重新配对，换 UUID 才需要。
 - 自动回复只回一次整段，不做流式；`max_auto_turns` 到顶后静默停止，等人工 `/fed say` 或 Web 面板发言（二者都会把计数清零）。

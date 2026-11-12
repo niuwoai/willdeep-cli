@@ -8,12 +8,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Text } from "@chakra-ui/react";
 import type { Language } from "./i18n";
 import {
+  createGroup,
   invitePeer,
   joinPeer,
   loadFederation,
+  pauseGroup,
   removePeer,
+  sendToGroup,
   sendToPeer,
   type FederationContact,
+  type FederationGroup,
   type FederationView,
 } from "./federationApi";
 import { federationText } from "./federationMessages";
@@ -28,6 +32,8 @@ export function FederationPanel({ language, onOpenSession }: { language: Languag
   const [invite, setInvite] = useState<string>("");
   const [joinUrl, setJoinUrl] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [groupName, setGroupName] = useState("");
+  const [groupMembers, setGroupMembers] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { if (query.data) setView(query.data); }, [query.data]);
@@ -74,7 +80,32 @@ export function FederationPanel({ language, onOpenSession }: { language: Languag
       </div>}
     </div>
 
+    <div className="intake-card">
+      <div className="intake-card-title"><strong>{t.groups}</strong></div>
+      <p className="intake-hint intake-wide">{t.groupHint}</p>
+      <div className="intake-wide intake-row">
+        <input value={groupName} placeholder={t.groupName} onChange={(event) => setGroupName(event.target.value)} />
+        <input value={groupMembers} placeholder={t.groupMembers} onChange={(event) => setGroupMembers(event.target.value)} />
+        <button type="button" className="intake-add" disabled={busy || !groupName.trim() || !groupMembers.trim()} onClick={() => void run(async () => {
+          apply(await createGroup(groupName.trim(), groupMembers.trim().split(/\s+/)));
+          setGroupName("");
+          setGroupMembers("");
+          setNotice({ tone: "ok", text: t.groupCreated });
+        })}>{t.createGroup}</button>
+      </div>
+    </div>
+
     {notice && <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? "intake-error" : "intake-notice"}>{notice.text}</p>}
+
+    {view.groups.map((group) => <GroupCard key={group.id} group={group} draft={drafts[group.id] ?? ""} busy={busy}
+      onDraft={(text) => setDrafts((current) => ({ ...current, [group.id]: text }))}
+      onSend={() => void run(async () => {
+        await sendToGroup(group.id, drafts[group.id] ?? "");
+        setDrafts((current) => ({ ...current, [group.id]: "" }));
+        setNotice({ tone: "ok", text: t.sent });
+      })}
+      onPause={() => void run(async () => { apply(await pauseGroup(group.id)); setNotice({ tone: "ok", text: t.groupStopped }); })}
+      onOpenSession={onOpenSession} t={t} />)}
 
     {view.contacts.length === 0 && <p>{t.empty}</p>}
     {view.contacts.map((contact) => <ContactCard key={contact.id} contact={contact} draft={drafts[contact.id] ?? ""} busy={busy}
@@ -87,6 +118,28 @@ export function FederationPanel({ language, onOpenSession }: { language: Languag
       onRemove={() => void run(async () => { apply(await removePeer(contact.id)); })}
       onOpenSession={onOpenSession} t={t} />)}
   </section>;
+}
+
+function GroupCard({ group, draft, busy, onDraft, onSend, onPause, onOpenSession, t }: {
+  group: FederationGroup; draft: string; busy: boolean;
+  onDraft: (text: string) => void; onSend: () => void; onPause: () => void;
+  onOpenSession: (sessionId: string) => void; t: ReturnType<typeof federationText>;
+}) {
+  return <div className="intake-card">
+    <div className="intake-card-title">
+      <strong>#{group.name}</strong>
+      <Text as="code">{t.groupMembersCount.replace("{count}", String(group.members))}{group.paused ? ` · ${t.groupPaused}` : ""}</Text>
+    </div>
+    <div className="intake-wide intake-row">
+      <textarea rows={2} value={draft} placeholder={t.messagePlaceholder} disabled={busy} onChange={(event) => onDraft(event.target.value)} />
+      <button type="button" disabled={busy || !draft.trim()} onClick={onSend}>{t.send}</button>
+    </div>
+    <div className="intake-card-actions">
+      {group.session_id && <button type="button" className="intake-link" onClick={() => onOpenSession(group.session_id as string)}>{t.openSession}</button>}
+      <span className="intake-hint">{t.autoTurns.replace("{count}", String(group.auto_turns))}</span>
+      <button type="button" className="intake-danger" disabled={busy || group.paused} onClick={onPause}>{t.pauseGroup}</button>
+    </div>
+  </div>;
 }
 
 function ContactCard({ contact, draft, busy, onDraft, onSend, onRemove, onOpenSession, t }: {

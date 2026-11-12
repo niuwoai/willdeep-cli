@@ -8,6 +8,13 @@
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
 
+## [0.148.0-rc15] - 2026-11-12
+
+### Added
+- 联邦群聊。建群的一方做 host，星形转发：一条消息先到 host，再由 host 按成员表转给其余成员，顺序只有一处决定。命令是 `willdeep fed group <群名> <成员...>`、`fed group-say <群名> <内容>`、`fed group-stop <群名>`；TUI 是 `/fed group`、`/fed group say`、`/fed stop`；Web 的联邦面板可以建群、发言、停止自动回复。成员上限 8，含 host。
+- 群消息带 `group_id`、`origin` 与 `from_agent`。成员收到的消息不再往下转发，所以不会成环。
+- 防无休止讨论：只有人发的话才触发一轮自动回复，Agent 的回复进房间但不再被回答；连续自动回复沿用 `max_auto_turns`（默认 6），到顶就停；`fed group-stop` 立刻停掉，直到有人再发言。
+
 ## [0.148.0-rc14] - 2026-11-12
 
 ### Changed

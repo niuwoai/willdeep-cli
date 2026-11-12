@@ -23,6 +23,16 @@ const zh = {
   openSession: "打开会话",
   remove: "解除",
   autoTurns: "自动回复 {count} 轮",
+  groups: "群聊",
+  groupHint: "群由这台机器主持：你说的话转给每个成员，成员的 Agent 回复回到这里。只有人发的话才触发自动回复，Agent 的回复不再往下传；连续自动回复到上限就停。",
+  groupName: "群名",
+  groupMembers: "成员，用空格分隔，填已配对的名字",
+  createGroup: "建群",
+  groupCreated: "群已建好，由这台机器主持。",
+  groupMembersCount: "{count} 人",
+  groupPaused: "自动回复已暂停",
+  pauseGroup: "停止自动回复",
+  groupStopped: "这个群的自动回复已停止，有人发言后恢复。",
 };
 
 const en: typeof zh = {
@@ -47,6 +57,16 @@ const en: typeof zh = {
   openSession: "Open session",
   remove: "Unpair",
   autoTurns: "{count} auto repl(ies)",
+  groups: "Groups",
+  groupHint: "This machine hosts the group: what you say is forwarded to every member, and their agents' replies come back here. Only a person's message starts an automatic reply; an agent's reply is delivered but never answered again. Automatic replies stop at the limit.",
+  groupName: "Group name",
+  groupMembers: "Members, separated by spaces; use paired names",
+  createGroup: "Create group",
+  groupCreated: "Group created. This machine hosts it.",
+  groupMembersCount: "{count} members",
+  groupPaused: "automatic replies paused",
+  pauseGroup: "Stop automatic replies",
+  groupStopped: "Automatic replies in this group are paused until someone sends a message.",
 };
 
 const ja: typeof zh = {
@@ -71,6 +91,16 @@ const ja: typeof zh = {
   openSession: "セッションを開く",
   remove: "解除",
   autoTurns: "自動返信 {count} 回",
+  groups: "グループ",
+  groupHint: "このマシンがグループを主催します。あなたの発言は各メンバーに転送され、相手のエージェントの返信はここに戻ります。人の発言だけが自動返信を起こし、エージェントの返信は届きますが、それに対して再び返信しません。自動返信は上限で止まります。",
+  groupName: "グループ名",
+  groupMembers: "メンバー（空白区切り、ペアリング済みの名前）",
+  createGroup: "作成",
+  groupCreated: "グループを作成しました。このマシンが主催します。",
+  groupMembersCount: "{count} 人",
+  groupPaused: "自動返信は停止中",
+  pauseGroup: "自動返信を停止",
+  groupStopped: "このグループの自動返信を停止しました。誰かが発言するまで再開しません。",
 };
 
 export const federationText = (language: Language) => language === "zh-CN" ? zh : language === "ja" ? ja : en;
