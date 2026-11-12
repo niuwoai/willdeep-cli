@@ -30,7 +30,7 @@ it("pins default and explicitly pinned destinations, including order zero, witho
   const view = render(renderRail(plugins, { kind: "plugin", qualifiedId: "Manual:home" }));
   const nav = screen.getByRole("navigation");
   expect(within(nav).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual([
-    text.conversation, "定时任务", "Default", "Manual", text.configEntry, text.pluginSectionTitle,
+    text.conversation, "定时任务", text.federationEntry, "Default", "Manual", text.configEntry, text.pluginSectionTitle,
   ]);
   expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Manual" }).getAttribute("aria-current")).toBe("page");
@@ -75,7 +75,7 @@ it.each<Language>(["zh-CN", "en", "ja"])("keeps configuration destinations under
   expect(plugins.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByRole("button", { name: text.intakeEntry })).toBeNull();
   expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual([
-    text.conversation, "Fixture schedule", text.configEntry, text.pluginSectionTitle,
+    text.conversation, "Fixture schedule", text.federationEntry, text.configEntry, text.pluginSectionTitle,
   ]);
 
   fireEvent.click(configuration);
@@ -115,7 +115,7 @@ it("places pinned destinations below schedules and keeps overflow in the Plugins
   const configuration = screen.getByRole("button", { name: text.configEntry });
   const plugins = screen.getByRole("button", { name: text.pluginSectionTitle });
   expect(within(screen.getByRole("navigation")).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual([
-    text.conversation, "定时任务", ...entries.slice(0, 5).map(({ destination }) => destination.title), text.configEntry, text.pluginSectionTitle,
+    text.conversation, "定时任务", text.federationEntry, ...entries.slice(0, 5).map(({ destination }) => destination.title), text.configEntry, text.pluginSectionTitle,
   ]);
   expect(screen.queryByRole("button", { name: last.title })).toBeNull();
   fireEvent.click(plugins);
@@ -149,7 +149,7 @@ it("keeps the same compact top-level navigation across every page", () => {
     expect(nav.classList.contains("plugin-rail")).toBe(true);
     expect(nav.classList.contains("agent-workspace-rail")).toBe(false);
     expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual([
-      "对话", "定时任务", text.configEntry, text.pluginSectionTitle,
+      "对话", "定时任务", "联邦", text.configEntry, text.pluginSectionTitle,
     ]);
     expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
     expect(screen.getByRole("img", { name: "WillDeep" })).toBeTruthy();
