@@ -695,6 +695,99 @@ async fn exhausting_turns_returns_the_partial_result_instead_of_failing() {
     );
 }
 
+/// 每一轮都调工具、同时报用量，用来证明目标预算不能被「一直调工具」绕开。
+struct ToolAndUsageProvider {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl Provider for ToolAndUsageProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> Result<Completion, ProviderError> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        Ok(Completion {
+            reasoning: None,
+            content: format!("still working, step {call}"),
+            tool_calls: vec![crate::types::ToolCall {
+                id: format!("call-{call}"),
+                name: "list_directory".to_owned(),
+                arguments: r#"{"path":"."}"#.to_owned(),
+            }],
+            finish_reason: Some("tool_calls".to_owned()),
+            usage: Some(crate::types::Usage {
+                input_tokens: Some(400),
+                output_tokens: Some(200),
+                total_tokens: Some(600),
+                cache_read_tokens: None,
+                ..crate::types::Usage::default()
+            }),
+        })
+    }
+}
+
+/// 目标的 token 预算在模型还在调工具时也生效：超限那一轮的工具调用不执行，
+/// 改走收尾引导，停机原因是预算耗尽而不是轮次上限。
+#[tokio::test]
+async fn a_goal_token_budget_wraps_up_even_while_the_model_keeps_calling_tools() {
+    let continuation = Arc::new(GoalContinuation::with_default_budget(
+        crate::goal::GoalBudget {
+            max_tokens: Some(1_000),
+            ..crate::goal::GoalBudget::default()
+        },
+    ));
+    continuation.activate("ship rc7", continuation.default_budget());
+    let agent = Agent::new(
+        Arc::new(ToolAndUsageProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        registry("goal-tool-budget"),
+        AgentConfig {
+            max_turns: 12,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    )
+    .with_goal_continuation(continuation.clone());
+
+    let outcome = agent.run("keep going").await.expect("run");
+
+    let state = continuation.snapshot().expect("goal state");
+    assert_eq!(
+        outcome.stop_reason,
+        AgentStopReason::BudgetLimited,
+        "tokens used {} after {} turns",
+        state.tokens_used,
+        outcome.turns
+    );
+    let tool_results = outcome
+        .messages
+        .iter()
+        .filter(|message| message.role == crate::types::Role::Tool)
+        .count();
+    assert_eq!(
+        tool_results, 1,
+        "only the round before the budget was spent may execute its tool"
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-budget-limited]")),
+        "the overrun round must carry the handover steering instead of its tool call"
+    );
+    let state = continuation.snapshot().expect("finished goal state");
+    assert_eq!(state.status, crate::goal::GoalStatus::BudgetLimited);
+    assert!(
+        state.tokens_used >= 1_000,
+        "the spent budget must be what stopped the run, got {}",
+        state.tokens_used
+    );
+}
+
 #[tokio::test]
 async fn stops_before_returning_when_token_budget_is_exhausted() {
     let agent = Agent::new(

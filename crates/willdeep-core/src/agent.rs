@@ -1594,7 +1594,14 @@ impl Agent {
                 continue;
             }
             incomplete_responses = 0;
-            if completion.tool_calls.is_empty() {
+            // 预算耗尽，或收尾引导已经注入：这一轮的工具调用都不执行。收尾引导
+            // 注入后 `budget_exhausted` 不再报，只看它会把收尾那一轮的工具放行。
+            if completion.tool_calls.is_empty()
+                || self
+                    .goal_continuation
+                    .as_ref()
+                    .is_some_and(|goal| goal.budget_exhausted().is_some() || goal.wrap_up_pending())
+            {
                 if content.is_empty() {
                     return Err(AgentError::EmptyResponse);
                 }
@@ -1639,7 +1646,9 @@ impl Agent {
                     messages.push(Message::host_instruction(format!("[completion-verification-required] {feedback} Continue the outstanding task. Do not weaken checks or claim completion. If verification is unavailable, explain the limitation; the runtime will retain a partial result.")));
                     continue;
                 }
-                // 长程续推：目标未达且预算未尽时，这里不是终点。
+                // 长程续推：目标未达且预算未尽时，这里不是终点。预算已经耗尽的工具轮
+                // 也从这里走：先记成普通 assistant 回复、不执行这一轮的工具调用，再由
+                // 下面的 SoftStop 注入收尾引导。
                 if let Some(continuation) = self.goal_continuation.clone() {
                     let observation = RoundObservation {
                         tools_executed: tools_since_check,

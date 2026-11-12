@@ -652,6 +652,22 @@ impl GoalContinuation {
         ))
     }
 
+    /// 预算是否已经耗尽：壁钟、续推次数或 token 任一维超限就算。
+    ///
+    /// 与 [`Self::evaluate`] 里的预算判定用同一套阈值。这里只读不改：
+    /// 调工具的轮次也要先问一句，否则模型一直调工具就永远走不到「没调工具」那条收尾路径。
+    /// 没有激活目标，或收尾引导已经注入过，返回 `None`。
+    pub fn budget_exhausted(&self) -> Option<SoftStopReason> {
+        let Ok(guard) = self.slots.lock() else {
+            return None;
+        };
+        let goal = guard.active.as_ref()?;
+        if goal.state.wrap_up_injected {
+            return None;
+        }
+        budget_reason(goal, goal.elapsed())
+    }
+
     /// 对一次「模型没有调用工具」的候选停止点做判定。
     ///
     /// 返回 `None` 表示当前没有激活的目标，调用方按原有逻辑正常收口。
@@ -677,6 +693,13 @@ impl GoalContinuation {
         }
 
         let elapsed = goal.elapsed();
+        if let Some(reason) = budget_reason(goal, elapsed) {
+            goal.state.wrap_up_injected = true;
+            return Some(ContinuationDecision::SoftStop {
+                steering: wrap_up_steering(&goal.state.statement, reason, elapsed),
+                reason,
+            });
+        }
         if declares_complete(reply) {
             let open = goal.state.open_criteria().len();
             // 空清单不是「全过」：没写过可核对条目时，完成标记只是自报。
@@ -694,40 +717,6 @@ impl GoalContinuation {
                 steering: rejection_steering(&goal.state, observation.workers_in_flight),
                 open_criteria: open,
                 workers_in_flight: observation.workers_in_flight,
-            });
-        }
-
-        if let Some(limit) = goal.budget.wall_clock
-            && elapsed >= limit
-        {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(
-                    &goal.state.statement,
-                    SoftStopReason::WallClock,
-                    elapsed,
-                ),
-                reason: SoftStopReason::WallClock,
-            });
-        }
-        if goal.state.continuations >= goal.budget.max_continuations {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(
-                    &goal.state.statement,
-                    SoftStopReason::Continuations,
-                    elapsed,
-                ),
-                reason: SoftStopReason::Continuations,
-            });
-        }
-        if let Some(limit) = goal.budget.max_tokens
-            && goal.state.tokens_used >= limit
-        {
-            goal.state.wrap_up_injected = true;
-            return Some(ContinuationDecision::SoftStop {
-                steering: wrap_up_steering(&goal.state.statement, SoftStopReason::Tokens, elapsed),
-                reason: SoftStopReason::Tokens,
             });
         }
 
@@ -782,6 +771,24 @@ If a criterion turned out to be wrong or impossible, say so explicitly and repla
 Then declare completion again.\n",
     );
     steering
+}
+
+/// 壁钟、续推次数、token 三道预算，按这个顺序取第一道超限的。都没超返回 `None`。
+fn budget_reason(goal: &ActiveGoal, elapsed: Duration) -> Option<SoftStopReason> {
+    if let Some(limit) = goal.budget.wall_clock
+        && elapsed >= limit
+    {
+        return Some(SoftStopReason::WallClock);
+    }
+    if goal.state.continuations >= goal.budget.max_continuations {
+        return Some(SoftStopReason::Continuations);
+    }
+    if let Some(limit) = goal.budget.max_tokens
+        && goal.state.tokens_used >= limit
+    {
+        return Some(SoftStopReason::Tokens);
+    }
+    None
 }
 
 fn rung_for(consecutive_no_progress: u32) -> ContinuationRung {
@@ -1173,6 +1180,36 @@ mod tests {
         assert!(steering.contains("BLOCKERS"));
         assert!(steering.contains("REMAINING"));
         assert!(continuation.wrap_up_pending());
+    }
+
+    /// 预算超限时，哪怕这一轮有工具证据，也先收尾、不计续推、不判完成。
+    #[test]
+    fn an_exhausted_budget_wraps_up_before_counting_progress_or_completion() {
+        let continuation = goal_with(GoalBudget {
+            wall_clock: None,
+            max_continuations: 1,
+            max_tokens: None,
+        });
+        continuation.evaluate("one", progressed());
+        assert_eq!(
+            continuation.budget_exhausted(),
+            Some(SoftStopReason::Continuations)
+        );
+        let decision = continuation
+            .evaluate("<goal-status>complete</goal-status> all done", progressed())
+            .unwrap();
+        let ContinuationDecision::SoftStop { reason, .. } = decision else {
+            panic!("budget comes before the completion marker, got {decision:?}");
+        };
+        assert_eq!(reason, SoftStopReason::Continuations);
+        let state = continuation
+            .snapshot()
+            .expect("still active while wrapping up");
+        assert_eq!(
+            state.continuations, 1,
+            "the wrap-up round is not another continuation"
+        );
+        assert_eq!(state.status, GoalStatus::Active);
     }
 
     #[test]
