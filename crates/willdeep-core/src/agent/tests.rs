@@ -1815,6 +1815,77 @@ async fn persisted_orphan_tool_results_are_removed_before_provider_replay() {
     assert_eq!(outcome.final_text, "recovered");
 }
 
+/// 服务端报窗口不够、收窗成功后，下一轮请求末尾的实时状态写明收到的窗口，
+/// 并要求先收口。第一次请求没有这句，容量核算本身不在这里测。
+#[tokio::test]
+async fn a_tightened_context_window_is_named_in_the_next_request() {
+    struct OverflowOnce {
+        calls: std::sync::atomic::AtomicUsize,
+        tails: Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl Provider for OverflowOnce {
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _: &[ToolDefinition],
+        ) -> Result<Completion, ProviderError> {
+            self.tails.lock().expect("tails").push(
+                messages
+                    .last()
+                    .map(|message| message.content.clone())
+                    .unwrap_or_default(),
+            );
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Err(ProviderError::Http {
+                    status: reqwest::StatusCode::BAD_REQUEST,
+                    body: "maximum context length is 32000 tokens".to_owned(),
+                    retry_after: None,
+                });
+            }
+            Ok(Completion {
+                reasoning: None,
+                content: "wrapped up".to_owned(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_owned()),
+            })
+        }
+    }
+
+    let provider = Arc::new(OverflowOnce {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        tails: Mutex::new(Vec::new()),
+    });
+    let agent = Agent::new(
+        provider.clone(),
+        registry("window-notice"),
+        AgentConfig {
+            max_turns: 3,
+            system_prompt: "system".to_owned(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    );
+    let outcome = agent.run("go").await.expect("recovers after one overflow");
+    assert_eq!(outcome.final_text, "wrapped up");
+    let tails = provider.tails.lock().expect("tails");
+    assert_eq!(tails.len(), 2);
+    assert!(
+        !tails[0].contains("[context-window]"),
+        "the notice appears only after the window was tightened"
+    );
+    assert!(
+        tails[1].contains("[context-window]")
+            && tails[1].contains("32000 tokens")
+            && tails[1].contains("128000")
+            && tails[1].contains("do not open new large outputs or new delegation"),
+        "the next request names the learned window, got:\n{}",
+        tails[1]
+    );
+    assert_eq!(agent.effective_context_window(), 32_000);
+}
+
 /// 按脚本回复：每步要么是一段文字，要么是一次工具调用。顺带记下每次请求的
 /// system 消息与提供的工具名。
 /// 一步脚本：回复文字，以及可选的一次工具调用（工具名，参数 JSON）。

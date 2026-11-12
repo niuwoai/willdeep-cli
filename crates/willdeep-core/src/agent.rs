@@ -1283,6 +1283,14 @@ impl Agent {
                 turn,
                 self.config.max_turns,
             ));
+            // 收窗只改容量核算，模型看不到。窗口比配置小，说明上一轮被服务端拒过，
+            // 这里补一句，让它先收口而不是按原来的大窗口继续拉大输出、派工。
+            if let Some(notice) = guidance::context_window_notice(
+                self.effective_context_window(),
+                self.config.context_window,
+            ) {
+                runtime_context.push_str(&notice);
+            }
             if let Some(remaining) = self.tools.remaining_execution_time() {
                 runtime_context.push_str(&format!("\n[run-time-budget] Remaining wall clock: {} ms. Model waits and tools consume this same budget; worker deadlines reserve the final 20% for parent integration.", remaining.as_millis()));
                 if self
