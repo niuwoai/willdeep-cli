@@ -679,7 +679,8 @@ impl GoalContinuation {
         let elapsed = goal.elapsed();
         if declares_complete(reply) {
             let open = goal.state.open_criteria().len();
-            if open == 0 && observation.workers_in_flight == 0 {
+            // 空清单不是「全过」：没写过可核对条目时，完成标记只是自报。
+            if !goal.state.criteria.is_empty() && open == 0 && observation.workers_in_flight == 0 {
                 let mut finished = goal.snapshot();
                 finished.status = GoalStatus::Complete;
                 slots.finished = Some(finished);
@@ -758,6 +759,11 @@ fn rejection_steering(state: &GoalState, workers_in_flight: usize) -> String {
     );
     steering.push_str(&format!("GOAL: {}\n\n", state.statement));
     steering.push_str("You declared the goal complete, but the harness cannot accept that yet:\n");
+    if state.criteria.is_empty() {
+        steering.push_str(
+            "- No acceptance criteria are recorded. Use `update_plan` to record the concrete, checkable criteria this goal must meet before declaring completion.\n",
+        );
+    }
     let open = state.open_criteria();
     if !open.is_empty() {
         steering.push_str("- These acceptance criteria are not marked done with evidence:\n");
@@ -1073,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_marker_completes_and_clears() {
+    fn explicit_marker_without_criteria_is_rejected() {
         let continuation = goal_with(GoalBudget::default());
         let decision = continuation
             .evaluate(
@@ -1081,8 +1087,18 @@ mod tests {
                 progressed(),
             )
             .expect("goal active");
-        assert_eq!(decision, ContinuationDecision::Complete);
-        assert!(!continuation.is_active());
+        let ContinuationDecision::CompletionRejected {
+            steering,
+            open_criteria,
+            workers_in_flight,
+        } = decision
+        else {
+            panic!("expected rejection, got {decision:?}");
+        };
+        assert_eq!((open_criteria, workers_in_flight), (0, 0));
+        assert!(steering.contains("No acceptance criteria are recorded"));
+        assert!(steering.contains("`update_plan`"));
+        assert!(continuation.is_active());
     }
 
     #[test]
@@ -1297,10 +1313,21 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(
-            continuation.evaluate("<goal-status>complete</goal-status>", progressed()),
-            Some(ContinuationDecision::Complete)
+        let idle = continuation
+            .evaluate("<goal-status>complete</goal-status>", progressed())
+            .unwrap();
+        assert!(
+            matches!(
+                idle,
+                ContinuationDecision::CompletionRejected {
+                    open_criteria: 0,
+                    workers_in_flight: 0,
+                    ..
+                }
+            ),
+            "workers finishing does not close a goal that still has no criteria, got {idle:?}"
         );
+        assert!(continuation.is_active());
     }
 
     #[test]

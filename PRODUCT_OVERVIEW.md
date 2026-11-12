@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-11 | 当前版本：v0.148.0-rc1
+> 最后更新：2026-11-12 | 当前版本：v0.148.0-rc2
+
+0.148.0-rc2 收紧长任务完成门禁：目标开着但还没有验收标准时，模型写 `<goal-status>complete</goal-status>` 不再被当成完成，harness 要求先用 `update_plan` 写下可核对条目。每条标准都带证据、且没有在跑的委派 Worker 时仍按原门禁收口。本次改动尚未安装或发布。
 
 0.148.0-rc1 让思考等级不再依赖 Provider 映射：没有 `[providers.X.reasoning]` 的档案也能在 TUI、控制 API 和 Web 端显式指定 `low` / `medium` / `high` / `xhigh`，值按各协议默认字段直发（Chat Completions `reasoning_effort`、Responses `reasoning.effort`、Anthropic `output_config.effort` 并联动 adaptive thinking）；不选就不发，与旧请求逐字节一致，配了映射时映射仍是唯一集合。Web 端选择器改为拉杆：第 0 档「跟随默认」，松手才提交，拖动期间请求串行化，失败回滚并显示上游原因。内置 `reviewer` 子 Agent 同时改为结构化代码审查协议：按正确性、安全、数据与兼容、并发、测试证据五类检查，每条发现给出严重级别、`file:line` 与可复现的触发条件，区分 `CONFIRMED` / `PLAUSIBLE`，不报纯风格问题、不写补丁、不声称跑过命令或测试，工具面仍只读并新增 `git log`。设计与边界见[思考等级：内置档位与 Web 拉杆](docs/decisions/2026-11-11-reasoning-slider.md)与[reviewer：内置代码审查协议](docs/decisions/2026-11-11-reviewer-code-review-protocol.md)。本次改动尚未安装或发布。
 

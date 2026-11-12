@@ -1167,13 +1167,15 @@ async fn goal_envelope_activates_continuation_in_the_core_runtime() {
     let provider = RecordingProvider::new(&[
         "I have only inspected the first part.",
         "<goal-status>complete</goal-status> Everything is verified.",
+        "<goal-status>complete</goal-status> Everything is verified.",
+        "<goal-status>complete</goal-status> Everything is verified.",
     ]);
     let continuation = Arc::new(GoalContinuation::new());
     let agent = Agent::new(
         provider.clone(),
         registry("goal-envelope"),
         AgentConfig {
-            max_turns: 3,
+            max_turns: 4,
             system_prompt: "system".to_owned(),
             context_window: 128_000,
             token_budget: None,
@@ -1184,12 +1186,19 @@ async fn goal_envelope_activates_continuation_in_the_core_runtime() {
     let outcome = agent
         .run("<goal>\nship the runtime\n</goal>\nContinue until this goal is genuinely complete.\n\ninspect the queue")
         .await
-        .expect("goal should continue until the marker");
+        .expect("an empty checklist cannot close the goal");
 
-    assert_eq!(outcome.turns, 2);
-    assert_eq!(outcome.stop_reason, AgentStopReason::GoalComplete);
-    assert!(!continuation.is_active());
-    assert_eq!(provider.requests.lock().expect("requests").len(), 2);
+    assert_eq!(outcome.turns, 4);
+    assert_eq!(outcome.stop_reason, AgentStopReason::MaxTurns);
+    assert!(continuation.is_active());
+    let requests = provider.requests.lock().expect("requests");
+    assert_eq!(requests.len(), 4);
+    assert!(
+        requests[2]
+            .iter()
+            .any(|message| message.content.contains("[goal-completion-rejected]")),
+        "declaring completion without criteria must be rejected"
+    );
 }
 
 #[tokio::test]
@@ -1402,17 +1411,24 @@ async fn active_goal_refuses_implicit_stop_until_the_marker_appears() {
         "Here is a summary of what I did.",
         "<goal-status>complete</goal-status> rc7 shipped and verified.",
     ]);
-    let agent = goal_agent(provider.clone(), crate::goal::GoalBudget::default());
+    let mut agent = goal_agent(provider.clone(), crate::goal::GoalBudget::default());
+    agent.config.max_turns = 3;
 
     let outcome = agent.run("ship it").await.expect("run");
 
-    assert_eq!(outcome.stop_reason, AgentStopReason::GoalComplete);
-    assert!(outcome.final_text.contains("rc7 shipped"));
+    assert_eq!(outcome.stop_reason, AgentStopReason::MaxTurns);
     let requests = provider.requests.lock().expect("requests");
     assert_eq!(
         requests.len(),
         3,
-        "harness should refuse the first two stops"
+        "a completion marker without criteria is refused, not accepted"
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content.contains("[goal-completion-rejected]")),
+        "declaring completion without criteria must be rejected"
     );
     assert!(
         requests[1]

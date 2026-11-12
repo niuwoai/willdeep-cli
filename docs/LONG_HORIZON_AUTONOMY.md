@@ -83,7 +83,7 @@ rs 侧目前**没有立场**——`crates/willdeep-core/src/agent.rs:275` 一旦
 - **RA2 已落地（持久化 + 清单部分）**：
   - `GoalState`（目标、验收标准、步骤、阻塞原因、状态、已用时长、续推计数）随检查点与消息同一次写入 `Session.goal_state`。它属于执行快照，并发合并时计数取单调较大者。`Session.goal` 单字符串保留，作为向后兼容的目标语句。
   - `update_plan` 工具只在有激活目标时出现在主 Agent 的工具面里，属于 `PARENT_ONLY_TOOLS`。`steps` / `checklist` / `blocked_reason` / `merge` 与 §2.3 同构。另有一个本端扩展 `criteria`，用来写下验收标准本身，因为 canonical 只规定了按序号勾选。没有证据的勾选会被拒绝，校验失败不消耗续推预算，清单有变化算作一次进展。
-  - **完成门禁**：模型声明完成时，只要还有未带证据的验收标准，或还有在跑的委派 Worker（只数 `Subagent`，不数 shell / monitor），就返回 `CompletionRejected` 并点名缺什么。这一次计入续推预算，免得虚报完成绕开预算。没有定义验收标准时行为不变。
+  - **完成门禁**：模型声明完成时，只要还没有验收标准、还有未带证据的验收标准，或还有在跑的委派 Worker（只数 `Subagent`，不数 shell / monitor），就返回 `CompletionRejected` 并点名缺什么。这一次计入续推预算，免得虚报完成绕开预算。空清单不是「全过」：从 0.148.0-rc2 起必须先用 `update_plan` 写下可核对条目才能收口。
   - **压缩固定区**：`<goal-state>` 块每轮重建进 system 消息。system 消息不参与压缩摘要，所以目标、清单与在飞 Worker 不会被摘要掉；本地摘要提示也附上它，避免摘要与之矛盾。
   - Web 端 `/goal` 仍是前端状态、随每轮 `<goal>` 信封到达。持久化状态在会话里只「停放」，信封带着同一句目标来才接回，所以关掉的目标不会复活。
 - **wall-clock 跨重启累计**：计时只在轮次运行时走，轮次之间与进程不在时不计。daemon 每轮重建 harness，从 `session.goal_state` 恢复（`harness::restore_goal`），不再每轮从满格预算重来。

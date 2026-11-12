@@ -230,6 +230,16 @@ async fn live_plan_goal_and_deadline_survive_compression_without_invalidating_it
     let (agent, provider, compressor) = loop_agent(true);
     let goal = Arc::new(GoalContinuation::new());
     goal.activate("inspect the fixture", crate::goal::GoalBudget::default());
+    goal.update_plan(crate::goal::PlanUpdate {
+        criteria: Some(vec!["the fixture is read".to_owned()]),
+        checklist: vec![crate::goal::ChecklistUpdate {
+            index: 1,
+            done: true,
+            evidence: Some("read current.txt".to_owned()),
+        }],
+        ..crate::goal::PlanUpdate::default()
+    })
+    .expect("one evidenced criterion lets the completion marker close the goal");
     let agent = agent
         .with_goal_continuation(goal)
         .with_time_budget(std::time::Duration::from_secs(60));

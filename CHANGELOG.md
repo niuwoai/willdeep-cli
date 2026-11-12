@@ -4,6 +4,11 @@
 
 ### Changed
 - README 将 SWE-bench 成绩与公开 coding agent 对照前移至「30 秒上手」之后，作为独立章节展示。
+
+## [0.148.0-rc2] - 2026-11-12
+
+### Fixed
+- 目标开着但还没有验收标准时，回复以 `<goal-status>complete</goal-status>` 开头不再被当成完成：`GoalContinuation::evaluate` 返回 `CompletionRejected`，目标保持激活，引导语要求先用 `update_plan` 写下可核对条目。每条标准都带证据、且没有在跑的委派 Worker 时，仍按原门禁收口；预算耗尽后的收尾不受影响。
 - README 同步官网 SWE-bench 最新超过 70% 的成绩和公开 coding agent 对比，补充证据链接，明确固定 60 题子集、完整 Verified 500 题及故障补测组合的口径区别。
 
 ## [0.148.0-rc1] - 2026-11-11
