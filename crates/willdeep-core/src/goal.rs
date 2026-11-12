@@ -220,6 +220,7 @@ impl GoalState {
         {
             self.elapsed_ms = self.elapsed_ms.max(previous.elapsed_ms);
             self.continuations = self.continuations.max(previous.continuations);
+            self.tokens_used = self.tokens_used.max(previous.tokens_used);
         }
         self
     }
@@ -870,6 +871,29 @@ named below). Do not redo steps that are already done; continue from what is act
     prompt
 }
 
+/// 重启后续推只接还在进行、没进入收尾的目标。预算是否用尽由调用方另判。
+pub fn accepts_restart_resume(state: &GoalState) -> bool {
+    state.status == GoalStatus::Active
+        && !state.statement.trim().is_empty()
+        && !state.wrap_up_injected
+}
+
+/// 用户那一句还没写进历史时，续推提示要带上它，不能只剩目标声明。
+pub fn resume_after_restart_prompt_for_unrecorded_request(
+    state: &GoalState,
+    request: &str,
+) -> String {
+    let mut prompt = resume_after_restart_prompt(state);
+    let request = request.trim();
+    if !request.is_empty() {
+        prompt.push_str(
+            "\n\nThe interrupted turn had not recorded this request yet. Honor it while continuing the goal:\n",
+        );
+        prompt.push_str(request);
+    }
+    prompt
+}
+
 fn format_remaining(budget: GoalBudget, elapsed: Duration) -> String {
     match budget.wall_clock {
         Some(limit) => format_elapsed(limit.saturating_sub(elapsed)),
@@ -1061,6 +1085,19 @@ mod tests {
         assert!(prompt.contains("port the grammar"));
         assert!(!prompt.contains("port the lexer"));
         assert!(prompt.ends_with("Continue until this goal is genuinely complete."));
+        assert!(accepts_restart_resume(&state));
+        let mut wrapping = state.clone();
+        wrapping.wrap_up_injected = true;
+        assert!(!accepts_restart_resume(&wrapping));
+        let carried =
+            resume_after_restart_prompt_for_unrecorded_request(&state, "  port the rest  ");
+        assert!(carried.contains("had not recorded this request yet"));
+        assert!(carried.ends_with("port the rest"));
+        assert_eq!(
+            resume_after_restart_prompt_for_unrecorded_request(&state, "  "),
+            prompt,
+            "a blank request adds nothing"
+        );
     }
 
     #[test]
@@ -1471,8 +1508,13 @@ mod tests {
         let mut newer = GoalState::new("g");
         newer.continuations = 3;
         newer.elapsed_ms = 60_000;
+        older.tokens_used = 4_000;
+        newer.tokens_used = 1_000;
         let merged = newer.merged_over(Some(&older));
-        assert_eq!((merged.continuations, merged.elapsed_ms), (9, 60_000));
+        assert_eq!(
+            (merged.continuations, merged.elapsed_ms, merged.tokens_used),
+            (9, 60_000, 4_000)
+        );
         let different = GoalState::new("h").merged_over(Some(&older));
         assert_eq!(different.continuations, 0);
     }

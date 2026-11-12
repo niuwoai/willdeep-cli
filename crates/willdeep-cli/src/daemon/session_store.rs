@@ -208,7 +208,8 @@ struct StoredRuntimeTurn {
 }
 
 /// 重启时历史有歧义、不能安全重放的在途轮次记的错误。`goal_resume` 只接这一种
-/// 中断：人为取消、失败都不自动续推。
+/// 中断：人为取消、失败都不自动续推。没动过工具、但目标还在进行的轮次也记这一种，
+/// 不按原句重放。
 pub(super) const RESTART_INTERRUPTED_ERROR: &str =
     "Runtime restarted after Turn history became ambiguous";
 
@@ -220,6 +221,9 @@ pub(super) struct GoalResumeCandidate {
     pub interrupted_turn_id: uuid::Uuid,
     /// 从最后一轮往前数，连续由自动续推发起的轮次数（含被打断的这一轮）。
     pub consecutive_resumes: usize,
+    /// 被打断的轮次还没把用户那一句写进历史时，这里是原句。已经写进去的为 `None`：
+    /// 原句留在历史里，续推提示词不再重复。
+    pub unrecorded_request: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -432,7 +436,9 @@ impl RuntimeSessionStore {
                     });
                 if !child
                     && (turn.team_control.is_some()
-                        || (!has_tool_activity && prepare_core_for_turn_replay(&core, turn)?))
+                        || (!has_tool_activity
+                            && !active_goal_awaits_restart_resume(&core, turn)
+                            && prepare_core_for_turn_replay(&core, turn)?))
                 {
                     turn.metadata.status = RuntimeTurnStatus::Queued;
                     turn.metadata.active_task_id = None;
@@ -1574,6 +1580,7 @@ impl RuntimeSessionStore {
                 root_agent_id: session.root_agent_id,
                 interrupted_turn_id: last.metadata.id,
                 consecutive_resumes,
+                unrecorded_request: unrecorded_request(&self.core, last),
             });
         }
         candidates.sort_by_key(|candidate| candidate.session_id);
@@ -2812,6 +2819,37 @@ fn load_sessions(path: &Path) -> Result<(HashMap<uuid::Uuid, RuntimeSession>, bo
             .collect(),
         migrated,
     ))
+}
+
+/// 这一轮的目标还在进行、没进入收尾。这样的轮次不按原句重放，标成
+/// [`RESTART_INTERRUPTED_ERROR`]，由 `goal_resume` 排一轮带对账的续推。
+/// 读不出 core 会话时按「不是」处理，退回原有的重放判定。
+/// 被打断的轮次还没把用户那一句写进历史时，返回原句。读不出 core 会话，或
+/// 历史末尾就是这句，返回 `None`：重放判定读不出时宁可少带一句，不重复已落盘的。
+fn unrecorded_request(
+    core_store: &willdeep_core::SessionStore,
+    turn: &StoredRuntimeTurn,
+) -> Option<String> {
+    let core = core_store.load(turn.metadata.session_id).ok()?;
+    let recorded = core.messages.last().is_some_and(|message| {
+        message.role == willdeep_core::Role::User && message.content == turn.prompt
+    });
+    if recorded {
+        None
+    } else {
+        Some(turn.prompt.clone())
+    }
+}
+
+fn active_goal_awaits_restart_resume(
+    core_store: &willdeep_core::SessionStore,
+    turn: &StoredRuntimeTurn,
+) -> bool {
+    core_store
+        .load(turn.metadata.session_id)
+        .ok()
+        .and_then(|core| core.goal_state)
+        .is_some_and(|goal| willdeep_core::goal::accepts_restart_resume(&goal))
 }
 
 fn prepare_core_for_turn_replay(

@@ -1,9 +1,11 @@
 //! daemon 重启后自动续推未完成的目标（long-horizon.v1 RA4）。
 //!
 //! 重启时动过工具的在途轮次不能安全重放，一律标成 `Interrupted`
-//! （[`session_store::RESTART_INTERRUPTED_ERROR`]）。会话的目标状态（清单、
-//! 预算、计数）早已随检查点落盘，缺的只是「再推一下」：这里给这样的会话排
-//! 一轮续推，提示词要求先核对实际状态再接着做。
+//! （[`session_store::RESTART_INTERRUPTED_ERROR`]）。没动过工具、但目标还在进行
+//! 的轮次同样标成这一种中断，不按原句重放：它的用户消息可能已经落盘，原样重放
+//! 会让模型接不上「先核对再继续」。会话的目标状态（清单、预算、计数）早已随
+//! 检查点落盘，缺的只是「再推一下」：这里给这样的会话排一轮续推，提示词要求
+//! 先核对实际状态再接着做。
 //!
 //! 兜底：
 //! - 只接重启造成的中断；人为取消、失败、已完成或已进入收尾的目标都不接。
@@ -100,7 +102,7 @@ pub(super) fn recover(
                 request_id: uuid::Uuid::from_u128(
                     candidate.interrupted_turn_id.as_u128() ^ REQUEST_SALT,
                 ),
-                prompt: willdeep_core::goal::resume_after_restart_prompt(&goal),
+                prompt: resume_prompt(&goal, &candidate),
                 attachments: Vec::new(),
                 origin_client: Some(format!("{ORIGIN_PREFIX}{}", candidate.interrupted_turn_id)),
                 defer_until_released: false,
@@ -146,17 +148,32 @@ pub(super) fn recover(
     Ok(resumed)
 }
 
+/// 续推提示词。被打断的轮次已经把用户那一句写进历史时，原句还在，提示词只说
+/// 核对再继续；还没写进去时，提示词带上原句，否则这一轮的要求就丢了。
+fn resume_prompt(
+    goal: &willdeep_core::GoalState,
+    candidate: &session_store::GoalResumeCandidate,
+) -> String {
+    match candidate.unrecorded_request.as_deref() {
+        Some(request) => {
+            willdeep_core::goal::resume_after_restart_prompt_for_unrecorded_request(goal, request)
+        }
+        None => willdeep_core::goal::resume_after_restart_prompt(goal),
+    }
+}
+
 /// 这个目标为什么不续推；`None` 表示该续推。
 fn skip_reason(
     goal: &willdeep_core::GoalState,
     budget: &willdeep_core::GoalBudget,
     consecutive_resumes: usize,
 ) -> Option<&'static str> {
-    if goal.status != willdeep_core::GoalStatus::Active || goal.statement.trim().is_empty() {
-        return Some("goal_not_active");
-    }
-    if goal.wrap_up_injected {
-        return Some("wrapping_up");
+    if !willdeep_core::goal::accepts_restart_resume(goal) {
+        return Some(if goal.wrap_up_injected {
+            "wrapping_up"
+        } else {
+            "goal_not_active"
+        });
     }
     if consecutive_resumes >= MAX_CONSECUTIVE_RESUMES {
         return Some("repeated_restarts");
