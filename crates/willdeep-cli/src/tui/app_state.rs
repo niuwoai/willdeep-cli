@@ -2887,6 +2887,7 @@ async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow:
             origin: Some(identity.id),
             from_agent: false,
             mention_depth: 0,
+            host_note: false,
         };
         let mut delivered = 0usize;
         for member in &group.members {

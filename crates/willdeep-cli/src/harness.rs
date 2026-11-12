@@ -13,6 +13,7 @@ use willdeep_core::{
 
 use crate::config::{LoadedConfig, ProviderProfile};
 use crate::daemon::{AgentCommandWatcher, RuntimeConnection};
+use crate::group_conversation::GroupConversation;
 use crate::i18n::Language;
 use crate::{
     ApiArg, Cli, TerminalApprover, TerminalSink, daemon, model_accepts_images, projects,
@@ -1509,6 +1510,7 @@ pub(crate) async fn build(
                 parent_provider_config.clone(),
             )?))
             .with_workflow_host(workflows.clone())
+            .with_group_conversation_host(Arc::new(GroupConversation::new(home.to_path_buf())))
     };
     let tools = if screenplay_plugins_allowed {
         let config_path = cli

@@ -1007,6 +1007,9 @@ async fn federation_message(
         from_agent: bool,
         #[serde(default)]
         mention_depth: u32,
+        /// 只给人看的说明。不进模型、不自动回、不再转发。
+        #[serde(default)]
+        host_note: bool,
         #[serde(default)]
         client_message_id: Option<String>,
     }
@@ -1025,6 +1028,24 @@ async fn federation_message(
     }
     let _ = incoming.reply_to;
     let _ = incoming.client_message_id;
+    // 说明不是发言：写进群会话就结束，不进模型，也不再往下传。
+    if incoming.host_note {
+        let Some(group_id) = incoming.group_id else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let Some(session_id) = federation::load(home).ok().and_then(|store| {
+            store
+                .groups
+                .iter()
+                .find(|group| group.id == group_id)
+                .and_then(|group| group.session_id)
+        }) else {
+            // 没有群记录的一方（成员）不存这份说明，否则它会再转发一次。
+            return StatusCode::ACCEPTED.into_response();
+        };
+        record_group_note(home, session_id, text).await;
+        return StatusCode::ACCEPTED.into_response();
+    }
     // 群消息的发言人可能不是转发方。名字以联系人表为准，查不到就用 UUID 末四位。
     let speaker_id = incoming.origin.unwrap_or(contact.id);
     let speaker_name = federation::load(home)
@@ -1099,13 +1120,14 @@ async fn federation_message(
                 .await;
                 // 被 @ 到才算被点名。名字取自己的实例名和联系人表里的名字。
                 let addressed = federation::mentions_any(text, &mention_names(home, &identity));
+                let mention_limit = federation::mention_depth_limit(&group);
                 if federation::group_should_auto_reply(
                     &group,
                     incoming.from_agent,
                     addressed,
                     incoming.mention_depth,
                     reply_policy.max_auto_turns,
-                    federation::DEFAULT_MAX_MENTION_DEPTH,
+                    mention_limit,
                 ) {
                     let state = Arc::clone(&state);
                     let group_id = group.id;
@@ -1118,6 +1140,17 @@ async fn federation_message(
                     tokio::spawn(async move {
                         watch_group_reply(state, group_id, session_id, turn_id, depth).await;
                     });
+                } else if incoming.from_agent
+                    && addressed
+                    && incoming.mention_depth >= mention_limit
+                    && !group.paused
+                    && group.auto_turns < reply_policy.max_auto_turns
+                {
+                    // 到限是静默的话，用户只看到对话突然停了。把原因写进群会话，
+                    // 并转给每个成员：说明不进模型，也不会被当成新的一轮。
+                    let notice = federation::mention_limit_notice(mention_limit);
+                    record_group_note(home, session_id, &notice).await;
+                    forward_group_note(home, &identity, &group, speaker_id, &notice).await;
                 }
             } else {
                 if let Err(error) = federation::note_session(home, contact.id, session_id) {
@@ -1166,6 +1199,7 @@ async fn forward_group_message(
         origin: Some(speaker),
         from_agent,
         mention_depth,
+        host_note: false,
     };
     for member in &group.members {
         if *member == speaker {
@@ -1188,6 +1222,63 @@ async fn forward_group_message(
 
 /// 等群里这一轮跑完，把回复转发给每个成员，并记一轮自动回复。
 /// 回复标成来自 Agent，成员收到后不会再自动回，所以一轮到此为止。
+/// 把一句说明写进群会话。它是系统消息：界面上能看到，模型的下一轮看不到，
+/// 也不会被当成用户发言。
+///
+/// 会话正在跑的时候，执行快照会整段替换消息，这时候插进去的句子会被盖掉。
+/// 等执行锁空出来再写；等不到就放弃这一句，不挡消息处理。
+async fn record_group_note(home: &Path, session_id: uuid::Uuid, text: &str) {
+    let store = willdeep_core::SessionStore::new(home);
+    let mut attempts = 0u32;
+    loop {
+        match store.try_update(session_id, |session| {
+            session
+                .messages
+                .push(willdeep_core::Message::system(text.to_owned()));
+        }) {
+            Ok(()) => return,
+            Err(willdeep_core::SessionError::ConcurrentUpdate(_)) if attempts < 4 => {
+                attempts += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(error) => {
+                eprintln!("Intake: cannot record the mention limit notice: {error}");
+                return;
+            }
+        }
+    }
+}
+
+/// 把一句说明转给除发言人外的每个成员。说明标成 host_note，收到的一方只展示，不回答。
+async fn forward_group_note(
+    home: &Path,
+    identity: &crate::identity::Identity,
+    group: &federation::Group,
+    speaker: uuid::Uuid,
+    text: &str,
+) {
+    let Ok(store) = federation::load(home) else {
+        return;
+    };
+    let envelope = federation::GroupEnvelope::note(group.id, speaker);
+    for member in &group.members {
+        if *member == speaker {
+            continue;
+        }
+        let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
+            continue;
+        };
+        if let Err(error) =
+            federation::send_group_message(identity.id, contact, text, &envelope).await
+        {
+            eprintln!(
+                "Intake: cannot forward the notice to {}: {error:#}",
+                contact.name
+            );
+        }
+    }
+}
+
 /// `@` 能点到的名字：自己的实例名，加上联系人表里的名字。
 fn mention_names(home: &Path, identity: &crate::identity::Identity) -> Vec<String> {
     let mut names = vec![identity.name.clone()];

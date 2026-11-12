@@ -247,6 +247,7 @@ async fn group_say(
         origin: Some(identity.id),
         from_agent: false,
         mention_depth: 0,
+        host_note: false,
     };
     for member in &group.members {
         let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {

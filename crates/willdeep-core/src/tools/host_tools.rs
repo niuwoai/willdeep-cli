@@ -30,6 +30,17 @@ pub struct WorkflowNotice {
     pub report: String,
 }
 
+/// 群会话里能改的那一小组设置。宿主按当前会话定位群，改动只落在那个群上。
+#[async_trait]
+pub trait GroupConversationHost: Send + Sync {
+    /// 把这个群的 @ 传递上限改成 `limit`。会话不是群会话时返回错误。
+    async fn set_mention_limit(
+        &self,
+        session_id: &str,
+        limit: u32,
+    ) -> Result<serde_json::Value, ToolError>;
+}
+
 #[async_trait]
 pub trait WorkflowHost: Send + Sync {
     /// A queued leaf may recover only while its owning graph still authorizes it.
@@ -116,6 +127,50 @@ impl ToolRegistry {
             self.workflow_host = Some(host);
         }
         self
+    }
+
+    pub fn with_group_conversation_host(mut self, host: Arc<dyn GroupConversationHost>) -> Self {
+        if !self.delegation_read_only {
+            self.group_conversation_host = Some(host);
+        }
+        self
+    }
+
+    /// 只在挂了群会话宿主时出现，所以普通会话的工具清单里没有它。
+    pub(super) fn group_conversation_definitions(&self) -> Vec<ToolDefinition> {
+        if self.group_conversation_host.is_none() {
+            return Vec::new();
+        }
+        vec![definition(
+            "set_group_mention_limit",
+            "Set how many times agents in this federation group may @-mention each other before automatic replies stop. The change applies only to the group this session belongs to, takes effect on the next message, and resets when a person speaks. Allowed values are 1 to 20. Fails outside a federation group session.",
+            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["limit"],"additionalProperties":false}),
+        )]
+    }
+
+    pub(super) async fn group_conversation_tool(
+        &self,
+        call: &ToolCall,
+    ) -> Result<String, ToolError> {
+        let Some(host) = &self.group_conversation_host else {
+            return Err(ToolError::UnknownTool(call.name.clone()));
+        };
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Args {
+            limit: u32,
+        }
+        let args: Args = parse(call)?;
+        let Some(session_id) = self.session_id.as_deref() else {
+            return Err(invalid_host_args(
+                call,
+                "this tool needs a session and this turn has none",
+            ));
+        };
+        Ok(host
+            .set_mention_limit(session_id, args.limit)
+            .await?
+            .to_string())
     }
 
     pub(crate) async fn workflow_operation(

@@ -30,6 +30,8 @@ pub const INVITE_TTL_SECONDS: u64 = 10 * 60;
 pub const MAX_GROUP_MEMBERS: usize = 8;
 /// Agent 之间靠 @ 互相点名，最多再传几次。人的发言不计入，到顶后只有人再开口才重新计数。
 pub const DEFAULT_MAX_MENTION_DEPTH: u32 = 3;
+/// 一个群能把这个上限调到的最大值。再大就成了两台 Agent 互相刷。
+pub const MAX_MENTION_DEPTH_CAP: u32 = 20;
 
 type SignatureMac = Hmac<Sha256>;
 
@@ -84,6 +86,9 @@ pub struct Group {
     /// 自动回复已停。人再发一条会重新打开。
     #[serde(default)]
     pub paused: bool,
+    /// 这个群里 @ 传递的上限。缺省走 [`DEFAULT_MAX_MENTION_DEPTH`]，只对这个群生效。
+    #[serde(default)]
+    pub max_mention_depth: Option<u32>,
     pub created_at: u64,
 }
 
@@ -251,6 +256,7 @@ pub fn create_group(home: &Path, name: &str, member_queries: &[String]) -> Resul
         session_id: None,
         auto_turns: 0,
         paused: false,
+        max_mention_depth: None,
         created_at: now_seconds(),
     };
     let mut store = store;
@@ -310,6 +316,47 @@ pub fn note_group_auto_reply(home: &Path, id: uuid::Uuid) -> Result<u32> {
     let count = group.auto_turns;
     save(home, &store)?;
     Ok(count)
+}
+
+/// 这个群实际生效的 @ 传递上限。没单独设过就用默认值。
+pub fn mention_depth_limit(group: &Group) -> u32 {
+    group.max_mention_depth.unwrap_or(DEFAULT_MAX_MENTION_DEPTH)
+}
+
+/// 按会话找它所属的群。一个会话最多属于一个群。
+pub fn group_for_session(home: &Path, session_id: uuid::Uuid) -> Result<Option<Group>> {
+    Ok(load(home)?
+        .groups
+        .into_iter()
+        .find(|group| group.session_id == Some(session_id)))
+}
+
+/// 只调整一个群的 @ 传递上限，不影响其他群，也不写进配置。
+/// 允许的范围是 1 到 [`MAX_MENTION_DEPTH_CAP`]，超出直接拒绝。
+pub fn set_group_mention_depth(home: &Path, query: &str, depth: u32) -> Result<Group> {
+    if !(1..=MAX_MENTION_DEPTH_CAP).contains(&depth) {
+        bail!(
+            "the mention limit must be between 1 and {MAX_MENTION_DEPTH_CAP}; {depth} is outside that"
+        );
+    }
+    let mut store = load(home)?;
+    let id = find_group(&store, query)?.id;
+    let group = store
+        .groups
+        .iter_mut()
+        .find(|group| group.id == id)
+        .expect("the group was just found");
+    group.max_mention_depth = Some(depth);
+    let updated = group.clone();
+    save(home, &store)?;
+    Ok(updated)
+}
+
+/// @ 传递到上限时给用户看的那一句。说清为什么不再回，以及谁能重新打开。
+pub fn mention_limit_notice(limit: u32) -> String {
+    format!(
+        "[联邦] 本轮由 @ 点名带起的自动回复已到 {limit} 次上限，被点名的实例不再自动回答。只有人再发一条消息，自动回复才会重新开始。"
+    )
 }
 
 /// 立刻停掉这个群的自动回复。人再发一条才会重新打开。
@@ -492,6 +539,9 @@ struct Outgoing<'a> {
     /// 发言人是一台 Agent，不是坐在机器前的人。接收方据此不再自动回，除非被 @ 到。
     #[serde(default, skip_serializing_if = "is_false")]
     from_agent: bool,
+    /// 这条不是发言，是给房间里的人看的说明。接收方只记进会话，不回答、不再转发。
+    #[serde(default, skip_serializing_if = "is_false")]
+    host_note: bool,
     /// 这条消息已经经过几次 Agent 之间的 @ 传递。人的发言是 0。
     #[serde(default, skip_serializing_if = "is_zero")]
     mention_depth: u32,
@@ -512,6 +562,7 @@ pub struct GroupEnvelope {
     pub origin: Option<uuid::Uuid>,
     pub from_agent: bool,
     pub mention_depth: u32,
+    pub host_note: bool,
 }
 
 impl GroupEnvelope {
@@ -521,6 +572,18 @@ impl GroupEnvelope {
             origin: None,
             from_agent: false,
             mention_depth: 0,
+            host_note: false,
+        }
+    }
+
+    /// 一条只给人看的说明：不触发自动回复，收到的一方也不再转发。
+    pub fn note(group_id: uuid::Uuid, speaker: uuid::Uuid) -> Self {
+        Self {
+            group_id: Some(group_id),
+            origin: Some(speaker),
+            from_agent: false,
+            mention_depth: 0,
+            host_note: true,
         }
     }
 }
@@ -566,6 +629,7 @@ async fn deliver(
         origin: envelope.origin.map(|id| id.to_string()),
         from_agent: envelope.from_agent,
         mention_depth: envelope.mention_depth,
+        host_note: envelope.host_note,
         client_message_id: &message_id,
     })
     .context("encode the federation message")?;
@@ -1022,6 +1086,36 @@ mod tests {
         assert!(!mentions_any("@alexander 不是 alex", &names));
         assert!(!mentions_any("email me at lin@example.com", &names));
         assert!(!mentions_any("没有点名", &names));
+
+        // @ 传递上限按群记。没设过走默认，设了只影响这一个群，超出范围直接拒绝。
+        let stored = find_group(&load(&root).unwrap(), &group.id.to_string())
+            .unwrap()
+            .clone();
+        assert_eq!(mention_depth_limit(&stored), DEFAULT_MAX_MENTION_DEPTH);
+        let raised = set_group_mention_depth(&root, "room", 7).unwrap();
+        assert_eq!(raised.max_mention_depth, Some(7));
+        assert_eq!(mention_depth_limit(&raised), 7);
+        let session = uuid::Uuid::new_v4();
+        note_group_session(&root, raised.id, session).unwrap();
+        let found = group_for_session(&root, session).unwrap().unwrap();
+        assert_eq!(found.id, raised.id);
+        assert!(
+            group_for_session(&root, uuid::Uuid::new_v4())
+                .unwrap()
+                .is_none()
+        );
+        assert!(set_group_mention_depth(&root, "room", 0).is_err());
+        assert!(set_group_mention_depth(&root, "room", MAX_MENTION_DEPTH_CAP + 1).is_err());
+        let stored = load(&root).unwrap();
+        let untouched = find_group(&stored, "room").unwrap();
+        assert_eq!(
+            untouched.max_mention_depth,
+            Some(7),
+            "a rejected change leaves the group alone"
+        );
+        let notice = mention_limit_notice(3);
+        assert!(notice.contains('3'));
+        assert!(notice.contains("人再发一条"));
 
         // 成员超过上限直接拒绝，重名的群要求用 UUID。
         let mut extras = Vec::new();

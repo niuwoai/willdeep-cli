@@ -458,6 +458,29 @@ impl SessionStore {
         change: impl FnOnce(&mut Session),
     ) -> Result<Session, SessionError> {
         let _guard = self.lock_session(id)?;
+        self.update_locked(id, change)
+    }
+
+    /// 同 [`SessionStore::update`]，但先确认没有轮次正在执行。
+    ///
+    /// 执行中的快照会在落盘时整段替换消息，这时候插进去的内容会被盖掉。
+    /// 拿不到执行锁就返回 [`SessionError::ConcurrentUpdate`]，调用方决定重试还是放弃。
+    pub fn try_update(
+        &self,
+        id: Uuid,
+        change: impl FnOnce(&mut Session),
+    ) -> Result<(), SessionError> {
+        let _guard = self.lock_session(id)?;
+        let _execution = self.acquire_execution(id)?;
+        self.update_locked(id, change)?;
+        Ok(())
+    }
+
+    fn update_locked(
+        &self,
+        id: Uuid,
+        change: impl FnOnce(&mut Session),
+    ) -> Result<Session, SessionError> {
         let mut session = self.load_baselined(id)?;
         change(&mut session);
         session.updated_at = now();
