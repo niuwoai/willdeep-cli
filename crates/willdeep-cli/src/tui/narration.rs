@@ -146,6 +146,26 @@ impl App {
     /// 屏幕上一条可见记录都没有时补上首屏欢迎语，顺带丢掉那些空白行——
     /// 留着它们只会把真正的内容往下挤。多个入口（启动、换会话、`/clear`）
     /// 共用这一条规则，别各自写一份 `is_empty()` 判断。
+    /// 回复行在屏幕上显示的名字。没起名时用默认名。
+    pub(super) fn assistant_name(&self) -> String {
+        if self.assistant_name.is_empty() {
+            ASSISTANT_LABEL.to_owned()
+        } else {
+            self.assistant_name.clone()
+        }
+    }
+
+    /// 从家目录读实例名。读不到（没家目录、文件坏了）就保持现状，不拿默认名
+    /// 把已经起好的名字盖掉。
+    pub(super) fn load_assistant_name(&mut self) {
+        let Some(home) = self.display_home.as_deref() else {
+            return;
+        };
+        if let Ok(identity) = crate::identity::load(home) {
+            self.assistant_name = identity.display_name(false);
+        }
+    }
+
     pub(super) fn ensure_welcome(&mut self, workspace: &std::path::Path, language: Language) {
         if self.has_visible_transcript() {
             return;
@@ -479,7 +499,7 @@ impl App {
         let label = self.transient_label();
         Some(match self.transient_kind {
             StreamKind::Reasoning => format!("· + Thought: {}", self.thought_elapsed_label()),
-            StreamKind::Reply => format!("WillDeep · {label}: {thought}"),
+            StreamKind::Reply => format!("{} · {label}: {thought}", self.assistant_name()),
         })
     }
 

@@ -364,6 +364,9 @@ struct App {
     composer_expanded: bool,
     quiet_drawn: bool,
     ui: crate::config::UiSettings,
+    /// 回复行显示的名字。空字符串表示没起名，画面上回落到 WillDeep。
+    /// 记录里始终写默认前缀，名字只在画的时候换上去，所以改名不用重写历史。
+    assistant_name: String,
     update_available: Option<update_notice::ReleaseNotice>,
     notice: Option<String>,
     notice_hold: Option<(String, Instant)>,
@@ -729,9 +732,9 @@ fn busy_input(prompt: &str) -> BusyInput {
     let command = value.split_whitespace().next().unwrap_or_default();
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
-        "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/skills" | "/history"
-        | "/permissions" | "/permission-mode" | "/queue" | "/short" | "/verbose" | "/name"
-        | "/fed" => BusyInput::RunNow,
+        "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/spacing" | "/skills"
+        | "/history" | "/permissions" | "/permission-mode" | "/queue" | "/short" | "/verbose"
+        | "/name" | "/fed" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" | "/reasoning" => BusyInput::RunNow,
@@ -1572,7 +1575,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
         let offset = max.saturating_sub(app.scroll_from_bottom);
         // 标题带上工作区名：并排开着几个 TUI 时，一眼能分清哪个窗口在跑哪个项目。
-        let brand = chat_title_brand(app.workspace.as_deref());
+        let brand = chat_title_brand(&app.assistant_name(), app.workspace.as_deref());
         let mut title = if app.native_selection_mode {
             format!(
                 "{brand} · {}",
@@ -2634,13 +2637,18 @@ fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
     ))
 }
 
-/// 聊天区标题里的品牌段：`WillDeep · <工作区目录名>`。取不到目录名（比如工作区是 `/`）
-/// 就用完整路径；过长的名字截断，免得把「工作中」计时挤出标题栏。
-fn chat_title_brand(workspace: Option<&std::path::Path>) -> String {
-    const BRAND: &str = "WillDeep";
+/// 聊天区标题里的品牌段：`<实例名> · <工作区目录名>`。没起名时用 WillDeep。
+/// 取不到目录名（比如工作区是 `/`）就用完整路径；过长的名字截断，免得把
+/// 「工作中」计时挤出标题栏。
+fn chat_title_brand(name: &str, workspace: Option<&std::path::Path>) -> String {
+    let brand = if name.is_empty() {
+        ASSISTANT_LABEL
+    } else {
+        name
+    };
     const MAX_WORKSPACE_CHARS: usize = 32;
     let Some(workspace) = workspace else {
-        return BRAND.to_owned();
+        return brand.to_owned();
     };
     let name = workspace
         .file_name()
@@ -2652,7 +2660,7 @@ fn chat_title_brand(workspace: Option<&std::path::Path>) -> String {
     } else {
         name
     };
-    format!("{BRAND} · {name}")
+    format!("{brand} · {name}")
 }
 
 /// Dialog title carrying how many more are queued behind this one, so the

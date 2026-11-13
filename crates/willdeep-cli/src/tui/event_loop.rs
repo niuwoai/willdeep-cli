@@ -492,6 +492,9 @@ pub(super) async fn event_loop(
     if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
         app.ui.show_thinking = show_thinking;
     }
+    if let Some(spacing) = crate::config::load_line_spacing(&runtime.home)? {
+        app.ui.line_spacing = spacing;
+    }
     // 顺序有讲究：装载聊天记录是整体替换，必须排在 startup_notices 之前，
     // 否则「首次使用 / 旧配置写法」那几条 System 提示会被覆盖掉。
     // daemon 的 display session 带上了各代历史的正文，比磁盘上的会话更全，
@@ -520,6 +523,7 @@ pub(super) async fn event_loop(
     app.workspace_status = workspace_status_placeholder(&session.workspace, language);
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
+    app.load_assistant_name();
     app.context_window = runtime.context_window.max(1);
     app.background_tasks = runtime.background_tasks.snapshots();
     refresh_session_lineage(&mut app, session, store);

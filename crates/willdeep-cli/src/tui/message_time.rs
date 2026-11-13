@@ -43,7 +43,7 @@ fn message_label(time: String, model: Option<&str>) -> String {
 /// 用户或助手说的话。系统行、工具行、分隔线都不算：它们不记时间，也不算
 /// 「又聊了几句」。
 pub(super) fn is_message(row: &str) -> bool {
-    row.starts_with("You: ") || row.starts_with("WillDeep: ")
+    row.starts_with("You: ") || row.starts_with(ASSISTANT_ROW_PREFIX)
 }
 
 fn key(row: &str) -> String {
@@ -355,6 +355,7 @@ pub(super) struct FoldedFrame {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn render_with_user_folds(
     rows: &[String],
     labels: &[Option<String>],
@@ -364,6 +365,35 @@ pub(super) fn render_with_user_folds(
     users: &BTreeMap<usize, (usize, bool)>,
     tools: &BTreeMap<usize, (usize, Option<String>)>,
     attachments: &[Vec<MessageAttachment>],
+) -> FoldedFrame {
+    render_transcript(
+        rows,
+        labels,
+        search,
+        width,
+        language,
+        users,
+        tools,
+        attachments,
+        "",
+        0,
+    )
+}
+
+/// [`render_with_user_folds`] 加上两样只影响画面的设置：回复行显示的名字，
+/// 以及每条记录之间额外空出的行数。记录原文不动，复制和搜索拿到的还是原样。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_transcript(
+    rows: &[String],
+    labels: &[Option<String>],
+    search: Option<&str>,
+    width: usize,
+    language: Language,
+    users: &BTreeMap<usize, (usize, bool)>,
+    tools: &BTreeMap<usize, (usize, Option<String>)>,
+    attachments: &[Vec<MessageAttachment>],
+    assistant_name: &str,
+    spacing: u8,
 ) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
@@ -376,9 +406,13 @@ pub(super) fn render_with_user_folds(
         // 真正画整段聊天区的最后一行时才补上。
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
-        let displayed = divider_without_your_turn(row, language);
+        let displayed = if assistant_name.is_empty() {
+            divider_without_your_turn(row, language)
+        } else {
+            named_assistant_row(&divider_without_your_turn(row, language), assistant_name)
+        };
         // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
-        let (mut entry, mut row_code_blocks) = if displayed.starts_with("WillDeep: ") {
+        let (mut entry, mut row_code_blocks) = if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
             rendering::render_assistant_entry_with_code_blocks(&displayed, search, width)
         } else {
             (
@@ -513,13 +547,17 @@ pub(super) fn render_with_user_folds(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 空行只属于分隔线与下一条用户消息之间。逐条上色看不到下一条是什么，
-        // 所以留在这里：后面没有用户消息时（最后一行、或后面是 Thought）不留。
+        // 空行只属于用户开口之前。逐条上色看不到下一条是什么，所以留在这里：
+        // 用户消息前面有内容（上一轮的回复、分隔线、系统行）就先让开一行，
+        // 聊天区第一条、或紧跟另一条用户消息时不留。
         let followed_by_user = rows
             .get(index + 1)
             .is_some_and(|row| row.starts_with("You:"));
-        if displayed.starts_with(TURN_DIVIDER_PREFIX) && followed_by_user {
-            text.lines.push(Line::default());
+        let blanks = usize::from(followed_by_user && !displayed.is_empty())
+            .saturating_add(usize::from(spacing));
+        if blanks > 0 && index != last {
+            let grown = text.lines.len() + blanks;
+            text.lines.resize_with(grown, Line::default);
         }
     }
     FoldedFrame {

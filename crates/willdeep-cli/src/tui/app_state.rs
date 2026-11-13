@@ -46,6 +46,7 @@ impl App {
             composer_expanded: false,
             quiet_drawn: false,
             ui: crate::config::UiSettings::default(),
+            assistant_name: String::new(),
             update_available: None,
             notice: None,
             notice_hold: None,
@@ -2258,6 +2259,58 @@ impl App {
                 let message = self.toggle_tool_rows();
                 self.append_transcript(message);
             }
+            "/spacing" => {
+                use crate::config::MAX_LINE_SPACING;
+
+                let argument = args.trim();
+                let spacing = if argument.is_empty() {
+                    self.ui.line_spacing
+                } else {
+                    match argument.parse::<u8>() {
+                        Ok(value) if value <= MAX_LINE_SPACING => value,
+                        _ => {
+                            self.append_transcript(format!(
+                                "Error: {} 0–{MAX_LINE_SPACING} (got `{argument}`)",
+                                self.language
+                                    .text("行距只能是", "line spacing must be", "行間は"),
+                            ));
+                            return true;
+                        }
+                    }
+                };
+                self.ui.line_spacing = spacing;
+                if let Some(home) = self.display_home.as_deref()
+                    && let Err(error) = crate::config::save_line_spacing(home, spacing)
+                {
+                    self.append_transcript(format!(
+                        "Error: {}: {error}",
+                        self.language.text(
+                            "行距没能保存",
+                            "could not save the line spacing",
+                            "行間を保存できませんでした"
+                        ),
+                    ));
+                    return true;
+                }
+                self.refresh_transcript_height();
+                self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+                self.append_transcript(format!(
+                    "System: {}",
+                    if argument.is_empty() {
+                        self.language.pick(
+                            format!("当前行距 {spacing}（每条记录之间空 {spacing} 行，0 最紧凑，最大 {MAX_LINE_SPACING}）"),
+                            format!("Line spacing is {spacing} ({spacing} blank row(s) between entries, 0 is tightest, {MAX_LINE_SPACING} is the maximum)"),
+                            format!("行間は {spacing}（各記録の間に {spacing} 行、0 が最も詰まり、最大 {MAX_LINE_SPACING}）"),
+                        )
+                    } else {
+                        self.language.pick(
+                            format!("行距已设为 {spacing}（每条记录之间空 {spacing} 行）"),
+                            format!("Line spacing set to {spacing} ({spacing} blank row(s) between entries)"),
+                            format!("行間を {spacing} に設定しました（各記録の間に {spacing} 行）"),
+                        )
+                    }
+                ));
+            }
             "/thinking" => {
                 self.ui.show_thinking = match args.trim().to_ascii_lowercase().as_str() {
                     "" | "toggle" => !self.ui.show_thinking,
@@ -2440,16 +2493,21 @@ impl App {
                     return true;
                 }
                 match crate::identity::rename(home, requested) {
-                    Ok(identity) => self.append_transcript(format!(
-                        "System: {} · {} · {}",
-                        self.language.text(
-                            "实例已改名",
-                            "Instance renamed",
-                            "インスタンス名を変更しました"
-                        ),
-                        identity.display_name(false),
-                        identity.id
-                    )),
+                    Ok(identity) => {
+                        // 改名立刻换上回复行的名字，不用重开窗口。记录原文不动，
+                        // 下一帧重画时整段历史都跟着新名字走。
+                        self.assistant_name = identity.display_name(false);
+                        self.append_transcript(format!(
+                            "System: {} · {} · {}",
+                            self.language.text(
+                                "实例已改名",
+                                "Instance renamed",
+                                "インスタンス名を変更しました"
+                            ),
+                            self.assistant_name,
+                            identity.id
+                        ));
+                    }
                     Err(error) => self.append_transcript(format!("Error: {error}")),
                 }
             }
