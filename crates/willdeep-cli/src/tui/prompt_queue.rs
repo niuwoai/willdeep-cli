@@ -64,6 +64,9 @@ impl App {
 
     pub(super) fn queued_steering_ready(&self) -> bool {
         self.running
+            // 压缩请求正在飞，插话进不了这次请求。等压缩结束再按普通队列处理，
+            // 否则纯文本会在下一拍被送进正在压缩的那一轮。
+            && !self.compression_in_progress()
             && self.prompt_queue.is_none()
             && self.attachment_panel.is_none()
             && self.queued_prompts.front().is_some_and(|item| {
@@ -152,13 +155,22 @@ impl App {
             attachments,
         });
         self.selected_attachment = 0;
-        self.notice = Some(format!(
-            "{} · {} {}",
+        let waiting = if self.compression_in_progress() {
+            self.language.text(
+                "正在压缩上下文，已排队，压缩结束后按顺序发送",
+                "Context is compressing, so this is queued and sends in order once compression finishes",
+                "コンテキスト圧縮中のためキューに追加しました。完了後に順番に送信します",
+            )
+        } else {
             self.language.text(
                 "文字自动送达，模型下一步读取；命令和附件等下一轮",
                 "Text auto-delivers for the next model step; commands and attachments wait for the next turn",
-                "テキストは次のモデル処理へ自動送達。コマンド・添付は次のターン待ち"
-            ),
+                "テキストは次のモデル処理へ自動送達。コマンド・添付は次のターン待ち",
+            )
+        };
+        self.notice = Some(format!(
+            "{} · {} {}",
+            waiting,
             self.queued_prompts.len(),
             self.language.text(
                 "条等待 · Ctrl+Q 编辑/删除/插话",
@@ -978,6 +990,14 @@ mod tests {
         app.prompt_queue = None;
         app.begin_turn(true, "running".into());
         assert!(app.queued_steering_ready());
+        // 压缩请求正在飞时不插话：这一拍送进去也进不了正在飞的摘要请求。
+        app.note_compression_started();
+        assert!(
+            !app.queued_steering_ready(),
+            "compression holds plain text until it finishes"
+        );
+        app.note_compression_completed();
+        assert!(app.queued_steering_ready());
         app.waiting_background = true;
         assert!(app.queued_steering_ready());
         app.open_prompt_queue();
@@ -1132,6 +1152,48 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// 压缩期间回车：输入区和附件都清空，原文连同附件进队列，并说明为什么要等。
+    /// 压完之前这条纯文本不会被插进正在飞的那一轮。
+    #[test]
+    fn enter_during_compression_queues_the_draft_and_holds_it() {
+        let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.note_compression_started();
+        app.input.insert("压缩完再看这一段");
+        app.attachments
+            .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+
+        app.queue_submitted_prompt();
+
+        assert!(app.input.is_empty(), "the composer is cleared");
+        assert!(app.attachments.is_empty(), "attachments leave with the text");
+        assert_eq!(app.queued_prompts.len(), 1);
+        assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
+        assert_eq!(app.queued_prompts[0].attachments.len(), 1);
+        assert!(
+            app.notice.as_deref().unwrap().contains("正在压缩上下文"),
+            "the notice says why it is waiting: {:?}",
+            app.notice
+        );
+        assert!(app.transcript.iter().any(|row| row.contains("［待发］")));
+        assert!(
+            !app.queued_steering_ready(),
+            "it stays queued while compression is still running"
+        );
+        assert!(app.composer_state().0.contains("回车排队"));
+
+        // 打字不受影响：压缩期间输入框照常接收字符。
+        app.edit_input(|input| input.insert("下一条"));
+        assert_eq!(app.input.text(), "下一条");
+
+        app.note_compression_completed();
+        assert!(!app.compression_in_progress());
+        assert!(app.composer_state().0.contains("本轮进行中"));
+        // 带附件的条目压完也不插话，等这一轮结束再整段发送。
+        assert!(!app.queued_steering_ready());
+        assert!(!app.queued_prompt_ready());
     }
 
     #[test]

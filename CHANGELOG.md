@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- TUI 在上下文压缩进行中按回车不再没反应：普通输入和附件会清空输入区、进入待发队列，并提示「正在压缩上下文，已排队，压缩结束后按顺序发送」。压缩请求还在飞时这些内容不会被插进正在压缩的那一轮；`/help`、`/model` 这类只读命令照常执行，`/new`、`/diff` 这类会改动会话的命令留在输入框里并说明原因。打字本身不受影响。手动压缩或轮次失败结束时，已经送进收件箱却没赶上的插话会交回队列，不再只剩一行回显。
+
 ### Added
 - 新增 [Multica 适配器](docs/MULTICA_ADAPTER.md)：`scripts/multica_claude_adapter.rb` 把 Multica daemon 的 Claude Code stream-json 调用翻译成 `willdeep run`，回传 `system`、`assistant`、`tool_result` 与 `result` 事件，支持 `--resume` 续跑。MCP、思考等级、追加系统提示词与工具白名单会被丢弃并记入 stderr；非 `bypassPermissions` 的权限模式直接拒绝。
 
