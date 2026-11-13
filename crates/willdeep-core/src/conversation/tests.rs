@@ -574,6 +574,18 @@ fn projection_hides_the_goal_completion_marker_without_mutating_history() {
 }
 
 #[test]
+fn federation_notice_projects_as_a_system_item() {
+    let mut note = Message::system("[联邦] 自动回复已暂停");
+    note.source = Some(crate::types::MessageSource::FederationNotice);
+    let items = project(&[Message::system("internal"), note], None);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].role, "system");
+    // 群说明要给人看到正文；它不像 host instruction 那样藏进 details。
+    assert_eq!(items[0].content, "[联邦] 自动回复已暂停");
+    assert!(items[0].details.is_empty());
+}
+
+#[test]
 fn goal_envelope_is_hidden_but_the_typed_text_stays() {
     let content = "<goal>\n请继续，最终以完成训练为目标\n</goal>\nContinue until this goal is genuinely complete.\n\n请继续，最终以完成训练为目标";
     assert_eq!(visible_user_text(content), "请继续，最终以完成训练为目标");

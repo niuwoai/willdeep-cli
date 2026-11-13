@@ -2669,26 +2669,32 @@ impl App {
             "group" => {
                 let home = home.to_path_buf();
                 let args = args.to_owned();
+                let config = config.map(std::path::Path::to_path_buf);
                 let ui = ui.clone();
                 tokio::spawn(async move {
-                    let message = federation_group_command(&home, &args).await;
+                    let message = federation_group_command(&home, &args, config.as_deref()).await;
                     let _ = ui.send(UiMessage::Federation(match message {
                         Ok(line) => format!("System: {line}"),
                         Err(error) => format!("Error: {error:#}"),
                     }));
                 });
             },
-            "stop" => match crate::federation::pause_group(home, args) {
-                Ok(group) => self.append_transcript(format!(
-                    "System: #{} {}",
-                    group.name,
-                    self.language.text(
-                        "的自动回复已暂停，有人发言后恢复",
-                        "automatic replies paused until someone speaks",
-                        "の自動返信を停止しました。誰かが発言するまで再開しません",
-                    )
-                )),
-                Err(error) => self.append_transcript(format!("Error: {error:#}")),
+            "stop" => {
+                let home = home.to_path_buf();
+                let group = args.to_owned();
+                let ui = ui.clone();
+                let stopped = self.language.text(
+                    "的自动回复已暂停，有人发言后恢复",
+                    "automatic replies paused until someone speaks",
+                    "の自動返信を停止しました。誰かが発言するまで再開しません",
+                ).to_owned();
+                tokio::spawn(async move {
+                    let message = crate::daemon::pause_host_group(&home, &group).await;
+                    let _ = ui.send(UiMessage::Federation(match message {
+                        Ok(group) => format!("System: #{} {stopped}", group.name),
+                        Err(error) => format!("Error: {error:#}"),
+                    }));
+                });
             },
             other => self.append_transcript(format!(
                 "Error: {} /fed list|invite|join <url>|say <name> <text>|group <name> <member...>|stop <group>|remove <name> (got `{other}`)",
@@ -2866,7 +2872,11 @@ async fn join_peer(
 }
 
 /// `/fed group`：建群，或在已有的群里发言。`say` 开头是发言，否则第一个词是群名。
-async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow::Result<String> {
+async fn federation_group_command(
+    home: &std::path::Path,
+    args: &str,
+    config: Option<&std::path::Path>,
+) -> anyhow::Result<String> {
     let mut parts = args.split_whitespace();
     let Some(first) = parts.next() else {
         anyhow::bail!("/fed group <name> <member...> | /fed group say <name> <text>");
@@ -2879,26 +2889,8 @@ async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow:
         if text.is_empty() {
             anyhow::bail!("/fed group say <name> <text>");
         }
-        let store = crate::federation::load(home)?;
-        let group = crate::federation::find_group(&store, name)?.clone();
-        let identity = crate::identity::load(home)?;
-        let envelope = crate::federation::GroupEnvelope {
-            group_id: Some(group.id),
-            origin: Some(identity.id),
-            from_agent: false,
-            mention_depth: 0,
-            host_note: false,
-        };
-        let mut delivered = 0usize;
-        for member in &group.members {
-            let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
-                continue;
-            };
-            crate::federation::send_group_message(identity.id, contact, &text, &envelope).await?;
-            delivered += 1;
-        }
-        crate::federation::note_group_manual(home, group.id)?;
-        return Ok(format!("#{}, delivered to {delivered}", group.name));
+        crate::daemon::say_to_group(home, name, &text, config).await?;
+        return Ok(format!("#{name}, sent"));
     }
     let members = parts.map(str::to_owned).collect::<Vec<_>>();
     let group = crate::federation::create_group(home, first, &members)?;

@@ -39,6 +39,17 @@ impl Agent {
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
         let settings = self.compression_settings()?;
+        // 展示用系统行不能插进工具批次里：先摘掉，压缩完成后按原位置放回。
+        let notices_source = messages
+            .iter()
+            .any(crate::checkpoint::is_federation_notice)
+            .then(|| messages.clone());
+        messages.retain(|message| !crate::checkpoint::is_federation_notice(message));
+        let restore_notices = |history: &mut Vec<Message>| {
+            if let Some(source) = &notices_source {
+                crate::checkpoint::preserve_federation_notices(history, source);
+            }
+        };
         // Manual compression can precede the next Agent run after a crash.
         uncertain::UncertainCalls::recover(&mut messages);
         let capacity = message_capacity(
@@ -47,8 +58,9 @@ impl Agent {
             self.completion_reserve(),
         )?;
         let target = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
-        messages = self.page_tool_outputs(&messages, capacity)?.messages;
+        messages = self.page_tool_outputs(&messages, capacity, false)?.messages;
         if messages.len() < KEEP_RECENT_MESSAGES + 2 && estimate_tokens(&messages) < target {
+            restore_notices(&mut messages);
             return Ok(messages);
         }
         let mut split = batch_boundary(
@@ -59,6 +71,7 @@ impl Agent {
             split = messages.len();
         }
         if split == 0 {
+            restore_notices(&mut messages);
             return Ok(messages);
         }
         self.sink
@@ -92,6 +105,8 @@ impl Agent {
                 dropped_messages: dropped,
             })
             .await;
+        // 展示行不参与容量核算；按原始接收位置放回持久历史。
+        restore_notices(&mut result);
         Ok(result)
     }
 
@@ -137,7 +152,7 @@ impl Agent {
         // Durable checkpoints retain the full system pin. Normalize only the
         // already-cloned request projection, without copying the whole history again.
         let page = || {
-            let mut paged = self.page_tool_outputs(messages, capacity)?;
+            let mut paged = self.page_tool_outputs(messages, capacity, true)?;
             if let Some(system) = stable_system {
                 paged.messages[0] = system.clone();
             }
@@ -276,6 +291,7 @@ impl Agent {
         &self,
         messages: &[Message],
         capacity: u64,
+        exclude_federation_notices: bool,
     ) -> Result<PagedHistory, AgentError> {
         let limit = (capacity / TOOL_MESSAGE_WINDOW_DIVISOR).max(64);
         // Host steering can be re-injected every turn. Keep the last exact
@@ -297,7 +313,11 @@ impl Agent {
             abbreviated: false,
         };
         for (index, message) in messages.iter().enumerate() {
-            if !keep[index] {
+            if !keep[index]
+                || (exclude_federation_notices
+                    && message.role == Role::System
+                    && message.source == Some(MessageSource::FederationNotice))
+            {
                 continue;
             }
             let mut result = message.clone();
@@ -424,7 +444,12 @@ impl Agent {
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
         let budget = self.summary_input_budget_for(settings);
-        let chunks = chunk_for_summary(messages, budget);
+        let visible: Vec<_> = messages
+            .iter()
+            .filter(|message| message.source != Some(MessageSource::FederationNotice))
+            .cloned()
+            .collect();
+        let chunks = chunk_for_summary(&visible, budget);
         if chunks.len() <= 1 {
             return self
                 .summarize_once(

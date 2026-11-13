@@ -1168,6 +1168,11 @@ impl Agent {
     ) -> Result<AgentOutcome, AgentError> {
         let mut preparation = crate::preparation::PreparationTrace::new("agent_context");
         let patch_baseline = checkpoint.patch_baseline().cloned();
+        // System rows are display-only here. Drop them before recovering tool
+        // effects and sanitizing tool history: a group notice can land between
+        // an assistant tool call and its real result and would otherwise hide
+        // the result and inject a synthetic unknown-effect row.
+        messages.retain(|message| message.role != crate::types::Role::System);
         // Persisted history can come from older desktop bridges that retained
         // `role=tool` while losing the protocol IDs. Never let one malformed
         // historical item make every future turn fail at the Provider boundary.

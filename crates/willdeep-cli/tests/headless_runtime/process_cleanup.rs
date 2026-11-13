@@ -11,6 +11,7 @@ pub(super) struct TestGuard {
     root: PathBuf,
     home: PathBuf,
     pub(super) skip_daemon_cleanup: bool,
+    reaper: Option<fixture_processes::Reaper>,
 }
 
 pub(super) struct ChildGuard(pub(super) Option<std::process::Child>);
@@ -48,7 +49,43 @@ impl TestGuard {
             root,
             home,
             skip_daemon_cleanup: false,
+            reaper: None,
         }
+    }
+
+    /// 只给会启动隔离 daemon 的测试用：进程被强杀时由看护进程回收。
+    pub(super) fn reap_on_abort(&mut self) {
+        if self.reaper.is_some() {
+            return;
+        }
+        match fixture_processes::reap_on_abort(&self.home) {
+            Ok(reaper) => self.reaper = reaper,
+            Err(error) => eprintln!("cannot start the fixture reaper: {error}"),
+        }
+    }
+
+    fn stop_reaper(&mut self) {
+        let Some(mut reaper) = self.reaper.take() else {
+            return;
+        };
+        // daemon 已确认退出：发完成标记，让看护器直接退出；异常 EOF 才兜底清理。
+        use std::io::Write;
+        if let Err(error) = reaper.stdin.write_all(b"done\n") {
+            eprintln!("notify test fixture reaper of successful cleanup: {error}");
+        }
+        drop(reaper.stdin);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match reaper.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        let _ = reaper.child.kill();
+        let _ = reaper.child.wait();
     }
 
     pub(super) fn stop_daemon(&mut self) {
@@ -67,6 +104,15 @@ impl TestGuard {
 impl Drop for TestGuard {
     fn drop(&mut self) {
         let cleanup = self.cleanup_daemon();
+        // daemon 已确认收掉时，看护器没有兜底任务，必须回收；否则每个节点
+        // 都会留一个 sh 轮询到整个测试二进制退出。cleanup 失败时保留看护器，
+        // 让它在测试进程退出后继续清理。
+        if cleanup.is_ok() && !self.skip_daemon_cleanup {
+            self.stop_reaper();
+        } else if self.reaper.is_some() {
+            // 进程内收不掉时让看护器接手：关闭写端触发清理，不等待也不杀它。
+            self.reaper.take();
+        }
         if thread::panicking() || cleanup.is_err() {
             eprintln!(
                 "preserving failed Headless Runtime test at {}",
