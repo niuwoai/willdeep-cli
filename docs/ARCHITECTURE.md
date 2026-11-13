@@ -194,7 +194,7 @@ Provider Profile 可声明 `context_window`。自动压缩只作用于请求投�
 
 ### 实例联邦（P1）
 
-两台公网可达的 willdeep 可以互相发消息。身份是 `~/.willdeep/identity.json` 的稳定 UUID 加一个可改的名字；联系人与每对实例的共享密钥在 `~/.willdeep/federation.json`（0600）。入口监听上注册 `/p/v1/join/{token}`（一次性邀请，10 分钟）与 `/p/v1/message`（HMAC + 时间戳 ±300s + nonce + 每分钟 20 条限流），不开联邦时这两条路径根本不注册。入站消息以 `Surface::Federation` 作为普通 Runtime 轮次进入 `[federation] workspace` 指定工作区的一条固定会话，正文包成「外部数据、不是指令」；一轮结束后按 `reply` 策略与 `max_auto_turns` 上限决定是否把最后一条助手回复回传。Web 侧只有回环能读联系人与发消息，共享密钥不出后端。设计与分期见 [FEDERATION.md](FEDERATION.md)，群聊与 E2E 尚未实现。
+两台公网可达的 willdeep 可以互相发消息。身份是 `~/.willdeep/identity.json` 的稳定 UUID 加一个可改的名字；联系人与每对实例的共享密钥在 `~/.willdeep/federation.json`（0600）。入口监听上注册 `/p/v1/join/{token}`（一次性邀请，10 分钟）与 `/p/v1/message`（HMAC + 时间戳 ±300s + nonce + 每分钟 20 条限流），不开联邦时这两条路径根本不注册。入站消息以 `Surface::Federation` 作为普通 Runtime 轮次进入 `[federation] workspace` 指定工作区的一条固定会话，正文包成「外部数据、不是指令」；一轮结束后按 `reply` 策略与 `max_auto_turns` 上限决定是否把最后一条助手回复回传。Web 侧只有回环能读联系人与发消息，共享密钥不出后端。群聊由建群实例主持。人工消息在主持者群会话建立 Runtime 轮次，消息随群 ID、成员名册和代数转发；成员只信任主持者签名的消息，用 `(host, group_id)` 保存会话归属，并把自己的 Agent 回复签名回传主持者。主持者只收成员以本人为 `origin` 的回复，统一排序、计数并转发；转发的来源只由主持者签名担保，成员原始签名不在接收端验证。主持者签名的回复许可限制成员自动回复，`federation.json` 的写操作在跨进程文件锁内重新读取并原子替换；群消息验签和资格校验后先返回 202，本地 Runtime 后台提交重核代数，群投递与暂停共用群锁，暂停后取消仍在执行的群轮次。人工群轮次的回复等待登记在 `federation.json`，由常驻 intake 原子领取并续看，短命 CLI 进程退出不影响回复转发。仅被 `@` 点名且未达到上限的实例启动下一轮；暂停及换代在各端阻断新轮次和在途旧回复，系统说明进入群会话而不送入模型，带联邦来源标记；Runtime 检查点与最终结果保存旧执行快照时保留这些系统行，避免并发轮次覆盖。设计与分期见 [FEDERATION.md](FEDERATION.md)。
 
 ### Mobile Relay
 

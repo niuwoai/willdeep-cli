@@ -43,6 +43,7 @@ pub struct Message {
 pub enum MessageSource {
     OperatorInput,
     HostInstruction,
+    FederationNotice,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

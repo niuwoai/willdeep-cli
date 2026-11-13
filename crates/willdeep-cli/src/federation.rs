@@ -8,10 +8,12 @@
 //! 这一层只管「怎么把一句话安全地送到对面」，不管会话：入站落到哪条会话、
 //! 回复怎么发出去，在 `daemon/intake.rs` 里接。
 
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use fs2::FileExt;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -68,8 +70,8 @@ pub struct Invite {
 
 /// 一个群。只有建群的那台机器持有这份记录并负责转发，成员那边不存。
 ///
-/// 防回环靠两件事：自动回复的计数，以及「谁开的这一轮」。Agent 的回复会进房间，
-/// 但不再触发下一轮自动回复；只有人发的话才重新开一轮。
+/// 防回环靠主持者预留自动回复名额，以及点名深度。Agent 的回复会进群，
+/// 只有明确 @ 到的成员才可能再开一轮；人工发言重新打开配额。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
@@ -80,7 +82,7 @@ pub struct Group {
     /// 这段群聊落在本机的哪条会话上。
     #[serde(default)]
     pub session_id: Option<uuid::Uuid>,
-    /// 自上次人工发言以来，群里已经自动回了多少轮。到上限就停。
+    /// 自上次人工发言以来，主持者已为自动回复预留多少轮。到上限就停。
     #[serde(default)]
     pub auto_turns: u32,
     /// 自动回复已停。人再发一条会重新打开。
@@ -89,6 +91,36 @@ pub struct Group {
     /// 这个群里 @ 传递的上限。缺省走 [`DEFAULT_MAX_MENTION_DEPTH`]，只对这个群生效。
     #[serde(default)]
     pub max_mention_depth: Option<u32>,
+    /// 每次人工发言或暂停都递增，旧轮次的回复不能跨代投递。
+    #[serde(default)]
+    pub generation: u64,
+    pub created_at: u64,
+}
+
+/// 成员只保存主持者发来的群归属；没有主持者的成员表转发权限。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinedGroup {
+    pub id: uuid::Uuid,
+    pub host: uuid::Uuid,
+    pub name: String,
+    pub members: Vec<uuid::Uuid>,
+    pub session_id: Option<uuid::Uuid>,
+    pub generation: u64,
+    pub paused: bool,
+}
+
+/// 主持者人工发言后，等待本地 Runtime 回复再转发给成员。短命 CLI 进程
+/// 退出后由常驻 intake 续看；只有取走登记的一方会转发。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingGroupWatch {
+    pub group_id: uuid::Uuid,
+    pub session_id: uuid::Uuid,
+    pub turn_id: uuid::Uuid,
+    pub generation: u64,
+    pub depth: u32,
+    pub max_auto_turns: u32,
     pub created_at: u64,
 }
 
@@ -102,6 +134,10 @@ pub struct FederationStore {
     pub invites: Vec<Invite>,
     #[serde(default)]
     pub groups: Vec<Group>,
+    #[serde(default)]
+    pub joined_groups: Vec<JoinedGroup>,
+    #[serde(default)]
+    pub pending_group_watches: Vec<PendingGroupWatch>,
 }
 
 impl Default for FederationStore {
@@ -111,6 +147,8 @@ impl Default for FederationStore {
             contacts: Vec::new(),
             invites: Vec::new(),
             groups: Vec::new(),
+            joined_groups: Vec::new(),
+            pending_group_watches: Vec::new(),
         }
     }
 }
@@ -155,6 +193,49 @@ pub fn save(home: &Path, store: &FederationStore) -> Result<()> {
     Ok(())
 }
 
+/// 所有写操作都在同一把跨进程锁内重新读取磁盘状态；锁文件不能随原子替换改名。
+fn update<T>(home: &Path, change: impl FnOnce(&mut FederationStore) -> Result<T>) -> Result<T> {
+    std::fs::create_dir_all(home).context("create the willdeep home directory")?;
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(home.join("federation.lock"))
+        .context("open federation lock")?;
+    FileExt::lock_exclusive(&lock).context("lock federation state")?;
+    let mut store = load(home)?;
+    let result = change(&mut store)?;
+    save(home, &store)?;
+    Ok(result)
+}
+
+/// 轮次提交与暂停共用的群锁：保证暂停写入之后不再提交旧代轮次。
+/// 文件锁在阻塞线程取得，在异步轮次提交期间由返回的文件句柄保持。
+pub async fn group_dispatch_lock(home: &Path, id: uuid::Uuid) -> Result<std::fs::File> {
+    let home = home.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&home).context("create the willdeep home directory")?;
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(home.join(format!("federation-dispatch-{id}.lock")))
+            .context("open federation group dispatch lock")?;
+        FileExt::lock_exclusive(&lock).context("lock federation group dispatch")?;
+        Ok(lock)
+    })
+    .await
+    .context("wait for federation group dispatch lock")?
+}
+
 /// 按名字或 UUID 找联系人。名字大小写不敏感；重名时要求用 UUID。
 pub fn find<'a>(store: &'a FederationStore, query: &str) -> Result<&'a Contact> {
     let query = query.trim();
@@ -176,56 +257,53 @@ pub fn find<'a>(store: &'a FederationStore, query: &str) -> Result<&'a Contact> 
 }
 
 pub fn upsert_contact(home: &Path, contact: Contact) -> Result<Contact> {
-    let mut store = load(home)?;
-    match store
-        .contacts
-        .iter_mut()
-        .find(|existing| existing.id == contact.id)
-    {
-        Some(existing) => {
-            // 重新配对会换新的共享密钥；名字和地址跟着对端最新的说法走。
-            existing.name = contact.name;
-            existing.url = contact.url;
-            existing.secret = contact.secret;
-            let updated = existing.clone();
-            save(home, &store)?;
-            Ok(updated)
+    update(home, |store| {
+        match store
+            .contacts
+            .iter_mut()
+            .find(|existing| existing.id == contact.id)
+        {
+            Some(existing) => {
+                // 重新配对会换新的共享密钥；名字和地址跟着对端最新的说法走。
+                existing.name = contact.name;
+                existing.url = contact.url;
+                existing.secret = contact.secret;
+                Ok(existing.clone())
+            }
+            None => {
+                store.contacts.push(contact.clone());
+                Ok(contact)
+            }
         }
-        None => {
-            store.contacts.push(contact.clone());
-            save(home, &store)?;
-            Ok(contact)
-        }
-    }
+    })
 }
 
 pub fn remove_contact(home: &Path, query: &str) -> Result<Contact> {
-    let mut store = load(home)?;
-    let contact = find(&store, query)?.clone();
-    store.contacts.retain(|item| item.id != contact.id);
-    save(home, &store)?;
-    Ok(contact)
+    update(home, |store| {
+        let contact = find(store, query)?.clone();
+        store.contacts.retain(|item| item.id != contact.id);
+        Ok(contact)
+    })
 }
 
 /// 手动发言会重置自动回复的计数：人接手了，循环风险就清零。
 pub fn note_manual_message(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let mut store = load(home)?;
-    if let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) {
-        contact.auto_turns = 0;
-        save(home, &store)?;
-    }
-    Ok(())
+    update(home, |store| {
+        if let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) {
+            contact.auto_turns = 0;
+        }
+        Ok(())
+    })
 }
 
 pub fn note_auto_reply(home: &Path, id: uuid::Uuid) -> Result<u32> {
-    let mut store = load(home)?;
-    let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) else {
-        return Ok(0);
-    };
-    contact.auto_turns = contact.auto_turns.saturating_add(1);
-    let count = contact.auto_turns;
-    save(home, &store)?;
-    Ok(count)
+    update(home, |store| {
+        let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) else {
+            return Ok(0);
+        };
+        contact.auto_turns = contact.auto_turns.saturating_add(1);
+        Ok(contact.auto_turns)
+    })
 }
 
 // ---------------------------------------------------------------- 群聊
@@ -237,32 +315,32 @@ pub fn create_group(home: &Path, name: &str, member_queries: &[String]) -> Resul
     if member_queries.is_empty() {
         bail!("a group needs at least one other member");
     }
-    let store = load(home)?;
-    let mut members = Vec::new();
-    for query in member_queries {
-        let contact = find(&store, query)?;
-        if !members.contains(&contact.id) {
-            members.push(contact.id);
+    update(home, |store| {
+        let mut members = Vec::new();
+        for query in member_queries {
+            let contact = find(store, query)?;
+            if !members.contains(&contact.id) {
+                members.push(contact.id);
+            }
         }
-    }
-    // 上限含建群的一方，所以成员表最多再放这么多个。
-    if members.len() >= MAX_GROUP_MEMBERS {
-        bail!("a group holds at most {MAX_GROUP_MEMBERS} members, including its host");
-    }
-    let group = Group {
-        id: uuid::Uuid::new_v4(),
-        name,
-        members,
-        session_id: None,
-        auto_turns: 0,
-        paused: false,
-        max_mention_depth: None,
-        created_at: now_seconds(),
-    };
-    let mut store = store;
-    store.groups.push(group.clone());
-    save(home, &store)?;
-    Ok(group)
+        // 上限含建群的一方，所以成员表最多再放这么多个。
+        if members.len() >= MAX_GROUP_MEMBERS {
+            bail!("a group holds at most {MAX_GROUP_MEMBERS} members, including its host");
+        }
+        let group = Group {
+            id: uuid::Uuid::new_v4(),
+            name,
+            members,
+            session_id: None,
+            auto_turns: 0,
+            paused: false,
+            max_mention_depth: None,
+            generation: 0,
+            created_at: now_seconds(),
+        };
+        store.groups.push(group.clone());
+        Ok(group)
+    })
 }
 
 /// 按名字或 UUID 找群。重名时要求用 UUID。
@@ -287,35 +365,94 @@ pub fn find_group<'a>(store: &'a FederationStore, query: &str) -> Result<&'a Gro
 
 /// 记下群聊落在本机的哪条会话上。
 pub fn note_group_session(home: &Path, id: uuid::Uuid, session_id: uuid::Uuid) -> Result<()> {
-    let mut store = load(home)?;
-    if let Some(group) = store.groups.iter_mut().find(|group| group.id == id) {
-        group.session_id = Some(session_id);
-        save(home, &store)?;
-    }
-    Ok(())
+    update(home, |store| {
+        if let Some(group) = store.groups.iter_mut().find(|group| group.id == id) {
+            group.session_id = Some(session_id);
+        }
+        Ok(())
+    })
 }
 
 /// 人发了一条。自动回复重新打开，计数清零。
 pub fn note_group_manual(home: &Path, id: uuid::Uuid) -> Result<()> {
-    let mut store = load(home)?;
-    if let Some(group) = store.groups.iter_mut().find(|group| group.id == id) {
-        group.auto_turns = 0;
-        group.paused = false;
-        save(home, &store)?;
-    }
-    Ok(())
+    update(home, |store| {
+        if let Some(group) = store.groups.iter_mut().find(|group| group.id == id) {
+            group.auto_turns = 0;
+            group.paused = false;
+            group.generation = group.generation.saturating_add(1);
+        }
+        Ok(())
+    })
 }
 
-/// 记一轮自动回复。返回记完之后的计数。
+/// 在主持者状态锁内预留一个自动回复名额；发送前预留可阻止并发成员越过总上限。
+pub fn reserve_group_auto_reply(
+    home: &Path,
+    id: uuid::Uuid,
+    generation: u64,
+    limit: u32,
+) -> Result<bool> {
+    update(home, |store| {
+        let group = store
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown hosted group {id}"))?;
+        if group.paused || group.generation != generation || group.auto_turns >= limit {
+            return Ok(false);
+        }
+        group.auto_turns = group.auto_turns.saturating_add(1);
+        Ok(true)
+    })
+}
+
+/// 对端拒绝或无法接收时退还本轮预留名额；换代后不影响新一轮。
+pub fn release_group_auto_reply(home: &Path, id: uuid::Uuid, generation: u64) -> Result<()> {
+    update(home, |store| {
+        let group = store
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown hosted group {id}"))?;
+        if group.generation == generation {
+            group.auto_turns = group.auto_turns.saturating_sub(1);
+        }
+        Ok(())
+    })
+}
+
+/// 登记一条等待本地回复的群人工轮次。重复登记同一轮次以最新一条为准。
+pub fn record_group_watch(home: &Path, watch: PendingGroupWatch) -> Result<()> {
+    update(home, |store| {
+        store
+            .pending_group_watches
+            .retain(|item| item.turn_id != watch.turn_id);
+        store.pending_group_watches.push(watch);
+        Ok(())
+    })
+}
+
+/// 取走一条待续看的登记；多个进程同时轮询时只有一个能拿到。
+pub fn take_group_watch(home: &Path, turn_id: uuid::Uuid) -> Result<Option<PendingGroupWatch>> {
+    update(home, |store| {
+        let index = store
+            .pending_group_watches
+            .iter()
+            .position(|item| item.turn_id == turn_id);
+        Ok(index.map(|index| store.pending_group_watches.remove(index)))
+    })
+}
+
+/// 测试跨进程写入时逐次增加计数。
+#[cfg(test)]
 pub fn note_group_auto_reply(home: &Path, id: uuid::Uuid) -> Result<u32> {
-    let mut store = load(home)?;
-    let Some(group) = store.groups.iter_mut().find(|group| group.id == id) else {
-        return Ok(0);
-    };
-    group.auto_turns = group.auto_turns.saturating_add(1);
-    let count = group.auto_turns;
-    save(home, &store)?;
-    Ok(count)
+    update(home, |store| {
+        let Some(group) = store.groups.iter_mut().find(|group| group.id == id) else {
+            return Ok(0);
+        };
+        group.auto_turns = group.auto_turns.saturating_add(1);
+        Ok(group.auto_turns)
+    })
 }
 
 /// 这个群实际生效的 @ 传递上限。没单独设过就用默认值。
@@ -339,17 +476,16 @@ pub fn set_group_mention_depth(home: &Path, query: &str, depth: u32) -> Result<G
             "the mention limit must be between 1 and {MAX_MENTION_DEPTH_CAP}; {depth} is outside that"
         );
     }
-    let mut store = load(home)?;
-    let id = find_group(&store, query)?.id;
-    let group = store
-        .groups
-        .iter_mut()
-        .find(|group| group.id == id)
-        .expect("the group was just found");
-    group.max_mention_depth = Some(depth);
-    let updated = group.clone();
-    save(home, &store)?;
-    Ok(updated)
+    update(home, |store| {
+        let id = find_group(store, query)?.id;
+        let group = store
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .expect("the group was just found");
+        group.max_mention_depth = Some(depth);
+        Ok(group.clone())
+    })
 }
 
 /// @ 传递到上限时给用户看的那一句。说清为什么不再回，以及谁能重新打开。
@@ -361,27 +497,100 @@ pub fn mention_limit_notice(limit: u32) -> String {
 
 /// 立刻停掉这个群的自动回复。人再发一条才会重新打开。
 pub fn pause_group(home: &Path, query: &str) -> Result<Group> {
-    let mut store = load(home)?;
-    let id = find_group(&store, query)?.id;
-    let group = store
-        .groups
-        .iter_mut()
-        .find(|group| group.id == id)
-        .expect("the group was just found");
-    group.paused = true;
-    let paused = group.clone();
-    save(home, &store)?;
-    Ok(paused)
+    update(home, |store| {
+        let id = find_group(store, query)?.id;
+        let group = store
+            .groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .expect("the group was just found");
+        group.paused = true;
+        group.generation = group.generation.saturating_add(1);
+        Ok(group.clone())
+    })
+}
+
+/// 只接受主持者签名的群状态；暂停通知可使成员正在等待的旧轮次失效。
+pub fn note_joined_group(
+    home: &Path,
+    host: uuid::Uuid,
+    id: uuid::Uuid,
+    name: &str,
+    members: &[uuid::Uuid],
+    generation: u64,
+    paused: bool,
+) -> Result<JoinedGroup> {
+    update(home, |store| {
+        let joined = match store.joined_groups.iter_mut().find(|group| group.id == id) {
+            Some(group) if group.host != host => bail!("group {id} belongs to another host"),
+            Some(group) => {
+                if generation < group.generation
+                    || (generation == group.generation && group.paused && !paused)
+                {
+                    bail!("stale group state for {id}");
+                }
+                if generation == group.generation
+                    && (group.name != name || group.members != members)
+                {
+                    bail!("group {id} changed its roster without a new generation");
+                }
+                if generation > group.generation {
+                    group.generation = generation;
+                    group.paused = paused;
+                    group.name = name.to_owned();
+                    group.members = members.to_vec();
+                } else if paused {
+                    group.paused = true;
+                }
+                group.clone()
+            }
+            None => {
+                let group = JoinedGroup {
+                    id,
+                    host,
+                    name: name.to_owned(),
+                    members: members.to_vec(),
+                    session_id: None,
+                    generation,
+                    paused,
+                };
+                store.joined_groups.push(group.clone());
+                group
+            }
+        };
+        Ok(joined)
+    })
+}
+
+pub fn note_joined_session(home: &Path, id: uuid::Uuid, session_id: uuid::Uuid) -> Result<()> {
+    update(home, |store| {
+        let group = store
+            .joined_groups
+            .iter_mut()
+            .find(|group| group.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown joined group {id}"))?;
+        group.session_id = Some(session_id);
+        Ok(())
+    })
+}
+
+pub fn group_generation_is_current(home: &Path, id: uuid::Uuid, generation: u64) -> bool {
+    load(home).is_ok_and(|store| {
+        store
+            .groups
+            .iter()
+            .any(|group| group.id == id && group.generation == generation && !group.paused)
+            || store
+                .joined_groups
+                .iter()
+                .any(|group| group.id == id && group.generation == generation && !group.paused)
+    })
 }
 
 /// 正文里有没有用 `@名字` 点到这些名字中的一个。
 ///
 /// 名字后面必须是结尾或非字母数字，避免 `@alex` 误中 `@alexander`。大小写按名字本身比较。
-pub fn mentions_any(text: &str, names: &[String]) -> bool {
-    names.iter().any(|name| mentions(text, name))
-}
-
-fn mentions(text: &str, name: &str) -> bool {
+pub fn mentions(text: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -423,13 +632,13 @@ pub fn group_should_auto_reply(
 }
 
 pub fn note_session(home: &Path, id: uuid::Uuid, session_id: uuid::Uuid) -> Result<()> {
-    let mut store = load(home)?;
-    if let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) {
-        contact.session_id = Some(session_id);
-        contact.last_seen = Some(now_seconds());
-        save(home, &store)?;
-    }
-    Ok(())
+    update(home, |store| {
+        if let Some(contact) = store.contacts.iter_mut().find(|item| item.id == id) {
+            contact.session_id = Some(session_id);
+            contact.last_seen = Some(now_seconds());
+        }
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------- 邀请
@@ -441,35 +650,35 @@ pub struct InviteCreated {
 
 /// 生成一个一次性邀请。过期的邀请顺手清掉，文件不会越攒越多。
 pub fn create_invite(home: &Path) -> Result<InviteCreated> {
-    let mut store = load(home)?;
-    let now = now_seconds();
-    store.invites.retain(|invite| invite.expires_at > now);
-    let token = new_token();
-    let expires_at = now + INVITE_TTL_SECONDS;
-    store.invites.push(Invite {
-        token_hash: hash_token(&token),
-        created_at: now,
-        expires_at,
-    });
-    save(home, &store)?;
-    Ok(InviteCreated { token, expires_at })
+    update(home, |store| {
+        let now = now_seconds();
+        store.invites.retain(|invite| invite.expires_at > now);
+        let token = new_token();
+        let expires_at = now + INVITE_TTL_SECONDS;
+        store.invites.push(Invite {
+            token_hash: hash_token(&token),
+            created_at: now,
+            expires_at,
+        });
+        Ok(InviteCreated { token, expires_at })
+    })
 }
 
 /// 消费一个邀请。令牌正确、未过期、且只能用一次。
 pub fn consume_invite(home: &Path, token: &str) -> Result<()> {
-    let mut store = load(home)?;
-    let now = now_seconds();
-    let hash = hash_token(token.trim());
-    let Some(index) = store
-        .invites
-        .iter()
-        .position(|invite| invite.token_hash == hash && invite.expires_at > now)
-    else {
-        bail!("the invitation is unknown or has expired");
-    };
-    store.invites.remove(index);
-    save(home, &store)?;
-    Ok(())
+    update(home, |store| {
+        let now = now_seconds();
+        let hash = hash_token(token.trim());
+        let Some(index) = store
+            .invites
+            .iter()
+            .position(|invite| invite.token_hash == hash && invite.expires_at > now)
+        else {
+            bail!("the invitation is unknown or has expired");
+        };
+        store.invites.remove(index);
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------- 签名
@@ -533,6 +742,19 @@ struct Outgoing<'a> {
     /// 这条消息所属的群。1:1 不带。
     #[serde(skip_serializing_if = "Option::is_none")]
     group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group_members: Option<&'a [uuid::Uuid]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mention_limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    paused: bool,
+    /// 主持者决定本条投递是否还能触发自动回复。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto_reply_allowed: Option<bool>,
     /// 群里真正的发言人。转发时 `from` 是转发方，这个字段才是开口的那一台。
     #[serde(skip_serializing_if = "Option::is_none")]
     origin: Option<String>,
@@ -559,6 +781,12 @@ fn is_zero(value: &u32) -> bool {
 /// 一条出站消息的群属性。1:1 传 [`GroupEnvelope::direct`]。
 pub struct GroupEnvelope {
     pub group_id: Option<uuid::Uuid>,
+    pub group_name: Option<String>,
+    pub group_members: Option<Vec<uuid::Uuid>>,
+    pub generation: Option<u64>,
+    pub mention_limit: Option<u32>,
+    pub paused: bool,
+    pub auto_reply_allowed: Option<bool>,
     pub origin: Option<uuid::Uuid>,
     pub from_agent: bool,
     pub mention_depth: u32,
@@ -569,6 +797,12 @@ impl GroupEnvelope {
     pub fn direct() -> Self {
         Self {
             group_id: None,
+            group_name: None,
+            group_members: None,
+            generation: None,
+            mention_limit: None,
+            paused: false,
+            auto_reply_allowed: None,
             origin: None,
             from_agent: false,
             mention_depth: 0,
@@ -576,14 +810,43 @@ impl GroupEnvelope {
         }
     }
 
-    /// 一条只给人看的说明：不触发自动回复，收到的一方也不再转发。
-    pub fn note(group_id: uuid::Uuid, speaker: uuid::Uuid) -> Self {
+    pub fn group(group: &Group, speaker: uuid::Uuid, from_agent: bool, depth: u32) -> Self {
         Self {
-            group_id: Some(group_id),
+            group_id: Some(group.id),
+            group_name: Some(group.name.clone()),
+            group_members: Some(group.members.clone()),
+            generation: Some(group.generation),
+            mention_limit: Some(mention_depth_limit(group)),
+            paused: false,
+            auto_reply_allowed: Some(!group.paused),
             origin: Some(speaker),
-            from_agent: false,
-            mention_depth: 0,
-            host_note: true,
+            from_agent,
+            mention_depth: depth,
+            host_note: false,
+        }
+    }
+
+    /// 说明和暂停信号都只给人看，不触发模型，也不再次转发。
+    pub fn note(group: &Group, speaker: uuid::Uuid, paused: bool) -> Self {
+        let mut envelope = Self::group(group, speaker, false, 0);
+        envelope.host_note = true;
+        envelope.paused = paused;
+        envelope
+    }
+
+    pub fn reply(id: uuid::Uuid, generation: u64, depth: u32, speaker: uuid::Uuid) -> Self {
+        Self {
+            group_id: Some(id),
+            group_name: None,
+            group_members: None,
+            generation: Some(generation),
+            mention_limit: None,
+            paused: false,
+            auto_reply_allowed: None,
+            origin: Some(speaker),
+            from_agent: true,
+            mention_depth: depth,
+            host_note: false,
         }
     }
 }
@@ -626,6 +889,12 @@ async fn deliver(
         text,
         reply_to: None,
         group_id: envelope.group_id.map(|id| id.to_string()),
+        group_name: envelope.group_name.as_deref(),
+        group_members: envelope.group_members.as_deref(),
+        generation: envelope.generation,
+        mention_limit: envelope.mention_limit,
+        paused: envelope.paused,
+        auto_reply_allowed: envelope.auto_reply_allowed,
         origin: envelope.origin.map(|id| id.to_string()),
         from_agent: envelope.from_agent,
         mention_depth: envelope.mention_depth,
@@ -1080,12 +1349,11 @@ mod tests {
         assert!(!stored.paused);
 
         // `@名字` 只在名字后面是边界时算点到，避免短名字误中长名字。
-        let names = vec!["alex".to_owned(), "lin".to_owned()];
-        assert!(mentions_any("@alex 看一下", &names));
-        assert!(mentions_any("ask @lin.", &names));
-        assert!(!mentions_any("@alexander 不是 alex", &names));
-        assert!(!mentions_any("email me at lin@example.com", &names));
-        assert!(!mentions_any("没有点名", &names));
+        assert!(mentions("@alex 看一下", "alex"));
+        assert!(mentions("ask @lin.", "lin"));
+        assert!(!mentions("@alexander 不是 alex", "alex"));
+        assert!(!mentions("email me at lin@example.com", "lin"));
+        assert!(!mentions("没有点名", "alex"));
 
         // @ 传递上限按群记。没设过走默认，设了只影响这一个群，超出范围直接拒绝。
         let stored = find_group(&load(&root).unwrap(), &group.id.to_string())
@@ -1128,6 +1396,116 @@ mod tests {
         assert!(create_group(&root, "too-big", &extras).is_err());
         create_group(&root, "room", &[host_side.name]).unwrap();
         assert!(find_group(&load(&root).unwrap(), "room").is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn joined_group_rejects_old_messages_and_other_hosts_after_pause() {
+        let root = home();
+        let id = uuid::Uuid::new_v4();
+        let host = uuid::Uuid::new_v4();
+        let member = uuid::Uuid::new_v4();
+        let members = [member];
+        note_joined_group(&root, host, id, "team", &members, 1, false).unwrap();
+        assert!(group_generation_is_current(&root, id, 1));
+        assert!(
+            note_joined_group(&root, host, id, "changed", &members, 1, false).is_err(),
+            "the host must advance generation before changing the roster or name"
+        );
+        note_joined_group(&root, host, id, "team", &members, 2, true).unwrap();
+        assert!(!group_generation_is_current(&root, id, 1));
+        assert!(!group_generation_is_current(&root, id, 2));
+        assert!(note_joined_group(&root, host, id, "team", &members, 1, false).is_err());
+        assert!(note_joined_group(&root, host, id, "team", &members, 2, false).is_err());
+        assert!(
+            note_joined_group(&root, uuid::Uuid::new_v4(), id, "team", &members, 3, false).is_err()
+        );
+        note_joined_group(&root, host, id, "team", &members, 3, false).unwrap();
+        assert!(group_generation_is_current(&root, id, 3));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_pending_group_watch_is_claimed_once() {
+        let root = home();
+        let watch = PendingGroupWatch {
+            group_id: uuid::Uuid::new_v4(),
+            session_id: uuid::Uuid::new_v4(),
+            turn_id: uuid::Uuid::new_v4(),
+            generation: 2,
+            depth: 0,
+            max_auto_turns: 6,
+            created_at: now_seconds(),
+        };
+        record_group_watch(&root, watch.clone()).unwrap();
+        let claimed = take_group_watch(&root, watch.turn_id).unwrap().unwrap();
+        assert_eq!(claimed.turn_id, watch.turn_id);
+        assert_eq!(claimed.generation, 2);
+        assert!(take_group_watch(&root, watch.turn_id).unwrap().is_none());
+        assert!(load(&root).unwrap().pending_group_watches.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_group_replies_respect_the_shared_limit() {
+        let root = home();
+        let member = contact();
+        upsert_contact(&root, member.clone()).unwrap();
+        let group = create_group(&root, "team", &[member.name]).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(17));
+        let accepted = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..16 {
+                let barrier = barrier.clone();
+                let root = &root;
+                let accepted = &accepted;
+                scope.spawn(move || {
+                    barrier.wait();
+                    if reserve_group_auto_reply(root, group.id, group.generation, 6).unwrap() {
+                        accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
+            }
+            barrier.wait();
+        });
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::Relaxed), 6);
+        assert_eq!(load(&root).unwrap().groups[0].auto_turns, 6);
+        assert!(!reserve_group_auto_reply(&root, group.id, group.generation, 6).unwrap());
+        release_group_auto_reply(&root, group.id, group.generation).unwrap();
+        assert!(reserve_group_auto_reply(&root, group.id, group.generation, 6).unwrap());
+        let paused = pause_group(&root, "team").unwrap();
+        release_group_auto_reply(&root, group.id, group.generation).unwrap();
+        assert_eq!(load(&root).unwrap().groups[0].auto_turns, 6);
+        assert!(!reserve_group_auto_reply(&root, group.id, paused.generation, 6).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_group_updates_preserve_pause_and_all_counts() {
+        let root = home();
+        let member = contact();
+        upsert_contact(&root, member.clone()).unwrap();
+        let group = create_group(&root, "team", &[member.name]).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(17));
+        std::thread::scope(|scope| {
+            for _ in 0..16 {
+                let barrier = barrier.clone();
+                let root = &root;
+                scope.spawn(move || {
+                    barrier.wait();
+                    note_group_auto_reply(root, group.id).unwrap();
+                });
+            }
+            barrier.wait();
+            pause_group(&root, "team").unwrap();
+        });
+        let stored = find_group(&load(&root).unwrap(), "team").unwrap().clone();
+        assert!(
+            stored.paused,
+            "a concurrent writer must not revert the pause"
+        );
+        assert_eq!(stored.generation, 1);
+        assert_eq!(stored.auto_turns, 16, "each concurrent update must survive");
         std::fs::remove_dir_all(root).unwrap();
     }
 
