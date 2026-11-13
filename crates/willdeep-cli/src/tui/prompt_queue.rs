@@ -1168,7 +1168,10 @@ mod tests {
         app.queue_submitted_prompt();
 
         assert!(app.input.is_empty(), "the composer is cleared");
-        assert!(app.attachments.is_empty(), "attachments leave with the text");
+        assert!(
+            app.attachments.is_empty(),
+            "attachments leave with the text"
+        );
         assert_eq!(app.queued_prompts.len(), 1);
         assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
         assert_eq!(app.queued_prompts[0].attachments.len(), 1);

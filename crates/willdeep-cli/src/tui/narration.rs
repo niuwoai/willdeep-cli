@@ -2365,7 +2365,11 @@ mod tests {
 
         app.note_compression_completed();
         assert!(!app.compression_in_progress());
-        assert!(app.compression_notice_row().unwrap().contains("上下文已压缩"));
+        assert!(
+            app.compression_notice_row()
+                .unwrap()
+                .contains("上下文已压缩")
+        );
         assert!(app.composer_state().0.contains("本轮进行中"));
     }
 

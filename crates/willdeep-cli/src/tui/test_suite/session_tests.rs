@@ -2412,7 +2412,11 @@ fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
     );
     app.finish_turn();
     assert!(!app.compression_in_progress());
-    assert_eq!(app.queued_prompts.len(), 1, "the queue survives the turn ending");
+    assert_eq!(
+        app.queued_prompts.len(),
+        1,
+        "the queue survives the turn ending"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -2425,10 +2429,8 @@ impl willdeep_core::provider::Provider for SilentProvider {
         &self,
         _: &[willdeep_core::Message],
         _: &[willdeep_core::types::ToolDefinition],
-    ) -> std::result::Result<
-        willdeep_core::types::Completion,
-        willdeep_core::provider::ProviderError,
-    > {
+    ) -> std::result::Result<willdeep_core::types::Completion, willdeep_core::provider::ProviderError>
+    {
         panic!("returning undelivered steering must not call the provider");
     }
 }
