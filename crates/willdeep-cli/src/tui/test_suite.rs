@@ -200,7 +200,7 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 38);
+        assert_eq!(commands.len(), 39);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
             "/reasoning",
@@ -316,6 +316,59 @@ mod command_tests {
         app.display_home = None;
         assert!(app.handle_slash_command("/name alex", &skills));
         assert!(app.transcript.last().unwrap().contains("willdeep home"));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    /// 改名之后回复行立刻换上新名字，历史里已经写下的回复也跟着换。
+    /// 记录原文不动：复制和重开历史仍是默认前缀。
+    #[test]
+    fn renaming_the_instance_relabels_replies_without_rewriting_the_transcript() {
+        let home =
+            std::env::temp_dir().join(format!("willdeep-tui-rename-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new(vec!["WillDeep: 改名前的回复".to_owned()], Language::ZhCn);
+        app.display_home = Some(home.clone());
+        let skills = SkillCatalog::default();
+
+        assert!(app.handle_slash_command("/name 滚小滚", &skills));
+        assert_eq!(app.assistant_name(), "滚小滚");
+        assert!(
+            app.transcript.iter().all(|row| !row.starts_with("滚小滚")),
+            "the stored transcript keeps the default prefix: {:?}",
+            app.transcript
+        );
+        let frame = app.render_user_transcript(
+            &app.display_transcript(),
+            &vec![None; app.display_transcript().rows.len()],
+            None,
+            app.display_transcript().rows.len(),
+        );
+        let drawn = text_rows(&frame.text).join("\n");
+        assert!(drawn.contains("滚小滚: 改名前的回复"), "{drawn}");
+        assert!(!drawn.contains("WillDeep:"), "{drawn}");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    /// `/spacing` 改的是行距并落盘；不带参数只报当前值，非法值不改现状。
+    #[test]
+    fn spacing_sets_and_reports_the_gap_between_transcript_entries() {
+        let home =
+            std::env::temp_dir().join(format!("willdeep-tui-spacing-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.display_home = Some(home.clone());
+        let skills = SkillCatalog::default();
+
+        assert!(app.handle_slash_command("/spacing", &skills));
+        assert!(app.transcript.last().unwrap().contains("当前行距 0"));
+
+        assert!(app.handle_slash_command("/spacing 2", &skills));
+        assert_eq!(app.ui.line_spacing, 2);
+        assert_eq!(crate::config::load_line_spacing(&home).unwrap(), Some(2));
+
+        assert!(app.handle_slash_command("/spacing 9", &skills));
+        assert!(app.transcript.last().unwrap().starts_with("Error:"));
+        assert_eq!(app.ui.line_spacing, 2);
         std::fs::remove_dir_all(home).unwrap();
     }
 

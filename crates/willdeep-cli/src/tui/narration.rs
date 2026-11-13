@@ -146,6 +146,26 @@ impl App {
     /// 屏幕上一条可见记录都没有时补上首屏欢迎语，顺带丢掉那些空白行——
     /// 留着它们只会把真正的内容往下挤。多个入口（启动、换会话、`/clear`）
     /// 共用这一条规则，别各自写一份 `is_empty()` 判断。
+    /// 回复行在屏幕上显示的名字。没起名时用默认名。
+    pub(super) fn assistant_name(&self) -> String {
+        if self.assistant_name.is_empty() {
+            ASSISTANT_LABEL.to_owned()
+        } else {
+            self.assistant_name.clone()
+        }
+    }
+
+    /// 从家目录读实例名。读不到（没家目录、文件坏了）就保持现状，不拿默认名
+    /// 把已经起好的名字盖掉。
+    pub(super) fn load_assistant_name(&mut self) {
+        let Some(home) = self.display_home.as_deref() else {
+            return;
+        };
+        if let Ok(identity) = crate::identity::load(home) {
+            self.assistant_name = identity.display_name(false);
+        }
+    }
+
     pub(super) fn ensure_welcome(&mut self, workspace: &std::path::Path, language: Language) {
         if self.has_visible_transcript() {
             return;
@@ -388,6 +408,21 @@ impl App {
         }
     }
 
+    /// 压缩请求正在飞。压完但提示还挂在屏幕上不算：那时输入照常处理。
+    ///
+    /// 这段时间模型在重写上下文，插话进不了正在飞的那次请求，本地命令也改不动
+    /// 正在压缩的会话。输入先排队，等压缩结束再按普通队列发出去。
+    pub(super) fn compression_in_progress(&self) -> bool {
+        self.compression.as_ref().is_some_and(|notice| !notice.done)
+    }
+
+    /// 把一条提示按住一段时间。状态行每帧都会把普通提示取走，不按住的话
+    /// 「为什么没发出去」会在下一帧消失。
+    pub(super) fn hold_notice(&mut self, notice: String, duration: Duration) {
+        self.notice_hold = Some((notice.clone(), Instant::now() + duration));
+        self.notice = Some(notice);
+    }
+
     /// 真正的输出开始了（正文、思维链、工具、计划），压缩那一行的使命结束。
     pub(super) fn dismiss_compression_notice(&mut self) {
         self.compression = None;
@@ -464,7 +499,7 @@ impl App {
         let label = self.transient_label();
         Some(match self.transient_kind {
             StreamKind::Reasoning => format!("· + Thought: {}", self.thought_elapsed_label()),
-            StreamKind::Reply => format!("WillDeep · {label}: {thought}"),
+            StreamKind::Reply => format!("{} · {label}: {thought}", self.assistant_name()),
         })
     }
 
@@ -713,6 +748,15 @@ impl App {
                     "バックグラウンド実行中 · 入力可 · Enter でテキスト送信 · Ctrl+Q 管理",
                 ),
                 Color::Cyan,
+            )
+        } else if self.compression_in_progress() {
+            (
+                self.language.text(
+                    "正在压缩上下文 · 回车排队，压缩结束后发送 · 打字不受影响",
+                    "Compressing context · Enter queues until it finishes · typing still works",
+                    "コンテキスト圧縮中 · Enter でキューに追加、完了後に送信 · 入力はそのまま",
+                ),
+                Color::Yellow,
             )
         } else if self.running {
             (
@@ -2328,6 +2372,25 @@ mod tests {
         app.note_narration("先说一句");
         app.note_compression_started();
         assert!(app.compression_notice_row().is_none());
+    }
+
+    /// 只有压缩请求还在飞才算「正在压缩」。压完但那一行还挂着时，输入恢复正常处理。
+    #[test]
+    fn finished_compression_stops_queueing_new_input() {
+        let mut app = App::new(vec!["You: 再问一句".to_owned()], Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.note_compression_started();
+        assert!(app.compression_in_progress());
+        assert!(app.composer_state().0.contains("回车排队"));
+
+        app.note_compression_completed();
+        assert!(!app.compression_in_progress());
+        assert!(
+            app.compression_notice_row()
+                .unwrap()
+                .contains("上下文已压缩")
+        );
+        assert!(app.composer_state().0.contains("本轮进行中"));
     }
 
     /// 压缩行画在用户消息正下方，读秒换词都落在同一行，输出一开始整行消失。

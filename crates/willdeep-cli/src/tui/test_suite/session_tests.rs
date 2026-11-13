@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::event_loop::requeue_undelivered_steering;
 
 #[test]
 fn session_picker_result_includes_content_snippet_without_embedded_lines() {
@@ -1900,6 +1901,35 @@ fn a_running_turn_no_longer_swallows_every_enter() {
     }
 }
 
+/// 压缩期间的回车沿用同一套三分法，不能把什么都收进队列：
+/// `/help`、`/model` 当场执行，`/new`、`/diff` 留在输入框里并说明原因。
+#[test]
+fn compression_keeps_immediate_commands_and_refuses_session_changes() {
+    let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+    app.begin_turn(true, "working".to_owned());
+    app.note_compression_started();
+
+    for command in ["/help", "/model qwen3-coder", "/clear"] {
+        app.input.insert(command);
+        assert_eq!(busy_input(app.input.text()), BusyInput::RunNow, "{command}");
+        assert!(app.queued_prompts.is_empty());
+        app.input.take();
+    }
+
+    for command in ["/new", "/diff", "/compress"] {
+        app.input.insert(command);
+        assert_eq!(busy_input(app.input.text()), BusyInput::Refuse, "{command}");
+        app.hold_notice(
+            "正在压缩上下文，该命令会改动会话或 Runtime，压缩结束后才能执行".to_owned(),
+            std::time::Duration::from_secs(10),
+        );
+        assert_eq!(app.input.text(), command, "a refused command stays typed");
+        assert!(app.queued_prompts.is_empty());
+        assert!(app.notice.as_deref().unwrap().contains("正在压缩上下文"));
+        app.input.take();
+    }
+}
+
 /// 一条失败的 Inbox 项此前只写 `Status: Failed`，打开详情等于什么都没说。
 #[test]
 fn failed_task_details_name_the_command_and_the_reason() {
@@ -2340,6 +2370,69 @@ fn runtime_compression_events_reach_the_status_bar_and_the_progress_line() {
     let row = app.compression_notice_row().unwrap();
     assert!(row.contains("Context compressed"), "{row}");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 手动 `/compress` 不读收件箱，结束时也不会再有一轮去消化它。压缩期间若有插话
+/// 已经进了收件箱，压缩结束（成功或失败）必须交回队列，不能只剩一行「已送达」。
+/// 事件循环在 `UiMessage::Compressed` 的成功和失败两条路上都调用这个交回。
+#[test]
+fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-compression-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+    app.begin_turn(false, "正在压缩上下文".to_owned());
+    app.note_compression_started();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let inbox = agent.instruction_inbox().unwrap();
+    assert!(inbox.push_operator("压缩完再看这一段".to_owned()));
+    app.note_steering_delivered("压缩完再看这一段", message_time::now());
+
+    requeue_undelivered_steering(&mut app, &agent);
+
+    assert!(!inbox.has_pending(), "the inbox is emptied");
+    assert_eq!(app.queued_prompts.len(), 1);
+    assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
+    assert!(app.deferred_steering.is_empty());
+    assert!(
+        app.transcript.iter().any(|row| row.contains("没赶上")),
+        "the user is told it missed this turn: {:?}",
+        app.transcript
+    );
+    app.finish_turn();
+    assert!(!app.compression_in_progress());
+    assert_eq!(
+        app.queued_prompts.len(),
+        1,
+        "the queue survives the turn ending"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 这个测试只把收件箱里的插话交回队列，不该真的去调模型。
+struct SilentProvider;
+
+#[async_trait::async_trait]
+impl willdeep_core::provider::Provider for SilentProvider {
+    async fn complete(
+        &self,
+        _: &[willdeep_core::Message],
+        _: &[willdeep_core::types::ToolDefinition],
+    ) -> std::result::Result<willdeep_core::types::Completion, willdeep_core::provider::ProviderError>
+    {
+        panic!("returning undelivered steering must not call the provider");
+    }
 }
 
 #[test]

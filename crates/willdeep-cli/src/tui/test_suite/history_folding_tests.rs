@@ -83,7 +83,7 @@ fn long_user_messages_toggle_independently_and_preserve_original_text() {
     app.transcript_width = 40;
     app.viewport_height = 60;
     app.prepare_transcript_frame();
-    assert_eq!(app.transcript_height, 18);
+    assert_eq!(app.transcript_height, 19);
     assert!(
         !app.transcript_rows
             .iter()
@@ -110,7 +110,7 @@ fn long_user_messages_toggle_independently_and_preserve_original_text() {
     let collapse = app.user_message_hit_rows[0].0;
     assert!(app.toggle_user_message_at(collapse));
     app.prepare_transcript_frame();
-    assert_eq!(app.transcript_height, 18);
+    assert_eq!(app.transcript_height, 19);
 }
 
 #[test]

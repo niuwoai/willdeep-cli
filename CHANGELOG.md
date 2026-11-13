@@ -2,7 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- TUI 在上下文压缩进行中按回车不再没反应：普通输入和附件会清空输入区、进入待发队列，并提示「正在压缩上下文，已排队，压缩结束后按顺序发送」。压缩请求还在飞时这些内容不会被插进正在压缩的那一轮；`/help`、`/model` 这类只读命令照常执行，`/new`、`/diff` 这类会改动会话的命令留在输入框里并说明原因。打字本身不受影响。手动压缩或轮次失败结束时，已经送进收件箱却没赶上的插话会交回队列，不再只剩一行回显。
+
 ### Added
+- TUI 聊天区在你开口之前留一行空白：上一轮的回复、分隔线或系统行后面紧跟你的发言时，中间空一行；聊天区第一条和连续两条你的发言之间不留。
+- 实例起过名字之后，聊天区的回复行和窗口标题显示这个名字，不再显示 WillDeep。没起名时仍是 WillDeep。名字只在画的时候替换，记录原文不变，改名后已有的回复也跟着换。
+- `/spacing <0-3>` 设置聊天区行距：每条记录之间额外空出相应的行数，0 是原来的紧凑排版。不带参数显示当前值，设置会记住，下次打开仍在。
 - 新增 [Multica 适配器](docs/MULTICA_ADAPTER.md)：`scripts/multica_claude_adapter.rb` 把 Multica daemon 的 Claude Code stream-json 调用翻译成 `willdeep run`，回传 `system`、`assistant`、`tool_result` 与 `result` 事件，支持 `--resume` 续跑。MCP、思考等级、追加系统提示词与工具白名单会被丢弃并记入 stderr；非 `bypassPermissions` 的权限模式直接拒绝。
 
 ### Changed

@@ -22,6 +22,10 @@ pub(super) struct TranscriptRenderCache {
     language: Language,
     search: Option<String>,
     time_labels: Vec<Option<String>>,
+    /// 回复前缀。缓存键必须带上：`/name` 改名之后旧前缀的画面不能继续用。
+    assistant_name: String,
+    /// 聊天区每条记录之间额外空出的行数。改了它整屏高度都变，缓存必须重算。
+    line_spacing: u8,
     /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
     code_blocks: Vec<CodeBlockLines>,
     text: Text<'static>,
@@ -62,6 +66,8 @@ impl App {
                 && cache.open_tools == self.expanded_tool_rows
                 && cache.language == self.language
                 && cache.search == search
+                && cache.assistant_name == self.assistant_name()
+                && cache.line_spacing == self.ui.line_spacing
                 && cache.source == self.transcript
                 && cache.time_labels == time_labels
         });
@@ -89,6 +95,8 @@ impl App {
                 open_tools: self.expanded_tool_rows.clone(),
                 language: self.language,
                 search: search.clone(),
+                assistant_name: self.assistant_name(),
+                line_spacing: self.ui.line_spacing,
                 time_labels,
                 code_blocks,
                 text,
@@ -262,8 +270,9 @@ pub(super) fn colored_transcript_at_width(
 
 /// 画聊天区。分隔线只有在最后一行时才带「轮到你」，语言跟界面走。
 ///
-/// 空行的位置按整段记录算，不按单条记录算：它只属于「本轮结束」分隔线与下一条
-/// 用户消息之间。逐条画的路径看不到下一条是什么，所以这里不留空行。
+/// 这条路径逐条画、看不到下一条是什么，所以不留空行：空行属于整段渲染
+/// （[`super::message_time::render_with_user_folds`]），它才知道用户消息前面
+/// 该不该让开一行。
 pub(super) fn colored_transcript(
     entries: &[String],
     search_query: Option<&str>,
@@ -307,8 +316,12 @@ pub(super) fn colored_transcript(
             }
             continue;
         }
-        if let Some(content) = value.strip_prefix("WillDeep: ") {
-            lines.extend(render_assistant_markdown(content, width));
+        if let Some(content) = value.strip_prefix(ASSISTANT_ROW_PREFIX) {
+            let label = assistant_label(value);
+            let content = content
+                .strip_prefix(&format!("{label}: "))
+                .unwrap_or(content);
+            lines.extend(render_assistant_markdown_labeled(content, width, &label).0);
             // 回复后面跟的是浅色分隔线，两者已经分开了，不再多空一行。
             continue;
         }
@@ -396,8 +409,9 @@ mod tool_row_style_tests {
     }
 
     /// 同一轮不空行：用户消息后面紧贴 Thought，回复后面紧贴分隔线。
-    /// 空行只在分隔线与下一轮的用户消息之间，两轮之间留一行。空行由整段渲染
-    /// 补上，逐条上色看不到下一条记录，所以这里断言走那条路径。
+    /// 空行属于用户开口之前：分隔线后面的用户消息让开一行，回复后面直接跟的
+    /// 用户消息同样让开一行。空行由整段渲染补上，逐条上色看不到下一条记录，
+    /// 所以这里断言走那条路径。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
         let text = message_time::render_with_times(
@@ -425,6 +439,109 @@ mod tool_row_style_tests {
         assert_eq!(rows[4], "");
         assert_eq!(rows[5], "You: next");
         assert_eq!(rows.len(), 6, "{rows:?}");
+    }
+
+    /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
+    /// 聊天区第一条用户消息前面没有内容，不留空行。
+    #[test]
+    fn a_user_message_keeps_one_blank_row_before_it_even_without_a_divider() {
+        let text = message_time::render_with_times(
+            &[
+                "You: first".to_owned(),
+                "WillDeep: done".to_owned(),
+                "You: next".to_owned(),
+            ],
+            &[None, None, None],
+            None,
+            80,
+            Language::En,
+        );
+        let rows = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(rows, vec!["You: first", "WillDeep: done", "", "You: next"]);
+    }
+
+    /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。
+    #[test]
+    fn a_named_instance_shows_its_name_instead_of_willdeep() {
+        let frame = message_time::render_transcript(
+            &["WillDeep: 你好".to_owned(), "You: 嗯".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "滚小滚",
+            0,
+        );
+        let rows = text_rows(&frame.text);
+        assert_eq!(rows[0], "滚小滚: 你好", "all rows: {rows:?}");
+        assert_eq!(rows.last().map(String::as_str), Some("You: 嗯"));
+        // 没起名时画面不变。
+        let plain = message_time::render_with_times(
+            &["WillDeep: 你好".to_owned()],
+            &[None],
+            None,
+            80,
+            Language::ZhCn,
+        );
+        assert_eq!(text_rows(&plain)[0], "WillDeep: 你好");
+    }
+
+    /// 行距是每条记录之间额外的空行，最后一条后面不加。
+    #[test]
+    fn line_spacing_adds_blank_rows_between_entries_but_not_after_the_last() {
+        let frame = message_time::render_transcript(
+            &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            2,
+        );
+        let rows = text_rows(&frame.text);
+        // 用户消息前面本身已让开一行，行距再加在它后面。
+        let blanks = rows.iter().filter(|row| row.is_empty()).count();
+        assert_eq!(blanks, 2, "{rows:?}");
+        assert_eq!(rows.first().map(String::as_str), Some("You: 一"));
+        assert_eq!(rows.last().map(String::as_str), Some("WillDeep: 二"));
+        // 行距为 0 时只剩用户消息前面那一行，和没设过行距的画面一致。
+        let tight = message_time::render_transcript(
+            &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            0,
+        );
+        assert_eq!(text_rows(&tight.text), vec!["You: 一", "WillDeep: 二"]);
+        // 最后一条后面不加：单独一条记录时行距不产生任何空白。
+        let single = message_time::render_transcript(
+            &["WillDeep: 只有一句".to_owned()],
+            &[None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            2,
+        );
+        assert_eq!(text_rows(&single.text), vec!["WillDeep: 只有一句"]);
     }
 
     /// 一段里没有空格也要按标点断开。模型写首页文案时整句不留空白，只按空白分词
@@ -808,7 +925,16 @@ pub(super) fn highlight_text_selection_at_offset(
 }
 
 pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line<'static>> {
-    render_assistant_markdown_annotated(content, width).0
+    render_assistant_markdown_labeled(content, width, ASSISTANT_LABEL).0
+}
+
+/// 和 [`render_assistant_markdown`] 一样，只是第一行的名字用调用方给的那个。
+pub(super) fn render_assistant_markdown_labeled(
+    content: &str,
+    width: usize,
+    label: &str,
+) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
+    render_assistant_markdown_annotated(content, width, label)
 }
 
 /// 和 `render_assistant_markdown` 画得完全一样，额外报出每个代码块落在哪些输出行。
@@ -816,6 +942,7 @@ pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line
 fn render_assistant_markdown_annotated(
     content: &str,
     width: usize,
+    label: &str,
 ) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
     let mut output = Vec::new();
     let mut blocks = Vec::new();
@@ -839,7 +966,7 @@ fn render_assistant_markdown_annotated(
         }
         if code_block {
             code_content.push(raw.to_owned());
-            let mut spans = assistant_prefix(index == 0);
+            let mut spans = assistant_prefix(index == 0, label);
             spans.push(Span::styled(
                 raw.to_owned(),
                 Style::default()
@@ -865,7 +992,7 @@ fn render_assistant_markdown_annotated(
                 index += 1;
             }
             if output.is_empty() {
-                output.push(Line::from(assistant_prefix(true)));
+                output.push(Line::from(assistant_prefix(true, label)));
             }
             output.extend(render_markdown_table(&rows, width));
             continue;
@@ -873,7 +1000,11 @@ fn render_assistant_markdown_annotated(
 
         let normalized = normalize_html_breaks(raw);
         for (piece_index, piece) in normalized.split('\n').enumerate() {
-            output.push(render_markdown_line(piece, index == 0 && piece_index == 0));
+            output.push(render_markdown_line(
+                piece,
+                index == 0 && piece_index == 0,
+                label,
+            ));
         }
         index += 1;
     }
@@ -882,7 +1013,10 @@ fn render_assistant_markdown_annotated(
         push_code_block(&mut blocks, code_start, output.len(), &code_content);
     }
     if output.is_empty() {
-        output.push(Line::styled("WillDeep:", Style::default().fg(Color::Green)));
+        output.push(Line::styled(
+            format!("{label}:"),
+            Style::default().fg(Color::Green),
+        ));
     }
     (output, blocks)
 }
@@ -907,12 +1041,17 @@ pub(super) fn render_assistant_entry_with_code_blocks(
     search: Option<&str>,
     width: usize,
 ) -> (Text<'static>, Vec<CodeBlockLines>) {
-    let Some(content) = row.strip_prefix("WillDeep: ") else {
+    let Some(content) = row.strip_prefix(ASSISTANT_ROW_PREFIX) else {
         let rows = [row.to_owned()];
         let text = wrap_styled_text(colored_transcript_at_width(&rows, search, width), width);
         return (text, Vec::new());
     };
-    let (lines, blocks) = render_assistant_markdown_annotated(content, width);
+    // 名字已经在记录前缀里换过一次，正文里不能再留一份，否则会画成两遍。
+    let label = assistant_label(row);
+    let content = content
+        .strip_prefix(&format!("{label}: "))
+        .unwrap_or(content);
+    let (lines, blocks) = render_assistant_markdown_annotated(content, width, &label);
     let mut text = Text::from(lines);
     if let Some(query) = search {
         highlight_matches(&mut text, query);
@@ -948,10 +1087,10 @@ pub(super) fn render_assistant_entry_with_code_blocks(
     (wrapped, blocks)
 }
 
-fn assistant_prefix(show: bool) -> Vec<Span<'static>> {
+fn assistant_prefix(show: bool, label: &str) -> Vec<Span<'static>> {
     show.then(|| {
         Span::styled(
-            "WillDeep: ",
+            format!("{label}: "),
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
@@ -961,8 +1100,8 @@ fn assistant_prefix(show: bool) -> Vec<Span<'static>> {
     .collect()
 }
 
-fn render_markdown_line(raw: &str, show_prefix: bool) -> Line<'static> {
-    let mut spans = assistant_prefix(show_prefix);
+fn render_markdown_line(raw: &str, show_prefix: bool, label: &str) -> Line<'static> {
+    let mut spans = assistant_prefix(show_prefix, label);
     let trimmed = raw.trim_start();
     let (marker, body, base) = if let Some(body) = trimmed.strip_prefix("### ") {
         (
@@ -1279,6 +1418,40 @@ pub(super) const THOUGHT_PREVIEW_CHARS: usize = 1200;
 /// 「本轮结束」分隔线的前缀。按账目行的灰色画，紧贴上一轮输出，不另占空行。
 pub(super) const TURN_DIVIDER_PREFIX: &str = "── ";
 
+/// 助手回复在记录里的前缀。记录永远以它开头，屏幕上显示的名字另算：
+/// 实例起过名就用那个名字，没起过才回落到 [`ASSISTANT_LABEL`]。
+/// 拆开是为了改名不改记录——历史里的旧行重开后也跟着新名字走。
+pub(super) const ASSISTANT_ROW_PREFIX: &str = "WillDeep: ";
+
+/// 没给实例起名时屏幕上用的名字。
+pub(super) const ASSISTANT_LABEL: &str = "WillDeep";
+
+/// 一条记录在屏幕上该显示的名字：`名字: 正文` 里冒号前的那段。
+/// 记录里没写名字时用默认名，所以旧记录和新记录画出来一样。
+pub(super) fn assistant_label(row: &str) -> String {
+    row.strip_prefix(ASSISTANT_ROW_PREFIX)
+        .and_then(|rest| rest.split_once(": ").map(|(label, _)| label.to_owned()))
+        .filter(|label| !label.is_empty() && !label.contains(|ch: char| ch.is_whitespace()))
+        .unwrap_or_else(|| ASSISTANT_LABEL.to_owned())
+}
+
+/// 把记录里的默认前缀换成屏幕上该显示的名字。没起名、名字就是默认名、
+/// 或这条记录已经带过名字时原样返回。
+pub(super) fn named_assistant_row(row: &str, name: &str) -> String {
+    if name.is_empty() || name == ASSISTANT_LABEL {
+        return row.to_owned();
+    }
+    let Some(body) = row.strip_prefix(ASSISTANT_ROW_PREFIX) else {
+        return row.to_owned();
+    };
+    // 已经带过名字的不再加第二遍。判定认的是记录里的名字段，不是正文开头：
+    // 正文恰好以 `名字: ` 起头时仍要换名，不能把正文误认成已经换过。
+    if assistant_label(row) != ASSISTANT_LABEL {
+        return row.to_owned();
+    }
+    format!("{ASSISTANT_ROW_PREFIX}{name}: {body}")
+}
+
 /// 分隔线末尾的「轮到你」。只在聊天区最后一行才有意义：新输出一来它就不再是事实。
 pub(super) fn your_turn_label(language: Language) -> &'static str {
     language.text("轮到你", "your turn", "あなたの番")
@@ -1412,15 +1585,16 @@ pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -
         .filter(|value| !value.is_empty())
         .unwrap_or(language.text("当前工作区", "current workspace", "現在のワークスペース"));
     let header = welcome_header();
+    // 问候走默认助手记录行，显示时和别的回复一样换成实例名。
     match language {
         Language::ZhCn => format!(
-            "{header}\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
+            "{header}\n{ASSISTANT_ROW_PREFIX}你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
         ),
         Language::En => format!(
-            "{header}\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
+            "{header}\n{ASSISTANT_ROW_PREFIX}Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
         ),
         Language::Ja => format!(
-            "{header}\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
+            "{header}\n{ASSISTANT_ROW_PREFIX}こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
     }
 }

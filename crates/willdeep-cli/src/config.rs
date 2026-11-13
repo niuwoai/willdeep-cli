@@ -11,7 +11,9 @@ pub const CONFIG_VERSION: u32 = 1;
 mod ui_settings;
 #[cfg(test)]
 pub use ui_settings::InputSuggestionColor;
+pub use ui_settings::MAX_LINE_SPACING;
 pub use ui_settings::{UiMode, UiSettings};
+pub use ui_settings::{load_line_spacing, save_line_spacing};
 pub use ui_settings::{load_thinking_visibility, save_thinking_visibility};
 
 #[derive(Clone, Debug, Subcommand)]

@@ -71,7 +71,7 @@ impl App {
                 Some((target, (source, expansion)))
             })
             .collect();
-        message_time::render_with_user_folds(
+        message_time::render_transcript(
             &folded.rows[..end],
             &labels[..end],
             search,
@@ -80,6 +80,8 @@ impl App {
             &users,
             &tools,
             &self.transcript_attachments,
+            &self.assistant_name(),
+            self.ui.line_spacing,
         )
     }
 

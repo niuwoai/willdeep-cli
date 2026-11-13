@@ -21,18 +21,28 @@ fn submitting_collapses_the_expanded_composer() {
 
 #[test]
 fn chat_title_brand_names_the_workspace() {
-    assert_eq!(chat_title_brand(None), "WillDeep");
+    assert_eq!(chat_title_brand("", None), "WillDeep");
     assert_eq!(
-        chat_title_brand(Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))),
+        chat_title_brand(
+            "滚小滚",
+            Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))
+        ),
+        "滚小滚 · willdeep-rs"
+    );
+    assert_eq!(
+        chat_title_brand(
+            "",
+            Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))
+        ),
         "WillDeep · willdeep-rs"
     );
     // 根目录没有目录名，退回完整路径。
     assert_eq!(
-        chat_title_brand(Some(std::path::Path::new("/"))),
+        chat_title_brand("", Some(std::path::Path::new("/"))),
         "WillDeep · /"
     );
     let long = format!("/tmp/{}", "项".repeat(40));
-    let brand = chat_title_brand(Some(std::path::Path::new(&long)));
+    let brand = chat_title_brand("", Some(std::path::Path::new(&long)));
     assert_eq!(brand, format!("WillDeep · {}…", "项".repeat(31)));
 }
 

@@ -26,6 +26,7 @@ async fn handle_queue_action(
         let index = app.prompt_queue.as_ref().unwrap().selected;
         let text = app.queued_prompts[index].text.clone();
         if app.running
+            && !app.compression_in_progress()
             && app.queued_prompts[index].attachments.is_empty()
             && !text.trim_start().starts_with('/')
             && steer_running_turn(app, session, runtime, agent, &text).await
@@ -303,7 +304,8 @@ async fn steer_running_turn(
 }
 
 /// 进程内轮次结束时，收件箱里还没送出的插话交回队列，本轮结束后照常发出。
-fn requeue_undelivered_steering(app: &mut App, agent: &Arc<Agent>) {
+/// 手动压缩和失败收尾也走这里：那两条路没有下一轮去消化收件箱。
+pub(super) fn requeue_undelivered_steering(app: &mut App, agent: &Arc<Agent>) {
     let Some(inbox) = agent.instruction_inbox() else {
         return;
     };
@@ -490,6 +492,9 @@ pub(super) async fn event_loop(
     if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
         app.ui.show_thinking = show_thinking;
     }
+    if let Some(spacing) = crate::config::load_line_spacing(&runtime.home)? {
+        app.ui.line_spacing = spacing;
+    }
     // 顺序有讲究：装载聊天记录是整体替换，必须排在 startup_notices 之前，
     // 否则「首次使用 / 旧配置写法」那几条 System 提示会被覆盖掉。
     // daemon 的 display session 带上了各代历史的正文，比磁盘上的会话更全，
@@ -518,6 +523,7 @@ pub(super) async fn event_loop(
     app.workspace_status = workspace_status_placeholder(&session.workspace, language);
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
+    app.load_assistant_name();
     app.context_window = runtime.context_window.max(1);
     app.background_tasks = runtime.background_tasks.snapshots();
     refresh_session_lineage(&mut app, session, store);
@@ -1758,6 +1764,30 @@ pub(super) async fn event_loop(
                             if confirmation_example::try_submit(&mut app, &runtime.tx) {
                                 continue;
                             }
+                            // 压缩请求正在飞：插话进不了这次请求，改会话的命令也动不了正在
+                            // 压缩的那一份。普通输入先排队并清空输入区；只读的本地命令照常执行。
+                            if app.compression_in_progress() {
+                                match busy_input(app.input.text()) {
+                                    BusyInput::RunNow => {}
+                                    BusyInput::Queue => {
+                                        app.queue_submitted_prompt();
+                                        app.hold_notice(
+                                            app.notice.clone().unwrap_or_default(),
+                                            Duration::from_secs(10),
+                                        );
+                                        continue;
+                                    }
+                                    BusyInput::Refuse => {
+                                        let notice = language.text(
+                                            "正在压缩上下文，该命令会改动会话或 Runtime，压缩结束后才能执行",
+                                            "Context is compressing; that command changes Session or Runtime state and runs after compression finishes",
+                                            "コンテキスト圧縮中です。このコマンドはセッション/Runtime を変更するため、完了後に実行されます",
+                                        ).to_owned();
+                                        app.hold_notice(notice, Duration::from_secs(10));
+                                        continue;
+                                    }
+                                }
+                            }
                             // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
                             // 提示词排队，其余命令说清楚为什么现在不行。
                             if app.running {
@@ -1781,13 +1811,11 @@ pub(super) async fn event_loop(
                                         continue;
                                     },
                                     BusyInput::Refuse=>{
-                                        let notice = language.text(
+                                        app.hold_notice(language.text(
                                             "该命令会改动会话或 Runtime，本轮结束后才能执行；Esc 可立即中断",
                                             "That command changes Session or Runtime state; it runs after this turn. Esc interrupts now",
                                             "このコマンドはセッション/Runtime を変更するため、ターン終了後に実行されます。Esc で即中断",
-                                        ).to_owned();
-                                        app.notice = Some(notice.clone());
-                                        app.notice_hold = Some((notice, Instant::now() + Duration::from_secs(10)));
+                                        ).to_owned(), Duration::from_secs(10));
                                         continue;
                                     },
                                 }
@@ -2066,9 +2094,9 @@ pub(super) async fn event_loop(
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
-                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));app.finish_turn();},
-                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});app.finish_turn();},
-                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));app.finish_turn();},
+                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
