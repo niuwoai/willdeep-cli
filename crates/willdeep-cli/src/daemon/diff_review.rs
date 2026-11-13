@@ -1814,6 +1814,24 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
     })
 }
 
+/// 验证命令两侧使用同一套逐文件内容指纹和 HEAD；读不全则交给整库快照。
+pub(crate) fn verification_inputs(
+    workspace: &Path,
+) -> Result<(String, Option<String>, BTreeMap<String, u64>)> {
+    let captured = capture(workspace)?;
+    // 读取每个文件指纹需要逐个 IO；期间若有并发写入，最初的快照 ID
+    // 可能与这些指纹不属于同一版本。失败时让调用方退回整库比较。
+    let after = snapshot(workspace)?;
+    if after.id != captured.snapshot.id || after.head != captured.snapshot.head {
+        bail!("workspace changed during verification fingerprint capture");
+    }
+    Ok((
+        captured.snapshot.id,
+        captured.snapshot.head,
+        captured.fingerprints,
+    ))
+}
+
 /// 在阻塞线程池上跑 [`capture`]。
 ///
 /// Git 索引批量读取，普通文件比较内容；放在 async worker 上会占着线程不放——同一个

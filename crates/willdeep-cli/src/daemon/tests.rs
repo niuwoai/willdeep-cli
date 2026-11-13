@@ -2013,8 +2013,8 @@ async fn interrupted_goals_resume_once_after_a_restart() {
     );
     assert!(claimed.request.prompt.contains("1. parser tests pass"));
     assert!(
-        claimed.request.prompt.contains("keep going"),
-        "the interrupted turn never recorded its request, so the resume carries it"
+        !claimed.request.prompt.contains("keep going"),
+        "the request is already in durable history and must not be repeated"
     );
     for skipped in [done, wrap, budget, plain] {
         assert!(sessions.claim_next(skipped).unwrap().is_none());
@@ -2026,6 +2026,80 @@ async fn interrupted_goals_resume_once_after_a_restart() {
     assert!(events.contains("reason=wrapping_up"));
     assert!(events.contains("reason=budget_spent"));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 用户消息还未落盘时，图片必须随续推轮次保留，不能只留下文本。
+#[test]
+fn restarted_goal_preserves_unrecorded_image() {
+    let root = std::env::temp_dir().join(format!("willdeep-goal-image-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let store = test_runtime_session_store(&root);
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let session = store
+        .create(session_store::CreateRuntimeSession {
+            id: None,
+            workspace,
+            profile: None,
+            model: None,
+            config: None,
+            title: None,
+        })
+        .unwrap();
+    let image = willdeep_core::MessageAttachment::Image {
+        name: "figure.png".into(),
+        media_type: "image/png".into(),
+        data: "aGVsbG8=".into(),
+        width: 1,
+        height: 1,
+    };
+    let (turn, _) = store
+        .enqueue_turn(
+            session.id,
+            session_store::CreateRuntimeTurn {
+                team_control: None,
+                request_id: uuid::Uuid::new_v4(),
+                prompt: "inspect the image".into(),
+                attachments: vec![image],
+                origin_client: None,
+                defer_until_released: false,
+            },
+        )
+        .unwrap();
+    store.claim_next(session.id).unwrap().unwrap();
+    store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap();
+    let core_store = willdeep_core::SessionStore::new(&root);
+    let mut core = core_store.load_baselined(session.id).unwrap();
+    core.goal_state = Some(willdeep_core::GoalState::new("inspect image"));
+    core_store.save(&mut core).unwrap();
+    drop(store);
+
+    let sessions = test_runtime_session_store(&root);
+    assert_eq!(
+        sessions.get_turn(turn.id).unwrap().unwrap().status,
+        session_store::RuntimeTurnStatus::Interrupted
+    );
+    assert_eq!(
+        sessions
+            .goal_resume_candidates(goal_resume::ORIGIN_PREFIX)
+            .unwrap()
+            .len(),
+        1
+    );
+    let state = test_server_state(&root, sessions.clone());
+    assert_eq!(
+        goal_resume::recover(&state, &Default::default()).unwrap(),
+        1,
+        "{}",
+        std::fs::read_to_string(root.join("events.ndjson")).unwrap_or_default()
+    );
+    let resumed = sessions.claim_next(session.id).unwrap().unwrap();
+    assert_eq!(resumed.request.attachments.len(), 1);
+    assert!(matches!(
+        &resumed.request.attachments[0],
+        willdeep_core::MessageAttachment::Image { name, .. } if name == "figure.png"
+    ));
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// 一个每次都把 daemon 弄崩的续推轮次不会被无限重放。
@@ -2057,7 +2131,8 @@ fn repeated_restart_interruptions_of_resume_turns_stop_resuming() {
             root_agent_id: sessions.get(session).unwrap().unwrap().root_agent_id,
             interrupted_turn_id: turn,
             consecutive_resumes: 1,
-            unrecorded_request: Some("keep going".to_owned()),
+            unrecorded_request: None,
+            unrecorded_attachments: Vec::new(),
         }]
     );
     let _ = std::fs::remove_dir_all(&root);

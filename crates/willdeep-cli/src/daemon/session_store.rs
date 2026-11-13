@@ -165,6 +165,9 @@ pub(crate) struct RuntimeTurn {
     pub message_end: Option<usize>,
     #[serde(default)]
     pub message_generation: u64,
+    /// 本轮消息之前的用户消息数量；压缩保留用户消息，可据此重定位边界。
+    #[serde(default)]
+    pub user_message_ordinal: Option<usize>,
     /// 这一轮开始前的工作区检查点（影子仓库里的 commit）。没拍到就是 `None`：
     /// 不是 git 仓库、检查点被关掉、或这条记录早于检查点功能。
     #[serde(default)]
@@ -221,9 +224,9 @@ pub(super) struct GoalResumeCandidate {
     pub interrupted_turn_id: uuid::Uuid,
     /// 从最后一轮往前数，连续由自动续推发起的轮次数（含被打断的这一轮）。
     pub consecutive_resumes: usize,
-    /// 被打断的轮次还没把用户那一句写进历史时，这里是原句。已经写进去的为 `None`：
-    /// 原句留在历史里，续推提示词不再重复。
+    /// 原轮次的用户消息还未落盘时，续推携带原句和附件；已经落盘则都留在历史里。
     pub unrecorded_request: Option<String>,
+    pub unrecorded_attachments: Vec<willdeep_core::MessageAttachment>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1439,6 +1442,7 @@ impl RuntimeSessionStore {
             message_start: None,
             message_end: None,
             message_generation: 0,
+            user_message_ordinal: None,
             workspace_checkpoint: None,
         };
         if let (Some(recorder), Some((prev_status, gap_ms, queued_behind, prev_turn_id))) =
@@ -1575,12 +1579,19 @@ impl RuntimeSessionStore {
                         .is_some_and(|origin| origin.starts_with(resume_origin_prefix))
                 })
                 .count();
+            let unrecorded_request = execution::unrecorded_request(&self.core, last);
+            let unrecorded_attachments = if unrecorded_request.is_some() {
+                last.attachments.clone()
+            } else {
+                Vec::new()
+            };
             candidates.push(GoalResumeCandidate {
                 session_id: session.id,
                 root_agent_id: session.root_agent_id,
                 interrupted_turn_id: last.metadata.id,
                 consecutive_resumes,
-                unrecorded_request: unrecorded_request(&self.core, last),
+                unrecorded_request,
+                unrecorded_attachments,
             });
         }
         candidates.sort_by_key(|candidate| candidate.session_id);
@@ -2819,26 +2830,6 @@ fn load_sessions(path: &Path) -> Result<(HashMap<uuid::Uuid, RuntimeSession>, bo
             .collect(),
         migrated,
     ))
-}
-
-/// 这一轮的目标还在进行、没进入收尾。这样的轮次不按原句重放，标成
-/// [`RESTART_INTERRUPTED_ERROR`]，由 `goal_resume` 排一轮带对账的续推。
-/// 读不出 core 会话时按「不是」处理，退回原有的重放判定。
-/// 被打断的轮次还没把用户那一句写进历史时，返回原句。读不出 core 会话，或
-/// 历史末尾就是这句，返回 `None`：重放判定读不出时宁可少带一句，不重复已落盘的。
-fn unrecorded_request(
-    core_store: &willdeep_core::SessionStore,
-    turn: &StoredRuntimeTurn,
-) -> Option<String> {
-    let core = core_store.load(turn.metadata.session_id).ok()?;
-    let recorded = core.messages.last().is_some_and(|message| {
-        message.role == willdeep_core::Role::User && message.content == turn.prompt
-    });
-    if recorded {
-        None
-    } else {
-        Some(turn.prompt.clone())
-    }
 }
 
 fn active_goal_awaits_restart_resume(
