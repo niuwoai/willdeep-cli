@@ -734,7 +734,7 @@ impl RuntimeSessionStore {
         let reasoning_level = if source.profile == target_profile {
             source.reasoning_level.clone()
         } else if let Some(level) = source.reasoning_level.as_deref() {
-            let loaded = crate::config::LoadedConfig::load(source.config.as_deref())?;
+            let loaded = crate::config::LoadedConfig::load_runtime(source.config.as_deref())?;
             let profile = loaded.select_provider(target_profile.as_deref())?;
             willdeep_core::provider::accepts_reasoning_level(
                 profile.and_then(|profile| profile.reasoning.as_ref()),
@@ -787,7 +787,7 @@ impl RuntimeSessionStore {
         if target_profile != source.profile {
             core.magpie_integration =
                 if target_profile.as_deref() == Some(crate::magpie_integration::PROFILE_ID) {
-                    let loaded = crate::config::LoadedConfig::load(core.config.as_deref())?;
+                    let loaded = crate::config::LoadedConfig::load_runtime(core.config.as_deref())?;
                     crate::magpie_integration::EffectiveProviders::snapshot(&loaded.file)
                         .config(crate::magpie_integration::PROFILE_ID)?
                         .magpie_integration

@@ -381,7 +381,7 @@ pub(super) fn render_with_user_folds(
 }
 
 /// [`render_with_user_folds`] 加上两样只影响画面的设置：回复行显示的名字，
-/// 以及每条记录之间额外空出的行数。记录原文不动，复制和搜索拿到的还是原样。
+/// 以及每条记录之间额外空出的行数。记录原文不动，显示名由调用方明确指定。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_transcript(
     rows: &[String],
@@ -406,18 +406,26 @@ pub(super) fn render_transcript(
         // 真正画整段聊天区的最后一行时才补上。
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
-        let displayed = if assistant_name.is_empty() {
-            divider_without_your_turn(row, language)
-        } else {
-            named_assistant_row(&divider_without_your_turn(row, language), assistant_name)
-        };
+        let displayed = divider_without_your_turn(row, language);
         // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
+        // 名字只影响画面，不参与正文解析或修改记录（欢迎语的助手行藏在多行记录里）。
         let (mut entry, mut row_code_blocks) = if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
-            rendering::render_assistant_entry_with_code_blocks(&displayed, search, width)
+            rendering::render_assistant_entry_with_code_blocks(
+                &displayed,
+                search,
+                width,
+                assistant_name,
+            )
         } else {
             (
                 wrap_styled_text(
-                    colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
+                    rendering::colored_transcript_with_name(
+                        std::slice::from_ref(&displayed),
+                        search,
+                        width,
+                        language,
+                        assistant_name,
+                    ),
                     width,
                 ),
                 Vec::new(),

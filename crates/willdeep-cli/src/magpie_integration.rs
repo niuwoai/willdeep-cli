@@ -545,7 +545,7 @@ pub async fn pin_new(
     if request.profile.is_none() {
         request.profile = workspace_profile;
     }
-    let loaded = LoadedConfig::load(request.config.as_deref())?;
+    let loaded = LoadedConfig::load_runtime(request.config.as_deref())?;
     let mut cli = crate::Cli::bare();
     cli.config = request.config.clone();
     cli.profile = request.profile.clone();

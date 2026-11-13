@@ -1709,7 +1709,13 @@ async fn run(home: &Path) -> Result<()> {
         crate::usage_cmd::backfill_on_daemon_start(&backfill_home)
     })
     .await;
-    let events = Arc::new(EventLog::open(paths.events.clone())?);
+    let event_log_settings =
+        crate::config::event_log_settings_from_config(&crate::config::LoadedConfig::load_runtime(None));
+    let events = Arc::new(EventLog::open(
+        paths.events.clone(),
+        home,
+        &event_log_settings,
+    )?);
     let agents = Arc::new(AgentStore::open(paths.agents.clone())?);
     let agent_commands = Arc::new(AgentCommandStore::open(paths.agent_commands.clone())?);
     let sessions = Arc::new(session_store::RuntimeSessionStore::open_guarded(
@@ -1719,7 +1725,7 @@ async fn run(home: &Path) -> Result<()> {
     )?);
     // 反馈账本（RSI 强反馈）：所有前端的轮次都从这里过，一处挂上即全覆盖。
     // 配置读不出来就按默认（开、只记 hash），不为它挡启动。
-    let feedback_settings = crate::config::LoadedConfig::load(None)
+    let feedback_settings = crate::config::LoadedConfig::load_runtime(None)
         .map(|loaded| loaded.file.feedback)
         .unwrap_or_default();
     if feedback_settings.enabled {
@@ -1861,7 +1867,7 @@ async fn run(home: &Path) -> Result<()> {
     // 调度或 `goal_resume` 自己叫醒调度通道领走。
     goal_resume::spawn(
         server_state.clone(),
-        crate::config::LoadedConfig::load(None)
+        crate::config::LoadedConfig::load_runtime(None)
             .map(|loaded| loaded.file.agent)
             .unwrap_or_default(),
     );

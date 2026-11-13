@@ -2420,6 +2420,233 @@ fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn recovered_inbox_matches_trimmed_text_to_original_submission() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-trimmed-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "compressing".into());
+    app.message_times.event_time = Some(100);
+    app.input.insert("  A  ");
+    app.queue_submitted_prompt();
+    let first_order = app.queued_prompts[0].submission_order;
+    let first_time = app.queued_submission_time(0);
+    let inbox = agent.instruction_inbox().unwrap();
+    assert!(inbox.push_operator("  A  ".into()));
+    app.note_steering_delivered_with_order("  A  ", first_time, first_order);
+    app.remove_queued_prompt_row(0);
+    app.queued_prompts.pop_front();
+    app.message_times.event_time = Some(200);
+    app.input.insert("A");
+    app.queue_submitted_prompt();
+    app.message_times.event_time = None;
+
+    requeue_undelivered_steering(&mut app, &agent);
+    assert_eq!(
+        app.queued_prompts
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>(),
+        ["  A  ", "A"]
+    );
+    assert_eq!(app.queued_submission_time(0), 100);
+    assert_eq!(app.queued_submission_time(1), 200);
+    assert!(app.deferred_steering.is_empty());
+    app.finish_turn();
+    assert!(!app.transcript.iter().any(|row| row == "You:   A  "));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn recovered_inbox_keeps_submission_order_and_duplicate_echo_identity() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-ordered-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "working".to_owned());
+    app.input.insert("older with attachment");
+    app.attachments
+        .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+    app.queue_submitted_prompt();
+
+    app.message_times.event_time = Some(100);
+    app.input.insert("same");
+    app.queue_submitted_prompt();
+    let first_order = app.queued_prompts[1].submission_order;
+    let first_time = app.queued_submission_time(1);
+    assert_eq!(first_time, 100);
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("same".into())
+    );
+    app.note_steering_delivered_with_order("same", first_time, first_order);
+    app.remove_queued_prompt_row(1);
+    app.queued_prompts.remove(1);
+
+    // Another inbox message was submitted before the local queue received B.
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("middle".into())
+    );
+    app.note_steering_delivered("middle", 150);
+    app.message_times.event_time = Some(200);
+    app.input.insert("same");
+    app.queue_submitted_prompt();
+    app.message_times.event_time = None;
+    let second_row = app.queued_prompts[1].transcript_row.unwrap();
+    let second_time = app.queued_submission_time(1);
+    assert_eq!(second_time, 200);
+
+    requeue_undelivered_steering(&mut app, &agent);
+    assert_eq!(
+        app.queued_prompts
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>(),
+        ["older with attachment", "same", "middle", "same"]
+    );
+    assert_eq!(app.queued_prompts[0].attachments.len(), 1);
+    assert_eq!(app.queued_submission_time(1), 100);
+    assert_eq!(app.queued_submission_time(3), 200);
+    assert_eq!(app.queued_prompts[3].transcript_row, Some(second_row));
+    let first_row = app.queued_prompts[1].transcript_row.unwrap();
+    assert!(
+        first_row > second_row,
+        "recovered A's echo is appended after B's"
+    );
+    app.finish_turn();
+    assert!(app.deferred_steering.is_empty());
+    assert!(!app.transcript.iter().any(|row| row == "You: middle"));
+
+    // Editing A targets its later echo, not B's identical earlier echo.
+    app.open_prompt_queue();
+    app.prompt_queue.as_mut().unwrap().selected = 1;
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    app.prompt_queue
+        .as_mut()
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap()
+        .insert(" first");
+    app.handle_queue_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.transcript[first_row],
+        app.queued_prompt_row("same first")
+    );
+    assert_eq!(app.transcript[second_row], app.queued_prompt_row("same"));
+    app.prompt_queue = None;
+
+    // Sending A must claim its own later echo and leave B's earlier one untouched.
+    let first = app.queued_prompts.remove(1).unwrap();
+    app.mark_queued_prompt_sent_at(&first.text, first.transcript_row);
+    assert_eq!(app.queued_submission_time(2), 200);
+    assert_eq!(app.transcript[second_row], app.queued_prompt_row("same"));
+    assert!(app.transcript.iter().any(|row| row == "You: same first"));
+    assert_eq!(
+        app.message_times.time_at(app.transcript.len() - 1),
+        Some(100)
+    );
+
+    // Editing B and deleting it must still target B, even after A is sent.
+    app.open_prompt_queue();
+    app.prompt_queue.as_mut().unwrap().selected = 2;
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    app.prompt_queue
+        .as_mut()
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap()
+        .insert(" edited");
+    app.handle_queue_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.transcript[second_row],
+        app.queued_prompt_row("same edited")
+    );
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    assert!(
+        !app.transcript
+            .iter()
+            .any(|row| row == &app.queued_prompt_row("same edited"))
+    );
+    assert_eq!(app.queued_prompts.len(), 2);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn local_interrupt_recovers_inbox_before_finishing_turn() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-interrupt-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "working".to_owned());
+    app.local_turn = Some(tokio::spawn(std::future::pending::<()>()));
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("interrupted".into())
+    );
+    app.note_steering_delivered("interrupted", 100);
+
+    interrupt_local_turn(&mut app, &agent).await;
+
+    assert!(!app.running);
+    assert!(app.deferred_steering.is_empty());
+    assert!(!agent.instruction_inbox().unwrap().has_pending());
+    assert_eq!(app.queued_prompts[0].text, "interrupted");
+    assert_eq!(app.queued_submission_time(0), 100);
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row == "You: [queued] interrupted")
+    );
+    assert!(!app.transcript.iter().any(|row| row == "You: interrupted"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// 这个测试只把收件箱里的插话交回队列，不该真的去调模型。
 struct SilentProvider;
 

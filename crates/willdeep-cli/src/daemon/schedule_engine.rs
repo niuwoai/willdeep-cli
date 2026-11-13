@@ -326,7 +326,7 @@ fn freeze_configuration(state: &ServerState, mut task: ScheduledTask) -> Result<
         .clone()
         .unwrap_or_else(|| state.home.join("config.toml"));
     if path.exists() {
-        let loaded = crate::config::LoadedConfig::load(Some(&path))?;
+        let loaded = crate::config::LoadedConfig::load_runtime(Some(&path))?;
         let mut cli = crate::Cli::try_parse_from(["willdeep"])?;
         cli.profile = task
             .settings
@@ -499,7 +499,7 @@ fn dispatch_run(state: &ServerState, mut run: ScheduleRun, now: u64) -> Result<S
 fn has_capacity(state: &ServerState, history: &ScheduleHistoryStore) -> Result<bool> {
     let path = state.home.join("config.toml");
     let limit = if path.exists() {
-        crate::config::LoadedConfig::load(Some(&path))?
+        crate::config::LoadedConfig::load_runtime(Some(&path))?
             .file
             .agent
             .schedule_max_active

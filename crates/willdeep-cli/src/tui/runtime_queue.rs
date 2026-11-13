@@ -72,10 +72,13 @@ impl App {
             .map(|item| item.id);
         self.queued_prompts.retain(|item| item.remote.is_none());
         for item in items {
+            let submission_order = self.next_submission_order();
             self.queued_prompts.push_back(QueuedPrompt {
                 text: item.text.clone(),
                 attachments: Vec::new(),
                 remote: Some(item),
+                submission_order,
+                transcript_row: None,
             });
         }
         // 还在队列里的保持原样；被删掉或改掉的，回显行改成「未发送」。

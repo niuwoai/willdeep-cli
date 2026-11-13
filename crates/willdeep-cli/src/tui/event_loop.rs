@@ -31,7 +31,12 @@ async fn handle_queue_action(
             && !text.trim_start().starts_with('/')
             && steer_running_turn(app, session, runtime, agent, &text).await
         {
-            app.note_steering_delivered(&text, app.queued_submission_time(index));
+            let submission_order = app.queued_prompts[index].submission_order;
+            app.note_steering_delivered_with_order(
+                &text,
+                app.queued_submission_time(index),
+                submission_order,
+            );
             app.remove_queued_prompt_row(index);
             app.queued_prompts.remove(index);
             app.prompt_queue.as_mut().unwrap().show_feedback(
@@ -741,7 +746,12 @@ pub(super) async fn event_loop(
         if app.permission_picker.is_none() && app.queued_steering_ready() {
             let text = app.queued_prompts.front().unwrap().text.clone();
             if steer_running_turn(&app, session, runtime, &agent, &text).await {
-                app.note_steering_delivered(&text, app.queued_submission_time(0));
+                let submission_order = app.queued_prompts[0].submission_order;
+                app.note_steering_delivered_with_order(
+                    &text,
+                    app.queued_submission_time(0),
+                    submission_order,
+                );
                 app.remove_queued_prompt_row(0);
                 app.queued_prompts.pop_front();
                 app.waiting_background = false;
@@ -798,7 +808,7 @@ pub(super) async fn event_loop(
             app.selected_attachment = draft_selected_attachment;
             match result {
                 Ok(()) => {
-                    app.mark_queued_prompt_sent(&queued.text);
+                    app.mark_queued_prompt_sent_at(&queued.text, queued.transcript_row);
                     app.attach_to_latest_user_row(
                         queued
                             .attachments
@@ -2024,7 +2034,7 @@ pub(super) async fn event_loop(
                             let now = Instant::now();
                             if interrupt_esc_deadline.is_some_and(|deadline| now <= deadline) {
                                 interrupt_esc_deadline = None;
-                                match interrupt_turn(&mut app,session,runtime).await {
+                                match interrupt_turn(&mut app,session,runtime,&agent).await {
                                     Ok(message)=>app.notice=Some(message),
                                     Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
                                 }

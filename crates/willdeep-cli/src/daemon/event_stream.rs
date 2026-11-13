@@ -13,7 +13,10 @@ const LIVE_BACKLOG_LIMIT: usize = 1_000;
 #[cfg(test)]
 mod group_commit_tests;
 mod index;
+mod rotation;
 mod writer;
+
+use rotation::maybe_rotate_before_open;
 
 use index::EventIndex;
 
@@ -30,7 +33,19 @@ struct EventLogState {
 }
 
 impl EventLog {
-    pub(super) fn open(path: PathBuf) -> Result<Self> {
+    pub(crate) fn open_for_tests(path: PathBuf) -> Result<Self> {
+        Self::open(
+            path,
+            Path::new("."),
+            &crate::config::EventLogSettings {
+                rotate_bytes: 0,
+                retain_archives: 0,
+            },
+        )
+    }
+
+    pub(super) fn open(path: PathBuf, home: &Path, settings: &crate::config::EventLogSettings) -> Result<Self> {
+        maybe_rotate_before_open(&path, home, settings)?;
         let index = EventIndex::scan(&path)?;
         let next_sequence = index.head().saturating_add(1);
         let (live, _) = tokio::sync::broadcast::channel(512);
@@ -388,7 +403,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("willdeep-live-events-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let log = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+        let log = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
         log.append("first", "one").unwrap();
         let receiver = log.subscribe();
         log.append("second", "two").unwrap();
@@ -414,7 +429,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("willdeep-event-shutdown-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let log = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+        let log = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
         let (shutdown, receiver) = tokio::sync::watch::channel(false);
         let mut state = LiveEventState {
             backlog: VecDeque::new(),
@@ -449,14 +464,14 @@ mod tests {
             attempt: 2,
             delay: Duration::from_millis(1500),
         });
-        let log = EventLog::open(path.clone()).unwrap();
+        let log = EventLog::open_for_tests(path.clone()).unwrap();
         log.append(
             "task.output",
             format!("task_id={} {payload}", uuid::Uuid::new_v4()),
         )
         .unwrap();
         drop(log);
-        let reopened = EventLog::open(path).unwrap();
+        let reopened = EventLog::open_for_tests(path).unwrap();
         let events = reopened.read_after(0, 10).unwrap();
         assert_eq!(events.len(), 1);
         let public = public_event(events[0].clone());
@@ -474,7 +489,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("willdeep-event-race-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let log = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+        let log = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
         log.append("first", "one").unwrap();
         let write_guard = log.state.lock().unwrap();
         let event = RuntimeEvent {

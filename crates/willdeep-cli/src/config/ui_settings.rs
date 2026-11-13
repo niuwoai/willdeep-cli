@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de::Error as _};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -72,11 +72,22 @@ pub struct UiSettings {
     pub copy_on_select: bool,
     /// 聊天区每条记录之间额外空出的行数。0 是原来的紧凑排版，上限见
     /// [`MAX_LINE_SPACING`]。终端一行就是一行，这里调的是行与行之间的空白。
+    #[serde(deserialize_with = "deserialize_line_spacing")]
     pub line_spacing: u8,
 }
 
 /// 行距的上限。再大就把一屏挤到只剩两三行字，得不偿失。
 pub const MAX_LINE_SPACING: u8 = 3;
+
+fn deserialize_line_spacing<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+    let spacing = u8::deserialize(deserializer)?;
+    if spacing > MAX_LINE_SPACING {
+        return Err(D::Error::custom(format!(
+            "line_spacing must be between 0 and {MAX_LINE_SPACING}"
+        )));
+    }
+    Ok(spacing)
+}
 
 impl Default for UiSettings {
     fn default() -> Self {
@@ -233,6 +244,23 @@ mod tests {
         assert!(
             toml::from_str::<ConfigFile>("[ui]\ninput_suggestion_color = 'not-a-color'").is_err()
         );
+    }
+
+    #[test]
+    fn toml_line_spacing_rejects_values_above_the_ui_limit() {
+        let defaults: ConfigFile = toml::from_str("[ui]").unwrap();
+        assert_eq!(defaults.ui.line_spacing, 0);
+        for spacing in [0, MAX_LINE_SPACING] {
+            let config: ConfigFile =
+                toml::from_str(&format!("[ui]\nline_spacing = {spacing}")).unwrap();
+            assert_eq!(config.ui.line_spacing, spacing);
+        }
+        for spacing in [MAX_LINE_SPACING + 1, 255] {
+            let error = toml::from_str::<ConfigFile>(&format!("[ui]\nline_spacing = {spacing}"))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("line_spacing"), "{error}");
+        }
     }
 
     #[test]

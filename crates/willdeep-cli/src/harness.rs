@@ -392,7 +392,7 @@ pub(crate) async fn execute_runtime(
     prepare_execution: impl FnOnce(&willdeep_core::Session) -> Result<()>,
 ) -> Result<RuntimeHarnessOutcome> {
     let mut preparation = willdeep_core::preparation::PreparationTrace::new("runtime_execution");
-    let loaded = LoadedConfig::load(request.config.as_deref())?;
+    let loaded = LoadedConfig::load_runtime(request.config.as_deref())?;
     let language = Language::parse(loaded.file.agent.language.as_deref())?;
     let cli = Cli {
         command: None,

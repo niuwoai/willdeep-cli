@@ -257,7 +257,7 @@ pub(in crate::daemon) async fn preflight(
     let profile = parent.profile.clone().ok_or_else(|| {
         control_api::ApiFailure::invalid("parent Session has no Provider profile")
     })?;
-    let loaded = crate::config::LoadedConfig::load(parent.config.as_deref())
+    let loaded = crate::config::LoadedConfig::load_runtime(parent.config.as_deref())
         .map_err(control_api::ApiFailure::internal)?;
     let mut provider =
         crate::provider_config_from_profile(&loaded.file, &profile).map_err(|error| {

@@ -28,7 +28,7 @@ impl Harness {
         // Use the production layout: the execution Harness reads the persisted
         // confirmation policy from this same Runtime Turn ledger.
         let paths = crate::daemon::DaemonPaths::new(&root);
-        let events = Arc::new(EventLog::open(paths.events).unwrap());
+        let events = Arc::new(EventLog::open_for_tests(paths.events).unwrap());
         let agents = Arc::new(AgentStore::open(paths.agents).unwrap());
         let sessions = Arc::new(
             session_store::RuntimeSessionStore::open(paths.runtime_sessions, &root).unwrap(),

@@ -125,10 +125,13 @@ mod tests {
     fn queued_messages_suppress_the_ready_cue_and_bell() {
         let mut app = App::new(Vec::new(), Language::En);
         app.begin_turn(true, "working".into());
+        let submission_order = app.next_submission_order();
         app.queued_prompts.push_back(QueuedPrompt {
             remote: None,
             text: "queued follow-up".into(),
             attachments: Vec::new(),
+            submission_order,
+            transcript_row: None,
         });
         app.finish_turn();
         let mut bytes = Vec::new();

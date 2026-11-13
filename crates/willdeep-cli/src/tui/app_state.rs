@@ -63,6 +63,7 @@ impl App {
             mobile_status: None,
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
+            next_prompt_submission_order: 0,
             runtime_queue_submission: None,
             queue_draft: PromptEditor::default(),
             queue_draft_attachments: Vec::new(),
@@ -849,6 +850,7 @@ impl App {
         }
     }
     pub(super) fn refresh_search_matches(&mut self) {
+        let assistant_name = self.assistant_name();
         let Some(search) = &mut self.search else {
             return;
         };
@@ -859,7 +861,12 @@ impl App {
             self.transcript
                 .iter()
                 .enumerate()
-                .filter_map(|(index, value)| value.to_lowercase().contains(&query).then_some(index))
+                .filter_map(|(index, value)| {
+                    rendering::searchable_transcript_row(value, &assistant_name)
+                        .to_lowercase()
+                        .contains(&query)
+                        .then_some(index)
+                })
                 .collect()
         };
         search.selected = 0;

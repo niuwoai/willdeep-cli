@@ -1500,7 +1500,7 @@ fn session_update_reasoning_level(state: &ServerState, request: &ApiRequest) -> 
         .ok_or_else(|| ApiFailure::not_found("Runtime Session not found"))?;
     if let Some(level) = params.reasoning_level.as_deref() {
         let loaded =
-            crate::config::LoadedConfig::load(existing.config.as_deref()).map_err(|error| {
+            crate::config::LoadedConfig::load_runtime(existing.config.as_deref()).map_err(|error| {
                 ApiFailure::invalid(format!("cannot load Session provider config: {error}"))
             })?;
         let profile = loaded

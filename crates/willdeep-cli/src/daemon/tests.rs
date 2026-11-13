@@ -28,7 +28,7 @@ pub(super) fn test_server_state_with_scheduler(
     sessions: Arc<session_store::RuntimeSessionStore>,
     scheduler: tokio::sync::mpsc::UnboundedSender<uuid::Uuid>,
 ) -> ServerState {
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(root);
     ServerState {
         home: root.to_path_buf(),
@@ -294,7 +294,7 @@ async fn runtime_sink_attributes_child_agent_file_changes_without_chat_metadata(
         root_agent_id,
         home: root.clone(),
         workspace: workspace.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         tools: tools.clone(),
         diff_baselines: AsyncMutex::new(HashMap::new()),
@@ -420,7 +420,7 @@ async fn shutdown_signal_is_observed_by_late_and_parallel_listeners() {
 async fn authorization_requires_exact_local_token() {
     let root = std::env::temp_dir().join(format!("willdeep-daemon-auth-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let state = Arc::new(ServerState {
         home: root.clone(),
@@ -518,13 +518,13 @@ fn event_log_assigns_sequences_and_resumes_after_cursor() {
     let root = std::env::temp_dir().join(format!("willdeep-events-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     assert_eq!(log.append("first", "one").unwrap().sequence, 1);
     assert_eq!(log.append("second", "two").unwrap().sequence, 2);
     assert_eq!(log.read_after(1, 10).unwrap()[0].kind, "second");
     drop(log);
 
-    let reopened = EventLog::open(path).unwrap();
+    let reopened = EventLog::open_for_tests(path).unwrap();
     assert_eq!(reopened.append("third", "three").unwrap().sequence, 3);
     assert_eq!(reopened.read_after(0, 2).unwrap().len(), 2);
     std::fs::remove_dir_all(root).unwrap();
@@ -837,7 +837,7 @@ fn restart_recovery_closes_child_agent_tool_and_command_resources_once() {
     let agents = AgentStore::open(agents_path).unwrap();
     let commands = AgentCommandStore::open(commands_path).unwrap();
     let tools = tool_store::ToolStore::open(tools_path).unwrap();
-    let events = EventLog::open(root.join("events.ndjson")).unwrap();
+    let events = EventLog::open_for_tests(root.join("events.ndjson")).unwrap();
     report_execution_resource_recovery(&events, &agents, &commands, &tools).unwrap();
 
     let child = agents.get(child_id).unwrap().unwrap();
@@ -944,7 +944,7 @@ fn task_store_marks_active_tasks_interrupted_after_restart() {
     };
     persist_tasks(&path, &HashMap::from([(id, task)])).unwrap();
     let agents = test_agent_store(&root);
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1003,7 +1003,7 @@ fn task_recovery_survives_dangling_session_reference() {
         error: None,
     };
     persist_tasks(&path, &HashMap::from([(id, task)])).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1082,7 +1082,7 @@ fn task_recovery_interrupts_waiting_task_and_cancels_its_interaction() {
         )]),
     )
     .unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path: tasks_path,
         interactions_path: interactions_path.clone(),
@@ -1162,7 +1162,7 @@ fn task_recovery_preserves_the_session_root_agent_id() {
     };
     persist_tasks(&path, &HashMap::from([(task_id, task)])).unwrap();
     let agents = test_agent_store(&root);
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1252,7 +1252,7 @@ async fn concurrent_task_updates_persist_a_complete_snapshot() {
     ));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("tasks.json");
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let manager = Arc::new(
         TaskManager::open(TaskManagerOptions {
@@ -1317,7 +1317,7 @@ async fn drain_wait_ignores_stale_cancellation_for_terminal_task() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1376,7 +1376,7 @@ async fn drain_does_not_wait_on_tasks_that_are_waiting_on_a_human() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1437,7 +1437,7 @@ async fn drain_still_waits_for_work_that_finishes_on_its_own() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1532,7 +1532,7 @@ fn active_runtime_task_statuses_are_explicit() {
 async fn pending_approval_blocks_until_a_valid_resolution_arrives() {
     let root = std::env::temp_dir().join(format!("willdeep-interaction-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let manager = TaskManager::open(TaskManagerOptions {
         path: root.join("tasks.json"),
@@ -1628,7 +1628,7 @@ async fn approval_resolutions_reach_the_feedback_ledger() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions,
         turn_scheduler: test_turn_scheduler(),
@@ -1755,7 +1755,7 @@ async fn daemon_turns_link_ledger_lines_to_their_usage_events() {
     std::fs::create_dir_all(&workspace).unwrap();
     let task_id = uuid::Uuid::new_v4();
     let session_id = uuid::Uuid::new_v4();
-    let events = Arc::new(EventLog::open(home.join("runtime/events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(home.join("runtime/events.ndjson")).unwrap());
     let sink = Arc::new(RuntimeEventSink {
         task_id,
         session_id: Some(session_id),

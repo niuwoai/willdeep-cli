@@ -518,10 +518,13 @@ mod tests {
     fn queued_edit_and_cancel_keep_draft_and_parent_queue() {
         let mut app = App::new(Vec::new(), Language::En);
         app.attachments = vec![text("draft")];
+        let submission_order = app.next_submission_order();
         app.queued_prompts.push_back(QueuedPrompt {
             remote: None,
             text: "queued".to_owned(),
             attachments: vec![text("original")],
+            submission_order,
+            transcript_row: None,
         });
         app.open_prompt_queue();
         app.open_attachments(Target::Queued(0));

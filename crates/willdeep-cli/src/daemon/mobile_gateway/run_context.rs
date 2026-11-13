@@ -24,7 +24,7 @@ fn loaded(
         .clone()
         .unwrap_or_else(|| server.home.join("config.toml"));
     let config = if session.config.is_some() || path.exists() {
-        crate::config::LoadedConfig::load(Some(path.as_path()))?
+        crate::config::LoadedConfig::load_runtime(Some(path.as_path()))?
     } else {
         crate::config::LoadedConfig {
             file: crate::config::ConfigFile::default(),

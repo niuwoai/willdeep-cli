@@ -100,7 +100,7 @@ pub(super) async fn continue_agent(state: &ServerState, request: &ApiRequest) ->
         message: message.into(),
         request_id: params.request_id,
     };
-    let settings = crate::config::LoadedConfig::load(session.config.as_deref())
+    let settings = crate::config::LoadedConfig::load_runtime(session.config.as_deref())
         .map_err(ApiFailure::internal)?
         .file
         .agent_team;

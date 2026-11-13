@@ -248,7 +248,7 @@ fn read_settings(config_path: &Path) -> Result<Option<(IntakeSettings, Federatio
     if !config_path.exists() {
         return Ok(None);
     }
-    let file = crate::config::LoadedConfig::load(Some(config_path))?.file;
+    let file = crate::config::LoadedConfig::load_runtime(Some(config_path))?.file;
     Ok(Some((file.intake, file.federation)))
 }
 
