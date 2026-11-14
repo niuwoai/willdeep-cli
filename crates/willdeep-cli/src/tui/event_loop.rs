@@ -2081,7 +2081,8 @@ pub(super) async fn event_loop(
                     app.dismiss_compression_notice();
                     append_plan_result(&mut app.transcript,&serde_json::to_string(&willdeep_core::planning::Receipt::new(plan,false))?);
                 },
-                UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
+                UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="rename_instance" {app.load_assistant_name();}
+                    if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
                     if !is_error && call.name=="workflow_control" && let Ok(value)=serde_json::from_str::<serde_json::Value>(&output) && let Some(run)=value.get("workflow").and_then(|run|serde_json::from_value(run.clone()).ok()) {workflow_ui::update(&mut app.transcript,run,false);}
                     if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&call.name,&call.arguments),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
                 UiMessage::Agent(AgentEvent::Usage(v))=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
