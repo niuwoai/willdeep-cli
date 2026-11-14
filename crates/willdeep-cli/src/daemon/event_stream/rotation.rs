@@ -121,7 +121,7 @@ mod tests {
             std::env::temp_dir().join(format!("wd-event-rotate-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("runtime")).unwrap();
         let path = root.join("runtime/events.ndjson");
-        let payload = format!("{}", "x".repeat(4096));
+        let payload = "x".repeat(4096);
         std::fs::write(&path, payload).unwrap();
         let settings = EventLogSettings {
             rotate_bytes: 1024,

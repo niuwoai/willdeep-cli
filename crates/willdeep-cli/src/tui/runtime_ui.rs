@@ -905,9 +905,26 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
         Some("completed" | "partial") => {
             let goal_complete =
                 value.get("stop_reason").and_then(|value| value.as_str()) == Some("goal_complete");
+            let partial = value.get("type").and_then(|value| value.as_str()) == Some("partial");
+            if partial {
+                let stop_reason = value
+                    .get("stop_reason")
+                    .and_then(|value| value.as_str())
+                    .and_then(willdeep_core::AgentStopReason::from_wire);
+                let turns = value
+                    .get("turns")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0) as usize;
+                if let Some(stop_reason) = stop_reason
+                    && let Some(text) =
+                        crate::harness::partial_outcome_status_text(stop_reason, turns, app.language)
+                {
+                    app.append_transcript(format!("System: {text}"));
+                }
+            }
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
-                // 最后一段多半已经作中途文字显示过，只补没见过的部分（比如轮次
-                // 上限提示）；镜像持久化也只补这一部分。
+                // 最后一段多半已经作中途文字显示过，只补没见过的部分；系统状态行
+                // 已单独落在 System:，不再冒充 assistant。
                 let remainder = app.note_reply(text);
                 if goal_complete {
                     app.note_goal_completed();

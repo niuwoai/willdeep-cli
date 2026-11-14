@@ -2300,13 +2300,10 @@ mod tests {
         assert_eq!(app.transcript.len(), 1);
 
         assert_eq!(
-            app.note_reply("⚠ limit\n\nNow update the log line"),
-            Some("⚠ limit".to_owned())
+            app.note_reply("Now update the log line"),
+            None
         );
-        assert_eq!(
-            app.transcript,
-            vec!["WillDeep: Now update the log line", "WillDeep: ⚠ limit"]
-        );
+        assert_eq!(app.transcript, vec!["WillDeep: Now update the log line"]);
     }
 
     #[test]
@@ -2369,11 +2366,8 @@ mod tests {
         // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
         app.begin_turn(true, "working".to_owned());
         app.note_narration("写完了");
-        assert_eq!(
-            app.note_reply("⚠ 轮次上限\n\n写完了"),
-            Some("⚠ 轮次上限\n\n写完了".to_owned())
-        );
-        assert!(app.transcript.iter().any(|row| row.contains("轮次上限")));
+        assert_eq!(app.note_reply("写完了"), Some("写完了".to_owned()));
+        assert!(!app.transcript.iter().any(|row| row.contains("轮次上限")));
         assert_eq!(
             app.transcript
                 .iter()

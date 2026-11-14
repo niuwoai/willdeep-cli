@@ -33,6 +33,8 @@ struct EventLogState {
 }
 
 impl EventLog {
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn open_for_tests(path: PathBuf) -> Result<Self> {
         Self::open(
             path,

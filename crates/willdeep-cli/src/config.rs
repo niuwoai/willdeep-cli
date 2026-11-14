@@ -643,19 +643,11 @@ fn default_feedback_enabled() -> bool {
 }
 
 /// `[runtime]`：本地 Runtime Daemon 的维护策略。
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeSettings {
     #[serde(default)]
     pub events: EventLogSettings,
-}
-
-impl Default for RuntimeSettings {
-    fn default() -> Self {
-        Self {
-            events: EventLogSettings::default(),
-        }
-    }
 }
 
 /// `runtime.events`：`events.ndjson` 全机事件总线的归档与重新开始。
@@ -972,14 +964,14 @@ impl LoadedConfig {
                 Ok(loaded)
             }
             Err(error) => {
-                if let Ok(cache) = RUNTIME_CONFIG_CACHE.lock() {
-                    if let Some(cached) = cache.get(&path) {
-                        eprintln!(
-                            "warning: configuration reload failed ({}): {error:#}; continuing with last successfully loaded configuration",
-                            path.display()
-                        );
-                        return Ok(cached.clone());
-                    }
+                if let Ok(cache) = RUNTIME_CONFIG_CACHE.lock()
+                    && let Some(cached) = cache.get(&path)
+                {
+                    eprintln!(
+                        "warning: configuration reload failed ({}): {error:#}; continuing with last successfully loaded configuration",
+                        path.display()
+                    );
+                    return Ok(cached.clone());
                 }
                 Err(error)
             }
