@@ -2266,6 +2266,30 @@ fn repeated_fresh_snapshots_without_tasks_flag_a_stale_runtime_turn() {
     }
 }
 
+/// 用户消息已回显、Runtime 没有活动任务、界面也没在跑轮次时，等待动画不该一直转。
+#[test]
+fn stale_awaiting_reply_clears_without_active_tasks() {
+    let session = uuid::Uuid::new_v4();
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.runtime_event_cursor = 1;
+    app.input.insert("hello");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+
+    assert!(!app.observe_runtime_tasks(&[], session, Some(1)));
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(&[], session, Some(2)));
+    assert!(app.awaiting_since.is_none());
+    assert!(app.transcript.iter().any(|row| row.contains("等待动画")));
+
+    let task = running_remote_task(session);
+    app.input.insert("again");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(std::slice::from_ref(&task), session, Some(3)));
+    assert!(app.awaiting_since.is_some());
+}
+
 #[test]
 fn ordinary_prompts_default_to_runtime_with_explicit_local_escape() {
     assert_eq!(

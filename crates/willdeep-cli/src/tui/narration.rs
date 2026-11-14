@@ -450,6 +450,7 @@ impl App {
     /// 模型有了第一个可见动作（思考行、正文、工具、计划），等待动画到此为止。
     pub(super) fn dismiss_awaiting_reply(&mut self) {
         self.awaiting_since = None;
+        self.stale_awaiting_reply_snapshots = 0;
     }
 
     /// 挂在最后一条用户消息正下方的等待行：`.`、`..`、`...` 每秒轮换。

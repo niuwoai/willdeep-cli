@@ -152,6 +152,22 @@ pub(super) fn initialize_submission_cursor(app: &mut App, session: &mut Session,
 /// Runtime 一句，没有在途轮次就把残留的「工作中」复位——和 Esc 走的是同一个判据，
 /// 只是不用人去按。Runtime 说有，或者根本问不到，都按兵不动：宁可多等一秒，
 /// 也不复位一条真在跑的轮次。
+pub(super) fn reconcile_stale_awaiting_reply(app: &mut App) {
+    if app.awaiting_since.is_none() {
+        return;
+    }
+    app.stale_awaiting_reply_snapshots = 0;
+    app.dismiss_awaiting_reply();
+    app.append_transcript(format!(
+        "System: {}",
+        app.language.text(
+            "Runtime 没有活动轮次，已清除等待动画；可重新发送或检查上一句是否提交失败",
+            "Runtime has no active turn; cleared the waiting indicator. Resend or check whether the last message failed to submit",
+            "Runtime に進行中のターンはありません。待機表示を消しました。再送するか、直前の送信失敗を確認してください",
+        )
+    ));
+}
+
 pub(super) async fn reconcile_stale_runtime_turn(
     app: &mut App,
     session: &Session,
@@ -162,6 +178,7 @@ pub(super) async fn reconcile_stale_runtime_turn(
             // 快照可能已经在途；复位后它们仍会逐个抵达。锁住本次恢复，
             // 避免同一故障反复输出提示。新轮次或重新发现活动任务会解锁。
             app.stale_runtime_turn_recovery_reported = true;
+            app.dismiss_awaiting_reply();
             app.finish_turn();
             app.append_transcript(format!(
                 "System: {}",

@@ -127,7 +127,7 @@ impl App {
         // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
         // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
         let waiting = self.awaiting_reply_row().map(|row| {
-            let waiting = self.compression_notice_lines(&row, search.as_deref());
+            let waiting = self.awaiting_reply_lines(&row, search.as_deref());
             let at = self.compression_notice_insert_at();
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
@@ -182,6 +182,21 @@ impl App {
             Text::from(Line::styled(
                 row.to_owned(),
                 Style::default().fg(Color::DarkGray),
+            )),
+            self.transcript_width,
+        );
+        if let Some(query) = search {
+            highlight_matches(&mut text, query);
+        }
+        text
+    }
+
+    /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
+    fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
+        let mut text = wrap_styled_text(
+            Text::from(Line::styled(
+                row.to_owned(),
+                Style::default().fg(Color::Yellow),
             )),
             self.transcript_width,
         );

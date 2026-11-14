@@ -28,6 +28,9 @@ use tokio::sync::{mpsc, oneshot};
 /// 快照一秒一份，刚提交的轮次在队列里排队时任务是 `Queued`、快照会滤掉它，
 /// 所以要留几秒余量，别把一条真在排队的轮次当成残留复位掉。
 const STALE_RUNTIME_TURN_SNAPSHOTS: u8 = 3;
+/// 界面还在等模型开口，但新鲜快照连续几次都说本会话没有活动任务、界面也没在跑
+/// Runtime 轮次：假等待（常见于提交失败或事件迟达）。间隔比残留「工作中」更短。
+const STALE_AWAITING_REPLY_SNAPSHOTS: u8 = 2;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use willdeep_core::types::Usage;
 use willdeep_core::{
@@ -455,6 +458,8 @@ struct App {
     stale_runtime_turn_snapshots: u8,
     /// 一次残留状态复位只确认、提示一次；等新轮次或 Runtime 活动任务出现后再解锁。
     stale_runtime_turn_recovery_reported: bool,
+    /// 用户消息下面还在转等待点、新鲜快照却没有活动任务且界面没在跑轮次时的连续次数。
+    stale_awaiting_reply_snapshots: u8,
     last_elapsed: Option<Duration>,
     context_window: u64,
     context_tokens: u64,

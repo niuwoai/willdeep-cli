@@ -4,6 +4,7 @@
 
 ### Fixed
 - Runtime Daemon 与执行中的轮次在配置文件被改成无法解析时不再整体罢工：沿用该路径上一次成功加载的快照并打出 warning；`willdeep config check` 等显式校验仍报错。
+- TUI 在用户消息下方转等待点时，若提交失败或 Runtime 已无活动轮次，会清除假等待动画；忙时提交失败、Enter 提交失败与快照对账两条路径都覆盖。等待点颜色与系统黄字一致。
 
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。

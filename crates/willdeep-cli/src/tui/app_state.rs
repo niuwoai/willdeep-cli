@@ -90,6 +90,7 @@ impl App {
             overlay_close_hits: Vec::new(),
             stale_runtime_turn_snapshots: 0,
             stale_runtime_turn_recovery_reported: false,
+            stale_awaiting_reply_snapshots: 0,
             last_elapsed: None,
             context_window: 128_000,
             context_tokens: 0,
@@ -266,6 +267,7 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        self.stale_awaiting_reply_snapshots = 0;
         // 过程行属于上一份记录，换了会话就没有可替的了。
         self.pending_notice_rows.clear();
         self.pending_reasoning_level = None;
@@ -1213,7 +1215,8 @@ impl App {
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
-        self.awaiting_since = None;
+        self.dismiss_awaiting_reply();
+        self.stale_awaiting_reply_snapshots = 0;
         self.running = false;
         self.last_progress_at = None;
         self.runtime_turn = false;
@@ -1386,6 +1389,7 @@ impl App {
         self.runtime_turn = runtime_turn;
         self.stale_runtime_turn_snapshots = 0;
         self.stale_runtime_turn_recovery_reported = false;
+        self.stale_awaiting_reply_snapshots = 0;
         self.turn_started = Some(now);
         self.last_progress_at = Some(now);
         self.last_elapsed = None;
@@ -1456,10 +1460,22 @@ impl App {
         if has_active_task {
             self.stale_runtime_turn_snapshots = 0;
             self.stale_runtime_turn_recovery_reported = false;
+            self.stale_awaiting_reply_snapshots = 0;
             if !self.running && fresh {
                 self.ensure_runtime_turn();
             }
             return false;
+        }
+        if fresh && self.awaiting_since.is_some() && !(self.running || self.runtime_turn) {
+            self.stale_awaiting_reply_snapshots =
+                self.stale_awaiting_reply_snapshots.saturating_add(1);
+            if self.stale_awaiting_reply_snapshots >= STALE_AWAITING_REPLY_SNAPSHOTS {
+                runtime_ui::reconcile_stale_awaiting_reply(self);
+            }
+            return false;
+        }
+        if self.awaiting_since.is_some() && fresh {
+            self.stale_awaiting_reply_snapshots = 0;
         }
         if self.stale_runtime_turn_recovery_reported {
             return false;
