@@ -856,9 +856,7 @@ mod tests {
         app.echo_runtime_submission("继续吧");
         app.sync_runtime_queue(Vec::new());
         assert!(
-            app.transcript
-                .iter()
-                .any(|row| row == "You: 继续吧"),
+            app.transcript.iter().any(|row| row == "You: 继续吧"),
             "in-flight steering must not be relabeled while the turn is running: {:?}",
             app.transcript
         );

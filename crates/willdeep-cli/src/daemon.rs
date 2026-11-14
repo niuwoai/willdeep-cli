@@ -1709,8 +1709,9 @@ async fn run(home: &Path) -> Result<()> {
         crate::usage_cmd::backfill_on_daemon_start(&backfill_home)
     })
     .await;
-    let event_log_settings =
-        crate::config::event_log_settings_from_config(&crate::config::LoadedConfig::load_runtime(None));
+    let event_log_settings = crate::config::event_log_settings_from_config(
+        &crate::config::LoadedConfig::load_runtime(None),
+    );
     let events = Arc::new(EventLog::open(
         paths.events.clone(),
         home,

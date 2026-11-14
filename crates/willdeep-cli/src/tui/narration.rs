@@ -2299,10 +2299,7 @@ mod tests {
         assert_eq!(app.note_reply("Now update the log line"), None);
         assert_eq!(app.transcript.len(), 1);
 
-        assert_eq!(
-            app.note_reply("Now update the log line"),
-            None
-        );
+        assert_eq!(app.note_reply("Now update the log line"), None);
         assert_eq!(app.transcript, vec!["WillDeep: Now update the log line"]);
     }
 

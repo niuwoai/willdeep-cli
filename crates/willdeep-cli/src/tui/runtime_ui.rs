@@ -916,8 +916,11 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     .and_then(|value| value.as_u64())
                     .unwrap_or(0) as usize;
                 if let Some(stop_reason) = stop_reason
-                    && let Some(text) =
-                        crate::harness::partial_outcome_status_text(stop_reason, turns, app.language)
+                    && let Some(text) = crate::harness::partial_outcome_status_text(
+                        stop_reason,
+                        turns,
+                        app.language,
+                    )
                 {
                     app.append_transcript(format!("System: {text}"));
                 }

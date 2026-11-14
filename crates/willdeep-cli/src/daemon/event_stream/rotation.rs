@@ -28,8 +28,12 @@ pub(super) fn maybe_rotate_before_open(
         return Ok(());
     }
     let archive = archive_path(home, now_unix())?;
-    std::fs::create_dir_all(archive.parent().context("resolve Runtime event archive dir")?)
-        .with_context(|| format!("create {}", archive.parent().unwrap().display()))?;
+    std::fs::create_dir_all(
+        archive
+            .parent()
+            .context("resolve Runtime event archive dir")?,
+    )
+    .with_context(|| format!("create {}", archive.parent().unwrap().display()))?;
     std::fs::rename(path, &archive)
         .with_context(|| format!("archive Runtime event log to {}", archive.display()))?;
     create_empty_log(path)?;
@@ -78,9 +82,9 @@ fn prune_archives(backups: &Path, retain: u32) -> Result<()> {
     }
     let mut archives = Vec::new();
     if backups.is_dir() {
-        for entry in std::fs::read_dir(backups).with_context(|| {
-            format!("read Runtime backups at {}", backups.display())
-        })? {
+        for entry in std::fs::read_dir(backups)
+            .with_context(|| format!("read Runtime backups at {}", backups.display()))?
+        {
             let entry = entry?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
@@ -117,8 +121,7 @@ mod tests {
 
     #[test]
     fn rotates_when_over_limit_and_starts_fresh_log() {
-        let root =
-            std::env::temp_dir().join(format!("wd-event-rotate-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("wd-event-rotate-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("runtime")).unwrap();
         let path = root.join("runtime/events.ndjson");
         let payload = "x".repeat(4096);
@@ -136,7 +139,14 @@ mod tests {
             .unwrap()
             .unwrap()
             .path();
-        assert!(archive.file_name().unwrap().to_str().unwrap().starts_with(ARCHIVE_PREFIX));
+        assert!(
+            archive
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(ARCHIVE_PREFIX)
+        );
         assert!(std::fs::metadata(&archive).unwrap().len() > 1024);
         std::fs::remove_dir_all(&root).unwrap();
     }

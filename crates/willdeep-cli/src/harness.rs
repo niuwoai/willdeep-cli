@@ -826,12 +826,13 @@ pub(crate) fn present_partial_outcome(
     outcome: &mut willdeep_core::AgentOutcome,
     language: Language,
 ) {
-    let Some(notice) =
-        partial_outcome_status_text(outcome.stop_reason, outcome.turns, language)
+    let Some(notice) = partial_outcome_status_text(outcome.stop_reason, outcome.turns, language)
     else {
         return;
     };
-    outcome.messages.push(willdeep_core::Message::system(notice));
+    outcome
+        .messages
+        .push(willdeep_core::Message::system(notice));
     if outcome.final_text.trim().is_empty() {
         outcome.final_text = language
             .text(
@@ -864,11 +865,7 @@ mod partial_outcome_tests {
         assert_eq!(outcome.final_text, "任务完成总结");
         assert_eq!(outcome.messages.len(), 1);
         assert_eq!(outcome.messages[0].role, willdeep_core::Role::System);
-        assert!(
-            outcome.messages[0]
-                .content
-                .contains("运行状态：部分完成")
-        );
+        assert!(outcome.messages[0].content.contains("运行状态：部分完成"));
     }
 }
 

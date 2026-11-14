@@ -46,7 +46,11 @@ impl EventLog {
         )
     }
 
-    pub(super) fn open(path: PathBuf, home: &Path, settings: &crate::config::EventLogSettings) -> Result<Self> {
+    pub(super) fn open(
+        path: PathBuf,
+        home: &Path,
+        settings: &crate::config::EventLogSettings,
+    ) -> Result<Self> {
         maybe_rotate_before_open(&path, home, settings)?;
         let index = EventIndex::scan(&path)?;
         let next_sequence = index.head().saturating_add(1);
