@@ -789,40 +789,82 @@ pub(crate) async fn execute_noninteractive(
     })
 }
 
+pub(crate) fn partial_outcome_status_text(
+    stop_reason: willdeep_core::AgentStopReason,
+    turns: usize,
+    language: Language,
+) -> Option<String> {
+    use willdeep_core::AgentStopReason;
+    let notice = match stop_reason {
+        AgentStopReason::Finished | AgentStopReason::GoalComplete => return None,
+        AgentStopReason::MaxTurns => language.text(
+            "轮次上限 {n} 已用尽，任务未收敛。改动已落盘但可能不完整；继续对话可接着做。",
+            "The {n}-turn limit was reached. The task is incomplete; saved changes can be continued.",
+            "ターン上限 {n} に達しました。タスクは未完了です。保存済みの変更から続行できます。",
+        ),
+        AgentStopReason::Incomplete => language.text(
+            "模型输出未完整结束。以下为部分结果，不能视为任务完成；未完整返回的工具调用没有执行。",
+            "The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
+            "モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
+        ),
+        // 验证门禁仍把这轮标为部分完成；具体失败由助手正文说明，
+        // 不再把通用警告写进会话历史或 TUI 状态行反复显示。
+        AgentStopReason::Unverified => return None,
+        AgentStopReason::BudgetLimited => language.text(
+            "执行预算已用尽，目标尚未完成。以下为交接信息。",
+            "The execution budget was exhausted; the goal remains incomplete. Handover follows.",
+            "実行予算に達しました。目標は未完了です。以下は引き継ぎ情報です。",
+        ),
+    };
+    Some(notice.replace("{n}", &turns.to_string()))
+}
+
+/// 未完成轮次的系统状态说明：写入 `Role::System`，不冒充 assistant，也不拼进 `final_text`。
 pub(crate) fn present_partial_outcome(
     outcome: &mut willdeep_core::AgentOutcome,
     language: Language,
 ) {
-    use willdeep_core::AgentStopReason;
-    let notice = match outcome.stop_reason {
-        AgentStopReason::Finished | AgentStopReason::GoalComplete => return,
-        AgentStopReason::MaxTurns => language.text(
-            "⚠ 轮次上限 {n} 已用尽，任务未收敛。改动已落盘但可能不完整；继续对话可接着做。",
-            "⚠ The {n}-turn limit was reached. The task is incomplete; saved changes can be continued.",
-            "⚠ ターン上限 {n} に達しました。タスクは未完了です。保存済みの変更から続行できます。",
-        ),
-        AgentStopReason::Incomplete => language.text(
-            "⚠ 模型输出未完整结束。以下为部分结果，不能视为任务完成；未完整返回的工具调用没有执行。",
-            "⚠ The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
-            "⚠ モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
-        ),
-        // 验证门禁仍把这轮标为部分完成；具体失败由助手正文说明，
-        // 不再把通用警告写进会话历史并在后续轮次反复显示。
-        AgentStopReason::Unverified => return,
-        AgentStopReason::BudgetLimited => language.text(
-            "⚠ 执行预算已用尽，目标尚未完成。以下为交接信息。",
-            "⚠ The execution budget was exhausted; the goal remains incomplete. Handover follows.",
-            "⚠ 実行予算に達しました。目標は未完了です。以下は引き継ぎ情報です。",
-        ),
-    }.replace("{n}", &outcome.turns.to_string());
+    let Some(notice) = partial_outcome_status_text(outcome.stop_reason, outcome.turns, language)
+    else {
+        return;
+    };
     outcome
         .messages
-        .push(willdeep_core::Message::assistant(&notice, Vec::new()));
-    outcome.final_text = if outcome.final_text.trim().is_empty() {
-        notice
-    } else {
-        format!("{notice}\n\n{}", outcome.final_text)
-    };
+        .push(willdeep_core::Message::system(notice));
+    if outcome.final_text.trim().is_empty() {
+        outcome.final_text = language
+            .text(
+                "（本轮无正文输出）",
+                "(No assistant text this turn)",
+                "（このターンにアシスタント本文なし）",
+            )
+            .to_owned();
+    }
+}
+
+#[cfg(test)]
+mod partial_outcome_tests {
+    use super::*;
+    use willdeep_core::{AgentOutcome, AgentStopReason};
+
+    #[test]
+    fn partial_notice_is_system_not_assistant() {
+        let mut outcome = AgentOutcome {
+            final_text: "任务完成总结".into(),
+            turns: 3,
+            messages: Vec::new(),
+            stop_reason: AgentStopReason::MaxTurns,
+            input_tokens: 0,
+            output_tokens: 0,
+            first_response_millis: None,
+            context_summary: None,
+        };
+        present_partial_outcome(&mut outcome, Language::ZhCn);
+        assert_eq!(outcome.final_text, "任务完成总结");
+        assert_eq!(outcome.messages.len(), 1);
+        assert_eq!(outcome.messages[0].role, willdeep_core::Role::System);
+        assert!(outcome.messages[0].content.contains("轮次上限"));
+    }
 }
 
 pub(crate) async fn build(

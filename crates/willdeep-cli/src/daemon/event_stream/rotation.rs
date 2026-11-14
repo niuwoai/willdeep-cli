@@ -326,7 +326,7 @@ mod tests {
         std::fs::create_dir_all(root.join("runtime")).unwrap();
         let path = root.join("runtime/events.ndjson");
         let log = super::super::EventLog::open_for_tests(path.clone()).unwrap();
-        log.append("task.completed", "done").unwrap();
+        log.append("task.completed", "done".repeat(2048)).unwrap();
         let old_head = log.latest_sequence();
         drop(log);
         let settings = EventLogSettings {
@@ -360,7 +360,7 @@ mod tests {
                 .unwrap()
                 .starts_with(ARCHIVE_PREFIX)
         );
-        assert!(std::fs::metadata(&archive).unwrap().len() > 0);
+        assert!(std::fs::metadata(&archive).unwrap().len() > 1024);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -83,11 +83,23 @@ impl App {
         }
         // 还在队列里的保持原样；被删掉或改掉的，回显行改成「未发送」。
         // 正在编辑时上面提前返回了，不会把没保存的修改当成删除。
-        let remaining = self
+        let mut remaining = self
             .queued_prompts
             .iter()
             .filter_map(|item| item.remote.as_ref().map(|remote| remote.text.clone()))
             .collect::<Vec<_>>();
+        // 压缩/忙时本地排队只存在于客户端，不进 turn_queue API。
+        for item in &self.queued_prompts {
+            if item.remote.is_none() {
+                remaining.push(item.text.clone());
+            }
+        }
+        // 忙时插话已提交给 Runtime，但 API 队列里不一定看得见；本轮还在跑时别误标「未发送」。
+        if self.running {
+            for echo in &self.pending_runtime_echoes {
+                remaining.push(echo.text.clone());
+            }
+        }
         let remaining = remaining.iter().map(String::as_str).collect::<Vec<_>>();
         self.retract_runtime_echoes(&remaining);
         if let Some(panel) = self.prompt_queue.as_mut() {
@@ -835,6 +847,27 @@ mod tests {
         // 同一条事件重放也不重复。
         runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
         assert_eq!(app.transcript.len(), before);
+    }
+
+    #[test]
+    fn sync_while_turn_running_keeps_in_flight_steering_echo() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.echo_runtime_submission("继续吧");
+        app.sync_runtime_queue(Vec::new());
+        assert!(
+            app.transcript.iter().any(|row| row == "You: 继续吧"),
+            "in-flight steering must not be relabeled while the turn is running: {:?}",
+            app.transcript
+        );
+        assert_eq!(app.pending_runtime_echoes.len(), 1);
+        app.running = false;
+        app.sync_runtime_queue(Vec::new());
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.contains("未发送") && row.contains("继续吧"))
+        );
     }
 
     #[test]
