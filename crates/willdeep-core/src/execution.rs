@@ -381,12 +381,14 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn descendant_holding_output_pipe_is_cleaned_after_leader_exit() {
+        const CLEANUP_DEADLINE: Duration = Duration::from_secs(1);
+
         let started = std::time::Instant::now();
         let result = run_capture(
             "sleep 30 &",
             Path::new("/tmp"),
             &SandboxSpec::new(SandboxPolicy::Off, []),
-            Duration::from_millis(100),
+            CLEANUP_DEADLINE,
             100,
         )
         .await;

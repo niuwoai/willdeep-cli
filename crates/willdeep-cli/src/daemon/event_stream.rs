@@ -34,11 +34,11 @@ struct EventLogState {
 
 impl EventLog {
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn open_for_tests(path: PathBuf) -> Result<Self> {
+        let home = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         Self::open(
             path,
-            Path::new("."),
+            &home,
             &crate::config::EventLogSettings {
                 rotate_bytes: 0,
                 retain_archives: 0,
@@ -51,7 +51,10 @@ impl EventLog {
         home: &Path,
         settings: &crate::config::EventLogSettings,
     ) -> Result<Self> {
-        maybe_rotate_before_open(&path, home, settings)?;
+        let recovered = rotation::resume_archived_cursor(&path, home, settings)?;
+        if !recovered {
+            maybe_rotate_before_open(&path, home, settings)?;
+        }
         let index = EventIndex::scan(&path)?;
         let next_sequence = index.head().saturating_add(1);
         let (live, _) = tokio::sync::broadcast::channel(512);

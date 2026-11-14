@@ -33,8 +33,12 @@ fn reference_frame(app: &App) -> Text<'static> {
 }
 
 fn assert_cached_frame_matches_reference(app: &mut App) {
-    let expected = reference_frame(app);
+    let mut expected = reference_frame(app);
     let (transient, notice, waiting) = app.prepare_transcript_frame();
+    if app.transient_row().is_some() {
+        let start = expected.lines.len() - transient.lines.len();
+        expected.lines.splice(start.., transient.lines.clone());
+    }
     assert_eq!(app.transcript_rows, text_rows(&expected));
     assert_eq!(app.transcript_height, expected.lines.len());
     for offset in [

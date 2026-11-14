@@ -151,10 +151,23 @@ impl App {
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
-                wrap_styled_text(
-                    colored_transcript_at_width(&[row], search.as_deref(), self.transcript_width),
-                    self.transcript_width,
-                )
+                let mut colored = colored_transcript_at_width(&[row], None, self.transcript_width);
+                if self.transient_kind == StreamKind::Reply
+                    && self.transient_thought.is_some()
+                    && let Some(line) = colored.lines.first_mut()
+                {
+                    let label = self.assistant_name();
+                    if let Some(suffix) = line.to_string().strip_prefix(&label) {
+                        *line = Line::from(vec![
+                            assistant_name_span(&label),
+                            Span::styled(suffix.to_owned(), line.style),
+                        ]);
+                    }
+                }
+                if let Some(query) = search.as_deref() {
+                    highlight_matches(&mut colored, query);
+                }
+                wrap_styled_text(colored, self.transcript_width)
             });
         self.transcript_rows.extend(text_rows(&transient));
         self.transcript_height = self.transcript_rows.len();
@@ -355,9 +368,10 @@ pub(super) fn colored_transcript_with_name(
                 .strip_prefix(ASSISTANT_ROW_PREFIX)
                 .filter(|_| is_welcome)
             {
-                // The welcome greeting was plain text before renaming. A workspace
-                // name may contain Markdown syntax, so only change its display prefix.
-                Line::styled(format!("{label}: {content}"), style)
+                // The welcome greeting stays plain text: workspace names may contain Markdown.
+                let mut spans = assistant_prefix(true, label);
+                spans.push(Span::styled(content.to_owned(), style));
+                Line::from(spans)
             } else {
                 banner::styled_line(line, width)
                     .or_else(|| banner::styled_name_line(line))
@@ -498,6 +512,11 @@ mod tool_row_style_tests {
         );
         let rows = text_rows(&frame.text);
         assert_eq!(rows[0], "滚小滚: 你好", "all rows: {rows:?}");
+        assert_eq!(frame.text.lines[0].spans[0].content, "滚小滚");
+        assert_eq!(frame.text.lines[0].spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(frame.text.lines[0].spans[1].content, ": ");
+        assert_eq!(frame.text.lines[0].spans[1].style.fg, Some(Color::Green));
+        assert_eq!(frame.text.lines[0].spans[2].style.fg, Some(Color::Green));
         assert_eq!(rows.last().map(String::as_str), Some("You: 嗯"));
         // 没起名时画面不变。
         let plain = message_time::render_with_times(
@@ -508,6 +527,28 @@ mod tool_row_style_tests {
             Language::ZhCn,
         );
         assert_eq!(text_rows(&plain)[0], "WillDeep: 你好");
+    }
+
+    #[test]
+    fn an_empty_reply_keeps_the_name_accent_without_an_extra_space() {
+        let (text, _) =
+            render_assistant_entry_with_code_blocks(ASSISTANT_ROW_PREFIX, None, 80, "滚小滚");
+        assert_eq!(text.lines[0].to_string(), "滚小滚:");
+        assert_eq!(text.lines[0].spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(text.lines[0].spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn streaming_reply_accents_only_its_instance_name() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.assistant_name = "滚小滚".to_owned();
+        app.stream_transient(StreamKind::Reply, "你好");
+        let (transient, _, _) = app.prepare_transcript_frame();
+        let line = &transient.lines[0];
+        assert!(line.to_string().starts_with("滚小滚 · 回复中: 你好"));
+        assert_eq!(line.spans[0].content, "滚小滚");
+        assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(line.spans[1].style.fg, Some(Color::Yellow));
     }
 
     #[test]
@@ -567,6 +608,15 @@ mod tool_row_style_tests {
             "{rows:?}"
         );
         assert!(welcome.contains("WillDeep: Hello"));
+        let greeting = frame
+            .text
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("滚小滚: Hello"))
+            .unwrap();
+        assert_eq!(greeting.spans[0].content, "滚小滚");
+        assert_eq!(greeting.spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(greeting.spans[1].style.fg, Some(Color::Green));
     }
 
     #[test]
@@ -1163,10 +1213,7 @@ fn render_assistant_markdown_annotated(
         push_code_block(&mut blocks, code_start, output.len(), &code_content);
     }
     if output.is_empty() {
-        output.push(Line::styled(
-            format!("{label}:"),
-            Style::default().fg(Color::Green),
-        ));
+        output.push(Line::from(assistant_prefix_with_suffix(label, ":")));
     }
     (output, blocks)
 }
@@ -1235,16 +1282,32 @@ pub(super) fn render_assistant_entry_with_code_blocks(
 }
 
 fn assistant_prefix(show: bool, label: &str) -> Vec<Span<'static>> {
-    show.then(|| {
+    if show {
+        assistant_prefix_with_suffix(label, ": ")
+    } else {
+        Vec::new()
+    }
+}
+
+fn assistant_name_span(label: &str) -> Span<'static> {
+    Span::styled(
+        label.to_owned(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn assistant_prefix_with_suffix(label: &str, suffix: &str) -> Vec<Span<'static>> {
+    vec![
+        assistant_name_span(label),
         Span::styled(
-            format!("{label}: "),
+            suffix.to_owned(),
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-        )
-    })
-    .into_iter()
-    .collect()
+        ),
+    ]
 }
 
 fn render_markdown_line(raw: &str, show_prefix: bool, label: &str) -> Line<'static> {
