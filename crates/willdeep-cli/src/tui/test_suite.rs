@@ -319,6 +319,18 @@ mod command_tests {
         std::fs::remove_dir_all(home).unwrap();
     }
 
+    #[test]
+    fn tool_rename_refreshes_the_display_name_without_restarting_tui() {
+        let home = std::env::temp_dir().join(format!("tui-tool-rename-{}", uuid::Uuid::new_v4()));
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.display_home = Some(home.clone());
+        app.load_assistant_name();
+        crate::identity::rename(&home, "滚小滚").unwrap();
+        app.load_assistant_name();
+        assert_eq!(app.assistant_name(), "滚小滚");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     /// 改名之后回复行立刻换上新名字，历史里已经写下的回复也跟着换。
     /// 记录原文不动：复制和重开历史仍是默认前缀。
     #[test]

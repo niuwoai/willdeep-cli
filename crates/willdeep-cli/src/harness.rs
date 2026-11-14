@@ -807,11 +807,9 @@ pub(crate) fn partial_outcome_status_text(
             "The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
             "モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
         ),
-        AgentStopReason::Unverified => language.text(
-            "运行状态：部分完成（未通过完成验证）。上文中的「验证通过」等说法不能视为任务已完工；须在稳定工作区用裸命令重跑检查（如 `rake test`，勿用管道包装）。改动已保留，可继续对话补验。",
-            "Run status: partial (completion verification missing). Claims such as “verified” in the assistant text above are not authoritative; rerun applicable checks on a stable workspace with bare commands (e.g. `rake test`, no pipes). Changes are kept; continue the conversation to re-verify.",
-            "実行状態：部分完了（完了検証なし）。上の「検証済み」等の記述は権威ではありません。安定したワークスペースで素のコマンドを再実行してください。変更は保持されています。",
-        ),
+        // 验证门禁仍把这轮标为部分完成；具体失败由助手正文说明，
+        // 不再把通用警告写进会话历史或 TUI 状态行反复显示。
+        AgentStopReason::Unverified => return None,
         AgentStopReason::BudgetLimited => language.text(
             "执行预算已用尽，目标尚未完成。以下为交接信息。",
             "The execution budget was exhausted; the goal remains incomplete. Handover follows.",
@@ -855,7 +853,7 @@ mod partial_outcome_tests {
             final_text: "任务完成总结".into(),
             turns: 3,
             messages: Vec::new(),
-            stop_reason: AgentStopReason::Unverified,
+            stop_reason: AgentStopReason::MaxTurns,
             input_tokens: 0,
             output_tokens: 0,
             first_response_millis: None,
@@ -865,7 +863,7 @@ mod partial_outcome_tests {
         assert_eq!(outcome.final_text, "任务完成总结");
         assert_eq!(outcome.messages.len(), 1);
         assert_eq!(outcome.messages[0].role, willdeep_core::Role::System);
-        assert!(outcome.messages[0].content.contains("运行状态：部分完成"));
+        assert!(outcome.messages[0].content.contains("轮次上限"));
     }
 }
 

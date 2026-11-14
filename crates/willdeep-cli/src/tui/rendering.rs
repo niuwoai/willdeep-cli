@@ -439,10 +439,8 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 同一轮不空行：用户消息后面紧贴 Thought，回复后面紧贴分隔线。
-    /// 空行属于用户开口之前：分隔线后面的用户消息让开一行，回复后面直接跟的
-    /// 用户消息同样让开一行。空行由整段渲染补上，逐条上色看不到下一条记录，
-    /// 所以这里断言走那条路径。
+    /// 同轮的用户消息、Thought 与回复紧贴。回复后和下一轮用户开口前各留一行；
+    /// 连续两条助手回复之间也留一行。空行由整段渲染补上，逐条上色看不到下一条记录。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
         let text = message_time::render_with_times(
@@ -466,10 +464,11 @@ mod tool_row_style_tests {
         assert_eq!(rows[0], "You: first");
         assert!(rows[1].contains("Thought: 3.0s"), "{rows:?}");
         assert_eq!(rows[2], "WillDeep: done");
-        assert!(rows[3].contains("turn finished"), "{rows:?}");
-        assert_eq!(rows[4], "");
-        assert_eq!(rows[5], "You: next");
-        assert_eq!(rows.len(), 6, "{rows:?}");
+        assert_eq!(rows[3], "");
+        assert!(rows[4].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[5], "");
+        assert_eq!(rows[6], "You: next");
+        assert_eq!(rows.len(), 7, "{rows:?}");
     }
 
     /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
@@ -493,6 +492,34 @@ mod tool_row_style_tests {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         assert_eq!(rows, vec!["You: first", "WillDeep: done", "", "You: next"]);
+    }
+
+    #[test]
+    fn consecutive_assistant_replies_have_one_blank_row_without_trailing_blank() {
+        let text = message_time::render_with_times(
+            &[
+                "You: question".to_owned(),
+                "WillDeep: first".to_owned(),
+                "WillDeep: second".to_owned(),
+                "── turn finished ──".to_owned(),
+            ],
+            &[None, None, None, None],
+            None,
+            80,
+            Language::En,
+        );
+        let rows = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 6, "{rows:?}");
+        assert_eq!(rows[0], "You: question");
+        assert!(rows[1].ends_with(": first"), "{rows:?}");
+        assert_eq!(rows[2], "");
+        assert!(rows[3].ends_with(": second"), "{rows:?}");
+        assert_eq!(rows[4], "");
+        assert!(rows[5].starts_with("── turn finished"), "{rows:?}");
     }
 
     /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。

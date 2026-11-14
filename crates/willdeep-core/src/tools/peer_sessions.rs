@@ -49,6 +49,11 @@ pub trait SessionCollaboration: Send + Sync {
 pub(super) fn definitions() -> Vec<ToolDefinition> {
     vec![
         definition(
+            "rename_instance",
+            "Rename this assistant instance when the user asks. Changes the assistant name in the TUI and Web while keeping the instance UUID. This does not rename the conversation or another instance.",
+            json!({"type":"object","properties":{"name":{"type":"string","description":"New instance name, subject to the existing identity name rules."}},"required":["name"],"additionalProperties":false}),
+        ),
+        definition(
             "list_workspace_sessions",
             "List independent sessions in this project, including linked Git worktrees. Use to coordinate overlapping work. This does not create or control subagents.",
             json!({"type":"object","properties":{},"additionalProperties":false}),

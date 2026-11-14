@@ -4,7 +4,7 @@ use super::*;
 // Extend the existing parent-only catalog without duplicating its entries.
 pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &{
     let inherited = super::agent_control::PARENT_ONLY_TOOLS;
-    let mut tools = [""; super::agent_control::PARENT_ONLY_TOOLS.len() + 2];
+    let mut tools = [""; super::agent_control::PARENT_ONLY_TOOLS.len() + 3];
     let mut index = 0;
     while index < inherited.len() {
         tools[index] = inherited[index];
@@ -12,6 +12,7 @@ pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &{
     }
     tools[index] = "configuration_read";
     tools[index + 1] = "configuration_write";
+    tools[index + 2] = "rename_instance";
     tools
 };
 
@@ -64,7 +65,8 @@ impl ToolRegistry {
                 && (child_mutation(name)
                     || matches!(
                         name,
-                        "run_command"
+                        "rename_instance"
+                            | "run_command"
                             | "monitor"
                             | "create_file"
                             | "edit_file"
