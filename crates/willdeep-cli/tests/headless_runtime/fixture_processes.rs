@@ -20,6 +20,66 @@ pub(super) fn prepare(home: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 看护器与测试进程之间的管道写端；测试进程被 SIGKILL 时内核关闭它，
+/// 看护器的 stdin 读到 EOF，开始清理夹具 daemon。
+pub(super) struct Reaper {
+    pub(super) child: std::process::Child,
+    pub(super) stdin: std::process::ChildStdin,
+}
+
+/// 测试进程被强杀时 `TestGuard::drop` 不会执行，而 daemon 又用
+/// `process_group(0)` 脱离了调用方的进程组。留一个同样脱离的看护进程：
+/// 它阻塞读 stdin，测试进程退出后读到 EOF，只停止这个夹具 HOME 的 daemon，
+/// 并按镜像路径校验后再精确 kill 残留 PID；不使用 `pkill -f` 的正则匹配。
+#[cfg(unix)]
+pub(super) fn reap_on_abort(home: &Path) -> std::io::Result<Option<Reaper>> {
+    use std::os::unix::process::CommandExt;
+
+    let image = executable(home);
+    // 正常清理发 done；调用方被强杀时管道直接 EOF，才执行兜底扫描。
+    let script = r#"if read -r status && [ "$status" = done ]; then exit 0; fi
+kill_image() {
+  ps -Ao pid=,command= -ww | while read -r pid command; do
+    case "$command" in
+      "$1"|"$1 "*) kill "$pid" 2>/dev/null || true ;;
+    esac
+  done
+}
+kill_image_hard() {
+  ps -Ao pid=,command= -ww | while read -r pid command; do
+    case "$command" in
+      "$1"|"$1 "*) kill -9 "$pid" 2>/dev/null || true ;;
+    esac
+  done
+}
+i=0
+while [ "$i" -lt 10 ]; do
+  kill_image "$1"
+  sleep 1
+  i=$((i+1))
+done
+kill_image_hard "$1"
+WILLDEEP_HOME="$2" "$1" daemon stop >/dev/null 2>&1 || true"#;
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .arg("willdeep-test-reaper")
+        .arg(&image)
+        .arg(home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    let stdin = child.stdin.take().expect("the reaper has piped stdin");
+    Ok(Some(Reaper { child, stdin }))
+}
+
+#[cfg(not(unix))]
+pub(super) fn reap_on_abort(_home: &Path) -> std::io::Result<Option<Reaper>> {
+    Ok(None)
+}
+
 fn check_deadline(deadline: Instant) -> Result<(), String> {
     if Instant::now() >= deadline {
         Err("test process cleanup exceeded deadline during image enumeration".into())

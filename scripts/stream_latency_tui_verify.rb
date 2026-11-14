@@ -93,7 +93,7 @@ end
 config = File.join(home, 'config.toml')
 File.write(config, [
   'version = 1', "default_provider = 'fixture'", '[agent]', 'max_turns = 2',
-  'auto_title = false', 'input_suggestions = false', 'small_model_routing = false',
+  "approval = 'smart'", 'auto_title = false', 'input_suggestions = false', 'small_model_routing = false',
   'auto_dispatch_read_only = false', '[providers.fixture]', "provider = 'openai-compatible'",
   "api = 'chat-completions'", "api_base = 'http://127.0.0.1:#{server.addr[1]}/v1'",
   "api_key = 'fixture-only'", "model = 'fixture'", 'context_window = 2000000',
@@ -164,12 +164,9 @@ begin
           workers << Thread.new { Open3.capture3('sample', pid.to_s, '2', '1', '-file', File.join(root, 'tui.sample.txt')) }
         end
         if submitted && sent.size == count && clock.call - sent.last[:at] > 0.5
-          saved = JSON.parse(File.read(session_path)) rescue {}
-          if saved.fetch('messages', []).any? { |m| m['role'] == 'assistant' && m['content'].strip == sent.map { |s| s[:content] }.join.strip }
-            completed_at ||= clock.call
-          end
+          completed_at ||= clock.call
         end
-        painted_completion_at ||= clock.call if bytes.include?('turn finished')
+        painted_completion_at ||= clock.call if bytes.include?(format('FLOW%04d', count - 1))
         if completed_at && painted_completion_at && clock.call - [completed_at, painted_completion_at].max > 1
           break unless ENV['STREAM_MEASURE_IDLE'] == '1'
           if idle_started.nil?
@@ -209,15 +206,20 @@ begin
   raise "terminal reconstruction failed: #{error}" unless status.success?
   measured = JSON.parse(output)
   raise "expected one inference request, got #{requests.size}" unless requests.size == 1
+  saved = JSON.parse(File.read(session_path, encoding: Encoding::UTF_8))
+  saved_answer_complete = saved.fetch('messages', []).any? do |message|
+    message['role'] == 'assistant' && message['content'].strip == sent.map { |event| event[:content] }.join.strip
+  end
+  raise 'TUI exit did not save the complete answer' unless saved_answer_complete
   report = measured.merge('binary' => binary, 'root' => root, 'history_entries' => history_count, 'historical_runtime_events' => journal_count,
     'execution' => execution, 'ui_mode' => ui_mode, 'requests' => requests, 'input_interval_ms' => interval * 1000,
     'runtime_stream_http_status' => runtime_stream_status,
     'observed_session_rewrites' => write_times.count { |t| t >= sent.first[:at] && t <= sent.last[:at] },
     'graceful_exit' => graceful_exit,
-    'saved_answer_complete' => true)
+    'saved_answer_complete' => saved_answer_complete)
   if execution == 'runtime'
-    latest_sequence = JSON.parse(File.readlines(File.join(home, 'runtime', 'events.ndjson')).last).fetch('sequence')
-    persisted_cursor = JSON.parse(File.read(session_path)).fetch('runtime_event_cursor')
+    latest_sequence = JSON.parse(File.readlines(File.join(home, 'runtime', 'events.ndjson'), encoding: Encoding::UTF_8).last).fetch('sequence')
+    persisted_cursor = saved.fetch('runtime_event_cursor')
     report['cursor_flushed_on_exit'] = latest_sequence == persisted_cursor
     raise 'graceful exit did not flush Runtime cursor' unless report['cursor_flushed_on_exit']
   end

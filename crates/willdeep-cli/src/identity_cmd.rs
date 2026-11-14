@@ -144,10 +144,12 @@ pub(crate) async fn federation_command(
         }
         FedAction::GroupSay { group, text } => {
             let text = text.join(" ");
-            say_to_group(home, &group, &text).await
+            crate::daemon::say_to_group(home, &group, &text, config_path).await?;
+            println!("sent to #{group}");
+            Ok(())
         }
         FedAction::GroupStop { group } => {
-            let paused = federation::pause_group(home, &group)?;
+            let paused = crate::daemon::pause_host_group(home, &group).await?;
             println!(
                 "automatic replies in #{} are paused until someone sends a message",
                 paused.name
@@ -155,33 +157,6 @@ pub(crate) async fn federation_command(
             Ok(())
         }
     }
-}
-
-/// 人在本机主持的群里说一句话：记进群会话，并转发给每个成员。
-/// 人工发言会把自动回复重新打开、计数清零。
-async fn say_to_group(home: &std::path::Path, query: &str, text: &str) -> Result<()> {
-    let store = federation::load(home)?;
-    let group = federation::find_group(&store, query)?.clone();
-    let identity = identity::load(home)?;
-    let envelope = federation::GroupEnvelope {
-        group_id: Some(group.id),
-        origin: Some(identity.id),
-        from_agent: false,
-        mention_depth: 0,
-        host_note: false,
-    };
-    let mut delivered = 0usize;
-    for member in &group.members {
-        let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
-            eprintln!("skipping a member that is no longer a contact");
-            continue;
-        };
-        federation::send_group_message(identity.id, contact, text, &envelope).await?;
-        delivered += 1;
-    }
-    federation::note_group_manual(home, group.id)?;
-    println!("sent to #{}, delivered to {delivered}", group.name);
-    Ok(())
 }
 
 /// `[intake] public_url`，去掉末尾斜杠。联邦的邀请与加入都以它为基地址——

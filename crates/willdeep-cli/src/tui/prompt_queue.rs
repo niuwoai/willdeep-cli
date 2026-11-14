@@ -139,9 +139,17 @@ impl App {
         self.selected_attachment = 0;
     }
 
+    pub(super) fn next_submission_order(&mut self) -> u64 {
+        let order = self.next_prompt_submission_order;
+        self.next_prompt_submission_order = order.saturating_add(1);
+        order
+    }
+
     pub(super) fn queue_submitted_prompt(&mut self) {
         let text = self.take_submitted_input();
         self.append_transcript(self.queued_prompt_row(&text));
+        let transcript_row = Some(self.transcript.len() - 1);
+        let submission_order = self.next_submission_order();
         let attachments = std::mem::take(&mut self.attachments);
         self.attach_to_latest_user_row(
             attachments
@@ -153,6 +161,8 @@ impl App {
             remote: None,
             text,
             attachments,
+            submission_order,
+            transcript_row,
         });
         self.selected_attachment = 0;
         let waiting = if self.compression_in_progress() {
@@ -272,13 +282,19 @@ impl App {
 
     fn queued_transcript_index(&self, selected: usize) -> Option<usize> {
         let item = self.queued_prompts.get(selected)?;
+        let row = self.queued_prompt_row(&item.text);
+        if item.remote.is_none() {
+            return item
+                .transcript_row
+                .filter(|&index| self.transcript.get(index) == Some(&row));
+        }
+        // Runtime echoes are synchronized from another process and have no local row identity.
         let ordinal = self
             .queued_prompts
             .iter()
             .take(selected)
             .filter(|p| p.text == item.text)
             .count();
-        let row = self.queued_prompt_row(&item.text);
         self.transcript
             .iter()
             .enumerate()
@@ -974,10 +990,13 @@ mod tests {
         let mut app = App::new(Vec::new(), Language::En);
         for text in ["first", "second", "first"] {
             app.append_transcript(app.queued_prompt_row(text));
+            let submission_order = app.next_submission_order();
             app.queued_prompts.push_back(QueuedPrompt {
                 remote: None,
                 text: text.to_owned(),
                 attachments: Vec::new(),
+                submission_order,
+                transcript_row: Some(app.transcript.len() - 1),
             });
         }
         app.open_prompt_queue();

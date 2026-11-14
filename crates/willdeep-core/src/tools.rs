@@ -1025,7 +1025,8 @@ impl ToolRegistry {
             | "configuration_read"
             | "configuration_write" => self.host_tool(call).await,
             "set_group_mention_limit" => self.group_conversation_tool(call).await,
-            "list_workspace_sessions"
+            "rename_instance"
+            | "list_workspace_sessions"
             | "send_session_message"
             | "read_session_messages"
             | "start_session"

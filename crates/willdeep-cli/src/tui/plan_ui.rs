@@ -193,14 +193,20 @@ pub(super) fn project_session(
         } else {
             match item.role {
                 "user" => vec![format!("You: {}", item.content)],
-                "system" => vec![format!(
-                    "System: {}",
-                    language.text(
-                        "系统自动推进",
-                        "Automatic system activity",
-                        "システムの自動進行"
-                    )
-                )],
+                "system" => {
+                    let text = if item.content.trim().is_empty() {
+                        language
+                            .text(
+                                "系统自动推进",
+                                "Automatic system activity",
+                                "システムの自動進行",
+                            )
+                            .to_owned()
+                    } else {
+                        item.content
+                    };
+                    vec![format!("System: {text}")]
+                }
                 _ => {
                     // 与实时路径同一套行：先正文（有的话），再逐条工具行。
                     let mut rows = Vec::with_capacity(1 + item.tools.len());

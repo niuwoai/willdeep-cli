@@ -40,7 +40,7 @@ async fn independent(
     if context.len() > MAX_CLASSIFIER_CONTEXT_BYTES {
         return Ok(false);
     }
-    let loaded = crate::config::LoadedConfig::load(session.config.as_deref())?;
+    let loaded = crate::config::LoadedConfig::load_runtime(session.config.as_deref())?;
     let mut cli = crate::Cli::bare();
     cli.profile = session.profile.clone();
     cli.model = session.model.clone();
@@ -153,7 +153,7 @@ async fn try_start_independent(
     if queued.is_empty() {
         return Ok(());
     }
-    let config = crate::config::LoadedConfig::load(session.config.as_deref())?;
+    let config = crate::config::LoadedConfig::load_runtime(session.config.as_deref())?;
     let seconds = config
         .file
         .agent

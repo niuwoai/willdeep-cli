@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn unverified_outcome_preserves_the_assistants_explanation_without_inserting_a_warning() {
+    let mut outcome = willdeep_core::AgentOutcome {
+        final_text: "具体检查结果".to_owned(),
+        turns: 1,
+        messages: vec![willdeep_core::Message::assistant(
+            "具体检查结果",
+            Vec::new(),
+        )],
+        stop_reason: willdeep_core::AgentStopReason::Unverified,
+        input_tokens: 0,
+        output_tokens: 0,
+        first_response_millis: None,
+        context_summary: None,
+    };
+    present_partial_outcome(&mut outcome, Language::ZhCn);
+    assert_eq!(
+        outcome.stop_reason,
+        willdeep_core::AgentStopReason::Unverified
+    );
+    assert_eq!(outcome.final_text, "具体检查结果");
+    assert_eq!(outcome.messages.len(), 1);
+}
+
 /// 会话记着的目标与状态对得上就原样恢复；换了目标从零开始；会话没记
 /// 目标（Web）时只停放，要等本轮信封带着同一句目标来才接回。
 #[test]

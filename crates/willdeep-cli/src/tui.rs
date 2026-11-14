@@ -404,6 +404,7 @@ struct App {
     /// 本轮在跑时收到的提示词，本轮一结束就按顺序发出去；中断当前轮次同样会让
     /// 队列立刻续上。手机发来的消息不进这里，直接进 Runtime 的轮次队列。
     queued_prompts: VecDeque<QueuedPrompt>,
+    next_prompt_submission_order: u64,
     runtime_queue_submission: Option<(String, uuid::Uuid)>,
     /// `/queue add` 的草稿。拿不到 Cmd 的终端没法一键入队，所以先用 Ctrl+U
     /// 把输入框里的内容挪到这里，腾出位置敲命令。只在本进程内，不落盘。
@@ -667,11 +668,16 @@ struct QueuedPrompt {
     text: String,
     attachments: Vec<DraftAttachment>,
     remote: Option<willdeep_runtime_protocol::QueuedTurnMessage>,
+    /// Original submission order, independent of when an undelivered inbox item is recovered.
+    submission_order: u64,
+    /// The echo's position in the transcript; queue order may differ from echo order.
+    transcript_row: Option<usize>,
 }
 
 struct DeliveredPrompt {
     text: String,
     sent_at: u64,
+    submission_order: u64,
 }
 
 impl From<&str> for DeliveredPrompt {
@@ -679,6 +685,7 @@ impl From<&str> for DeliveredPrompt {
         Self {
             text: text.to_owned(),
             sent_at: message_time::now(),
+            submission_order: 0,
         }
     }
 }
@@ -1270,10 +1277,26 @@ async fn handle_diff_attention_action(
     Ok(())
 }
 
+/// Abort must finish before draining the inbox, so the worker cannot race the recovery.
+async fn interrupt_local_turn(app: &mut App, agent: &Arc<Agent>) {
+    let Some(handle) = app.local_turn.take() else {
+        return;
+    };
+    handle.abort();
+    let _ = handle.await;
+    event_loop::requeue_undelivered_steering(app, agent);
+    app.finish_turn();
+}
+
 /// 停掉当前这一轮。Runtime 轮次交给 Daemon 排空（它知道在途工具怎么收尾），
 /// 进程内轮次只能掐 Task；两条路都要保证 `running` 落回去，否则界面会一直卡在
 /// 「工作中」，排队的提示词也永远续不上。
-async fn interrupt_turn(app: &mut App, session: &Session, runtime: &TuiRuntime) -> Result<String> {
+async fn interrupt_turn(
+    app: &mut App,
+    session: &Session,
+    runtime: &TuiRuntime,
+    agent: &Arc<Agent>,
+) -> Result<String> {
     if !app.running {
         return Ok(app
             .language
@@ -1284,13 +1307,8 @@ async fn interrupt_turn(app: &mut App, session: &Session, runtime: &TuiRuntime) 
             )
             .to_owned());
     }
-    if !app.runtime_turn
-        && let Some(handle) = app.local_turn.take()
-    {
-        handle.abort();
-        // Wait for cancellation before a queued prompt can read its final checkpoint.
-        let _ = handle.await;
-        app.finish_turn();
+    if !app.runtime_turn && app.local_turn.is_some() {
+        interrupt_local_turn(app, agent).await;
         app.append_transcript(format!(
             "System: {}",
             app.language.text(

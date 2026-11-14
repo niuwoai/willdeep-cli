@@ -40,7 +40,7 @@ mod agent_control;
 mod agent_store;
 mod agent_team;
 mod intake;
-pub(crate) use intake::IntakeService;
+pub(crate) use intake::{IntakeService, pause_host_group, say_to_group};
 pub(crate) mod web_app;
 // 审计导出直接读 `agents.json`，不走 `AgentStore::open`：open 会把运行中的 Agent
 // 标成中断并落盘，一个只读命令不能有这种副作用。
@@ -1091,8 +1091,16 @@ async fn ensure_running(home: &Path) -> Result<DaemonState> {
     {
         return Ok(state);
     }
-    start(home, false, &print_progress).await?;
-    load_state(&path)
+    // 单测进程的 current_exe() 是测试 harness，不是 willdeep 主程序。把它当
+    // daemon 拉起时，`daemon run` 会被 libtest 当成过滤器再次执行测试；而
+    // daemon start 又会脱离进程组，测试结束时甚至 TaskStop 都收不到它。
+    #[cfg(test)]
+    anyhow::bail!("unit tests must not start a Runtime Daemon from the test harness binary");
+    #[cfg(not(test))]
+    {
+        start(home, false, &print_progress).await?;
+        load_state(&path)
+    }
 }
 
 fn print_public_task(task: &willdeep_runtime_protocol::RuntimeTask) {
@@ -1331,7 +1339,21 @@ pub(crate) async fn runtime_upgrade(
     upgrade(home, timeout_seconds, false, report).await
 }
 
+/// 单测进程的 `current_exe()` 是测试 harness。把它拉起成 daemon 后，libtest
+/// 会把隐藏参数当过滤器再次执行测试，而且 `process_group(0)` 让子进程逃过
+/// 测试结束时的进程组清理。所有 daemon 启动路径统一在这里拦住。
+#[cfg(test)]
+fn allow_daemon_start() -> Result<()> {
+    anyhow::bail!("unit tests must not start a Runtime Daemon from the test harness binary")
+}
+
+#[cfg(not(test))]
+fn allow_daemon_start() -> Result<()> {
+    Ok(())
+}
+
 async fn start(home: &Path, announce: bool, report: DaemonProgress<'_>) -> Result<()> {
+    allow_daemon_start()?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.directory)?;
     if let Ok(state) = load_state(&paths.state)
@@ -1687,7 +1709,14 @@ async fn run(home: &Path) -> Result<()> {
         crate::usage_cmd::backfill_on_daemon_start(&backfill_home)
     })
     .await;
-    let events = Arc::new(EventLog::open(paths.events.clone())?);
+    let event_log_settings = crate::config::event_log_settings_from_config(
+        &crate::config::LoadedConfig::load_runtime(None),
+    );
+    let events = Arc::new(EventLog::open(
+        paths.events.clone(),
+        home,
+        &event_log_settings,
+    )?);
     let agents = Arc::new(AgentStore::open(paths.agents.clone())?);
     let agent_commands = Arc::new(AgentCommandStore::open(paths.agent_commands.clone())?);
     let sessions = Arc::new(session_store::RuntimeSessionStore::open_guarded(
@@ -1697,7 +1726,7 @@ async fn run(home: &Path) -> Result<()> {
     )?);
     // 反馈账本（RSI 强反馈）：所有前端的轮次都从这里过，一处挂上即全覆盖。
     // 配置读不出来就按默认（开、只记 hash），不为它挡启动。
-    let feedback_settings = crate::config::LoadedConfig::load(None)
+    let feedback_settings = crate::config::LoadedConfig::load_runtime(None)
         .map(|loaded| loaded.file.feedback)
         .unwrap_or_default();
     if feedback_settings.enabled {
@@ -1839,7 +1868,7 @@ async fn run(home: &Path) -> Result<()> {
     // 调度或 `goal_resume` 自己叫醒调度通道领走。
     goal_resume::spawn(
         server_state.clone(),
-        crate::config::LoadedConfig::load(None)
+        crate::config::LoadedConfig::load_runtime(None)
             .map(|loaded| loaded.file.agent)
             .unwrap_or_default(),
     );

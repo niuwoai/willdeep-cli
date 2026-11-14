@@ -13,6 +13,94 @@ mod settings_tests;
 mod usage_tests;
 
 #[tokio::test]
+async fn federation_notice_stays_in_history_but_not_model_requests() {
+    let (agent, _) = agent(WINDOW);
+    let mut notice = Message::system("[联邦] 自动回复已暂停");
+    notice.source = Some(MessageSource::FederationNotice);
+    let history = vec![
+        Message::system("system pin"),
+        notice,
+        Message::user("next turn"),
+    ];
+    let request = agent.request_messages(&history, &mut None).await.unwrap();
+    assert_eq!(request.len(), 2);
+    assert!(
+        !request
+            .iter()
+            .any(|message| { message.source == Some(MessageSource::FederationNotice) })
+    );
+    let persisted = agent.compress_history(history).await.unwrap();
+    assert!(
+        persisted
+            .iter()
+            .any(|message| { message.source == Some(MessageSource::FederationNotice) })
+    );
+}
+
+#[tokio::test]
+async fn manual_compression_preserves_federation_notice_without_summarizing_it() {
+    let (agent, provider) = agent(8192);
+    let mut notice = Message::system("[联邦] 自动回复已暂停");
+    notice.source = Some(MessageSource::FederationNotice);
+    let mut messages = history();
+    messages.insert(2, notice);
+    let compressed = agent.compress_history(messages).await.unwrap();
+    assert!(
+        compressed
+            .iter()
+            .any(|message| { message.source == Some(MessageSource::FederationNotice) })
+    );
+    let requests = provider.requests.lock().unwrap();
+    assert!(
+        !requests.is_empty(),
+        "this fixture must exercise summary requests"
+    );
+    assert!(
+        !requests
+            .iter()
+            .flatten()
+            .any(|message| { message.content.contains("自动回复已暂停") })
+    );
+}
+
+#[tokio::test]
+async fn compression_keeps_a_tool_result_separated_by_a_group_notice() {
+    let (agent, _) = agent(8192);
+    let mut notice = Message::system("[联邦] 中间插入的群说明");
+    notice.source = Some(MessageSource::FederationNotice);
+    let mut messages = history();
+    let last_assistant = messages
+        .iter()
+        .rposition(|message| message.role == Role::Assistant)
+        .unwrap();
+    messages.insert(last_assistant + 1, notice.clone());
+    let compressed = agent.compress_history(messages).await.unwrap();
+    let tool_at = compressed
+        .iter()
+        .position(|message| {
+            message.role == Role::Tool && message.tool_call_id.as_deref() == Some("call-19")
+        })
+        .expect("the real tool result must survive compression");
+    assert!(compressed[tool_at].content.contains("file-19"));
+    assert!(
+        !compressed.iter().any(|message| {
+            message.tool_call_id.as_deref() == Some("call-19")
+                && message.content.contains("[willdeep-unknown-tool-effect]")
+        }),
+        "a notice must not turn a real tool result into unknown-effect"
+    );
+    let notice_at = compressed
+        .iter()
+        .position(crate::checkpoint::is_federation_notice)
+        .expect("the display-only notice must be restored");
+    let assistant_at = compressed
+        .iter()
+        .position(|message| message.tool_calls.iter().any(|call| call.id == "call-19"))
+        .unwrap();
+    assert!(assistant_at < notice_at && notice_at < tool_at);
+}
+
+#[tokio::test]
 async fn compression_preserves_unknown_effects_and_their_replay_guard() {
     let (agent, _) = agent(8192);
     let pending = ToolCall {
@@ -630,7 +718,7 @@ async fn repeated_host_instruction_keeps_the_persisted_summary() {
         agent.completion_reserve(),
     )
     .unwrap();
-    let projection = agent.page_tool_outputs(&messages, capacity).unwrap();
+    let projection = agent.page_tool_outputs(&messages, capacity, false).unwrap();
     assert_eq!(
         projection.messages.len(),
         messages.len() - 1,
@@ -667,8 +755,8 @@ async fn a_repaged_projection_keeps_the_persisted_summary_valid() {
     let persisted = cache
         .expect("compression must leave a summary behind")
         .persist();
-    let narrow = agent.page_tool_outputs(&messages, 256).unwrap();
-    let wide = agent.page_tool_outputs(&messages, 4_096).unwrap();
+    let narrow = agent.page_tool_outputs(&messages, 256, false).unwrap();
+    let wide = agent.page_tool_outputs(&messages, 4_096, false).unwrap();
     let size = |paged: &PagedHistory| -> usize {
         paged
             .messages

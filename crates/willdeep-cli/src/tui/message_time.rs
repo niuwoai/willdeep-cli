@@ -381,7 +381,7 @@ pub(super) fn render_with_user_folds(
 }
 
 /// [`render_with_user_folds`] 加上两样只影响画面的设置：回复行显示的名字，
-/// 以及每条记录之间额外空出的行数。记录原文不动，复制和搜索拿到的还是原样。
+/// 以及每条记录之间额外空出的行数。记录原文不动，显示名由调用方明确指定。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_transcript(
     rows: &[String],
@@ -406,18 +406,26 @@ pub(super) fn render_transcript(
         // 真正画整段聊天区的最后一行时才补上。
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
-        let displayed = if assistant_name.is_empty() {
-            divider_without_your_turn(row, language)
-        } else {
-            named_assistant_row(&divider_without_your_turn(row, language), assistant_name)
-        };
+        let displayed = divider_without_your_turn(row, language);
         // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
+        // 名字只影响画面，不参与正文解析或修改记录（欢迎语的助手行藏在多行记录里）。
         let (mut entry, mut row_code_blocks) = if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
-            rendering::render_assistant_entry_with_code_blocks(&displayed, search, width)
+            rendering::render_assistant_entry_with_code_blocks(
+                &displayed,
+                search,
+                width,
+                assistant_name,
+            )
         } else {
             (
                 wrap_styled_text(
-                    colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
+                    rendering::colored_transcript_with_name(
+                        std::slice::from_ref(&displayed),
+                        search,
+                        width,
+                        language,
+                        assistant_name,
+                    ),
                     width,
                 ),
                 Vec::new(),
@@ -547,14 +555,18 @@ pub(super) fn render_transcript(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 空行只属于用户开口之前。逐条上色看不到下一条是什么，所以留在这里：
-        // 用户消息前面有内容（上一轮的回复、分隔线、系统行）就先让开一行，
-        // 聊天区第一条、或紧跟另一条用户消息时不留。
-        let followed_by_user = rows
-            .get(index + 1)
-            .is_some_and(|row| row.starts_with("You:"));
-        let blanks = usize::from(followed_by_user && !displayed.is_empty())
-            .saturating_add(usize::from(spacing));
+        // 用户开口前、连续回复之间和回复后的轮次分隔线前各留一行。
+        // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
+        let next = rows.get(index + 1);
+        let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
+        let followed_by_reply_or_divider = displayed.starts_with(ASSISTANT_ROW_PREFIX)
+            && next.is_some_and(|row| {
+                row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
+            });
+        let blanks = usize::from(
+            (followed_by_user && !displayed.is_empty()) || followed_by_reply_or_divider,
+        )
+        .saturating_add(usize::from(spacing));
         if blanks > 0 && index != last {
             let grown = text.lines.len() + blanks;
             text.lines.resize_with(grown, Line::default);

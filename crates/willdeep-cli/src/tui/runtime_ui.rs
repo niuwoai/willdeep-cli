@@ -693,6 +693,9 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
                 app.tools.completed(name, is_error);
+                if !is_error && name == "rename_instance" {
+                    app.load_assistant_name();
+                }
                 if !is_error
                     && name == "update_plan"
                     && let Some(receipt) = value.get("plan_update")
@@ -905,9 +908,29 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
         Some("completed" | "partial") => {
             let goal_complete =
                 value.get("stop_reason").and_then(|value| value.as_str()) == Some("goal_complete");
+            let partial = value.get("type").and_then(|value| value.as_str()) == Some("partial");
+            if partial {
+                let stop_reason = value
+                    .get("stop_reason")
+                    .and_then(|value| value.as_str())
+                    .and_then(willdeep_core::AgentStopReason::from_wire);
+                let turns = value
+                    .get("turns")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0) as usize;
+                if let Some(stop_reason) = stop_reason
+                    && let Some(text) = crate::harness::partial_outcome_status_text(
+                        stop_reason,
+                        turns,
+                        app.language,
+                    )
+                {
+                    app.append_transcript(format!("System: {text}"));
+                }
+            }
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
-                // 最后一段多半已经作中途文字显示过，只补没见过的部分（比如轮次
-                // 上限提示）；镜像持久化也只补这一部分。
+                // 最后一段多半已经作中途文字显示过，只补没见过的部分；系统状态行
+                // 已单独落在 System:，不再冒充 assistant。
                 let remainder = app.note_reply(text);
                 if goal_complete {
                     app.note_goal_completed();
@@ -930,6 +953,37 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
 #[cfg(test)]
 mod background_queue_tests {
     use super::*;
+
+    #[test]
+    fn runtime_rename_completion_refreshes_the_tui_name() {
+        let home = std::env::temp_dir().join(format!("runtime-rename-{}", uuid::Uuid::new_v4()));
+        let mut app = App::new(Vec::new(), Language::En);
+        app.display_home = Some(home.clone());
+        app.load_assistant_name();
+        crate::identity::rename(&home, "滚小滚").unwrap();
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"tool_completed","name":"rename_instance","is_error":false}"#,
+        );
+        assert_eq!(app.assistant_name(), "滚小滚");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn unverified_runtime_result_keeps_reply_without_generic_status_line() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "running".into());
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"partial","stop_reason":"unverified","turns":1,"text":"具体检查结果"}"#,
+        );
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.contains("具体检查结果"))
+        );
+        assert!(!app.transcript.iter().any(|row| row.starts_with("System: ")));
+    }
 
     #[test]
     fn ordinary_messages_can_deliver_during_generation_tools_and_background_wait() {
