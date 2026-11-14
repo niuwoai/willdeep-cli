@@ -8,6 +8,11 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.148.0-rc22] - 2026-11-15
+
+### Changed
+- 可信的仓库 push 将 macOS CI 派发到自托管 iMac；公开 PR 与发布验证继续使用 GitHub 托管 runner。
+
 ## [0.148.0-rc21] - 2026-11-14
 
 ### Fixed
