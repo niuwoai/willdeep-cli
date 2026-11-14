@@ -8,6 +8,11 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.149.0-rc2] - 2026-11-15
+
+### Fixed
+- TUI 当前轮次运行时，`/tools` 不再被误判为会改动会话或 Runtime 的命令；按回车可立即展开或收起工具调用行。
+
 ## [0.149.0-rc1] - 2026-11-14
 
 ### Added
