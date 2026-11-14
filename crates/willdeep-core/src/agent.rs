@@ -378,6 +378,18 @@ impl AgentStopReason {
             Self::Unverified => "unverified",
         }
     }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "finished" => Some(Self::Finished),
+            "goal_complete" => Some(Self::GoalComplete),
+            "budget_limited" => Some(Self::BudgetLimited),
+            "max_turns" => Some(Self::MaxTurns),
+            "incomplete" => Some(Self::Incomplete),
+            "unverified" => Some(Self::Unverified),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]

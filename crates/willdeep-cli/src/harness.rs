@@ -789,42 +789,84 @@ pub(crate) async fn execute_noninteractive(
     })
 }
 
+pub(crate) fn partial_outcome_status_text(
+    stop_reason: willdeep_core::AgentStopReason,
+    turns: usize,
+    language: Language,
+) -> Option<String> {
+    use willdeep_core::AgentStopReason;
+    let notice = match stop_reason {
+        AgentStopReason::Finished | AgentStopReason::GoalComplete => return None,
+        AgentStopReason::MaxTurns => language.text(
+            "轮次上限 {n} 已用尽，任务未收敛。改动已落盘但可能不完整；继续对话可接着做。",
+            "The {n}-turn limit was reached. The task is incomplete; saved changes can be continued.",
+            "ターン上限 {n} に達しました。タスクは未完了です。保存済みの変更から続行できます。",
+        ),
+        AgentStopReason::Incomplete => language.text(
+            "模型输出未完整结束。以下为部分结果，不能视为任务完成；未完整返回的工具调用没有执行。",
+            "The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
+            "モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
+        ),
+        AgentStopReason::Unverified => language.text(
+            "运行状态：部分完成（未通过完成验证）。上文中的「验证通过」等说法不能视为任务已完工；须在稳定工作区用裸命令重跑检查（如 `rake test`，勿用管道包装）。改动已保留，可继续对话补验。",
+            "Run status: partial (completion verification missing). Claims such as “verified” in the assistant text above are not authoritative; rerun applicable checks on a stable workspace with bare commands (e.g. `rake test`, no pipes). Changes are kept; continue the conversation to re-verify.",
+            "実行状態：部分完了（完了検証なし）。上の「検証済み」等の記述は権威ではありません。安定したワークスペースで素のコマンドを再実行してください。変更は保持されています。",
+        ),
+        AgentStopReason::BudgetLimited => language.text(
+            "执行预算已用尽，目标尚未完成。以下为交接信息。",
+            "The execution budget was exhausted; the goal remains incomplete. Handover follows.",
+            "実行予算に達しました。目標は未完了です。以下は引き継ぎ情報です。",
+        ),
+    };
+    Some(notice.replace("{n}", &turns.to_string()))
+}
+
+/// 未完成轮次的系统状态说明：写入 `Role::System`，不冒充 assistant，也不拼进 `final_text`。
 pub(crate) fn present_partial_outcome(
     outcome: &mut willdeep_core::AgentOutcome,
     language: Language,
 ) {
-    use willdeep_core::AgentStopReason;
-    let notice = match outcome.stop_reason {
-        AgentStopReason::Finished | AgentStopReason::GoalComplete => return,
-        AgentStopReason::MaxTurns => language.text(
-            "⚠ 轮次上限 {n} 已用尽，任务未收敛。改动已落盘但可能不完整；继续对话可接着做。",
-            "⚠ The {n}-turn limit was reached. The task is incomplete; saved changes can be continued.",
-            "⚠ ターン上限 {n} に達しました。タスクは未完了です。保存済みの変更から続行できます。",
-        ),
-        AgentStopReason::Incomplete => language.text(
-            "⚠ 模型输出未完整结束。以下为部分结果，不能视为任务完成；未完整返回的工具调用没有执行。",
-            "⚠ The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
-            "⚠ モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
-        ),
-        AgentStopReason::Unverified => language.text(
-            "⚠ 当前改动缺少有效的通过验证记录（检查未通过，或检查运行期间工作区被改动），任务仅部分完成。",
-            "⚠ Current changes lack valid passing verification (checks failed, or the workspace changed while they ran); the task is only partially complete.",
-            "⚠ 現在の変更には有効な検証成功記録がありません（チェック失敗、または実行中にワークスペースが変更）。タスクは部分完了です。",
-        ),
-        AgentStopReason::BudgetLimited => language.text(
-            "⚠ 执行预算已用尽，目标尚未完成。以下为交接信息。",
-            "⚠ The execution budget was exhausted; the goal remains incomplete. Handover follows.",
-            "⚠ 実行予算に達しました。目標は未完了です。以下は引き継ぎ情報です。",
-        ),
-    }.replace("{n}", &outcome.turns.to_string());
+    let Some(notice) = partial_outcome_status_text(outcome.stop_reason, outcome.turns, language)
+    else {
+        return;
+    };
     outcome
         .messages
-        .push(willdeep_core::Message::assistant(&notice, Vec::new()));
-    outcome.final_text = if outcome.final_text.trim().is_empty() {
-        notice
-    } else {
-        format!("{notice}\n\n{}", outcome.final_text)
-    };
+        .push(willdeep_core::Message::system(notice));
+    if outcome.final_text.trim().is_empty() {
+        outcome.final_text = language
+            .text(
+                "（本轮无正文输出）",
+                "(No assistant text this turn)",
+                "（このターンにアシスタント本文なし）",
+            )
+            .to_owned();
+    }
+}
+
+#[cfg(test)]
+mod partial_outcome_tests {
+    use super::*;
+    use willdeep_core::{AgentOutcome, AgentStopReason};
+
+    #[test]
+    fn partial_notice_is_system_not_assistant() {
+        let mut outcome = AgentOutcome {
+            final_text: "任务完成总结".into(),
+            turns: 3,
+            messages: Vec::new(),
+            stop_reason: AgentStopReason::Unverified,
+            input_tokens: 0,
+            output_tokens: 0,
+            first_response_millis: None,
+            context_summary: None,
+        };
+        present_partial_outcome(&mut outcome, Language::ZhCn);
+        assert_eq!(outcome.final_text, "任务完成总结");
+        assert_eq!(outcome.messages.len(), 1);
+        assert_eq!(outcome.messages[0].role, willdeep_core::Role::System);
+        assert!(outcome.messages[0].content.contains("运行状态：部分完成"));
+    }
 }
 
 pub(crate) async fn build(

@@ -33,6 +33,8 @@ struct EventLogState {
 }
 
 impl EventLog {
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn open_for_tests(path: PathBuf) -> Result<Self> {
         Self::open(
             path,
@@ -44,7 +46,11 @@ impl EventLog {
         )
     }
 
-    pub(super) fn open(path: PathBuf, home: &Path, settings: &crate::config::EventLogSettings) -> Result<Self> {
+    pub(super) fn open(
+        path: PathBuf,
+        home: &Path,
+        settings: &crate::config::EventLogSettings,
+    ) -> Result<Self> {
         maybe_rotate_before_open(&path, home, settings)?;
         let index = EventIndex::scan(&path)?;
         let next_sequence = index.head().saturating_add(1);

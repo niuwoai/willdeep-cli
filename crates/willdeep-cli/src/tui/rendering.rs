@@ -542,7 +542,7 @@ mod tool_row_style_tests {
     fn a_named_instance_relabels_the_welcome_greeting_after_the_whale() {
         let welcome = welcome_message(std::path::Path::new("/tmp/project"), Language::En);
         let frame = message_time::render_transcript(
-            &[welcome.clone()],
+            std::slice::from_ref(&welcome),
             &[None],
             None,
             120,
