@@ -555,14 +555,18 @@ pub(super) fn render_transcript(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 空行只属于用户开口之前。逐条上色看不到下一条是什么，所以留在这里：
-        // 用户消息前面有内容（上一轮的回复、分隔线、系统行）就先让开一行，
-        // 聊天区第一条、或紧跟另一条用户消息时不留。
-        let followed_by_user = rows
-            .get(index + 1)
-            .is_some_and(|row| row.starts_with("You:"));
-        let blanks = usize::from(followed_by_user && !displayed.is_empty())
-            .saturating_add(usize::from(spacing));
+        // 用户开口前、连续回复之间和回复后的轮次分隔线前各留一行。
+        // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
+        let next = rows.get(index + 1);
+        let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
+        let followed_by_reply_or_divider = displayed.starts_with(ASSISTANT_ROW_PREFIX)
+            && next.is_some_and(|row| {
+                row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
+            });
+        let blanks = usize::from(
+            (followed_by_user && !displayed.is_empty()) || followed_by_reply_or_divider,
+        )
+        .saturating_add(usize::from(spacing));
         if blanks > 0 && index != last {
             let grown = text.lines.len() + blanks;
             text.lines.resize_with(grown, Line::default);

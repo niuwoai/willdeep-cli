@@ -8,6 +8,14 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.149.0-rc1] - 2026-11-14
+
+### Added
+- 助手可通过 `rename_instance` 工具修改当前实例名，保持 UUID 不变；TUI 在工具完成后立即刷新回复显示名，无需打开 Web 或重启。
+
+### Changed
+- TUI 在连续助手回复之间及回复后的轮次分隔线前留一行空白；不再向历史记录反复写入“缺少有效验证记录”的通用警告，未验证的轮次仍标为部分完成。
+
 ## [0.148.0-rc21] - 2026-11-14
 
 ### Fixed

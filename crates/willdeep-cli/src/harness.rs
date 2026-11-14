@@ -806,11 +806,9 @@ pub(crate) fn present_partial_outcome(
             "⚠ The provider response is incomplete. This is a partial result, not task completion. Incomplete tool calls were not executed.",
             "⚠ モデルの応答が未完了です。以下は部分的な結果です。未完了のツール呼び出しは実行していません。",
         ),
-        AgentStopReason::Unverified => language.text(
-            "⚠ 当前改动缺少有效的通过验证记录（检查未通过，或检查运行期间工作区被改动），任务仅部分完成。",
-            "⚠ Current changes lack valid passing verification (checks failed, or the workspace changed while they ran); the task is only partially complete.",
-            "⚠ 現在の変更には有効な検証成功記録がありません（チェック失敗、または実行中にワークスペースが変更）。タスクは部分完了です。",
-        ),
+        // 验证门禁仍把这轮标为部分完成；具体失败由助手正文说明，
+        // 不再把通用警告写进会话历史并在后续轮次反复显示。
+        AgentStopReason::Unverified => return,
         AgentStopReason::BudgetLimited => language.text(
             "⚠ 执行预算已用尽，目标尚未完成。以下为交接信息。",
             "⚠ The execution budget was exhausted; the goal remains incomplete. Handover follows.",
