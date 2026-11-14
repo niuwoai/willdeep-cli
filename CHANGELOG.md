@@ -8,6 +8,11 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.148.0-rc20] - 2026-11-14
+
+### Fixed
+- 将配置初始化测试与联邦入站测试归入独立测试模块，修复 CI 对单文件 3000 行上限的检查失败，生产行为不变。
+
 ## [0.148.0-rc19] - 2026-11-13
 
 ### Fixed
