@@ -229,15 +229,34 @@ fn persist_turn_result(session: &mut Session, store: &SessionStore) -> Result<()
     match store.save(session) {
         Ok(()) => Ok(()),
         Err(willdeep_core::session::SessionError::ConcurrentUpdate(_)) => {
-            let messages = std::mem::take(&mut session.messages);
-            // `update` 在锁内从磁盘最新快照起改：别人刚写进去的字段全部保留，
-            // 只把本轮的消息放上去。
-            *session = store.update(session.id, |latest| latest.messages = messages)?;
+            // `update` 在锁内保留磁盘上的最新元数据；消息、摘要、压缩边界和
+            // 检查点属于同一份执行快照，必须一起替换。
+            let latest = store.update(session.id, |latest| {
+                latest.adopt_execution_snapshot(session);
+            })?;
+            *session = latest;
             Ok(())
         }
         Err(error) => Err(error.into()),
     }
 }
+
+/// 本地提示与通知共用 Finished 成功回调的保存边界。
+/// 调用方仍持有执行所有权；先接回检查点，再用 outcome 的消息与摘要一起收尾。
+fn persist_finished_outcome(
+    session: &mut Session,
+    store: &SessionStore,
+    outcome: willdeep_core::AgentOutcome,
+) -> Result<()> {
+    store.refresh_execution(session)?;
+    session.messages = outcome.messages;
+    session.context_summary = outcome.context_summary;
+    persist_turn_result(session, store)
+}
+
+#[cfg(test)]
+#[path = "test_suite/local_summary_persistence.rs"]
+mod local_summary_persistence;
 
 /// 开屏提示：没有配置文件时说明凭据来自哪里、怎么固化；配置里有旧写法时点名。
 fn startup_notices(runtime: &TuiRuntime, language: Language) -> Vec<String> {
@@ -2104,7 +2123,7 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::GoalBudgetLimited{reason})=>app.record_progress(format!("{} · {reason:?}",language.text("目标预算耗尽 · 转入收尾","Goal budget exhausted · wrapping up","目標の予算を使い切りました · まとめに移ります"))),
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
-                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);if let Some(text)=crate::harness::partial_outcome_status_text(outcome.stop_reason,outcome.turns,language){app.append_transcript(format!("System: {text}"));}app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
+                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);if let Some(text)=crate::harness::partial_outcome_status_text(outcome.stop_reason,outcome.turns,language){app.append_transcript(format!("System: {text}"));}app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));persist_finished_outcome(session,store,outcome)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
                 UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
                 UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
                 UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},

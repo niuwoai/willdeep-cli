@@ -7,6 +7,7 @@ use std::sync::Mutex;
 /// 专门的测试，混进来只会让「缓存命中几次」「记了几笔账」这些断言跟着跳。
 pub(super) const WINDOW: u64 = 12_288;
 
+mod manual_reuse_tests;
 mod multi_turn_tests;
 mod recovery_tests;
 mod settings_tests;

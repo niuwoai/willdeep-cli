@@ -120,10 +120,11 @@ pub(super) fn dispatch_compress(
     let tx = tx.clone();
     let store = store.clone();
     let session_id = session.id;
+    let summary = session.context_summary.clone();
     app.local_turn = Some(tokio::spawn(async move {
         let _ = tx.send(UiMessage::Compressed(
             agent
-                .compress_history_recorded(history, &mut |usage| {
+                .compress_history_with_summary_recorded(history, summary, &mut |usage| {
                     store
                         .record_compression_usage(session_id, usage)
                         .map_err(|error| willdeep_core::AgentError::Checkpoint(error.to_string()))
@@ -670,5 +671,69 @@ mod tests {
             .is_ok()
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn dispatch_compress_materializes_the_real_saved_summary_without_provider_requests() {
+        use crate::harness::manual_compression_tests::Fixture;
+        use willdeep_core::checkpoint::SessionCheckpointSink;
+
+        let mut fixture = Fixture::new();
+        let summary = fixture.seed().await;
+        let previous_count = fixture.session.messages.len();
+        let main_calls = fixture.main.calls();
+        let compression_calls = fixture.compressor.calls();
+        let mut app = App::new(Vec::new(), Language::En);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        dispatch_compress(
+            &mut app,
+            &mut fixture.session,
+            &fixture.store,
+            &fixture.agent,
+            &tx,
+            Some(&fixture.config),
+            &parent_config(),
+        )
+        .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        app.local_turn.take().unwrap().await.unwrap();
+        let UiMessage::Compressed(result, ownership) = result else {
+            panic!("dispatch_compress must return its compressed callback")
+        };
+        let messages = result.unwrap();
+        assert_eq!(
+            fixture.main.calls(),
+            main_calls,
+            "refreshed settings must not issue a main-model fallback"
+        );
+        assert_eq!(fixture.compressor.calls(), compression_calls);
+        assert!(
+            SessionCheckpointSink {
+                store: fixture.store.clone(),
+                session_id: fixture.session.id,
+            }
+            .claim()
+            .is_err(),
+            "ownership must survive until the host stores the materialization"
+        );
+        fixture
+            .store
+            .refresh_execution(&mut fixture.session)
+            .unwrap();
+        assert!(fixture.session.replace_with_compressed_messages(messages));
+        fixture.store.save(&mut fixture.session).unwrap();
+        fixture.assert_materialized(&summary, previous_count);
+        drop(ownership);
+        assert!(
+            SessionCheckpointSink {
+                store: fixture.store.clone(),
+                session_id: fixture.session.id,
+            }
+            .claim()
+            .is_ok()
+        );
     }
 }

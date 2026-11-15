@@ -8,6 +8,13 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.149.0-rc2] - 2026-11-16
+
+### Fixed
+- TUI 本地 `/local` 轮次与通知轮次在成功结束及并发保存兜底时，将上下文摘要和执行消息一同落盘；后续轮次可复用更新后的摘要。
+- 手动 `/compress` 复用有效的自动摘要；需要继续压缩时只处理旧摘要与未覆盖尾部，尾部过长的二次折叠不再重新发送已处理的原始前缀。TUI 与无头入口采用相同契约。
+- 持久化 Worker 在同一会话重试时恢复并保存上下文摘要，避免 verifier 重试重复摘要已覆盖历史。
+
 ## [0.149.0-rc1] - 2026-11-14
 
 ### Added

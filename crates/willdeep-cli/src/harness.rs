@@ -28,6 +28,8 @@ mod worker_profiles;
 pub(crate) mod workflows;
 
 #[cfg(test)]
+pub(crate) mod manual_compression_tests;
+#[cfg(test)]
 mod ownership_tests;
 
 /// 把三个 Worker 档位各自解析成一个模型绑定。
@@ -553,11 +555,15 @@ pub(crate) async fn execute_noninteractive(
     if options.allow_compress_command && prompt.trim() == "/compress" {
         let result = built
             .agent
-            .compress_history_recorded(session.messages.clone(), &mut |usage| {
-                store
-                    .record_compression_usage(session.id, usage)
-                    .map_err(|error| willdeep_core::AgentError::Checkpoint(error.to_string()))
-            })
+            .compress_history_with_summary_recorded(
+                session.messages.clone(),
+                session.context_summary.clone(),
+                &mut |usage| {
+                    store
+                        .record_compression_usage(session.id, usage)
+                        .map_err(|error| willdeep_core::AgentError::Checkpoint(error.to_string()))
+                },
+            )
             .await;
         store.refresh_execution(session)?;
         let messages = result?;
