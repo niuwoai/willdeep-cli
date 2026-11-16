@@ -450,6 +450,7 @@ impl App {
     /// 模型有了第一个可见动作（思考行、正文、工具、计划），等待动画到此为止。
     pub(super) fn dismiss_awaiting_reply(&mut self) {
         self.awaiting_since = None;
+        self.stale_awaiting_reply_snapshots = 0;
     }
 
     /// 挂在最后一条用户消息正下方的等待行：`.`、`..`、`...` 每秒轮换。
@@ -1577,7 +1578,10 @@ mod tests {
         }
         // 同一轮不留空行，等待动画紧贴在用户消息正下方。
         let rows = &app.transcript_rows;
-        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        let user = rows
+            .iter()
+            .position(|row| row.contains("别磨叽了"))
+            .unwrap();
         assert_eq!(rows[user + 1], ".", "{rows:?}");
 
         // 思考行一落进记录，动画就撤，记录里不留那几个点。
@@ -1651,7 +1655,8 @@ mod tests {
             (Duration::from_secs(2), "..."),
         ] {
             let lines = stage(&mut app, elapsed);
-            let message = lines.iter().position(|line| line.contains("You:")).unwrap();
+            // TestBackend 的宽字符续格带空白，用正文里的 ASCII 词定位实际画面。
+            let message = lines.iter().position(|line| line.contains("main")).unwrap();
             // 边框是 `│`，中间那一格才是内容。紧贴消息的下一行应该只有那几个点。
             let below = lines[message + 1]
                 .trim_matches(|ch: char| "│ ".contains(ch))
@@ -2455,7 +2460,10 @@ mod tests {
 
         let (_transient, _notice, _waiting) = app.prepare_transcript_frame();
         let rows = app.transcript_rows.clone();
-        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        let user = rows
+            .iter()
+            .position(|row| row.contains("现在结果怎么样了？"))
+            .unwrap();
         let notice_row = &rows[user + 1];
         assert!(
             notice_row.contains("正在压缩上下文"),

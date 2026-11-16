@@ -2796,10 +2796,17 @@ async fn index() -> Response {
 async fn asset(Path(path): Path<String>) -> Response {
     embedded(&path)
 }
+pub(crate) fn embedded_public_asset(path: &str) -> Option<Response> {
+    let file = WebAssets::get(path)?;
+    Some(embedded_file(path, file))
+}
 fn embedded(path: &str) -> Response {
     let Some(file) = WebAssets::get(path).or_else(|| WebAssets::get("index.html")) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    embedded_file(path, file)
+}
+fn embedded_file(path: &str, file: rust_embed::EmbeddedFile) -> Response {
     let content_type = match path.rsplit('.').next() {
         Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",

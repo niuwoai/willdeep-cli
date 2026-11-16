@@ -17,28 +17,21 @@ fn synthetic_history(history_len: usize) -> Vec<String> {
 }
 
 fn reference_frame(app: &App) -> Text<'static> {
-    let mut rows = app.display_transcript().rows;
-    if let Some(row) = app.transient_row() {
-        rows.push(row);
-    }
+    let folded = app.display_transcript();
+    let labels = app.message_time_labels(&folded, message_time::now());
     let search = app
         .search
         .as_ref()
         .map(|s| s.editor.text().trim())
         .filter(|s| !s.is_empty());
-    wrap_styled_text(
-        colored_transcript(&rows, search, app.transcript_width, app.language),
-        app.transcript_width,
-    )
+    app.render_user_transcript(&folded, &labels, search, folded.rows.len())
+        .text
 }
 
 fn assert_cached_frame_matches_reference(app: &mut App) {
     let mut expected = reference_frame(app);
     let (transient, notice, waiting) = app.prepare_transcript_frame();
-    if app.transient_row().is_some() {
-        let start = expected.lines.len() - transient.lines.len();
-        expected.lines.splice(start.., transient.lines.clone());
-    }
+    expected.lines.extend(transient.lines.clone());
     assert_eq!(app.transcript_rows, text_rows(&expected));
     assert_eq!(app.transcript_height, expected.lines.len());
     for offset in [

@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(app.approval_mode, willdeep_core::ApprovalMode::Smart);
         assert_eq!(app.notice.as_deref(), Some("正在准备会话…"));
         assert_eq!(app.transcript.len(), 1);
-        assert!(app.transcript[0].contains("WILLDEEP"));
+        assert!(app.transcript[0].contains(super::super::banner::NAME));
         assert!(session.messages.is_empty());
     }
 }

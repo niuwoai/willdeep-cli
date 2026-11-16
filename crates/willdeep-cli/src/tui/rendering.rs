@@ -28,6 +28,7 @@ pub(super) struct TranscriptRenderCache {
     line_spacing: u8,
     /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
     code_blocks: Vec<CodeBlockLines>,
+    selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     text: Text<'static>,
 }
 
@@ -82,6 +83,7 @@ impl App {
                 tool_controls,
                 attachment_hits,
                 code_blocks,
+                selection_bounds,
             } = frame;
             self.user_message_controls = user_controls;
             self.tool_row_controls = tool_controls;
@@ -99,21 +101,18 @@ impl App {
                 line_spacing: self.ui.line_spacing,
                 time_labels,
                 code_blocks,
+                selection_bounds,
                 text,
             });
         }
-        let history = &self
+        let cached = self
             .transcript_render_cache
             .as_ref()
-            .expect("prepared history")
-            .text;
-        let cached_code_blocks = self
-            .transcript_render_cache
-            .as_ref()
-            .expect("prepared history")
-            .code_blocks
-            .clone();
-        self.transcript_rows.truncate(history.lines.len());
+            .expect("prepared history");
+        let cached_code_blocks = cached.code_blocks.clone();
+        self.transcript_selection_bounds
+            .clone_from(&cached.selection_bounds);
+        self.transcript_rows.truncate(cached.text.lines.len());
         // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
         // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
         // 插入点按缓存里的样式行算，点名和点击命中都走 `transcript_rows`，插完才对得上。
@@ -127,7 +126,7 @@ impl App {
         // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
         // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
         let waiting = self.awaiting_reply_row().map(|row| {
-            let waiting = self.compression_notice_lines(&row, search.as_deref());
+            let waiting = self.awaiting_reply_lines(&row, search.as_deref());
             let at = self.compression_notice_insert_at();
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
@@ -137,6 +136,8 @@ impl App {
         let mut code_blocks = cached_code_blocks;
         for (at, drawn) in [notice.as_ref(), waiting.as_ref()].into_iter().flatten() {
             shift_code_block_rows(&mut code_blocks, *at, drawn.lines.len());
+            self.transcript_selection_bounds
+                .splice(*at..*at, std::iter::repeat_n(None, drawn.lines.len()));
         }
         self.code_copy.set_blocks(
             code_blocks
@@ -167,9 +168,19 @@ impl App {
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                wrap_styled_text(colored, self.transcript_width)
+                let mut transient = wrap_styled_text(colored, self.transcript_width);
+                if self
+                    .transcript
+                    .last()
+                    .is_some_and(|row| row.starts_with("You: "))
+                {
+                    transient.lines.insert(0, Line::default());
+                }
+                transient
             });
         self.transcript_rows.extend(text_rows(&transient));
+        self.transcript_selection_bounds
+            .resize(self.transcript_rows.len(), None);
         self.transcript_height = self.transcript_rows.len();
         (transient, notice, waiting)
     }
@@ -177,15 +188,11 @@ impl App {
     /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行，紧贴着插。
     /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
     fn compression_notice_insert_at(&self) -> usize {
-        self.transcript_rows
+        self.transcript_selection_bounds
             .iter()
-            .rposition(|row| row.starts_with("You:"))
-            .map_or(self.transcript_rows.len(), |user| {
-                let body = self.transcript_rows[user..]
-                    .iter()
-                    .position(|row| row.is_empty())
-                    .unwrap_or(self.transcript_rows.len() - user);
-                (user + body).min(self.transcript_rows.len())
+            .rposition(Option::is_some)
+            .map_or(self.transcript_rows.len(), |last_user_line| {
+                last_user_line + 1
             })
     }
 
@@ -195,6 +202,21 @@ impl App {
             Text::from(Line::styled(
                 row.to_owned(),
                 Style::default().fg(Color::DarkGray),
+            )),
+            self.transcript_width,
+        );
+        if let Some(query) = search {
+            highlight_matches(&mut text, query);
+        }
+        text
+    }
+
+    /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
+    fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
+        let mut text = wrap_styled_text(
+            Text::from(Line::styled(
+                row.to_owned(),
+                Style::default().fg(Color::Yellow),
             )),
             self.transcript_width,
         );
@@ -439,8 +461,8 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 同轮的用户消息、Thought 与回复紧贴；「本轮结束」分隔线紧贴上一轮回复。
-    /// 分隔线与下一轮用户开口之间留一行；连续两条助手回复之间也留一行。
+    /// 用户消息与 Thought 之间、分隔线与下一轮用户开口前各留一行；
+    /// 「本轮结束」分隔线紧贴上一轮回复；连续两条助手回复之间也留一行。
     /// 空行由整段渲染补上，逐条上色看不到下一条记录。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
@@ -462,13 +484,14 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], "You: first");
-        assert!(rows[1].contains("Thought: 3.0s"), "{rows:?}");
-        assert_eq!(rows[2], "WillDeep: done");
-        assert!(rows[3].contains("turn finished"), "{rows:?}");
-        assert_eq!(rows[4], "");
-        assert_eq!(rows[5], "You: next");
-        assert_eq!(rows.len(), 6, "{rows:?}");
+        assert_eq!(rows[0].trim(), "first");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].contains("Thought: 3.0s"), "{rows:?}");
+        assert_eq!(rows[3], "WillDeep: done");
+        assert!(rows[4].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[5], "");
+        assert_eq!(rows[6].trim(), "next");
+        assert_eq!(rows.len(), 7, "{rows:?}");
     }
 
     /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
@@ -491,7 +514,10 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows, vec!["You: first", "WillDeep: done", "", "You: next"]);
+        assert_eq!(
+            rows.iter().map(|row| row.trim()).collect::<Vec<_>>(),
+            vec!["first", "", "WillDeep: done", "", "next"]
+        );
     }
 
     #[test]
@@ -513,12 +539,13 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows.len(), 5, "{rows:?}");
-        assert_eq!(rows[0], "You: question");
-        assert!(rows[1].ends_with(": first"), "{rows:?}");
-        assert_eq!(rows[2], "");
-        assert!(rows[3].ends_with(": second"), "{rows:?}");
-        assert!(rows[4].starts_with("── turn finished"), "{rows:?}");
+        assert_eq!(rows.len(), 6, "{rows:?}");
+        assert_eq!(rows[0].trim(), "question");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].ends_with(": first"), "{rows:?}");
+        assert_eq!(rows[3], "");
+        assert!(rows[4].ends_with(": second"), "{rows:?}");
+        assert!(rows[5].starts_with("── turn finished"), "{rows:?}");
     }
 
     /// 行距大于 0 时，「本轮结束」分隔线仍紧贴上一轮回复；行距只作用在其它记录之间。
@@ -551,6 +578,7 @@ mod tool_row_style_tests {
         assert!(!rows[divider - 1].is_empty(), "{rows:?}");
         assert!(rows[divider - 1].ends_with(": done"), "{rows:?}");
         // 分隔线后仍保留用户开口前的产品空行，并叠加行距（此处 spacing=2 → 共 3 行空）。
+        // 用户消息块会隐藏 You: 前缀，所以下一行是正文。
         assert_eq!(
             rows.get(divider + 1).map(String::as_str),
             Some(""),
@@ -567,8 +595,8 @@ mod tool_row_style_tests {
             "{rows:?}"
         );
         assert_eq!(
-            rows.get(divider + 4).map(String::as_str),
-            Some("You: next"),
+            rows.get(divider + 4).map(|row| row.trim()),
+            Some("next"),
             "{rows:?}"
         );
     }
@@ -595,7 +623,7 @@ mod tool_row_style_tests {
         assert_eq!(frame.text.lines[0].spans[1].content, ": ");
         assert_eq!(frame.text.lines[0].spans[1].style.fg, Some(Color::Green));
         assert_eq!(frame.text.lines[0].spans[2].style.fg, Some(Color::Green));
-        assert_eq!(rows.last().map(String::as_str), Some("You: 嗯"));
+        assert_eq!(rows.last().map(|row| row.trim()), Some("嗯"));
         // 没起名时画面不变。
         let plain = message_time::render_with_times(
             &["WillDeep: 你好".to_owned()],
@@ -674,7 +702,8 @@ mod tool_row_style_tests {
         );
         let rows = text_rows(&frame.text);
         assert!(
-            rows.iter().any(|row| row.starts_with("WILLDEEP  v")),
+            rows.iter()
+                .any(|row| row.starts_with(&banner::name_line("v"))),
             "{rows:?}"
         );
         assert!(
@@ -695,6 +724,13 @@ mod tool_row_style_tests {
         assert_eq!(greeting.spans[0].content, "滚小滚");
         assert_eq!(greeting.spans[0].style.fg, Some(Color::Cyan));
         assert_eq!(greeting.spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn legacy_wordmark_welcomes_still_relabel_the_assistant_greeting() {
+        let legacy = format!("willdeep  v0.1.0\n\n{ASSISTANT_ROW_PREFIX}Hello");
+        let text = colored_transcript_with_name(&[legacy], None, 80, Language::En, "demo");
+        assert!(text_rows(&text).iter().any(|row| row == "demo: Hello"));
     }
 
     #[test]
@@ -787,12 +823,12 @@ mod tool_row_style_tests {
             2,
         );
         let rows = text_rows(&frame.text);
-        // 用户消息前面本身已让开一行，行距再加在它后面。
+        // 用户与助手之间基础间距一行，再加配置的两行。
         let blanks = rows.iter().filter(|row| row.is_empty()).count();
-        assert_eq!(blanks, 2, "{rows:?}");
-        assert_eq!(rows.first().map(String::as_str), Some("You: 一"));
+        assert_eq!(blanks, 3, "{rows:?}");
+        assert_eq!(rows.first().map(|row| row.trim()), Some("一"));
         assert_eq!(rows.last().map(String::as_str), Some("WillDeep: 二"));
-        // 行距为 0 时只剩用户消息前面那一行，和没设过行距的画面一致。
+        // 行距为 0 时仍保留角色之间的基础空行。
         let tight = message_time::render_transcript(
             &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
             &[None, None],
@@ -805,7 +841,13 @@ mod tool_row_style_tests {
             "",
             0,
         );
-        assert_eq!(text_rows(&tight.text), vec!["You: 一", "WillDeep: 二"]);
+        assert_eq!(
+            text_rows(&tight.text)
+                .iter()
+                .map(|row| row.trim())
+                .collect::<Vec<_>>(),
+            vec!["一", "", "WillDeep: 二"]
+        );
         // 最后一条后面不加：单独一条记录时行距不产生任何空白。
         let single = message_time::render_transcript(
             &["WillDeep: 只有一句".to_owned()],
@@ -882,7 +924,7 @@ mod tool_row_style_tests {
     }
 }
 
-fn highlight_matches(text: &mut Text<'static>, query: &str) {
+pub(super) fn highlight_matches(text: &mut Text<'static>, query: &str) {
     let Ok(pattern) = RegexBuilder::new(&regex::escape(query))
         .case_insensitive(true)
         .build()
@@ -988,7 +1030,9 @@ pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'stati
             let word = &cells[word_start..index];
             let whitespace_width = whitespace.iter().map(|cell| cell.width).sum::<usize>();
             let word_width = word.iter().map(|cell| cell.width).sum::<usize>();
-            if word_width <= width {
+            if word_width <= width
+                && (line_width > 0 || whitespace_width.saturating_add(word_width) <= width)
+            {
                 if line_width > 0
                     && line_width
                         .saturating_add(whitespace_width)
@@ -1111,16 +1155,29 @@ pub(super) fn text_rows(text: &Text<'static>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn selected_text(rows: &[String], start: (usize, usize), end: (usize, usize)) -> String {
+pub(super) fn selected_text(
+    rows: &[String],
+    bounds: &[Option<std::ops::Range<usize>>],
+    start: (usize, usize),
+    end: (usize, usize),
+) -> String {
     if rows.is_empty() || start >= end {
         return String::new();
     }
     let last_row = end.0.min(rows.len().saturating_sub(1));
     (start.0..=last_row)
         .map(|row| {
-            let start_column = if row == start.0 { start.1 } else { 0 };
-            let end_column = if row == end.0 { end.1 } else { usize::MAX };
-            display_column_slice(&rows[row], start_column, end_column)
+            let mut start_column = if row == start.0 { start.1 } else { 0 };
+            let mut end_column = if row == end.0 { end.1 } else { usize::MAX };
+            if let Some(Some(content)) = bounds.get(row) {
+                start_column = start_column.max(content.start);
+                end_column = end_column.min(content.end);
+            }
+            if start_column >= end_column {
+                String::new()
+            } else {
+                display_column_slice(&rows[row], start_column, end_column)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1724,7 +1781,11 @@ fn assistant_display_name(name: &str) -> &str {
 
 fn is_welcome_entry(value: &str) -> bool {
     value.contains("\nWillDeep: ")
-        && value.starts_with(&banner::art_rows().join("\n"))
+        && (value
+            .lines()
+            .next()
+            .is_some_and(|line| banner::styled_name_line(line).is_some())
+            || value.starts_with(&banner::art_rows().join("\n")))
         && value
             .lines()
             .any(|line| banner::styled_name_line(line).is_some())
@@ -1864,7 +1925,7 @@ pub(super) fn cache_hit_rate(usage: &willdeep_core::types::Usage) -> Option<f64>
     Some(cached as f64 / input as f64 * 100.0)
 }
 
-/// 首屏：吉祥物 + 产品名与版本。版本取自 crate，跟着发版走。
+/// 首屏：吉祥物 + 产品名与版本。图形按实际聊天宽度适配，记录保持完整。
 fn welcome_header() -> String {
     let art = banner::art_rows().join("\n");
     format!(

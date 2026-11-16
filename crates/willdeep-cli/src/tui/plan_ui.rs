@@ -164,7 +164,7 @@ pub(super) fn projected_transcript(
 ///
 /// 附件只挂在用户那一行上，其余行是空的。用户行不再把附件塞进
 /// `[N attachment(s)]` 这种后缀：实时回显的是纯 `You: 原文`，重开后必须长得一样，
-/// 附件正文改由画的时候从对齐的槽里取。模型名只挂在用户行和助手正文行上，
+/// 附件正文改由画的时候从对齐的槽里取。模型名只挂在助手正文行上，
 /// 取的是消息落盘时记下的那个；没记下的行留空，不拿会话模型填。
 pub(super) fn project_session(
     messages: &[Message],
@@ -225,10 +225,9 @@ pub(super) fn project_session(
         } else {
             Vec::new()
         };
-        // 模型章只属于说话的那一行：用户行和助手正文行。一条助手消息先投影出
-        // 正文行再投影工具行，章挂在正文行上；只有工具调用的消息没有正文行，
-        // 章就无处可挂，留空而不是安到工具行上。
-        let spoken = item.model.filter(|_| is_user || item.role == "assistant");
+        // 模型章只属于助手正文行。一条助手消息先投影出正文行再投影工具行，
+        // 章挂在正文行上；只有工具调用的消息没有正文行，章就无处可挂。
+        let spoken = item.model.filter(|_| item.role == "assistant");
         for (index, row) in produced.into_iter().enumerate() {
             rows.push(row);
             attachments.push(if index == 0 { slot.clone() } else { Vec::new() });
@@ -538,9 +537,9 @@ mod tests {
     #[test]
     fn reopened_history_keeps_each_messages_recorded_model() {
         let history = [
-            Message::user("第一句"),
+            Message::user("第一句").with_model(Some("legacy-user-model".into())),
             Message::assistant("glm 的回答", Vec::new()).with_model(Some("glm-5".into())),
-            Message::user("第二句"),
+            Message::user("第二句").with_model(Some("another-user-model".into())),
             Message::assistant("qwen 的回答", Vec::new()).with_model(Some("Qwen3.8-27B".into())),
             Message::assistant("旧消息，没记模型", Vec::new()),
         ];
