@@ -57,7 +57,7 @@ fn command_menu_discovers_webapp() {
 #[test]
 fn welcome_mentions_workspace_without_entering_model_history() {
     let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::ZhCn);
-    // 首屏第一行就是吉祥物：它进的是 transcript 原文，拖动选中复制出来的也是这串字。
+    // 首屏保留完整鲸鱼原文；终端变窄只改变绘制，记录本身不改写。
     assert!(welcome.starts_with(super::super::banner::art_rows()[0].as_str()));
     assert!(welcome.contains(super::super::banner::NAME));
     assert!(welcome.contains(env!("CARGO_PKG_VERSION")));

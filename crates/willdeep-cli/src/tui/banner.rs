@@ -1,4 +1,4 @@
-//! 首屏吉祥物：深潜鲸。
+//! 首屏吉祥物：深潜鲸。图形按聊天区可用宽度适配，不能按正文折行拆散。
 //!
 //! 同一份像素网格同时生成两种东西——进 transcript 的纯文本行，和带真彩色的
 //! `Line`。两边的行数与字符一一对应，所以拖选、复制、搜索拿到的就是屏幕上
@@ -52,6 +52,7 @@ const SMALL_ART: [&str; 14] = [
 
 /// 产品名那一行。复制出来仍然是这几个字。
 pub(super) const NAME: &str = "WILLDEEP";
+const LEGACY_NAME: &str = "willdeep";
 
 const COLUMNS: usize = 24;
 
@@ -115,13 +116,7 @@ fn plain_rows() -> &'static [String] {
     ROWS.get_or_init(|| rows_of(&ART, COLUMNS))
 }
 
-fn small_rows() -> &'static [String] {
-    static ROWS: OnceLock<Vec<String>> = OnceLock::new();
-    ROWS.get_or_init(|| rows_of(&SMALL_ART, SMALL_ART[0].chars().count()))
-}
-
-/// 进 transcript 的纯文本行。始终是宽版：文本是会话开始就定下来的，
-/// 之后终端变窄只会改变**画法**，不会改写记录，所以行数与行号保持不变。
+/// 进 transcript 的完整像素图原文；终端变窄只改变画法，保持记录与行号。
 pub(super) fn art_rows() -> &'static [String] {
     plain_rows()
 }
@@ -130,23 +125,22 @@ pub(super) fn art_rows() -> &'static [String] {
 /// `width` 是聊天区可用的内宽：放得下宽版就画宽版，否则换小号。
 pub(super) fn styled_line(row: &str, width: usize) -> Option<Line<'static>> {
     let line = plain_rows().iter().position(|plain| plain == row)?;
-    let (art, plain): (&[&str], &[String]) = if width >= COLUMNS {
-        (&ART, plain_rows())
-    } else {
-        (&SMALL_ART, small_rows())
-    };
-    if !color_supported() {
-        return Some(Line::styled(
-            plain[line].clone(),
-            Style::default().fg(Color::Cyan),
-        ));
-    }
+    let art: &[&str] = if width >= COLUMNS { &ART } else { &SMALL_ART };
+    let source_columns = art[0].chars().count();
+    let columns = source_columns.min(width.max(1));
+    let use_color = color_supported();
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for column in 0..plain[line].chars().count() {
-        let (glyph, style) = cell(
-            pixel_at(art, line * 2, column),
-            pixel_at(art, line * 2 + 1, column),
+    for column in 0..columns {
+        // 不足小号宽度时采样整幅网格，不能裁掉右侧或让正文折行拆散像素行。
+        // 真彩与单色共用同一采样位置；原有 24/12 列画法保持不变。
+        let source_column = (column * source_columns + source_columns / 2) / columns;
+        let (glyph, mut style) = cell(
+            pixel_at(art, line * 2, source_column),
+            pixel_at(art, line * 2 + 1, source_column),
         );
+        if !use_color {
+            style = Style::default().fg(Color::Cyan);
+        }
         let text = glyph.to_string();
         // 相邻同款合并：一行一个 Span 太碎，终端重绘也更慢
         match spans.last_mut() {
@@ -163,13 +157,23 @@ pub(super) fn name_line(version: &str) -> String {
 }
 
 pub(super) fn styled_name_line(row: &str) -> Option<Line<'static>> {
-    let version = row.strip_prefix(NAME)?.strip_prefix("  ")?;
+    let (name, version) = if let Some(version) = row
+        .strip_prefix(NAME)
+        .and_then(|rest| rest.strip_prefix("  "))
+    {
+        (NAME, version)
+    } else {
+        (
+            LEGACY_NAME,
+            row.strip_prefix(LEGACY_NAME)?.strip_prefix("  ")?,
+        )
+    };
     if version.is_empty() {
         return None;
     }
     Some(Line::from(vec![
         Span::styled(
-            NAME.to_owned(),
+            name.to_owned(),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -224,7 +228,7 @@ mod tests {
     /// 宽屏画宽版、窄屏画小号；两种情况下行数一致，宽度跟着聊天区走。
     #[test]
     fn a_narrow_chat_area_draws_the_small_whale_without_folding() {
-        for (width, expected) in [(COLUMNS, COLUMNS), (COLUMNS - 1, 12), (8, 12)] {
+        for (width, expected) in [(COLUMNS, COLUMNS), (COLUMNS - 1, 12), (8, 8)] {
             let lines: Vec<Line<'static>> = art_rows()
                 .iter()
                 .map(|row| styled_line(row, width).expect("mascot row"))
@@ -265,6 +269,25 @@ mod tests {
             .map(|row| row.chars().filter(|ch| *ch != ' ').count())
             .sum::<usize>();
         assert!(drawn > 40, "the mascot should actually draw something");
+    }
+
+    #[test]
+    fn whale_rows_fit_the_viewport_without_wrapping_or_changing_row_count() {
+        for width in 1..=COLUMNS + 1 {
+            let text = ratatui::text::Text::from(
+                art_rows()
+                    .iter()
+                    .map(|row| styled_line(row, width).expect("mascot row"))
+                    .collect::<Vec<_>>(),
+            );
+            assert!(
+                text.lines.iter().all(|line| line.width() <= width),
+                "mascot exceeds the {width}-column viewport"
+            );
+            let wrapped = super::super::rendering::wrap_styled_text(text.clone(), width);
+            assert_eq!(wrapped, text, "mascot was reflowed at width {width}");
+            assert_eq!(wrapped.lines.len(), art_rows().len());
+        }
     }
 
     /// 两种颜色落在同一个单元格时，下半部分必须变成背景，否则那块就是纯色，

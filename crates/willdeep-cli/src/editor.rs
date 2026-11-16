@@ -68,6 +68,10 @@ impl PromptEditor {
     pub fn cursor_visual(&self, width: usize) -> (usize, usize) {
         visual_position(&self.text, self.cursor, width)
     }
+    pub fn cursor_visual_with_prefix(&self, prefix: &str, width: usize) -> (usize, usize) {
+        let text = format!("{prefix}{}", self.text);
+        visual_position(&text, prefix.len() + self.cursor, width)
+    }
     pub fn wrapped_text(&self, width: usize) -> String {
         visual_rows(&self.text, width).join("\n")
     }

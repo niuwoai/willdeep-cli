@@ -1,0 +1,252 @@
+{
+  "passed": true,
+  "version": "0.149.0-rc11",
+  "checks": [
+    {
+      "name": "compact",
+      "passed": true,
+      "columns": 120,
+      "rows": 45,
+      "complete_whale": true
+    },
+    {
+      "name": "full",
+      "passed": true,
+      "columns": 120,
+      "rows": 45,
+      "complete_whale": true
+    },
+    {
+      "name": "narrow",
+      "passed": true,
+      "columns": 60,
+      "rows": 45,
+      "complete_whale": true
+    }
+  ],
+  "whale_width_checks": [
+    {
+      "layout": "compact",
+      "columns": 120,
+      "content_columns": 118,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 60,
+      "content_columns": 58,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 40,
+      "content_columns": 38,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 26,
+      "content_columns": 24,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 25,
+      "content_columns": 23,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 24,
+      "content_columns": 22,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 23,
+      "content_columns": 21,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 14,
+      "content_columns": 12,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 13,
+      "content_columns": 11,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 10,
+      "content_columns": 8,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "compact",
+      "columns": 120,
+      "content_columns": 118,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": true
+    },
+    {
+      "layout": "full",
+      "columns": 120,
+      "content_columns": 118,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 60,
+      "content_columns": 58,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 40,
+      "content_columns": 38,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 26,
+      "content_columns": 24,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 25,
+      "content_columns": 23,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 24,
+      "content_columns": 22,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 23,
+      "content_columns": 21,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 14,
+      "content_columns": 12,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 13,
+      "content_columns": 11,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 10,
+      "content_columns": 8,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": false
+    },
+    {
+      "layout": "full",
+      "columns": 120,
+      "content_columns": 118,
+      "rows": 80,
+      "passed": true,
+      "whale_rows": 7,
+      "soft_wrapped": false,
+      "restored_wide": true
+    }
+  ],
+  "model_requests": 2,
+  "isolation": "Temporary WILLDEEP_HOME, loopback provider; no real credentials or model calls.",
+  "previews": "SVG reconstructed from actual ANSI cells; block glyphs are exact rectangles with square half-cells; text fonts/palette may differ."
+}

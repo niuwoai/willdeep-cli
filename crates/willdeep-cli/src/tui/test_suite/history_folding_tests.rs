@@ -226,7 +226,11 @@ fn a_blank_or_thought_only_history_still_gets_the_welcome_screen() {
     assert!(!app.has_visible_transcript());
     app.ensure_welcome(workspace, Language::En);
     assert!(app.has_visible_transcript());
-    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row.contains(super::super::banner::NAME))
+    );
     assert!(
         !app.transcript.iter().any(String::is_empty),
         "blank rows should be dropped"
@@ -238,14 +242,22 @@ fn a_blank_or_thought_only_history_still_gets_the_welcome_screen() {
     app.ui.show_thinking = false;
     assert!(!app.has_visible_transcript());
     app.ensure_welcome(workspace, Language::En);
-    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row.contains(super::super::banner::NAME))
+    );
 
     // 打开显示时它就是内容，不该再补一遍欢迎语。
     let mut app = App::new(vec![thought], Language::En);
     app.ui.show_thinking = true;
     assert!(app.has_visible_transcript());
     app.ensure_welcome(workspace, Language::En);
-    assert!(!app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        !app.transcript
+            .iter()
+            .any(|row| row.contains(super::super::banner::NAME))
+    );
 }
 
 /// 简洁 UI 同样要显示首屏：同一段历史，两种布局都能看到产品名。
@@ -272,7 +284,7 @@ fn the_welcome_screen_is_visible_in_both_layouts() {
             .map(|cell| cell.symbol())
             .collect();
         assert!(
-            screen.contains("WILLDEEP"),
+            screen.contains(super::super::banner::NAME),
             "{mode:?} layout lost the welcome screen"
         );
     }
@@ -294,7 +306,11 @@ fn loading_the_display_session_before_notices_keeps_both() {
         .resize_with(app.transcript.len(), Vec::new);
 
     assert!(app.has_visible_transcript());
-    assert!(app.transcript.iter().any(|row| row.contains("WILLDEEP")));
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row.contains(super::super::banner::NAME))
+    );
     assert!(
         app.transcript
             .iter()

@@ -1309,7 +1309,7 @@ fn text_selection_mode_uses_escape_or_ctrl_s_without_treating_copy_as_exit() {
 #[test]
 fn internal_chat_selection_copies_unicode_display_columns() {
     let rows = vec!["你好吗".to_owned(), "second".to_owned()];
-    assert_eq!(selected_text(&rows, (0, 2), (1, 3)), "好吗\nsec");
+    assert_eq!(selected_text(&rows, &[], (0, 2), (1, 3)), "好吗\nsec");
     assert_eq!(quote_selected_text("第一行\n第二行"), "> 第一行\n> 第二行");
 }
 
@@ -2266,6 +2266,41 @@ fn repeated_fresh_snapshots_without_tasks_flag_a_stale_runtime_turn() {
     }
 }
 
+/// 用户消息已回显、Runtime 没有活动任务、界面也没在跑轮次时，等待动画不该一直转。
+#[test]
+fn stale_awaiting_reply_clears_without_active_tasks() {
+    let session = uuid::Uuid::new_v4();
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.runtime_event_cursor = 1;
+    app.input.insert("hello");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+
+    // A queued submission can wait through empty snapshots while its network
+    // receipt or Runtime turn identity is pending. Neither should clear the UI.
+    app.runtime_queue_submission = Some(("pending retry".into(), uuid::Uuid::new_v4()));
+    assert!(!app.observe_runtime_tasks(&[], session, Some(1)));
+    assert!(app.awaiting_since.is_some());
+    app.runtime_queue_submission = None;
+    app.runtime_submitted_turn = Some(uuid::Uuid::new_v4());
+    assert!(!app.observe_runtime_tasks(&[], session, Some(2)));
+    assert!(app.awaiting_since.is_some());
+    app.runtime_submitted_turn = None;
+
+    assert!(!app.observe_runtime_tasks(&[], session, Some(3)));
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(&[], session, Some(4)));
+    assert!(app.awaiting_since.is_none());
+    assert!(app.transcript.iter().any(|row| row.contains("等待动画")));
+
+    let task = running_remote_task(session);
+    app.input.insert("again");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(std::slice::from_ref(&task), session, Some(3)));
+    assert!(app.awaiting_since.is_some());
+}
+
 #[test]
 fn ordinary_prompts_default_to_runtime_with_explicit_local_escape() {
     assert_eq!(
@@ -2707,27 +2742,20 @@ fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     assert!(app.chat_selection.is_none());
 }
 
-/// 首屏是一整条多行记录：只在「整条记录开头」认吉祥物会全部落空，
-/// 这里按行核对，顺带保证产品名那一行用的是强调色而不是默认黄色。
+/// 首屏是一整条多行记录：鲸鱼逐行上色，产品名保留强调色。
 #[test]
 fn the_welcome_banner_is_drawn_row_by_row_with_colour() {
     let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::En);
+    assert!(welcome.starts_with(&super::super::banner::art_rows().join("\n")));
     let text = colored_transcript(&[welcome], None, 120, Language::En);
     let rows = text_rows(&text);
-
-    for art_row in super::super::banner::art_rows() {
-        let index = rows
-            .iter()
-            .position(|row| row == art_row)
-            .unwrap_or_else(|| panic!("mascot row missing from the transcript: {art_row:?}"));
-        let colours: Vec<_> = text.lines[index]
-            .spans
-            .iter()
-            .filter_map(|span| span.style.fg)
-            .collect();
+    for (index, row) in super::super::banner::art_rows().iter().enumerate() {
+        assert_eq!(&rows[index], row);
         assert!(
-            !colours.is_empty(),
-            "mascot row {index} lost its colours and fell back to one style"
+            text.lines[index]
+                .spans
+                .iter()
+                .any(|span| span.style.fg.is_some())
         );
     }
 

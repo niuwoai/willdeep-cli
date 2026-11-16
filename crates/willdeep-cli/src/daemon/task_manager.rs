@@ -876,6 +876,7 @@ impl TaskManager {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn wait_until_idle(&self) {
         loop {
             let has_active_tasks = {
@@ -891,6 +892,38 @@ impl TaskManager {
             };
             if !has_active_tasks {
                 return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Wait for active work to finish, but abort the handoff if a task reaches
+    /// a human gate while draining. The old Runtime must remain available to
+    /// deliver that question and receive its answer.
+    pub(super) async fn wait_until_idle_or_human_gate(&self) -> bool {
+        loop {
+            let state = {
+                // Gate creation and terminal persistence use this same lock.
+                // Observing both task statuses under it closes the transition
+                // window between a running task and its persisted interaction.
+                let _persistence = self.persistence.lock().await;
+                let tasks = self.tasks.read().await;
+                let waiting_on_human = tasks.values().any(|task| {
+                    matches!(
+                        task.status,
+                        RuntimeTaskStatus::WaitingApproval | RuntimeTaskStatus::WaitingAnswer
+                    )
+                });
+                let has_active_tasks = tasks
+                    .values()
+                    .any(|task| runtime_task_status_blocks_drain(task.status));
+                (waiting_on_human, has_active_tasks)
+            };
+            if state.0 {
+                return false;
+            }
+            if !state.1 {
+                return true;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
