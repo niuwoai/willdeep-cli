@@ -1,0 +1,77 @@
+{
+  "version": "0.149.0-rc11",
+  "date": "2026-11-16",
+  "status": "passed",
+  "scope": "Combined verification-gate fix and already-installed rc10 TUI/Runtime behavior",
+  "branch": "fix/verification-gate-stale-failures",
+  "base_commit": "7127dd521dc673e4ac81959a2947612d062358f3",
+  "merge_parents": ["6c4fd82b5fa678d69d929bea12190746d4b35dc4", "ba894a5906982921411e33486fa699f6f356e43e"],
+  "checks": [
+    {
+      "name": "rust_workspace",
+      "command": "CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/Users/rocky/Sites/willdeep-rs/target cargo +1.94.1 test --locked --workspace",
+      "exit_code": 0,
+      "passed": 2863,
+      "failed": 0,
+      "ignored": 12,
+      "nested_helper_passes_not_added": 1,
+      "build_seconds": 1129,
+      "suites": [
+        {"name": "willdeep_unit", "passed": 1629, "failed": 0, "ignored": 5, "seconds": 104.19},
+        {"name": "detached_jobs", "passed": 18, "failed": 0, "ignored": 1, "seconds": 5.02},
+        {"name": "headless_runtime", "passed": 62, "failed": 0, "ignored": 0, "seconds": 297.14},
+        {"name": "workspace_versions", "passed": 1, "failed": 0, "ignored": 0, "seconds": 0.00},
+        {"name": "willdeep_core_unit", "passed": 1083, "failed": 0, "ignored": 6, "seconds": 420.62},
+        {"name": "provider_contracts", "passed": 5, "failed": 0, "ignored": 0, "seconds": 0.03},
+        {"name": "runtime_client_unit", "passed": 7, "failed": 0, "ignored": 0, "seconds": 0.01},
+        {"name": "runtime_protocol_unit", "passed": 57, "failed": 0, "ignored": 0, "seconds": 0.01},
+        {"name": "doctests", "passed": 1, "failed": 0, "ignored": 0, "seconds": 0.00}
+      ]
+    },
+    {"name": "strict_clippy", "command": "CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/Users/rocky/Sites/willdeep-rs/target cargo +1.94.1 clippy --locked --workspace --all-targets -- -D warnings", "exit_code": 0, "seconds": 92},
+    {"name": "rust_format", "command": "cargo +1.94.1 fmt --all -- --check", "exit_code": 0},
+    {"name": "web_tests", "command": "yarn --cwd web test --maxWorkers=2", "exit_code": 0, "files": 52, "passed": 430, "failed": 0, "seconds": 223.99},
+    {"name": "web_build", "command": "yarn --cwd web build", "exit_code": 0},
+    {"name": "web_lint", "command": "yarn --cwd web lint", "exit_code": 0, "errors": 0, "warnings": 1, "existing_warning": "ModelPicker.tsx:42 react-hooks/exhaustive-deps"},
+    {"name": "config_bridge", "passed": 6, "failed": 0, "exit_code": 0},
+    {"name": "npm_installation_tests", "command": "ruby scripts/test/npm_willdeep_test.rb", "runs": 7, "assertions": 38, "failures": 0, "errors": 0, "skips": 0, "exit_code": 0},
+    {"name": "ruby_ci_guards", "runs": 71, "assertions": 1072, "failures": 0, "errors": 0, "skips": 0, "exit_code": 0, "suites": [
+      {"name": "model_eval", "runs": 32, "assertions": 748},
+      {"name": "agent_metrics", "runs": 9, "assertions": 75},
+      {"name": "prompt_rsi", "runs": 22, "assertions": 188},
+      {"name": "eval_execution", "runs": 5, "assertions": 46},
+      {"name": "feedback_health", "runs": 3, "assertions": 15}
+    ]},
+    {"name": "model_eval_task_contract", "command": "ruby scripts/model_eval.rb --check-tasks", "exit_code": 0},
+    {"name": "magpie_integration", "command": "yarn --cwd integrations/magpie test", "passed": 19, "failed": 0, "exit_code": 0},
+    {"name": "version_consistency", "command": "ruby scripts/check_release_version.rb 0.149.0-rc11", "exit_code": 0},
+    {"name": "source_size", "reviewed_files": 1525, "max_lines": 3000, "violations": [], "exit_code": 0},
+    {"name": "background_contract", "command": "ruby scripts/check_background_contract.rb", "exit_code": 0},
+    {"name": "source_diff_whitespace", "exit_code": 0, "exception": "Raw terminal captures under docs/verification retain actual terminal padding and blank rows; the unfiltered whole-tree diff check reports these historical evidence files."},
+    {"name": "real_tui", "exit_code": 0, "layouts_passed": 3, "terminal_width_checks_passed": 22, "model_requests": 2, "provider": "loopback fixture", "temporary_home": true, "report": "user-messages/integration.json"},
+    {"name": "imac_universal_prebuild", "exit_code": 0, "architectures": ["x86_64", "arm64"], "version": "0.149.0-rc11", "rust": "1.94.1", "intel_build_seconds": 1001, "arm_build_seconds": 886, "release_artifact": false, "note": "Dirty prebuild only. Final release artifacts must come from the clean release commit and pass embedded commit identity checks."}
+  ],
+  "earlier_attempts": [
+    {"name": "default_parallel_web_tests", "files_passed": 51, "files_failed": 1, "passed": 429, "failed": 1, "reason": "ChildSessionsP2 prerequisite selection timed out at 5000ms under default concurrency", "resolution": "Unchanged single suite passed 26 tests; unchanged complete suite passed with maxWorkers=2. No timeout or assertion weakened."},
+    {"name": "combined_static_checks", "reason": "Three Rust lints and one React refresh export error blocked strict checks", "resolution": "Test-only helper cfg, remove unused input entry, lexical borrow scope, export SharePage and remove module-constant effect dependency. Final strict Clippy and Web lint succeeded."},
+    {"name": "npm_tests_with_forced_internal_utf8", "runs": 7, "assertions": 33, "failures": 0, "errors": 1, "reason": "ruby -EUTF-8:UTF-8 attempted to transcode binary executable fixture", "resolution": "Standard project ruby invocation passed 7 runs and 38 assertions without source changes."},
+    {"name": "imac_source_sync", "exit_code": 23, "reason": "Quoted Git path output did not match Unicode filenames", "resolution": "NUL-delimited git ls-files -z and rsync --from0 completed successfully."},
+    {"name": "browser_preview", "verified": false, "reason": "Preview launcher resolved the original Xedit project configuration, so no matching CLI preview server was started."}
+  ],
+  "coverage": [
+    "Cargo invocation errors require exact native diagnostics, one package selector and exit 101",
+    "Package correction preserves cwd and all other arguments; real failures and required checks remain blocking",
+    "Stable current snapshots are required for successful evidence",
+    "Legacy checkpoints migrate only with complete unambiguous native tool history",
+    "Production detached jobs collect terminal results, deduplicate and validate restored job identities",
+    "Previously installed rc10 message layout, copying, whale rendering and human-gate Runtime handoff remain present"
+  ],
+  "delivery_at_report_time": {
+    "stage": "local_combined_verification_complete_before_release_commit",
+    "published": false,
+    "installed": false,
+    "runtime_upgraded": false,
+    "real_user_session_files_modified": false,
+    "real_provider_calls": 0
+  }
+}
