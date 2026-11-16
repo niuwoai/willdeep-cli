@@ -163,7 +163,7 @@ fn validate(draft: &ScheduleDraft, _now: u64) -> Result<(), ApiFailure> {
         if !path.is_absolute() {
             return Err(ApiFailure::invalid("schedule config_path must be absolute"));
         }
-        crate::config::LoadedConfig::load(Some(path)).map_err(|error| {
+        crate::config::LoadedConfig::load_runtime(Some(path)).map_err(|error| {
             ApiFailure::invalid(willdeep_core::judge::redact_credentials(&error.to_string()))
         })?;
     }

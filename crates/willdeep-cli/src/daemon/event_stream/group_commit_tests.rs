@@ -39,7 +39,7 @@ fn preview_batches_are_durable_ordered_and_flushed_before_terminal_events() {
     let root = std::env::temp_dir().join(format!("wd-group-commit-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     let mut receiver = log.subscribe();
     for index in 0..200 {
         assert_eq!(
@@ -60,7 +60,7 @@ fn preview_batches_are_durable_ordered_and_flushed_before_terminal_events() {
         assert_eq!(receiver.try_recv().unwrap().sequence, expected.sequence);
     }
     drop(log);
-    let reopened = EventLog::open(path).unwrap();
+    let reopened = EventLog::open_for_tests(path).unwrap();
     assert_eq!(reopened.latest_sequence(), 201);
     assert_eq!(reopened.append("next", "resumed").unwrap().sequence, 202);
     drop(reopened);
@@ -72,7 +72,7 @@ async fn a_single_preview_is_delivered_without_waiting_for_another_token() {
     let root = std::env::temp_dir().join(format!("wd-group-first-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     let mut receiver = log.subscribe();
     log.append("task.output", preview(0)).unwrap();
     let event = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
@@ -90,7 +90,7 @@ fn drop_and_read_barriers_flush_tail_previews() {
     let root = std::env::temp_dir().join(format!("wd-group-tail-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     log.append("task.output", preview(0)).unwrap();
     assert_eq!(log.read_after(0, 10).unwrap().len(), 1);
     log.append("task.output", preview(1)).unwrap();
@@ -103,7 +103,7 @@ fn drop_and_read_barriers_flush_tail_previews() {
 fn failed_disk_write_never_broadcasts_or_advances_committed_cursor() {
     let root = std::env::temp_dir().join(format!("wd-group-failure-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let log = EventLog::open(root.join("events.ndjson")).unwrap();
+    let log = EventLog::open_for_tests(root.join("events.ndjson")).unwrap();
     let mut receiver = log.subscribe();
     std::fs::remove_dir_all(root).unwrap();
     log.append("task.output", preview(0)).unwrap();
@@ -117,7 +117,7 @@ fn failed_disk_write_never_broadcasts_or_advances_committed_cursor() {
 async fn contiguous_live_stream_never_rescans_the_journal() {
     let root = std::env::temp_dir().join(format!("wd-live-fast-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let log = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let log = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let receiver = log.subscribe();
     for index in 0..200 {
         log.append("task.output", preview(index)).unwrap();
@@ -144,7 +144,7 @@ async fn contiguous_live_stream_never_rescans_the_journal() {
 async fn a_live_gap_backfills_history_before_returning_the_new_event() {
     let root = std::env::temp_dir().join(format!("wd-live-gap-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let log = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let log = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     for index in 0..3 {
         log.append("history", index.to_string()).unwrap();
     }
@@ -172,13 +172,13 @@ fn index_reads_match_a_full_scan_across_sample_boundaries() {
     let root = std::env::temp_dir().join(format!("wd-index-boundary-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     for index in 0..700 {
         log.append("task.output", preview(index)).unwrap();
     }
     drop(log);
 
-    let reopened = EventLog::open(path.clone()).unwrap();
+    let reopened = EventLog::open_for_tests(path.clone()).unwrap();
     for after in [0, 1, 255, 256, 257, 511, 512, 513, 698, 699, 700, 701] {
         for limit in [1, 7, 256, 1_000] {
             let indexed = reopened.read_after(after, limit).unwrap();
@@ -205,13 +205,13 @@ fn appended_events_stay_indexed_after_a_restart() {
     let root = std::env::temp_dir().join(format!("wd-index-restart-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     for index in 0..300 {
         log.append("task.output", preview(index)).unwrap();
     }
     drop(log);
 
-    let reopened = EventLog::open(path.clone()).unwrap();
+    let reopened = EventLog::open_for_tests(path.clone()).unwrap();
     assert_eq!(reopened.append("next", "resumed").unwrap().sequence, 301);
     for index in 300..620 {
         reopened.append("task.output", preview(index)).unwrap();

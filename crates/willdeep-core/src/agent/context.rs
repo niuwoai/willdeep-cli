@@ -35,48 +35,133 @@ impl Agent {
     /// Record every reported compression bill before yielding to event observers.
     pub async fn compress_history_recorded(
         &self,
-        mut messages: Vec<Message>,
+        messages: Vec<Message>,
+        record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
+    ) -> Result<Vec<Message>, AgentError> {
+        self.compress_history_with_summary_recorded(messages, None, record_usage)
+            .await
+    }
+
+    /// Materialize an automatic summary into durable history. Cache anchors refer
+    /// to the original durable prefix, before notices, recovery, or paging change
+    /// its indices. Only stable rules participate in the system fingerprint.
+    /// The caller must discard the old prefix anchor after saving the new history.
+    pub async fn compress_history_with_summary_recorded(
+        &self,
+        messages: Vec<Message>,
+        summary: Option<crate::context_summary::ContextSummary>,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
         let settings = self.compression_settings()?;
-        // Manual compression can precede the next Agent run after a crash.
-        uncertain::UncertainCalls::recover(&mut messages);
+        let cached = if let Some(summary) = summary {
+            let rules = crate::project_rules::ProjectRules::new(self.tools.workspace())
+                .map_err(ToolError::Io)?;
+            let stable_system = self.stable_system_message(&rules)?;
+            let system =
+                fingerprint_of(messages.iter().enumerate().filter_map(|(index, message)| {
+                    (message.role == Role::System
+                        && !crate::checkpoint::is_federation_notice(message))
+                    .then_some(if index == 0 { &stable_system } else { message })
+                }));
+            Some(SummaryCache::restore(summary)).filter(|entry| {
+                entry.matches(&messages, &system)
+                    // Notices can sit between an assistant and its real receipts.
+                    // Validate the durable boundary without mistaking a notice
+                    // for the end of that batch.
+                    && messages[entry.through..]
+                        .iter()
+                        .find(|message| !crate::checkpoint::is_federation_notice(message))
+                        .is_none_or(|message| message.role != Role::Tool)
+            })
+        } else {
+            None
+        };
+        // 展示用系统行不能插进工具批次里：先摘掉，压缩完成后按原位置放回。
+        let notices_source = messages
+            .iter()
+            .any(crate::checkpoint::is_federation_notice)
+            .then(|| messages.clone());
+        let restore_notices = |history: &mut Vec<Message>| {
+            if let Some(source) = &notices_source {
+                crate::checkpoint::preserve_federation_notices(history, source);
+            }
+        };
         let capacity = message_capacity(
             self.effective_context_window(),
             &self.request_definitions(),
             self.completion_reserve(),
         )?;
         let target = capacity.saturating_mul(COMPRESSION_TRIGGER_PERCENT) / 100;
-        messages = self.page_tool_outputs(&messages, capacity)?.messages;
-        if messages.len() < KEEP_RECENT_MESSAGES + 2 && estimate_tokens(&messages) < target {
+        let paged = self.page_tool_outputs(&messages, capacity, true)?;
+        let cached = cached.map(|entry| (paged.projected_index(entry.through), entry.summary));
+        let mut messages = paged.messages;
+        // Recovery may insert UNKNOWN receipts before the anchor. Recover each
+        // side of the validated batch boundary and remap through to the repaired
+        // prefix length; retained unknown-effect batches remain verbatim.
+        let (mut through, mut summary) = if let Some((through, summary)) = cached {
+            let mut tail = messages.split_off(through);
+            uncertain::UncertainCalls::recover(&mut messages);
+            let through = messages.len();
+            uncertain::UncertainCalls::recover(&mut tail);
+            messages.append(&mut tail);
+            (through, Some(summary))
+        } else {
+            uncertain::UncertainCalls::recover(&mut messages);
+            (0, None)
+        };
+        if summary.is_none()
+            && messages.len() < KEEP_RECENT_MESSAGES + 2
+            && estimate_tokens(&messages) < target
+        {
+            restore_notices(&mut messages);
             return Ok(messages);
         }
-        let mut split = batch_boundary(
-            &messages,
-            messages.len().saturating_sub(KEEP_RECENT_MESSAGES),
+        let mut result = summary.as_ref().map_or_else(
+            || messages.clone(),
+            |summary| compact_prefix(&messages, through, summary),
         );
-        if split == 0 && estimate_tokens(&messages) >= target {
-            split = messages.len();
-        }
-        if split == 0 {
-            return Ok(messages);
-        }
         self.sink
             .emit(AgentEvent::CompressionStarted {
                 estimated_tokens: estimate_tokens(&messages),
             })
             .await;
-        let summary = self
-            .summarize_history_with_settings(&messages[..split], &settings, record_usage)
-            .await?;
-        let mut result = compact_prefix(&messages, split, &summary);
-        // A summary alone is not success: the recent tail may still contain a
-        // window-sized tool batch (including reasoning). Fold that tail too.
-        if estimate_tokens(&result) > target && split < messages.len() {
-            let summary = self
-                .summarize_history_with_settings(&messages, &settings, record_usage)
-                .await?;
-            result = compact_prefix(&messages, messages.len(), &summary);
+        // A saved summary that already meets the target needs no model call,
+        // even when the raw durable history remains very large.
+        if summary.is_none() || estimate_tokens(&result) > target {
+            let mut split = batch_boundary(
+                &messages,
+                messages.len().saturating_sub(KEEP_RECENT_MESSAGES),
+            );
+            if split == 0 && estimate_tokens(&messages) >= target {
+                split = messages.len();
+            }
+            split = split.max(through);
+            if has_summary_material(&messages[through..split]) {
+                let source = summary.as_ref().map_or_else(
+                    || messages[..split].to_vec(),
+                    |summary| extend_summary(&messages[..split], through, summary),
+                );
+                summary = Some(
+                    self.summarize_history_with_settings(&source, &settings, record_usage)
+                        .await?,
+                );
+            }
+            through = split;
+            if let Some(summary) = &summary {
+                result = compact_prefix(&messages, through, summary);
+            }
+            // The recent tail may itself exceed the window. Feed the derived
+            // summary once plus only uncovered material, never the raw prefix again.
+            if estimate_tokens(&result) > target && has_summary_material(&messages[through..]) {
+                let source = summary.as_ref().map_or_else(
+                    || messages.clone(),
+                    |summary| extend_summary(&messages, through, summary),
+                );
+                let summary = self
+                    .summarize_history_with_settings(&source, &settings, record_usage)
+                    .await?;
+                result = compact_prefix(&messages, messages.len(), &summary);
+            }
         }
         let dropped = self.archive_old_batches(&mut result, target)?;
         let estimated = estimate_tokens(&result);
@@ -92,7 +177,30 @@ impl Agent {
                 dropped_messages: dropped,
             })
             .await;
+        // 展示行不参与容量核算；按原始接收位置放回持久历史。
+        restore_notices(&mut result);
         Ok(result)
+    }
+
+    /// Stable rules shared by automatic and manual compression. Runtime state
+    /// belongs in the request tail and must never invalidate a saved summary.
+    pub(super) fn stable_system_message(
+        &self,
+        rules: &crate::project_rules::ProjectRules,
+    ) -> Result<Message, AgentError> {
+        let mut content = format!(
+            "{}\n\n{}\n\n{}\n\n{}",
+            self.config.system_prompt,
+            rules.render(),
+            self.tools.required_verification_prompt(),
+            self.tools.completion_contract_prompt()
+        );
+        self.append_instance_identity(&mut content)?;
+        if self.tools.allows_agent_tool("update_plan") {
+            content.push_str("\n\n");
+            content.push_str(crate::planning::SCHEDULING_CONTRACT);
+        }
+        Ok(Message::system(content))
     }
 
     #[cfg(test)]
@@ -137,7 +245,7 @@ impl Agent {
         // Durable checkpoints retain the full system pin. Normalize only the
         // already-cloned request projection, without copying the whole history again.
         let page = || {
-            let mut paged = self.page_tool_outputs(messages, capacity)?;
+            let mut paged = self.page_tool_outputs(messages, capacity, true)?;
             if let Some(system) = stable_system {
                 paged.messages[0] = system.clone();
             }
@@ -276,6 +384,7 @@ impl Agent {
         &self,
         messages: &[Message],
         capacity: u64,
+        exclude_federation_notices: bool,
     ) -> Result<PagedHistory, AgentError> {
         let limit = (capacity / TOOL_MESSAGE_WINDOW_DIVISOR).max(64);
         // Host steering can be re-injected every turn. Keep the last exact
@@ -297,7 +406,11 @@ impl Agent {
             abbreviated: false,
         };
         for (index, message) in messages.iter().enumerate() {
-            if !keep[index] {
+            if !keep[index]
+                || (exclude_federation_notices
+                    && message.role == Role::System
+                    && message.source == Some(MessageSource::FederationNotice))
+            {
                 continue;
             }
             let mut result = message.clone();
@@ -424,7 +537,12 @@ impl Agent {
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
         let budget = self.summary_input_budget_for(settings);
-        let chunks = chunk_for_summary(messages, budget);
+        let visible: Vec<_> = messages
+            .iter()
+            .filter(|message| message.source != Some(MessageSource::FederationNotice))
+            .cloned()
+            .collect();
+        let chunks = chunk_for_summary(&visible, budget);
         if chunks.len() <= 1 {
             return self
                 .summarize_once(
@@ -583,6 +701,37 @@ impl Agent {
             .await;
         Err(last_error.unwrap_or(ProviderError::EmptyResponse).into())
     }
+}
+
+fn has_summary_material(messages: &[Message]) -> bool {
+    let mut index = 0;
+    while index < messages.len() {
+        let message = &messages[index];
+        let end = if message.role == Role::Assistant && !message.tool_calls.is_empty() {
+            batch_boundary(messages, index + 1)
+        } else {
+            index + 1
+        };
+        if matches!(message.role, Role::Tool | Role::Assistant)
+            && !uncertain::has_unknown_effect(&messages[index..end])
+        {
+            return true;
+        }
+        index = end;
+    }
+    false
+}
+
+/// One copy of the derived state followed by precisely the uncovered transcript.
+fn extend_summary(messages: &[Message], through: usize, summary: &str) -> Vec<Message> {
+    let mut source = vec![summary_message(
+        summary,
+        messages[..through]
+            .iter()
+            .any(Message::requires_reasoning_replay),
+    )];
+    source.extend_from_slice(&messages[through..]);
+    source
 }
 
 fn compact_prefix(messages: &[Message], split: usize, summary: &str) -> Vec<Message> {

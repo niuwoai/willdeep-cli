@@ -1018,6 +1018,88 @@ fn unresolved_calls_are_uncertain_and_completed_siblings_are_preserved() {
     assert_eq!(history[1].content, "saved");
 }
 
+#[test]
+fn runtime_checkpoint_preserves_external_group_notices_at_their_original_position() {
+    let home = std::env::temp_dir().join(format!("willdeep-group-notice-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    let store = SessionStore::new(&home);
+    let mut session = Session::new(home.clone(), None, "group");
+    store.save(&mut session).unwrap();
+    let mut note = Message::system("beta replied");
+    note.source = Some(crate::types::MessageSource::FederationNotice);
+    let checkpoint_messages = vec![
+        Message::user("host starts"),
+        Message::assistant("host replies", Vec::new()),
+        Message::user("gamma replies"),
+    ];
+    store
+        .update(session.id, |session| {
+            session.messages = checkpoint_messages[..2].to_vec();
+            session.messages.push(note.clone());
+            session.messages.push(note.clone());
+        })
+        .unwrap();
+    let sink = SessionCheckpointSink {
+        store,
+        session_id: session.id,
+    };
+    let checkpoint = RunCheckpoint {
+        plan: None,
+        metadata: CheckpointMetadata::default(),
+        messages: checkpoint_messages,
+        goal: None,
+    };
+    sink.save(&checkpoint).unwrap();
+    sink.save(&checkpoint).unwrap();
+    let saved = sink.store.load(session.id).unwrap();
+    assert_eq!(saved.messages.len(), 5);
+    assert_eq!(saved.messages[2].content, "beta replied");
+    assert_eq!(saved.messages[3].content, "beta replied");
+    assert_eq!(saved.messages[4].content, "gamma replies");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn group_notice_keeps_its_place_when_the_checkpoint_gains_a_system_pin() {
+    let home = std::env::temp_dir().join(format!("willdeep-group-pin-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    let store = SessionStore::new(&home);
+    let mut session = Session::new(home.clone(), None, "group");
+    store.save(&mut session).unwrap();
+    let mut note = Message::system("beta replied");
+    note.source = Some(crate::types::MessageSource::FederationNotice);
+    store
+        .update(session.id, |session| {
+            session.messages = vec![
+                Message::user("host starts"),
+                note.clone(),
+                Message::user("gamma replies"),
+            ];
+        })
+        .unwrap();
+    let sink = SessionCheckpointSink {
+        store,
+        session_id: session.id,
+    };
+    let checkpoint = RunCheckpoint {
+        plan: None,
+        metadata: CheckpointMetadata::default(),
+        messages: vec![
+            Message::system("system pin"),
+            Message::user("host starts"),
+            Message::user("gamma replies"),
+        ],
+        goal: None,
+    };
+    sink.save(&checkpoint).unwrap();
+    let saved = sink.store.load(session.id).unwrap();
+    assert_eq!(saved.messages[0].content, "system pin");
+    assert_eq!(saved.messages[1].content, "host starts");
+    assert_eq!(saved.messages[2].content, "beta replied");
+    assert_eq!(saved.messages[3].content, "gamma replies");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 /// 目标状态随检查点落进会话：一轮跑完，续推次数、验收清单都在会话文件里；
 /// 较旧的一份写回来不会把计数拨回去；旧会话文件（没有 `goal_state`）照常加载。
 #[test]

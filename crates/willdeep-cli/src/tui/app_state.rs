@@ -46,6 +46,7 @@ impl App {
             composer_expanded: false,
             quiet_drawn: false,
             ui: crate::config::UiSettings::default(),
+            assistant_name: String::new(),
             update_available: None,
             notice: None,
             notice_hold: None,
@@ -62,6 +63,7 @@ impl App {
             mobile_status: None,
             mobile_qr: None,
             queued_prompts: VecDeque::new(),
+            next_prompt_submission_order: 0,
             runtime_queue_submission: None,
             queue_draft: PromptEditor::default(),
             queue_draft_attachments: Vec::new(),
@@ -88,6 +90,7 @@ impl App {
             overlay_close_hits: Vec::new(),
             stale_runtime_turn_snapshots: 0,
             stale_runtime_turn_recovery_reported: false,
+            stale_awaiting_reply_snapshots: 0,
             last_elapsed: None,
             context_window: 128_000,
             context_tokens: 0,
@@ -148,6 +151,7 @@ impl App {
             native_selection_mode: false,
             chat_selection: None,
             transcript_rows: Vec::new(),
+            transcript_selection_bounds: Vec::new(),
             transcript_render_cache: None,
             transcript_render_offset: 0,
             skill_selected: 0,
@@ -268,6 +272,7 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        self.stale_awaiting_reply_snapshots = 0;
         // 过程行属于上一份记录，换了会话就没有可替的了。
         self.pending_notice_rows.clear();
         self.pending_reasoning_level = None;
@@ -854,6 +859,7 @@ impl App {
         }
     }
     pub(super) fn refresh_search_matches(&mut self) {
+        let assistant_name = self.assistant_name();
         let Some(search) = &mut self.search else {
             return;
         };
@@ -864,7 +870,12 @@ impl App {
             self.transcript
                 .iter()
                 .enumerate()
-                .filter_map(|(index, value)| value.to_lowercase().contains(&query).then_some(index))
+                .filter_map(|(index, value)| {
+                    rendering::searchable_transcript_row(value, &assistant_name)
+                        .to_lowercase()
+                        .contains(&query)
+                        .then_some(index)
+                })
                 .collect()
         };
         search.selected = 0;
@@ -1211,7 +1222,8 @@ impl App {
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
-        self.awaiting_since = None;
+        self.dismiss_awaiting_reply();
+        self.stale_awaiting_reply_snapshots = 0;
         self.running = false;
         self.last_progress_at = None;
         self.runtime_turn = false;
@@ -1384,6 +1396,7 @@ impl App {
         self.runtime_turn = runtime_turn;
         self.stale_runtime_turn_snapshots = 0;
         self.stale_runtime_turn_recovery_reported = false;
+        self.stale_awaiting_reply_snapshots = 0;
         self.turn_started = Some(now);
         self.last_progress_at = Some(now);
         self.last_elapsed = None;
@@ -1454,10 +1467,31 @@ impl App {
         if has_active_task {
             self.stale_runtime_turn_snapshots = 0;
             self.stale_runtime_turn_recovery_reported = false;
+            self.stale_awaiting_reply_snapshots = 0;
             if !self.running && fresh {
                 self.ensure_runtime_turn();
             }
             return false;
+        }
+        if self.awaiting_since.is_some() && fresh && !(self.running || self.runtime_turn) {
+            // 等待中的回显表示提交/重试仍未落到 Runtime 事件流。快照的暂时空闲
+            // 不能据此撤掉动画；收到回显或提交失败后，pending 状态会自行解除。
+            if self.runtime_queue_submission.is_some()
+                || !self.pending_runtime_echoes.is_empty()
+                || self.runtime_submitted_turn.is_some()
+            {
+                self.stale_awaiting_reply_snapshots = 0;
+                return false;
+            }
+            self.stale_awaiting_reply_snapshots =
+                self.stale_awaiting_reply_snapshots.saturating_add(1);
+            if self.stale_awaiting_reply_snapshots >= STALE_AWAITING_REPLY_SNAPSHOTS {
+                runtime_ui::reconcile_stale_awaiting_reply(self);
+            }
+            return false;
+        }
+        if self.awaiting_since.is_some() && fresh {
+            self.stale_awaiting_reply_snapshots = 0;
         }
         if self.stale_runtime_turn_recovery_reported {
             return false;
@@ -1824,6 +1858,7 @@ impl App {
             idle,
         ))
     }
+
     pub(super) fn handle_question_key(&mut self, key: KeyEvent) {
         let Some(dialog) = self.question.as_mut() else {
             return;
@@ -2030,25 +2065,6 @@ impl App {
                 .saturating_add(self.transcript_height.saturating_sub(previous_height));
         }
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
-    }
-
-    /// 新落进记录的这一行该盖哪个模型的章。
-    ///
-    /// 只有说话的行才盖：用户行盖的是发送当时的会话模型（这句话发给了谁），
-    /// 助手正文行盖的是这一轮事件带来的产出模型。工具行、系统行和分隔线都不是
-    /// 模型的原话，留空。两个来源都可能是空，空着就是不知道，不互相顶替。
-    fn model_for_row(&self, row: &str) -> Option<String> {
-        let source = if row.starts_with("You: ") {
-            self.display_model.as_deref()
-        } else if row.starts_with("WillDeep: ") {
-            self.reply_model.as_deref()
-        } else {
-            None
-        };
-        source
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .map(str::to_owned)
     }
 
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
@@ -2264,6 +2280,58 @@ impl App {
                 let message = self.toggle_tool_rows();
                 self.append_transcript(message);
             }
+            "/spacing" => {
+                use crate::config::MAX_LINE_SPACING;
+
+                let argument = args.trim();
+                let spacing = if argument.is_empty() {
+                    self.ui.line_spacing
+                } else {
+                    match argument.parse::<u8>() {
+                        Ok(value) if value <= MAX_LINE_SPACING => value,
+                        _ => {
+                            self.append_transcript(format!(
+                                "Error: {} 0–{MAX_LINE_SPACING} (got `{argument}`)",
+                                self.language
+                                    .text("行距只能是", "line spacing must be", "行間は"),
+                            ));
+                            return true;
+                        }
+                    }
+                };
+                self.ui.line_spacing = spacing;
+                if let Some(home) = self.display_home.as_deref()
+                    && let Err(error) = crate::config::save_line_spacing(home, spacing)
+                {
+                    self.append_transcript(format!(
+                        "Error: {}: {error}",
+                        self.language.text(
+                            "行距没能保存",
+                            "could not save the line spacing",
+                            "行間を保存できませんでした"
+                        ),
+                    ));
+                    return true;
+                }
+                self.refresh_transcript_height();
+                self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+                self.append_transcript(format!(
+                    "System: {}",
+                    if argument.is_empty() {
+                        self.language.pick(
+                            format!("当前行距 {spacing}（每条记录之间空 {spacing} 行，0 最紧凑，最大 {MAX_LINE_SPACING}）"),
+                            format!("Line spacing is {spacing} ({spacing} blank row(s) between entries, 0 is tightest, {MAX_LINE_SPACING} is the maximum)"),
+                            format!("行間は {spacing}（各記録の間に {spacing} 行、0 が最も詰まり、最大 {MAX_LINE_SPACING}）"),
+                        )
+                    } else {
+                        self.language.pick(
+                            format!("行距已设为 {spacing}（每条记录之间空 {spacing} 行）"),
+                            format!("Line spacing set to {spacing} ({spacing} blank row(s) between entries)"),
+                            format!("行間を {spacing} に設定しました（各記録の間に {spacing} 行）"),
+                        )
+                    }
+                ));
+            }
             "/thinking" => {
                 self.ui.show_thinking = match args.trim().to_ascii_lowercase().as_str() {
                     "" | "toggle" => !self.ui.show_thinking,
@@ -2446,16 +2514,21 @@ impl App {
                     return true;
                 }
                 match crate::identity::rename(home, requested) {
-                    Ok(identity) => self.append_transcript(format!(
-                        "System: {} · {} · {}",
-                        self.language.text(
-                            "实例已改名",
-                            "Instance renamed",
-                            "インスタンス名を変更しました"
-                        ),
-                        identity.display_name(false),
-                        identity.id
-                    )),
+                    Ok(identity) => {
+                        // 改名立刻换上回复行的名字，不用重开窗口。记录原文不动，
+                        // 下一帧重画时整段历史都跟着新名字走。
+                        self.assistant_name = identity.display_name(false);
+                        self.append_transcript(format!(
+                            "System: {} · {} · {}",
+                            self.language.text(
+                                "实例已改名",
+                                "Instance renamed",
+                                "インスタンス名を変更しました"
+                            ),
+                            self.assistant_name,
+                            identity.id
+                        ));
+                    }
                     Err(error) => self.append_transcript(format!("Error: {error}")),
                 }
             }
@@ -2675,26 +2748,32 @@ impl App {
             "group" => {
                 let home = home.to_path_buf();
                 let args = args.to_owned();
+                let config = config.map(std::path::Path::to_path_buf);
                 let ui = ui.clone();
                 tokio::spawn(async move {
-                    let message = federation_group_command(&home, &args).await;
+                    let message = federation_group_command(&home, &args, config.as_deref()).await;
                     let _ = ui.send(UiMessage::Federation(match message {
                         Ok(line) => format!("System: {line}"),
                         Err(error) => format!("Error: {error:#}"),
                     }));
                 });
             },
-            "stop" => match crate::federation::pause_group(home, args) {
-                Ok(group) => self.append_transcript(format!(
-                    "System: #{} {}",
-                    group.name,
-                    self.language.text(
-                        "的自动回复已暂停，有人发言后恢复",
-                        "automatic replies paused until someone speaks",
-                        "の自動返信を停止しました。誰かが発言するまで再開しません",
-                    )
-                )),
-                Err(error) => self.append_transcript(format!("Error: {error:#}")),
+            "stop" => {
+                let home = home.to_path_buf();
+                let group = args.to_owned();
+                let ui = ui.clone();
+                let stopped = self.language.text(
+                    "的自动回复已暂停，有人发言后恢复",
+                    "automatic replies paused until someone speaks",
+                    "の自動返信を停止しました。誰かが発言するまで再開しません",
+                ).to_owned();
+                tokio::spawn(async move {
+                    let message = crate::daemon::pause_host_group(&home, &group).await;
+                    let _ = ui.send(UiMessage::Federation(match message {
+                        Ok(group) => format!("System: #{} {stopped}", group.name),
+                        Err(error) => format!("Error: {error:#}"),
+                    }));
+                });
             },
             other => self.append_transcript(format!(
                 "Error: {} /fed list|invite|join <url>|say <name> <text>|group <name> <member...>|stop <group>|remove <name> (got `{other}`)",
@@ -2872,7 +2951,11 @@ async fn join_peer(
 }
 
 /// `/fed group`：建群，或在已有的群里发言。`say` 开头是发言，否则第一个词是群名。
-async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow::Result<String> {
+async fn federation_group_command(
+    home: &std::path::Path,
+    args: &str,
+    config: Option<&std::path::Path>,
+) -> anyhow::Result<String> {
     let mut parts = args.split_whitespace();
     let Some(first) = parts.next() else {
         anyhow::bail!("/fed group <name> <member...> | /fed group say <name> <text>");
@@ -2885,26 +2968,8 @@ async fn federation_group_command(home: &std::path::Path, args: &str) -> anyhow:
         if text.is_empty() {
             anyhow::bail!("/fed group say <name> <text>");
         }
-        let store = crate::federation::load(home)?;
-        let group = crate::federation::find_group(&store, name)?.clone();
-        let identity = crate::identity::load(home)?;
-        let envelope = crate::federation::GroupEnvelope {
-            group_id: Some(group.id),
-            origin: Some(identity.id),
-            from_agent: false,
-            mention_depth: 0,
-            host_note: false,
-        };
-        let mut delivered = 0usize;
-        for member in &group.members {
-            let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
-                continue;
-            };
-            crate::federation::send_group_message(identity.id, contact, &text, &envelope).await?;
-            delivered += 1;
-        }
-        crate::federation::note_group_manual(home, group.id)?;
-        return Ok(format!("#{}, delivered to {delivered}", group.name));
+        crate::daemon::say_to_group(home, name, &text, config).await?;
+        return Ok(format!("#{name}, sent"));
     }
     let members = parts.map(str::to_owned).collect::<Vec<_>>();
     let group = crate::federation::create_group(home, first, &members)?;

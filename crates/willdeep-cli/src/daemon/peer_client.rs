@@ -2,6 +2,12 @@ use super::*;
 
 const PEER_REQUEST_ATTEMPTS: usize = 2;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameInstanceArgs {
+    name: String,
+}
+
 pub(crate) async fn peer_operation(
     home: &Path,
     operation: &str,
@@ -185,6 +191,18 @@ impl willdeep_core::tools::SessionCollaboration for PeerSessionClient {
         name: &str,
         arguments: serde_json::Value,
     ) -> std::result::Result<String, willdeep_core::tools::ToolError> {
+        if name == "rename_instance" {
+            let args: RenameInstanceArgs = serde_json::from_value(arguments).map_err(|source| {
+                willdeep_core::tools::ToolError::InvalidArguments {
+                    tool: name.to_owned(),
+                    source,
+                }
+            })?;
+            let identity = crate::identity::rename(&self.home, &args.name).map_err(|error| {
+                willdeep_core::tools::ToolError::Network(format!("rename this instance: {error:#}"))
+            })?;
+            return Ok(serde_json::json!({"name": identity.name}).to_string());
+        }
         let result = async {
             let (operation, params) = match name {
                 "list_workspace_sessions" => ("session.peers", serde_json::json!({"id": self.session_id})),
@@ -281,6 +299,7 @@ impl PeerSessionClient {
 mod tests {
     use super::*;
     use willdeep_core::peer_sessions::{PeerMessage, PeerMessageStore, PeerOrigin};
+    use willdeep_core::tools::SessionCollaboration;
     use willdeep_runtime_protocol::{ApiResponse, ErrorCode};
 
     #[test]
@@ -314,6 +333,37 @@ mod tests {
         let (operation, params) = model_child_params("start_session", serde_json::json!({"title":"Read", "prompt":"Inspect files", "subscription":"inbox", "depends_on":[uuid::Uuid::new_v4()]})).unwrap();
         assert_eq!(operation, "session.child.start");
         assert_eq!(params["subscription"], "inbox");
+    }
+
+    #[tokio::test]
+    async fn rename_instance_changes_only_the_name_and_rejects_invalid_arguments() {
+        let home = std::env::temp_dir().join(format!("peer-rename-{}", uuid::Uuid::new_v4()));
+        let original = crate::identity::load(&home).unwrap();
+        let client = PeerSessionClient {
+            home: home.clone(),
+            session_id: uuid::Uuid::new_v4(),
+            turn_id: None,
+        };
+        let response = client
+            .execute("rename_instance", serde_json::json!({"name": "滚小滚"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response).unwrap()["name"],
+            "滚小滚"
+        );
+        let renamed = crate::identity::load(&home).unwrap();
+        assert_eq!(renamed.id, original.id);
+        assert_eq!(renamed.name, "滚小滚");
+        for arguments in [
+            serde_json::json!({"name": "bad name"}),
+            serde_json::json!({"name": "valid", "session_id": "other"}),
+            serde_json::json!({}),
+        ] {
+            assert!(client.execute("rename_instance", arguments).await.is_err());
+            assert_eq!(crate::identity::load(&home).unwrap(), renamed);
+        }
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[tokio::test]

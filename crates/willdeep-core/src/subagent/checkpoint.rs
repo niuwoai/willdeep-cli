@@ -53,10 +53,30 @@ pub(super) async fn run(
     {
         session.messages.push(notice);
     }
-    agent
-        .run_checkpointed(session.messages, Message::user(brief), Some(&checkpoint))
-        .await
+    let outcome = agent
+        .run_checkpointed_with_summary(
+            session.messages,
+            Message::user(brief),
+            Some(&checkpoint),
+            session.context_summary,
+        )
+        .await?;
+    // checkpoint 仍持有执行所有权。按最新磁盘快照只补消息与摘要，不能用运行前的
+    // session 覆盖刚落盘的用量、计划、执行检查点或并发写入的外部元数据。
+    store
+        .update(id, |session| {
+            let mut messages = outcome.messages.clone();
+            crate::checkpoint::preserve_federation_notices(&mut messages, &session.messages);
+            session.messages = messages;
+            session.context_summary = outcome.context_summary.clone();
+        })
+        .map_err(persistence_error)?;
+    Ok(outcome)
 }
+
+#[cfg(test)]
+#[path = "checkpoint_summary_tests.rs"]
+mod summary_tests;
 
 #[cfg(test)]
 mod tests {

@@ -21,6 +21,8 @@ mod control_policy;
 mod deferred_gates;
 #[path = "headless_runtime/detached_background.rs"]
 mod detached_background;
+#[path = "headless_runtime/federation_groups.rs"]
+mod federation_groups;
 #[path = "headless_runtime/foreground_recovery.rs"]
 mod foreground_recovery;
 #[path = "headless_runtime/local_partial.rs"]
@@ -2639,6 +2641,9 @@ enum MockMode {
     WaitRootThenRetryChild,
     RetryRoot,
     StreamingUntilReleased,
+    FederationReply(&'static str),
+    FederationReplySequence(&'static str, &'static str),
+    FederationReplyAfterFirstWait(&'static str, &'static str),
     Success,
     IncompleteThenSuccess,
     Status(u16),
@@ -2735,6 +2740,11 @@ async fn mock_provider_response(
             }
         }
     }
+    if matches!(state.mode, MockMode::FederationReplyAfterFirstWait(..)) && request_index > 0 {
+        while !state.release_stream.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
     if matches!(state.mode, MockMode::StreamingUntilReleased) {
         let stream = futures_util::stream::unfold(
             (0, state.release_stream),
@@ -2778,6 +2788,9 @@ async fn mock_provider_response(
         | MockMode::WaitRootThenRetryChild
         | MockMode::RetryRoot
         | MockMode::StreamingUntilReleased
+        | MockMode::FederationReply(_)
+        | MockMode::FederationReplySequence(..)
+        | MockMode::FederationReplyAfterFirstWait(..)
         | MockMode::IncompleteThenSuccess
         | MockMode::DelayedSuccess(_)
         | MockMode::FailingToolThenSuccess
@@ -2823,6 +2836,21 @@ async fn mock_provider_response(
             "choices": [{"message": {"content": "partial evidence", "tool_calls": []}, "finish_reason": "length"}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
         }).to_string()
+    } else if let MockMode::FederationReplyAfterFirstWait(first, later)
+    | MockMode::FederationReplySequence(first, later) = state.mode
+    {
+        let reply = if request_index == 0 { first } else { later };
+        serde_json::json!({
+            "choices": [{"message": {"content": reply, "tool_calls": []}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        })
+        .to_string()
+    } else if let MockMode::FederationReply(reply) = state.mode {
+        serde_json::json!({
+            "choices": [{"message": {"content": reply, "tool_calls": []}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        })
+        .to_string()
     } else if status == 200 {
         format!(
             r#"{{"choices":[{{"message":{{"content":"{MOCK_REPLY}","tool_calls":[]}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}}}"#

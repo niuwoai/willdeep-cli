@@ -183,7 +183,7 @@ pub struct ConversationItem {
 }
 
 /// Both surfaces use exactly this projection when reopening or refreshing a
-/// session. Only explicitly sourced host messages are reclassified.
+/// session. Only explicitly sourced host instructions and federation notices become system items.
 pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<ConversationItem> {
     let mut items: Vec<ConversationItem> = Vec::new();
     let mut active: Option<usize> = None;
@@ -262,6 +262,7 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
         }
         let role = match message.role {
             Role::User if message.source == Some(MessageSource::HostInstruction) => "system",
+            Role::System if message.source == Some(MessageSource::FederationNotice) => "system",
             Role::User => "user",
             // 只带工具调用、正文为空的 assistant 消息也要进投影：工具行回放靠它。
             Role::Assistant
@@ -305,7 +306,7 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
                 continue;
             }
         }
-        if role == "system" {
+        if role == "system" && message.source != Some(MessageSource::FederationNotice) {
             entry.details.push(std::mem::take(&mut entry.content));
         }
         if role == "assistant" {

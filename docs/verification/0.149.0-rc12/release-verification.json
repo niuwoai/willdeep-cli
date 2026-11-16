@@ -1,0 +1,41 @@
+{
+  "version": "0.149.0-rc12",
+  "date": "2026-11-17",
+  "status": "local_verified",
+  "verified_source_sha256": "098806f6f6b55cd64f4dc33f0ab1cec57d791d6940a15fa556944b21d9b5f025",
+  "source_unchanged_during_verification": true,
+  "branch": "fix/verification-gate-stale-failures",
+  "base_commit": "7127dd521dc673e4ac81959a2947612d062358f3",
+  "previous_candidate_commit": "25415efc846b0c7afd5a1a9f11b785b7bea5a46e",
+  "scope": "验证门禁修正、既有 TUI/Runtime 交互保留、Runtime 心跳关闭竞态及插件内容摘要缓存误判",
+  "checks": [
+    {"name": "web_tests", "command": "yarn --cwd web test --maxWorkers=2", "status": "passed", "exit_code": 0, "files": 52, "passed": 430, "failed": 0},
+    {"name": "web_build", "command": "yarn --cwd web build", "status": "passed", "exit_code": 0},
+    {"name": "web_lint", "command": "yarn --cwd web lint", "status": "passed", "exit_code": 0, "errors": 0, "warnings": 1, "existing_warning": "ModelPicker.tsx:42 react-hooks/exhaustive-deps"},
+    {"name": "ruby_ci_guards", "status": "passed", "runs": 71, "assertions": 1072, "failures": 0, "errors": 0, "skips": 0, "exit_code": 0},
+    {"name": "npm_installation_tests", "status": "passed", "runs": 7, "assertions": 38, "failures": 0, "errors": 0, "skips": 0, "exit_code": 0},
+    {"name": "config_bridge", "status": "passed", "passed": 6, "failed": 0, "exit_code": 0},
+    {"name": "magpie_integration", "status": "passed", "passed": 19, "failed": 0, "exit_code": 0},
+    {"name": "model_eval_task_contract", "status": "passed", "tasks": 20, "invalid": 0, "exit_code": 0},
+    {"name": "ci_samples", "status": "passed", "exit_code": 0},
+    {"name": "npm_pack_dry_run", "command": "npm pack ./npm/willdeep --dry-run --json --pack-destination /private/tmp", "status": "passed", "files": 6, "exit_code": 0},
+    {"name": "real_tui_debug", "status": "passed", "exit_code": 0, "version": "0.149.0-rc12", "layouts_passed": 3, "whale_width_checks_passed": 22, "loopback_model_requests": 2, "isolation": "Temporary WILLDEEP_HOME and loopback-only provider; no real credentials or model calls", "evidence": ".claude/scratch/rc12-tui-debug/", "preview_kind": "SVG reconstructed from actual ANSI cells; not an OS screenshot"},
+    {"name": "browser_share_preview", "status": "blocked_tool_configuration", "reason": "preview_start 未识别 CLI 工作树 .claude/launch.json 中的 cli-share-release-preview，返回的可选启动项属于 Xedit；未启动其他项目服务，未声称浏览器验收通过。"},
+    {"name": "plugin_core_targeted", "status": "passed", "passed": 67, "failed": 0, "exit_code": 0},
+    {"name": "plugin_cli_targeted", "status": "passed", "passed": 7, "failed": 0, "exit_code": 0},
+    {"name": "lease_shutdown_targeted", "status": "passed", "passed": 5, "failed": 0, "exit_code": 0},
+    {"name": "process_cleanup_targeted", "status": "passed", "passed": 17, "failed": 0, "exit_code": 0},
+    {"name": "original_rewind_targeted", "status": "passed", "passed": 1, "failed": 0, "exit_code": 0},
+    {"name": "rust_final_workspace", "command": "cargo +1.94.1 test --locked --workspace", "status": "passed", "task_id": "b7k90rbyt", "exit_code": 0, "passed": 2878, "failed": 0, "ignored": 12, "suites": [{"name": "willdeep_unit", "passed": 1637, "failed": 0, "ignored": 5}, {"name": "detached_jobs", "passed": 18, "failed": 0, "ignored": 1}, {"name": "headless_runtime", "passed": 62, "failed": 0, "ignored": 0}, {"name": "core_unit", "passed": 1091, "failed": 0, "ignored": 6, "seconds": 420.66}, {"name": "provider_contracts", "passed": 5, "failed": 0}, {"name": "runtime_client_unit", "passed": 7, "failed": 0}, {"name": "runtime_protocol_unit", "passed": 57, "failed": 0}, {"name": "runtime_client_doctest", "passed": 1, "failed": 0}], "note": "Two nested helper subprocess results and targeted reruns are not double-counted."},
+    {"name": "strict_clippy", "command": "cargo +1.94.1 clippy --locked --workspace --all-targets -- -D warnings", "status": "passed", "exit_code": 0, "seconds": 63},
+    {"name": "final_source_guards", "status": "passed", "exit_code": 0, "rustfmt": "passed", "source_size_reviewed_files": 1528, "source_size_violations": 0, "background_contract": "passed", "version_consistency": "passed", "diff_whitespace": "passed", "source_identity_unchanged": true}
+  ],
+  "earlier_attempts": [
+    {"name": "rc12_before_plugin_fix", "status": "cancelled_for_source_change", "lease_shutdown_passed": 5, "process_cleanup_passed": 17, "rewind_passed": 1, "workspace_suites_completed": [{"name": "willdeep_unit", "passed": 1634, "failed": 0, "ignored": 5}, {"name": "detached_jobs", "passed": 18, "failed": 0, "ignored": 1}], "note": "主线程主动停止尚在 headless 集成阶段的批次，以纳入随后发现的插件修正；全量与 Clippy 未完成，未记为通过。注入 panic 用例按预期捕获异常并通过。"},
+    {"name": "rc11_imac_ci", "head": "25415efc846b0c7afd5a1a9f11b785b7bea5a46e", "status": "failed", "willdeep_unit_passed": 1629, "detached_jobs_passed": 18, "headless_passed": 61, "headless_failed": 1, "test": "rewind_restores_conversation_and_files_to_an_earlier_turn", "reason": "进程清理 10 秒截止时间到达，已退出进程的 JSON 租约仍存在。基线心跳取消与清理存在可确定重现的写回竞态；原 CI 失败瞬间未完全取证，不能把竞态路径当作完整现场证明。"},
+    {"name": "rc11_q4_ci_after_proxy_fix", "head": "25415efc846b0c7afd5a1a9f11b785b7bea5a46e", "job_id": 133448168042, "status": "failed", "willdeep_unit_passed": 1626, "failed": 1, "ignored": 5, "test": "plugin_cmd::tests::refuses_to_overwrite_a_version_whose_content_changed", "reason": "来源包 payload 等长改写且 mtime、ctime 不变，路径/大小/mtime 缓存可能复用旧摘要；现场来源与已安装副本内容不同，但被误判为已安装。"},
+    {"name": "source_size_ascii_locale", "status": "failed_invocation", "reason": "US-ASCII locale 无法拆分 Git 输出中的 Unicode 文件名", "resolution": "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 下检查 1527 文件、0 违规；最终源码仍需重新检查。"},
+    {"name": "npm_prefix_pack", "status": "failed_invocation", "reason": "npm --prefix 未使 pack 使用包目录，根目录无 package.json", "resolution": "显式传 npm pack ./npm/willdeep 后通过，发布清单 6 文件。"}
+  ],
+  "delivery_at_report_time": {"published": false, "installed_rc12": false, "runtime_upgraded_rc12": false, "real_user_session_files_modified": false, "note": "本机 Cargo CLI 与 Runtime 当前为 rc11；Homebrew 当前为 rc1。rc11 程序已新增独立备份，原始 rc10、rc1 与会话热备保留。"}
+}

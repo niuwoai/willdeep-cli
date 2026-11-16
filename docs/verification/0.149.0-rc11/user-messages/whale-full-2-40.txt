@@ -1,0 +1,80 @@
+┌nova · workspace──────────────────────┐
+│            ▄▄                        │
+│     ▄▄    ▄██▄                       │
+│   ▄█████████████▄▄                   │
+│  ██████████████████▄                 │
+│  ████████████████████▄               │
+│   ▀██████████████████▀▀              │
+│     ▀▀▀████████▀▀▀                   │
+│                                      │
+│WILLDEEP  v0.149.0-rc11               │
+│                                      │
+│nova: Hello, I’m in workspace. Tell me│
+│what you want to build, fix, or       │
+│investigate; I’ll inspect the project │
+│before making changes. Type `/help`   │
+│for every command, or `/model` to     │
+│switch models.                        │
+│System: Switched to full UI           │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+┌Activity · Ctrl+O details─────────────┐
+│                                      │
+└──────────────────────────────────────┘
+┌Prompt [focused] · F2 expand · Shift/A┐
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+Ready · Focus: Prompt · context 0% · lat

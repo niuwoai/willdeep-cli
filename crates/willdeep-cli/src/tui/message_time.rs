@@ -43,7 +43,7 @@ fn message_label(time: String, model: Option<&str>) -> String {
 /// 用户或助手说的话。系统行、工具行、分隔线都不算：它们不记时间，也不算
 /// 「又聊了几句」。
 pub(super) fn is_message(row: &str) -> bool {
-    row.starts_with("You: ") || row.starts_with("WillDeep: ")
+    row.starts_with("You: ") || row.starts_with(ASSISTANT_ROW_PREFIX)
 }
 
 fn key(row: &str) -> String {
@@ -311,9 +311,9 @@ impl App {
             {
                 *target = Some(message_label(
                     relative_time(*sent, current, self.language),
-                    self.transcript_models
-                        .get(index)
-                        .and_then(|model| model.as_deref()),
+                    row.starts_with(ASSISTANT_ROW_PREFIX)
+                        .then(|| self.transcript_models.get(index).and_then(Option::as_deref))
+                        .flatten(),
                 ));
             }
         }
@@ -346,6 +346,8 @@ pub(super) fn render_with_times(
 /// 工具点击位置是（样式行号，记录位置，是不是「收起」那一行）。
 pub(super) struct FoldedFrame {
     pub(super) text: Text<'static>,
+    /// 与显示行对齐，用户行只允许复制此范围，其他行没有额外边界。
+    pub(super) selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     pub(super) user_controls: Vec<(usize, usize)>,
     pub(super) tool_controls: Vec<(usize, usize, bool)>,
     /// 附件标签所在的样式行：行号、记录位置、附件序号（从 0 起）。
@@ -355,6 +357,7 @@ pub(super) struct FoldedFrame {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn render_with_user_folds(
     rows: &[String],
     labels: &[Option<String>],
@@ -365,8 +368,38 @@ pub(super) fn render_with_user_folds(
     tools: &BTreeMap<usize, (usize, Option<String>)>,
     attachments: &[Vec<MessageAttachment>],
 ) -> FoldedFrame {
+    render_transcript(
+        rows,
+        labels,
+        search,
+        width,
+        language,
+        users,
+        tools,
+        attachments,
+        "",
+        0,
+    )
+}
+
+/// [`render_with_user_folds`] 加上两样只影响画面的设置：回复行显示的名字，
+/// 以及每条记录之间额外空出的行数。记录原文不动，显示名由调用方明确指定。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_transcript(
+    rows: &[String],
+    labels: &[Option<String>],
+    search: Option<&str>,
+    width: usize,
+    language: Language,
+    users: &BTreeMap<usize, (usize, bool)>,
+    tools: &BTreeMap<usize, (usize, Option<String>)>,
+    attachments: &[Vec<MessageAttachment>],
+    assistant_name: &str,
+    spacing: u8,
+) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
+    let mut selection_bounds = Vec::new();
     let mut controls = Vec::new();
     let mut tool_controls = Vec::new();
     let mut attachment_hits = Vec::new();
@@ -377,14 +410,37 @@ pub(super) fn render_with_user_folds(
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
         let displayed = divider_without_your_turn(row, language);
-        // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
-        let (mut entry, mut row_code_blocks) = if displayed.starts_with("WillDeep: ") {
-            rendering::render_assistant_entry_with_code_blocks(&displayed, search, width)
+        let is_user = displayed.starts_with("You: ");
+        let entry_width = if is_user {
+            user_message::content_width(width)
+        } else {
+            width
+        };
+        // 用户只画正文；角色判断先于移除前缀，正文里的角色文本不再被解释。
+        // 助手走带代码块标注的 Markdown 路径；名字只影响画面，不修改记录。
+        let (mut entry, mut row_code_blocks) = if is_user {
+            (
+                user_message::render_body(&displayed, search, entry_width),
+                Vec::new(),
+            )
+        } else if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
+            rendering::render_assistant_entry_with_code_blocks(
+                &displayed,
+                search,
+                width,
+                assistant_name,
+            )
         } else {
             (
                 wrap_styled_text(
-                    colored_transcript_at_width(std::slice::from_ref(&displayed), search, width),
-                    width,
+                    rendering::colored_transcript_with_name(
+                        std::slice::from_ref(&displayed),
+                        search,
+                        entry_width,
+                        language,
+                        assistant_name,
+                    ),
+                    entry_width,
                 ),
                 Vec::new(),
             )
@@ -396,7 +452,7 @@ pub(super) fn render_with_user_folds(
         {
             for (attachment_index, attachment) in list.iter().enumerate() {
                 let (lines, label_lines) =
-                    attachment_lines(attachment, attachment_index, language, width);
+                    attachment_lines(attachment, attachment_index, language, entry_width);
                 let label_at = text.lines.len() + entry.lines.len();
                 for offset in 0..label_lines {
                     attachment_hits.push((label_at + offset, source, attachment_index));
@@ -425,7 +481,7 @@ pub(super) fn render_with_user_folds(
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 )),
-                width,
+                entry_width,
             );
             controls.extend(
                 (0..control.lines.len())
@@ -467,16 +523,22 @@ pub(super) fn render_with_user_folds(
             }
         }
         if let Some(Some(label)) = labels.get(index) {
-            let suffix = format!(" · {label}");
+            let suffix = if is_user && UnicodeWidthStr::width(label.as_str()) + 3 > entry_width {
+                label.clone()
+            } else {
+                format!(" · {label}")
+            };
             let suffix_width = UnicodeWidthStr::width(suffix.as_str());
-            if suffix_width <= width
+            if suffix_width <= entry_width
                 && let Some(last) = entry.lines.iter().rposition(|line| line.width() > 0)
             {
                 let span = Span::styled(
                     suffix,
                     Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
                 );
-                if entry.lines[last].width() + suffix_width <= width {
+                if entry.lines[last].width() + suffix_width <= entry_width
+                    && span.content.starts_with(" · ")
+                {
                     entry.lines[last].spans.push(span);
                 } else {
                     // 时间标签另起一行时插在块内还是块后：块内的行号要跟着 +1，
@@ -502,6 +564,16 @@ pub(super) fn render_with_user_folds(
                 line.push_span(Span::raw(label));
             }
         }
+        selection_bounds.resize(text.lines.len(), None);
+        if is_user {
+            selection_bounds.extend(
+                user_message::style_block(&mut entry, width)
+                    .into_iter()
+                    .map(Some),
+            );
+        } else {
+            selection_bounds.resize(text.lines.len() + entry.lines.len(), None);
+        }
         let block_base = text.lines.len();
         code_blocks.extend(
             row_code_blocks
@@ -513,17 +585,29 @@ pub(super) fn render_with_user_folds(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 空行只属于分隔线与下一条用户消息之间。逐条上色看不到下一条是什么，
-        // 所以留在这里：后面没有用户消息时（最后一行、或后面是 Thought）不留。
-        let followed_by_user = rows
-            .get(index + 1)
-            .is_some_and(|row| row.starts_with("You:"));
-        if displayed.starts_with(TURN_DIVIDER_PREFIX) && followed_by_user {
-            text.lines.push(Line::default());
+        // 用户消息前后、连续回复之间和回复后的轮次分隔线前各留一行。
+        // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
+        let next = rows.get(index + 1);
+        let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
+        let followed_by_reply_or_divider = displayed.starts_with(ASSISTANT_ROW_PREFIX)
+            && next.is_some_and(|row| {
+                row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
+            });
+        let blanks = usize::from(
+            (followed_by_user && !displayed.is_empty())
+                || (is_user && next.is_some_and(|row| !row.is_empty()))
+                || followed_by_reply_or_divider,
+        )
+        .saturating_add(usize::from(spacing));
+        if blanks > 0 && index != last {
+            let grown = text.lines.len() + blanks;
+            text.lines.resize_with(grown, Line::default);
         }
     }
+    selection_bounds.resize(text.lines.len(), None);
     FoldedFrame {
         text,
+        selection_bounds,
         user_controls: controls,
         tool_controls,
         attachment_hits,
@@ -679,13 +763,12 @@ mod tests {
             app.message_time_labels(&folded, 160),
             [Some("1分前".into())]
         );
-        // 时间后面的模型名只认这条消息落进记录时记下的那个。会话当前的模型
-        // 变了也不回头改旧消息，没记下模型的消息只留时间。
+        // 旧用户行即使存过模型也只显示发送时间；当前模型同样不参与用户标签。
         app.transcript_models[0] = Some("glm-5".into());
         app.display_model = Some("qwen".into());
         assert_eq!(
             app.message_time_labels(&folded, 160),
-            [Some("1分前 · glm-5".into())]
+            [Some("1分前".into())]
         );
         app.transcript_models[0] = Some("  ".into());
         assert_eq!(
@@ -712,9 +795,9 @@ mod tests {
         assert_eq!(
             app.transcript_models,
             vec![
+                None,
                 Some("glm-5".into()),
-                Some("glm-5".into()),
-                Some("Qwen3.8-27B".into()),
+                None,
                 Some("Qwen3.8-27B".into()),
                 None,
                 None,
@@ -725,9 +808,9 @@ mod tests {
         assert_eq!(
             labels.iter().flatten().collect::<Vec<_>>(),
             vec![
+                &"刚刚".to_owned(),
                 &"刚刚 · glm-5".to_owned(),
-                &"刚刚 · glm-5".to_owned(),
-                &"刚刚 · Qwen3.8-27B".to_owned(),
+                &"刚刚".to_owned(),
                 &"刚刚 · Qwen3.8-27B".to_owned(),
             ]
         );

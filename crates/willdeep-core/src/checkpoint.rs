@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::agent::{AgentError, AgentOutcome};
 use crate::types::{Message, Role};
 
+mod verification_migration;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointStatus {
@@ -584,8 +586,14 @@ impl CheckpointSink for SessionCheckpointSink {
             .map(|session| {
                 session
                     .execution_checkpoint
+                    .as_ref()
                     .filter(|checkpoint| checkpoint.status != CheckpointStatus::Completed)
-                    .map(|checkpoint| checkpoint.verification_evidence)
+                    .map(|checkpoint| {
+                        verification_migration::migrate(
+                            checkpoint.verification_evidence.clone(),
+                            &session,
+                        )
+                    })
                     .unwrap_or_default()
             })
             .map_err(|error| error.to_string())
@@ -610,7 +618,9 @@ impl CheckpointSink for SessionCheckpointSink {
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
         self.store
             .update(self.session_id, |session| {
-                session.messages = checkpoint.messages.clone();
+                let mut messages = checkpoint.messages.clone();
+                preserve_federation_notices(&mut messages, &session.messages);
+                session.messages = messages;
                 if let Some(plan) = &checkpoint.plan {
                     session.current_plan = Some(plan.clone());
                 }
@@ -625,6 +635,62 @@ impl CheckpointSink for SessionCheckpointSink {
             })
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+}
+
+/// 只给人看的联邦群系统行；模型请求、工具批次扫描都不应看到它。
+pub fn is_federation_notice(message: &Message) -> bool {
+    message.role == Role::System
+        && message.source == Some(crate::types::MessageSource::FederationNotice)
+}
+
+/// 外部群系统行可能在 Runtime 已装载执行快照后写入；保存检查点时保留它们。
+/// 同内容的多条消息按出现次数合并，避免重试时丢失重复发言。
+/// 两边可能相差一条 system pin，所以按“前面有多少条普通消息”定位，
+/// 而不是直接使用 persisted 的下标。
+pub fn preserve_federation_notices(messages: &mut Vec<Message>, persisted: &[Message]) {
+    let mut seen = std::collections::HashMap::<&str, usize>::new();
+    for (position, note) in persisted.iter().enumerate() {
+        if !is_federation_notice(note) {
+            continue;
+        }
+        let count = seen.entry(note.content.as_str()).or_default();
+        *count += 1;
+        let existing = messages
+            .iter()
+            .filter(|message| is_federation_notice(message) && message.content == note.content)
+            .count();
+        if existing >= *count {
+            continue;
+        }
+        // 优先锚定说明后面的第一条普通消息：压缩可能删掉前面大片历史，
+        // 用下标或前缀条数都会错位。找不到后一条时退回前一条，再不行才追加。
+        let same = |left: &Message, right: &Message| {
+            left.role == right.role && left.content == right.content
+        };
+        let mut insert_at = persisted[position + 1..]
+            .iter()
+            .find(|message| !is_federation_notice(message))
+            .and_then(|next| {
+                messages
+                    .iter()
+                    .position(|message| !is_federation_notice(message) && same(message, next))
+            });
+        if insert_at.is_none() {
+            insert_at = persisted[..position]
+                .iter()
+                .rev()
+                .find(|message| !is_federation_notice(message))
+                .and_then(|previous| {
+                    messages
+                        .iter()
+                        .rposition(|message| {
+                            !is_federation_notice(message) && same(message, previous)
+                        })
+                        .map(|index| index + 1)
+                });
+        }
+        messages.insert(insert_at.unwrap_or(messages.len()), note.clone());
     }
 }
 

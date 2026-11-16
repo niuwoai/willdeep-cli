@@ -48,6 +48,7 @@ async fn delegation_cap_survives_full_access_and_blocks_forged_calls() {
         "get_session_task",
         "send_session_message",
         "list_workspace_sessions",
+        "rename_instance",
     ];
     let offered = tools.definitions();
     for name in forbidden {

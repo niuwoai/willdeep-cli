@@ -1,0 +1,74 @@
+{
+  "version": "0.149.0-rc9",
+  "date": "2026-11-16",
+  "status": "functional_checks_passed_static_check_failed",
+  "checks": [
+    {
+      "name": "tui_unit_regressions",
+      "command": "CARGO_INCREMENTAL=0 cargo test -p willdeep tui:: --no-fail-fast",
+      "status": "passed",
+      "passed": 533,
+      "failed": 0,
+      "ignored": 2,
+      "initial_run": {
+        "passed": 531,
+        "failed": 1,
+        "ignored": 2,
+        "finding": "A drawn-screen test matched contiguous Chinese text, but TestBackend includes blank continuation cells for wide glyphs. It now matches the ASCII word in the same user message; the full TUI filter was rerun."
+      },
+      "limitation": "TUI filter only; original manual performance tests ignored; not a full workspace test run."
+    },
+    {
+      "name": "debug_build",
+      "command": "CARGO_INCREMENTAL=0 cargo build -p willdeep",
+      "status": "passed"
+    },
+    {
+      "name": "actual_tui_integration",
+      "command": "ruby scripts/verify_tui_user_messages.rb target/debug/willdeep docs/verification/0.149.0-rc9/user-messages",
+      "status": "passed",
+      "layouts": ["compact_120x35", "full_120x35", "narrow_60x35"],
+      "model_requests": 2,
+      "isolation": "Temporary WILLDEEP_HOME and loopback-only fixture provider; no real credentials or external model requests.",
+      "report": "user-messages/integration.json",
+      "previews_visually_checked": true,
+      "png_assets": "../../assets/tui-user-messages/0.149.0-rc9/README.md",
+      "image_source": "SVG reconstructed from actual TUI ANSI cells, converted to PNG at 2x; not operating-system screenshots."
+    },
+    {
+      "name": "rust_format",
+      "command": "cargo fmt --all -- --check",
+      "status": "passed"
+    },
+    {
+      "name": "version_consistency",
+      "command": "ruby scripts/check_release_version.rb 0.149.0-rc9",
+      "status": "passed"
+    },
+    {
+      "name": "ruby_syntax",
+      "command": "ruby -c scripts/verify_tui_user_messages.rb",
+      "status": "passed"
+    },
+    {
+      "name": "diff_whitespace",
+      "command": "git diff --check",
+      "status": "passed"
+    },
+    {
+      "name": "strict_clippy",
+      "command": "CARGO_INCREMENTAL=0 cargo clippy -p willdeep --all-targets -- -D warnings",
+      "status": "failed",
+      "exit_code": 101,
+      "existing_findings_confirmed_in_baseline": true,
+      "findings": [
+        {"file": "crates/willdeep-cli/src/daemon/task_manager.rs", "line": 879, "message": "method wait_until_idle is never used"},
+        {"file": "crates/willdeep-cli/src/tui/app_state.rs", "line": 1855, "message": "method handle_question_text is never used"},
+        {"file": "crates/willdeep-cli/src/tui/human_gate_ui.rs", "line": 130, "message": "drop_non_drop: drop(append)"}
+      ]
+    }
+  ],
+  "installed": false,
+  "published": false,
+  "committed_by_this_session": false
+}

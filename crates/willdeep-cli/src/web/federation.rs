@@ -237,28 +237,9 @@ async fn group_say(
             "federation is available only from a loopback Web server",
         ));
     }
-    let store = crate::federation::load(&state.home).map_err(WebError::from_anyhow)?;
-    let group = crate::federation::find_group(&store, &id)
-        .map_err(|error| WebError::bad_request(error.to_string()))?
-        .clone();
-    let identity = crate::identity::load(&state.home).map_err(WebError::from_anyhow)?;
-    let envelope = crate::federation::GroupEnvelope {
-        group_id: Some(group.id),
-        origin: Some(identity.id),
-        from_agent: false,
-        mention_depth: 0,
-        host_note: false,
-    };
-    for member in &group.members {
-        let Some(contact) = store.contacts.iter().find(|contact| contact.id == *member) else {
-            continue;
-        };
-        crate::federation::send_group_message(identity.id, contact, &request.text, &envelope)
-            .await
-            .map_err(WebError::from_anyhow)?;
-    }
-    // 人接手了：自动回复重新打开，计数清零。
-    crate::federation::note_group_manual(&state.home, group.id).map_err(WebError::from_anyhow)?;
+    crate::daemon::say_to_group(&state.home, &id, &request.text, Some(&state.config_path))
+        .await
+        .map_err(WebError::from_anyhow)?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -271,7 +252,9 @@ async fn group_pause(
             "federation is available only from a loopback Web server",
         ));
     }
-    crate::federation::pause_group(&state.home, &id).map_err(WebError::from_anyhow)?;
+    crate::daemon::pause_host_group(&state.home, &id)
+        .await
+        .map_err(WebError::from_anyhow)?;
     list(State(state)).await
 }
 

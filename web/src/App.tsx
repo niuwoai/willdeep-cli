@@ -787,8 +787,10 @@ export function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
-    setError(detail.failure ? runtimeFailureMessage(detail.failure, t) : "");
-    setRuntimeFailure(detail.failure ? runtimeFailureReference(detail.failure, detail.id) : null);
+    // 取消是正常的插队/停止控制流，不应从最近一轮状态恢复成持久错误横幅。
+    const failure = detail.failure?.message === "turn.cancelled" ? null : detail.failure;
+    setError(failure ? runtimeFailureMessage(failure, t) : "");
+    setRuntimeFailure(failure ? runtimeFailureReference(failure, detail.id) : null);
     setSessionRelation({ id: detail.id, parent: detail.parent_session_id ?? null, readOnly: detail.delegation_read_only ?? false, detached: detail.delegation_detached ?? false });
     replyStyleRef.current = detail.response_style ?? null;
     setApprovalMode(detail.approval_mode ?? null);
@@ -872,6 +874,10 @@ export function App() {
       return { terminal: true as const, text: event.text || t.emptyReply };
     }
     if (event.type === "error") {
+      if (event.message === "turn.cancelled") {
+        setRuntimeFailure(null);
+        return { terminal: true as const };
+      }
       setRuntimeFailure(currentSessionId ? runtimeFailureReference(event, currentSessionId) : null);
       return { terminal: true as const, error: runtimeFailureMessage(event, t) };
     }
