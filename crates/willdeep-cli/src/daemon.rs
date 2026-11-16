@@ -40,7 +40,7 @@ mod agent_control;
 mod agent_store;
 mod agent_team;
 mod intake;
-pub(crate) use intake::IntakeService;
+pub(crate) use intake::{IntakeService, pause_host_group, say_to_group};
 pub(crate) mod web_app;
 // 审计导出直接读 `agents.json`，不走 `AgentStore::open`：open 会把运行中的 Agent
 // 标成中断并落盘，一个只读命令不能有这种副作用。
@@ -1091,8 +1091,16 @@ async fn ensure_running(home: &Path) -> Result<DaemonState> {
     {
         return Ok(state);
     }
-    start(home, false, &print_progress).await?;
-    load_state(&path)
+    // 单测进程的 current_exe() 是测试 harness，不是 willdeep 主程序。把它当
+    // daemon 拉起时，`daemon run` 会被 libtest 当成过滤器再次执行测试；而
+    // daemon start 又会脱离进程组，测试结束时甚至 TaskStop 都收不到它。
+    #[cfg(test)]
+    anyhow::bail!("unit tests must not start a Runtime Daemon from the test harness binary");
+    #[cfg(not(test))]
+    {
+        start(home, false, &print_progress).await?;
+        load_state(&path)
+    }
 }
 
 fn print_public_task(task: &willdeep_runtime_protocol::RuntimeTask) {
@@ -1331,7 +1339,21 @@ pub(crate) async fn runtime_upgrade(
     upgrade(home, timeout_seconds, false, report).await
 }
 
+/// 单测进程的 `current_exe()` 是测试 harness。把它拉起成 daemon 后，libtest
+/// 会把隐藏参数当过滤器再次执行测试，而且 `process_group(0)` 让子进程逃过
+/// 测试结束时的进程组清理。所有 daemon 启动路径统一在这里拦住。
+#[cfg(test)]
+fn allow_daemon_start() -> Result<()> {
+    anyhow::bail!("unit tests must not start a Runtime Daemon from the test harness binary")
+}
+
+#[cfg(not(test))]
+fn allow_daemon_start() -> Result<()> {
+    Ok(())
+}
+
 async fn start(home: &Path, announce: bool, report: DaemonProgress<'_>) -> Result<()> {
+    allow_daemon_start()?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.directory)?;
     if let Ok(state) = load_state(&paths.state)
@@ -1515,8 +1537,9 @@ async fn upgrade(
             health.version, state.pid
         ));
     }
-    // 先把「等人回应」的任务点出来再动手。它们不拦交接，但会跟着旧 Runtime 一起
-    // 走——用户有权在看到这句话之后决定是先去把审批处理掉，还是就这么升上去。
+    // Waiting tasks cannot survive a Runtime process restart: their futures
+    // live in the old process. Refuse handoff while any human gate is pending,
+    // so an ask_user prompt remains answerable in the current Runtime.
     if let Ok(response) = runtime_client(&state)?.tasks().await
         && let Ok(tasks) = response.into_result()
     {
@@ -1532,17 +1555,10 @@ async fn upgrade(
             .collect::<Vec<_>>();
         if !waiting.is_empty() {
             report(format!(
-                "{} task(s) are waiting on you and will be dropped by this handoff:",
+                "{} task(s) are waiting for your answer; resolve them before upgrading Runtime.",
                 waiting.len()
             ));
-            for task in waiting {
-                report(format!(
-                    "  {} {:?} {}",
-                    task.id,
-                    task.status,
-                    task.workspace.as_deref().unwrap_or("-")
-                ));
-            }
+            bail!("Runtime upgrade stopped because a task is waiting on a human gate");
         }
     }
     let internal_drain = internal_transport::InternalRuntimeClient::from_state(&state)?
@@ -1562,6 +1578,11 @@ async fn upgrade(
                 Err(error) => return Err(error).context("request legacy Runtime Daemon drain"),
             }
         }
+        Err(error) if error.status_code() == Some(409) => {
+            bail!(
+                "Runtime upgrade stopped because a task is waiting on a human gate; answer it and retry"
+            )
+        }
         Err(error) => return Err(error).context("request Runtime Daemon drain"),
     }
     report(format!(
@@ -1571,6 +1592,15 @@ async fn upgrade(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_seconds);
     let mut replacement = None;
     loop {
+        if let Ok(current) = load_state(&paths.state)
+            && current.token == state.token
+            && let Ok(health) = probe(&current).await
+            && health.status != "draining"
+        {
+            bail!(
+                "Runtime upgrade stopped because a task began waiting on a human gate; answer it and retry"
+            );
+        }
         match load_state(&paths.state) {
             Ok(candidate) if candidate.token != state.token => {
                 if probe(&candidate).await.is_ok() {
@@ -1680,6 +1710,21 @@ async fn run(home: &Path) -> Result<()> {
         local_endpoint: Some(local_endpoint),
     };
     let lock_heartbeat = spawn_lock_heartbeat(paths.lock.clone(), cleanup.lock_token.clone());
+    let result = run_daemon_services(home, &paths, state, listener, local_listener).await;
+    finish_daemon_run(result, lock_heartbeat, cleanup).await?;
+    eprintln!("WillDeep Runtime Daemon stopped");
+    Ok(())
+}
+
+async fn run_daemon_services(
+    home: &Path,
+    paths: &DaemonPaths,
+    state: DaemonState,
+    listener: tokio::net::TcpListener,
+    local_listener: local_transport::LocalListener,
+) -> Result<()> {
+    let address = state.address;
+    let started_at = state.started_at;
     let (shutdown_signal, shutdown_receiver) = watch::channel(false);
     // 接任务之前把旧 Runtime 的用量补进账本（仅一次，有标记即跳过；失败只警告）。
     let backfill_home = home.to_path_buf();
@@ -1687,7 +1732,14 @@ async fn run(home: &Path) -> Result<()> {
         crate::usage_cmd::backfill_on_daemon_start(&backfill_home)
     })
     .await;
-    let events = Arc::new(EventLog::open(paths.events.clone())?);
+    let event_log_settings = crate::config::event_log_settings_from_config(
+        &crate::config::LoadedConfig::load_runtime(None),
+    );
+    let events = Arc::new(EventLog::open(
+        paths.events.clone(),
+        home,
+        &event_log_settings,
+    )?);
     let agents = Arc::new(AgentStore::open(paths.agents.clone())?);
     let agent_commands = Arc::new(AgentCommandStore::open(paths.agent_commands.clone())?);
     let sessions = Arc::new(session_store::RuntimeSessionStore::open_guarded(
@@ -1697,7 +1749,7 @@ async fn run(home: &Path) -> Result<()> {
     )?);
     // 反馈账本（RSI 强反馈）：所有前端的轮次都从这里过，一处挂上即全覆盖。
     // 配置读不出来就按默认（开、只记 hash），不为它挡启动。
-    let feedback_settings = crate::config::LoadedConfig::load(None)
+    let feedback_settings = crate::config::LoadedConfig::load_runtime(None)
         .map(|loaded| loaded.file.feedback)
         .unwrap_or_default();
     if feedback_settings.enabled {
@@ -1785,6 +1837,8 @@ async fn run(home: &Path) -> Result<()> {
     deferred_gates::spawn(server_state.clone());
     production::recover(home);
     let scheduler_state = server_state.clone();
+    let retrying_sessions = Arc::new(Mutex::new(HashSet::new()));
+    let claim_failures = Arc::new(Mutex::new(HashMap::<uuid::Uuid, u32>::new()));
     tokio::spawn(async move {
         while let Some(first) = scheduled_sessions.recv().await {
             for session_id in turn_scheduler::ready_batch(first, &mut scheduled_sessions) {
@@ -1792,8 +1846,53 @@ async fn run(home: &Path) -> Result<()> {
                 if *work_guard {
                     continue;
                 }
-                let claimed = scheduler_state.sessions.claim_next(session_id);
-                let Ok(Some(mut claimed)) = claimed else {
+                let claimed = match scheduler_state.sessions.claim_next(session_id) {
+                    Ok(claimed) => {
+                        if let Ok(mut failures) = claim_failures.lock() {
+                            failures.remove(&session_id);
+                        }
+                        claimed
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "claim queued Runtime Turn for Session {session_id}: {}",
+                            willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+                        );
+                        let retry_scheduled = retrying_sessions
+                            .lock()
+                            .is_ok_and(|mut retrying| retrying.insert(session_id));
+                        if retry_scheduled {
+                            let attempt = claim_failures
+                                .lock()
+                                .map(|mut failures| {
+                                    let attempt = failures.entry(session_id).or_default();
+                                    *attempt = attempt.saturating_add(1);
+                                    *attempt
+                                })
+                                .unwrap_or(1);
+                            let exponent = attempt.saturating_sub(1).min(7);
+                            let delay_ms = 250_u64.saturating_mul(1_u64 << exponent).min(30_000);
+                            let retry_tasks = scheduler_state.tasks.clone();
+                            let retrying_sessions = retrying_sessions.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                                if let Ok(mut retrying) = retrying_sessions.lock() {
+                                    retrying.remove(&session_id);
+                                }
+                                if let Err(error) = retry_tasks.schedule_session(session_id) {
+                                    eprintln!(
+                                        "retry scheduling Runtime Turn for Session {session_id}: {}",
+                                        willdeep_core::judge::redact_credentials(&format!(
+                                            "{error:#}"
+                                        ))
+                                    );
+                                }
+                            });
+                        }
+                        continue;
+                    }
+                };
+                let Some(mut claimed) = claimed else {
                     continue;
                 };
                 // A queued child owns no worktree. Only after the execution slot is
@@ -1839,7 +1938,7 @@ async fn run(home: &Path) -> Result<()> {
     // 调度或 `goal_resume` 自己叫醒调度通道领走。
     goal_resume::spawn(
         server_state.clone(),
-        crate::config::LoadedConfig::load(None)
+        crate::config::LoadedConfig::load_runtime(None)
             .map(|loaded| loaded.file.agent)
             .unwrap_or_default(),
     );
@@ -2024,10 +2123,31 @@ async fn run(home: &Path) -> Result<()> {
     }
     tasks.cancel_all().await;
     events.append("daemon.stopped", format!("pid={}", std::process::id()))?;
-    lock_heartbeat.abort();
-    drop(cleanup);
-    eprintln!("WillDeep Runtime Daemon stopped");
     Ok(())
+}
+
+async fn finish_daemon_run(
+    result: Result<()>,
+    lock_heartbeat: tokio::task::JoinHandle<()>,
+    cleanup: StateCleanup,
+) -> Result<()> {
+    lock_heartbeat.abort();
+    // Cancellation does not interrupt a synchronous lease write already in flight.
+    // Join before unlinking so its final rename cannot recreate the retired lease.
+    let heartbeat_result = match lock_heartbeat.await {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_cancelled() => Ok(()),
+        Err(error) => Err(error).context("stop Runtime Daemon lease heartbeat"),
+    };
+    drop(cleanup);
+    match (result, heartbeat_result) {
+        (Ok(()), heartbeat_result) => heartbeat_result,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(heartbeat_error)) => {
+            eprintln!("Runtime Daemon shutdown also failed: {heartbeat_error:#}");
+            Err(error)
+        }
+    }
 }
 
 async fn wait_for_shutdown_deadline(receiver: watch::Receiver<bool>, grace: Duration) {
@@ -2188,6 +2308,9 @@ async fn drain_handler(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     authorize_internal(&state, &headers)?;
+    if !state.tasks.tasks_awaiting_a_human().await.is_empty() {
+        return Err(StatusCode::CONFLICT);
+    }
     {
         let mut draining = state.work_gate.write().await;
         if !*draining {
@@ -2207,26 +2330,32 @@ async fn drain_handler(
     }
     let tasks = state.tasks.clone();
     let shutdown = state.shutdown.clone();
-    // 等人的任务不拦 drain，但它们会随这次交接一起没掉，所以得留下痕迹——
-    // 静默放弃和无限期挂起一样难查。
-    let abandoned = tasks.tasks_awaiting_a_human().await;
-    if !abandoned.is_empty() {
-        let _ = state.events.append(
-            "daemon.draining.abandoned",
-            format!(
-                "count={} tasks={}",
-                abandoned.len(),
-                abandoned
-                    .iter()
-                    .map(uuid::Uuid::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        );
-    }
+    let draining_state = state.clone();
     tokio::spawn(async move {
-        tasks.wait_until_idle().await;
-        let _ = shutdown.send(true);
+        if tasks.wait_until_idle_or_human_gate().await {
+            let _ = shutdown.send(true);
+            return;
+        }
+        *draining_state.work_gate.write().await = false;
+        let _ = draining_state
+            .events
+            .append("daemon.drain_aborted", "reason=task_waiting_on_human");
+        match draining_state.sessions.schedulable_sessions() {
+            Ok(sessions) => {
+                for session_id in sessions {
+                    if let Err(error) = draining_state.tasks.schedule_session(session_id) {
+                        eprintln!(
+                            "reschedule queued Turns after drain abort for Session {session_id}: {}",
+                            willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+                        );
+                    }
+                }
+            }
+            Err(error) => eprintln!(
+                "list queued Runtime Turns after drain abort: {}",
+                willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+            ),
+        }
     });
     Ok(StatusCode::ACCEPTED.into_response())
 }
@@ -2702,12 +2831,20 @@ fn spawn_lock_heartbeat(path: PathBuf, token: String) -> tokio::task::JoinHandle
 }
 
 fn refresh_daemon_lock(path: &Path, token: &str) -> Result<()> {
+    refresh_daemon_lock_with_writer(path, token, write_json_atomic)
+}
+
+fn refresh_daemon_lock_with_writer(
+    path: &Path,
+    token: &str,
+    write: impl FnOnce(&Path, &DaemonLock) -> Result<()>,
+) -> Result<()> {
     let mut lock = load_daemon_lock(path)?;
     if lock.token != token {
         bail!("Runtime Daemon lease ownership changed");
     }
     lock.created_at = now();
-    write_json_atomic(path, &lock)
+    write(path, &lock)
 }
 
 fn load_daemon_lock(path: &Path) -> Result<DaemonLock> {

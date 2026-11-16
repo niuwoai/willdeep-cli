@@ -28,6 +28,9 @@ use tokio::sync::{mpsc, oneshot};
 /// 快照一秒一份，刚提交的轮次在队列里排队时任务是 `Queued`、快照会滤掉它，
 /// 所以要留几秒余量，别把一条真在排队的轮次当成残留复位掉。
 const STALE_RUNTIME_TURN_SNAPSHOTS: u8 = 3;
+/// 界面还在等模型开口，但新鲜快照连续几次都说本会话没有活动任务、界面也没在跑
+/// Runtime 轮次：假等待（常见于提交失败或事件迟达）。间隔比残留「工作中」更短。
+const STALE_AWAITING_REPLY_SNAPSHOTS: u8 = 2;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use willdeep_core::types::Usage;
 use willdeep_core::{
@@ -59,6 +62,7 @@ mod diff_review_ui;
 mod dispatch;
 mod human_gate_ui;
 mod media_ui;
+mod message_model;
 mod message_time;
 mod mobile_qr_ui;
 mod model_commands;
@@ -308,9 +312,8 @@ struct App {
     /// 附件正文不写进记录字符串：图片的 base64 会把记录撑爆，也会改掉
     /// `You: 原文` 这一行，而回显认领靠的正是整行比对。正文留在这里，画的时候再拼上去。
     transcript_attachments: Vec<Vec<MessageAttachment>>,
-    /// 与 `transcript` 逐行对齐的模型名：用户行是发送当时的会话模型，助手正文行
-    /// 是产出它的模型。没有记录的行（旧会话、工具行、系统行）是 `None`，
-    /// 显示时只留时间，不用会话当前模型去猜。
+    /// 与 `transcript` 逐行对齐的模型名：仅助手正文行记录产出它的模型。
+    /// 用户、工具、系统行及未记录模型的旧消息为 `None`，不用当前会话模型猜。
     transcript_models: Vec<Option<String>>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
@@ -364,6 +367,9 @@ struct App {
     composer_expanded: bool,
     quiet_drawn: bool,
     ui: crate::config::UiSettings,
+    /// 回复行显示的名字。空字符串表示没起名，画面上回落到 WillDeep。
+    /// 记录里始终写默认前缀，名字只在画的时候换上去，所以改名不用重写历史。
+    assistant_name: String,
     update_available: Option<update_notice::ReleaseNotice>,
     notice: Option<String>,
     notice_hold: Option<(String, Instant)>,
@@ -401,6 +407,7 @@ struct App {
     /// 本轮在跑时收到的提示词，本轮一结束就按顺序发出去；中断当前轮次同样会让
     /// 队列立刻续上。手机发来的消息不进这里，直接进 Runtime 的轮次队列。
     queued_prompts: VecDeque<QueuedPrompt>,
+    next_prompt_submission_order: u64,
     runtime_queue_submission: Option<(String, uuid::Uuid)>,
     /// `/queue add` 的草稿。拿不到 Cmd 的终端没法一键入队，所以先用 Ctrl+U
     /// 把输入框里的内容挪到这里，腾出位置敲命令。只在本进程内，不落盘。
@@ -451,6 +458,8 @@ struct App {
     stale_runtime_turn_snapshots: u8,
     /// 一次残留状态复位只确认、提示一次；等新轮次或 Runtime 活动任务出现后再解锁。
     stale_runtime_turn_recovery_reported: bool,
+    /// 用户消息下面还在转等待点、新鲜快照却没有活动任务且界面没在跑轮次时的连续次数。
+    stale_awaiting_reply_snapshots: u8,
     last_elapsed: Option<Duration>,
     context_window: u64,
     context_tokens: u64,
@@ -538,6 +547,8 @@ struct App {
     chat_selection: Option<ChatSelection>,
     code_copy: code_copy::CodeCopyState,
     transcript_rows: Vec<String>,
+    /// 用户显示行的正文列范围；复制时排除靠右布局产生的空白。
+    transcript_selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     transcript_render_cache: Option<rendering::TranscriptRenderCache>,
     transcript_render_offset: usize,
     skill_selected: usize,
@@ -664,11 +675,16 @@ struct QueuedPrompt {
     text: String,
     attachments: Vec<DraftAttachment>,
     remote: Option<willdeep_runtime_protocol::QueuedTurnMessage>,
+    /// Original submission order, independent of when an undelivered inbox item is recovered.
+    submission_order: u64,
+    /// The echo's position in the transcript; queue order may differ from echo order.
+    transcript_row: Option<usize>,
 }
 
 struct DeliveredPrompt {
     text: String,
     sent_at: u64,
+    submission_order: u64,
 }
 
 impl From<&str> for DeliveredPrompt {
@@ -676,6 +692,7 @@ impl From<&str> for DeliveredPrompt {
         Self {
             text: text.to_owned(),
             sent_at: message_time::now(),
+            submission_order: 0,
         }
     }
 }
@@ -729,9 +746,9 @@ fn busy_input(prompt: &str) -> BusyInput {
     let command = value.split_whitespace().next().unwrap_or_default();
     match command {
         // 切档正是为了处理「这一轮在跑、又不停地弹审批」，必须当场生效。
-        "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/skills" | "/history"
-        | "/permissions" | "/permission-mode" | "/queue" | "/short" | "/verbose" | "/name"
-        | "/fed" => BusyInput::RunNow,
+        "/help" | "/version" | "/clear" | "/sidebar" | "/uistyle" | "/spacing" | "/skills"
+        | "/tools" | "/history" | "/permissions" | "/permission-mode" | "/queue" | "/short"
+        | "/verbose" | "/name" | "/fed" => BusyInput::RunNow,
         // 换模型本来就只作用于下一轮，没有理由让用户等到本轮结束再敲一遍：当场收下，
         // 记成待切换，本轮结束时再真正切（见 `switch_or_defer_model`）。
         "/model" | "/reasoning" => BusyInput::RunNow,
@@ -1267,10 +1284,26 @@ async fn handle_diff_attention_action(
     Ok(())
 }
 
+/// Abort must finish before draining the inbox, so the worker cannot race the recovery.
+async fn interrupt_local_turn(app: &mut App, agent: &Arc<Agent>) {
+    let Some(handle) = app.local_turn.take() else {
+        return;
+    };
+    handle.abort();
+    let _ = handle.await;
+    event_loop::requeue_undelivered_steering(app, agent);
+    app.finish_turn();
+}
+
 /// 停掉当前这一轮。Runtime 轮次交给 Daemon 排空（它知道在途工具怎么收尾），
 /// 进程内轮次只能掐 Task；两条路都要保证 `running` 落回去，否则界面会一直卡在
 /// 「工作中」，排队的提示词也永远续不上。
-async fn interrupt_turn(app: &mut App, session: &Session, runtime: &TuiRuntime) -> Result<String> {
+async fn interrupt_turn(
+    app: &mut App,
+    session: &Session,
+    runtime: &TuiRuntime,
+    agent: &Arc<Agent>,
+) -> Result<String> {
     if !app.running {
         return Ok(app
             .language
@@ -1281,13 +1314,8 @@ async fn interrupt_turn(app: &mut App, session: &Session, runtime: &TuiRuntime) 
             )
             .to_owned());
     }
-    if !app.runtime_turn
-        && let Some(handle) = app.local_turn.take()
-    {
-        handle.abort();
-        // Wait for cancellation before a queued prompt can read its final checkpoint.
-        let _ = handle.await;
-        app.finish_turn();
+    if !app.runtime_turn && app.local_turn.is_some() {
+        interrupt_local_turn(app, agent).await;
         app.append_transcript(format!(
             "System: {}",
             app.language.text(
@@ -1572,7 +1600,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         app.scroll_from_bottom = app.scroll_from_bottom.min(max);
         let offset = max.saturating_sub(app.scroll_from_bottom);
         // 标题带上工作区名：并排开着几个 TUI 时，一眼能分清哪个窗口在跑哪个项目。
-        let brand = chat_title_brand(app.workspace.as_deref());
+        let brand = chat_title_brand(&app.assistant_name(), app.workspace.as_deref());
         let mut title = if app.native_selection_mode {
             format!(
                 "{brand} · {}",
@@ -2634,13 +2662,18 @@ fn session_lineage_line(app: &App, session: &Session) -> Option<String> {
     ))
 }
 
-/// 聊天区标题里的品牌段：`WillDeep · <工作区目录名>`。取不到目录名（比如工作区是 `/`）
-/// 就用完整路径；过长的名字截断，免得把「工作中」计时挤出标题栏。
-fn chat_title_brand(workspace: Option<&std::path::Path>) -> String {
-    const BRAND: &str = "WillDeep";
+/// 聊天区标题里的品牌段：`<实例名> · <工作区目录名>`。没起名时用 WillDeep。
+/// 取不到目录名（比如工作区是 `/`）就用完整路径；过长的名字截断，免得把
+/// 「工作中」计时挤出标题栏。
+fn chat_title_brand(name: &str, workspace: Option<&std::path::Path>) -> String {
+    let brand = if name.is_empty() {
+        ASSISTANT_LABEL
+    } else {
+        name
+    };
     const MAX_WORKSPACE_CHARS: usize = 32;
     let Some(workspace) = workspace else {
-        return BRAND.to_owned();
+        return brand.to_owned();
     };
     let name = workspace
         .file_name()
@@ -2652,7 +2685,7 @@ fn chat_title_brand(workspace: Option<&std::path::Path>) -> String {
     } else {
         name
     };
-    format!("{BRAND} · {name}")
+    format!("{brand} · {name}")
 }
 
 /// Dialog title carrying how many more are queued behind this one, so the
@@ -2907,6 +2940,8 @@ pub fn channel() -> (
 mod human_gate_ui_tests;
 #[cfg(test)]
 mod test_suite;
+#[cfg(test)]
+mod welcome_layout_tests;
 
 /// 渲染测试用的空会话。谱系行只在 `started_by` 有值时出现，这些测试不设它。
 #[cfg(test)]

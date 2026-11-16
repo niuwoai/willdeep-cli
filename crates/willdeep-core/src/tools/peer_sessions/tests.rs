@@ -19,6 +19,28 @@ impl SessionCollaboration for Notices {
     }
 }
 
+#[tokio::test]
+async fn read_only_mode_cannot_offer_or_call_instance_rename() {
+    let tools = ToolRegistry::new(std::env::temp_dir(), ApprovalMode::ReadOnly)
+        .unwrap()
+        .with_session_collaboration(Arc::new(Notices(Vec::new())));
+    assert!(
+        !tools
+            .definitions()
+            .iter()
+            .any(|tool| tool.name == "rename_instance")
+    );
+    let call = ToolCall {
+        id: "rename".into(),
+        name: "rename_instance".into(),
+        arguments: json!({"name": "new-name"}).to_string(),
+    };
+    assert!(matches!(
+        tools.execute(&call).await,
+        Err(ToolError::ReadOnlyPolicy(_))
+    ));
+}
+
 #[test]
 fn delegation_notices_are_bounded_and_deduplicate_only_host_identity() {
     let id = uuid::Uuid::new_v4();

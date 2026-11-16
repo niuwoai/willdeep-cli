@@ -152,6 +152,22 @@ pub(super) fn initialize_submission_cursor(app: &mut App, session: &mut Session,
 /// Runtime 一句，没有在途轮次就把残留的「工作中」复位——和 Esc 走的是同一个判据，
 /// 只是不用人去按。Runtime 说有，或者根本问不到，都按兵不动：宁可多等一秒，
 /// 也不复位一条真在跑的轮次。
+pub(super) fn reconcile_stale_awaiting_reply(app: &mut App) {
+    if app.awaiting_since.is_none() {
+        return;
+    }
+    app.stale_awaiting_reply_snapshots = 0;
+    app.dismiss_awaiting_reply();
+    app.append_transcript(format!(
+        "System: {}",
+        app.language.text(
+            "Runtime 没有活动轮次，已清除等待动画；可重新发送或检查上一句是否提交失败",
+            "Runtime has no active turn; cleared the waiting indicator. Resend or check whether the last message failed to submit",
+            "Runtime に進行中のターンはありません。待機表示を消しました。再送するか、直前の送信失敗を確認してください",
+        )
+    ));
+}
+
 pub(super) async fn reconcile_stale_runtime_turn(
     app: &mut App,
     session: &Session,
@@ -162,6 +178,7 @@ pub(super) async fn reconcile_stale_runtime_turn(
             // 快照可能已经在途；复位后它们仍会逐个抵达。锁住本次恢复，
             // 避免同一故障反复输出提示。新轮次或重新发现活动任务会解锁。
             app.stale_runtime_turn_recovery_reported = true;
+            app.dismiss_awaiting_reply();
             app.finish_turn();
             app.append_transcript(format!(
                 "System: {}",
@@ -693,6 +710,9 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
                 app.tools.completed(name, is_error);
+                if !is_error && name == "rename_instance" {
+                    app.load_assistant_name();
+                }
                 if !is_error
                     && name == "update_plan"
                     && let Some(receipt) = value.get("plan_update")
@@ -905,9 +925,29 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
         Some("completed" | "partial") => {
             let goal_complete =
                 value.get("stop_reason").and_then(|value| value.as_str()) == Some("goal_complete");
+            let partial = value.get("type").and_then(|value| value.as_str()) == Some("partial");
+            if partial {
+                let stop_reason = value
+                    .get("stop_reason")
+                    .and_then(|value| value.as_str())
+                    .and_then(willdeep_core::AgentStopReason::from_wire);
+                let turns = value
+                    .get("turns")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0) as usize;
+                if let Some(stop_reason) = stop_reason
+                    && let Some(text) = crate::harness::partial_outcome_status_text(
+                        stop_reason,
+                        turns,
+                        app.language,
+                    )
+                {
+                    app.append_transcript(format!("System: {text}"));
+                }
+            }
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
-                // 最后一段多半已经作中途文字显示过，只补没见过的部分（比如轮次
-                // 上限提示）；镜像持久化也只补这一部分。
+                // 最后一段多半已经作中途文字显示过，只补没见过的部分；系统状态行
+                // 已单独落在 System:，不再冒充 assistant。
                 let remainder = app.note_reply(text);
                 if goal_complete {
                     app.note_goal_completed();
@@ -930,6 +970,37 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
 #[cfg(test)]
 mod background_queue_tests {
     use super::*;
+
+    #[test]
+    fn runtime_rename_completion_refreshes_the_tui_name() {
+        let home = std::env::temp_dir().join(format!("runtime-rename-{}", uuid::Uuid::new_v4()));
+        let mut app = App::new(Vec::new(), Language::En);
+        app.display_home = Some(home.clone());
+        app.load_assistant_name();
+        crate::identity::rename(&home, "滚小滚").unwrap();
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"tool_completed","name":"rename_instance","is_error":false}"#,
+        );
+        assert_eq!(app.assistant_name(), "滚小滚");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn unverified_runtime_result_keeps_reply_without_generic_status_line() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "running".into());
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"partial","stop_reason":"unverified","turns":1,"text":"具体检查结果"}"#,
+        );
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.contains("具体检查结果"))
+        );
+        assert!(!app.transcript.iter().any(|row| row.starts_with("System: ")));
+    }
 
     #[test]
     fn ordinary_messages_can_deliver_during_generation_tools_and_background_wait() {

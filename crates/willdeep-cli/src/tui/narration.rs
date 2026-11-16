@@ -146,6 +146,26 @@ impl App {
     /// 屏幕上一条可见记录都没有时补上首屏欢迎语，顺带丢掉那些空白行——
     /// 留着它们只会把真正的内容往下挤。多个入口（启动、换会话、`/clear`）
     /// 共用这一条规则，别各自写一份 `is_empty()` 判断。
+    /// 回复行在屏幕上显示的名字。没起名时用默认名。
+    pub(super) fn assistant_name(&self) -> String {
+        if self.assistant_name.is_empty() {
+            ASSISTANT_LABEL.to_owned()
+        } else {
+            self.assistant_name.clone()
+        }
+    }
+
+    /// 从家目录读实例名。读不到（没家目录、文件坏了）就保持现状，不拿默认名
+    /// 把已经起好的名字盖掉。
+    pub(super) fn load_assistant_name(&mut self) {
+        let Some(home) = self.display_home.as_deref() else {
+            return;
+        };
+        if let Ok(identity) = crate::identity::load(home) {
+            self.assistant_name = identity.display_name(false);
+        }
+    }
+
     pub(super) fn ensure_welcome(&mut self, workspace: &std::path::Path, language: Language) {
         if self.has_visible_transcript() {
             return;
@@ -186,6 +206,15 @@ impl App {
 
     /// 删掉记录里的一行，连同它的附件槽、模型章和时间一起，保持逐行对齐。
     pub(super) fn drop_transcript_row(&mut self, index: usize) {
+        for queued in &mut self.queued_prompts {
+            if let Some(row) = queued.transcript_row.as_mut() {
+                if *row == index {
+                    queued.transcript_row = None;
+                } else if *row > index {
+                    *row -= 1;
+                }
+            }
+        }
         self.transcript.remove(index);
         if index < self.transcript_attachments.len() {
             self.transcript_attachments.remove(index);
@@ -388,6 +417,21 @@ impl App {
         }
     }
 
+    /// 压缩请求正在飞。压完但提示还挂在屏幕上不算：那时输入照常处理。
+    ///
+    /// 这段时间模型在重写上下文，插话进不了正在飞的那次请求，本地命令也改不动
+    /// 正在压缩的会话。输入先排队，等压缩结束再按普通队列发出去。
+    pub(super) fn compression_in_progress(&self) -> bool {
+        self.compression.as_ref().is_some_and(|notice| !notice.done)
+    }
+
+    /// 把一条提示按住一段时间。状态行每帧都会把普通提示取走，不按住的话
+    /// 「为什么没发出去」会在下一帧消失。
+    pub(super) fn hold_notice(&mut self, notice: String, duration: Duration) {
+        self.notice_hold = Some((notice.clone(), Instant::now() + duration));
+        self.notice = Some(notice);
+    }
+
     /// 真正的输出开始了（正文、思维链、工具、计划），压缩那一行的使命结束。
     pub(super) fn dismiss_compression_notice(&mut self) {
         self.compression = None;
@@ -406,6 +450,7 @@ impl App {
     /// 模型有了第一个可见动作（思考行、正文、工具、计划），等待动画到此为止。
     pub(super) fn dismiss_awaiting_reply(&mut self) {
         self.awaiting_since = None;
+        self.stale_awaiting_reply_snapshots = 0;
     }
 
     /// 挂在最后一条用户消息正下方的等待行：`.`、`..`、`...` 每秒轮换。
@@ -464,7 +509,7 @@ impl App {
         let label = self.transient_label();
         Some(match self.transient_kind {
             StreamKind::Reasoning => format!("· + Thought: {}", self.thought_elapsed_label()),
-            StreamKind::Reply => format!("WillDeep · {label}: {thought}"),
+            StreamKind::Reply => format!("{} · {label}: {thought}", self.assistant_name()),
         })
     }
 
@@ -714,6 +759,15 @@ impl App {
                 ),
                 Color::Cyan,
             )
+        } else if self.compression_in_progress() {
+            (
+                self.language.text(
+                    "正在压缩上下文 · 回车排队，压缩结束后发送 · 打字不受影响",
+                    "Compressing context · Enter queues until it finishes · typing still works",
+                    "コンテキスト圧縮中 · Enter でキューに追加、完了後に送信 · 入力はそのまま",
+                ),
+                Color::Yellow,
+            )
         } else if self.running {
             (
                 self.language.text(
@@ -789,25 +843,60 @@ impl App {
                 "直前のメッセージはこのターンに間に合わず、終了後に送信するためキューに入れました",
             )
         ));
-        // 还压着没显示的，就以「待发」行出现，发出时照常去掉标记。
-        if let Some(index) = self
+        // A was submitted before B even if B's queued echo was drawn before A's inbox
+        // was drained. Keep the original submission order without moving either echo.
+        // The instruction inbox trims text before storing it. Match on that same
+        // normalized value, then restore the original user input for the queue.
+        let delivered = self
             .deferred_steering
             .iter()
-            .position(|value| value.text == text)
-        {
-            let delivered = self.deferred_steering.remove(index);
-            let row = self.queued_prompt_row(&text);
-            self.append_transcript_at(row, delivered.sent_at);
-        }
-        self.queued_prompts.push_back(QueuedPrompt {
-            remote: None,
-            text,
-            attachments: Vec::new(),
-        });
+            .position(|value| value.text.trim() == text.trim())
+            .map(|index| self.deferred_steering.remove(index));
+        let text = delivered
+            .as_ref()
+            .map(|item| item.text.clone())
+            .unwrap_or(text);
+        let submission_order = delivered
+            .as_ref()
+            .map(|item| item.submission_order)
+            .unwrap_or_else(|| self.next_submission_order());
+        let sent_at = delivered
+            .map(|item| item.sent_at)
+            .unwrap_or_else(message_time::now);
+        let row = self.queued_prompt_row(&text);
+        self.append_transcript_at(row, sent_at);
+        let transcript_row = Some(self.transcript.len() - 1);
+        let insert_at = self
+            .queued_prompts
+            .iter()
+            .position(|item| item.submission_order > submission_order)
+            .unwrap_or(self.queued_prompts.len());
+        self.queued_prompts.insert(
+            insert_at,
+            QueuedPrompt {
+                remote: None,
+                text,
+                attachments: Vec::new(),
+                submission_order,
+                transcript_row,
+            },
+        );
+    }
+
+    /// 测试里模拟直接送达；实际队列沿用提交时分配的顺序号。
+    #[cfg(test)]
+    pub(super) fn note_steering_delivered(&mut self, text: &str, sent_at: u64) {
+        let order = self.next_submission_order();
+        self.note_steering_delivered_with_order(text, sent_at, order);
     }
 
     /// 送达只代表收件箱接收成功；到模型下一步读取前持续显示待阅状态。
-    pub(super) fn note_steering_delivered(&mut self, text: &str, sent_at: u64) {
+    pub(super) fn note_steering_delivered_with_order(
+        &mut self,
+        text: &str,
+        sent_at: u64,
+        submission_order: u64,
+    ) {
         self.waiting_background = false;
         let pending_copies = self
             .deferred_steering
@@ -819,6 +908,7 @@ impl App {
         self.deferred_steering.push(DeliveredPrompt {
             text: text.to_owned(),
             sent_at,
+            submission_order,
         });
     }
 
@@ -924,12 +1014,22 @@ impl App {
         self.pending_runtime_echoes = kept;
     }
 
-    /// 真正发出后移除最早的同文待发占位，并在当前轮次边界回显原文。
-    /// 只改旧行会把用户消息留在上一轮中间，下一轮回复前就看不到提问。
+    /// 测试里模拟旧记录无行号的发送路径。
+    #[cfg(test)]
     pub(super) fn mark_queued_prompt_sent(&mut self, text: &str) {
+        self.mark_queued_prompt_sent_at(text, None);
+    }
+
+    /// 真正发出后移除这条消息自己的待发占位，并在当前轮次边界回显原文。
+    /// 只改旧行会把用户消息留在上一轮中间，下一轮回复前就看不到提问。
+    pub(super) fn mark_queued_prompt_sent_at(&mut self, text: &str, transcript_row: Option<usize>) {
         let queued = self.queued_prompt_row(text);
         let mut sent_at = message_time::now();
-        if let Some(index) = self.transcript.iter().position(|line| *line == queued) {
+        let index = match transcript_row {
+            Some(index) => (self.transcript.get(index) == Some(&queued)).then_some(index),
+            None => self.transcript.iter().position(|line| *line == queued),
+        };
+        if let Some(index) = index {
             sent_at = self.message_times.time_at(index).unwrap_or(sent_at);
             self.drop_transcript_row(index);
         }
@@ -1478,7 +1578,10 @@ mod tests {
         }
         // 同一轮不留空行，等待动画紧贴在用户消息正下方。
         let rows = &app.transcript_rows;
-        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        let user = rows
+            .iter()
+            .position(|row| row.contains("别磨叽了"))
+            .unwrap();
         assert_eq!(rows[user + 1], ".", "{rows:?}");
 
         // 思考行一落进记录，动画就撤，记录里不留那几个点。
@@ -1552,7 +1655,8 @@ mod tests {
             (Duration::from_secs(2), "..."),
         ] {
             let lines = stage(&mut app, elapsed);
-            let message = lines.iter().position(|line| line.contains("You:")).unwrap();
+            // TestBackend 的宽字符续格带空白，用正文里的 ASCII 词定位实际画面。
+            let message = lines.iter().position(|line| line.contains("main")).unwrap();
             // 边框是 `│`，中间那一格才是内容。紧贴消息的下一行应该只有那几个点。
             let below = lines[message + 1]
                 .trim_matches(|ch: char| "│ ".contains(ch))
@@ -2200,14 +2304,8 @@ mod tests {
         assert_eq!(app.note_reply("Now update the log line"), None);
         assert_eq!(app.transcript.len(), 1);
 
-        assert_eq!(
-            app.note_reply("⚠ limit\n\nNow update the log line"),
-            Some("⚠ limit".to_owned())
-        );
-        assert_eq!(
-            app.transcript,
-            vec!["WillDeep: Now update the log line", "WillDeep: ⚠ limit"]
-        );
+        assert_eq!(app.note_reply("Now update the log line"), None);
+        assert_eq!(app.transcript, vec!["WillDeep: Now update the log line"]);
     }
 
     #[test]
@@ -2270,11 +2368,8 @@ mod tests {
         // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
         app.begin_turn(true, "working".to_owned());
         app.note_narration("写完了");
-        assert_eq!(
-            app.note_reply("⚠ 轮次上限\n\n写完了"),
-            Some("⚠ 轮次上限\n\n写完了".to_owned())
-        );
-        assert!(app.transcript.iter().any(|row| row.contains("轮次上限")));
+        assert_eq!(app.note_reply("写完了"), Some("写完了".to_owned()));
+        assert!(!app.transcript.iter().any(|row| row.contains("轮次上限")));
         assert_eq!(
             app.transcript
                 .iter()
@@ -2330,6 +2425,25 @@ mod tests {
         assert!(app.compression_notice_row().is_none());
     }
 
+    /// 只有压缩请求还在飞才算「正在压缩」。压完但那一行还挂着时，输入恢复正常处理。
+    #[test]
+    fn finished_compression_stops_queueing_new_input() {
+        let mut app = App::new(vec!["You: 再问一句".to_owned()], Language::ZhCn);
+        app.begin_turn(true, "working".to_owned());
+        app.note_compression_started();
+        assert!(app.compression_in_progress());
+        assert!(app.composer_state().0.contains("回车排队"));
+
+        app.note_compression_completed();
+        assert!(!app.compression_in_progress());
+        assert!(
+            app.compression_notice_row()
+                .unwrap()
+                .contains("上下文已压缩")
+        );
+        assert!(app.composer_state().0.contains("本轮进行中"));
+    }
+
     /// 压缩行画在用户消息正下方，读秒换词都落在同一行，输出一开始整行消失。
     #[test]
     fn compression_notice_renders_on_the_line_below_the_user_message() {
@@ -2346,7 +2460,10 @@ mod tests {
 
         let (_transient, _notice, _waiting) = app.prepare_transcript_frame();
         let rows = app.transcript_rows.clone();
-        let user = rows.iter().position(|row| row.starts_with("You:")).unwrap();
+        let user = rows
+            .iter()
+            .position(|row| row.contains("现在结果怎么样了？"))
+            .unwrap();
         let notice_row = &rows[user + 1];
         assert!(
             notice_row.contains("正在压缩上下文"),

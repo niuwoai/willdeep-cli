@@ -962,6 +962,10 @@ fn digest_failure_output(output: &str) -> String {
     bounded(digest, MAX_VERIFIER_DIGEST_BYTES)
 }
 
+#[cfg(all(test, unix))]
+#[path = "runner_summary_tests.rs"]
+mod summary_retry_tests;
+
 #[cfg(test)]
 mod tests {
     #[test]

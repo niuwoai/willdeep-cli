@@ -181,7 +181,12 @@ impl App {
             return String::new();
         };
         let (start, end) = selection.ordered_range();
-        selected_text(&self.transcript_rows, start, end)
+        selected_text(
+            &self.transcript_rows,
+            &self.transcript_selection_bounds,
+            start,
+            end,
+        )
     }
 
     /// 松手时该不该自动复制、复制什么。关掉 `copy_on_select` 或选区为空都返回 `None`，

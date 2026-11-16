@@ -58,6 +58,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:端口]",
             "/sidebar [on|off]",
+            "/spacing [0-3]",
             "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <任务>",
@@ -96,6 +97,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:PORT]",
             "/sidebar [on|off]",
+            "/spacing [0-3]",
             "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <task>",
@@ -134,6 +136,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/mobile [show|hide|off]",
             "/webapp [status|start|stop|127.0.0.1:ポート]",
             "/sidebar [on|off]",
+            "/spacing [0-3]",
             "/uistyle [full|compact|status|no-status]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <タスク>",
@@ -196,6 +199,7 @@ pub(super) fn command_runs_immediately(command: &str) -> bool {
             | "/thinking"
             | "/sidebar"
             | "/uistyle"
+            | "/spacing"
             | "/clear"
             | "/short"
             | "/verbose"
@@ -329,6 +333,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "显示或隐藏右侧状态栏",
                 "Show or hide the status sidebar",
                 "状態サイドバーの表示・非表示",
+            ),
+        ),
+        (
+            "/spacing",
+            language.text(
+                "设置聊天区行距（0 最紧凑，最大 3）",
+                "Set the chat line spacing (0 is tightest, 3 is the maximum)",
+                "チャットの行間を設定（0 が最も詰まり、最大 3）",
             ),
         ),
         (

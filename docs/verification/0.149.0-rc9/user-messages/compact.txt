@@ -1,0 +1,35 @@
+ willdeep  v0.149.0-rc9
+
+ rosa: Hello, I’m in workspace. Tell me what you want to build, fix, or investigate; I’ll inspect the project before
+ making changes. Type `/help` for every command, or `/model` to switch models.       
+
+                                                                                            帮我看一下这段代码。 · now 
+   
+ rosa: 可以。把代码贴过来，我会先检查关键逻辑。 · now · fixture-chat-model
+
+ ── turn finished · first reply 1.16s · total 1.59s · in 30 · out 20 · your turn ──            
+
+                                          请重点检查输入校验和错误处理。发现问题时，先说明原因，再给出修改建议。 · now 
+   
+ rosa: 我会先检查输入边界、异常分支和资源释放，再说明发现的问题与修改建议。 · now · fixture-chat-model
+
+ ── turn finished · first reply 0.85s · total 1.12s · in 30 · out 20 · your turn ── · your turn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+ Tell me what you need                                                                                                  
+                                                                                                                        
+                                                                                                                        
+Ready · Focus: Prompt · context 0% · latest ↑30 ↓20 · 1.1s · Enter sends · Cmd/Ctrl+Enter queues · Ctrl+S select · F1   

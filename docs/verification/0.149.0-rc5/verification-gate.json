@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-16",
+  "version": "0.149.0-rc5",
+  "branch": "fix/verification-gate-stale-failures",
+  "base_commit": "7127dd521dc673e4ac81959a2947612d062358f3",
+  "status": "passed",
+  "checks": [
+    {"name": "initial_verification_regressions", "command": "cargo test -p willdeep-core --lib verification -- --nocapture", "exit_code": 0, "passed": 60, "failed": 0, "ignored": 0, "filtered_out": 1026, "duration_seconds": 1.87},
+    {"name": "verification_regressions", "command": "cargo test -p willdeep-core --lib verification -- --nocapture", "exit_code": 0, "passed": 63, "failed": 0, "ignored": 0, "filtered_out": 1026, "duration_seconds": 3.15},
+    {"name": "rust_format", "command": "cargo fmt --all -- --check", "exit_code": 0},
+    {"name": "source_size", "exit_code": 0, "reviewed_files": 1508, "max_lines": 3000, "violations": []},
+    {"name": "release_version_consistency", "command": "ruby -EUTF-8:UTF-8 scripts/check_release_version.rb 0.149.0-rc5", "exit_code": 0},
+    {"name": "background_contract", "command": "ruby -EUTF-8:UTF-8 scripts/check_background_contract.rb", "exit_code": 0},
+    {"name": "diff_whitespace", "command": "git diff --check", "exit_code": 0},
+    {"name": "embedded_web_build", "command": "yarn --cwd web install --frozen-lockfile && yarn --cwd web build", "exit_code": 0},
+    {"name": "initial_cli_test_targets_check", "command": "cargo check -p willdeep --tests", "exit_code": 0},
+    {"name": "baseline_worker_timeout_single_test", "base_commit": "7127dd521dc673e4ac81959a2947612d062358f3", "exit_code": 0, "passed": 1, "failed": 0},
+    {"name": "workspace_tests", "command": "cargo test --workspace", "exit_code": 0, "passed": 2845, "failed": 0, "ignored": 12, "nested_helper_passes_not_added": 1, "build_and_wait_seconds": 934, "note": "Started before three final warning regressions; final delta covered by verification_regressions and strict_clippy", "suites": [{"name":"willdeep_unit","passed":1614,"ignored":5,"duration_seconds":784.06},{"name":"detached_jobs","passed":18,"ignored":1,"duration_seconds":7.20},{"name":"headless_runtime","passed":62,"ignored":0,"duration_seconds":344.47},{"name":"workspace_versions","passed":1,"ignored":0,"duration_seconds":0},{"name":"willdeep_core_unit","passed":1080,"ignored":6,"duration_seconds":421.98},{"name":"provider_contracts","passed":5,"ignored":0,"duration_seconds":0.04},{"name":"runtime_client_unit","passed":7,"ignored":0,"duration_seconds":0.01},{"name":"runtime_protocol_unit","passed":57,"ignored":0,"duration_seconds":0.01},{"name":"doctests","passed":1,"ignored":0}] },
+    {"name": "initial_strict_clippy", "command": "cargo clippy --workspace --all-targets -- -D warnings", "exit_code": 0, "duration_seconds": 1727, "note": "Final legacy multiline-warning test was added while this check was running; repeat against final sources"},
+    {"name": "strict_clippy", "command": "cargo clippy --workspace --all-targets -- -D warnings", "exit_code": 0, "duration_seconds": 27.64},
+    {"name": "cargo_invocation_module", "command": "cargo test --offline -p willdeep-core --lib tools::verification::invocation::tests", "exit_code": 0, "passed": 10, "failed": 0, "ignored": 0, "filtered_out": 1079, "duration_seconds": 3.59, "build_and_wait_seconds": 914}
+  ],
+  "initial_core_run": {"exit_code": 101, "passed": 1062, "failed": 2, "ignored": 6, "duration_seconds": 424.78, "issues": ["New Cargo fixture inherited shared target directory; fixed by explicit fixture-local --target-dir target", "Worker timeout test encountered missing file; isolated unchanged-base rerun passed"]},
+  "coverage": ["foreground and in-process background real Cargo package correction", "explicit Cargo colored diagnostics and complete native multiline profile warnings", "legacy multiline warnings migrate only without mixed failures", "production detached spawn branch with fixture supervisor", "automatic terminal collection and get_job_output de-duplication", "required commands and real failures remain blocking", "cwd, test filters and all other arguments remain scoped", "snapshot changes and missing snapshot pairs never pass", "legacy checkpoint migration and normal persistence", "manual compression, materialized summaries and imported history remain conservative", "restart preserves settled evidence but invalidates unobserved pending successes", "job owner, workspace and identity checks"],
+  "delivery": {"stage": "at_completion_of_pre_release_verification", "committed": false, "merged": false, "pushed": false, "installed": false, "released": false, "real_user_session_files_modified": false, "real_provider_calls": 0, "user_turn_latency_benchmarked": false}
+}

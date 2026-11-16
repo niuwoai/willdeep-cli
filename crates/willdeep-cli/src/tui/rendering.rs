@@ -22,8 +22,13 @@ pub(super) struct TranscriptRenderCache {
     language: Language,
     search: Option<String>,
     time_labels: Vec<Option<String>>,
+    /// 回复前缀。缓存键必须带上：`/name` 改名之后旧前缀的画面不能继续用。
+    assistant_name: String,
+    /// 聊天区每条记录之间额外空出的行数。改了它整屏高度都变，缓存必须重算。
+    line_spacing: u8,
     /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
     code_blocks: Vec<CodeBlockLines>,
+    selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     text: Text<'static>,
 }
 
@@ -62,6 +67,8 @@ impl App {
                 && cache.open_tools == self.expanded_tool_rows
                 && cache.language == self.language
                 && cache.search == search
+                && cache.assistant_name == self.assistant_name()
+                && cache.line_spacing == self.ui.line_spacing
                 && cache.source == self.transcript
                 && cache.time_labels == time_labels
         });
@@ -76,6 +83,7 @@ impl App {
                 tool_controls,
                 attachment_hits,
                 code_blocks,
+                selection_bounds,
             } = frame;
             self.user_message_controls = user_controls;
             self.tool_row_controls = tool_controls;
@@ -89,23 +97,22 @@ impl App {
                 open_tools: self.expanded_tool_rows.clone(),
                 language: self.language,
                 search: search.clone(),
+                assistant_name: self.assistant_name(),
+                line_spacing: self.ui.line_spacing,
                 time_labels,
                 code_blocks,
+                selection_bounds,
                 text,
             });
         }
-        let history = &self
+        let cached = self
             .transcript_render_cache
             .as_ref()
-            .expect("prepared history")
-            .text;
-        let cached_code_blocks = self
-            .transcript_render_cache
-            .as_ref()
-            .expect("prepared history")
-            .code_blocks
-            .clone();
-        self.transcript_rows.truncate(history.lines.len());
+            .expect("prepared history");
+        let cached_code_blocks = cached.code_blocks.clone();
+        self.transcript_selection_bounds
+            .clone_from(&cached.selection_bounds);
+        self.transcript_rows.truncate(cached.text.lines.len());
         // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
         // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
         // 插入点按缓存里的样式行算，点名和点击命中都走 `transcript_rows`，插完才对得上。
@@ -119,7 +126,7 @@ impl App {
         // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
         // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
         let waiting = self.awaiting_reply_row().map(|row| {
-            let waiting = self.compression_notice_lines(&row, search.as_deref());
+            let waiting = self.awaiting_reply_lines(&row, search.as_deref());
             let at = self.compression_notice_insert_at();
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
@@ -129,6 +136,8 @@ impl App {
         let mut code_blocks = cached_code_blocks;
         for (at, drawn) in [notice.as_ref(), waiting.as_ref()].into_iter().flatten() {
             shift_code_block_rows(&mut code_blocks, *at, drawn.lines.len());
+            self.transcript_selection_bounds
+                .splice(*at..*at, std::iter::repeat_n(None, drawn.lines.len()));
         }
         self.code_copy.set_blocks(
             code_blocks
@@ -143,12 +152,35 @@ impl App {
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
-                wrap_styled_text(
-                    colored_transcript_at_width(&[row], search.as_deref(), self.transcript_width),
-                    self.transcript_width,
-                )
+                let mut colored = colored_transcript_at_width(&[row], None, self.transcript_width);
+                if self.transient_kind == StreamKind::Reply
+                    && self.transient_thought.is_some()
+                    && let Some(line) = colored.lines.first_mut()
+                {
+                    let label = self.assistant_name();
+                    if let Some(suffix) = line.to_string().strip_prefix(&label) {
+                        *line = Line::from(vec![
+                            assistant_name_span(&label),
+                            Span::styled(suffix.to_owned(), line.style),
+                        ]);
+                    }
+                }
+                if let Some(query) = search.as_deref() {
+                    highlight_matches(&mut colored, query);
+                }
+                let mut transient = wrap_styled_text(colored, self.transcript_width);
+                if self
+                    .transcript
+                    .last()
+                    .is_some_and(|row| row.starts_with("You: "))
+                {
+                    transient.lines.insert(0, Line::default());
+                }
+                transient
             });
         self.transcript_rows.extend(text_rows(&transient));
+        self.transcript_selection_bounds
+            .resize(self.transcript_rows.len(), None);
         self.transcript_height = self.transcript_rows.len();
         (transient, notice, waiting)
     }
@@ -156,15 +188,11 @@ impl App {
     /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行，紧贴着插。
     /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
     fn compression_notice_insert_at(&self) -> usize {
-        self.transcript_rows
+        self.transcript_selection_bounds
             .iter()
-            .rposition(|row| row.starts_with("You:"))
-            .map_or(self.transcript_rows.len(), |user| {
-                let body = self.transcript_rows[user..]
-                    .iter()
-                    .position(|row| row.is_empty())
-                    .unwrap_or(self.transcript_rows.len() - user);
-                (user + body).min(self.transcript_rows.len())
+            .rposition(Option::is_some)
+            .map_or(self.transcript_rows.len(), |last_user_line| {
+                last_user_line + 1
             })
     }
 
@@ -174,6 +202,21 @@ impl App {
             Text::from(Line::styled(
                 row.to_owned(),
                 Style::default().fg(Color::DarkGray),
+            )),
+            self.transcript_width,
+        );
+        if let Some(query) = search {
+            highlight_matches(&mut text, query);
+        }
+        text
+    }
+
+    /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
+    fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
+        let mut text = wrap_styled_text(
+            Text::from(Line::styled(
+                row.to_owned(),
+                Style::default().fg(Color::Yellow),
             )),
             self.transcript_width,
         );
@@ -262,14 +305,26 @@ pub(super) fn colored_transcript_at_width(
 
 /// 画聊天区。分隔线只有在最后一行时才带「轮到你」，语言跟界面走。
 ///
-/// 空行的位置按整段记录算，不按单条记录算：它只属于「本轮结束」分隔线与下一条
-/// 用户消息之间。逐条画的路径看不到下一条是什么，所以这里不留空行。
+/// 这条路径逐条画、看不到下一条是什么，所以不留空行：空行属于整段渲染
+/// （[`super::message_time::render_with_user_folds`]），它才知道用户消息前面
+/// 该不该让开一行。
 pub(super) fn colored_transcript(
     entries: &[String],
     search_query: Option<&str>,
     width: usize,
     language: Language,
 ) -> Text<'static> {
+    colored_transcript_with_name(entries, search_query, width, language, "")
+}
+
+pub(super) fn colored_transcript_with_name(
+    entries: &[String],
+    search_query: Option<&str>,
+    width: usize,
+    language: Language,
+    assistant_name: &str,
+) -> Text<'static> {
+    let label = assistant_display_name(assistant_name);
     let last = entries.len().saturating_sub(1);
     let mut lines = Vec::new();
     for (index, raw) in entries.iter().enumerate() {
@@ -307,8 +362,8 @@ pub(super) fn colored_transcript(
             }
             continue;
         }
-        if let Some(content) = value.strip_prefix("WillDeep: ") {
-            lines.extend(render_assistant_markdown(content, width));
+        if let Some(content) = value.strip_prefix(ASSISTANT_ROW_PREFIX) {
+            lines.extend(render_assistant_markdown_labeled(content, width, label).0);
             // 回复后面跟的是浅色分隔线，两者已经分开了，不再多空一行。
             continue;
         }
@@ -327,12 +382,23 @@ pub(super) fn colored_transcript(
         } else {
             Style::default().fg(Color::Yellow)
         };
-        // 首屏吉祥物是夹在一条多行记录里的，所以要逐行认，不能只看整条记录的开头。
-        // 文本本身不变：复制、搜索拿到的还是屏幕上这些字（窄屏会画小号，行数不变）。
+        // Only the generated welcome banner contains a nested assistant greeting.
+        // A user's multiline quote or a tool/code row must keep its literal text.
+        let is_welcome = is_welcome_entry(value);
         lines.extend(value.lines().map(|line| {
-            banner::styled_line(line, width)
-                .or_else(|| banner::styled_name_line(line))
-                .unwrap_or_else(|| Line::styled(line.to_owned(), style))
+            if let Some(content) = line
+                .strip_prefix(ASSISTANT_ROW_PREFIX)
+                .filter(|_| is_welcome)
+            {
+                // The welcome greeting stays plain text: workspace names may contain Markdown.
+                let mut spans = assistant_prefix(true, label);
+                spans.push(Span::styled(content.to_owned(), style));
+                Line::from(spans)
+            } else {
+                banner::styled_line(line, width)
+                    .or_else(|| banner::styled_name_line(line))
+                    .unwrap_or_else(|| Line::styled(line.to_owned(), style))
+            }
         }));
     }
     let mut text = Text::from(lines);
@@ -395,9 +461,8 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 同一轮不空行：用户消息后面紧贴 Thought，回复后面紧贴分隔线。
-    /// 空行只在分隔线与下一轮的用户消息之间，两轮之间留一行。空行由整段渲染
-    /// 补上，逐条上色看不到下一条记录，所以这里断言走那条路径。
+    /// 用户消息与 Thought 之间、回复后和下一轮用户开口前各留一行；
+    /// 连续两条助手回复之间也留一行。空行由整段渲染补上，逐条上色看不到下一条记录。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
         let text = message_time::render_with_times(
@@ -418,13 +483,333 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], "You: first");
-        assert!(rows[1].contains("Thought: 3.0s"), "{rows:?}");
-        assert_eq!(rows[2], "WillDeep: done");
-        assert!(rows[3].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[0].trim(), "first");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].contains("Thought: 3.0s"), "{rows:?}");
+        assert_eq!(rows[3], "WillDeep: done");
         assert_eq!(rows[4], "");
-        assert_eq!(rows[5], "You: next");
-        assert_eq!(rows.len(), 6, "{rows:?}");
+        assert!(rows[5].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[6], "");
+        assert_eq!(rows[7].trim(), "next");
+        assert_eq!(rows.len(), 8, "{rows:?}");
+    }
+
+    /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
+    /// 聊天区第一条用户消息前面没有内容，不留空行。
+    #[test]
+    fn a_user_message_keeps_one_blank_row_before_it_even_without_a_divider() {
+        let text = message_time::render_with_times(
+            &[
+                "You: first".to_owned(),
+                "WillDeep: done".to_owned(),
+                "You: next".to_owned(),
+            ],
+            &[None, None, None],
+            None,
+            80,
+            Language::En,
+        );
+        let rows = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.iter().map(|row| row.trim()).collect::<Vec<_>>(),
+            vec!["first", "", "WillDeep: done", "", "next"]
+        );
+    }
+
+    #[test]
+    fn consecutive_assistant_replies_have_one_blank_row_without_trailing_blank() {
+        let text = message_time::render_with_times(
+            &[
+                "You: question".to_owned(),
+                "WillDeep: first".to_owned(),
+                "WillDeep: second".to_owned(),
+                "── turn finished ──".to_owned(),
+            ],
+            &[None, None, None, None],
+            None,
+            80,
+            Language::En,
+        );
+        let rows = text
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 7, "{rows:?}");
+        assert_eq!(rows[0].trim(), "question");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].ends_with(": first"), "{rows:?}");
+        assert_eq!(rows[3], "");
+        assert!(rows[4].ends_with(": second"), "{rows:?}");
+        assert_eq!(rows[5], "");
+        assert!(rows[6].starts_with("── turn finished"), "{rows:?}");
+    }
+
+    /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。
+    #[test]
+    fn a_named_instance_shows_its_name_instead_of_willdeep() {
+        let frame = message_time::render_transcript(
+            &["WillDeep: 你好".to_owned(), "You: 嗯".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "滚小滚",
+            0,
+        );
+        let rows = text_rows(&frame.text);
+        assert_eq!(rows[0], "滚小滚: 你好", "all rows: {rows:?}");
+        assert_eq!(frame.text.lines[0].spans[0].content, "滚小滚");
+        assert_eq!(frame.text.lines[0].spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(frame.text.lines[0].spans[1].content, ": ");
+        assert_eq!(frame.text.lines[0].spans[1].style.fg, Some(Color::Green));
+        assert_eq!(frame.text.lines[0].spans[2].style.fg, Some(Color::Green));
+        assert_eq!(rows.last().map(|row| row.trim()), Some("嗯"));
+        // 没起名时画面不变。
+        let plain = message_time::render_with_times(
+            &["WillDeep: 你好".to_owned()],
+            &[None],
+            None,
+            80,
+            Language::ZhCn,
+        );
+        assert_eq!(text_rows(&plain)[0], "WillDeep: 你好");
+    }
+
+    #[test]
+    fn an_empty_reply_keeps_the_name_accent_without_an_extra_space() {
+        let (text, _) =
+            render_assistant_entry_with_code_blocks(ASSISTANT_ROW_PREFIX, None, 80, "滚小滚");
+        assert_eq!(text.lines[0].to_string(), "滚小滚:");
+        assert_eq!(text.lines[0].spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(text.lines[0].spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn streaming_reply_accents_only_its_instance_name() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.assistant_name = "滚小滚".to_owned();
+        app.stream_transient(StreamKind::Reply, "你好");
+        let (transient, _, _) = app.prepare_transcript_frame();
+        let line = &transient.lines[0];
+        assert!(line.to_string().starts_with("滚小滚 · 回复中: 你好"));
+        assert_eq!(line.spans[0].content, "滚小滚");
+        assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(line.spans[1].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn a_colon_in_the_reply_body_does_not_become_an_instance_name() {
+        let rows = ["WillDeep: Status: done".to_owned()];
+        let named = message_time::render_transcript(
+            &rows,
+            &[None],
+            Some("Status"),
+            80,
+            Language::En,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "滚小滚",
+            0,
+        );
+        assert_eq!(text_rows(&named.text), ["滚小滚: Status: done"]);
+        assert!(
+            named.text.lines[0]
+                .spans
+                .iter()
+                .any(|span| span.content == "Status" && span.style.bg == Some(Color::Yellow))
+        );
+        assert_eq!(rows, ["WillDeep: Status: done"]);
+
+        let default = colored_transcript_at_width(&rows, None, 80);
+        assert_eq!(text_rows(&default), ["WillDeep: Status: done"]);
+    }
+
+    #[test]
+    fn a_named_instance_relabels_the_welcome_greeting_after_the_whale() {
+        let welcome = welcome_message(std::path::Path::new("/tmp/project"), Language::En);
+        let frame = message_time::render_transcript(
+            std::slice::from_ref(&welcome),
+            &[None],
+            None,
+            120,
+            Language::En,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "滚小滚",
+            0,
+        );
+        let rows = text_rows(&frame.text);
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with(&banner::name_line("v"))),
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.starts_with("滚小滚: Hello")),
+            "{rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.starts_with("WillDeep: ")),
+            "{rows:?}"
+        );
+        assert!(welcome.contains("WillDeep: Hello"));
+        let greeting = frame
+            .text
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("滚小滚: Hello"))
+            .unwrap();
+        assert_eq!(greeting.spans[0].content, "滚小滚");
+        assert_eq!(greeting.spans[0].style.fg, Some(Color::Cyan));
+        assert_eq!(greeting.spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn legacy_wordmark_welcomes_still_relabel_the_assistant_greeting() {
+        let legacy = format!("willdeep  v0.1.0\n\n{ASSISTANT_ROW_PREFIX}Hello");
+        let text = colored_transcript_with_name(&[legacy], None, 80, Language::En, "demo");
+        assert!(text_rows(&text).iter().any(|row| row == "demo: Hello"));
+    }
+
+    #[test]
+    fn welcome_workspace_name_with_markdown_syntax_stays_literal() {
+        let welcome = welcome_message(
+            std::path::Path::new("/tmp/repo[archive](2026)"),
+            Language::En,
+        );
+        let displayed = colored_transcript_with_name(
+            &[welcome],
+            Some("repo[archive](2026)"),
+            120,
+            Language::En,
+            "滚小滚",
+        );
+        let greeting = displayed
+            .lines
+            .iter()
+            .find(|line| line.to_string().starts_with("滚小滚: Hello"))
+            .unwrap();
+        assert!(greeting.to_string().contains("repo[archive](2026)"));
+        assert!(greeting.spans.iter().any(|span| {
+            span.content == "repo[archive](2026)" && span.style.bg == Some(Color::Yellow)
+        }));
+    }
+
+    #[test]
+    fn renamed_assistant_search_matches_the_visible_label() {
+        let welcome = welcome_message(std::path::Path::new("/tmp/project"), Language::En);
+        let mut app = App::new(
+            vec![welcome, "WillDeep: Status: done".to_owned()],
+            Language::En,
+        );
+        app.assistant_name = "滚小滚".to_owned();
+        for (query, expected) in [
+            ("WillDeep:", Vec::new()),
+            ("滚小滚:", vec![0, 1]),
+            ("Status: done", vec![1]),
+        ] {
+            app.search = Some(SearchState::default());
+            app.search.as_mut().unwrap().editor.insert(query);
+            app.refresh_search_matches();
+            assert_eq!(app.search.as_ref().unwrap().matches, expected, "{query}");
+        }
+        let text = colored_transcript_with_name(
+            &[app.transcript[0].clone()],
+            Some("滚小滚"),
+            120,
+            Language::En,
+            &app.assistant_name,
+        );
+        assert!(text.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content == "滚小滚" && span.style.bg == Some(Color::Yellow))
+        }));
+    }
+
+    #[test]
+    fn multiline_user_and_tool_rows_do_not_relabel_quoted_assistant_text() {
+        let rows = [
+            "You: quoted line\nWillDeep: Status: done".to_owned(),
+            "System: output\nWillDeep: Status: done".to_owned(),
+        ];
+        let text = colored_transcript_with_name(&rows, None, 80, Language::En, "滚小滚");
+        assert_eq!(
+            text_rows(&text),
+            [
+                "You: quoted line",
+                "WillDeep: Status: done",
+                "System: output",
+                "WillDeep: Status: done"
+            ]
+        );
+    }
+
+    /// 行距是每条记录之间额外的空行，最后一条后面不加。
+    #[test]
+    fn line_spacing_adds_blank_rows_between_entries_but_not_after_the_last() {
+        let frame = message_time::render_transcript(
+            &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            2,
+        );
+        let rows = text_rows(&frame.text);
+        // 用户与助手之间基础间距一行，再加配置的两行。
+        let blanks = rows.iter().filter(|row| row.is_empty()).count();
+        assert_eq!(blanks, 3, "{rows:?}");
+        assert_eq!(rows.first().map(|row| row.trim()), Some("一"));
+        assert_eq!(rows.last().map(String::as_str), Some("WillDeep: 二"));
+        // 行距为 0 时仍保留角色之间的基础空行。
+        let tight = message_time::render_transcript(
+            &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
+            &[None, None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            0,
+        );
+        assert_eq!(
+            text_rows(&tight.text)
+                .iter()
+                .map(|row| row.trim())
+                .collect::<Vec<_>>(),
+            vec!["一", "", "WillDeep: 二"]
+        );
+        // 最后一条后面不加：单独一条记录时行距不产生任何空白。
+        let single = message_time::render_transcript(
+            &["WillDeep: 只有一句".to_owned()],
+            &[None],
+            None,
+            80,
+            Language::ZhCn,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            "",
+            2,
+        );
+        assert_eq!(text_rows(&single.text), vec!["WillDeep: 只有一句"]);
     }
 
     /// 一段里没有空格也要按标点断开。模型写首页文案时整句不留空白，只按空白分词
@@ -487,7 +872,7 @@ mod tool_row_style_tests {
     }
 }
 
-fn highlight_matches(text: &mut Text<'static>, query: &str) {
+pub(super) fn highlight_matches(text: &mut Text<'static>, query: &str) {
     let Ok(pattern) = RegexBuilder::new(&regex::escape(query))
         .case_insensitive(true)
         .build()
@@ -593,7 +978,9 @@ pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'stati
             let word = &cells[word_start..index];
             let whitespace_width = whitespace.iter().map(|cell| cell.width).sum::<usize>();
             let word_width = word.iter().map(|cell| cell.width).sum::<usize>();
-            if word_width <= width {
+            if word_width <= width
+                && (line_width > 0 || whitespace_width.saturating_add(word_width) <= width)
+            {
                 if line_width > 0
                     && line_width
                         .saturating_add(whitespace_width)
@@ -716,16 +1103,29 @@ pub(super) fn text_rows(text: &Text<'static>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn selected_text(rows: &[String], start: (usize, usize), end: (usize, usize)) -> String {
+pub(super) fn selected_text(
+    rows: &[String],
+    bounds: &[Option<std::ops::Range<usize>>],
+    start: (usize, usize),
+    end: (usize, usize),
+) -> String {
     if rows.is_empty() || start >= end {
         return String::new();
     }
     let last_row = end.0.min(rows.len().saturating_sub(1));
     (start.0..=last_row)
         .map(|row| {
-            let start_column = if row == start.0 { start.1 } else { 0 };
-            let end_column = if row == end.0 { end.1 } else { usize::MAX };
-            display_column_slice(&rows[row], start_column, end_column)
+            let mut start_column = if row == start.0 { start.1 } else { 0 };
+            let mut end_column = if row == end.0 { end.1 } else { usize::MAX };
+            if let Some(Some(content)) = bounds.get(row) {
+                start_column = start_column.max(content.start);
+                end_column = end_column.min(content.end);
+            }
+            if start_column >= end_column {
+                String::new()
+            } else {
+                display_column_slice(&rows[row], start_column, end_column)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -808,7 +1208,16 @@ pub(super) fn highlight_text_selection_at_offset(
 }
 
 pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line<'static>> {
-    render_assistant_markdown_annotated(content, width).0
+    render_assistant_markdown_labeled(content, width, ASSISTANT_LABEL).0
+}
+
+/// 和 [`render_assistant_markdown`] 一样，只是第一行的名字用调用方给的那个。
+pub(super) fn render_assistant_markdown_labeled(
+    content: &str,
+    width: usize,
+    label: &str,
+) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
+    render_assistant_markdown_annotated(content, width, label)
 }
 
 /// 和 `render_assistant_markdown` 画得完全一样，额外报出每个代码块落在哪些输出行。
@@ -816,6 +1225,7 @@ pub(super) fn render_assistant_markdown(content: &str, width: usize) -> Vec<Line
 fn render_assistant_markdown_annotated(
     content: &str,
     width: usize,
+    label: &str,
 ) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
     let mut output = Vec::new();
     let mut blocks = Vec::new();
@@ -839,7 +1249,7 @@ fn render_assistant_markdown_annotated(
         }
         if code_block {
             code_content.push(raw.to_owned());
-            let mut spans = assistant_prefix(index == 0);
+            let mut spans = assistant_prefix(index == 0, label);
             spans.push(Span::styled(
                 raw.to_owned(),
                 Style::default()
@@ -865,7 +1275,7 @@ fn render_assistant_markdown_annotated(
                 index += 1;
             }
             if output.is_empty() {
-                output.push(Line::from(assistant_prefix(true)));
+                output.push(Line::from(assistant_prefix(true, label)));
             }
             output.extend(render_markdown_table(&rows, width));
             continue;
@@ -873,7 +1283,11 @@ fn render_assistant_markdown_annotated(
 
         let normalized = normalize_html_breaks(raw);
         for (piece_index, piece) in normalized.split('\n').enumerate() {
-            output.push(render_markdown_line(piece, index == 0 && piece_index == 0));
+            output.push(render_markdown_line(
+                piece,
+                index == 0 && piece_index == 0,
+                label,
+            ));
         }
         index += 1;
     }
@@ -882,7 +1296,7 @@ fn render_assistant_markdown_annotated(
         push_code_block(&mut blocks, code_start, output.len(), &code_content);
     }
     if output.is_empty() {
-        output.push(Line::styled("WillDeep:", Style::default().fg(Color::Green)));
+        output.push(Line::from(assistant_prefix_with_suffix(label, ":")));
     }
     (output, blocks)
 }
@@ -906,13 +1320,15 @@ pub(super) fn render_assistant_entry_with_code_blocks(
     row: &str,
     search: Option<&str>,
     width: usize,
+    assistant_name: &str,
 ) -> (Text<'static>, Vec<CodeBlockLines>) {
-    let Some(content) = row.strip_prefix("WillDeep: ") else {
+    let Some(content) = row.strip_prefix(ASSISTANT_ROW_PREFIX) else {
         let rows = [row.to_owned()];
         let text = wrap_styled_text(colored_transcript_at_width(&rows, search, width), width);
         return (text, Vec::new());
     };
-    let (lines, blocks) = render_assistant_markdown_annotated(content, width);
+    let label = assistant_display_name(assistant_name);
+    let (lines, blocks) = render_assistant_markdown_annotated(content, width, label);
     let mut text = Text::from(lines);
     if let Some(query) = search {
         highlight_matches(&mut text, query);
@@ -948,21 +1364,37 @@ pub(super) fn render_assistant_entry_with_code_blocks(
     (wrapped, blocks)
 }
 
-fn assistant_prefix(show: bool) -> Vec<Span<'static>> {
-    show.then(|| {
+fn assistant_prefix(show: bool, label: &str) -> Vec<Span<'static>> {
+    if show {
+        assistant_prefix_with_suffix(label, ": ")
+    } else {
+        Vec::new()
+    }
+}
+
+fn assistant_name_span(label: &str) -> Span<'static> {
+    Span::styled(
+        label.to_owned(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn assistant_prefix_with_suffix(label: &str, suffix: &str) -> Vec<Span<'static>> {
+    vec![
+        assistant_name_span(label),
         Span::styled(
-            "WillDeep: ",
+            suffix.to_owned(),
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-        )
-    })
-    .into_iter()
-    .collect()
+        ),
+    ]
 }
 
-fn render_markdown_line(raw: &str, show_prefix: bool) -> Line<'static> {
-    let mut spans = assistant_prefix(show_prefix);
+fn render_markdown_line(raw: &str, show_prefix: bool, label: &str) -> Line<'static> {
+    let mut spans = assistant_prefix(show_prefix, label);
     let trimmed = raw.trim_start();
     let (marker, body, base) = if let Some(body) = trimmed.strip_prefix("### ") {
         (
@@ -1279,6 +1711,55 @@ pub(super) const THOUGHT_PREVIEW_CHARS: usize = 1200;
 /// 「本轮结束」分隔线的前缀。按账目行的灰色画，紧贴上一轮输出，不另占空行。
 pub(super) const TURN_DIVIDER_PREFIX: &str = "── ";
 
+/// 助手回复在记录里的固定前缀；显示名由渲染调用方传入。
+/// 改名不改记录，历史里的旧行重开后也跟着新名字走。
+pub(super) const ASSISTANT_ROW_PREFIX: &str = "WillDeep: ";
+
+/// 没给实例起名时屏幕上用的名字。
+pub(super) const ASSISTANT_LABEL: &str = "WillDeep";
+
+/// 显示名只由调用方给出；记录本身只含固定前缀和原始正文。
+fn assistant_display_name(name: &str) -> &str {
+    if name.is_empty() {
+        ASSISTANT_LABEL
+    } else {
+        name
+    }
+}
+
+fn is_welcome_entry(value: &str) -> bool {
+    value.contains("\nWillDeep: ")
+        && (value
+            .lines()
+            .next()
+            .is_some_and(|line| banner::styled_name_line(line).is_some())
+            || value.starts_with(&banner::art_rows().join("\n")))
+        && value
+            .lines()
+            .any(|line| banner::styled_name_line(line).is_some())
+}
+
+/// 搜索与聊天区使用同一个助手显示名，但会话记录仍保留固定前缀。
+/// 只投影显示名，不解释 Markdown，也不改变正文和会话文件。
+pub(super) fn searchable_transcript_row<'a>(
+    row: &'a str,
+    assistant_name: &str,
+) -> std::borrow::Cow<'a, str> {
+    let label = assistant_display_name(assistant_name);
+    if label == ASSISTANT_LABEL {
+        return std::borrow::Cow::Borrowed(row);
+    }
+    if let Some(body) = row.strip_prefix(ASSISTANT_ROW_PREFIX) {
+        return std::borrow::Cow::Owned(format!("{label}: {body}"));
+    }
+    if is_welcome_entry(row)
+        && let Some((banner, greeting)) = row.rsplit_once("\nWillDeep: ")
+    {
+        return std::borrow::Cow::Owned(format!("{banner}\n{label}: {greeting}"));
+    }
+    std::borrow::Cow::Borrowed(row)
+}
+
 /// 分隔线末尾的「轮到你」。只在聊天区最后一行才有意义：新输出一来它就不再是事实。
 pub(super) fn your_turn_label(language: Language) -> &'static str {
     language.text("轮到你", "your turn", "あなたの番")
@@ -1392,7 +1873,7 @@ pub(super) fn cache_hit_rate(usage: &willdeep_core::types::Usage) -> Option<f64>
     Some(cached as f64 / input as f64 * 100.0)
 }
 
-/// 首屏：吉祥物 + 产品名与版本。版本取自 crate，跟着发版走。
+/// 首屏：吉祥物 + 产品名与版本。图形按实际聊天宽度适配，记录保持完整。
 fn welcome_header() -> String {
     let art = banner::art_rows().join("\n");
     format!(
@@ -1412,15 +1893,16 @@ pub(super) fn welcome_message(workspace: &std::path::Path, language: Language) -
         .filter(|value| !value.is_empty())
         .unwrap_or(language.text("当前工作区", "current workspace", "現在のワークスペース"));
     let header = welcome_header();
+    // 问候走默认助手记录行，显示时和别的回复一样换成实例名。
     match language {
         Language::ZhCn => format!(
-            "{header}\nWillDeep: 你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
+            "{header}\n{ASSISTANT_ROW_PREFIX}你好，我已经进入 {project}。你可以直接告诉我想实现、修复或调查什么；我会先了解项目，再开始动手。输入 `/help` 查看全部命令，`/model` 切换模型。"
         ),
         Language::En => format!(
-            "{header}\nWillDeep: Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
+            "{header}\n{ASSISTANT_ROW_PREFIX}Hello, I’m in {project}. Tell me what you want to build, fix, or investigate; I’ll inspect the project before making changes. Type `/help` for every command, or `/model` to switch models."
         ),
         Language::Ja => format!(
-            "{header}\nWillDeep: こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
+            "{header}\n{ASSISTANT_ROW_PREFIX}こんにちは。{project} を開きました。実装、修正、調査したいことを教えてください。まずプロジェクトを確認してから作業します。`/help` で全コマンド、`/model` でモデルを切り替えられます。"
         ),
     }
 }
@@ -1432,7 +1914,7 @@ mod code_block_tests {
     #[test]
     fn code_blocks_report_their_wrapped_rows_and_source() {
         let row = "WillDeep: intro\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\nafter";
-        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80, "");
         let rows = text_rows(&text);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].content, "fn main() {\n    println!(\"hi\");\n}");
@@ -1445,12 +1927,47 @@ mod code_block_tests {
         assert_eq!(rows[blocks[0].end], "after");
     }
 
+    #[test]
+    fn a_named_reply_keeps_markdown_newlines_code_blocks_and_highlights() {
+        let row = "WillDeep: Status: done\n**bold** and `code`\n```rust\nlet status = \"Status: done\";\n```\nafter";
+        let (text, blocks) =
+            render_assistant_entry_with_code_blocks(row, Some("Status"), 80, "滚小滚");
+        let rows = text_rows(&text);
+        assert_eq!(
+            rows,
+            [
+                "滚小滚: Status: done",
+                "bold and code",
+                "let status = \"Status: done\";",
+                "after",
+            ]
+        );
+        assert_eq!(blocks.len(), 1);
+        assert_eq!((blocks[0].start, blocks[0].end), (2, 3));
+        assert_eq!(blocks[0].content, "let status = \"Status: done\";");
+        assert!(text.lines[1].spans.iter().any(|span| {
+            span.content == "bold" && span.style.add_modifier.contains(Modifier::BOLD)
+        }));
+        assert!(
+            text.lines[0]
+                .spans
+                .iter()
+                .any(|span| { span.content == "Status" && span.style.bg == Some(Color::Yellow) })
+        );
+        assert!(
+            text.lines[2]
+                .spans
+                .iter()
+                .any(|span| { span.content == "Status" && span.style.bg == Some(Color::Yellow) })
+        );
+    }
+
     /// 长代码行要在块内折行，块的行数按折行后的屏幕行算，复制内容仍是原始一行。
     #[test]
     fn long_code_lines_wrap_inside_the_block() {
         let long = "x".repeat(40);
         let row = format!("WillDeep: ```\n{long}\n```");
-        let (text, blocks) = render_assistant_entry_with_code_blocks(&row, None, 10);
+        let (text, blocks) = render_assistant_entry_with_code_blocks(&row, None, 10, "");
         let rows = text_rows(&text);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].start, 0);
@@ -1466,7 +1983,7 @@ mod code_block_tests {
     #[test]
     fn an_unclosed_fence_reports_the_body_to_the_end() {
         let row = "WillDeep: ```\nlet x = 1;";
-        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        let (text, blocks) = render_assistant_entry_with_code_blocks(row, None, 80, "");
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].content, "let x = 1;");
         assert_eq!(blocks[0].start, 0);
@@ -1476,7 +1993,7 @@ mod code_block_tests {
     #[test]
     fn every_block_in_a_message_is_reported_in_order() {
         let row = "WillDeep: ```\na\n```\ntext\n```\nb\n```";
-        let (_, blocks) = render_assistant_entry_with_code_blocks(row, None, 80);
+        let (_, blocks) = render_assistant_entry_with_code_blocks(row, None, 80, "");
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].content, "a");
         assert_eq!(blocks[1].content, "b");

@@ -902,7 +902,8 @@ pub(crate) async fn remote_record_verification(
         willdeep_core::VerificationStatus::Passed => VerificationOutcome::Passed,
         willdeep_core::VerificationStatus::Failed => VerificationOutcome::Failed,
         willdeep_core::VerificationStatus::TimedOut => VerificationOutcome::TimedOut,
-        willdeep_core::VerificationStatus::LaunchFailed => VerificationOutcome::LaunchFailed,
+        willdeep_core::VerificationStatus::LaunchFailed
+        | willdeep_core::VerificationStatus::InvocationError => VerificationOutcome::LaunchFailed,
         willdeep_core::VerificationStatus::Invalidated => VerificationOutcome::Invalidated,
     };
     let response = runtime_client(&state)?

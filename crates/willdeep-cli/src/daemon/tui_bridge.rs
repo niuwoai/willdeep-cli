@@ -786,6 +786,11 @@ pub(crate) async fn runtime_events(
         .collect())
 }
 
+const EVENT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const EVENT_TASK_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+const EVENT_TASK_NOT_FOUND_RETRIES: usize = 4;
+const EVENT_TASK_NOT_FOUND_DELAY: Duration = Duration::from_millis(200);
+
 pub(crate) struct RuntimeEventFollower(tokio::task::JoinHandle<()>);
 
 impl Drop for RuntimeEventFollower {
@@ -831,9 +836,12 @@ async fn follow_runtime_events_once(
     tx: &tokio::sync::mpsc::UnboundedSender<Vec<RemoteRuntimeEvent>>,
 ) -> Result<()> {
     let state = load_state(&DaemonPaths::new(home).state)?;
-    let mut stream = match runtime_client(&state)?
-        .stream_events(*cursor, 1_000, None)
-        .await
+    let mut stream = match tokio::time::timeout(
+        EVENT_STREAM_IDLE_TIMEOUT,
+        runtime_client(&state)?.stream_events(*cursor, 1_000, None),
+    )
+    .await
+    .context("Runtime event stream connection timed out")?
     {
         Ok(stream) => stream,
         Err(willdeep_runtime_client::ClientError::HttpStatus(404)) => {
@@ -850,39 +858,54 @@ async fn follow_runtime_events_once(
         Err(error) => return Err(error.into()),
     };
     let mut visible_tasks = HashMap::<uuid::Uuid, Option<uuid::Uuid>>::new();
-    while let Some(response) = stream.next::<RuntimeEvent>().await? {
+    while let Some(response) =
+        tokio::time::timeout(EVENT_STREAM_IDLE_TIMEOUT, stream.next::<RuntimeEvent>())
+            .await
+            .context("Runtime event stream idle; reconnect to recover missed events")??
+    {
         let event = match response {
             willdeep_runtime_protocol::ApiResponse::Ok { data, .. } => data,
             willdeep_runtime_protocol::ApiResponse::Error { error, .. } => {
                 bail!("Runtime event stream failed: {}", error.message)
             }
         };
-        *cursor = (*cursor).max(event.sequence);
         let session_id = if let Some(task_id) = event_task_id(&event.message) {
             if let Some(session_id) = visible_tasks.get(&task_id) {
                 *session_id
             } else {
-                let client = runtime_client(&state)?;
-                let (task_found, session_id) = match client.task(task_id).await {
-                    Ok(response) => match api_data(response) {
-                        Ok(task) => (
-                            true,
-                            (task.workspace.as_deref().map(Path::new) == Some(workspace))
-                                .then_some(task.session_id)
-                                .flatten(),
-                        ),
-                        Err(_) => (false, None),
-                    },
-                    Err(_) => (false, None),
-                };
-                if task_found {
-                    visible_tasks.insert(task_id, session_id);
+                let mut resolved = None;
+                for attempt in 0..EVENT_TASK_NOT_FOUND_RETRIES {
+                    let client = runtime_client(&state)?;
+                    let response =
+                        tokio::time::timeout(EVENT_TASK_LOOKUP_TIMEOUT, client.task(task_id))
+                            .await
+                            .with_context(|| {
+                                format!("lookup timed out for Runtime event task {task_id}")
+                            })?;
+                    resolved = resolve_event_task(response, workspace)
+                        .with_context(|| format!("resolve Runtime event task {task_id}"))?;
+                    if resolved.is_some() {
+                        break;
+                    }
+                    if attempt + 1 < EVENT_TASK_NOT_FOUND_RETRIES {
+                        tokio::time::sleep(EVENT_TASK_NOT_FOUND_DELAY).await;
+                    }
                 }
-                session_id
+                // A missing task may be created between the event and the
+                // lookup. Never cache a negative result for later output.
+                if let Some(session_id) = resolved {
+                    visible_tasks.insert(task_id, session_id);
+                    session_id
+                } else {
+                    None
+                }
             }
         } else {
             None
         };
+        // Do not acknowledge the event before its task lookup succeeds. A
+        // transient lookup failure must reconnect from the same sequence.
+        *cursor = (*cursor).max(event.sequence);
         if tx
             .send(vec![RemoteRuntimeEvent {
                 sequence: event.sequence,
@@ -897,7 +920,29 @@ async fn follow_runtime_events_once(
             return Ok(());
         }
     }
-    Ok(())
+    bail!("Runtime event stream closed; reconnect from the last event")
+}
+
+fn resolve_event_task(
+    response: Result<
+        willdeep_runtime_protocol::ApiResponse<willdeep_runtime_protocol::RuntimeTask>,
+        willdeep_runtime_client::ClientError,
+    >,
+    workspace: &Path,
+) -> Result<Option<Option<uuid::Uuid>>> {
+    match response? {
+        willdeep_runtime_protocol::ApiResponse::Ok { data: task, .. } => Ok(Some(
+            (task.workspace.as_deref().map(Path::new) == Some(workspace))
+                .then_some(task.session_id)
+                .flatten(),
+        )),
+        willdeep_runtime_protocol::ApiResponse::Error { error, .. }
+            if error.code == willdeep_runtime_protocol::ErrorCode::NotFound =>
+        {
+            Ok(None)
+        }
+        willdeep_runtime_protocol::ApiResponse::Error { error, .. } => Err(error.into()),
+    }
 }
 
 fn event_task_id(message: &str) -> Option<uuid::Uuid> {
@@ -1662,6 +1707,47 @@ pub(crate) async fn cancel_remote_task(home: &Path, id: uuid::Uuid) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transient_task_lookup_does_not_make_an_event_invisible() {
+        use willdeep_runtime_protocol::{ApiResponse, ErrorCode, RuntimeTask};
+
+        let workspace = Path::new("/test/workspace");
+        assert!(
+            resolve_event_task(
+                Err(willdeep_runtime_client::ClientError::HttpStatus(503)),
+                workspace,
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_event_task(
+                Ok(ApiResponse::<RuntimeTask>::error(
+                    ErrorCode::Unavailable,
+                    "temporarily unavailable",
+                    true,
+                    willdeep_core::VERSION,
+                    None,
+                )),
+                workspace,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            resolve_event_task(
+                Ok(ApiResponse::<RuntimeTask>::error(
+                    ErrorCode::NotFound,
+                    "task has been removed",
+                    false,
+                    willdeep_core::VERSION,
+                    None,
+                )),
+                workspace,
+            )
+            .unwrap(),
+            None,
+        );
+    }
 
     /// 同一个目录开两个 TUI 时，A 会话的审批框曾经在 B 会话照弹，
     /// 而且在 B 里点「允许」会真的把 A 的审批解掉——等于替一条没看见的命令签字。

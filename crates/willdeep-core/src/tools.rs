@@ -23,6 +23,7 @@ use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
 mod child_sessions;
 mod delegation;
+mod detached_verification;
 mod host_tools;
 mod peer_sessions;
 mod plan_jobs;
@@ -65,6 +66,9 @@ pub enum VerificationStatus {
     Failed,
     TimedOut,
     LaunchFailed,
+    /// Cargo 在启动测试前明确拒绝了不存在的包选择器。保留尝试记录，
+    /// 不产生通过证据，也不把拼错的命令变成永久检查义务。
+    InvocationError,
     /// 退出码 0，但检查运行期间工作区变了（或结束后快照读不到），因此结果不能
     /// 当作原始文件的证据。这**不是**测试失败——另一个会话或进程可能正在写这
     /// 个工作区，也可能是检查自己改了受版本控制的文件。
@@ -215,6 +219,7 @@ pub struct ToolRegistry {
     /// 脱离父进程的后台作业。挂上它之后，显式 `run_in_background` 的命令不再
     /// 随 Harness 一起死：升级、重启、退出都不影响，回来按记录取结果。
     detached_jobs: Option<Arc<crate::detached_job::DetachedJobStore>>,
+    detached_verifications: Arc<detached_verification::Tracker>,
     allowed_tools: Option<HashSet<String>>,
     /// Every path a subagent is allowed to write. `None` means the registry
     /// is not write-scoped at all (the main agent); a set means writes are
@@ -368,6 +373,7 @@ impl ToolRegistry {
             allowed_tools: None,
             write_targets: None,
             detached_jobs: None,
+            detached_verifications: Arc::new(detached_verification::Tracker::default()),
             read_only_git_shell: false,
             command_allowlist: None,
             reviewed_subagent_shell: false,
@@ -1025,7 +1031,8 @@ impl ToolRegistry {
             | "configuration_read"
             | "configuration_write" => self.host_tool(call).await,
             "set_group_mention_limit" => self.group_conversation_tool(call).await,
-            "list_workspace_sessions"
+            "rename_instance"
+            | "list_workspace_sessions"
             | "send_session_message"
             | "read_session_messages"
             | "start_session"
@@ -1772,7 +1779,8 @@ impl ToolRegistry {
                 .await?;
             sandbox = sandbox.with_network(crate::sandbox::NetworkPolicy::Allow);
         }
-        // Verification must stay synchronous: launching a job is not a passing check.
+        // Verification may run explicitly in the background, but only a terminal
+        // result bound to its start/end snapshots counts; launching is not evidence.
         let automatic_delay = (!accepted_verification && self.command_allowlist.is_none())
             .then(|| command_wait::leading_sleep_seconds(&args.command))
             .flatten();
@@ -1800,6 +1808,12 @@ impl ToolRegistry {
             // 脱离模式：进程自成进程组，输出与退出码落盘。父进程升级或退出
             // 都不影响它，回来只取结果，不重跑。
             if let Some(jobs) = self.detached_jobs.clone() {
+                let verification_start = self.prepare_detached_verification(
+                    &args.command,
+                    &evidence_command,
+                    &command_workspace,
+                    accepted_verification,
+                );
                 let job = jobs
                     .spawn_with_policy(
                         &args.command,
@@ -1808,12 +1822,18 @@ impl ToolRegistry {
                         &sandbox,
                         timeout,
                     )
-                    .map_err(ToolError::Io)?;
+                    .map_err(|error| {
+                        self.report_detached_launch_failure(verification_start.as_ref(), &error);
+                        ToolError::Io(error)
+                    })?;
+                let notice = format!(
+                    "Background job started: {} (pid {}). It survives a Runtime restart; read it with get_job_output.",
+                    job.id, job.pid
+                );
+                let verification_notice =
+                    self.observe_detached_verification(jobs, job, verification_start, timeout);
                 return Ok(command_wait::started_notice(
-                    format!(
-                        "Background job started: {} (pid {}). It survives a Runtime restart; read it with get_job_output.",
-                        job.id, job.pid
-                    ),
+                    format!("{notice}{verification_notice}"),
                     automatic_delay,
                 ));
             }
@@ -2221,6 +2241,7 @@ impl ToolRegistry {
         if let Some(jobs) = &self.detached_jobs
             && let Some(job) = jobs.get(&args.job_id)
         {
+            self.collect_detached_verification(jobs, &job);
             return Ok(jobs.render_output(&job, args.tail_lines));
         }
         Err(ToolError::Network(format!(

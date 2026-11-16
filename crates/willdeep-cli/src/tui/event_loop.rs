@@ -26,11 +26,17 @@ async fn handle_queue_action(
         let index = app.prompt_queue.as_ref().unwrap().selected;
         let text = app.queued_prompts[index].text.clone();
         if app.running
+            && !app.compression_in_progress()
             && app.queued_prompts[index].attachments.is_empty()
             && !text.trim_start().starts_with('/')
             && steer_running_turn(app, session, runtime, agent, &text).await
         {
-            app.note_steering_delivered(&text, app.queued_submission_time(index));
+            let submission_order = app.queued_prompts[index].submission_order;
+            app.note_steering_delivered_with_order(
+                &text,
+                app.queued_submission_time(index),
+                submission_order,
+            );
             app.remove_queued_prompt_row(index);
             app.queued_prompts.remove(index);
             app.prompt_queue.as_mut().unwrap().show_feedback(
@@ -223,15 +229,34 @@ fn persist_turn_result(session: &mut Session, store: &SessionStore) -> Result<()
     match store.save(session) {
         Ok(()) => Ok(()),
         Err(willdeep_core::session::SessionError::ConcurrentUpdate(_)) => {
-            let messages = std::mem::take(&mut session.messages);
-            // `update` 在锁内从磁盘最新快照起改：别人刚写进去的字段全部保留，
-            // 只把本轮的消息放上去。
-            *session = store.update(session.id, |latest| latest.messages = messages)?;
+            // `update` 在锁内保留磁盘上的最新元数据；消息、摘要、压缩边界和
+            // 检查点属于同一份执行快照，必须一起替换。
+            let latest = store.update(session.id, |latest| {
+                latest.adopt_execution_snapshot(session);
+            })?;
+            *session = latest;
             Ok(())
         }
         Err(error) => Err(error.into()),
     }
 }
+
+/// 本地提示与通知共用 Finished 成功回调的保存边界。
+/// 调用方仍持有执行所有权；先接回检查点，再用 outcome 的消息与摘要一起收尾。
+fn persist_finished_outcome(
+    session: &mut Session,
+    store: &SessionStore,
+    outcome: willdeep_core::AgentOutcome,
+) -> Result<()> {
+    store.refresh_execution(session)?;
+    session.messages = outcome.messages;
+    session.context_summary = outcome.context_summary;
+    persist_turn_result(session, store)
+}
+
+#[cfg(test)]
+#[path = "test_suite/local_summary_persistence.rs"]
+mod local_summary_persistence;
 
 /// 开屏提示：没有配置文件时说明凭据来自哪里、怎么固化；配置里有旧写法时点名。
 fn startup_notices(runtime: &TuiRuntime, language: Language) -> Vec<String> {
@@ -303,7 +328,8 @@ async fn steer_running_turn(
 }
 
 /// 进程内轮次结束时，收件箱里还没送出的插话交回队列，本轮结束后照常发出。
-fn requeue_undelivered_steering(app: &mut App, agent: &Arc<Agent>) {
+/// 手动压缩和失败收尾也走这里：那两条路没有下一轮去消化收件箱。
+pub(super) fn requeue_undelivered_steering(app: &mut App, agent: &Arc<Agent>) {
     let Some(inbox) = agent.instruction_inbox() else {
         return;
     };
@@ -490,6 +516,9 @@ pub(super) async fn event_loop(
     if let Some(show_thinking) = crate::config::load_thinking_visibility(&runtime.home)? {
         app.ui.show_thinking = show_thinking;
     }
+    if let Some(spacing) = crate::config::load_line_spacing(&runtime.home)? {
+        app.ui.line_spacing = spacing;
+    }
     // 顺序有讲究：装载聊天记录是整体替换，必须排在 startup_notices 之前，
     // 否则「首次使用 / 旧配置写法」那几条 System 提示会被覆盖掉。
     // daemon 的 display session 带上了各代历史的正文，比磁盘上的会话更全，
@@ -518,6 +547,7 @@ pub(super) async fn event_loop(
     app.workspace_status = workspace_status_placeholder(&session.workspace, language);
     app.attention_read = session.attention_read.clone();
     app.display_home = Some(runtime.home.clone());
+    app.load_assistant_name();
     app.context_window = runtime.context_window.max(1);
     app.background_tasks = runtime.background_tasks.snapshots();
     refresh_session_lineage(&mut app, session, store);
@@ -735,7 +765,12 @@ pub(super) async fn event_loop(
         if app.permission_picker.is_none() && app.queued_steering_ready() {
             let text = app.queued_prompts.front().unwrap().text.clone();
             if steer_running_turn(&app, session, runtime, &agent, &text).await {
-                app.note_steering_delivered(&text, app.queued_submission_time(0));
+                let submission_order = app.queued_prompts[0].submission_order;
+                app.note_steering_delivered_with_order(
+                    &text,
+                    app.queued_submission_time(0),
+                    submission_order,
+                );
                 app.remove_queued_prompt_row(0);
                 app.queued_prompts.pop_front();
                 app.waiting_background = false;
@@ -792,7 +827,7 @@ pub(super) async fn event_loop(
             app.selected_attachment = draft_selected_attachment;
             match result {
                 Ok(()) => {
-                    app.mark_queued_prompt_sent(&queued.text);
+                    app.mark_queued_prompt_sent_at(&queued.text, queued.transcript_row);
                     app.attach_to_latest_user_row(
                         queued
                             .attachments
@@ -1758,6 +1793,30 @@ pub(super) async fn event_loop(
                             if confirmation_example::try_submit(&mut app, &runtime.tx) {
                                 continue;
                             }
+                            // 压缩请求正在飞：插话进不了这次请求，改会话的命令也动不了正在
+                            // 压缩的那一份。普通输入先排队并清空输入区；只读的本地命令照常执行。
+                            if app.compression_in_progress() {
+                                match busy_input(app.input.text()) {
+                                    BusyInput::RunNow => {}
+                                    BusyInput::Queue => {
+                                        app.queue_submitted_prompt();
+                                        app.hold_notice(
+                                            app.notice.clone().unwrap_or_default(),
+                                            Duration::from_secs(10),
+                                        );
+                                        continue;
+                                    }
+                                    BusyInput::Refuse => {
+                                        let notice = language.text(
+                                            "正在压缩上下文，该命令会改动会话或 Runtime，压缩结束后才能执行",
+                                            "Context is compressing; that command changes Session or Runtime state and runs after compression finishes",
+                                            "コンテキスト圧縮中です。このコマンドはセッション/Runtime を変更するため、完了後に実行されます",
+                                        ).to_owned();
+                                        app.hold_notice(notice, Duration::from_secs(10));
+                                        continue;
+                                    }
+                                }
+                            }
                             // 本轮在跑时不再把 Enter 整条封死：本地命令照常执行，
                             // 提示词排队，其余命令说清楚为什么现在不行。
                             if app.running {
@@ -1781,13 +1840,11 @@ pub(super) async fn event_loop(
                                         continue;
                                     },
                                     BusyInput::Refuse=>{
-                                        let notice = language.text(
+                                        app.hold_notice(language.text(
                                             "该命令会改动会话或 Runtime，本轮结束后才能执行；Esc 可立即中断",
                                             "That command changes Session or Runtime state; it runs after this turn. Esc interrupts now",
                                             "このコマンドはセッション/Runtime を変更するため、ターン終了後に実行されます。Esc で即中断",
-                                        ).to_owned();
-                                        app.notice = Some(notice.clone());
-                                        app.notice_hold = Some((notice, Instant::now() + Duration::from_secs(10)));
+                                        ).to_owned(), Duration::from_secs(10));
                                         continue;
                                     },
                                 }
@@ -1996,7 +2053,7 @@ pub(super) async fn event_loop(
                             let now = Instant::now();
                             if interrupt_esc_deadline.is_some_and(|deadline| now <= deadline) {
                                 interrupt_esc_deadline = None;
-                                match interrupt_turn(&mut app,session,runtime).await {
+                                match interrupt_turn(&mut app,session,runtime,&agent).await {
                                     Ok(message)=>app.notice=Some(message),
                                     Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
                                 }
@@ -2043,7 +2100,8 @@ pub(super) async fn event_loop(
                     app.dismiss_compression_notice();
                     append_plan_result(&mut app.transcript,&serde_json::to_string(&willdeep_core::planning::Receipt::new(plan,false))?);
                 },
-                UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
+                UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="rename_instance" {app.load_assistant_name();}
+                    if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
                     if !is_error && call.name=="workflow_control" && let Ok(value)=serde_json::from_str::<serde_json::Value>(&output) && let Some(run)=value.get("workflow").and_then(|run|serde_json::from_value(run.clone()).ok()) {workflow_ui::update(&mut app.transcript,run,false);}
                     if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&call.name,&call.arguments),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
                 UiMessage::Agent(AgentEvent::Usage { usage: v, .. })=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
@@ -2065,10 +2123,10 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::GoalBudgetLimited{reason})=>app.record_progress(format!("{} · {reason:?}",language.text("目标预算耗尽 · 转入收尾","Goal budget exhausted · wrapping up","目標の予算を使い切りました · まとめに移ります"))),
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
-                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));store.refresh_execution(session)?;session.messages=outcome.messages;persist_turn_result(session,store)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
-                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));app.finish_turn();},
-                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});app.finish_turn();},
-                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));app.finish_turn();},
+                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);if let Some(text)=crate::harness::partial_outcome_status_text(outcome.stop_reason,outcome.turns,language){app.append_transcript(format!("System: {text}"));}app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));persist_finished_outcome(session,store,outcome)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
+                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),

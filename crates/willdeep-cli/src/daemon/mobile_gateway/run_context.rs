@@ -24,7 +24,7 @@ fn loaded(
         .clone()
         .unwrap_or_else(|| server.home.join("config.toml"));
     let config = if session.config.is_some() || path.exists() {
-        crate::config::LoadedConfig::load(Some(path.as_path()))?
+        crate::config::LoadedConfig::load_runtime(Some(path.as_path()))?
     } else {
         crate::config::LoadedConfig {
             file: crate::config::ConfigFile::default(),
@@ -268,7 +268,9 @@ async fn build_capabilities(
     let host = PluginHost::discover(&server.home)?;
     let mut plugins = Vec::new();
     for package in host.packages() {
-        if host.is_enabled(&package.id).await && host.approval_gap(&package.id).await?.is_none() {
+        if host.is_enabled(&package.id).await
+            && host.approval_gap_preview(&package.id).await?.is_none()
+        {
             let id = format!("plugin:{}", package.id);
             plugins.push(json!({"id": id, "title": package.id, "is_active": session.mobile_plugins.contains(&id)}));
         }

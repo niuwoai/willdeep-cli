@@ -24,7 +24,7 @@ pub(crate) async fn routing_guidance(home: &Path, allowed: bool) -> Option<Strin
     let package = host.package("willdeep-video-studio").ok()?;
     if !host.is_enabled("willdeep-video-studio").await
         || host
-            .approval_gap("willdeep-video-studio")
+            .approval_gap_preview("willdeep-video-studio")
             .await
             .ok()?
             .is_some()

@@ -21,18 +21,28 @@ fn submitting_collapses_the_expanded_composer() {
 
 #[test]
 fn chat_title_brand_names_the_workspace() {
-    assert_eq!(chat_title_brand(None), "WillDeep");
+    assert_eq!(chat_title_brand("", None), "WillDeep");
     assert_eq!(
-        chat_title_brand(Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))),
+        chat_title_brand(
+            "滚小滚",
+            Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))
+        ),
+        "滚小滚 · willdeep-rs"
+    );
+    assert_eq!(
+        chat_title_brand(
+            "",
+            Some(std::path::Path::new("/Users/rocky/Sites/willdeep-rs"))
+        ),
         "WillDeep · willdeep-rs"
     );
     // 根目录没有目录名，退回完整路径。
     assert_eq!(
-        chat_title_brand(Some(std::path::Path::new("/"))),
+        chat_title_brand("", Some(std::path::Path::new("/"))),
         "WillDeep · /"
     );
     let long = format!("/tmp/{}", "项".repeat(40));
-    let brand = chat_title_brand(Some(std::path::Path::new(&long)));
+    let brand = chat_title_brand("", Some(std::path::Path::new(&long)));
     assert_eq!(brand, format!("WillDeep · {}…", "项".repeat(31)));
 }
 
@@ -47,7 +57,7 @@ fn command_menu_discovers_webapp() {
 #[test]
 fn welcome_mentions_workspace_without_entering_model_history() {
     let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::ZhCn);
-    // 首屏第一行就是吉祥物：它进的是 transcript 原文，拖动选中复制出来的也是这串字。
+    // 首屏保留完整鲸鱼原文；终端变窄只改变绘制，记录本身不改写。
     assert!(welcome.starts_with(super::super::banner::art_rows()[0].as_str()));
     assert!(welcome.contains(super::super::banner::NAME));
     assert!(welcome.contains(env!("CARGO_PKG_VERSION")));

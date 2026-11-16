@@ -28,7 +28,7 @@ pub(super) fn test_server_state_with_scheduler(
     sessions: Arc<session_store::RuntimeSessionStore>,
     scheduler: tokio::sync::mpsc::UnboundedSender<uuid::Uuid>,
 ) -> ServerState {
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(root);
     ServerState {
         home: root.to_path_buf(),
@@ -294,7 +294,7 @@ async fn runtime_sink_attributes_child_agent_file_changes_without_chat_metadata(
         root_agent_id,
         home: root.clone(),
         workspace: workspace.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         tools: tools.clone(),
         diff_baselines: AsyncMutex::new(HashMap::new()),
@@ -420,7 +420,7 @@ async fn shutdown_signal_is_observed_by_late_and_parallel_listeners() {
 async fn authorization_requires_exact_local_token() {
     let root = std::env::temp_dir().join(format!("willdeep-daemon-auth-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let state = Arc::new(ServerState {
         home: root.clone(),
@@ -518,13 +518,13 @@ fn event_log_assigns_sequences_and_resumes_after_cursor() {
     let root = std::env::temp_dir().join(format!("willdeep-events-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("events.ndjson");
-    let log = EventLog::open(path.clone()).unwrap();
+    let log = EventLog::open_for_tests(path.clone()).unwrap();
     assert_eq!(log.append("first", "one").unwrap().sequence, 1);
     assert_eq!(log.append("second", "two").unwrap().sequence, 2);
     assert_eq!(log.read_after(1, 10).unwrap()[0].kind, "second");
     drop(log);
 
-    let reopened = EventLog::open(path).unwrap();
+    let reopened = EventLog::open_for_tests(path).unwrap();
     assert_eq!(reopened.append("third", "three").unwrap().sequence, 3);
     assert_eq!(reopened.read_after(0, 2).unwrap().len(), 2);
     std::fs::remove_dir_all(root).unwrap();
@@ -837,7 +837,7 @@ fn restart_recovery_closes_child_agent_tool_and_command_resources_once() {
     let agents = AgentStore::open(agents_path).unwrap();
     let commands = AgentCommandStore::open(commands_path).unwrap();
     let tools = tool_store::ToolStore::open(tools_path).unwrap();
-    let events = EventLog::open(root.join("events.ndjson")).unwrap();
+    let events = EventLog::open_for_tests(root.join("events.ndjson")).unwrap();
     report_execution_resource_recovery(&events, &agents, &commands, &tools).unwrap();
 
     let child = agents.get(child_id).unwrap().unwrap();
@@ -944,7 +944,7 @@ fn task_store_marks_active_tasks_interrupted_after_restart() {
     };
     persist_tasks(&path, &HashMap::from([(id, task)])).unwrap();
     let agents = test_agent_store(&root);
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1003,7 +1003,7 @@ fn task_recovery_survives_dangling_session_reference() {
         error: None,
     };
     persist_tasks(&path, &HashMap::from([(id, task)])).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1082,7 +1082,7 @@ fn task_recovery_interrupts_waiting_task_and_cancels_its_interaction() {
         )]),
     )
     .unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path: tasks_path,
         interactions_path: interactions_path.clone(),
@@ -1162,7 +1162,7 @@ fn task_recovery_preserves_the_session_root_agent_id() {
     };
     persist_tasks(&path, &HashMap::from([(task_id, task)])).unwrap();
     let agents = test_agent_store(&root);
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let manager = TaskManager::open(TaskManagerOptions {
         path,
         interactions_path: root.join("interactions.json"),
@@ -1244,6 +1244,238 @@ fn daemon_lock_heartbeat_refreshes_only_the_owner_lease() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+mod lease_shutdown_tests {
+    use super::*;
+    use std::future::{Future, poll_fn};
+    use std::sync::mpsc;
+    use std::task::Poll;
+    use tokio::task::JoinHandle;
+
+    const GATE_TIMEOUT: Duration = Duration::from_secs(5);
+    const SETUP_FAILURE: &str = "injected Runtime setup failure";
+    const HEARTBEAT_PANIC: &str = "injected lease heartbeat panic";
+
+    struct LeaseFixture {
+        root: PathBuf,
+        paths: DaemonPaths,
+        state: DaemonState,
+        cleanup: Option<StateCleanup>,
+    }
+
+    impl LeaseFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("willdeep-lease-shutdown-{}", uuid::Uuid::new_v4()));
+            let paths = DaemonPaths::new(&root);
+            std::fs::create_dir_all(&paths.directory).unwrap();
+            let lock = acquire_daemon_lock(&paths.lock).unwrap();
+            let state = DaemonState {
+                schema: STATE_SCHEMA,
+                version: willdeep_core::VERSION.to_owned(),
+                pid: std::process::id(),
+                address: "127.0.0.1:1".parse().unwrap(),
+                token: uuid::Uuid::new_v4().to_string(),
+                started_at: now(),
+                local_transport: None,
+            };
+            write_state(&paths.state, &state).unwrap();
+            let cleanup = StateCleanup {
+                path: paths.state.clone(),
+                token: state.token.clone(),
+                lock_path: paths.lock.clone(),
+                lock_token: lock.token,
+                local_endpoint: None,
+            };
+            Self {
+                root,
+                paths,
+                state,
+                cleanup: Some(cleanup),
+            }
+        }
+
+        fn pause_refresh(&self) -> (JoinHandle<()>, mpsc::Sender<()>) {
+            let (entered, entered_receiver) = mpsc::channel();
+            let (release, release_receiver) = mpsc::channel();
+            let path = self.paths.lock.clone();
+            let token = self.cleanup.as_ref().unwrap().lock_token.clone();
+            let heartbeat = tokio::spawn(async move {
+                refresh_daemon_lock_with_writer(&path, &token, |path, lock| {
+                    entered.send(()).context("signal in-flight lease refresh")?;
+                    // Block inside a synchronous refresh, after validating ownership.
+                    // Dropping release on an assertion failure also unblocks this task.
+                    release_receiver.recv().context("release lease refresh")?;
+                    write_json_atomic(path, lock)
+                })
+                .expect("refresh the real lease");
+                std::future::pending::<()>().await;
+            });
+            entered_receiver
+                .recv_timeout(GATE_TIMEOUT)
+                .expect("heartbeat must reach the gated lease write");
+            (heartbeat, release)
+        }
+
+        fn take_cleanup(&mut self) -> StateCleanup {
+            self.cleanup.take().unwrap()
+        }
+    }
+
+    impl Drop for LeaseFixture {
+        fn drop(&mut self) {
+            drop(self.cleanup.take());
+            if let Err(error) = std::fs::remove_dir_all(&self.root) {
+                if std::thread::panicking() {
+                    eprintln!("remove lease fixture {}: {error}", self.root.display());
+                } else {
+                    panic!("remove lease fixture {}: {error}", self.root.display());
+                }
+            }
+        }
+    }
+
+    async fn wait_finished(heartbeat: &JoinHandle<()>) {
+        tokio::time::timeout(GATE_TIMEOUT, async {
+            while !heartbeat.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("heartbeat must finish before testing its join result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn abort_without_join_recreates_a_removed_lease() {
+        let mut fixture = LeaseFixture::new();
+        let token = fixture.cleanup.as_ref().unwrap().lock_token.clone();
+        let (heartbeat, release) = fixture.pause_refresh();
+        // Negative control: this is the old production shutdown ordering.
+        heartbeat.abort();
+        drop(fixture.take_cleanup());
+        assert!(!fixture.paths.state.exists());
+        assert!(!fixture.paths.lock.exists());
+        release.send(()).unwrap();
+        assert!(heartbeat.await.unwrap_err().is_cancelled());
+        assert_eq!(load_daemon_lock(&fixture.paths.lock).unwrap().token, token);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_joins_in_flight_refresh_on_success_and_setup_failure() {
+        for setup_failure in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let (heartbeat, release) = fixture.pause_refresh();
+            let result = if setup_failure {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, SETUP_FAILURE).into())
+            } else {
+                Ok(())
+            };
+            let mut shutdown =
+                Box::pin(finish_daemon_run(result, heartbeat, fixture.take_cleanup()));
+            let pending =
+                poll_fn(|context| Poll::Ready(shutdown.as_mut().poll(context).is_pending())).await;
+            assert!(
+                pending,
+                "shutdown must join the blocked synchronous refresh"
+            );
+            assert!(
+                fixture.paths.state.exists(),
+                "state must outlive the writer"
+            );
+            assert!(fixture.paths.lock.exists(), "lease must outlive the writer");
+            release.send(()).unwrap();
+            let result = shutdown.await;
+            if setup_failure {
+                let error = result.unwrap_err();
+                assert_eq!(error.to_string(), SETUP_FAILURE);
+                assert_eq!(
+                    error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+            } else {
+                result.unwrap();
+            }
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_accepts_cancelled_and_already_finished_heartbeats() {
+        for already_finished in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let heartbeat = tokio::spawn(async move {
+                if !already_finished {
+                    std::future::pending::<()>().await;
+                }
+            });
+            if already_finished {
+                wait_finished(&heartbeat).await;
+            }
+            finish_daemon_run(Ok(()), heartbeat, fixture.take_cleanup())
+                .await
+                .unwrap();
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_reports_heartbeat_panics_without_replacing_the_run_error() {
+        for setup_failure in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let heartbeat = tokio::spawn(async { panic!("{HEARTBEAT_PANIC}") });
+            wait_finished(&heartbeat).await;
+            let result = if setup_failure {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, SETUP_FAILURE).into())
+            } else {
+                Ok(())
+            };
+            let error = finish_daemon_run(result, heartbeat, fixture.take_cleanup())
+                .await
+                .unwrap_err();
+            if setup_failure {
+                assert_eq!(error.to_string(), SETUP_FAILURE);
+                assert_eq!(
+                    error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+            } else {
+                let diagnostic = format!("{error:#}");
+                assert!(diagnostic.contains("stop Runtime Daemon lease heartbeat"));
+                assert!(diagnostic.contains(HEARTBEAT_PANIC));
+                assert!(
+                    error
+                        .downcast_ref::<tokio::task::JoinError>()
+                        .unwrap()
+                        .is_panic()
+                );
+            }
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_preserves_replacement_state_and_lease() {
+        let mut fixture = LeaseFixture::new();
+        let token = fixture.cleanup.as_ref().unwrap().lock_token.clone();
+        remove_owned_lock(&fixture.paths.lock, &token);
+        let replacement = acquire_daemon_lock(&fixture.paths.lock).unwrap();
+        let mut state = fixture.state.clone();
+        state.token = uuid::Uuid::new_v4().to_string();
+        write_state(&fixture.paths.state, &state).unwrap();
+        let heartbeat = tokio::spawn(std::future::pending());
+        finish_daemon_run(Ok(()), heartbeat, fixture.take_cleanup())
+            .await
+            .unwrap();
+        assert_eq!(load_state(&fixture.paths.state).unwrap().token, state.token);
+        assert_eq!(
+            load_daemon_lock(&fixture.paths.lock).unwrap().token,
+            replacement.token
+        );
+    }
+}
+
 #[tokio::test]
 async fn concurrent_task_updates_persist_a_complete_snapshot() {
     let root = std::env::temp_dir().join(format!(
@@ -1252,7 +1484,7 @@ async fn concurrent_task_updates_persist_a_complete_snapshot() {
     ));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("tasks.json");
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let manager = Arc::new(
         TaskManager::open(TaskManagerOptions {
@@ -1317,7 +1549,7 @@ async fn drain_wait_ignores_stale_cancellation_for_terminal_task() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1376,7 +1608,7 @@ async fn drain_does_not_wait_on_tasks_that_are_waiting_on_a_human() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1437,7 +1669,7 @@ async fn drain_still_waits_for_work_that_finishes_on_its_own() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions: test_runtime_session_store(&root),
         turn_scheduler: test_turn_scheduler(),
@@ -1532,7 +1764,7 @@ fn active_runtime_task_statuses_are_explicit() {
 async fn pending_approval_blocks_until_a_valid_resolution_arrives() {
     let root = std::env::temp_dir().join(format!("willdeep-interaction-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let events = Arc::new(EventLog::open(root.join("events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap());
     let agents = test_agent_store(&root);
     let manager = TaskManager::open(TaskManagerOptions {
         path: root.join("tasks.json"),
@@ -1628,7 +1860,7 @@ async fn approval_resolutions_reach_the_feedback_ledger() {
         path: root.join("tasks.json"),
         interactions_path: root.join("interactions.json"),
         home: root.clone(),
-        events: Arc::new(EventLog::open(root.join("events.ndjson")).unwrap()),
+        events: Arc::new(EventLog::open_for_tests(root.join("events.ndjson")).unwrap()),
         agents: test_agent_store(&root),
         sessions,
         turn_scheduler: test_turn_scheduler(),
@@ -1755,7 +1987,7 @@ async fn daemon_turns_link_ledger_lines_to_their_usage_events() {
     std::fs::create_dir_all(&workspace).unwrap();
     let task_id = uuid::Uuid::new_v4();
     let session_id = uuid::Uuid::new_v4();
-    let events = Arc::new(EventLog::open(home.join("runtime/events.ndjson")).unwrap());
+    let events = Arc::new(EventLog::open_for_tests(home.join("runtime/events.ndjson")).unwrap());
     let sink = Arc::new(RuntimeEventSink {
         task_id,
         session_id: Some(session_id),

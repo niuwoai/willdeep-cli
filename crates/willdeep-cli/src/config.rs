@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
@@ -8,10 +9,14 @@ use willdeep_core::McpServerConfig;
 
 pub const CONFIG_VERSION: u32 = 1;
 
+#[cfg(test)]
+mod init_tests;
 mod ui_settings;
 #[cfg(test)]
 pub use ui_settings::InputSuggestionColor;
+pub use ui_settings::MAX_LINE_SPACING;
 pub use ui_settings::{UiMode, UiSettings};
+pub use ui_settings::{load_line_spacing, save_line_spacing};
 pub use ui_settings::{load_thinking_visibility, save_thinking_visibility};
 
 #[derive(Clone, Debug, Subcommand)]
@@ -231,6 +236,9 @@ pub struct ConfigFile {
     /// 本机反馈账本（RSI 强反馈数据）。只写本机、不上传。
     #[serde(default)]
     pub feedback: FeedbackSettings,
+    /// Runtime Daemon 持久化状态（事件流归档等）。
+    #[serde(default)]
+    pub runtime: RuntimeSettings,
     /// Cross-client attention delivery settings shared with WillDeep.app.
     /// The CLI accepts the full section even when only webhook fields are
     /// relevant on a headless machine; desktop-only sound fields remain
@@ -636,6 +644,52 @@ fn default_feedback_enabled() -> bool {
     true
 }
 
+/// `[runtime]`：本地 Runtime Daemon 的维护策略。
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSettings {
+    #[serde(default)]
+    pub events: EventLogSettings,
+}
+
+/// `runtime.events`：`events.ndjson` 全机事件总线的归档与重新开始。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventLogSettings {
+    /// 活跃日志超过此大小时，在 daemon 启动时整文件移到 backups 并新建空日志；0 表示关闭。
+    #[serde(default = "default_event_rotate_bytes")]
+    pub rotate_bytes: u64,
+    /// 在 backups 里最多保留几份 `runtime-events-*.ndjson` 归档。
+    #[serde(default = "default_event_retain_archives")]
+    pub retain_archives: u32,
+}
+
+impl Default for EventLogSettings {
+    fn default() -> Self {
+        Self {
+            rotate_bytes: default_event_rotate_bytes(),
+            retain_archives: default_event_retain_archives(),
+        }
+    }
+}
+
+fn default_event_rotate_bytes() -> u64 {
+    32 * 1024 * 1024
+}
+
+fn default_event_retain_archives() -> u32 {
+    8
+}
+
+pub fn event_log_settings_from_config(
+    loaded: &std::result::Result<LoadedConfig, anyhow::Error>,
+) -> EventLogSettings {
+    loaded
+        .as_ref()
+        .map(|value| value.file.runtime.events.clone())
+        .unwrap_or_default()
+}
+
 /// Deliberately *not* `deny_unknown_fields`: this is the one section both
 /// WillDeep.app and the CLI read out of the same file. Rejecting unknown keys
 /// would mean the app cannot add a field without breaking every CLI that has
@@ -863,16 +917,24 @@ pub struct WorkerTierSettings {
     pub context_window: Option<u64>,
 }
 
+static RUNTIME_CONFIG_CACHE: LazyLock<Mutex<HashMap<PathBuf, LoadedConfig>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn resolve_config_path(explicit_path: Option<&Path>) -> Result<(PathBuf, bool)> {
+    match explicit_path {
+        Some(path) => Ok((path.to_path_buf(), true)),
+        None => default_config_path().map(|path| (path, false)),
+    }
+}
+
+#[derive(Clone)]
 pub struct LoadedConfig {
     pub file: ConfigFile,
 }
 
 impl LoadedConfig {
     pub fn load(explicit_path: Option<&Path>) -> Result<Self> {
-        let (path, required) = match explicit_path {
-            Some(path) => (path.to_path_buf(), true),
-            None => (default_config_path()?, false),
-        };
+        let (path, required) = resolve_config_path(explicit_path)?;
         if !path.exists() {
             if required {
                 bail!("configuration file does not exist: {}", path.display());
@@ -891,6 +953,31 @@ impl LoadedConfig {
             .with_context(|| format!("parse TOML configuration: {}", path.display()))?;
         validate(&file, &path)?;
         Ok(Self { file })
+    }
+
+    /// 长驻 Runtime（daemon / 进行中的会话）用：重载失败时沿用该路径上一次成功解析的快照。
+    pub fn load_runtime(explicit_path: Option<&Path>) -> Result<Self> {
+        let (path, _) = resolve_config_path(explicit_path)?;
+        match Self::load(explicit_path) {
+            Ok(loaded) => {
+                if let Ok(mut cache) = RUNTIME_CONFIG_CACHE.lock() {
+                    cache.insert(path, loaded.clone());
+                }
+                Ok(loaded)
+            }
+            Err(error) => {
+                if let Ok(cache) = RUNTIME_CONFIG_CACHE.lock()
+                    && let Some(cached) = cache.get(&path)
+                {
+                    eprintln!(
+                        "warning: configuration reload failed ({}): {error:#}; continuing with last successfully loaded configuration",
+                        path.display()
+                    );
+                    return Ok(cached.clone());
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn select_provider(&self, requested: Option<&str>) -> Result<Option<&ProviderProfile>> {
@@ -1783,6 +1870,21 @@ mod tests {
         );
         assert_eq!(budget.max_continuations, 10);
         assert_eq!(configured.agent.goal_auto_resume, Some(false));
+    }
+
+    #[test]
+    fn load_runtime_reuses_last_good_config_after_parse_failure() {
+        let root =
+            std::env::temp_dir().join(format!("wd-config-resilient-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.toml");
+        std::fs::write(&path, "version = 1\n[agent]\nmax_turns = 4\n").unwrap();
+        let first = LoadedConfig::load_runtime(Some(&path)).unwrap();
+        assert_eq!(first.file.agent.max_turns, Some(4));
+        std::fs::write(&path, "version = 1\nnot valid toml [[[\n").unwrap();
+        let second = LoadedConfig::load_runtime(Some(&path)).unwrap();
+        assert_eq!(second.file.agent.max_turns, Some(4));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -2881,23 +2983,5 @@ secret = "inline-secret"
         let error =
             resolve_web_listen(None, None, "localhost:3").expect_err("config must be IP:PORT");
         assert!(error.to_string().contains("web.listen"), "{error}");
-    }
-
-    #[test]
-    fn init_is_private_and_never_overwrites() {
-        let root = std::env::temp_dir().join(format!("willdeep-config-{}", uuid::Uuid::new_v4()));
-        let path = root.join("nested/config.toml");
-        init(&path).unwrap();
-        assert!(path.exists());
-        assert!(init(&path).is_err());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

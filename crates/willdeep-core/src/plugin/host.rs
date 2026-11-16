@@ -297,9 +297,19 @@ impl PluginHost {
         self.registry.lock().await.is_enabled(plugin_id)
     }
 
+    /// 权威审批检查：摘要比较读取当前包字节。
     pub async fn approval_gap(&self, plugin_id: &str) -> Result<Option<ApprovalGap>, HostError> {
         let package = self.package(plugin_id)?;
         Ok(self.registry.lock().await.approval_gap(package)?)
+    }
+
+    /// 仅供展示与能力提示，可能复用旧摘要。实际放行须再次检查 `approval_gap`。
+    pub async fn approval_gap_preview(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<ApprovalGap>, HostError> {
+        let package = self.package(plugin_id)?;
+        Ok(self.registry.lock().await.approval_gap_preview(package)?)
     }
 
     pub async fn approve(&self, plugin_id: &str, now: u64) -> Result<(), HostError> {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::event_loop::requeue_undelivered_steering;
 
 #[test]
 fn session_picker_result_includes_content_snippet_without_embedded_lines() {
@@ -1308,7 +1309,7 @@ fn text_selection_mode_uses_escape_or_ctrl_s_without_treating_copy_as_exit() {
 #[test]
 fn internal_chat_selection_copies_unicode_display_columns() {
     let rows = vec!["你好吗".to_owned(), "second".to_owned()];
-    assert_eq!(selected_text(&rows, (0, 2), (1, 3)), "好吗\nsec");
+    assert_eq!(selected_text(&rows, &[], (0, 2), (1, 3)), "好吗\nsec");
     assert_eq!(quote_selected_text("第一行\n第二行"), "> 第一行\n> 第二行");
 }
 
@@ -1900,6 +1901,35 @@ fn a_running_turn_no_longer_swallows_every_enter() {
     }
 }
 
+/// 压缩期间的回车沿用同一套三分法，不能把什么都收进队列：
+/// `/help`、`/model` 当场执行，`/new`、`/diff` 留在输入框里并说明原因。
+#[test]
+fn compression_keeps_immediate_commands_and_refuses_session_changes() {
+    let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+    app.begin_turn(true, "working".to_owned());
+    app.note_compression_started();
+
+    for command in ["/help", "/model qwen3-coder", "/clear"] {
+        app.input.insert(command);
+        assert_eq!(busy_input(app.input.text()), BusyInput::RunNow, "{command}");
+        assert!(app.queued_prompts.is_empty());
+        app.input.take();
+    }
+
+    for command in ["/new", "/diff", "/compress"] {
+        app.input.insert(command);
+        assert_eq!(busy_input(app.input.text()), BusyInput::Refuse, "{command}");
+        app.hold_notice(
+            "正在压缩上下文，该命令会改动会话或 Runtime，压缩结束后才能执行".to_owned(),
+            std::time::Duration::from_secs(10),
+        );
+        assert_eq!(app.input.text(), command, "a refused command stays typed");
+        assert!(app.queued_prompts.is_empty());
+        assert!(app.notice.as_deref().unwrap().contains("正在压缩上下文"));
+        app.input.take();
+    }
+}
+
 /// 一条失败的 Inbox 项此前只写 `Status: Failed`，打开详情等于什么都没说。
 #[test]
 fn failed_task_details_name_the_command_and_the_reason() {
@@ -2236,6 +2266,41 @@ fn repeated_fresh_snapshots_without_tasks_flag_a_stale_runtime_turn() {
     }
 }
 
+/// 用户消息已回显、Runtime 没有活动任务、界面也没在跑轮次时，等待动画不该一直转。
+#[test]
+fn stale_awaiting_reply_clears_without_active_tasks() {
+    let session = uuid::Uuid::new_v4();
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.runtime_event_cursor = 1;
+    app.input.insert("hello");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+
+    // A queued submission can wait through empty snapshots while its network
+    // receipt or Runtime turn identity is pending. Neither should clear the UI.
+    app.runtime_queue_submission = Some(("pending retry".into(), uuid::Uuid::new_v4()));
+    assert!(!app.observe_runtime_tasks(&[], session, Some(1)));
+    assert!(app.awaiting_since.is_some());
+    app.runtime_queue_submission = None;
+    app.runtime_submitted_turn = Some(uuid::Uuid::new_v4());
+    assert!(!app.observe_runtime_tasks(&[], session, Some(2)));
+    assert!(app.awaiting_since.is_some());
+    app.runtime_submitted_turn = None;
+
+    assert!(!app.observe_runtime_tasks(&[], session, Some(3)));
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(&[], session, Some(4)));
+    assert!(app.awaiting_since.is_none());
+    assert!(app.transcript.iter().any(|row| row.contains("等待动画")));
+
+    let task = running_remote_task(session);
+    app.input.insert("again");
+    app.take_prompt_for_submission();
+    assert!(app.awaiting_since.is_some());
+    assert!(!app.observe_runtime_tasks(std::slice::from_ref(&task), session, Some(3)));
+    assert!(app.awaiting_since.is_some());
+}
+
 #[test]
 fn ordinary_prompts_default_to_runtime_with_explicit_local_escape() {
     assert_eq!(
@@ -2342,6 +2407,296 @@ fn runtime_compression_events_reach_the_status_bar_and_the_progress_line() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 手动 `/compress` 不读收件箱，结束时也不会再有一轮去消化它。压缩期间若有插话
+/// 已经进了收件箱，压缩结束（成功或失败）必须交回队列，不能只剩一行「已送达」。
+/// 事件循环在 `UiMessage::Compressed` 的成功和失败两条路上都调用这个交回。
+#[test]
+fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-compression-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut app = App::new(vec!["You: hi".to_owned()], Language::ZhCn);
+    app.begin_turn(false, "正在压缩上下文".to_owned());
+    app.note_compression_started();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let inbox = agent.instruction_inbox().unwrap();
+    assert!(inbox.push_operator("压缩完再看这一段".to_owned()));
+    app.note_steering_delivered("压缩完再看这一段", message_time::now());
+
+    requeue_undelivered_steering(&mut app, &agent);
+
+    assert!(!inbox.has_pending(), "the inbox is emptied");
+    assert_eq!(app.queued_prompts.len(), 1);
+    assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
+    assert!(app.deferred_steering.is_empty());
+    assert!(
+        app.transcript.iter().any(|row| row.contains("没赶上")),
+        "the user is told it missed this turn: {:?}",
+        app.transcript
+    );
+    app.finish_turn();
+    assert!(!app.compression_in_progress());
+    assert_eq!(
+        app.queued_prompts.len(),
+        1,
+        "the queue survives the turn ending"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn recovered_inbox_matches_trimmed_text_to_original_submission() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-trimmed-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "compressing".into());
+    app.message_times.event_time = Some(100);
+    app.input.insert("  A  ");
+    app.queue_submitted_prompt();
+    let first_order = app.queued_prompts[0].submission_order;
+    let first_time = app.queued_submission_time(0);
+    let inbox = agent.instruction_inbox().unwrap();
+    assert!(inbox.push_operator("  A  ".into()));
+    app.note_steering_delivered_with_order("  A  ", first_time, first_order);
+    app.remove_queued_prompt_row(0);
+    app.queued_prompts.pop_front();
+    app.message_times.event_time = Some(200);
+    app.input.insert("A");
+    app.queue_submitted_prompt();
+    app.message_times.event_time = None;
+
+    requeue_undelivered_steering(&mut app, &agent);
+    assert_eq!(
+        app.queued_prompts
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>(),
+        ["  A  ", "A"]
+    );
+    assert_eq!(app.queued_submission_time(0), 100);
+    assert_eq!(app.queued_submission_time(1), 200);
+    assert!(app.deferred_steering.is_empty());
+    app.finish_turn();
+    assert!(!app.transcript.iter().any(|row| row == "You:   A  "));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn recovered_inbox_keeps_submission_order_and_duplicate_echo_identity() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-ordered-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "working".to_owned());
+    app.input.insert("older with attachment");
+    app.attachments
+        .push(encode_clipboard_image(1, 1, vec![255, 0, 0, 255]).unwrap());
+    app.queue_submitted_prompt();
+
+    app.message_times.event_time = Some(100);
+    app.input.insert("same");
+    app.queue_submitted_prompt();
+    let first_order = app.queued_prompts[1].submission_order;
+    let first_time = app.queued_submission_time(1);
+    assert_eq!(first_time, 100);
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("same".into())
+    );
+    app.note_steering_delivered_with_order("same", first_time, first_order);
+    app.remove_queued_prompt_row(1);
+    app.queued_prompts.remove(1);
+
+    // Another inbox message was submitted before the local queue received B.
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("middle".into())
+    );
+    app.note_steering_delivered("middle", 150);
+    app.message_times.event_time = Some(200);
+    app.input.insert("same");
+    app.queue_submitted_prompt();
+    app.message_times.event_time = None;
+    let second_row = app.queued_prompts[1].transcript_row.unwrap();
+    let second_time = app.queued_submission_time(1);
+    assert_eq!(second_time, 200);
+
+    requeue_undelivered_steering(&mut app, &agent);
+    assert_eq!(
+        app.queued_prompts
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>(),
+        ["older with attachment", "same", "middle", "same"]
+    );
+    assert_eq!(app.queued_prompts[0].attachments.len(), 1);
+    assert_eq!(app.queued_submission_time(1), 100);
+    assert_eq!(app.queued_submission_time(3), 200);
+    assert_eq!(app.queued_prompts[3].transcript_row, Some(second_row));
+    let first_row = app.queued_prompts[1].transcript_row.unwrap();
+    assert!(
+        first_row > second_row,
+        "recovered A's echo is appended after B's"
+    );
+    app.finish_turn();
+    assert!(app.deferred_steering.is_empty());
+    assert!(!app.transcript.iter().any(|row| row == "You: middle"));
+
+    // Editing A targets its later echo, not B's identical earlier echo.
+    app.open_prompt_queue();
+    app.prompt_queue.as_mut().unwrap().selected = 1;
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    app.prompt_queue
+        .as_mut()
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap()
+        .insert(" first");
+    app.handle_queue_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.transcript[first_row],
+        app.queued_prompt_row("same first")
+    );
+    assert_eq!(app.transcript[second_row], app.queued_prompt_row("same"));
+    app.prompt_queue = None;
+
+    // Sending A must claim its own later echo and leave B's earlier one untouched.
+    let first = app.queued_prompts.remove(1).unwrap();
+    app.mark_queued_prompt_sent_at(&first.text, first.transcript_row);
+    assert_eq!(app.queued_submission_time(2), 200);
+    assert_eq!(app.transcript[second_row], app.queued_prompt_row("same"));
+    assert!(app.transcript.iter().any(|row| row == "You: same first"));
+    assert_eq!(
+        app.message_times.time_at(app.transcript.len() - 1),
+        Some(100)
+    );
+
+    // Editing B and deleting it must still target B, even after A is sent.
+    app.open_prompt_queue();
+    app.prompt_queue.as_mut().unwrap().selected = 2;
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    app.prompt_queue
+        .as_mut()
+        .unwrap()
+        .editor
+        .as_mut()
+        .unwrap()
+        .insert(" edited");
+    app.handle_queue_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(
+        app.transcript[second_row],
+        app.queued_prompt_row("same edited")
+    );
+    app.handle_queue_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    assert!(
+        !app.transcript
+            .iter()
+            .any(|row| row == &app.queued_prompt_row("same edited"))
+    );
+    assert_eq!(app.queued_prompts.len(), 2);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn local_interrupt_recovers_inbox_before_finishing_turn() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-tui-interrupt-requeue-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agent = Arc::new(willdeep_core::Agent::new(
+        Arc::new(SilentProvider),
+        willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::Strict).unwrap(),
+        willdeep_core::AgentConfig {
+            max_turns: 1,
+            system_prompt: String::new(),
+            context_window: 128_000,
+            token_budget: None,
+        },
+    ));
+    let mut app = App::new(Vec::new(), Language::En);
+    app.begin_turn(false, "working".to_owned());
+    app.local_turn = Some(tokio::spawn(std::future::pending::<()>()));
+    assert!(
+        agent
+            .instruction_inbox()
+            .unwrap()
+            .push_operator("interrupted".into())
+    );
+    app.note_steering_delivered("interrupted", 100);
+
+    interrupt_local_turn(&mut app, &agent).await;
+
+    assert!(!app.running);
+    assert!(app.deferred_steering.is_empty());
+    assert!(!agent.instruction_inbox().unwrap().has_pending());
+    assert_eq!(app.queued_prompts[0].text, "interrupted");
+    assert_eq!(app.queued_submission_time(0), 100);
+    assert!(
+        app.transcript
+            .iter()
+            .any(|row| row == "You: [queued] interrupted")
+    );
+    assert!(!app.transcript.iter().any(|row| row == "You: interrupted"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 这个测试只把收件箱里的插话交回队列，不该真的去调模型。
+struct SilentProvider;
+
+#[async_trait::async_trait]
+impl willdeep_core::provider::Provider for SilentProvider {
+    async fn complete(
+        &self,
+        _: &[willdeep_core::Message],
+        _: &[willdeep_core::types::ToolDefinition],
+    ) -> std::result::Result<willdeep_core::types::Completion, willdeep_core::provider::ProviderError>
+    {
+        panic!("returning undelivered steering must not call the provider");
+    }
+}
+
 #[test]
 fn modal_colours_do_not_come_from_the_theme_palette() {
     // 0–15 号会被终端主题改写；弹窗与选区必须用色立方里的固定色。
@@ -2387,27 +2742,20 @@ fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     assert!(app.chat_selection.is_none());
 }
 
-/// 首屏是一整条多行记录：只在「整条记录开头」认吉祥物会全部落空，
-/// 这里按行核对，顺带保证产品名那一行用的是强调色而不是默认黄色。
+/// 首屏是一整条多行记录：鲸鱼逐行上色，产品名保留强调色。
 #[test]
 fn the_welcome_banner_is_drawn_row_by_row_with_colour() {
     let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::En);
+    assert!(welcome.starts_with(&super::super::banner::art_rows().join("\n")));
     let text = colored_transcript(&[welcome], None, 120, Language::En);
     let rows = text_rows(&text);
-
-    for art_row in super::super::banner::art_rows() {
-        let index = rows
-            .iter()
-            .position(|row| row == art_row)
-            .unwrap_or_else(|| panic!("mascot row missing from the transcript: {art_row:?}"));
-        let colours: Vec<_> = text.lines[index]
-            .spans
-            .iter()
-            .filter_map(|span| span.style.fg)
-            .collect();
+    for (index, row) in super::super::banner::art_rows().iter().enumerate() {
+        assert_eq!(&rows[index], row);
         assert!(
-            !colours.is_empty(),
-            "mascot row {index} lost its colours and fell back to one style"
+            text.lines[index]
+                .spans
+                .iter()
+                .any(|span| span.style.fg.is_some())
         );
     }
 

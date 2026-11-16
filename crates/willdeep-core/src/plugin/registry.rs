@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::manifest::PluginPermission;
-use super::package::PluginPackage;
+use super::package::{PackageError, PluginPackage};
 
 const STATE_VERSION: u32 = 1;
 
@@ -170,6 +170,23 @@ impl PluginRegistry {
         &self,
         package: &PluginPackage,
     ) -> Result<Option<ApprovalGap>, RegistryError> {
+        self.approval_gap_with_digest(package, PluginPackage::digest)
+    }
+
+    /// 仅用于展示或能力提示的审批预览。可能复用旧摘要，不能据此放行操作；
+    /// 启用和实际使用前仍须调用 `approval_gap` 读取当前内容。
+    pub fn approval_gap_preview(
+        &self,
+        package: &PluginPackage,
+    ) -> Result<Option<ApprovalGap>, RegistryError> {
+        self.approval_gap_with_digest(package, PluginPackage::cached_digest)
+    }
+
+    fn approval_gap_with_digest(
+        &self,
+        package: &PluginPackage,
+        digest: impl FnOnce(&PluginPackage) -> Result<String, PackageError>,
+    ) -> Result<Option<ApprovalGap>, RegistryError> {
         let requested = permission_names(package);
         let Some(approval) = self
             .file
@@ -200,8 +217,8 @@ impl PluginRegistry {
                 approved: approval.source.clone(),
             }));
         }
-        // 最后才读包内容。到这里为止，前面几条都只看清单与注册表。
-        if approval.digest != package.digest()? {
+        // 最后才获取摘要。权威入口必读当前字节，展示预览才允许复用缓存。
+        if approval.digest != digest(package)? {
             return Ok(Some(ApprovalGap::DigestChanged));
         }
         Ok(None)
@@ -363,8 +380,10 @@ mod tests {
     use crate::plugin::package::{PluginSource, load_package};
 
     fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("willdeep-registry-test-{name}"));
-        let _ = fs::remove_dir_all(&root);
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-registry-test-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&root).expect("scratch directory");
         root
     }
@@ -447,6 +466,172 @@ mod tests {
             registry.approval_gap(&widened).expect("gap"),
             Some(ApprovalGap::NewPermissions(added)) if added == vec!["network.access".to_owned()]
         ));
+    }
+
+    fn approved_then_rewritten_package(name: &str) -> (PluginPackage, PluginRegistry, String) {
+        let home = scratch(name);
+        let installed = package(&home.join("pkg"), "[]");
+        let payload = installed.root.join("ui/index.html");
+        write(&payload, "one");
+        let mut registry =
+            PluginRegistry::load(&PluginRegistry::default_path(&home)).expect("registry");
+        registry
+            .approve(&installed, 1)
+            .expect("approve original bytes");
+        let old = installed.cached_digest().expect("warm original preview");
+        let before = fs::metadata(&payload).expect("original metadata");
+        assert_eq!(before.len(), "two".len() as u64);
+        fs::write(&payload, "two").expect("rewrite payload only");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&payload)
+            .expect("open payload")
+            .set_times(fs::FileTimes::new().set_modified(before.modified().expect("mtime")))
+            .expect("restore mtime");
+        let after = fs::metadata(&payload).expect("rewritten metadata");
+        assert_eq!(after.len(), before.len());
+        assert_eq!(
+            after.modified().expect("mtime"),
+            before.modified().expect("mtime")
+        );
+        assert_eq!(installed.cached_digest().expect("stale preview"), old);
+        assert_eq!(
+            registry.approval_gap_preview(&installed).expect("preview"),
+            None
+        );
+        assert!(!registry.is_enabled(&installed.id));
+        (installed, registry, old)
+    }
+
+    #[test]
+    fn authoritative_approval_gap_detects_rewrite_hidden_from_preview() {
+        let (installed, registry, _) = approved_then_rewritten_package("fresh-gap");
+        assert_eq!(
+            registry
+                .approval_gap(&installed)
+                .expect("current bytes checked"),
+            Some(ApprovalGap::DigestChanged)
+        );
+    }
+
+    #[test]
+    fn enabling_rejects_rewrite_hidden_from_preview() {
+        let (installed, mut registry, _) = approved_then_rewritten_package("fresh-enable");
+        assert_eq!(
+            registry
+                .set_enabled(&installed, true)
+                .expect("enable checked"),
+            Err(ApprovalGap::DigestChanged)
+        );
+        assert!(!registry.is_enabled(&installed.id));
+        let reloaded = PluginRegistry::load(&registry.path).expect("reload disabled state");
+        assert!(!reloaded.is_enabled(&installed.id));
+    }
+
+    #[test]
+    fn reapproval_persists_current_bytes_despite_stale_preview() {
+        let (installed, mut registry, old) = approved_then_rewritten_package("fresh-reapprove");
+        registry
+            .approve(&installed, 2)
+            .expect("approve current bytes");
+        let reloaded = PluginRegistry::load(&registry.path).expect("reload approval");
+        let approval = reloaded
+            .state(&installed.id)
+            .expect("state")
+            .approval
+            .as_ref()
+            .expect("approval");
+        assert_ne!(approval.digest, old);
+        assert_eq!(approval.digest, installed.digest().expect("current digest"));
+        assert_eq!(approval.approved_at, 2);
+        assert_eq!(
+            reloaded.approval_gap(&installed).expect("current approval"),
+            None
+        );
+    }
+
+    #[test]
+    fn never_approved_checks_do_not_read_payload() {
+        let home = scratch("lazy-never-approved");
+        let installed = package(&home.join("pkg"), "[]");
+        fs::File::create(installed.root.join("ui/huge.bin"))
+            .expect("payload")
+            .set_len(super::super::package::MAX_FILE_BYTES + 1)
+            .expect("sparse oversized payload");
+        let registry =
+            PluginRegistry::load(&PluginRegistry::default_path(&home)).expect("registry");
+        assert_eq!(
+            registry
+                .approval_gap(&installed)
+                .expect("lazy authoritative check"),
+            Some(ApprovalGap::NeverApproved)
+        );
+        assert_eq!(
+            registry
+                .approval_gap_preview(&installed)
+                .expect("lazy preview"),
+            Some(ApprovalGap::NeverApproved)
+        );
+        assert!(
+            installed.digest().is_err(),
+            "reading payload would reject it"
+        );
+    }
+
+    #[test]
+    fn approval_preview_and_authoritative_check_keep_short_circuit_order() {
+        let home = scratch("gap-order");
+        let mut installed = package(&home.join("pkg"), r#"["process.execute"]"#);
+        let mut registry =
+            PluginRegistry::load(&PluginRegistry::default_path(&home)).expect("registry");
+        registry.approve(&installed, 1).expect("approve original");
+        let approval = registry
+            .file
+            .plugins
+            .get_mut(&installed.id)
+            .expect("state")
+            .approval
+            .as_mut()
+            .expect("approval");
+        approval.version = "0.9.0".to_owned();
+        approval.permissions.clear();
+        approval.source = "draft".to_owned();
+        // 三项差异同时存在；超限 payload 确保这两个公开入口都在摘要前短路。
+        fs::File::create(installed.root.join("ui/huge.bin"))
+            .expect("payload")
+            .set_len(super::super::package::MAX_FILE_BYTES + 1)
+            .expect("sparse oversized payload");
+        for expected in [
+            ApprovalGap::VersionChanged {
+                approved: "0.9.0".to_owned(),
+            },
+            ApprovalGap::NewPermissions(vec!["process.execute".to_owned()]),
+            ApprovalGap::SourceChanged {
+                approved: "draft".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                registry.approval_gap(&installed).expect("short circuit"),
+                Some(expected.clone())
+            );
+            assert_eq!(
+                registry
+                    .approval_gap_preview(&installed)
+                    .expect("short preview"),
+                Some(expected.clone())
+            );
+            match expected {
+                ApprovalGap::VersionChanged { .. } => installed.version = "0.9.0".to_owned(),
+                ApprovalGap::NewPermissions(_) => installed
+                    .manifest
+                    .as_mut()
+                    .expect("manifest")
+                    .permissions
+                    .clear(),
+                ApprovalGap::SourceChanged { .. } => {}
+                _ => unreachable!("only metadata gaps tested"),
+            }
+        }
     }
 
     #[cfg(unix)]
