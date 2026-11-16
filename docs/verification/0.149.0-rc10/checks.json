@@ -1,0 +1,122 @@
+{
+  "version": "0.149.0-rc10",
+  "date": "2026-11-16",
+  "status": "functional_checks_passed_static_check_failed",
+  "checks": [
+    {
+      "name": "tui_unit_regressions",
+      "command": "CARGO_INCREMENTAL=0 cargo test -p willdeep tui:: --no-fail-fast",
+      "status": "passed",
+      "passed": 536,
+      "failed": 0,
+      "ignored": 2,
+      "initial_red_test": {
+        "name": "tui::banner::tests::whale_rows_fit_the_viewport_without_wrapping_or_changing_row_count",
+        "status": "failed_before_fix",
+        "message": "mascot exceeds the 1-column viewport",
+        "exit_code": 101
+      },
+      "limitation": "TUI filter only; two existing manual performance tests ignored; not a full workspace test run."
+    },
+    {
+      "name": "debug_build",
+      "command": "CARGO_INCREMENTAL=0 cargo build -p willdeep",
+      "status": "passed",
+      "binary_version": "0.149.0-rc10"
+    },
+    {
+      "name": "monochrome_whale",
+      "command": "NO_COLOR=1 CARGO_INCREMENTAL=0 cargo test -p willdeep tui::banner::tests::",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "actual_tui_integration",
+      "command": "ruby scripts/verify_tui_user_messages.rb target/debug/willdeep docs/verification/0.149.0-rc10/user-messages",
+      "status": "passed",
+      "layouts": ["compact_120x45", "full_120x45", "narrow_60x45"],
+      "width_checks": 22,
+      "widths_per_layout": [120, 60, 40, 26, 25, 24, 23, 14, 13, 10, 120],
+      "width_probe_rows": 80,
+      "restored_wide_layouts": ["compact", "full"],
+      "exact_whale_pattern_checked": true,
+      "resize_requires_new_output": true,
+      "minimum_stable_screen_seconds": 0.5,
+      "model_requests": 2,
+      "isolation": "Temporary WILLDEEP_HOME and loopback-only fixture provider; no real credentials or external model requests.",
+      "report": "user-messages/integration.json",
+      "limitation": "Real PTY starts at 120 columns, then resizes; narrow cold startup not covered."
+    },
+    {
+      "name": "capture_validator_mutation_checks",
+      "status": "passed",
+      "accepts_complete_whale": true,
+      "rejects_one_glyph_per_row": true,
+      "rejects_stale_small_whale_after_widening": true
+    },
+    {
+      "name": "preview_geometry_and_visual_checks",
+      "status": "passed",
+      "wide_whale_block_cells_per_main_image": 99,
+      "cell_dimensions": [10, 20],
+      "half_cell_dimensions": [10, 10],
+      "main_png_dimensions": {
+        "compact": [2464, 1864],
+        "full": [2464, 1864],
+        "narrow": [1264, 1864]
+      },
+      "main_previews_visually_checked": true,
+      "boundary_previews_visually_checked": ["whale-compact-4-25.png", "whale-full-8-13.png"],
+      "png_assets": "../../assets/tui-user-messages/0.149.0-rc10/README.md",
+      "image_source": "Actual TUI ANSI cells reconstructed as SVG and converted to PNG at 2x; block glyphs rendered as exact rectangles; not operating-system screenshots."
+    },
+    {
+      "name": "metadata_extraction_and_file_size",
+      "status": "passed",
+      "model_attribution_body_matches_baseline": true,
+      "module": "crates/willdeep-cli/src/tui/message_model.rs",
+      "largest_modified_rust_file": "crates/willdeep-cli/src/tui/app_state.rs",
+      "largest_modified_rust_file_lines": 2991,
+      "maximum_lines": 3000
+    },
+    {
+      "name": "rust_format",
+      "command": "cargo fmt --all -- --check",
+      "status": "passed"
+    },
+    {
+      "name": "version_consistency",
+      "command": "ruby scripts/check_release_version.rb 0.149.0-rc10",
+      "status": "passed"
+    },
+    {
+      "name": "ruby_syntax",
+      "command": "ruby -c scripts/verify_tui_user_messages.rb",
+      "status": "passed"
+    },
+    {
+      "name": "diff_whitespace",
+      "command": "git diff --check",
+      "status": "passed"
+    },
+    {
+      "name": "strict_clippy",
+      "command": "CARGO_INCREMENTAL=0 cargo clippy -p willdeep --all-targets -- -D warnings",
+      "status": "failed",
+      "exit_code": 101,
+      "existing_findings_confirmed_in_baseline": true,
+      "new_test_clone_warning_fixed": true,
+      "findings": [
+        {"file": "crates/willdeep-cli/src/daemon/task_manager.rs", "line": 879, "message": "method wait_until_idle is never used"},
+        {"file": "crates/willdeep-cli/src/tui/app_state.rs", "line": 1855, "message": "method handle_question_text is never used"},
+        {"file": "crates/willdeep-cli/src/tui/human_gate_ui.rs", "line": 130, "message": "drop_non_drop: drop(append)"}
+      ]
+    }
+  ],
+  "installed": true,
+  "local_install_report": "local-install.json",
+  "published": false,
+  "committed_by_this_session": false
+}

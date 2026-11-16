@@ -1,0 +1,50 @@
+{
+  "version": "0.149.0-rc10",
+  "date": "2026-11-16",
+  "status": "passed",
+  "source_branch": "fix/tui-queue-during-compression",
+  "installation": {
+    "command": "CARGO_INCREMENTAL=0 cargo install --path crates/willdeep-cli --locked --force",
+    "exit_code": 0,
+    "release_build_elapsed": "9m 06s",
+    "path": "/Users/rocky/.cargo/bin/willdeep",
+    "path_default_confirmed": true,
+    "absolute_and_default_command_versions": "0.149.0-rc10",
+    "release_and_installed_sha256": "7e5eb8e12fc981776e8304d0013e98ee6029b3a8d5adc5b2d065b3e328a7c4b0"
+  },
+  "web": {
+    "build_command": "yarn --cwd web build",
+    "build_status": "passed",
+    "entry": "/assets/index-CI09gyn_.js",
+    "entry_name_found_in_installed_binary": true,
+    "index_sha256": "b328dc53af7b5702a1437c618bdbe7e1fbe033d67c03a59dda3ea7781547d8bd",
+    "entry_sha256": "d80da913528b2959d6a9e0bbae148ea13cfc856bd7239bcce7b31301550fb82a"
+  },
+  "runtime": {
+    "command": "/Users/rocky/.cargo/bin/willdeep daemon upgrade --timeout 300",
+    "exit_code": 0,
+    "handoff": "safe_drain",
+    "before": {"version": "0.149.0-rc3", "pid": 36399, "address": "127.0.0.1:65080"},
+    "after": {"version": "0.149.0-rc10", "pid": 39783, "address": "127.0.0.1:59447", "status": "running"},
+    "executable_confirmed_by_lsof": "/Users/rocky/.cargo/bin/willdeep",
+    "health_check": "passed"
+  },
+  "backup": {
+    "path": "/Users/rocky/.local/share/willdeep/local-install-backups/0.149.0-rc3-20261116-192826/willdeep",
+    "version": "0.149.0-rc3",
+    "sha256": "8d28eaeb6463ac0367c1264084026bb4bcd6e376d340c11bc74abedf5ef859d9",
+    "matches_original_installed_binary": true,
+    "backup_command_version_checked": true,
+    "rollback_executed": false
+  },
+  "warnings": [
+    "Existing dead_code warnings: wait_until_idle and handle_question_text.",
+    "Cargo registry reports locked chacha20 0.10.1 and clipboard-win 5.4.1 as yanked; --locked install succeeded without dependency changes.",
+    "Vite reports a large chunk; Web build succeeded."
+  ],
+  "database_migration_commands_executed": false,
+  "homebrew_modified": false,
+  "published": false,
+  "committed_by_this_session": false,
+  "rollback_record": "local-install.md"
+}

@@ -90,6 +90,7 @@ impl App {
             overlay_close_hits: Vec::new(),
             stale_runtime_turn_snapshots: 0,
             stale_runtime_turn_recovery_reported: false,
+            stale_awaiting_reply_snapshots: 0,
             last_elapsed: None,
             context_window: 128_000,
             context_tokens: 0,
@@ -150,6 +151,7 @@ impl App {
             native_selection_mode: false,
             chat_selection: None,
             transcript_rows: Vec::new(),
+            transcript_selection_bounds: Vec::new(),
             transcript_render_cache: None,
             transcript_render_offset: 0,
             skill_selected: 0,
@@ -266,6 +268,7 @@ impl App {
         self.prompt_history = None;
         self.runtime_follow_after = None;
         self.pending_model = None;
+        self.stale_awaiting_reply_snapshots = 0;
         // 过程行属于上一份记录，换了会话就没有可替的了。
         self.pending_notice_rows.clear();
         self.pending_reasoning_level = None;
@@ -1213,7 +1216,8 @@ impl App {
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
-        self.awaiting_since = None;
+        self.dismiss_awaiting_reply();
+        self.stale_awaiting_reply_snapshots = 0;
         self.running = false;
         self.last_progress_at = None;
         self.runtime_turn = false;
@@ -1386,6 +1390,7 @@ impl App {
         self.runtime_turn = runtime_turn;
         self.stale_runtime_turn_snapshots = 0;
         self.stale_runtime_turn_recovery_reported = false;
+        self.stale_awaiting_reply_snapshots = 0;
         self.turn_started = Some(now);
         self.last_progress_at = Some(now);
         self.last_elapsed = None;
@@ -1456,10 +1461,31 @@ impl App {
         if has_active_task {
             self.stale_runtime_turn_snapshots = 0;
             self.stale_runtime_turn_recovery_reported = false;
+            self.stale_awaiting_reply_snapshots = 0;
             if !self.running && fresh {
                 self.ensure_runtime_turn();
             }
             return false;
+        }
+        if self.awaiting_since.is_some() && fresh && !(self.running || self.runtime_turn) {
+            // 等待中的回显表示提交/重试仍未落到 Runtime 事件流。快照的暂时空闲
+            // 不能据此撤掉动画；收到回显或提交失败后，pending 状态会自行解除。
+            if self.runtime_queue_submission.is_some()
+                || !self.pending_runtime_echoes.is_empty()
+                || self.runtime_submitted_turn.is_some()
+            {
+                self.stale_awaiting_reply_snapshots = 0;
+                return false;
+            }
+            self.stale_awaiting_reply_snapshots =
+                self.stale_awaiting_reply_snapshots.saturating_add(1);
+            if self.stale_awaiting_reply_snapshots >= STALE_AWAITING_REPLY_SNAPSHOTS {
+                runtime_ui::reconcile_stale_awaiting_reply(self);
+            }
+            return false;
+        }
+        if self.awaiting_since.is_some() && fresh {
+            self.stale_awaiting_reply_snapshots = 0;
         }
         if self.stale_runtime_turn_recovery_reported {
             return false;
@@ -1826,6 +1852,7 @@ impl App {
             idle,
         ))
     }
+
     pub(super) fn handle_question_key(&mut self, key: KeyEvent) {
         let Some(dialog) = self.question.as_mut() else {
             return;
@@ -2032,25 +2059,6 @@ impl App {
                 .saturating_add(self.transcript_height.saturating_sub(previous_height));
         }
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
-    }
-
-    /// 新落进记录的这一行该盖哪个模型的章。
-    ///
-    /// 只有说话的行才盖：用户行盖的是发送当时的会话模型（这句话发给了谁），
-    /// 助手正文行盖的是这一轮事件带来的产出模型。工具行、系统行和分隔线都不是
-    /// 模型的原话，留空。两个来源都可能是空，空着就是不知道，不互相顶替。
-    fn model_for_row(&self, row: &str) -> Option<String> {
-        let source = if row.starts_with("You: ") {
-            self.display_model.as_deref()
-        } else if row.starts_with("WillDeep: ") {
-            self.reply_model.as_deref()
-        } else {
-            None
-        };
-        source
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .map(str::to_owned)
     }
 
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。

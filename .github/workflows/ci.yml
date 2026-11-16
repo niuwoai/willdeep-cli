@@ -17,7 +17,8 @@ jobs:
         # Windows 不再发版，也不再跑 CI。windows-latest 的测试反复因 runner 上的进程枚举超时失败，
         # 而发布步骤依赖整份验证，一次失败就把已经编好的 macOS 和 Linux 包也卡住。
         os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    # PR 与发布验证使用 GitHub 托管环境；仓库 CI 的分支 push 分别使用 iMac 和 q4-pub。
+    runs-on: ${{ matrix.os == 'macos-latest' && github.event_name == 'push' && github.workflow == 'CI' && !startsWith(github.ref, 'refs/tags/') && fromJSON('["self-hosted","macOS","X64","imac"]') || matrix.os == 'ubuntu-latest' && github.event_name == 'push' && github.workflow == 'CI' && !startsWith(github.ref, 'refs/tags/') && fromJSON('["self-hosted","Linux","X64","q4-pub"]') || matrix.os }}
     # 卡住的测试 1 小时内失败，不空等 GitHub 缺省的 6 小时。
     timeout-minutes: 60
     steps:
@@ -25,8 +26,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: yarn
-          cache-dependency-path: web/yarn.lock
+      - name: Activate pinned Yarn 1
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - name: Build embedded Web frontend
         working-directory: web
         run: yarn install --frozen-lockfile && yarn build
