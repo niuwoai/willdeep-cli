@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Multica 适配器在取消或超时后由独立监护进程终止 willdeep 及工具子进程，即使 Multica 对适配器发送 SIGKILL 也不会继续执行；失效的 `--resume` 不再冒充已建立的会话，允许 daemon 在未执行工具时回退到新会话；已开始工具的失败不重放提示词。事件改为逐行转发，不再双重缓冲。思考块使用消费端读取的 `text` 字段，用量事件携带实际请求模型并保留缓存扣减；成功工具结果不再把参数摘要当输出，失败工具结果不外传原始输出。缺少终态行即使 willdeep 退出码为零也明确报错。新增真实 Go 消费端解析与跨进程取消回归。
+
 ### Added
 - 新增 [Multica 适配器](docs/MULTICA_ADAPTER.md)：`scripts/multica_claude_adapter.rb` 把 Multica daemon 的 Claude Code stream-json 调用翻译成 `willdeep run`，回传 `system`、`assistant`、`tool_result` 与 `result` 事件，支持 `--resume` 续跑。MCP、思考等级、追加系统提示词与工具白名单会被丢弃并记入 stderr；非 `bypassPermissions` 的权限模式直接拒绝。
 

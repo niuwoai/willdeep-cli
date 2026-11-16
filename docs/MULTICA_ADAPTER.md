@@ -30,9 +30,9 @@ claude -p --output-format stream-json --input-format stream-json --verbose \
 willdeep run --output ndjson [--session SESSION] [--model M] --input -
 ```
 
-willdeep 的事件再翻回 daemon 认得的四行：`system`（带 `session_id`，续跑全靠它）、
-`assistant`（`text`、`thinking`、`tool_use` 块与 `usage`）、`user`（`tool_result`）、
-`result`（终态，`is_error` 判成败）。
+willdeep 的事件再翻回 daemon 认得的四类事件：`system`（只在 willdeep 确实报告会话 ID 时携带 `session_id`）、
+`assistant`（`text`、`thinking`、`tool_use` 块与按模型归属的 `usage`）、`user`（`tool_result`）、
+`result`（终态，`is_error` 判成败）。文本、思考和工具事件逐行转发；会话 ID 在终态确认后另补一条 `system`，防止失效的续跑 ID 被当作已建立的会话。
 
 ## 注册
 
@@ -63,7 +63,7 @@ runtime 时 daemon 起不来。
 - `--effort`：思考等级不生效。
 - `--append-system-prompt`：追加的系统提示词不生效。
 - `--disallowedTools`、`--allowedTools`：工具限制不生效。
-- `--resume` 的值不是 willdeep 会话 UUID 时当作新会话，不报错。
+- `--resume` 的值不是 willdeep 会话 UUID 时当作新会话，不报错；合法但已失效的 UUID 若尚未开始工具、执行失败且没有返回会话 ID，终态不回显旧 ID，让 Multica daemon 用新会话重试。
 
 权限模式只接受 `bypassPermissions`、`acceptEdits`、`dontAsk`。`default`、`plan`
 需要适配器在 stdin 上应答 `control_request`，这一版不做，直接以退出码 2 拒绝。
@@ -71,11 +71,19 @@ runtime 时 daemon 起不来。
 用量按 willdeep 的口径换算：它的 `input_tokens` 已含缓存命中，而 daemon 把
 `input_tokens` 与 `cache_read_input_tokens` 相加，所以适配器先扣掉缓存部分。
 willdeep 不报缓存写入量，`cache_creation_input_tokens` 恒为 0。数字互相矛盾
-（缓存命中大于输入）时整条用量丢掉，不报一个负数。
+（缓存命中大于输入）时整条用量丢掉，不报一个负数。`usage` 从 NDJSON 事件取实际请求模型；
+`subagent_usage` 也保留 Worker 自己的模型。旧版 willdeep 的用量事件没有 `model` 时无法可靠归属，会跳过该条，不拿 Multica 请求的模型代替实际模型。
+
+willdeep 成功的 `tool_completed` 没有工具输出，只给 daemon 一个不带 `content` 的工具结果；
+失败事件可能含敏感参数和输出，适配器只报告固定错误状态，不转发原文；
+willdeep 的 stderr 也不直通 Multica daemon。若续跑失败前已经出现工具调用，适配器
+保留旧会话指针并让任务失败，不让 daemon 用新会话重跑可能产生副作用的提示。
+Multica 对适配器强制取消或超时时，独立监护进程会终止 willdeep 进程组和其中的工具进程。
+进程自己脱离该进程组的后台作业不在此保证范围内。
 
 `stop_reason` 为 `max_turns`、`budget_limited`、`incomplete`、`unverified` 或
 `partial` 时，即使退出码是 0 也报 `is_error: true`。否则看板会把一次没收敛的
-任务当成做完了。
+任务当成做完了。没有 `completed` 或 `partial` 终态行时，即便子进程返回 0，适配器也以退出码 5 和错误结果结束。
 
 ## 验证
 
@@ -83,5 +91,8 @@ willdeep 不报缓存写入量，`cache_creation_input_tokens` 恒为 0。数字
 ruby scripts/test/multica_claude_adapter_test.rb
 ```
 
-测试不启动 willdeep，用一个桩二进制喂入事件。真实的一次跑通需要本机装好
-willdeep 并配好 provider，不在这里覆盖。
+测试用桩二进制喂入固定事件，不启动真实 willdeep，也不调用模型。检测到本机
+`~/Sites/multica/server/go.mod` 时，它还会编译小型 Go 探针，经 Multica 自己的
+`agent.New("claude")`/`Execute` 消费这些事件；其他位置可用 `MULTICA_ROOT` 指向
+Multica 仓库。没有本地仓库时这两项测试明确跳过。取消测试分别发送 SIGTERM 和
+SIGKILL，并验证 willdeep 工具子进程没有继续执行。真实 provider 跑通仍需另行验收。

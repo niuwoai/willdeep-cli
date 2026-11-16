@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-13 | 当前版本：v0.148.0-rc17
+> 最后更新：2026-11-13 | 当前版本：v0.148.0-rc18
 
 ## 分发
 
@@ -30,6 +30,13 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
         ├── Session Store（版本化 JSON）
         └── 工具结果回传 Provider，直到最终文本
 ```
+
+## Multica 协议适配边界
+
+本机 Ruby 适配器将 Multica 的 Claude `stream-json` 调用转成 `willdeep run --output ndjson`；
+CLI 的 `AgentEvent::Usage` 携带请求发出时确定的模型，NDJSON `usage.model` 据此给外部消费端归属用量。
+适配器逐行转发运行中事件，只在终态交付时确认会话 ID；其独立监护进程先于 willdeep 建立，在适配器被强制结束时清理 willdeep 进程组。
+工具输出不跨此边界外发。具体限制见 [Multica 适配器](MULTICA_ADAPTER.md)。
 
 ## 核心设计
 

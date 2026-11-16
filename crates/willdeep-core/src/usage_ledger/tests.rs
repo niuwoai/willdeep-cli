@@ -405,7 +405,7 @@ impl EventSink for SequencedSink {
 
     async fn emit_sequenced(&self, event: AgentEvent) -> Option<u64> {
         let sequence = self.next.fetch_add(1, Ordering::SeqCst) + 1;
-        if matches!(event, AgentEvent::Usage(_)) {
+        if matches!(event, AgentEvent::Usage { .. }) {
             self.usage_sequences.lock().unwrap().push(sequence);
         }
         Some(sequence)

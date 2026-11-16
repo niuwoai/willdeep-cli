@@ -15,7 +15,7 @@
 require 'json'
 
 module MulticaClaudeAdapter
-  VERSION_LINE = 'willdeep-multica-adapter 1.0.0'
+  VERSION_LINE = 'willdeep-multica-adapter 1.0.1'
   PERMISSION_MODES = %w[bypassPermissions acceptEdits dontAsk].freeze
   DROPPED_FLAGS = %w[
     --verbose --strict-mcp-config --include-partial-messages --allowedTools
@@ -103,9 +103,11 @@ module MulticaClaudeAdapter
       [assistant_message([tool_use_block(event)])]
     when 'tool_completed'
       [user_message([tool_result_block(event)])]
-    when 'usage'
+    when 'usage', 'subagent_usage'
       usage = usage_block(event)
-      usage ? [assistant_message([], usage:)] : []
+      usage_model = event['model']
+      usage && usage_model.is_a?(String) && !usage_model.empty? ?
+        [assistant_message([], model: usage_model, usage:)] : []
     else
       []
     end
@@ -115,12 +117,13 @@ module MulticaClaudeAdapter
 
   # willdeep 的收尾行加上退出码，翻成对方要的唯一终态行。没有收尾行时按退出码说明原因。
   def self.result_event(completion, exit_code:, session_id:)
-    completion = nil unless completion.is_a?(Hash) && completion['type']
+    completion = nil unless completion.is_a?(Hash) && %w[completed partial].include?(completion['type'])
     text = completion&.fetch('text', nil)
     text = '' unless text.is_a?(String)
     stop = completion&.fetch('stop_reason', nil)
-    failed = exit_code != 0 || INCOMPLETE_STOPS.include?(stop)
+    failed = completion.nil? || exit_code != 0 || INCOMPLETE_STOPS.include?(stop)
     error = failure_text(exit_code, stop, text)
+    error += '; missing completed/partial terminal event' if completion.nil?
 
     {
       'type' => 'result',
@@ -134,16 +137,84 @@ module MulticaClaudeAdapter
   end
 
   def self.system_event(session_id)
-    { 'type' => 'system', 'subtype' => 'init', 'session_id' => session_id }
+    { 'type' => 'system', 'subtype' => 'init', 'session_id' => session_id }.compact
   end
 
-  # 续跑只能用我们自己上次回传的会话 id；对方传来别的东西就当新会话，
-  # 不能让 willdeep 拿着它去找一个必然不存在的会话。
-  def self.session_id_for(resume, reported)
-    return reported if reported.is_a?(String) && reported.match?(UUID_PATTERN)
-    return resume if resume.is_a?(String) && resume.match?(UUID_PATTERN)
+  # 只交回 willdeep 本次确实报告的会话 id；失效的 resume 不能在失败
+  # result 里被原样回传，否则 Multica 不会重试新会话。
+  def self.session_id_for(reported)
+    reported if reported.is_a?(String) && reported.match?(UUID_PATTERN)
+  end
 
-    'pending'
+  # 先 fork 监护进程，再由它启动 willdeep：Multica 的 CommandContext
+  # 即便 SIGKILL 适配器，管道 EOF 也会让监护进程清理整个工具进程组。
+  def self.run_child(command, arguments, prompt)
+    prompt_read, prompt_write = IO.pipe
+    output_read, output_write = IO.pipe
+    status_read, status_write = IO.pipe
+    watch_read, watch_write = IO.pipe
+    watcher = fork do
+      prompt_write.close
+      output_read.close
+      status_read.close
+      watch_write.close
+      STDOUT.reopen(File::NULL, 'w')
+      STDERR.reopen(File::NULL, 'w')
+      begin
+        # 父进程已死就不要再启动一个新任务。
+        exit! 0 if IO.select([watch_read], nil, nil, 0) && watch_read.eof?
+        # stderr 可能含工具输出，不能进入 Multica 的 daemon 日志。
+        child_pid = Process.spawn(command, *arguments, '--input', '-', in: prompt_read,
+                                  out: output_write, err: File::NULL, pgroup: true)
+        prompt_read.close
+        output_write.close
+        waiter = Thread.new do
+          status = Process.waitpid2(child_pid).last
+          status_write.write((status.exitstatus || 1).to_s)
+          status_write.close
+        end
+        terminate_group(child_pid) unless watch_read.read == 'done'
+        waiter.join
+      rescue SystemCallError
+        status_write.write('5') unless status_write.closed?
+      ensure
+        status_write.close unless status_write.closed?
+        output_write.close unless output_write.closed?
+        exit! 0
+      end
+    end
+    prompt_read.close
+    output_write.close
+    status_write.close
+    watch_read.close
+    handlers = %w[TERM INT HUP].to_h do |signal|
+      [signal, Signal.trap(signal) { raise Interrupt, signal }]
+    end
+    finished = false
+    begin
+      prompt_write.write(prompt)
+      prompt_write.close
+      output_read.each_line { |line| yield line }
+      status = Integer(status_read.read)
+      finished = true
+      status
+    ensure
+      handlers.each { |signal, previous| Signal.trap(signal, previous) }
+      prompt_write.close unless prompt_write.closed?
+      output_read.close unless output_read.closed?
+      status_read.close unless status_read.closed?
+      watch_write.write('done') if finished
+      watch_write.close
+      Process.waitpid(watcher)
+    end
+  end
+
+  def self.terminate_group(pid)
+    Process.kill('TERM', -pid)
+    sleep 0.3
+    Process.kill('KILL', -pid)
+  rescue Errno::ESRCH
+    nil
   end
 
   class UsageError < StandardError; end
@@ -223,7 +294,7 @@ module MulticaClaudeAdapter
     end
 
     def thinking_block(text)
-      { 'type' => 'thinking', 'thinking' => text }
+      { 'type' => 'thinking', 'text' => text }
     end
 
     def tool_use_block(event)
@@ -253,17 +324,15 @@ module MulticaClaudeAdapter
 
     def tool_result_block(event)
       errored = event['is_error'] == true
-      body = if errored
-               [event['arguments'], event['output']].grep(String).reject(&:empty?).join("\n")
-             else
-               event['detail'].is_a?(String) ? event['detail'] : ''
-             end
-      {
+      # 成功事件没有输出字段；detail 是调用参数摘要，不是执行结果。失败事件
+      # 可能含命令和输出，仅给消费端一个固定状态，绝不转发可能含密钥的原文。
+      result = {
         'type' => 'tool_result',
         'tool_use_id' => event['id'].is_a?(String) ? event['id'] : '',
-        'is_error' => errored,
-        'content' => body
+        'is_error' => errored
       }
+      result['content'] = { 'error' => 'Tool failed' } if errored
+      result
     end
 
     # 对方按 input 加上 output 累加，而 willdeep 的 input 已经含缓存命中。
@@ -309,39 +378,47 @@ if $PROGRAM_NAME == __FILE__
     prompt = MulticaClaudeAdapter.prompt_from_stdin($stdin)
     willdeep = ENV.fetch('WILLDEEP_BIN', 'willdeep')
     requested = arguments.include?('--session') ? arguments[arguments.index('--session') + 1] : nil
-    session_id = MulticaClaudeAdapter.session_id_for(requested, nil)
     completion = nil
-    # 会话 id 只在收尾行里。先缓冲事件，等它到了再一次性写出去，
-    # 这样 system 行和后面的事件用同一个 id。
-    buffered = []
+    tool_started = false
+    # 先报无 ID 的运行状态，终态确定会话后再补一条 system；事件逐行
+    # 交付，不为长任务积压整份输出，也不把旧 resume id 冒充新会话。
+    $stdout.sync = true
+    puts JSON.generate(MulticaClaudeAdapter.system_event(nil))
+    status = MulticaClaudeAdapter.run_child(willdeep, arguments, prompt) do |line|
+      parsed = begin
+        JSON.parse(line)
+      rescue JSON::ParserError
+        nil
+      end
+      next unless parsed.is_a?(Hash)
 
-    IO.popen([willdeep, *arguments, '--input', '-'], 'r+') do |child|
-      child.write(prompt)
-      child.close_write
-      child.each_line do |line|
-        parsed = begin
-          JSON.parse(line)
-        rescue JSON::ParserError
-          nil
-        end
-        if parsed.is_a?(Hash) && %w[completed partial].include?(parsed['type'])
-          completion = parsed
-          session_id = MulticaClaudeAdapter.session_id_for(requested, parsed['session_id'])
-          next
-        end
-        buffered.concat(MulticaClaudeAdapter.translate_event(line, session_id: session_id))
+      if %w[completed partial].include?(parsed['type'])
+        completion = parsed
+        next
+      end
+      tool_started ||= %w[tool_requested tool_completed].include?(parsed['type'])
+      MulticaClaudeAdapter.translate_event(line, session_id: nil).each do |event|
+        puts JSON.generate(event)
       end
     end
-    status = $?
-    session_id = MulticaClaudeAdapter.session_id_for(requested, completion&.fetch('session_id', nil))
-    puts JSON.generate(MulticaClaudeAdapter.system_event(session_id))
-    buffered.each { |event| puts JSON.generate(event) }
-    puts JSON.generate(MulticaClaudeAdapter.result_event(completion, exit_code: status.exitstatus || 1,
-                                                                     session_id: session_id))
+    session_id = MulticaClaudeAdapter.session_id_for(completion&.fetch('session_id', nil))
+    exit_code = completion.nil? && status.zero? ? 5 : status
+    result = MulticaClaudeAdapter.result_event(completion, exit_code: exit_code, session_id: session_id)
+    # 已开始工具的失败可能留下写操作；重放提示词会执行第二遍。
+    # 只在确认没有工具调用时允许 Multica 对失效 resume 重试。
+    if requested && tool_started && result['is_error'] && session_id != requested
+      session_id = requested
+      result['session_id'] = session_id
+    end
+    puts JSON.generate(MulticaClaudeAdapter.system_event(session_id)) if session_id
+    puts JSON.generate(result)
     warn("multica adapter ignored: #{dropped.join(', ')}") unless dropped.empty?
-    exit(status.exitstatus || 1)
+    exit(exit_code)
   rescue MulticaClaudeAdapter::UsageError => error
     warn "multica adapter: #{error.message}"
     exit 2
+  rescue Interrupt => error
+    warn "multica adapter: interrupted by #{error.message}"
+    exit 130
   end
 end

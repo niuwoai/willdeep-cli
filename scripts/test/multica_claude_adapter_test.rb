@@ -14,10 +14,13 @@ require 'minitest/autorun'
 require 'open3'
 require 'stringio'
 require 'tmpdir'
+require 'timeout'
 
 require_relative '../multica_claude_adapter'
 
 ADAPTER = File.expand_path('../multica_claude_adapter.rb', __dir__)
+MULTICA_ROOT = ENV.fetch('MULTICA_ROOT', File.expand_path('~/Sites/multica'))
+CONTRACT_PROBE = File.expand_path('multica_claude_contract.go', __dir__)
 SESSION = '11111111-1111-1111-1111-111111111111'
 
 DAEMON_ARGV = [
@@ -133,7 +136,7 @@ class TranslateEventTest < Minitest::Test
   def test_reasoning_becomes_a_thinking_block
     events = translate('type' => 'reasoning_delta', 'text' => 'hmm')
 
-    assert_equal [{ 'type' => 'thinking', 'thinking' => 'hmm' }], events.first.dig('message', 'content')
+    assert_equal [{ 'type' => 'thinking', 'text' => 'hmm' }], events.first.dig('message', 'content')
   end
 
   def test_tool_request_and_completion_keep_the_call_id
@@ -154,7 +157,7 @@ class TranslateEventTest < Minitest::Test
     assert_equal 'tool_result', result.fetch('type')
     assert_equal 'call-1', result.fetch('tool_use_id')
     assert_equal false, result.fetch('is_error')
-    assert_equal 'read README.md', result.fetch('content')
+    refute result.key?('content'), 'success has no tool output; detail is only the input summary'
   end
 
   def test_failed_tool_carries_the_reason
@@ -165,7 +168,9 @@ class TranslateEventTest < Minitest::Test
     result = events.first.dig('message', 'content', 0)
 
     assert_equal true, result.fetch('is_error')
-    assert_equal "{\"command\":\"rm -rf /\"}\napproval denied", result.fetch('content')
+    assert_equal({ 'error' => 'Tool failed' }, result.fetch('content'))
+    refute_includes JSON.generate(result), 'rm -rf'
+    refute_includes JSON.generate(result), 'approval denied'
   end
 
   def test_unparseable_expansion_stays_an_object
@@ -175,15 +180,22 @@ class TranslateEventTest < Minitest::Test
   end
 
   def test_usage_subtracts_cache_reads_and_drops_contradictions
-    events = translate('type' => 'usage', 'input_tokens' => 100, 'output_tokens' => 5,
-                       'cache_read_tokens' => 80)
+    events = translate('type' => 'usage', 'model' => 'actual-model', 'input_tokens' => 100,
+                       'output_tokens' => 5, 'cache_read_tokens' => 80)
+    assert_equal 'actual-model', events.first.dig('message', 'model')
     usage = events.first.dig('message', 'usage')
     assert_equal 20, usage.fetch('input_tokens')
     assert_equal 5, usage.fetch('output_tokens')
     assert_equal 80, usage.fetch('cache_read_input_tokens')
     assert_equal 0, usage.fetch('cache_creation_input_tokens')
 
-    assert_empty translate('type' => 'usage', 'input_tokens' => 10, 'cache_read_tokens' => 50)
+    assert_empty translate('type' => 'usage', 'model' => 'actual-model', 'input_tokens' => 10,
+                           'cache_read_tokens' => 50)
+    assert_empty translate('type' => 'usage', 'input_tokens' => 10)
+    child = translate('type' => 'subagent_usage', 'model' => 'worker-model', 'input_tokens' => 8,
+                      'output_tokens' => 2, 'cache_read_tokens' => 3)
+    assert_equal 'worker-model', child.first.dig('message', 'model')
+    assert_equal 5, child.first.dig('message', 'usage', 'input_tokens')
   end
 
   def test_unknown_and_broken_lines_are_ignored
@@ -221,11 +233,11 @@ class ResultEventTest < Minitest::Test
     assert_match(/rejected the input/, result(nil, 2).fetch('result'))
   end
 
-  def test_session_id_prefers_what_willdeep_reported
+  def test_session_id_requires_a_valid_report_from_willdeep
     reported = '22222222-2222-2222-2222-222222222222'
-    assert_equal reported, MulticaClaudeAdapter.session_id_for(SESSION, reported)
-    assert_equal SESSION, MulticaClaudeAdapter.session_id_for(SESSION, 'not-a-uuid')
-    assert_equal 'pending', MulticaClaudeAdapter.session_id_for('latest', nil)
+    assert_equal reported, MulticaClaudeAdapter.session_id_for(reported)
+    assert_nil MulticaClaudeAdapter.session_id_for('not-a-uuid')
+    assert_nil MulticaClaudeAdapter.session_id_for(nil)
   end
 end
 
@@ -248,8 +260,9 @@ class EndToEndTest < Minitest::Test
   end
 
   # 桩的源码用 %q 包住每一行，避免把 JSON 里的引号交回去再转义一次。
-  def stub_source(lines, exit_code)
+  def stub_source(lines, exit_code, stderr: nil)
     body = lines.map { |line| "    STDOUT.puts(%q{#{line}})" }.join("\n")
+    body += "\n    warn(#{stderr.inspect})" if stderr
     <<~RUBY
       #!/usr/bin/env ruby
       if ARGV == ['--version']
@@ -270,7 +283,8 @@ class EndToEndTest < Minitest::Test
       JSON.generate('type' => 'tool_requested', 'id' => 'call-1', 'name' => 'read_file',
                     'expansion' => '{"path":"a.rs"}'),
       JSON.generate('type' => 'tool_completed', 'id' => 'call-1', 'name' => 'read_file', 'is_error' => false),
-      JSON.generate('type' => 'usage', 'input_tokens' => 30, 'output_tokens' => 4, 'cache_read_tokens' => 10),
+      JSON.generate('type' => 'usage', 'model' => 'actual-model', 'input_tokens' => 30,
+                    'output_tokens' => 4, 'cache_read_tokens' => 10),
       JSON.generate('type' => 'completed', 'stop_reason' => 'finished', 'text' => 'fixed', 'turns' => 1,
                     'session_id' => SESSION)
     ]
@@ -279,12 +293,14 @@ class EndToEndTest < Minitest::Test
     assert_equal 0, status.exitstatus, stderr
     events = events_from(stdout)
     assert_equal 'system', events.first.fetch('type')
-    assert_equal SESSION, events.first.fetch('session_id')
+    refute events.first.key?('session_id')
+    assert_equal 'system', events[-2].fetch('type')
+    assert_equal SESSION, events[-2].fetch('session_id')
     assert_equal 'result', events.last.fetch('type')
     assert_equal false, events.last.fetch('is_error')
     assert_equal 'fixed', events.last.fetch('result')
     assert_equal SESSION, events.last.fetch('session_id')
-    assert_equal %w[assistant assistant user assistant], events[1..-2].map { |event| event.fetch('type') }
+    assert_equal %w[assistant assistant user assistant], events[1..-3].map { |event| event.fetch('type') }
     assert_match(/disallowedTools/, stderr)
   end
 
@@ -312,5 +328,168 @@ class EndToEndTest < Minitest::Test
 
     assert_equal 2, status.exitstatus
     assert_match(/output-format/, stderr)
+  end
+
+  def test_exit_zero_without_terminal_line_is_a_failure
+    stdout, _stderr, status = run_adapter([JSON.generate('type' => 'assistant_text_delta', 'text' => 'half')],
+                                          exit_code: 0)
+    assert_equal 5, status.exitstatus
+    assert_equal true, events_from(stdout).last.fetch('is_error')
+    assert_match(/missing completed\/partial terminal event/, events_from(stdout).last.fetch('result'))
+  end
+
+  def test_failed_resume_does_not_echo_a_session_id_that_never_started
+    stdout, _stderr, status = run_adapter([], exit_code: 2, argv: daemon_argv('--resume', SESSION))
+    assert_equal 2, status.exitstatus
+    events = events_from(stdout)
+    refute events.first.key?('session_id')
+    refute events.last.key?('session_id')
+    assert_equal true, events.last.fetch('is_error')
+  end
+
+  def test_text_is_visible_before_willdeep_finishes
+    Dir.mktmpdir do |dir|
+      stub = File.join(dir, 'willdeep')
+      live_line = JSON.generate('type' => 'assistant_text_delta', 'text' => 'live')
+      File.write(stub, <<~RUBY)
+        #!/usr/bin/env ruby
+        STDIN.read
+        puts #{live_line.inspect}
+        STDOUT.flush
+        sleep 30
+      RUBY
+      File.chmod(0o755, stub)
+      Open3.popen3({ 'WILLDEEP_BIN' => stub }, 'ruby', ADAPTER, *daemon_argv) do |input, output, _err, waiter|
+        input.write(JSON.generate(PROMPT))
+        input.close
+        first, text = Timeout.timeout(5) { [JSON.parse(output.gets), JSON.parse(output.gets)] }
+        assert_equal 'system', first.fetch('type')
+        assert_equal 'live', text.dig('message', 'content', 0, 'text')
+        refute waiter.join(0), 'adapter must still be running when text arrives'
+        Process.kill('TERM', waiter.pid)
+        Timeout.timeout(3) { waiter.value }
+      ensure
+        Process.kill('KILL', waiter.pid) unless waiter.join(0)
+      end
+    end
+  end
+
+  def test_failed_resume_with_a_started_tool_cannot_replay_side_effects
+    lines = [JSON.generate('type' => 'tool_requested', 'id' => 'write-1', 'name' => 'edit_file')]
+    stdout, _stderr, status = run_adapter(lines, exit_code: 0, argv: daemon_argv('--resume', SESSION))
+    assert_equal 5, status.exitstatus
+    events = events_from(stdout)
+    assert_equal SESSION, events[-2].fetch('session_id')
+    assert_equal SESSION, events.last.fetch('session_id')
+    assert_equal true, events.last.fetch('is_error')
+  end
+
+  def test_multica_real_go_consumer_parses_events_and_usage
+    skip 'local Multica server checkout unavailable' unless File.file?(File.join(MULTICA_ROOT, 'server/go.mod'))
+    skip 'Go compiler unavailable' unless system('go version', out: File::NULL, err: File::NULL)
+
+    lines = [
+      JSON.generate('type' => 'assistant_text_delta', 'text' => 'working'),
+      JSON.generate('type' => 'reasoning_delta', 'text' => 'checking'),
+      JSON.generate('type' => 'tool_requested', 'id' => 'call-1', 'name' => 'read_file',
+                    'expansion' => '{"path":"a.rs"}'),
+      JSON.generate('type' => 'tool_completed', 'id' => 'call-1', 'name' => 'read_file',
+                    'detail' => 'read a.rs', 'is_error' => false),
+      JSON.generate('type' => 'tool_completed', 'id' => 'call-2', 'name' => 'run_command',
+                    'arguments' => 'sensitive arguments', 'output' => 'sensitive output', 'is_error' => true),
+      JSON.generate('type' => 'usage', 'model' => 'actual-model', 'input_tokens' => 30,
+                    'output_tokens' => 4, 'cache_read_tokens' => 10),
+      JSON.generate('type' => 'subagent_usage', 'model' => 'worker-model', 'input_tokens' => 8,
+                    'output_tokens' => 2, 'cache_read_tokens' => 3),
+      JSON.generate('type' => 'completed', 'stop_reason' => 'finished', 'text' => 'fixed',
+                    'session_id' => SESSION, 'turns' => 1)
+    ]
+    Dir.mktmpdir do |dir|
+      stub = File.join(dir, 'willdeep')
+      File.write(stub, stub_source(lines, 0, stderr: 'sensitive stderr'))
+      File.chmod(0o755, stub)
+      stdout, stderr, status = Open3.capture3('go', 'run', CONTRACT_PROBE, ADAPTER, stub,
+                                              chdir: File.join(MULTICA_ROOT, 'server'))
+      assert status.success?, stderr
+      observed = JSON.parse(stdout)
+      result = observed.fetch('result')
+      assert_equal 'completed', result.fetch('Status')
+      assert_equal SESSION, result.fetch('SessionID')
+      assert_equal 'fixed', result.fetch('Output')
+      usage = result.fetch('Usage').fetch('actual-model')
+      assert_equal 20, usage.fetch('InputTokens')
+      assert_equal 10, usage.fetch('CacheReadTokens')
+      assert_equal 4, usage.fetch('OutputTokens')
+      worker = result.fetch('Usage').fetch('worker-model')
+      assert_equal 5, worker.fetch('InputTokens')
+      assert_equal 3, worker.fetch('CacheReadTokens')
+      messages = observed.fetch('messages')
+      assert messages.any? { |msg| msg['Type'] == 'thinking' && msg['Content'] == 'checking' }
+      assert messages.any? { |msg| msg['Type'] == 'tool-use' && msg['CallID'] == 'call-1' }
+      tool_result = messages.find { |msg| msg['Type'] == 'tool-result' }
+      assert_equal 'call-1', tool_result.fetch('CallID')
+      assert_equal '', tool_result.fetch('Output'), 'a success without output must not show its input summary'
+      failed_result = messages.find { |msg| msg['Type'] == 'tool-result' && msg['CallID'] == 'call-2' }
+      assert_equal '{"error":"Tool failed"}', failed_result.fetch('Output')
+      refute_includes JSON.generate(observed), 'sensitive output'
+      refute_includes JSON.generate(observed), 'sensitive arguments'
+    end
+  end
+
+  def test_multica_real_go_consumer_falls_back_after_invalid_resume
+    skip 'local Multica server checkout unavailable' unless File.file?(File.join(MULTICA_ROOT, 'server/go.mod'))
+    Dir.mktmpdir do |dir|
+      stub = File.join(dir, 'willdeep')
+      File.write(stub, stub_source([], 2))
+      File.chmod(0o755, stub)
+      stdout, stderr, status = Open3.capture3('go', 'run', CONTRACT_PROBE, ADAPTER, stub, SESSION,
+                                              chdir: File.join(MULTICA_ROOT, 'server'))
+      assert status.success?, stderr
+      result = JSON.parse(stdout).fetch('result')
+      assert_equal 'failed', result.fetch('Status')
+      assert_equal '', result.fetch('SessionID')
+    end
+  end
+
+  def test_sigkill_and_sigterm_reap_willdeep_and_its_tool_child
+    %w[KILL TERM].each do |signal|
+      Dir.mktmpdir do |dir|
+        ready = File.join(dir, 'ready')
+        escaped = File.join(dir, 'escaped')
+        stub = File.join(dir, 'willdeep')
+        File.write(stub, <<~RUBY)
+          #!/usr/bin/env ruby
+          child = fork { sleep 1.2; File.write(#{escaped.inspect}, 'still running') }
+          File.write(#{ready.inspect}, "\#{Process.pid}:\#{child}")
+          sleep 30
+        RUBY
+        File.chmod(0o755, stub)
+        reader, writer = IO.pipe
+        pid = Process.spawn({ 'WILLDEEP_BIN' => stub }, 'ruby', ADAPTER, *daemon_argv,
+                            in: reader, out: File::NULL, err: File::NULL)
+        reader.close
+        writer.write(JSON.generate(PROMPT))
+        writer.close
+        Timeout.timeout(5) { sleep 0.02 until File.exist?(ready) }
+        Process.kill(signal, pid)
+        Timeout.timeout(5) { Process.waitpid(pid) }
+        sleep 1.4
+        refute File.exist?(escaped), "#{signal} left a willdeep tool running"
+      ensure
+        begin
+          Process.kill('KILL', pid) if pid && Process.waitpid(pid, Process::WNOHANG).nil?
+        rescue Errno::ESRCH, Errno::ECHILD
+          nil
+        end
+        if File.exist?(ready)
+          group = File.read(ready).split(':').first.to_i
+          begin
+            Process.kill('KILL', -group) if group.positive?
+          rescue Errno::ESRCH
+            nil
+          end
+        end
+      end
+    end
   end
 end

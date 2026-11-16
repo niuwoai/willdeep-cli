@@ -1849,7 +1849,7 @@ impl EventSink for TerminalSink {
                 let status = if is_error { "error" } else { "done" };
                 eprintln!("[tool:{status}] {}\n{}", call.name, compact_output(&output));
             }
-            AgentEvent::Usage(usage) => {
+            AgentEvent::Usage { usage, .. } => {
                 if let Some(total) = usage.total_tokens {
                     eprintln!("[usage] {total} tokens");
                 }
@@ -1897,7 +1897,7 @@ impl EventSink for TerminalSink {
                 "[subagent] id={id} tool={name} status={}",
                 if is_error { "error" } else { "done" }
             ),
-            AgentEvent::SubagentUsage { id, usage } => {
+            AgentEvent::SubagentUsage { id, usage, .. } => {
                 if let Some(total) = usage.total_tokens {
                     eprintln!("[subagent] id={id} usage={total}");
                 }
@@ -2205,8 +2205,9 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
             }
             value
         }
-        AgentEvent::Usage(usage) => serde_json::json!({
+        AgentEvent::Usage { usage, model } => serde_json::json!({
             "type": "usage",
+            "model": model,
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
             "total_tokens": usage.total_tokens,
@@ -2342,12 +2343,14 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
             "name": name,
             "is_error": is_error
         }),
-        AgentEvent::SubagentUsage { id, usage } => serde_json::json!({
+        AgentEvent::SubagentUsage { id, usage, model } => serde_json::json!({
             "type": "subagent_usage",
             "id": id,
+            "model": model,
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
-            "total_tokens": usage.total_tokens
+            "total_tokens": usage.total_tokens,
+            "cache_read_tokens": usage.cache_read_tokens
         }),
         AgentEvent::SubagentRetryWait { id, attempt, delay } => serde_json::json!({
             "type": "subagent_retry_wait", "id": id, "attempt": attempt,

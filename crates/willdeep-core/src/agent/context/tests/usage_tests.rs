@@ -133,7 +133,7 @@ impl CheckpointSink for Ledger {
 impl EventSink for Ledger {
     async fn emit(&self, event: AgentEvent) {
         match event {
-            AgentEvent::Usage(usage) => self.usage.lock().unwrap().push(usage),
+            AgentEvent::Usage { usage, .. } => self.usage.lock().unwrap().push(usage),
             AgentEvent::ModelFallback {
                 purpose,
                 used,
