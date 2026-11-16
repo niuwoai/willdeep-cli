@@ -551,10 +551,26 @@ mod tool_row_style_tests {
         assert!(!rows[divider - 1].is_empty(), "{rows:?}");
         assert!(rows[divider - 1].ends_with(": done"), "{rows:?}");
         // 分隔线后仍保留用户开口前的产品空行，并叠加行距（此处 spacing=2 → 共 3 行空）。
-        assert_eq!(rows.get(divider + 1).map(String::as_str), Some(""), "{rows:?}");
-        assert_eq!(rows.get(divider + 2).map(String::as_str), Some(""), "{rows:?}");
-        assert_eq!(rows.get(divider + 3).map(String::as_str), Some(""), "{rows:?}");
-        assert_eq!(rows.get(divider + 4).map(String::as_str), Some("You: next"), "{rows:?}");
+        assert_eq!(
+            rows.get(divider + 1).map(String::as_str),
+            Some(""),
+            "{rows:?}"
+        );
+        assert_eq!(
+            rows.get(divider + 2).map(String::as_str),
+            Some(""),
+            "{rows:?}"
+        );
+        assert_eq!(
+            rows.get(divider + 3).map(String::as_str),
+            Some(""),
+            "{rows:?}"
+        );
+        assert_eq!(
+            rows.get(divider + 4).map(String::as_str),
+            Some("You: next"),
+            "{rows:?}"
+        );
     }
 
     /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。
