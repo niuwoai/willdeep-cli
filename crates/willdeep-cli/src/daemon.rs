@@ -1537,8 +1537,9 @@ async fn upgrade(
             health.version, state.pid
         ));
     }
-    // 先把「等人回应」的任务点出来再动手。它们不拦交接，但会跟着旧 Runtime 一起
-    // 走——用户有权在看到这句话之后决定是先去把审批处理掉，还是就这么升上去。
+    // Waiting tasks cannot survive a Runtime process restart: their futures
+    // live in the old process. Refuse handoff while any human gate is pending,
+    // so an ask_user prompt remains answerable in the current Runtime.
     if let Ok(response) = runtime_client(&state)?.tasks().await
         && let Ok(tasks) = response.into_result()
     {
@@ -1554,17 +1555,10 @@ async fn upgrade(
             .collect::<Vec<_>>();
         if !waiting.is_empty() {
             report(format!(
-                "{} task(s) are waiting on you and will be dropped by this handoff:",
+                "{} task(s) are waiting for your answer; resolve them before upgrading Runtime.",
                 waiting.len()
             ));
-            for task in waiting {
-                report(format!(
-                    "  {} {:?} {}",
-                    task.id,
-                    task.status,
-                    task.workspace.as_deref().unwrap_or("-")
-                ));
-            }
+            bail!("Runtime upgrade stopped because a task is waiting on a human gate");
         }
     }
     let internal_drain = internal_transport::InternalRuntimeClient::from_state(&state)?
@@ -1584,6 +1578,11 @@ async fn upgrade(
                 Err(error) => return Err(error).context("request legacy Runtime Daemon drain"),
             }
         }
+        Err(error) if error.status_code() == Some(409) => {
+            bail!(
+                "Runtime upgrade stopped because a task is waiting on a human gate; answer it and retry"
+            )
+        }
         Err(error) => return Err(error).context("request Runtime Daemon drain"),
     }
     report(format!(
@@ -1593,6 +1592,15 @@ async fn upgrade(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_seconds);
     let mut replacement = None;
     loop {
+        if let Ok(current) = load_state(&paths.state)
+            && current.token == state.token
+            && let Ok(health) = probe(&current).await
+            && health.status != "draining"
+        {
+            bail!(
+                "Runtime upgrade stopped because a task began waiting on a human gate; answer it and retry"
+            );
+        }
         match load_state(&paths.state) {
             Ok(candidate) if candidate.token != state.token => {
                 if probe(&candidate).await.is_ok() {
@@ -1814,6 +1822,8 @@ async fn run(home: &Path) -> Result<()> {
     deferred_gates::spawn(server_state.clone());
     production::recover(home);
     let scheduler_state = server_state.clone();
+    let retrying_sessions = Arc::new(Mutex::new(HashSet::new()));
+    let claim_failures = Arc::new(Mutex::new(HashMap::<uuid::Uuid, u32>::new()));
     tokio::spawn(async move {
         while let Some(first) = scheduled_sessions.recv().await {
             for session_id in turn_scheduler::ready_batch(first, &mut scheduled_sessions) {
@@ -1821,8 +1831,53 @@ async fn run(home: &Path) -> Result<()> {
                 if *work_guard {
                     continue;
                 }
-                let claimed = scheduler_state.sessions.claim_next(session_id);
-                let Ok(Some(mut claimed)) = claimed else {
+                let claimed = match scheduler_state.sessions.claim_next(session_id) {
+                    Ok(claimed) => {
+                        if let Ok(mut failures) = claim_failures.lock() {
+                            failures.remove(&session_id);
+                        }
+                        claimed
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "claim queued Runtime Turn for Session {session_id}: {}",
+                            willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+                        );
+                        let retry_scheduled = retrying_sessions
+                            .lock()
+                            .is_ok_and(|mut retrying| retrying.insert(session_id));
+                        if retry_scheduled {
+                            let attempt = claim_failures
+                                .lock()
+                                .map(|mut failures| {
+                                    let attempt = failures.entry(session_id).or_default();
+                                    *attempt = attempt.saturating_add(1);
+                                    *attempt
+                                })
+                                .unwrap_or(1);
+                            let exponent = attempt.saturating_sub(1).min(7);
+                            let delay_ms = 250_u64.saturating_mul(1_u64 << exponent).min(30_000);
+                            let retry_tasks = scheduler_state.tasks.clone();
+                            let retrying_sessions = retrying_sessions.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                                if let Ok(mut retrying) = retrying_sessions.lock() {
+                                    retrying.remove(&session_id);
+                                }
+                                if let Err(error) = retry_tasks.schedule_session(session_id) {
+                                    eprintln!(
+                                        "retry scheduling Runtime Turn for Session {session_id}: {}",
+                                        willdeep_core::judge::redact_credentials(&format!(
+                                            "{error:#}"
+                                        ))
+                                    );
+                                }
+                            });
+                        }
+                        continue;
+                    }
+                };
+                let Some(mut claimed) = claimed else {
                     continue;
                 };
                 // A queued child owns no worktree. Only after the execution slot is
@@ -2217,6 +2272,9 @@ async fn drain_handler(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     authorize_internal(&state, &headers)?;
+    if !state.tasks.tasks_awaiting_a_human().await.is_empty() {
+        return Err(StatusCode::CONFLICT);
+    }
     {
         let mut draining = state.work_gate.write().await;
         if !*draining {
@@ -2236,26 +2294,32 @@ async fn drain_handler(
     }
     let tasks = state.tasks.clone();
     let shutdown = state.shutdown.clone();
-    // 等人的任务不拦 drain，但它们会随这次交接一起没掉，所以得留下痕迹——
-    // 静默放弃和无限期挂起一样难查。
-    let abandoned = tasks.tasks_awaiting_a_human().await;
-    if !abandoned.is_empty() {
-        let _ = state.events.append(
-            "daemon.draining.abandoned",
-            format!(
-                "count={} tasks={}",
-                abandoned.len(),
-                abandoned
-                    .iter()
-                    .map(uuid::Uuid::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        );
-    }
+    let draining_state = state.clone();
     tokio::spawn(async move {
-        tasks.wait_until_idle().await;
-        let _ = shutdown.send(true);
+        if tasks.wait_until_idle_or_human_gate().await {
+            let _ = shutdown.send(true);
+            return;
+        }
+        *draining_state.work_gate.write().await = false;
+        let _ = draining_state
+            .events
+            .append("daemon.drain_aborted", "reason=task_waiting_on_human");
+        match draining_state.sessions.schedulable_sessions() {
+            Ok(sessions) => {
+                for session_id in sessions {
+                    if let Err(error) = draining_state.tasks.schedule_session(session_id) {
+                        eprintln!(
+                            "reschedule queued Turns after drain abort for Session {session_id}: {}",
+                            willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+                        );
+                    }
+                }
+            }
+            Err(error) => eprintln!(
+                "list queued Runtime Turns after drain abort: {}",
+                willdeep_core::judge::redact_credentials(&format!("{error:#}"))
+            ),
+        }
     });
     Ok(StatusCode::ACCEPTED.into_response())
 }

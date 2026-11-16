@@ -311,9 +311,9 @@ impl App {
             {
                 *target = Some(message_label(
                     relative_time(*sent, current, self.language),
-                    self.transcript_models
-                        .get(index)
-                        .and_then(|model| model.as_deref()),
+                    row.starts_with(ASSISTANT_ROW_PREFIX)
+                        .then(|| self.transcript_models.get(index).and_then(Option::as_deref))
+                        .flatten(),
                 ));
             }
         }
@@ -407,6 +407,12 @@ pub(super) fn render_transcript(
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
         // 里面再补一次就会叠成两句。
         let displayed = divider_without_your_turn(row, language);
+        let is_user = displayed.starts_with("You: ");
+        let entry_width = if is_user {
+            user_message::content_width(width)
+        } else {
+            width
+        };
         // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
         // 名字只影响画面，不参与正文解析或修改记录（欢迎语的助手行藏在多行记录里）。
         let (mut entry, mut row_code_blocks) = if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
@@ -422,11 +428,11 @@ pub(super) fn render_transcript(
                     rendering::colored_transcript_with_name(
                         std::slice::from_ref(&displayed),
                         search,
-                        width,
+                        entry_width,
                         language,
                         assistant_name,
                     ),
-                    width,
+                    entry_width,
                 ),
                 Vec::new(),
             )
@@ -438,7 +444,7 @@ pub(super) fn render_transcript(
         {
             for (attachment_index, attachment) in list.iter().enumerate() {
                 let (lines, label_lines) =
-                    attachment_lines(attachment, attachment_index, language, width);
+                    attachment_lines(attachment, attachment_index, language, entry_width);
                 let label_at = text.lines.len() + entry.lines.len();
                 for offset in 0..label_lines {
                     attachment_hits.push((label_at + offset, source, attachment_index));
@@ -467,7 +473,7 @@ pub(super) fn render_transcript(
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 )),
-                width,
+                entry_width,
             );
             controls.extend(
                 (0..control.lines.len())
@@ -509,16 +515,22 @@ pub(super) fn render_transcript(
             }
         }
         if let Some(Some(label)) = labels.get(index) {
-            let suffix = format!(" · {label}");
+            let suffix = if is_user && UnicodeWidthStr::width(label.as_str()) + 3 > entry_width {
+                label.clone()
+            } else {
+                format!(" · {label}")
+            };
             let suffix_width = UnicodeWidthStr::width(suffix.as_str());
-            if suffix_width <= width
+            if suffix_width <= entry_width
                 && let Some(last) = entry.lines.iter().rposition(|line| line.width() > 0)
             {
                 let span = Span::styled(
                     suffix,
                     Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
                 );
-                if entry.lines[last].width() + suffix_width <= width {
+                if entry.lines[last].width() + suffix_width <= entry_width
+                    && span.content.starts_with(" · ")
+                {
                     entry.lines[last].spans.push(span);
                 } else {
                     // 时间标签另起一行时插在块内还是块后：块内的行号要跟着 +1，
@@ -544,6 +556,9 @@ pub(super) fn render_transcript(
                 line.push_span(Span::raw(label));
             }
         }
+        if is_user {
+            user_message::style_block(&mut entry, width);
+        }
         let block_base = text.lines.len();
         code_blocks.extend(
             row_code_blocks
@@ -555,7 +570,7 @@ pub(super) fn render_transcript(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 用户开口前、连续回复之间和回复后的轮次分隔线前各留一行。
+        // 用户消息前后、连续回复之间和回复后的轮次分隔线前各留一行。
         // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
         let next = rows.get(index + 1);
         let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
@@ -564,7 +579,9 @@ pub(super) fn render_transcript(
                 row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
             });
         let blanks = usize::from(
-            (followed_by_user && !displayed.is_empty()) || followed_by_reply_or_divider,
+            (followed_by_user && !displayed.is_empty())
+                || (is_user && next.is_some_and(|row| !row.is_empty()))
+                || followed_by_reply_or_divider,
         )
         .saturating_add(usize::from(spacing));
         if blanks > 0 && index != last {
@@ -729,13 +746,12 @@ mod tests {
             app.message_time_labels(&folded, 160),
             [Some("1分前".into())]
         );
-        // 时间后面的模型名只认这条消息落进记录时记下的那个。会话当前的模型
-        // 变了也不回头改旧消息，没记下模型的消息只留时间。
+        // 旧用户行即使存过模型也只显示发送时间；当前模型同样不参与用户标签。
         app.transcript_models[0] = Some("glm-5".into());
         app.display_model = Some("qwen".into());
         assert_eq!(
             app.message_time_labels(&folded, 160),
-            [Some("1分前 · glm-5".into())]
+            [Some("1分前".into())]
         );
         app.transcript_models[0] = Some("  ".into());
         assert_eq!(
@@ -762,9 +778,9 @@ mod tests {
         assert_eq!(
             app.transcript_models,
             vec![
+                None,
                 Some("glm-5".into()),
-                Some("glm-5".into()),
-                Some("Qwen3.8-27B".into()),
+                None,
                 Some("Qwen3.8-27B".into()),
                 None,
                 None,
@@ -775,9 +791,9 @@ mod tests {
         assert_eq!(
             labels.iter().flatten().collect::<Vec<_>>(),
             vec![
+                &"刚刚".to_owned(),
                 &"刚刚 · glm-5".to_owned(),
-                &"刚刚 · glm-5".to_owned(),
-                &"刚刚 · Qwen3.8-27B".to_owned(),
+                &"刚刚".to_owned(),
                 &"刚刚 · Qwen3.8-27B".to_owned(),
             ]
         );

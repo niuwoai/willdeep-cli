@@ -400,6 +400,7 @@ fn finish_input_submission(
             app.notice = Some(feedback);
         }
         Err(error) => {
+            app.dismiss_awaiting_reply();
             app.composer_expanded = expanded;
             let message = format!(
                 "{}: {error:#}",
@@ -774,6 +775,7 @@ mod tests {
         assert!(app.transcript[row].starts_with(
             "Error: Submission failed; input and attachments retained: Runtime unavailable"
         ));
+        assert!(app.awaiting_since.is_none());
         assert!(app.pending_runtime_echoes.is_empty());
         assert_eq!(
             submission_request_id(&mut app, "keep me", &attachments, session_id, false).unwrap(),

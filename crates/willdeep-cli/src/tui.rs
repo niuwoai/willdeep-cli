@@ -28,6 +28,9 @@ use tokio::sync::{mpsc, oneshot};
 /// 快照一秒一份，刚提交的轮次在队列里排队时任务是 `Queued`、快照会滤掉它，
 /// 所以要留几秒余量，别把一条真在排队的轮次当成残留复位掉。
 const STALE_RUNTIME_TURN_SNAPSHOTS: u8 = 3;
+/// 界面还在等模型开口，但新鲜快照连续几次都说本会话没有活动任务、界面也没在跑
+/// Runtime 轮次：假等待（常见于提交失败或事件迟达）。间隔比残留「工作中」更短。
+const STALE_AWAITING_REPLY_SNAPSHOTS: u8 = 2;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use willdeep_core::types::Usage;
 use willdeep_core::{
@@ -308,9 +311,8 @@ struct App {
     /// 附件正文不写进记录字符串：图片的 base64 会把记录撑爆，也会改掉
     /// `You: 原文` 这一行，而回显认领靠的正是整行比对。正文留在这里，画的时候再拼上去。
     transcript_attachments: Vec<Vec<MessageAttachment>>,
-    /// 与 `transcript` 逐行对齐的模型名：用户行是发送当时的会话模型，助手正文行
-    /// 是产出它的模型。没有记录的行（旧会话、工具行、系统行）是 `None`，
-    /// 显示时只留时间，不用会话当前模型去猜。
+    /// 与 `transcript` 逐行对齐的模型名：仅助手正文行记录产出它的模型。
+    /// 用户、工具、系统行及未记录模型的旧消息为 `None`，不用当前会话模型猜。
     transcript_models: Vec<Option<String>>,
     /// 聊天区最前面这段记录暂时不参与渲染（长会话的归档区）。它仍在内存里，
     /// 只是不进折叠、排版、算高的循环；用户翻到顶时再放回来。
@@ -455,6 +457,8 @@ struct App {
     stale_runtime_turn_snapshots: u8,
     /// 一次残留状态复位只确认、提示一次；等新轮次或 Runtime 活动任务出现后再解锁。
     stale_runtime_turn_recovery_reported: bool,
+    /// 用户消息下面还在转等待点、新鲜快照却没有活动任务且界面没在跑轮次时的连续次数。
+    stale_awaiting_reply_snapshots: u8,
     last_elapsed: Option<Duration>,
     context_window: u64,
     context_tokens: u64,

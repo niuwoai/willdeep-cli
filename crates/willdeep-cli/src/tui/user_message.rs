@@ -3,6 +3,58 @@ use super::*;
 
 pub(super) const PREVIEW_LINES: usize = 8;
 
+// 用户块沿用青色正文，背景只做低对比区分；显式空白同时进入显示坐标和选区坐标。
+pub(super) const BLOCK_BG: Color = Color::Rgb(36, 48, 62);
+const MAX_BLOCK_WIDTH: usize = 100;
+const NARROW_VIEWPORT_WIDTH: usize = 20;
+const BLOCK_WIDTH_NUMERATOR: usize = 4;
+const BLOCK_WIDTH_DENOMINATOR: usize = 5;
+const HORIZONTAL_PADDING: usize = 1;
+
+fn block_width(width: usize) -> usize {
+    let width = width.max(1);
+    if width < NARROW_VIEWPORT_WIDTH {
+        width
+    } else {
+        (width / BLOCK_WIDTH_DENOMINATOR * BLOCK_WIDTH_NUMERATOR).min(MAX_BLOCK_WIDTH)
+    }
+}
+
+fn block_padding(width: usize) -> usize {
+    usize::from(width >= NARROW_VIEWPORT_WIDTH) * HORIZONTAL_PADDING
+}
+
+pub(super) fn content_width(width: usize) -> usize {
+    block_width(width)
+        .saturating_sub(2 * block_padding(width))
+        .max(1)
+}
+
+/// 消息块靠右、块内各行左对齐。缩进是透明的，只有正文和左右内边距带背景。
+/// 不添加样式行，折叠按钮和附件标签的纵向命中位置保持不变。
+pub(super) fn style_block(entry: &mut Text<'static>, width: usize) {
+    let width = width.max(1);
+    let padding = block_padding(width);
+    let body_width = entry.lines.iter().map(Line::width).max().unwrap_or(0);
+    let block_width = body_width.saturating_add(2 * padding).min(width);
+    let indent = width.saturating_sub(block_width);
+    for line in &mut entry.lines {
+        let trailing = block_width.saturating_sub(padding + line.width());
+        let base = line.style.bg(BLOCK_BG);
+        let mut spans = vec![
+            Span::raw(" ".repeat(indent)),
+            Span::styled(" ".repeat(padding), base),
+        ];
+        spans.extend(
+            std::mem::take(&mut line.spans)
+                .into_iter()
+                .map(|span| Span::styled(span.content, base.patch(span.style))),
+        );
+        spans.push(Span::styled(" ".repeat(trailing), base));
+        *line = Line::from(spans);
+    }
+}
+
 impl App {
     /// 普通 Enter 的本地反馈先准备好，调用方立刻绘制，再执行命令或提交 Runtime。
     pub(super) fn take_prompt_for_submission(&mut self) -> String {
@@ -166,9 +218,10 @@ impl App {
         let collapsing = self.expanded_user_messages.get(&source) == Some(row);
         let mut offset = self.transcript_render_offset;
         if collapsing {
+            let width = content_width(self.transcript_width);
             let body_height = wrap_styled_text(
-                colored_transcript_at_width(std::slice::from_ref(row), None, self.transcript_width),
-                self.transcript_width,
+                colored_transcript_at_width(std::slice::from_ref(row), None, width),
+                width,
             )
             .lines
             .len();
@@ -192,6 +245,10 @@ impl App {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "user_message_layout_tests.rs"]
+mod layout_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1256,32 +1256,21 @@ impl Agent {
             let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
             checkpoint.plan = plan.clone();
             rules.refresh().map_err(ToolError::Io)?;
-            messages[0].content = format!(
-                "{}\n\n{}\n\n{}\n\n{}",
-                self.config.system_prompt,
-                rules.render(),
-                self.tools.required_verification_prompt(),
-                self.tools.completion_contract_prompt()
-            );
-            self.append_instance_identity(&mut messages[0].content)?;
+            messages[0] = self.stable_system_message(&rules)?;
             // Only stable rules enter summary input and its system fingerprint.
             // Live state is attached to the request tail after compression: it never
             // enters durable history or the system message, so the provider's
             // automatic prefix cache keeps the whole history between turns instead
             // of breaking at messages[0] every round.
             let mut runtime_context = String::new();
-            if self.tools.allows_agent_tool("update_plan") {
-                messages[0].content.push_str("\n\n");
-                messages[0]
-                    .content
-                    .push_str(crate::planning::SCHEDULING_CONTRACT);
-                if let Some(plan) = &plan {
-                    let state = crate::planning::Receipt::new(plan.clone(), false);
-                    runtime_context.push_str(&format!(
-                        "\n<session-plan>{}</session-plan>",
-                        serde_json::to_string(&state).expect("plan serializes")
-                    ));
-                }
+            if self.tools.allows_agent_tool("update_plan")
+                && let Some(plan) = &plan
+            {
+                let state = crate::planning::Receipt::new(plan.clone(), false);
+                runtime_context.push_str(&format!(
+                    "\n<session-plan>{}</session-plan>",
+                    serde_json::to_string(&state).expect("plan serializes")
+                ));
             }
             // 目标状态每轮重建、只随请求末尾的实时状态发出，不进压缩摘要，
             // 所以目标、验收清单与在飞 Worker 永远不会被摘要掉。

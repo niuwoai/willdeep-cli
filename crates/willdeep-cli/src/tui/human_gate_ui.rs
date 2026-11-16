@@ -127,15 +127,38 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
         ));
     }
     append(String::new(), Style::default());
-    append(
-        format!(
-            "{}: {}",
-            app.language
-                .text("其他答案", "Other answer", "その他の回答"),
-            dialog.answer.text()
-        ),
-        Style::default().fg(Color::LightYellow),
+    drop(append);
+    let answer_prefix = format!(
+        "{}: ",
+        app.language
+            .text("其他答案", "Other answer", "その他の回答")
     );
+    let answer_line_start = lines.len();
+    let answer_value = if dialog.answer.text().is_empty() {
+        " ".to_owned()
+    } else {
+        dialog.answer.text().to_owned()
+    };
+    let mut answer_text = Text::from(Line::from(vec![
+        Span::styled(
+            answer_prefix.clone(),
+            Style::default().fg(Color::LightYellow),
+        ),
+        Span::styled(
+            answer_value,
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+    ]));
+    for line in &mut answer_text.lines {
+        line.style = Style::default();
+    }
+    let mut wrapped_answer = wrap_styled_text(answer_text, content_width);
+    for line in &mut wrapped_answer.lines {
+        line.style = Style::default();
+    }
+    lines.extend(wrapped_answer.lines);
     let help = if dialog.request.multi_select {
         app.language.text(
             "↑/↓ 选择 · Space 勾选 · 输入其他答案 · Enter 发送 · Esc 跳过",
@@ -149,7 +172,17 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
             "↑/↓ 選択 · その他を入力 · Enter 送信 · Esc スキップ",
         )
     };
-    let footer = append(help.to_owned(), Style::default().fg(Color::Gray));
+    let footer_start = lines.len();
+    let mut footer_text = Text::from(help.to_owned());
+    for line in &mut footer_text.lines {
+        line.style = Style::default().fg(Color::Gray);
+    }
+    let mut wrapped_footer = wrap_styled_text(footer_text, content_width);
+    for line in &mut wrapped_footer.lines {
+        line.style = Style::default().fg(Color::Gray);
+    }
+    lines.extend(wrapped_footer.lines);
+    let footer = footer_start..lines.len();
     let height = (lines.len().saturating_add(2).min(u16::MAX as usize) as u16)
         .max(8)
         .min(f.area().height);
@@ -169,8 +202,12 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
     let inner = block.inner(popup);
     let viewport = usize::from(inner.height);
     let selected = option_ranges.get(dialog.selected);
+    let (answer_cursor_row, answer_cursor_column) = dialog
+        .answer
+        .cursor_visual_with_prefix(&answer_prefix, content_width);
+    let answer_cursor_line = answer_line_start + answer_cursor_row;
     let offset = if !dialog.answer.text().is_empty() {
-        lines.len().saturating_sub(viewport)
+        answer_cursor_line.saturating_sub(viewport.saturating_sub(1))
     } else {
         selected.map_or(0, |range| range.end.saturating_sub(viewport))
     };
@@ -199,6 +236,11 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
         ),
         inner,
     );
+    if answer_cursor_line >= offset && answer_cursor_line - offset < viewport {
+        let cursor_x = inner.x + (answer_cursor_column as u16).min(inner.width.saturating_sub(1));
+        let cursor_y = inner.y + (answer_cursor_line - offset) as u16;
+        f.set_cursor_position((cursor_x, cursor_y));
+    }
     let halo = modal_halo(popup, f.area());
     seal_modal_background(f.buffer_mut(), halo);
 }

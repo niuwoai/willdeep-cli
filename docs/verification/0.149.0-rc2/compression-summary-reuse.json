@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-16",
+  "status": "passed_with_documented_coverage_limits",
+  "repository": "niuwoai/willdeep-cli",
+  "workspace": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/compression-summary-reuse-de99ea",
+  "branch_ref": "refs/heads/claude/compression-summary-reuse-de99ea",
+  "baseline_head": "a202ff87c942a15ec6883a6d4c3ee2c174e6a1e6",
+  "baseline_ref": "refs/heads/develop",
+  "version": "0.149.0-rc2",
+  "built_cli_version": "willdeep 0.149.0-rc2",
+  "platform": "macOS",
+  "rust_version": "1.94.1",
+  "authorization": {
+    "edit_and_verify": true,
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "tag": false,
+    "install": false,
+    "publish": false
+  },
+  "isolation": {
+    "own_worktree_only": true,
+    "credentials_read": false,
+    "paid_model_requests": false,
+    "model_providers": "local mocks only",
+    "existing_user_daemon_started": false,
+    "cargo_target": "workspace-local target",
+    "rust_environment": {
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0"
+    }
+  },
+  "new_tests": {
+    "declared_count": 23,
+    "verified_pass_count": 23,
+    "manual_core": [
+      "manual_tail_fallback_sends_first_summary_and_uncovered_batch_only",
+      "manual_compression_materializes_the_actual_automatic_summary_without_requests",
+      "manual_reuse_validates_durable_indices_before_notice_removal_and_host_deduplication",
+      "manual_reuse_ignores_live_goal_and_budget_pins_but_preserves_constraints",
+      "manual_incremental_summary_sends_saved_state_once_and_only_new_material",
+      "manual_reuse_does_not_resummarize_when_only_protected_material_is_new",
+      "manual_summary_invalidates_after_durable_history_or_stable_rules_change",
+      "manual_reuse_remaps_the_anchor_after_unknown_receipts_are_inserted",
+      "manual_reuse_rejects_an_anchor_inside_a_tool_batch_even_with_notices",
+      "manual_reuse_survives_a_changed_tool_output_paging_limit",
+      "manual_reuse_does_not_activate_nested_rules_from_historical_tool_calls"
+    ],
+    "tui_finished": [
+      "local_prompt_finished_persists_summary_and_reuses_it_on_next_turn",
+      "notification_finished_persists_summary_for_the_next_local_prompt",
+      "notification_reuses_summary_persisted_by_local_finished",
+      "finished_replaces_stale_summary_after_a_covered_prefix_changes",
+      "finished_clears_a_concurrent_old_summary_when_the_real_run_returns_none",
+      "concurrent_turn_save_keeps_metadata_and_the_complete_execution_snapshot"
+    ],
+    "manual_hosts": [
+      "dispatch_compress_materializes_the_real_saved_summary_without_provider_requests",
+      "headless_compress_materializes_the_real_saved_summary_without_provider_requests"
+    ],
+    "worker": [
+      "recreated_worker_restores_the_saved_summary_without_resummarizing",
+      "recreated_worker_updates_the_summary_using_only_the_uncovered_tail",
+      "final_summary_save_preserves_concurrent_metadata_usage_plan_and_ownership",
+      "verifier_failure_retries_the_same_worker_with_its_persisted_summary"
+    ]
+  },
+  "checks": [
+    {
+      "id": "core_full_initial",
+      "command": "cargo test --offline --locked -p willdeep-core --lib",
+      "passed": 1048,
+      "failed": 1,
+      "ignored": 6,
+      "filtered_out": 0,
+      "exit_code": 101,
+      "status": "failed_test_fixture_corrected",
+      "failure": "New paging fixture changed config.context_window without changing the Agent's effective learned window; switched to tighten_context_window and all 62 context tests passed."
+    },
+    {
+      "id": "core_context_corrected",
+      "command": "cargo test --offline --locked -p willdeep-core --lib agent::context::tests -- --nocapture",
+      "passed": 62,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 993,
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "tui_finished_strengthened",
+      "command": "cargo test --offline --locked -p willdeep --bin willdeep local_summary_persistence -- --nocapture",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 1613,
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "manual_hosts",
+      "command": "cargo test --offline --locked -p willdeep --bin willdeep materializes_the_real_saved_summary_without_provider_requests -- --nocapture",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 1617,
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "headless_compression_integration",
+      "command": "cargo test --offline --locked -p willdeep --test headless_runtime compress -- --nocapture",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 58,
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "id": "clippy_initial",
+      "command": "cargo clippy --offline --locked --workspace --all-targets -- -D warnings",
+      "exit_code": 0,
+      "status": "passed_before_test_strengthening"
+    },
+    {
+      "id": "web_build",
+      "command": "yarn --cwd web install --offline --frozen-lockfile && yarn --cwd web build",
+      "exit_code": 0,
+      "status": "passed",
+      "warning": "Vite chunk size over 500 kB"
+    },
+    {
+      "id": "npm_regression",
+      "command": "LC_ALL=en_US.UTF-8 ruby scripts/test/npm_willdeep_test.rb",
+      "passed": 7,
+      "assertions": 38,
+      "failed": 0,
+      "errors": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "final_validation": {
+    "core_full": {
+      "status": "passed",
+      "command": "cargo test --offline --locked -p willdeep-core --lib",
+      "passed": 1049,
+      "failed": 0,
+      "ignored": 6,
+      "filtered_out": 0,
+      "exit_code": 0,
+      "test_duration_seconds": 420.71
+    },
+    "tui_finished": {
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 1613,
+      "exit_code": 0
+    },
+    "manual_hosts": {
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 1617,
+      "exit_code": 0
+    },
+    "clippy_workspace_all_targets_deny_warnings": {
+      "status": "passed",
+      "exit_code": 0
+    },
+    "cargo_fmt_check": {
+      "status": "passed",
+      "exit_code": 0
+    },
+    "source_size": {
+      "status": "passed",
+      "reviewed_files": 1503,
+      "max_lines": 3000,
+      "violations": [],
+      "exit_code": 0
+    },
+    "version_consistency": {
+      "status": "passed",
+      "version": "0.149.0-rc2",
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "status": "passed",
+      "exit_code": 0
+    }
+  },
+  "independent_review": {
+    "workflow_run_id": "wf_ac4950c0-bcf",
+    "review_dimensions": ["manual", "tui", "worker"],
+    "confirmed_implementation_defects": 0,
+    "test_gaps_identified": 2,
+    "test_gaps_addressed": 2,
+    "gaps": [
+      "Added a real local run returning None and a concurrent stale-summary writer before Finished persistence.",
+      "Added distinct nondefault plan, compression generation and compression checkpoint values, plus precondition inequality assertions."
+    ],
+    "review_execution": "read-only; no compilation or tests by reviewers"
+  },
+  "negative_controls": {
+    "status": "passed",
+    "groups": [
+      {
+        "id": "manual_tail_raw_prefix",
+        "mutation": "Second manual summary request uses the original messages instead of the first summary plus uncovered tail.",
+        "passed": 0,
+        "failed": 1,
+        "exit_code": 101,
+        "expected_failure_observed": true,
+        "evidence": "Second request contains RAW_PREFIX_0."
+      },
+      {
+        "id": "worker_summary_not_restored_or_saved",
+        "mutation": "Restore the original run_checkpointed call and omit the final summary save.",
+        "passed": 0,
+        "failed": 1,
+        "exit_code": 101,
+        "expected_failure_observed": true,
+        "evidence": "Real verifier retry cannot load the first attempt's persistent summary."
+      },
+      {
+        "id": "tui_snapshot_messages_only",
+        "mutation": "Concurrent-save fallback copies only messages.",
+        "passed": 0,
+        "failed": 1,
+        "exit_code": 101,
+        "expected_failure_observed": true,
+        "evidence": "Saved SUMMARY_1 differs from authoritative SUMMARY_2."
+      },
+      {
+        "id": "manual_hosts_drop_summary",
+        "mutation": "Both TUI and headless manual compression pass None instead of the persisted summary.",
+        "passed": 0,
+        "failed": 2,
+        "exit_code": 101,
+        "expected_failure_observed": true,
+        "evidence": "Each host sends an additional provider request: expected 1, actual 2."
+      },
+      {
+        "id": "tui_finished_drops_returned_summary",
+        "mutation": "Finished persists outcome.messages without assigning outcome.context_summary.",
+        "passed": 1,
+        "failed": 5,
+        "exit_code": 101,
+        "expected_failure_observed": true,
+        "evidence": "Cross-turn and notification tests save None; the None-clearing test retains Some(old)."
+      }
+    ],
+    "production_sources_restored": true,
+    "all_five_production_hashes_match_before_and_after": true
+  },
+  "source_hashes_before_negative_controls": {
+    "crates/willdeep-cli/src/tui/event_loop.rs": "52f04facca2eb5edb23c54773444bbc1b9b1986bbfb3721081f1b3cc70189fa7",
+    "crates/willdeep-cli/src/tui/dispatch.rs": "f41cdc400e789c0c7bdf940818cfaa14c8d2f617f073a882b89b2d48c3ab833f",
+    "crates/willdeep-cli/src/harness.rs": "c8d834defec9b68b35a131c89f9875b522909e4430c2ad2390dd50317b87f46d",
+    "crates/willdeep-core/src/agent/context.rs": "6b96e49997c6a8ea29de24c523af9bf325eba7ff357bd69f3f764dac46ce3b33",
+    "crates/willdeep-core/src/subagent/checkpoint.rs": "d40e3df63eee89929f5482b38623f5b0396431c17628aa9a206ea83ec4ccd8ba"
+  },
+  "coverage_limits": [
+    "Local mocks only; no real model billing, service-side prefix-cache hit rate, or user-observed latency measurement.",
+    "TUI dispatches and the production shared persistence helper are exercised, not the complete terminal event loop or PTY UI.",
+    "The TUI manual-compression test executes refresh/save in the test after receiving Compressed; it does not drive the complete event loop.",
+    "The concurrent snapshot merge uses deliberately distinct fixture values for plan and compression boundaries, not a real prior manual-compression run.",
+    "The Worker concurrent-save test returns no summary; it does not directly cover a nonempty returned summary together with a concurrent save.",
+    "Existing Worker cancellation tests cover message durability and ownership, not cancellation immediately after generating a fresh summary.",
+    "macOS execution only; no Windows/Linux machine run. Some verifier tests have existing Unix gating.",
+    "The six ignored core entries include live-fire tests, manual preflight, external-ledger benchmark, and two child-process entry points.",
+    "Compression-related CLI host and integration tests only; not the complete CLI test suite.",
+    "No installation or release. No edits to the unrelated source checkout."
+  ]
+}

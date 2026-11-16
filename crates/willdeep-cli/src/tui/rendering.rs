@@ -127,7 +127,7 @@ impl App {
         // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
         // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
         let waiting = self.awaiting_reply_row().map(|row| {
-            let waiting = self.compression_notice_lines(&row, search.as_deref());
+            let waiting = self.awaiting_reply_lines(&row, search.as_deref());
             let at = self.compression_notice_insert_at();
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
@@ -167,7 +167,15 @@ impl App {
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                wrap_styled_text(colored, self.transcript_width)
+                let mut transient = wrap_styled_text(colored, self.transcript_width);
+                if self
+                    .transcript
+                    .last()
+                    .is_some_and(|row| row.starts_with("You: "))
+                {
+                    transient.lines.insert(0, Line::default());
+                }
+                transient
             });
         self.transcript_rows.extend(text_rows(&transient));
         self.transcript_height = self.transcript_rows.len();
@@ -179,7 +187,7 @@ impl App {
     fn compression_notice_insert_at(&self) -> usize {
         self.transcript_rows
             .iter()
-            .rposition(|row| row.starts_with("You:"))
+            .rposition(|row| row.trim_start().starts_with("You:"))
             .map_or(self.transcript_rows.len(), |user| {
                 let body = self.transcript_rows[user..]
                     .iter()
@@ -195,6 +203,21 @@ impl App {
             Text::from(Line::styled(
                 row.to_owned(),
                 Style::default().fg(Color::DarkGray),
+            )),
+            self.transcript_width,
+        );
+        if let Some(query) = search {
+            highlight_matches(&mut text, query);
+        }
+        text
+    }
+
+    /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
+    fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
+        let mut text = wrap_styled_text(
+            Text::from(Line::styled(
+                row.to_owned(),
+                Style::default().fg(Color::Yellow),
             )),
             self.transcript_width,
         );
@@ -439,7 +462,7 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 同轮的用户消息、Thought 与回复紧贴。回复后和下一轮用户开口前各留一行；
+    /// 用户消息与 Thought 之间、回复后和下一轮用户开口前各留一行；
     /// 连续两条助手回复之间也留一行。空行由整段渲染补上，逐条上色看不到下一条记录。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
@@ -461,14 +484,15 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows[0], "You: first");
-        assert!(rows[1].contains("Thought: 3.0s"), "{rows:?}");
-        assert_eq!(rows[2], "WillDeep: done");
-        assert_eq!(rows[3], "");
-        assert!(rows[4].contains("turn finished"), "{rows:?}");
-        assert_eq!(rows[5], "");
-        assert_eq!(rows[6], "You: next");
-        assert_eq!(rows.len(), 7, "{rows:?}");
+        assert_eq!(rows[0].trim(), "You: first");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].contains("Thought: 3.0s"), "{rows:?}");
+        assert_eq!(rows[3], "WillDeep: done");
+        assert_eq!(rows[4], "");
+        assert!(rows[5].contains("turn finished"), "{rows:?}");
+        assert_eq!(rows[6], "");
+        assert_eq!(rows[7].trim(), "You: next");
+        assert_eq!(rows.len(), 8, "{rows:?}");
     }
 
     /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
@@ -491,7 +515,10 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows, vec!["You: first", "WillDeep: done", "", "You: next"]);
+        assert_eq!(
+            rows.iter().map(|row| row.trim()).collect::<Vec<_>>(),
+            vec!["You: first", "", "WillDeep: done", "", "You: next"]
+        );
     }
 
     #[test]
@@ -513,13 +540,14 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows.len(), 6, "{rows:?}");
-        assert_eq!(rows[0], "You: question");
-        assert!(rows[1].ends_with(": first"), "{rows:?}");
-        assert_eq!(rows[2], "");
-        assert!(rows[3].ends_with(": second"), "{rows:?}");
-        assert_eq!(rows[4], "");
-        assert!(rows[5].starts_with("── turn finished"), "{rows:?}");
+        assert_eq!(rows.len(), 7, "{rows:?}");
+        assert_eq!(rows[0].trim(), "You: question");
+        assert_eq!(rows[1], "");
+        assert!(rows[2].ends_with(": first"), "{rows:?}");
+        assert_eq!(rows[3], "");
+        assert!(rows[4].ends_with(": second"), "{rows:?}");
+        assert_eq!(rows[5], "");
+        assert!(rows[6].starts_with("── turn finished"), "{rows:?}");
     }
 
     /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。
@@ -544,7 +572,7 @@ mod tool_row_style_tests {
         assert_eq!(frame.text.lines[0].spans[1].content, ": ");
         assert_eq!(frame.text.lines[0].spans[1].style.fg, Some(Color::Green));
         assert_eq!(frame.text.lines[0].spans[2].style.fg, Some(Color::Green));
-        assert_eq!(rows.last().map(String::as_str), Some("You: 嗯"));
+        assert_eq!(rows.last().map(|row| row.trim()), Some("You: 嗯"));
         // 没起名时画面不变。
         let plain = message_time::render_with_times(
             &["WillDeep: 你好".to_owned()],
@@ -736,12 +764,12 @@ mod tool_row_style_tests {
             2,
         );
         let rows = text_rows(&frame.text);
-        // 用户消息前面本身已让开一行，行距再加在它后面。
+        // 用户与助手之间基础间距一行，再加配置的两行。
         let blanks = rows.iter().filter(|row| row.is_empty()).count();
-        assert_eq!(blanks, 2, "{rows:?}");
-        assert_eq!(rows.first().map(String::as_str), Some("You: 一"));
+        assert_eq!(blanks, 3, "{rows:?}");
+        assert_eq!(rows.first().map(|row| row.trim()), Some("You: 一"));
         assert_eq!(rows.last().map(String::as_str), Some("WillDeep: 二"));
-        // 行距为 0 时只剩用户消息前面那一行，和没设过行距的画面一致。
+        // 行距为 0 时仍保留角色之间的基础空行。
         let tight = message_time::render_transcript(
             &["You: 一".to_owned(), "WillDeep: 二".to_owned()],
             &[None, None],
@@ -754,7 +782,13 @@ mod tool_row_style_tests {
             "",
             0,
         );
-        assert_eq!(text_rows(&tight.text), vec!["You: 一", "WillDeep: 二"]);
+        assert_eq!(
+            text_rows(&tight.text)
+                .iter()
+                .map(|row| row.trim())
+                .collect::<Vec<_>>(),
+            vec!["You: 一", "", "WillDeep: 二"]
+        );
         // 最后一条后面不加：单独一条记录时行距不产生任何空白。
         let single = message_time::render_transcript(
             &["WillDeep: 只有一句".to_owned()],
