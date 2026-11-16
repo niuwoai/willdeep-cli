@@ -268,7 +268,9 @@ async fn build_capabilities(
     let host = PluginHost::discover(&server.home)?;
     let mut plugins = Vec::new();
     for package in host.packages() {
-        if host.is_enabled(&package.id).await && host.approval_gap(&package.id).await?.is_none() {
+        if host.is_enabled(&package.id).await
+            && host.approval_gap_preview(&package.id).await?.is_none()
+        {
             let id = format!("plugin:{}", package.id);
             plugins.push(json!({"id": id, "title": package.id, "is_active": session.mobile_plugins.contains(&id)}));
         }

@@ -131,12 +131,16 @@ impl PluginPackage {
             .unwrap_or_else(|| self.id.clone())
     }
 
-    /// 这个包的内容指纹。
-    ///
-    /// 按需计算：算一次要读遍包内容，而只有比对审批时才真的需要它。结果按
-    /// (文件名, 大小, mtime) 在进程内缓存，所以常驻进程里重复调用是便宜的。
+    /// 当前包字节的内容指纹。每次枚举并读取包内容，不以 metadata 缓存放行。
+    /// 安装、审批与实际使用前的校验必须走这个入口；不提供目录的原子快照。
     pub fn digest(&self) -> Result<String, PackageError> {
         package_digest(&self.root)
+    }
+
+    /// 仅供展示或能力提示的摘要预览，按路径、大小与 mtime 复用进程内缓存。
+    /// 等长改写并恢复 mtime 时可能过期，不能据此批准、启用或使用插件。
+    pub fn cached_digest(&self) -> Result<String, PackageError> {
+        cached_package_digest(&self.root, |path| fs::read(path))
     }
 
     /// 包内相对路径 → 绝对路径，逐项做规范化、符号链接解析与包根前缀校验。
@@ -485,8 +489,8 @@ fn digest_cache() -> &'static Mutex<HashMap<PathBuf, CachedDigest>> {
 
 /// 一个包内所有文件的 (相对路径, 大小, mtime) 汇总。
 ///
-/// 这**不是**安全边界——安全边界是下面那个 SHA256。它只回答「这个包自上次
-/// 起有没有动过」，所以用最便宜的哈希就够，和会话摘要缓存那边同一个手法。
+/// 只用于展示缓存：相同 metadata 不能证明字节未变，因而不能决定是否执行
+/// 安装或审批所需的 SHA256。权威摘要始终读取当前包内容。
 fn fingerprint(files: &[FileEntry]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for file in files {
@@ -497,24 +501,35 @@ fn fingerprint(files: &[FileEntry]) -> u64 {
     hasher.finish()
 }
 
+#[derive(Debug, PartialEq, Eq)]
 struct FileEntry {
     relative: String,
     size: u64,
     modified: u64,
 }
 
-/// 内容 digest：审批记录绑定它，同版本内容变了就要重新确认。
-/// 路径与内容都进哈希，只哈希内容的话换个文件名照样能改行为。
-///
-/// 结果按 (文件名, 大小, mtime) 缓存。没有缓存时，光是列一次插件就要把
-/// 全部包内容读一遍——本机 30 MB 的插件目录在 debug 构建下要 8 秒，
-/// 而这份哈希在包没动过时每次都是同一个值。
+/// 当前内容 digest：每次读取包字节，审批与不可变版本安装绑定此结果。
+/// 路径、字节长度与内容的 SHA256 编码保持兼容；metadata 缓存只接受回填。
+/// 这不是整个目录的原子快照，读取过程中并发修改仍由调用方约束。
 pub fn package_digest(root: &Path) -> Result<String, PackageError> {
+    let files = digest_files(root)?;
+    hash_package_files(root, &files, |path| fs::read(path))
+}
+
+fn digest_files(root: &Path) -> Result<Vec<FileEntry>, PackageError> {
     let mut files = Vec::new();
     collect_files(root, root, &mut files, &mut 0u64)?;
     files.sort_by(|left, right| left.relative.cmp(&right.relative));
-    let fingerprint = fingerprint(&files);
+    Ok(files)
+}
 
+/// 仅展示预览会按 metadata 命中缓存。可注入读取器，以确定性验证热缓存不读包。
+fn cached_package_digest(
+    root: &Path,
+    read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<String, PackageError> {
+    let files = digest_files(root)?;
+    let fingerprint = fingerprint(&files);
     if let Some(cached) = digest_cache()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -523,13 +538,19 @@ pub fn package_digest(root: &Path) -> Result<String, PackageError> {
     {
         return Ok(cached.digest.clone());
     }
+    hash_package_files(root, &files, read)
+}
 
+fn hash_package_files(
+    root: &Path,
+    files: &[FileEntry],
+    mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<String, PackageError> {
     let mut hasher = Sha256::new();
-    for file in &files {
+    for file in files {
         hasher.update(file.relative.as_bytes());
         hasher.update([0u8]);
-        let path = root.join(&file.relative);
-        let bytes = fs::read(&path).map_err(|error| PackageError::Unreadable {
+        let bytes = read(&root.join(&file.relative)).map_err(|error| PackageError::Unreadable {
             path: file.relative.clone(),
             reason: error.to_string(),
         })?;
@@ -543,7 +564,7 @@ pub fn package_digest(root: &Path) -> Result<String, PackageError> {
         .insert(
             root.to_path_buf(),
             CachedDigest {
-                fingerprint,
+                fingerprint: fingerprint(files),
                 digest: digest.clone(),
             },
         );
@@ -687,8 +708,10 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("willdeep-plugin-test-{name}"));
-        let _ = fs::remove_dir_all(&root);
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-plugin-test-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&root).expect("scratch directory");
         root
     }
@@ -741,32 +764,129 @@ mod tests {
 
     #[test]
     fn loading_a_package_does_not_read_its_contents() {
-        // 发现阶段只该看清单。这条盯着的是一次真实的回归：digest 曾经在
-        // load_package 里算，于是「列一下装了什么」要把 30 MB 的插件目录
-        // 整个读一遍，本机实测 8 秒。
-        let root = scratch("lazy-digest");
+        let directory = scratch("lazy-digest");
+        let root = directory.join("demo");
         fixture(&root);
-        // 一个大到读它必然明显变慢的文件；load_package 不该碰它。
-        fs::write(root.join("ui/huge.bin"), vec![7u8; 24 * 1024 * 1024]).expect("write");
-
-        let started = std::time::Instant::now();
+        // 稀疏超限 payload：加载与发现只解析清单，摘要入口则必须拒绝。
+        fs::File::create(root.join("ui/huge.bin"))
+            .expect("payload")
+            .set_len(MAX_FILE_BYTES + 1)
+            .expect("sparse payload");
         let package = load_package(&root, PluginSource::Shared).expect("package loads");
-        let load_time = started.elapsed();
-
-        let started = std::time::Instant::now();
-        let digest = package.digest().expect("digest");
-        let digest_time = started.elapsed();
-
-        assert!(digest.starts_with("sha256:"));
+        let found = discover(&directory, PluginSource::Shared);
+        assert_eq!(found.len(), 1);
         assert!(
-            load_time < digest_time,
-            "loading ({load_time:?}) should be cheaper than hashing ({digest_time:?})"
+            found[0].is_ok(),
+            "discovery must not read the oversized payload"
         );
+        assert!(
+            !digest_cache()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains_key(&root)
+        );
+        assert!(matches!(
+            package.digest(),
+            Err(PackageError::TooLarge { .. })
+        ));
+        assert!(matches!(
+            package.cached_digest(),
+            Err(PackageError::TooLarge { .. })
+        ));
+    }
 
-        // 第二次走缓存，不再读文件。
-        let started = std::time::Instant::now();
-        assert_eq!(package.digest().expect("digest"), digest);
-        assert!(started.elapsed() < digest_time);
+    #[test]
+    fn cached_digest_preview_does_not_read_payload_on_a_hot_cache() {
+        let root = scratch("hot-preview");
+        fixture(&root);
+        let package = load_package(&root, PluginSource::Shared).expect("package loads");
+        let mut payload_reads = 0;
+        let digest = cached_package_digest(&root, |path| {
+            if path == root.join("ui/index.html") {
+                payload_reads += 1;
+            }
+            fs::read(path)
+        })
+        .expect("cold preview");
+        assert_eq!(payload_reads, 1);
+        assert_eq!(package.cached_digest().expect("public preview"), digest);
+        assert_eq!(
+            cached_package_digest(&root, |_| panic!("hot preview must not read package bytes"))
+                .expect("hot preview"),
+            digest
+        );
+    }
+
+    fn rewrite_preserving_metadata(path: &Path, contents: &str) {
+        let before = fs::metadata(path).expect("original metadata");
+        assert_eq!(before.len(), contents.len() as u64, "equal length rewrite");
+        fs::write(path, contents).expect("rewrite payload only");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open payload")
+            .set_times(fs::FileTimes::new().set_modified(before.modified().expect("mtime")))
+            .expect("restore mtime");
+        let after = fs::metadata(path).expect("rewritten metadata");
+        assert_eq!(after.len(), before.len());
+        assert_eq!(
+            after.modified().expect("mtime"),
+            before.modified().expect("mtime")
+        );
+    }
+
+    #[test]
+    fn authoritative_digest_detects_equal_length_rewrite_with_restored_mtime() {
+        let root = scratch("same-metadata");
+        fixture(&root);
+        let payload = root.join("ui/index.html");
+        write(&payload, "one");
+        let package = load_package(&root, PluginSource::Shared).expect("package loads");
+        let old = package.cached_digest().expect("warm old cache");
+        let before = digest_files(&root).expect("original file metadata");
+        rewrite_preserving_metadata(&payload, "two");
+        let after = digest_files(&root).expect("current file metadata");
+        assert_eq!(before, after, "all paths, lengths and mtimes must match");
+        assert_eq!(fingerprint(&before), fingerprint(&after));
+        assert_eq!(package.cached_digest().expect("stale preview"), old);
+        let fresh = package.digest().expect("authoritative digest");
+        assert_ne!(fresh, old, "metadata cache must not hide changed bytes");
+        assert_eq!(package_digest(&root).expect("public digest"), fresh);
+        assert_eq!(package.cached_digest().expect("refilled preview"), fresh);
+    }
+
+    #[test]
+    fn authoritative_digest_ignores_an_injected_matching_cache_entry() {
+        let root = scratch("injected-cache");
+        fixture(&root);
+        let payload = root.join("ui/index.html");
+        write(&payload, "one");
+        let package = load_package(&root, PluginSource::Shared).expect("package loads");
+        let old = package.cached_digest().expect("old digest");
+        rewrite_preserving_metadata(&payload, "two");
+        let expected = package.digest().expect("current bytes");
+        assert_ne!(expected, old);
+        for via_method in [false, true] {
+            // 即便未来 fingerprint 加入 ctime/inode，完整命中也不能影响权威结果。
+            let files = digest_files(&root).expect("current metadata");
+            digest_cache()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(
+                    root.clone(),
+                    CachedDigest {
+                        fingerprint: fingerprint(&files),
+                        digest: old.clone(),
+                    },
+                );
+            assert_eq!(package.cached_digest().expect("injected preview"), old);
+            let actual = if via_method {
+                package.digest()
+            } else {
+                package_digest(&root)
+            };
+            assert_eq!(actual.expect("fresh digest"), expected);
+        }
     }
 
     #[test]
