@@ -555,18 +555,19 @@ pub(super) fn render_transcript(
                 }),
         );
         text.lines.extend(entry.lines);
-        // 用户开口前、连续回复之间和回复后的轮次分隔线前各留一行。
-        // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
+        // 用户开口前和连续助手回复之间各留一行；「本轮结束」分隔线紧贴上一轮输出，
+        // 中间不加产品空行，也不吃行距。思考与工具行仍紧贴同一轮的回复；最后一条后不留空行。
         let next = rows.get(index + 1);
+        let next_is_divider = next.is_some_and(|row| row.starts_with(TURN_DIVIDER_PREFIX));
         let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
-        let followed_by_reply_or_divider = displayed.starts_with(ASSISTANT_ROW_PREFIX)
-            && next.is_some_and(|row| {
-                row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
-            });
-        let blanks = usize::from(
-            (followed_by_user && !displayed.is_empty()) || followed_by_reply_or_divider,
-        )
-        .saturating_add(usize::from(spacing));
+        let followed_by_reply = displayed.starts_with(ASSISTANT_ROW_PREFIX)
+            && next.is_some_and(|row| row.starts_with(ASSISTANT_ROW_PREFIX));
+        let blanks = if next_is_divider {
+            0
+        } else {
+            usize::from((followed_by_user && !displayed.is_empty()) || followed_by_reply)
+                .saturating_add(usize::from(spacing))
+        };
         if blanks > 0 && index != last {
             let grown = text.lines.len() + blanks;
             text.lines.resize_with(grown, Line::default);

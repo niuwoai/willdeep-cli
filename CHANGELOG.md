@@ -8,6 +8,11 @@
 ### Added
 - Runtime Daemon 在启动时自动归档过大的 `runtime/events.ndjson`：超过阈值（默认 32MB）时整文件移到 `backups/runtime-events-<时间戳>.ndjson` 并新建空日志，旧归档默认最多保留 8 份；可在 `config.toml` 的 `[runtime.events]` 调整 `rotate_bytes`（0 关闭）与 `retain_archives`。
 
+## [0.149.0-rc3] - 2026-11-16
+
+### Fixed
+- TUI「本轮结束」分隔线重新紧贴上一轮助手输出；与下一轮用户消息之间仍保留一行空行。rc1 曾有意在分隔线前留空，现已收回；行距设置也不会再把空行插到分隔线前。
+
 ## [0.149.0-rc2] - 2026-11-16
 
 ### Fixed
