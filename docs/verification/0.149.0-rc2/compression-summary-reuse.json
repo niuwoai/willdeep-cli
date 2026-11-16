@@ -13,7 +13,8 @@
   "rust_version": "1.94.1",
   "authorization": {
     "edit_and_verify": true,
-    "commit": false,
+    "commit": true,
+    "commit_scope": "local_commit_only",
     "push": false,
     "merge": false,
     "tag": false,

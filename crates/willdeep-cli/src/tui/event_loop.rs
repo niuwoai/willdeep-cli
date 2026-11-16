@@ -229,7 +229,8 @@ fn persist_turn_result(session: &mut Session, store: &SessionStore) -> Result<()
     match store.save(session) {
         Ok(()) => Ok(()),
         Err(willdeep_core::session::SessionError::ConcurrentUpdate(_)) => {
-            // 消息、摘要、压缩边界和检查点属于同一份执行快照，必须一起替换。
+            // `update` 在锁内保留磁盘上的最新元数据；消息、摘要、压缩边界和
+            // 检查点属于同一份执行快照，必须一起替换。
             let latest = store.update(session.id, |latest| {
                 latest.adopt_execution_snapshot(session);
             })?;
@@ -1035,10 +1036,6 @@ pub(super) async fn event_loop(
             event=next_terminal_event(&mut events, &mut deferred_events)=>if let Some(event)=event { match event {
                 Event::Paste(value)=>{
                     if app.permission_picker.is_some() { continue; }
-                    if app.question.is_some() {
-                        app.handle_question_text(&value);
-                        continue;
-                    }
                     if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
                     if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
                         if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
@@ -2038,7 +2035,7 @@ pub(super) async fn event_loop(
                                     if let Some(goal)=runtime_ui::goal_command_to_start(&prompt) {
                                         match runtime_ui::submit_turn(&mut app,session,store,runtime,goal.to_owned()).await {
                                             Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                            Err(error)=>{app.dismiss_awaiting_reply();app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
+                                            Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
                                         }
                                     }
                                     continue;
@@ -2047,7 +2044,7 @@ pub(super) async fn event_loop(
                             let PromptExecution::Runtime(remote_prompt)=prompt_execution(&prompt) else {unreachable!("local prompts were handled above")};
                             match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt).await {
                                 Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                Err(error)=>{app.dismiss_awaiting_reply();app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
+                                Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
                             }
                         }
                         // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。

@@ -1,12 +1,12 @@
 # Rust 压缩摘要复用验证
 
-状态：本次三处修复通过本地验证，23 项新增用例全部通过；五组旧行为反验均在预期断言处失败，临时改动已完整恢复。未提交、推送、合并、安装或发布。验证结论受本文“未验证边界”约束。
+状态：本次三处修复通过本地验证，23 项新增用例全部通过；五组旧行为反验均在预期断言处失败，临时改动已完整恢复。本地提交已另行获授权；推送、合并、打 tag、安装与发布不在本次授权范围内。验证结论受本文“未验证边界”约束。
 
 ## 范围与基线
 
 - 工作树：`/Users/rocky/Sites/willdeep-rs/.claude/worktrees/compression-summary-reuse-de99ea`
 - 分支：`refs/heads/claude/compression-summary-reuse-de99ea`
-- HEAD 与本地 `refs/heads/develop`：`a202ff87c942a15ec6883a6d4c3ee2c174e6a1e6`，整个任务未新增提交。
+- 修复与测试基线：`a202ff87c942a15ec6883a6d4c3ee2c174e6a1e6`，对应验证时的 HEAD 与本地 `refs/heads/develop`；本次本地提交基于该提交。
 - 仓库：`niuwoai/willdeep-cli`
 - 版本：`0.149.0-rc1` → `0.149.0-rc2`，实际构建二进制输出 `willdeep 0.149.0-rc2`。
 - 原调查 HEAD `ce73f70959e9d170795b33d7ee4d29f78a7aa867` 有一个当前 develop 未包含的假等待动画修复。本次未引入该无关提交，当前基线不能表述成包含该调查 HEAD。
@@ -132,10 +132,10 @@ headless 集成的四项实际为：持久摘要跨运行复用、本地自动�
 - `crates/willdeep-core/src/subagent/checkpoint_summary_tests.rs`（新增）
 - `crates/willdeep-core/src/subagent/runner_summary_tests.rs`（新增）
 
-版本与文档：`Cargo.toml`、`Cargo.lock`、`web/package.json`、`npm/willdeep/package.json`、`npm/willdeep/install-manifest.json`、`CHANGELOG.md`、`PRODUCT_OVERVIEW.md`、`docs/ARCHITECTURE.md`，以及本 Markdown 和 JSON 验证报告。共 16 个已跟踪文件修改与 7 个新增文件，尚未暂存或提交。
+版本与文档：`Cargo.toml`、`Cargo.lock`、`web/package.json`、`npm/willdeep/package.json`、`npm/willdeep/install-manifest.json`、`CHANGELOG.md`、`PRODUCT_OVERVIEW.md`、`docs/ARCHITECTURE.md`，以及本 Markdown 和 JSON 验证报告。提交范围共 23 个文件：16 个既有文件修改与 7 个新增文件；不含 scratch、构建产物或其他任务文件。
 
 ## 交接
 
 共享 notes：`/Users/rocky/Library/Application Support/Claude-3p/side-session-notes/local_b599d43b-2f8b-476c-9460-1bbda91dd166/rust-compression-summary-reuse-de99ea.md`。
 
-配套机器可读报告：`docs/verification/0.149.0-rc2/compression-summary-reuse.json`。后续提交、推送、合并、安装或发布均未获本任务授权。
+配套机器可读报告：`docs/verification/0.149.0-rc2/compression-summary-reuse.json`。验证完成后，本地 commit 已另行获授权；推送、合并、打 tag、安装或发布仍未获本任务授权。提交前再次核对现存测试证据与源码，代码未作新增改动，不重复运行耗时测试。
