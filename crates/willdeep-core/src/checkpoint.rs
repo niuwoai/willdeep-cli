@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::agent::{AgentError, AgentOutcome};
 use crate::types::{Message, Role};
 
+mod verification_migration;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointStatus {
@@ -584,8 +586,14 @@ impl CheckpointSink for SessionCheckpointSink {
             .map(|session| {
                 session
                     .execution_checkpoint
+                    .as_ref()
                     .filter(|checkpoint| checkpoint.status != CheckpointStatus::Completed)
-                    .map(|checkpoint| checkpoint.verification_evidence)
+                    .map(|checkpoint| {
+                        verification_migration::migrate(
+                            checkpoint.verification_evidence.clone(),
+                            &session,
+                        )
+                    })
                     .unwrap_or_default()
             })
             .map_err(|error| error.to_string())
