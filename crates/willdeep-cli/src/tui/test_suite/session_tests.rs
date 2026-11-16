@@ -1958,7 +1958,7 @@ fn failed_task_details_name_the_command_and_the_reason() {
 #[test]
 fn command_completion_offers_the_runtime_controls() {
     let matches = command_catalog::command_candidates(Language::En);
-    for command in ["/daemon", "/history", "/model", "/webapp"] {
+    for command in ["/daemon", "/history", "/groups", "/model", "/webapp"] {
         assert!(
             matches.iter().any(|(name, _)| *name == command),
             "{command} missing from the completion catalog"
@@ -1967,6 +1967,7 @@ fn command_completion_offers_the_runtime_controls() {
     // help_text 内部断言用法签名与说明一一对齐；漏改一边会把说明贴到别的命令上。
     for language in [Language::ZhCn, Language::En, Language::Ja] {
         assert!(command_catalog::help_text(language).contains("/history"));
+        assert!(command_catalog::help_text(language).contains("/groups"));
     }
 }
 

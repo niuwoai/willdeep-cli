@@ -12,10 +12,10 @@ it("loads candidates for a bare at sign without changing the draft", async () =>
   const fetch = vi.fn().mockResolvedValue(response(entries));
   vi.stubGlobal("fetch", fetch);
   const onError = vi.fn();
-  const { result } = renderHook(() => useComposerReferences("/workspace", "@", "Failed", onError));
+  const { result } = renderHook(() => useComposerReferences("/workspace", "session-1", "@", "Failed", onError));
   act(() => result.current.update("@", 1));
   await act(async () => { await vi.advanceTimersByTimeAsync(150); });
-  expect(fetch).toHaveBeenCalledWith("/api/composer?workspace=%2Fworkspace&reference_query=");
+  expect(fetch).toHaveBeenCalledWith("/api/composer?workspace=%2Fworkspace&reference_query=&session=session-1");
   expect(result.current.query?.query).toBe("");
   expect(result.current.entries).toEqual(entries);
   expect(result.current.loading).toBe(false);
@@ -29,7 +29,7 @@ it("discards an old workspace response after loading the new workspace", async (
   const current: Reference[] = [{ kind: "file", name: "new.rs", value: '@file:"new.rs"' }];
   const fetch = vi.fn().mockReturnValueOnce(old).mockResolvedValueOnce(response(current));
   vi.stubGlobal("fetch", fetch);
-  const { result, rerender } = renderHook(({ workspace }) => useComposerReferences(workspace, "@", "Failed", vi.fn()), { initialProps: { workspace: "/old" } });
+  const { result, rerender } = renderHook(({ workspace }) => useComposerReferences(workspace, "", "@", "Failed", vi.fn()), { initialProps: { workspace: "/old" } });
   act(() => result.current.update("@", 1));
   await act(async () => { await vi.advanceTimersByTimeAsync(150); });
   rerender({ workspace: "/new" });

@@ -78,6 +78,42 @@ pub(crate) fn collect(
     Ok(entries)
 }
 
+/// 这个群会话里能用 `@名字` 点到的成员，排在 MCP、智能体、文件之前。
+///
+/// 插入的是裸 `@名字`，不是 `@peer:` 前缀：自动回复只认 `@名字` 后面紧跟边界，
+/// 带前缀的写法点不中任何人。不是群会话时返回空，菜单与原来一样。
+pub(crate) fn group_peers(home: &Path, session_id: Option<uuid::Uuid>) -> Vec<Reference> {
+    let Some(session_id) = session_id else {
+        return Vec::new();
+    };
+    let Ok(Some(group)) = crate::federation::group_for_session(home, session_id) else {
+        return Vec::new();
+    };
+    let Ok(store) = crate::federation::load(home) else {
+        return Vec::new();
+    };
+    group
+        .members
+        .iter()
+        .filter_map(|member| {
+            let name = store
+                .contacts
+                .iter()
+                .find(|contact| contact.id == *member)?
+                .name
+                .clone();
+            if name.is_empty() {
+                return None;
+            }
+            Some(Reference {
+                kind: "peer",
+                value: format!("@{name}"),
+                name,
+            })
+        })
+        .collect()
+}
+
 fn installed_agents(home: &Path) -> anyhow::Result<Vec<Reference>> {
     use willdeep_core::agent_definition::store::AgentLibrary;
     let mut libraries = vec![AgentLibrary::new(home)];
@@ -214,6 +250,9 @@ mod tests {
                 .any(|entry| entry.value == "@agent:generalist")
         );
         assert_eq!(entries.last().unwrap().value, "@file:\"中文 file.rs\"");
+        // 群成员不进这份共用列表：不是群会话时一个都没有，避免每个会话都多出一档。
+        assert!(group_peers(&root, None).is_empty());
+        assert!(group_peers(&root, Some(uuid::Uuid::new_v4())).is_empty());
         assert!(
             !collect(&root, &root, &config, &["other".into()], "")
                 .unwrap()

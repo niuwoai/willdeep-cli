@@ -1,5 +1,29 @@
 use super::*;
 
+/// 群列表面板的选择在这里落地。打开会话本身要动 Runtime，不在按键分支里做，
+/// 只把目标记下来交给主循环。
+fn apply_group_picker_action(app: &mut App, action: GroupPickerAction, language: Language) {
+    match action {
+        GroupPickerAction::None => {}
+        GroupPickerAction::Close => app.group_picker = None,
+        GroupPickerAction::Open(session_id) => {
+            app.group_picker = None;
+            app.pending_group_switch = Some(session_id);
+        }
+        GroupPickerAction::Unavailable(name) => {
+            app.group_picker = None;
+            app.notice = Some(format!(
+                "{}: #{name}",
+                language.text(
+                    "这个群还没有会话，等第一条消息到来后才能进入",
+                    "This group has no conversation yet; it opens once the first message arrives",
+                    "このグループにはまだ会話がありません。最初のメッセージが届いてから開けます",
+                )
+            ));
+        }
+    }
+}
+
 async fn handle_queue_action(
     key: KeyEvent,
     app: &mut App,
@@ -635,6 +659,41 @@ pub(super) async fn event_loop(
                 }
             }
         }
+        if let Some(id) = app.pending_group_switch.take() {
+            if app.running {
+                app.notice = Some(
+                    language
+                        .text(
+                            "当前会话正在运行，结束后才能进入群聊",
+                            "Wait for the current turn to finish before opening a group",
+                            "現在のターンが完了してからグループを開いてください",
+                        )
+                        .to_owned(),
+                );
+                continue;
+            }
+            match session_commands::switch_related(
+                &mut app,
+                session,
+                store,
+                runtime,
+                &id.to_string(),
+            )
+            .await
+            {
+                Ok(message) => app.notice = Some(message),
+                Err(error) => {
+                    app.notice = Some(format!(
+                        "{}: {error}",
+                        language.text(
+                            "进入群聊失败",
+                            "Opening the group failed",
+                            "グループを開けませんでした"
+                        )
+                    ));
+                }
+            }
+        }
         if let Some(target) = app.pending_session_switch.take() {
             if app.running {
                 app.notice = Some(
@@ -840,12 +899,15 @@ pub(super) async fn event_loop(
             } else {
                 Vec::new()
             };
-            app.references = Some(
-                tokio::task::spawn_blocking(move || {
-                    crate::composer_references::collect(&root, &home, &config.file, &allowed, "")
-                })
-                .await??,
-            );
+            let session_id = session.id;
+            let mut references = tokio::task::spawn_blocking(move || {
+                crate::composer_references::collect(&root, &home, &config.file, &allowed, "")
+            })
+            .await??;
+            // 群成员单独算：共用的引用列表不知道当前是哪条会话。插在最前，菜单里排在 MCP 之前。
+            let peers = crate::composer_references::group_peers(&runtime.home, Some(session_id));
+            references.splice(0..0, peers);
+            app.references = Some(references);
         }
         load_attention_diagnostics(&mut app, runtime);
         redraw::redraw(term, &mut app, &runtime.skills, session)?;
@@ -1015,6 +1077,9 @@ pub(super) async fn event_loop(
                     } else if let Some(picker)=app.workspace_picker.as_mut() {
                         picker.editor.insert(&value);
                         app.refresh_workspace_picker_matches();
+                    } else if let Some(picker)=app.group_picker.as_mut() {
+                        picker.editor.insert(&value);
+                        app.refresh_group_picker_matches();
                     } else if let Some(picker)=app.session_picker.as_mut() {
                         picker.editor.insert(&value);
                         refresh_session_picker(&mut app,runtime,session).await;
@@ -1080,6 +1145,18 @@ pub(super) async fn event_loop(
                                     app.workspace_picker=None;
                                     app.pending_workspace_switch=Some(id);
                                 }
+                            },
+                            _=>{},
+                        }
+                        continue;
+                    }
+                    if app.group_picker.is_some() {
+                        match mouse.kind {
+                            MouseEventKind::ScrollUp=>app.group_picker_scroll(-1),
+                            MouseEventKind::ScrollDown=>app.group_picker_scroll(1),
+                            MouseEventKind::Down(MouseButton::Left)=>match app.activate_group_picker_at(mouse.column,mouse.row) {
+                                GroupPickerAction::None=>{},
+                                action=>apply_group_picker_action(&mut app,action,language),
                             },
                             _=>{},
                         }
@@ -1479,6 +1556,11 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
+                    if app.group_picker.is_some(){
+                        let action=app.handle_group_picker_key(key);
+                        apply_group_picker_action(&mut app,action,language);
+                        continue;
+                    }
                     if app.session_picker.is_some(){
                         match app.handle_session_picker_key(key) {
                             SessionPickerAction::None=>{},
@@ -1864,6 +1946,11 @@ pub(super) async fn event_loop(
                                 Ok(true)=>continue,
                                 Ok(false)=>{},
                                 Err(error)=>{app.append_transcript(format!("Error: {}: {error}",language.text("Agent 操作失败","Agent action failed","Agent 操作に失敗しました")));continue;},
+                            }
+                            // `/groups` 开本机群列表面板，与 `/history` 同一套交互，但进入时允许跨工作区。
+                            if prompt.trim()=="/groups" {
+                                app.open_group_picker(group_picker_ui::group_picker_rows(&runtime.home),session.id);
+                                continue;
                             }
                             // `/history` 与 `/session search` 都开面板，必须排在 handle_session_command 前面。
                             match parse_session_picker_command(&prompt) {

@@ -24,6 +24,7 @@ pub(super) enum DismissibleOverlay {
     RoutingSettings,
     ModelPicker,
     WorkspacePicker,
+    GroupPicker,
     SessionPicker,
     Palette,
     Search,
@@ -153,6 +154,10 @@ impl App {
                 DismissibleOverlay::WorkspacePicker,
                 self.workspace_picker_rect,
             )),
+            (self.group_picker.is_some()).then_some(OverlayLayer::Dismissible(
+                DismissibleOverlay::GroupPicker,
+                self.group_picker_rect,
+            )),
             (self.session_picker.is_some()).then_some(OverlayLayer::Dismissible(
                 DismissibleOverlay::SessionPicker,
                 self.session_picker_rect,
@@ -248,6 +253,7 @@ impl App {
             }
             DismissibleOverlay::ModelPicker => self.model_picker = None,
             DismissibleOverlay::WorkspacePicker => self.workspace_picker = None,
+            DismissibleOverlay::GroupPicker => self.group_picker = None,
             DismissibleOverlay::SessionPicker => self.session_picker = None,
             DismissibleOverlay::Palette => self.palette = None,
             DismissibleOverlay::Search => self.search = None,

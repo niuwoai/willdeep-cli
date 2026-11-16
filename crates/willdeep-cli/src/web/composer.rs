@@ -10,6 +10,8 @@ use willdeep_core::SkillCatalog;
 pub(super) struct ComposerQuery {
     workspace: Option<String>,
     reference_query: Option<String>,
+    /// 当前会话。只有群会话才会在引用列表最前面加上这个群的成员。
+    session: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -35,17 +37,25 @@ pub(super) async fn get(
         .map_err(WebError::from_anyhow)?
         .file;
     let skill_roots = config.skills.roots.clone();
+    let session_id = query
+        .session
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok());
     let references = if let Some(query) = query.reference_query {
         let root = workspace.root.clone();
         let allowed = workspace.mcp_servers.clone();
         let home = state.home.clone();
         tokio::task::spawn_blocking(move || {
+            let peers = crate::composer_references::group_peers(&home, session_id);
             let all = crate::composer_references::collect(&root, &home, &config, &allowed, &query)?;
             Ok::<_, anyhow::Error>(
-                ["mcp", "agent", "file"]
-                    .into_iter()
+                // 群成员在最前，其余顺序不变。不是群会话时 peers 为空，结果与原来一致。
+                std::iter::once("peer")
+                    .chain(["mcp", "agent", "file"])
                     .flat_map(|kind| {
-                        all.iter()
+                        peers
+                            .iter()
+                            .chain(all.iter())
                             .filter(move |entry| entry.kind == kind)
                             .take(6)
                             .cloned()
