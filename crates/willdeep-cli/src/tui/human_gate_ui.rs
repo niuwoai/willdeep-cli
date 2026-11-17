@@ -137,52 +137,54 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
     let content_width = usize::from(width.saturating_sub(4).max(1));
     let mut lines = Vec::new();
     let mut option_ranges = Vec::new();
-    let mut append = |text: String, style: Style| {
-        let mut text = Text::from(text);
-        for line in &mut text.lines {
-            line.style = style;
-        }
-        let mut wrapped = wrap_styled_text(text, content_width);
-        for line in &mut wrapped.lines {
-            line.style = style;
-        }
-        let start = lines.len();
-        lines.extend(wrapped.lines);
-        start..lines.len()
-    };
-    append(
-        dialog.request.question.clone(),
-        Style::default().add_modifier(Modifier::BOLD),
-    );
-    append(String::new(), Style::default());
-    // Preserve all choices via a scrolling viewport when the terminal is short.
-    let gap = usize::from(f.area().height >= 12);
-    for (index, option) in dialog.request.options.iter().enumerate() {
-        if index > 0 && gap > 0 {
-            append(String::new(), Style::default());
-        }
-        let selected = index == dialog.selected;
-        let marker = if dialog.request.multi_select {
-            if dialog.checked[index] { "[x]" } else { "[ ]" }
-        } else if selected {
-            "(*)"
-        } else {
-            "( )"
+    {
+        let mut append = |text: String, style: Style| {
+            let mut text = Text::from(text);
+            for line in &mut text.lines {
+                line.style = style;
+            }
+            let mut wrapped = wrap_styled_text(text, content_width);
+            for line in &mut wrapped.lines {
+                line.style = style;
+            }
+            let start = lines.len();
+            lines.extend(wrapped.lines);
+            start..lines.len()
         };
-        let style = if selected {
-            Style::default()
-                .bg(Color::LightCyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        option_ranges.push(append(
-            format!("{} {marker} {option}", if selected { "▶" } else { " " }),
-            style,
-        ));
+        append(
+            dialog.request.question.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        );
+        append(String::new(), Style::default());
+        // Preserve all choices via a scrolling viewport when the terminal is short.
+        let gap = usize::from(f.area().height >= 12);
+        for (index, option) in dialog.request.options.iter().enumerate() {
+            if index > 0 && gap > 0 {
+                append(String::new(), Style::default());
+            }
+            let selected = index == dialog.selected;
+            let marker = if dialog.request.multi_select {
+                if dialog.checked[index] { "[x]" } else { "[ ]" }
+            } else if selected {
+                "(*)"
+            } else {
+                "( )"
+            };
+            let style = if selected {
+                Style::default()
+                    .bg(Color::LightCyan)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            option_ranges.push(append(
+                format!("{} {marker} {option}", if selected { "▶" } else { " " }),
+                style,
+            ));
+        }
+        append(String::new(), Style::default());
     }
-    append(String::new(), Style::default());
     let answer_prefix = format!(
         "{}: ",
         app.language

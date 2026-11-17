@@ -1712,6 +1712,21 @@ async fn run(home: &Path) -> Result<()> {
         local_endpoint: Some(local_endpoint),
     };
     let lock_heartbeat = spawn_lock_heartbeat(paths.lock.clone(), cleanup.lock_token.clone());
+    let result = run_daemon_services(home, &paths, state, listener, local_listener).await;
+    finish_daemon_run(result, lock_heartbeat, cleanup).await?;
+    eprintln!("WillDeep Runtime Daemon stopped");
+    Ok(())
+}
+
+async fn run_daemon_services(
+    home: &Path,
+    paths: &DaemonPaths,
+    state: DaemonState,
+    listener: tokio::net::TcpListener,
+    local_listener: local_transport::LocalListener,
+) -> Result<()> {
+    let address = state.address;
+    let started_at = state.started_at;
     let (shutdown_signal, shutdown_receiver) = watch::channel(false);
     // 接任务之前把旧 Runtime 的用量补进账本（仅一次，有标记即跳过；失败只警告）。
     let backfill_home = home.to_path_buf();
@@ -2110,10 +2125,31 @@ async fn run(home: &Path) -> Result<()> {
     }
     tasks.cancel_all().await;
     events.append("daemon.stopped", format!("pid={}", std::process::id()))?;
-    lock_heartbeat.abort();
-    drop(cleanup);
-    eprintln!("WillDeep Runtime Daemon stopped");
     Ok(())
+}
+
+async fn finish_daemon_run(
+    result: Result<()>,
+    lock_heartbeat: tokio::task::JoinHandle<()>,
+    cleanup: StateCleanup,
+) -> Result<()> {
+    lock_heartbeat.abort();
+    // Cancellation does not interrupt a synchronous lease write already in flight.
+    // Join before unlinking so its final rename cannot recreate the retired lease.
+    let heartbeat_result = match lock_heartbeat.await {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_cancelled() => Ok(()),
+        Err(error) => Err(error).context("stop Runtime Daemon lease heartbeat"),
+    };
+    drop(cleanup);
+    match (result, heartbeat_result) {
+        (Ok(()), heartbeat_result) => heartbeat_result,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(heartbeat_error)) => {
+            eprintln!("Runtime Daemon shutdown also failed: {heartbeat_error:#}");
+            Err(error)
+        }
+    }
 }
 
 async fn wait_for_shutdown_deadline(receiver: watch::Receiver<bool>, grace: Duration) {
@@ -2797,12 +2833,20 @@ fn spawn_lock_heartbeat(path: PathBuf, token: String) -> tokio::task::JoinHandle
 }
 
 fn refresh_daemon_lock(path: &Path, token: &str) -> Result<()> {
+    refresh_daemon_lock_with_writer(path, token, write_json_atomic)
+}
+
+fn refresh_daemon_lock_with_writer(
+    path: &Path,
+    token: &str,
+    write: impl FnOnce(&Path, &DaemonLock) -> Result<()>,
+) -> Result<()> {
     let mut lock = load_daemon_lock(path)?;
     if lock.token != token {
         bail!("Runtime Daemon lease ownership changed");
     }
     lock.created_at = now();
-    write_json_atomic(path, &lock)
+    write(path, &lock)
 }
 
 fn load_daemon_lock(path: &Path) -> Result<DaemonLock> {

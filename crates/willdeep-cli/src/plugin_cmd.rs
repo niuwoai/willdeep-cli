@@ -127,9 +127,9 @@ async fn list(home: &Path, json: bool) -> Result<()> {
                 "version": package.version,
                 "source": package.source.as_str(),
                 "enabled": host.is_enabled(&package.id).await,
-                "approval_gap": host.approval_gap(&package.id).await?.as_ref().map(describe_gap),
+                "approval_gap": host.approval_gap_preview(&package.id).await?.as_ref().map(describe_gap),
                 "destinations": package.manifest.as_ref().map(|manifest| manifest.destinations.len()).unwrap_or(0),
-                "digest": package.digest().unwrap_or_default(),
+                "digest": package.cached_digest().unwrap_or_default(),
             }));
         }
         println!(
@@ -153,7 +153,7 @@ async fn list(home: &Path, json: bool) -> Result<()> {
     }
     for package in host.packages() {
         let enabled = host.is_enabled(&package.id).await;
-        let gap = host.approval_gap(&package.id).await?;
+        let gap = host.approval_gap_preview(&package.id).await?;
         let state = match (enabled, &gap) {
             (true, _) => "enabled".to_owned(),
             (false, Some(gap)) => format!("blocked — {}", describe_gap(gap)),
@@ -180,11 +180,11 @@ async fn info(home: &Path, id: &str) -> Result<()> {
     println!("id:       {}", package.id);
     println!("source:   {}", package.source.as_str());
     println!("root:     {}", package.root.display());
-    println!("digest:   {}", package.digest()?);
+    println!("digest:   {}", package.cached_digest()?);
     if let Some(description) = &package.codex.description {
         println!("about:    {description}");
     }
-    match host.approval_gap(id).await? {
+    match host.approval_gap_preview(id).await? {
         None => println!("approval: current"),
         Some(gap) => println!("approval: {}", describe_gap(&gap)),
     }
@@ -336,24 +336,28 @@ pub(crate) fn install_one(home: &Path, path: &Path) -> Result<(String, String)> 
         .join(format!(".staging-{}", package.version));
     let _ = std::fs::remove_dir_all(&staging);
     copy_package(&source, &staging)?;
-    // 复制后重新校验：确认落盘的那一份确实还是刚才检查过的那一份。
-    let staged = load_package(&staging, PluginSource::Shared).inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(&staging);
+    publish_staged_package(&staging, &target, &incoming)?;
+    Ok((package.id, package.version))
+}
+
+/// 复制后的发布边界：必须读取 staging 当前字节，不能复用该路径的旧摘要。
+fn publish_staged_package(staging: &Path, target: &Path, incoming: &str) -> Result<()> {
+    let staged = load_package(staging, PluginSource::Shared).inspect_err(|_| {
+        let _ = std::fs::remove_dir_all(staging);
     })?;
     let staged_digest = staged.digest().inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_dir_all(staging);
     })?;
     if staged_digest != incoming {
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_dir_all(staging);
         bail!(
             "package changed while copying ({} became {})",
             incoming,
             staged_digest
         );
     }
-    std::fs::rename(&staging, &target)
-        .with_context(|| format!("move staged package into {}", target.display()))?;
-    Ok((package.id, package.version))
+    std::fs::rename(staging, target)
+        .with_context(|| format!("move staged package into {}", target.display()))
 }
 
 /// 常见的第一方插件来源。找不到就报清楚，不猜。
@@ -546,10 +550,12 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("willdeep-plugin-cmd-{name}"));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-plugin-cmd-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).expect("scratch");
-        root
+        root.canonicalize().expect("canonical scratch")
     }
 
     fn write(path: &Path, contents: &str) {
@@ -584,16 +590,137 @@ mod tests {
         install_one(&home, &source).expect("re-install is a no-op");
     }
 
+    fn cached_digest(root: &Path) -> String {
+        load_package(root, PluginSource::Shared)
+            .expect("package")
+            .cached_digest()
+            .expect("warm preview cache")
+    }
+
+    fn rewrite_payload_preserving_metadata(root: &Path, body: &str) {
+        let path = root.join("ui/index.html");
+        let before = std::fs::metadata(&path).expect("original metadata");
+        assert_eq!(before.len(), body.len() as u64, "equal length rewrite");
+        std::fs::write(&path, body).expect("rewrite payload only");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open payload")
+            .set_times(std::fs::FileTimes::new().set_modified(before.modified().expect("mtime")))
+            .expect("restore mtime");
+        let after = std::fs::metadata(&path).expect("rewritten metadata");
+        assert_eq!(after.len(), before.len());
+        assert_eq!(
+            after.modified().expect("mtime"),
+            before.modified().expect("mtime")
+        );
+    }
+
     #[test]
-    fn refuses_to_overwrite_a_version_whose_content_changed() {
-        let home = scratch("immutable");
+    fn refuses_same_version_source_rewrite_with_restored_mtime() {
+        let home = scratch("immutable-source-mtime");
         let source = home.join("src");
         source_package(&source, "1.0.0", "<html>one</html>");
         install_one(&home, &source).expect("installs");
-        // 同版本换内容：覆盖会让一份已批准的 digest 在用户不知情时被换掉。
-        source_package(&source, "1.0.0", "<html>two</html>");
-        let error = install_one(&home, &source).expect_err("must refuse");
+        let target = home.join("plugins/demo/1.0.0");
+        let old = cached_digest(&source);
+        assert_eq!(cached_digest(&target), old);
+        rewrite_payload_preserving_metadata(&source, "<html>two</html>");
+        assert_eq!(cached_digest(&source), old, "source cache is still stale");
+        let error = install_one(&home, &source).expect_err("must refuse changed source");
         assert!(error.to_string().contains("different content"));
+        assert_eq!(
+            std::fs::read_to_string(target.join("ui/index.html")).expect("target"),
+            "<html>one</html>"
+        );
+        assert_eq!(
+            std::fs::read_to_string(source.join("ui/index.html")).expect("source"),
+            "<html>two</html>"
+        );
+    }
+
+    #[test]
+    fn refuses_same_version_installed_rewrite_with_restored_mtime() {
+        let home = scratch("immutable-installed-mtime");
+        let source = home.join("src");
+        source_package(&source, "1.0.0", "<html>one</html>");
+        install_one(&home, &source).expect("installs");
+        let target = home.join("plugins/demo/1.0.0");
+        let old = cached_digest(&target);
+        assert_eq!(cached_digest(&source), old);
+        rewrite_payload_preserving_metadata(&target, "<html>two</html>");
+        assert_eq!(
+            cached_digest(&target),
+            old,
+            "installed cache is still stale"
+        );
+        let error = install_one(&home, &source).expect_err("must refuse changed installed copy");
+        assert!(error.to_string().contains("different content"));
+        assert_eq!(
+            std::fs::read_to_string(target.join("ui/index.html")).expect("target"),
+            "<html>two</html>"
+        );
+        assert_eq!(
+            std::fs::read_to_string(source.join("ui/index.html")).expect("source"),
+            "<html>one</html>"
+        );
+    }
+
+    #[test]
+    fn staging_rejects_changed_bytes_hidden_by_a_warm_preview() {
+        let home = scratch("staging-mismatch-mtime");
+        let source = home.join("src");
+        source_package(&source, "1.0.0", "<html>one</html>");
+        let incoming = load_package(&source, PluginSource::Shared)
+            .expect("source")
+            .digest()
+            .expect("incoming digest");
+        let staging = home.join("plugins/demo/.staging-1.0.0");
+        let target = home.join("plugins/demo/1.0.0");
+        copy_package(&source, &staging).expect("copy before publication");
+        assert_eq!(cached_digest(&staging), incoming);
+        // 在复制后、发布前的私有边界确定性改写，无并发线程或 sleep。
+        rewrite_payload_preserving_metadata(&staging, "<html>two</html>");
+        assert_eq!(cached_digest(&staging), incoming, "staging cache is stale");
+        let error =
+            publish_staged_package(&staging, &target, &incoming).expect_err("reject mismatch");
+        assert!(error.to_string().contains("package changed while copying"));
+        assert!(
+            !target.exists(),
+            "mismatching staging must never be published"
+        );
+        assert!(!staging.exists(), "rejected staging is removed");
+        assert_eq!(
+            std::fs::read_to_string(source.join("ui/index.html")).expect("source"),
+            "<html>one</html>"
+        );
+    }
+
+    #[test]
+    fn staging_path_reuse_validates_current_bytes_instead_of_cached_digest() {
+        let home = scratch("staging-reuse-mtime");
+        let source = home.join("src");
+        source_package(&source, "1.0.0", "<html>one</html>");
+        let staging = home.join("plugins/demo/.staging-1.0.0");
+        let target = home.join("plugins/demo/1.0.0");
+        copy_package(&source, &staging).expect("first staged bytes");
+        let old = cached_digest(&staging);
+        rewrite_payload_preserving_metadata(&source, "<html>two</html>");
+        let incoming = load_package(&source, PluginSource::Shared)
+            .expect("source")
+            .digest()
+            .expect("current incoming digest");
+        assert_ne!(incoming, old);
+        // 模拟该 staging 路径复用后保留旧 fingerprint 的内容，清单不重写。
+        rewrite_payload_preserving_metadata(&staging, "<html>two</html>");
+        assert_eq!(cached_digest(&staging), old);
+        publish_staged_package(&staging, &target, &incoming)
+            .expect("publish current matching bytes");
+        assert_eq!(
+            std::fs::read_to_string(target.join("ui/index.html")).expect("target"),
+            "<html>two</html>"
+        );
+        assert!(!staging.exists());
     }
 
     #[test]

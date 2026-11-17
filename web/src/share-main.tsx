@@ -47,7 +47,7 @@ export function SharePage() {
 
   useEffect(() => {
     document.title = t.pageTitle;
-  }, [t.pageTitle]);
+  }, []);
 
   useEffect(() => {
     void load();

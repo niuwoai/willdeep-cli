@@ -418,7 +418,7 @@ async fn list_plugins(
     let mut plugins = Vec::new();
     for package in host.packages() {
         let enabled = host.is_enabled(&package.id).await;
-        let gap = host.approval_gap(&package.id).await?;
+        let gap = host.approval_gap_preview(&package.id).await?;
         let never_approved = matches!(gap, Some(ApprovalGap::NeverApproved));
         let stored_settings = package_settings(&host, package).await;
         let manifest = package.manifest.as_ref();
@@ -597,11 +597,11 @@ async fn list_plugins(
                         .collect()
                 })
                 .unwrap_or_default(),
-            // 批准过的包在 approval_gap 里已经算过一次，这里走进程内缓存。
+            // 仅展示缓存预览；未审批包不读取 payload，实际操作另做权威校验。
             digest: if never_approved {
                 None
             } else {
-                package.digest().ok()
+                package.cached_digest().ok()
             },
         });
     }

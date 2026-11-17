@@ -1244,6 +1244,238 @@ fn daemon_lock_heartbeat_refreshes_only_the_owner_lease() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+mod lease_shutdown_tests {
+    use super::*;
+    use std::future::{Future, poll_fn};
+    use std::sync::mpsc;
+    use std::task::Poll;
+    use tokio::task::JoinHandle;
+
+    const GATE_TIMEOUT: Duration = Duration::from_secs(5);
+    const SETUP_FAILURE: &str = "injected Runtime setup failure";
+    const HEARTBEAT_PANIC: &str = "injected lease heartbeat panic";
+
+    struct LeaseFixture {
+        root: PathBuf,
+        paths: DaemonPaths,
+        state: DaemonState,
+        cleanup: Option<StateCleanup>,
+    }
+
+    impl LeaseFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("willdeep-lease-shutdown-{}", uuid::Uuid::new_v4()));
+            let paths = DaemonPaths::new(&root);
+            std::fs::create_dir_all(&paths.directory).unwrap();
+            let lock = acquire_daemon_lock(&paths.lock).unwrap();
+            let state = DaemonState {
+                schema: STATE_SCHEMA,
+                version: willdeep_core::VERSION.to_owned(),
+                pid: std::process::id(),
+                address: "127.0.0.1:1".parse().unwrap(),
+                token: uuid::Uuid::new_v4().to_string(),
+                started_at: now(),
+                local_transport: None,
+            };
+            write_state(&paths.state, &state).unwrap();
+            let cleanup = StateCleanup {
+                path: paths.state.clone(),
+                token: state.token.clone(),
+                lock_path: paths.lock.clone(),
+                lock_token: lock.token,
+                local_endpoint: None,
+            };
+            Self {
+                root,
+                paths,
+                state,
+                cleanup: Some(cleanup),
+            }
+        }
+
+        fn pause_refresh(&self) -> (JoinHandle<()>, mpsc::Sender<()>) {
+            let (entered, entered_receiver) = mpsc::channel();
+            let (release, release_receiver) = mpsc::channel();
+            let path = self.paths.lock.clone();
+            let token = self.cleanup.as_ref().unwrap().lock_token.clone();
+            let heartbeat = tokio::spawn(async move {
+                refresh_daemon_lock_with_writer(&path, &token, |path, lock| {
+                    entered.send(()).context("signal in-flight lease refresh")?;
+                    // Block inside a synchronous refresh, after validating ownership.
+                    // Dropping release on an assertion failure also unblocks this task.
+                    release_receiver.recv().context("release lease refresh")?;
+                    write_json_atomic(path, lock)
+                })
+                .expect("refresh the real lease");
+                std::future::pending::<()>().await;
+            });
+            entered_receiver
+                .recv_timeout(GATE_TIMEOUT)
+                .expect("heartbeat must reach the gated lease write");
+            (heartbeat, release)
+        }
+
+        fn take_cleanup(&mut self) -> StateCleanup {
+            self.cleanup.take().unwrap()
+        }
+    }
+
+    impl Drop for LeaseFixture {
+        fn drop(&mut self) {
+            drop(self.cleanup.take());
+            if let Err(error) = std::fs::remove_dir_all(&self.root) {
+                if std::thread::panicking() {
+                    eprintln!("remove lease fixture {}: {error}", self.root.display());
+                } else {
+                    panic!("remove lease fixture {}: {error}", self.root.display());
+                }
+            }
+        }
+    }
+
+    async fn wait_finished(heartbeat: &JoinHandle<()>) {
+        tokio::time::timeout(GATE_TIMEOUT, async {
+            while !heartbeat.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("heartbeat must finish before testing its join result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn abort_without_join_recreates_a_removed_lease() {
+        let mut fixture = LeaseFixture::new();
+        let token = fixture.cleanup.as_ref().unwrap().lock_token.clone();
+        let (heartbeat, release) = fixture.pause_refresh();
+        // Negative control: this is the old production shutdown ordering.
+        heartbeat.abort();
+        drop(fixture.take_cleanup());
+        assert!(!fixture.paths.state.exists());
+        assert!(!fixture.paths.lock.exists());
+        release.send(()).unwrap();
+        assert!(heartbeat.await.unwrap_err().is_cancelled());
+        assert_eq!(load_daemon_lock(&fixture.paths.lock).unwrap().token, token);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_joins_in_flight_refresh_on_success_and_setup_failure() {
+        for setup_failure in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let (heartbeat, release) = fixture.pause_refresh();
+            let result = if setup_failure {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, SETUP_FAILURE).into())
+            } else {
+                Ok(())
+            };
+            let mut shutdown =
+                Box::pin(finish_daemon_run(result, heartbeat, fixture.take_cleanup()));
+            let pending =
+                poll_fn(|context| Poll::Ready(shutdown.as_mut().poll(context).is_pending())).await;
+            assert!(
+                pending,
+                "shutdown must join the blocked synchronous refresh"
+            );
+            assert!(
+                fixture.paths.state.exists(),
+                "state must outlive the writer"
+            );
+            assert!(fixture.paths.lock.exists(), "lease must outlive the writer");
+            release.send(()).unwrap();
+            let result = shutdown.await;
+            if setup_failure {
+                let error = result.unwrap_err();
+                assert_eq!(error.to_string(), SETUP_FAILURE);
+                assert_eq!(
+                    error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+            } else {
+                result.unwrap();
+            }
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_accepts_cancelled_and_already_finished_heartbeats() {
+        for already_finished in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let heartbeat = tokio::spawn(async move {
+                if !already_finished {
+                    std::future::pending::<()>().await;
+                }
+            });
+            if already_finished {
+                wait_finished(&heartbeat).await;
+            }
+            finish_daemon_run(Ok(()), heartbeat, fixture.take_cleanup())
+                .await
+                .unwrap();
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_reports_heartbeat_panics_without_replacing_the_run_error() {
+        for setup_failure in [false, true] {
+            let mut fixture = LeaseFixture::new();
+            let heartbeat = tokio::spawn(async { panic!("{HEARTBEAT_PANIC}") });
+            wait_finished(&heartbeat).await;
+            let result = if setup_failure {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, SETUP_FAILURE).into())
+            } else {
+                Ok(())
+            };
+            let error = finish_daemon_run(result, heartbeat, fixture.take_cleanup())
+                .await
+                .unwrap_err();
+            if setup_failure {
+                assert_eq!(error.to_string(), SETUP_FAILURE);
+                assert_eq!(
+                    error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+            } else {
+                let diagnostic = format!("{error:#}");
+                assert!(diagnostic.contains("stop Runtime Daemon lease heartbeat"));
+                assert!(diagnostic.contains(HEARTBEAT_PANIC));
+                assert!(
+                    error
+                        .downcast_ref::<tokio::task::JoinError>()
+                        .unwrap()
+                        .is_panic()
+                );
+            }
+            assert!(!fixture.paths.state.exists());
+            assert!(!fixture.paths.lock.exists());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_preserves_replacement_state_and_lease() {
+        let mut fixture = LeaseFixture::new();
+        let token = fixture.cleanup.as_ref().unwrap().lock_token.clone();
+        remove_owned_lock(&fixture.paths.lock, &token);
+        let replacement = acquire_daemon_lock(&fixture.paths.lock).unwrap();
+        let mut state = fixture.state.clone();
+        state.token = uuid::Uuid::new_v4().to_string();
+        write_state(&fixture.paths.state, &state).unwrap();
+        let heartbeat = tokio::spawn(std::future::pending());
+        finish_daemon_run(Ok(()), heartbeat, fixture.take_cleanup())
+            .await
+            .unwrap();
+        assert_eq!(load_state(&fixture.paths.state).unwrap().token, state.token);
+        assert_eq!(
+            load_daemon_lock(&fixture.paths.lock).unwrap().token,
+            replacement.token
+        );
+    }
+}
+
 #[tokio::test]
 async fn concurrent_task_updates_persist_a_complete_snapshot() {
     let root = std::env::temp_dir().join(format!(

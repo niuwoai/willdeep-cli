@@ -1833,6 +1833,7 @@ impl App {
     pub(super) fn working_summary(&self) -> Option<String> {
         self.turn_phase_summary()
     }
+
     pub(super) fn handle_question_key(&mut self, key: KeyEvent) {
         let Some(dialog) = self.question.as_mut() else {
             return;

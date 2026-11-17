@@ -26,7 +26,7 @@ pub(crate) async fn routing_guidance(home: &Path, plugins_allowed: bool) -> Opti
         .iter()
         .any(|command| command.id == "screenplay.start")
         || !host.is_enabled(id).await
-        || host.approval_gap(id).await.ok()?.is_some()
+        || host.approval_gap_preview(id).await.ok()?.is_some()
     {
         return None;
     }
