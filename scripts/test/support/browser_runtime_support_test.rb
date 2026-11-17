@@ -59,8 +59,23 @@ class BrowserRuntimeSupportTest < Minitest::Test
       assert_equal '/fixed:/usr/bin:/bin:/usr/sbin:/sbin', env.fetch('PATH')
       assert_equal '127.0.0.1 40000 127.0.0.1 22', env.fetch('SSH_CONNECTION')
       refute env.key?('NODE_OPTIONS')
+      refute env.key?('WILLDEEP_LANGUAGE'), 'a CLI language override diverts run away from shared Runtime'
       refute env.key?('OPENAI_API_KEY')
       refute env.key?('ANTHROPIC_API_KEY')
+    end
+  end
+
+  def test_artifact_inventory_includes_owned_nested_files_and_uncommitted_partials
+    Dir.mktmpdir('browser-helper-artifacts-') do |root|
+      nested = File.join(root, 'browser-synthetic')
+      FileUtils.mkdir_p(nested)
+      committed = File.join(nested, 'screenshot.png')
+      partial = File.join(nested, '.pending.png')
+      File.binwrite(committed, 'synthetic PNG inventory')
+      File.binwrite(partial, 'uncommitted partial inventory')
+      suite = BrowserRuntimeEntrypoints.new({})
+      suite.instance_variable_set(:@manifest, {'artifacts' => root})
+      assert_equal [partial, committed].map { |path| File.realpath(path) }.sort, suite.send(:artifact_files)
     end
   end
 

@@ -44,6 +44,11 @@
 | 文档 | 内容 |
 |---|---|
 | [Runtime 工具配置与边界](P1_RUNTIME_TOOLS.md) | 语义重命名、AST、浏览器、独立搜索、项目模型策略及 Goal 执行证据 |
+| [0.152.0-rc3 P0/P1、TUI 与工具展示验收](verification/0.152.0-rc3/p0-p1-closeout.md)（[JSON](verification/0.152.0-rc3/p0-p1-closeout.json)） | 当前逐项状态、固定二进制组合验收、真实三端与四套 PTY、差异空白保真及脱敏边界 |
+| [0.152.0-rc2 历史整合验收](verification/0.152.0-rc2/p0-p1-closeout.md)（[JSON](verification/0.152.0-rc2/p0-p1-closeout.json)） | 工程与六类、三端九例通过；保留工具展示夹具误判和后续 diff 空白缺陷，最终组合由 rc3 接续 |
+| [0.152.0-rc1 历史整合验收](verification/0.152.0-rc1/p0-p1-closeout.md)（[JSON](verification/0.152.0-rc1/p0-p1-closeout.json)） | 工具展示、显式续跑与 Thought 修复的阶段记录，保留全量失败和修复经过 |
+| [0.151.0-rc3 历史整合验收](verification/0.151.0-rc3/p0-p1-closeout.md)（[JSON](verification/0.151.0-rc3/p0-p1-closeout.json)） | 队列、Runtime 与显示修复的阶段记录，最终组合由 0.152.0-rc3 接续 |
+| [0.151.0-rc2 历史整合验收](verification/0.151.0-rc2/p0-p1-closeout.md)（[JSON](verification/0.151.0-rc2/p0-p1-closeout.json)） | rc2 阶段结果与失败经过，未签发最终通过；后续在 rc3 验收 |
 | [some.im 集成](SOMEIM_INTEGRATION.md) | 登录、自动识别、请求头、视觉回退、web_search |
 | [Magpie 本地网关](MAGPIE.md) | 标准地址变量、共享 Profile、Runtime 环境与隔离联调 |
 | [Magpie 社区 Agent](MAGPIE_AGENT_PLAN.md) | 独立 JSON 连接、临时 `magpie-cli` Provider、双端插件与验收边界 |
@@ -78,6 +83,7 @@
 | 文档 | 内容 |
 |---|---|
 | [故障排查](TROUBLESHOOTING.md) | doctor、常见报错、SSH 鼠标与剪贴板、退出码对照 |
+| [工具调用与耗时诊断](research/2026-11-17-tool-call-efficiency.md)（[JSON](research/2026-11-17-tool-call-efficiency.json)） | 单轮 76 次调用与 25 次工具错误的分类；裸 Rake 识别和新输入验证范围已修复，其余优化待实施 |
 | [RSI 提交与近期数据审查](RSI_REVIEW_2026_10_02.md) | 评测门禁、反馈指标和近期数据的证据与复核 |
 | [RSI 审查独立复核](RSI_REVIEW_CLAUDE_2026_10_02.md) | 逐项确认 R1–R8、新增 N1–N5，以及各项的修复进度 |
 
@@ -110,6 +116,7 @@
 | [P0 编码工具验收](verification/0.150.0-rc2/p0-coding-tools.md) | 实际命令与分层结果、场景覆盖、离线夹具和真实语言服务的区别、未验证项（0.150.0-rc2；附 JSON） |
 | [审批结果 Hook 决策](decisions/2026-11-17-approval-resolved-hooks.md) | 裁决来源、会话归属、合法有界 JSON、观察失败与取消边界（0.150.0-rc3） |
 | [Clippy 与审批 Hook 验收](verification/0.150.0-rc3/clippy-approval-hooks.md) | 三处 lint、提问输入与折行、审批接线的实际回归和未验证边界（0.150.0-rc3；附 JSON） |
+| [TUI 差异与当前命令展示](decisions/2026-11-17-tui-tool-visuals.md) | 真实成功回执、双行号和彩色 diff、活动命令与手动折叠、本机/公共事件边界 |
 | [P1 Runtime 工具实施契约](decisions/2026-11-17-p1-runtime-tools.md) | 语义重命名、AST、隔离浏览器、独立搜索、项目模型策略与 Goal 执行证据（0.151.0-rc1） |
 | [P1 Runtime 工具验收](verification/0.151.0-rc1/p1-runtime-tools.md) | 实际命令、失败与修复、真实工具/离线回归及未验证项（0.151.0-rc1；附 JSON） |
 | [竞争力分析（历史）](COMPETITIVE_LANDSCAPE.md) | willdeep 实况为 2026-09-20，pi / Claude Code / Codex / dsh 外部材料沿用 2026-08-21 |

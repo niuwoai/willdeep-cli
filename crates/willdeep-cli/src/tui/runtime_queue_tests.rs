@@ -142,6 +142,7 @@ fn success_uses_the_real_queued_running_or_completed_receipt_and_exact_record() 
         assert!(app.input.is_empty());
         assert!(app.attachments.is_empty());
         assert_eq!(app.last_turn_outcome, echo.status.outcome());
+        assert!(app.transcript.iter().all(|row| !row.starts_with("System:")));
     }
 }
 

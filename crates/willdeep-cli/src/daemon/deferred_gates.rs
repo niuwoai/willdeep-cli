@@ -379,7 +379,7 @@ impl TaskManager {
         Ok(())
     }
 
-    async fn deliver_buffered_decisions(&self) -> Result<()> {
+    pub(super) async fn deliver_buffered_decisions(&self) -> Result<()> {
         let buffered = self
             .interactions
             .read()

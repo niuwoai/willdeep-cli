@@ -14,7 +14,20 @@ use super::config::BrowserConfig;
 mod tests;
 
 const MAX_FRAME_BYTES: u64 = 12 * 1024 * 1024;
+const STARTUP_RESPONSE_RESERVE_MS: u64 = 1000;
 pub(super) const BRIDGE: &str = include_str!("bridge.mjs");
+
+fn initialization(config: &BrowserConfig, root: &std::path::Path) -> Value {
+    let total_ms = config.timeout_seconds * 1000;
+    // Leave time to deliver a startup diagnostic before the outer operation deadline.
+    // Short configurations still give Chrome at least three quarters of the budget.
+    let startup_timeout_ms = total_ms - (total_ms / 4).min(STARTUP_RESPONSE_RESERVE_MS);
+    json!({
+        "action":"init", "chrome_path":config.chrome_path,
+        "profile":root.join("profile"), "allowed_origins":config.allowed_origins,
+        "startup_timeout_ms":startup_timeout_ms,
+    })
+}
 
 pub(super) struct Bridge {
     child: Option<Child>,
@@ -99,12 +112,7 @@ impl Bridge {
             root,
             next_id: 1,
         };
-        bridge
-            .request(json!({
-                "action":"init", "chrome_path":config.chrome_path,
-                "profile":bridge.root.join("profile"), "allowed_origins":config.allowed_origins,
-            }))
-            .await?;
+        bridge.request(initialization(config, &bridge.root)).await?;
         Ok(bridge)
     }
 

@@ -26,6 +26,7 @@ mod browser;
 mod child_sessions;
 mod delegation;
 mod detached_verification;
+pub mod edit_display;
 mod file_changes;
 mod goal_evidence;
 mod host_tools;
@@ -2079,15 +2080,23 @@ impl ToolRegistry {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
+        let path = self.new_change_path(&args.path)?;
+        let reported_path = self.change_receipt_path(&path)?;
         let mut options = tokio::fs::OpenOptions::new();
         let mut file = options.write(true).create_new(true).open(&path).await?;
         file.write_all(args.content.as_bytes()).await?;
         file.flush().await?;
-        Ok(format!(
-            "created {} ({} bytes)",
-            args.path,
-            args.content.len()
-        ))
+        let edit_display = edit_display::from_snapshots([(
+            reported_path.as_str(),
+            &[][..],
+            args.content.as_bytes(),
+        )]);
+        Ok(json!({
+            "status": "created",
+            "message": format!("created {} ({} bytes)", args.path, args.content.len()),
+            "edit_display": edit_display,
+        })
+        .to_string())
     }
 
     async fn edit_file(&self, args: EditArgs) -> Result<String, ToolError> {

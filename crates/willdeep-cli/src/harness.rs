@@ -28,6 +28,8 @@ mod worker_profiles;
 pub(crate) mod workflows;
 
 #[cfg(test)]
+pub(crate) mod input_scope_tests;
+#[cfg(test)]
 pub(crate) mod manual_compression_tests;
 #[cfg(test)]
 mod model_policy_tests;
@@ -386,6 +388,7 @@ pub(crate) struct RuntimeHarnessOutcome {
 pub(crate) struct ExecutionOptions {
     pub allow_compress_command: bool,
     pub replay_existing_user_message: bool,
+    pub continue_task: bool,
     pub ownership: Option<willdeep_core::checkpoint::ClaimedSessionCheckpointSink>,
 }
 
@@ -521,6 +524,8 @@ pub(crate) async fn execute_runtime(
         ExecutionOptions {
             allow_compress_command: true,
             replay_existing_user_message: request.replay_existing_user_message,
+            continue_task: request.origin_client.as_deref()
+                == Some(crate::daemon::CONTINUE_TASK_ORIGIN),
             ownership,
         },
     )
@@ -603,6 +608,10 @@ pub(crate) async fn execute_noninteractive(
         store.save(session)?;
     }
     preparation.mark("derived_title");
+    let new_input = !options.continue_task
+        && !options.replay_existing_user_message
+        && !built.host_input
+        && !built.goal.is_active();
     let (history, user_message) = if options.replay_existing_user_message {
         let user_message = session
             .messages
@@ -618,7 +627,13 @@ pub(crate) async fn execute_noninteractive(
         if let Some(notice) = session
             .execution_checkpoint
             .as_ref()
-            .and_then(willdeep_core::checkpoint::CheckpointMetadata::recovery_notice)
+            .and_then(|checkpoint| {
+                if new_input {
+                    checkpoint.new_input_notice()
+                } else {
+                    checkpoint.recovery_notice()
+                }
+            })
         {
             history.push(notice);
         }
@@ -641,15 +656,23 @@ pub(crate) async fn execute_noninteractive(
     );
     preparation.mark("user_message");
     drop(preparation);
+    let input_checkpoint = new_input
+        .then(|| checkpointer.for_new_input())
+        .transpose()?;
+    let sink: &dyn willdeep_core::checkpoint::CheckpointSink = input_checkpoint
+        .as_ref()
+        .map(|sink| sink as &dyn willdeep_core::checkpoint::CheckpointSink)
+        .unwrap_or(&checkpointer);
     let run_result = built
         .agent
         .run_checkpointed_with_summary(
             history,
             user_message,
-            Some(&checkpointer),
+            Some(sink),
             session.context_summary.clone(),
         )
         .await;
+    drop(input_checkpoint);
     // Synchronize even on error: files may already have changed during this run.
     *session = store.load_baselined(session.id)?;
     match &run_result {

@@ -1,0 +1,79 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "compact",
+      "name": "Chinese, emoji and cross-line selection visibly highlighted",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "Esc clears selection and preserves unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "y/q are typed into draft instead of chat selection commands",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "Chinese, emoji and cross-line selection visibly highlighted",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "Esc clears selection and preserves unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "y/q are typed into draft instead of chat selection commands",
+      "passed": true
+    },
+    {
+      "mode": "compact-ssh",
+      "name": "Chinese, emoji and cross-line selection visibly highlighted",
+      "passed": true
+    },
+    {
+      "mode": "compact-ssh",
+      "name": "Esc clears selection and preserves unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "compact-ssh",
+      "name": "Ctrl+C sends exact original selection through OSC 52 and keeps draft alive",
+      "passed": true
+    },
+    {
+      "mode": "compact-ssh",
+      "name": "y/q are typed into draft instead of chat selection commands",
+      "passed": true
+    },
+    {
+      "mode": "full-ssh",
+      "name": "Chinese, emoji and cross-line selection visibly highlighted",
+      "passed": true
+    },
+    {
+      "mode": "full-ssh",
+      "name": "Esc clears selection and preserves unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full-ssh",
+      "name": "Ctrl+C sends exact original selection through OSC 52 and keeps draft alive",
+      "passed": true
+    },
+    {
+      "mode": "full-ssh",
+      "name": "y/q are typed into draft instead of chat selection commands",
+      "passed": true
+    }
+  ],
+  "ssh_copy": true,
+  "binary_sha256": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb",
+  "isolation": "Temporary HOME/WILLDEEP_HOME; copy_on_select=false; copy key only in isolated SSH PTYs; OSC 52 captured without a desktop clipboard; no prompt submission.",
+  "version": "willdeep 0.152.0-rc3"
+}

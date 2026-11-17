@@ -1,0 +1,534 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "full",
+      "name": "requested layout is painted through the default Runtime TUI",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/00-layout-ready.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/00-layout-ready.ansi",
+        "application_frame": 4,
+        "columns": 132,
+        "rows": 70,
+        "activity_panel": true
+      }
+    },
+    {
+      "mode": "full",
+      "name": "historical ending touches AI/time and hides your turn",
+      "passed": true,
+      "evidence": {
+        "answer_row": 6,
+        "divider_row": 7,
+        "rows": [
+          "│HISTORY_AI_LAST_LINE · now · fixture                                                                                              │",
+          "│── turn finished · first reply 0.96s · total 1.16s ──                                                                             │"
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/01-historical-ending.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/01-historical-ending.ansi",
+        "application_frame": 37
+      }
+    },
+    {
+      "mode": "full",
+      "name": "running command 1 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/02-command-1-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/02-command-1-running.ansi",
+        "application_frame": 39,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-1.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-1.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-1.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_1_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_1_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_1_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "full",
+      "name": "completed command 1 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-command-1-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-command-1-collapsed.ansi",
+        "application_frame": 42
+      }
+    },
+    {
+      "mode": "full",
+      "name": "running command 2 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/02-command-2-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/02-command-2-running.ansi",
+        "application_frame": 46,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-2.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-2.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-2.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_2_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_2_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_2_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "full",
+      "name": "completed command 2 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-command-2-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-command-2-collapsed.ansi",
+        "application_frame": 49
+      }
+    },
+    {
+      "mode": "full",
+      "name": "clicking the last folded thought reveals only its own body",
+      "passed": true,
+      "evidence": {
+        "expanded": {
+          "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-thought-expanded.json",
+          "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-thought-expanded.ansi",
+          "application_frame": 51
+        },
+        "collapsed": {
+          "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-thought-collapsed.json",
+          "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/03-thought-collapsed.ansi",
+          "application_frame": 53
+        }
+      }
+    },
+    {
+      "mode": "full",
+      "name": "create_file commits a green numbered diff with filename/counts",
+      "passed": true,
+      "evidence": {
+        "file": "visual-create.txt",
+        "added": 3,
+        "removed": 0,
+        "color_cells": [
+          {
+            "body": "+CREATE_FIRST_LINE",
+            "x": 17,
+            "y": 16,
+            "foreground": 2,
+            "color": "green"
+          },
+          {
+            "body": "+CREATE_MIDDLE_LINE",
+            "x": 17,
+            "y": 17,
+            "foreground": 2,
+            "color": "green"
+          },
+          {
+            "body": "+CREATE_LAST_LINE",
+            "x": 17,
+            "y": 18,
+            "foreground": 2,
+            "color": "green"
+          }
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/04-create-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/04-create-diff.ansi",
+        "application_frame": 58
+      }
+    },
+    {
+      "mode": "full",
+      "name": "edit_file reads a real baseline then commits red/green/context rows",
+      "passed": true,
+      "evidence": {
+        "file": "visual-edit.txt",
+        "added": 1,
+        "removed": 1,
+        "color_cells": [
+          {
+            "body": "-EDIT_OLD_LINE",
+            "x": 17,
+            "y": 24,
+            "foreground": 1,
+            "color": "red"
+          },
+          {
+            "body": "+EDIT_NEW_LINE",
+            "x": 17,
+            "y": 25,
+            "foreground": 2,
+            "color": "green"
+          }
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/05-edit-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/05-edit-diff.ansi",
+        "application_frame": 66
+      }
+    },
+    {
+      "mode": "full",
+      "name": "file_changes preview does not write or display a committed diff",
+      "passed": true,
+      "evidence": "e80927d1-ca0d-492a-b41c-8d90114ed775"
+    },
+    {
+      "mode": "full",
+      "name": "file_changes apply commits multi-file diffs matching disk contents",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/07-file-changes-applied.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/07-file-changes-applied.ansi",
+        "application_frame": 82,
+        "files": [
+          {
+            "file": "visual-batch.txt",
+            "added": 1,
+            "removed": 1,
+            "color_cells": [
+              {
+                "body": "-BATCH_OLD_LINE",
+                "x": 17,
+                "y": 32,
+                "foreground": 1,
+                "color": "red"
+              },
+              {
+                "body": "+BATCH_NEW_LINE",
+                "x": 17,
+                "y": 33,
+                "foreground": 2,
+                "color": "green"
+              }
+            ]
+          },
+          {
+            "file": "visual-batch-new.txt",
+            "added": 1,
+            "removed": 0,
+            "color_cells": [
+              {
+                "body": "+BATCH_CREATED_LINE",
+                "x": 17,
+                "y": 37,
+                "foreground": 2,
+                "color": "green"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "mode": "full",
+      "name": "all historical commands stay collapsed with final Provider held open",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/08-final-provider-held.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/full/08-final-provider-held.ansi",
+        "application_frame": 82,
+        "provider_requests": 10,
+        "pending_response_index": 9,
+        "clipboard_writes": 0
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "requested layout is painted through the default Runtime TUI",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/00-layout-ready.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/00-layout-ready.ansi",
+        "application_frame": 4,
+        "columns": 132,
+        "rows": 70,
+        "activity_panel": false
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "historical ending touches AI/time and hides your turn",
+      "passed": true,
+      "evidence": {
+        "answer_row": 5,
+        "divider_row": 6,
+        "rows": [
+          " HISTORY_AI_LAST_LINE · now · fixture",
+          " ── turn finished · first reply 0.44s · total 0.54s ──            "
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/01-historical-ending.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/01-historical-ending.ansi",
+        "application_frame": 35
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "running command 1 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/02-command-1-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/02-command-1-running.ansi",
+        "application_frame": 39,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-1.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-1.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-1.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_1_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_1_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_1_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "completed command 1 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-command-1-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-command-1-collapsed.ansi",
+        "application_frame": 42
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "running command 2 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/02-command-2-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/02-command-2-running.ansi",
+        "application_frame": 44,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-2.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-2.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-2.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_2_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_2_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_2_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "completed command 2 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-command-2-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-command-2-collapsed.ansi",
+        "application_frame": 47
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "clicking the last folded thought reveals only its own body",
+      "passed": true,
+      "evidence": {
+        "expanded": {
+          "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-thought-expanded.json",
+          "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-thought-expanded.ansi",
+          "application_frame": 49
+        },
+        "collapsed": {
+          "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-thought-collapsed.json",
+          "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/03-thought-collapsed.ansi",
+          "application_frame": 51
+        }
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "create_file commits a green numbered diff with filename/counts",
+      "passed": true,
+      "evidence": {
+        "file": "visual-create.txt",
+        "added": 3,
+        "removed": 0,
+        "color_cells": [
+          {
+            "body": "+CREATE_FIRST_LINE",
+            "x": 17,
+            "y": 15,
+            "foreground": 2,
+            "color": "green"
+          },
+          {
+            "body": "+CREATE_MIDDLE_LINE",
+            "x": 17,
+            "y": 16,
+            "foreground": 2,
+            "color": "green"
+          },
+          {
+            "body": "+CREATE_LAST_LINE",
+            "x": 17,
+            "y": 17,
+            "foreground": 2,
+            "color": "green"
+          }
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/04-create-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/04-create-diff.ansi",
+        "application_frame": 56
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "edit_file reads a real baseline then commits red/green/context rows",
+      "passed": true,
+      "evidence": {
+        "file": "visual-edit.txt",
+        "added": 1,
+        "removed": 1,
+        "color_cells": [
+          {
+            "body": "-EDIT_OLD_LINE",
+            "x": 17,
+            "y": 23,
+            "foreground": 1,
+            "color": "red"
+          },
+          {
+            "body": "+EDIT_NEW_LINE",
+            "x": 17,
+            "y": 24,
+            "foreground": 2,
+            "color": "green"
+          }
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/05-edit-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/05-edit-diff.ansi",
+        "application_frame": 66
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "file_changes preview does not write or display a committed diff",
+      "passed": true,
+      "evidence": "59816483-8aec-4eb7-a447-61b8526b126a"
+    },
+    {
+      "mode": "compact",
+      "name": "file_changes apply commits multi-file diffs matching disk contents",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/07-file-changes-applied.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/07-file-changes-applied.ansi",
+        "application_frame": 80,
+        "files": [
+          {
+            "file": "visual-batch.txt",
+            "added": 1,
+            "removed": 1,
+            "color_cells": [
+              {
+                "body": "-BATCH_OLD_LINE",
+                "x": 17,
+                "y": 31,
+                "foreground": 1,
+                "color": "red"
+              },
+              {
+                "body": "+BATCH_NEW_LINE",
+                "x": 17,
+                "y": 32,
+                "foreground": 2,
+                "color": "green"
+              }
+            ]
+          },
+          {
+            "file": "visual-batch-new.txt",
+            "added": 1,
+            "removed": 0,
+            "color_cells": [
+              {
+                "body": "+BATCH_CREATED_LINE",
+                "x": 17,
+                "y": 36,
+                "foreground": 2,
+                "color": "green"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "all historical commands stay collapsed with final Provider held open",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/08-final-provider-held.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc3/tui-tool-visuals-final1/compact/08-final-provider-held.ansi",
+        "application_frame": 80,
+        "provider_requests": 10,
+        "pending_response_index": 9,
+        "clipboard_writes": 0
+      }
+    },
+    {
+      "mode": "binary",
+      "name": "binary SHA256 unchanged",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "cleanup": [
+    {
+      "mode": "full",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "release owned command locks",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned loopback Provider",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "release owned command locks",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned loopback Provider",
+      "passed": true
+    }
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/p0-p1-rc152-rc3-20261117-final1/willdeep",
+  "binary_sha256_before": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb",
+  "fixture_root": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-tui-tool-visuals-20261117-80583-oruuw9",
+  "real_model_requests": false,
+  "layouts": [
+    "full",
+    "compact"
+  ],
+  "scope": "real Runtime/full+compact PTY; gated command expansion/collapse; committed create/edit/file_changes diffs; historical AI/time/divider adjacency",
+  "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; file-lock synchronization; OSC52 captured in owned PTY.",
+  "boundary": "No final finish after writes: the last Provider request remains gated until private Runtime shutdown. Does not verify real models, public-event redaction, Web/mobile, manual expansion, parallel calls or cross-platform behavior.",
+  "version": "willdeep 0.152.0-rc3",
+  "binary_sha256_after": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb",
+  "checks_passed": 25,
+  "fixture_retained": false
+}

@@ -626,6 +626,27 @@ pub(crate) async fn submit_runtime_turn_with_options(
     request_id: uuid::Uuid,
     defer_until_released: bool,
 ) -> Result<RemoteRuntimeTurn> {
+    submit_runtime_turn_with_origin(
+        home,
+        session_id,
+        prompt,
+        attachments,
+        crate::client_identity(surface).to_owned(),
+        request_id,
+        defer_until_released,
+    )
+    .await
+}
+
+pub(super) async fn submit_runtime_turn_with_origin(
+    home: &Path,
+    session_id: uuid::Uuid,
+    prompt: String,
+    attachments: Vec<willdeep_core::MessageAttachment>,
+    origin_client: String,
+    request_id: uuid::Uuid,
+    defer_until_released: bool,
+) -> Result<RemoteRuntimeTurn> {
     if prompt.trim().is_empty() && attachments.is_empty() {
         bail!("Runtime Turn prompt and attachments must not both be empty");
     }
@@ -640,7 +661,7 @@ pub(crate) async fn submit_runtime_turn_with_options(
         turn_request_id: request_id,
         prompt,
         attachments: public_attachments,
-        origin_client: Some(crate::client_identity(surface).to_owned()),
+        origin_client: Some(origin_client),
         defer_until_released,
     };
     let turn = api_data(client.submit_turn(&params, request_id).await?)?;
@@ -847,7 +868,7 @@ async fn follow_runtime_events_once(
     let state = load_state(&DaemonPaths::new(home).state)?;
     let mut stream = match tokio::time::timeout(
         EVENT_STREAM_IDLE_TIMEOUT,
-        runtime_client(&state)?.stream_events(*cursor, 1_000, None),
+        runtime_client(&state)?.stream_local_events(*cursor, 1_000),
     )
     .await
     .context("Runtime event stream connection timed out")?
@@ -867,17 +888,10 @@ async fn follow_runtime_events_once(
         Err(error) => return Err(error.into()),
     };
     let mut visible_tasks = HashMap::<uuid::Uuid, Option<uuid::Uuid>>::new();
-    while let Some(response) =
-        tokio::time::timeout(EVENT_STREAM_IDLE_TIMEOUT, stream.next::<RuntimeEvent>())
-            .await
-            .context("Runtime event stream idle; reconnect to recover missed events")??
+    while let Some(event) = tokio::time::timeout(EVENT_STREAM_IDLE_TIMEOUT, stream.next_event())
+        .await
+        .context("Runtime event stream idle; reconnect to recover missed events")??
     {
-        let event = match response {
-            willdeep_runtime_protocol::ApiResponse::Ok { data, .. } => data,
-            willdeep_runtime_protocol::ApiResponse::Error { error, .. } => {
-                bail!("Runtime event stream failed: {}", error.message)
-            }
-        };
         let session_id = if let Some(task_id) = event_task_id(&event.message) {
             if let Some(session_id) = visible_tasks.get(&task_id) {
                 *session_id

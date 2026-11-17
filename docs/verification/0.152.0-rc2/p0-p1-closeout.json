@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "version": "0.152.0-rc2",
+  "date": "2026-11-17",
+  "status": "historical_stage_record_superseded_by_rc3",
+  "final_report": "../0.152.0-rc3/p0-p1-closeout.json",
+  "project_stage": "existing_project_iteration",
+  "scope": {
+    "p0": ["versioned_edit_and_file_changes", "six_scenario_regression", "lsp_queries"],
+    "p1": ["semantic_rename_and_ast", "interactive_browser", "byok_search", "project_model_policy", "execution_evidence_and_audit", "tool_defaults"],
+    "included_parallel_work": ["tui_progress_delivery_viewport_selection_and_copy", "tui_queue_timeline", "custom_subagent_configuration_diagnostics"],
+    "additional_requests": ["tool_call_efficiency_diagnosis", "new_input_verification_scope", "historical_turn_dividers", "committed_inline_diff", "current_command_expansion", "folded_thought_click_source"]
+  },
+  "snapshot": {"source_digest": "7fb99ecd5a6360417404915b0fae80e8310aaa458866649c1c320a34411df81f", "binary_sha256": "0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5", "binary": "target/p0-p1-rc152-rc2-20261117-final1/willdeep", "read_only_mode": "0555"},
+  "checks": {
+    "workspace_tests": {"status": "passed", "top_level_targets": 18, "passed": 3371, "failed": 0, "ignored": 24, "cli_unit_passed": 1838, "core_unit_passed": 1331, "headless_passed": 63, "configuration_isolation_fix_verified": true, "runtime_home_new_cases_passed": 4, "raw_summary_including_child_helper": {"records": 19, "passed": 3372, "extra_child_helper_passed": 1}, "log": "../../../target/p0-p1-final-engineering-20261117T084903Z-83222.log"},
+    "thought_click_targeted": {"status": "passed", "related_passed": 19, "failed": 0, "ignored": 0, "new_regressions": 6, "layouts": ["full", "compact"], "real_mouse_dispatch": true, "painted_header_coordinates_checked": true, "wrapped_title_clicks": true, "stale_geometry_invalidated": true, "original_thoughts_retained": true},
+    "runtime_home_configuration": {"status": "passed", "new_test_cases": 4, "explicit_missing_config_still_errors": true, "default_path_not_pinned_as_explicit_config": true, "covered_by": "engineering.json"},
+    "strict_workspace_clippy": {"status": "passed", "warnings_denied": true, "all_targets": true},
+    "application_build": {"status": "passed", "version": "0.152.0-rc2"},
+    "custom_subagent_startup": {"status": "passed", "checks_passed": 8, "native_tests_passed": 95, "specialist_model_requests": 2, "previous_failed_attempts": 3, "binary_sha256": "0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5", "final_snapshot_matches": true, "fixture_preserved": false, "report": "custom-subagent-final1/custom-subagent-startup.json", "previous_report": "custom-subagent-startup.json", "closeout": "custom-subagent-closeout.md", "installed_old_version_smoke_included_as_rc2": false},
+    "six_scenario_regression": {"status": "passed", "baseline_complete": true, "scenarios_passed": 6, "actual_tests": 21, "pending": [], "source_stable": true, "report": "../../../target/p0-p1-rc152-rc2-regression-final1/run-20261117-74633-aolnvx/report.json"},
+    "browser_runtime_entrypoints": {"status": "passed", "required_cases": 9, "passed": 9, "same_run": true, "binary_matches": true, "react_rendering_verified": false},
+    "tui_interactions": {"status": "passed", "required_checks": 18, "passed": 18, "report": "tui-interactions-final1/integration.json"},
+    "tui_prompt_selection": {"status": "passed", "required_checks": 14, "passed": 14, "isolated_osc52": true, "report": "tui-prompt-selection-final1/integration.json"},
+    "tui_queue_timeline": {"status": "passed", "passed": 10, "report": "tui-queue-timeline-final1/queue-timeline.json"},
+    "tui_tool_visuals": {"status": "failed", "layouts": ["full", "compact"], "checks_passed": 17, "checks_failed": 2, "cause": "Credential redaction compressed diff context markers and code indentation in display; disk and receipts were correct.", "cleanup_passed": 12, "fixture_retained": true, "report": "tui-tool-visuals-final2/tool-visuals.json", "previous_report": "tui-tool-visuals-final1/tool-visuals.json", "folded_thought_clicks_executed": true, "create_diff_passed": true, "edit_diff_passed": false, "file_changes_visuals_executed": false},
+    "release_version": {"status": "passed", "version": "0.152.0-rc2"},
+    "format": {"status": "passed"},
+    "source_size": {"status": "passed", "reviewed_files": 1697, "violations": 0},
+    "final_links_and_sensitive_scan": {"status": "pending"}
+  },
+  "previous_unchanged_scope_checks": {
+    "report": "../0.152.0-rc1/p0-p1-closeout.json",
+    "web": {"status": "passed", "test_files": 52, "tests_passed": 430, "tests_failed": 0, "build": "passed", "lint_errors": 0, "lint_warnings": 1},
+    "windows_gnu_core_clippy": {"status": "passed", "native_windows_execution": false},
+    "real_rust_lsp": {"passed": 3, "failed": 0},
+    "real_typescript_lsp": {"passed": 4, "failed": 0},
+    "real_native_ast": {"passed": 1, "failed": 0, "languages": ["rust", "typescript", "tsx"]},
+    "goal_detached_combination": {"passed": 2, "failed": 0}
+  },
+  "historical_attempts": [
+    {"phase": "rc1_initial_workspace", "passed": 3353, "failed": 2, "ignored": 24, "exit_code": 101, "report": "../0.152.0-rc1/p0-p1-closeout.json"},
+    {"phase": "rc1_after_initial_thought_fix", "passed": 3337, "failed": 26, "ignored": 24, "exit_code": 101, "headless_passed": 63, "core_unit_passed": 1331, "confirmed_user_configuration_errors": 25, "report": "../0.152.0-rc1/p0-p1-closeout.json"},
+    {"phase": "thought_additional_boundaries_fixture_error", "passed": 18, "failed": 1, "cause": "Test moved a user message to the tail and activated the existing historical-thought folding rule; corrected the fixture to move the target thought."},
+    {"phase": "concurrent_rc2_version_transition", "exit_code": 101, "cause": "--locked rejected Cargo.lock while Cargo.toml had advanced to rc2 and the lock file was still rc1.", "workspace_tests_executed": false, "following_clippy_executed": false, "following_build_executed": false}
+  ],
+  "historical_reports": ["../0.151.0-rc2/p0-p1-closeout.json", "../0.151.0-rc3/p0-p1-closeout.json", "../0.152.0-rc1/p0-p1-closeout.json"],
+  "real_model_calls": false,
+  "model_cost": null,
+  "model_tokens": null,
+  "delivery": {"branch": "feat/p0-p1-runtime-tools", "implementation_commit": "662e69c8", "develop_integration_commit": "2744e575", "report_scope": "pre_commit_verification_snapshot", "final_closeout_commit": null, "pushed": false, "pull_request": null, "installed": false, "published": false, "release_tag_created": false, "release_tag_constraint": "Tag only after the commit is merged into the default branch."}
+}

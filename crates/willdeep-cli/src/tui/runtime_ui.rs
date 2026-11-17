@@ -142,7 +142,12 @@ pub(super) async fn submit_turn(
     app.attachments.clear();
     app.selected_attachment = 0;
     app.publish_gallery();
-    if let Some(record) = record {
+    if let Some(record) = app
+        .pending_runtime_echoes
+        .iter()
+        .find(|echo| echo.turn_id == turn.id)
+        .and_then(|echo| echo.record)
+    {
         app.transcript_attachments
             .resize_with(app.transcript.len(), Vec::new);
         app.transcript_attachments[record] = attachments;
@@ -797,7 +802,8 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                     "Runtime · {} {name}",
                     app.language.text("正在使用", "using", "使用中")
                 ));
-                app.note_tool_requested(
+                app.note_tool_call_requested(
+                    value.get("id").and_then(|value| value.as_str()),
                     name,
                     value.get("detail").and_then(|value| value.as_str()),
                     value
@@ -855,7 +861,8 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                         app.language.text("已完成", "finished", "完了")
                     }
                 ));
-                app.note_tool_completed(
+                app.note_tool_call_completed(
+                    value.get("id").and_then(|value| value.as_str()),
                     name,
                     value.get("detail").and_then(|value| value.as_str()),
                     value
@@ -863,6 +870,7 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                         .and_then(|value| value.as_str())
                         .map(str::to_owned),
                     is_error,
+                    value.get("edit_display"),
                 );
                 if !is_error
                     && name == "run_command"

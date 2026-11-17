@@ -149,6 +149,23 @@ impl MessageTimes {
         }
     }
 
+    /// Reorder only the live projection; historical duplicate ordinals stay put.
+    pub(super) fn move_row_to_end(&mut self, index: usize, row_count: usize) {
+        if index >= row_count {
+            return;
+        }
+        self.rows.resize(row_count, None);
+        self.rows[index..].rotate_left(1);
+    }
+
+    /// Transfer a receipt's original time, including an unknown time, without
+    /// rewriting the historical hash/ordinal ledger or inventing a timestamp.
+    pub(super) fn copy_time(&mut self, from: usize, to: usize) {
+        let time = self.time_at(from);
+        self.rows.resize(self.rows.len().max(to + 1), None);
+        self.rows[to] = time;
+    }
+
     pub(super) fn clear_rows(&mut self, transcript: &[String]) {
         for row in transcript.iter().filter(|row| is_message(row)) {
             *self.offsets.entry(key(row)).or_default() += 1;
@@ -333,7 +350,7 @@ pub(super) fn render_with_user_folds(
     width: usize,
     language: Language,
     users: &BTreeMap<usize, (usize, bool)>,
-    tools: &BTreeMap<usize, (usize, Option<String>)>,
+    tools: &BTreeMap<usize, (usize, Option<String>, bool)>,
     attachments: &[Vec<MessageAttachment>],
 ) -> FoldedFrame {
     render_transcript(
@@ -360,7 +377,7 @@ pub(super) fn render_transcript(
     width: usize,
     language: Language,
     users: &BTreeMap<usize, (usize, bool)>,
-    tools: &BTreeMap<usize, (usize, Option<String>)>,
+    tools: &BTreeMap<usize, (usize, Option<String>, bool)>,
     attachments: &[Vec<MessageAttachment>],
     assistant_name: &str,
     spacing: u8,
@@ -397,8 +414,8 @@ pub(super) fn render_transcript(
         } else if let Some(body) = displayed.strip_prefix(ASSISTANT_ROW_PREFIX) {
             source::assistant_entry(body, search, width, assistant_name, id)
         } else {
-            let text = rendering::colored_transcript_with_name(
-                std::slice::from_ref(&displayed),
+            let text = rendering::colored_transcript_entry_with_name(
+                &displayed,
                 search,
                 entry_width,
                 language,
@@ -464,7 +481,7 @@ pub(super) fn render_transcript(
             entry.lines.extend(control.lines);
         }
         // 工具行整行可点。点开后完整命令接在它下面，再跟一行「收起」，那一行单独可点。
-        if let Some((source, expansion)) = tools.get(&index) {
+        if let Some((source, expansion, diff)) = tools.get(&index) {
             let source = *source;
             tool_controls.extend(
                 (0..entry.lines.len()).map(|line| (text.lines.len() + line, source, false)),
@@ -473,14 +490,7 @@ pub(super) fn render_transcript(
                 sources
                     .parts
                     .insert((id, SourcePart::ToolDetail), detail.clone());
-                let detail_rendered = Text::from(
-                    detail
-                        .split('\n')
-                        .map(|line| {
-                            Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray))
-                        })
-                        .collect::<Vec<_>>(),
-                );
+                let detail_rendered = tool_visuals::detail_lines(detail, *diff);
                 let (detail_text, detail_sources) = source::wrap_literal(
                     detail_rendered,
                     id,
@@ -575,20 +585,22 @@ pub(super) fn render_transcript(
         debug_assert_eq!(entry_sources.len(), entry.lines.len());
         sources.rows.extend(entry_sources);
         text.lines.extend(entry.lines);
-        // 用户消息前后、连续回复之间和回复后的轮次分隔线前各留一行。
-        // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
+        // 分隔线属于上一轮输出，基础间距和额外行距都不将它与回答拆开。
+        // 用户消息前后、连续回复之间仍留空行；最后一条记录后不留空行。
         let next = rows.get(index + 1);
         let followed_by_user = next.is_some_and(|row| row.starts_with("You:"));
-        let followed_by_reply_or_divider = displayed.starts_with(ASSISTANT_ROW_PREFIX)
-            && next.is_some_and(|row| {
-                row.starts_with(ASSISTANT_ROW_PREFIX) || row.starts_with(TURN_DIVIDER_PREFIX)
-            });
-        let blanks = usize::from(
-            (followed_by_user && !displayed.is_empty())
-                || (is_user && next.is_some_and(|row| !row.is_empty()))
-                || followed_by_reply_or_divider,
-        )
-        .saturating_add(usize::from(spacing));
+        let followed_by_reply = displayed.starts_with(ASSISTANT_ROW_PREFIX)
+            && next.is_some_and(|row| row.starts_with(ASSISTANT_ROW_PREFIX));
+        let blanks = if next.is_some_and(|row| row.starts_with(TURN_DIVIDER_PREFIX)) {
+            0
+        } else {
+            usize::from(
+                (followed_by_user && !displayed.is_empty())
+                    || (is_user && next.is_some_and(|row| !row.is_empty()))
+                    || followed_by_reply,
+            )
+            .saturating_add(usize::from(spacing))
+        };
         if blanks > 0 && index != last {
             let grown = text.lines.len() + blanks;
             text.lines.resize_with(grown, Line::default);
@@ -714,6 +726,36 @@ mod tests {
         times.remove(1);
         assert_eq!(times.rows, [None, Some(200)]);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn moving_and_copying_rows_leave_the_historical_time_ledger_unchanged() {
+        let mut times = MessageTimes::default();
+        let mut rows = vec!["You: duplicate".to_owned()];
+        times.observe(&rows, 100);
+        rows.push("You: duplicate".into());
+        times.observe(&rows, 200);
+        let known = times.known.clone();
+        let offsets = times.offsets.clone();
+        times.dirty = false;
+        times.event_time = Some(300);
+
+        times.move_row_to_end(0, 4);
+        assert_eq!(times.rows, [Some(200), None, None, Some(100)]);
+        times.copy_time(3, 1);
+        assert_eq!(times.rows, [Some(200), Some(100), None, Some(100)]);
+        times.copy_time(2, 0);
+        assert_eq!(times.rows, [None, Some(100), None, Some(100)]);
+        times.copy_time(50, 3);
+        assert_eq!(times.time_at(3), None);
+        times.copy_time(1, 5);
+        assert_eq!(times.rows, [None, Some(100), None, None, None, Some(100)]);
+        times.move_row_to_end(6, 6);
+        assert_eq!(times.time_at(5), Some(100));
+        assert_eq!(times.known, known);
+        assert_eq!(times.offsets, offsets);
+        assert_eq!(times.event_time, Some(300));
+        assert!(!times.dirty);
     }
 
     #[test]

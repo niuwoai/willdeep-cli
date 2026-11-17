@@ -149,6 +149,104 @@ fn state(model: &str) -> std::result::Result<Option<ProviderProfile>, Connection
     parse_for(&connection(model), CLIENT_ID)
 }
 
+fn runtime_request(home: &Path) -> crate::daemon::session_store::CreateRuntimeSession {
+    crate::daemon::session_store::CreateRuntimeSession {
+        id: None,
+        workspace: home.to_owned(),
+        profile: None,
+        model: None,
+        config: None,
+        title: None,
+    }
+}
+
+#[tokio::test]
+async fn pin_new_uses_runtime_home_config_without_pinning_its_path() {
+    let home = root();
+    std::fs::write(
+        home.join("config.toml"),
+        "default_provider = 'runtime'\n[providers.runtime]\nmodel = 'runtime/model'\n",
+    )
+    .unwrap();
+    // Explicit model/profile or workspace routing keeps these cases independent
+    // of any process-wide integration connection or Provider environment.
+    for (profile, model, workspace_profile, expected_model) in [
+        (None, Some("explicit/model"), None, "explicit/model"),
+        (Some("runtime"), None, None, "runtime/model"),
+        (None, None, Some("runtime"), "runtime/model"),
+    ] {
+        let mut request = runtime_request(&home);
+        request.profile = profile.map(str::to_owned);
+        request.model = model.map(str::to_owned);
+        assert!(
+            !pin_new(&home, &mut request, workspace_profile.map(str::to_owned))
+                .await
+                .unwrap()
+        );
+        assert_eq!(request.profile.as_deref(), Some("runtime"));
+        assert_eq!(request.model.as_deref(), Some(expected_model));
+        assert_eq!(request.config, None);
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn pin_new_explicit_config_overrides_runtime_home() {
+    let home = root();
+    std::fs::write(
+        home.join("config.toml"),
+        "default_provider = 'runtime'\n[providers.runtime]\nmodel = 'runtime/model'\n",
+    )
+    .unwrap();
+    let explicit = home.join("explicit.toml");
+    std::fs::write(
+        &explicit,
+        "default_provider = 'explicit'\n[providers.explicit]\nmodel = 'explicit/model'\n",
+    )
+    .unwrap();
+    let mut request = runtime_request(&home);
+    request.config = Some(explicit.clone());
+    assert!(!pin_new(&home, &mut request, None).await.unwrap());
+    assert_eq!(request.profile.as_deref(), Some("explicit"));
+    assert_eq!(request.model.as_deref(), Some("explicit/model"));
+    assert_eq!(request.config.as_ref(), Some(&explicit));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn pin_new_rejects_a_missing_explicit_config_instead_of_using_runtime_home() {
+    let home = root();
+    std::fs::write(
+        home.join("config.toml"),
+        "default_provider = 'runtime'\n[providers.runtime]\nmodel = 'runtime/model'\n",
+    )
+    .unwrap();
+    let explicit = home.join("missing.toml");
+    let mut request = runtime_request(&home);
+    request.config = Some(explicit.clone());
+    let error = pin_new(&home, &mut request, None).await.unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("configuration file does not exist"));
+    assert!(message.contains(&explicit.display().to_string()));
+    assert_eq!(request.profile, None);
+    assert_eq!(request.model, None);
+    assert_eq!(request.config.as_ref(), Some(&explicit));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn pin_new_without_runtime_home_config_uses_empty_defaults() {
+    let home = root();
+    let mut request = runtime_request(&home);
+    request.profile = Some("workspace-provider".into());
+    assert!(!pin_new(&home, &mut request, None).await.unwrap());
+    assert_eq!(request.profile.as_deref(), Some("workspace-provider"));
+    assert_eq!(request.model, None);
+    assert_eq!(request.config, None);
+    assert!(!home.join("config.toml").exists());
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 #[test]
 fn default_selection_and_restore_keep_provider_and_model_fixed() {
     let loaded = configured();

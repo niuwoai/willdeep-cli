@@ -1033,6 +1033,16 @@ impl Agent {
             self.restore_team_for_execution().await?;
         }
         preparation.mark("restore_team");
+        if sink.is_some_and(|sink| sink.is_new_input())
+            && self
+                .goal_continuation
+                .as_ref()
+                .is_some_and(|goal| goal.is_active())
+        {
+            return Err(AgentError::Checkpoint(
+                "An active Goal must retain its task verification scope; use the recovery checkpoint sink.".into(),
+            ));
+        }
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
         let deadline = self
             .time_budget

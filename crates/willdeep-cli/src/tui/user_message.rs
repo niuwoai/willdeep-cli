@@ -138,11 +138,13 @@ impl App {
                 // 行本身一直可点，但完整命令只在点开之后才画出来。
                 // 记下的展开内容不管展开状态，收起时照样留着，下次点开还在。
                 let expansion = self
-                    .expanded_tool_rows
-                    .contains(&source)
+                    .tool_row_open(source)
                     .then(|| self.tool_expansions.get(&source).cloned())
                     .flatten();
-                Some((target, (source, expansion)))
+                Some((
+                    target,
+                    (source, expansion, self.tool_visuals.is_diff(source)),
+                ))
             })
             .collect();
         let mut frame = message_time::render_transcript(
@@ -246,6 +248,7 @@ impl App {
     }
 
     pub(super) fn update_user_message_hits(&mut self, offset: usize, top: u16) {
+        self.update_thought_hits(offset, top);
         self.user_message_hit_rows = self
             .user_message_controls
             .iter()

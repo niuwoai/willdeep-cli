@@ -56,6 +56,15 @@ pub(super) struct CodeCopyState {
     hint_shown: bool,
     /// 徽标按下后要连拖动、抬起一起吃掉，避免旧选区在松手时又复制一次。
     badge_pressed: bool,
+    /// 实例级测试写入端，不访问系统剪贴板、终端或进程环境。
+    #[cfg(test)]
+    clipboard_fixture: Option<ClipboardFixture>,
+}
+
+#[cfg(test)]
+struct ClipboardFixture {
+    result: Result<ClipboardRoute, String>,
+    writes: std::sync::Mutex<Vec<String>>,
 }
 
 struct Feedback {
@@ -95,7 +104,31 @@ impl CodeCopyState {
     }
 
     pub(super) fn write_clipboard(&self, text: &str) -> Result<ClipboardRoute, String> {
+        #[cfg(test)]
+        if let Some(fixture) = &self.clipboard_fixture {
+            fixture.writes.lock().unwrap().push(text.to_owned());
+            return fixture.result.clone();
+        }
         write_code_clipboard(text, self.hosted)
+    }
+
+    #[cfg(test)]
+    pub(super) fn stub_clipboard(&mut self, result: Result<ClipboardRoute, String>) {
+        self.clipboard_fixture = Some(ClipboardFixture {
+            result,
+            writes: std::sync::Mutex::new(Vec::new()),
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clipboard_writes(&self) -> Vec<String> {
+        self.clipboard_fixture
+            .as_ref()
+            .expect("clipboard fixture must be installed before inspecting writes")
+            .writes
+            .lock()
+            .unwrap()
+            .clone()
     }
 
     pub(super) fn set_blocks(&mut self, blocks: Vec<CodeBlock>) {
@@ -548,6 +581,26 @@ mod tests {
             column: 2,
             row: 2,
             modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn clipboard_fixture_records_original_writes_and_returns_each_result() {
+        let original = "中🙂  \n\n  tail ";
+        let mut state = CodeCopyState::new(false);
+        for result in [
+            Ok(ClipboardRoute::Local),
+            Ok(ClipboardRoute::Terminal),
+            Err("fixture clipboard unavailable".into()),
+        ] {
+            state.stub_clipboard(result.clone());
+            assert!(state.clipboard_writes().is_empty());
+            assert_eq!(state.write_clipboard(original), result);
+            assert_eq!(state.write_clipboard(""), result);
+            assert_eq!(state.clipboard_writes(), vec![original, ""]);
+            state.clear();
+            assert_eq!(state.write_clipboard(original), result);
+            assert_eq!(state.clipboard_writes(), vec![original, "", original]);
         }
     }
 

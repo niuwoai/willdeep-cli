@@ -68,13 +68,14 @@ fn lost_receipt_and_early_start_merge_only_the_proven_identity() {
     app.reconcile_runtime_deliveries(std::slice::from_ref(&receipt));
     assert_eq!(app.transcript.len(), 2);
     assert_eq!(app.pending_runtime_echoes.len(), 2);
-    assert_eq!(app.pending_runtime_echoes[0].record, Some(0));
+    assert_eq!(app.pending_runtime_echoes[0].record, Some(1));
     assert_eq!(
         app.pending_runtime_echoes[0].status,
         DeliveryStatus::Started
     );
-    assert_eq!(app.message_times.time_at(0), Some(42));
-    assert_eq!(app.transcript_attachments[0].len(), 1);
+    assert_eq!(app.pending_runtime_echoes[1].record, Some(0));
+    assert_eq!(app.message_times.time_at(1), Some(42));
+    assert_eq!(app.transcript_attachments[1].len(), 1);
     app.note_runtime_input_started(receipt.id, "same");
     assert_eq!(app.transcript.len(), 2);
 }
@@ -92,9 +93,9 @@ fn queued_runtime_receipt_reuses_the_exact_placeholder_once() {
     );
     app.note_runtime_input_started(receipt.id, "same");
     assert_eq!(app.transcript.len(), 3);
-    assert_eq!(app.pending_runtime_echoes[0].record, Some(1));
-    assert_eq!(app.message_times.time_at(1), Some(42));
-    assert_eq!(app.transcript[2], "You: same");
+    assert_eq!(app.pending_runtime_echoes[0].record, Some(2));
+    assert_eq!(app.message_times.time_at(2), Some(42));
+    assert_eq!(app.transcript[1], "You: same");
 }
 
 #[test]
@@ -211,13 +212,13 @@ fn editing_and_claiming_preserve_the_original_timestamp_and_attachments() {
     app.sync_runtime_delivery_queue(&[queued(&receipt, "edited elsewhere")]);
     app.note_runtime_input_started(uuid::Uuid::new_v4(), "edited elsewhere");
     app.note_runtime_input_started(receipt.id, "edited elsewhere");
-    assert_eq!(app.message_times.time_at(0), Some(42));
-    assert_eq!(app.transcript_attachments[0].len(), 1);
+    assert_eq!(app.message_times.time_at(1), Some(42));
+    assert_eq!(app.transcript_attachments[1].len(), 1);
     assert!(
-        matches!(&app.transcript_attachments[0][0], MessageAttachment::Text { name, content } if name == "keep.txt" && content == "contents")
+        matches!(&app.transcript_attachments[1][0], MessageAttachment::Text { name, content } if name == "keep.txt" && content == "contents")
     );
-    assert!(app.transcript_attachments[1].is_empty());
-    assert!(app.transcript[0].contains("edited elsewhere"));
+    assert!(app.transcript_attachments[0].is_empty());
+    assert!(app.transcript[1].contains("edited elsewhere"));
 }
 
 #[test]
@@ -297,4 +298,95 @@ fn receipt_status_follows_the_actual_turn_including_human_waits() {
         assert_eq!(app.pending_runtime_echoes[0].status, expected);
         assert!(app.transcript[0].contains(expected.label(Language::En)));
     }
+}
+
+#[test]
+fn start_event_positions_after_prior_output_even_when_snapshot_advanced_first() {
+    for status in [TurnStatus::Running, TurnStatus::Completed] {
+        let mut app = App::new(Vec::new(), Language::En);
+        let mut receipt = turn(TurnStatus::Queued);
+        app.append_transcript_at("You: queued".into(), 42);
+        app.echo_runtime_submission("queued", &receipt, false, Some(0));
+        app.append_transcript_at(format!("{ASSISTANT_ROW_PREFIX}previous answer"), 99);
+        receipt.status = status;
+        app.reconcile_runtime_deliveries(std::slice::from_ref(&receipt));
+        assert_eq!(app.pending_runtime_echoes[0].record, Some(0));
+        app.note_runtime_input_started(receipt.id, "queued");
+        assert_eq!(app.pending_runtime_echoes[0].record, Some(1));
+        assert_eq!(app.message_times.time_at(1), Some(42));
+        assert!(app.transcript[0].ends_with("previous answer"));
+        app.append_transcript(format!("{ASSISTANT_ROW_PREFIX}next answer"));
+        let settled = app.transcript.clone();
+        app.note_runtime_input_started(receipt.id, "stale replay");
+        app.reconcile_runtime_deliveries(&[receipt]);
+        assert_eq!(app.transcript, settled);
+    }
+}
+
+#[test]
+fn identical_queued_inputs_move_independently_in_actual_execution_order() {
+    let mut app = App::new(Vec::new(), Language::En);
+    let first = turn(TurnStatus::Queued);
+    let second = turn(TurnStatus::Queued);
+    app.echo_runtime_submission("same", &first, false, None);
+    app.echo_runtime_submission("same", &second, false, None);
+    app.append_transcript(format!("{ASSISTANT_ROW_PREFIX}previous answer"));
+    app.note_runtime_input_started(first.id, "same");
+    app.append_transcript(format!("{ASSISTANT_ROW_PREFIX}first answer"));
+    app.note_runtime_input_started(second.id, "same");
+    app.append_transcript(format!("{ASSISTANT_ROW_PREFIX}second answer"));
+    assert_eq!(app.pending_runtime_echoes[0].record, Some(1));
+    assert_eq!(app.pending_runtime_echoes[1].record, Some(3));
+    assert!(app.transcript[0].ends_with("previous answer"));
+    assert!(app.transcript[1].ends_with("same"));
+    assert!(app.transcript[2].ends_with("first answer"));
+    assert!(app.transcript[3].ends_with("same"));
+    assert!(app.transcript[4].ends_with("second answer"));
+    let settled = app.transcript.clone();
+    app.note_runtime_input_started(first.id, "same");
+    app.note_runtime_input_started(second.id, "same");
+    assert_eq!(app.transcript, settled);
+}
+
+#[test]
+fn runtime_input_boundary_commits_the_previous_live_or_held_output_first() {
+    for held in [false, true] {
+        let mut app = App::new(Vec::new(), Language::En);
+        let receipt = turn(TurnStatus::Queued);
+        app.begin_turn(true, "working".into());
+        app.echo_runtime_submission("next question", &receipt, false, None);
+        if held {
+            app.note_narration("previous answer");
+        } else {
+            app.stream_transient(StreamKind::Reply, "previous answer");
+        }
+        app.note_runtime_input_started(receipt.id, "next question");
+        let user = app.pending_runtime_echoes[0].record.unwrap();
+        assert!(user > 0);
+        assert!(
+            app.transcript[user - 1].ends_with("previous answer"),
+            "{:?}",
+            app.transcript
+        );
+        assert!(app.transcript[user].ends_with("next question"));
+        assert!(app.transient_thought.is_none());
+        assert!(app.held_narration.is_none());
+    }
+}
+
+#[test]
+fn a_delivered_message_clears_only_the_last_pending_delivery_notice() {
+    let mut app = App::new(Vec::new(), Language::En);
+    let first = turn(TurnStatus::Queued);
+    let second = turn(TurnStatus::Queued);
+    app.echo_runtime_submission("one", &first, false, None);
+    app.echo_runtime_submission("two", &second, false, None);
+    app.notice = Some(DeliveryStatus::Queued.feedback(Language::En).into());
+    app.note_runtime_input_started(first.id, "one");
+    assert!(app.notice.is_some());
+    app.note_runtime_input_started(second.id, "two");
+    assert!(app.notice.is_none());
+    app.notice = Some("unrelated feedback".into());
+    app.note_runtime_input_started(second.id, "two");
+    assert_eq!(app.notice.as_deref(), Some("unrelated feedback"));
 }

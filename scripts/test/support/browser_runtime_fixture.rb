@@ -274,6 +274,7 @@ if $PROGRAM_NAME == __FILE__
     version = 1
     default_provider = "fixture"
     [agent]
+    language = "en"
     approval = "full-access"
     sandbox = false
     max_turns = 24

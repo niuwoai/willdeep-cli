@@ -4,6 +4,8 @@ use super::*;
 mod history_folding_tests;
 #[path = "test_suite/prompt_history_tests.rs"]
 mod prompt_history_tests;
+#[path = "test_suite/thought_click_tests.rs"]
+mod thought_click_tests;
 
 #[path = "test_suite/model_cascade.rs"]
 mod model_cascade;

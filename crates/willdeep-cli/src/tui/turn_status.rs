@@ -161,6 +161,8 @@ impl App {
     pub(super) fn note_turn_outcome(&mut self, outcome: TurnOutcome) {
         if self.running && self.last_turn_outcome.is_none() {
             self.last_turn_outcome = Some(outcome);
+            self.tool_visuals.finish();
+            self.transcript_render_cache = None;
         }
     }
 

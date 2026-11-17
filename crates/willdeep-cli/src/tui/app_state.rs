@@ -137,6 +137,7 @@ impl App {
             thought_hit_rows: Vec::new(),
             expanded_tool_rows: BTreeSet::new(),
             tool_expansions: BTreeMap::new(),
+            tool_visuals: tool_visuals::ToolVisuals::default(),
             tool_row_hits: Vec::new(),
             tool_row_controls: Vec::new(),
             expanded_user_messages: BTreeMap::new(),
@@ -324,6 +325,7 @@ impl App {
         self.thought_hit_rows.clear();
         self.expanded_tool_rows.clear();
         self.tool_expansions.clear();
+        self.tool_visuals = tool_visuals::ToolVisuals::default();
         self.tool_row_hits.clear();
         self.tool_row_controls.clear();
         self.expanded_user_messages.clear();
@@ -1210,6 +1212,8 @@ impl App {
     }
 
     pub(super) fn finish_turn(&mut self) {
+        self.tool_visuals.finish();
+        self.transcript_render_cache = None;
         let was_running = self.running;
         self.finish_thought();
         self.finish_reply_stream();

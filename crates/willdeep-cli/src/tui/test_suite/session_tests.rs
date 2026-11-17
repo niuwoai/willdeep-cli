@@ -727,11 +727,16 @@ fn runtime_hands_back_undelivered_steering_and_the_tui_requeues_it() {
     assert_eq!(app.queued_prompts.len(), 1);
     assert_eq!(app.queued_prompts[0].text, "先别删，只改 handler");
     assert!(
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("The last message missed this turn")),
+        "{:?}",
+        app.notice
+    );
+    assert!(
         app.transcript
             .iter()
-            .any(|line| line.starts_with("System: The last message missed this turn")),
-        "{:?}",
-        app.transcript
+            .all(|line| !line.starts_with("System:"))
     );
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -2443,10 +2448,13 @@ fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
     assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
     assert!(app.deferred_steering.is_empty());
     assert!(
-        app.transcript.iter().any(|row| row.contains("没赶上")),
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("没赶上")),
         "the user is told it missed this turn: {:?}",
-        app.transcript
+        app.notice
     );
+    assert!(app.transcript.iter().all(|row| !row.starts_with("System:")));
     app.finish_turn();
     assert!(!app.compression_in_progress());
     assert_eq!(

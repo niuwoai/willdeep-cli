@@ -14,6 +14,8 @@ pub(crate) mod browser;
 mod init_tests;
 mod redaction;
 pub(crate) mod search;
+#[cfg(test)]
+mod subagent_tests;
 mod ui_settings;
 use redaction::redact_inline_secrets;
 #[cfg(test)]
@@ -1603,7 +1605,12 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
                 | "tester"
                 | "ops_runner"
         ) {
-            bail!("unknown subagent profile: {name}");
+            let language = crate::i18n::Language::parse(file.agent.language.as_deref())?;
+            bail!(
+                "unknown subagent profile: {name} ({}; [subagents.{name}])\n{}",
+                path.display(),
+                language.subagent_configuration_hint()
+            );
         }
         // 4K is below any usable worker budget once the system prompt and
         // tool schemas are paid for; past the 1M ceiling nothing real is being

@@ -28,6 +28,7 @@ pub(super) struct TranscriptRenderCache {
     expanded_tools: BTreeMap<usize, String>,
     /// 哪些行处于展开状态。和内容分开记：收起不删内容，只改这一项。
     open_tools: BTreeSet<usize>,
+    tool_visuals: tool_visuals::ToolVisuals,
     language: Language,
     search: Option<String>,
     time_labels: Vec<Option<String>>,
@@ -79,6 +80,7 @@ impl App {
                 && cache.expanded == self.tool_rows_expanded
                 && cache.expanded_tools == self.tool_expansions
                 && cache.open_tools == self.expanded_tool_rows
+                && cache.tool_visuals == self.tool_visuals
                 && cache.language == self.language
                 && cache.search == search
                 && cache.assistant_name == self.assistant_name()
@@ -116,6 +118,7 @@ impl App {
                 expanded: self.tool_rows_expanded,
                 expanded_tools: self.tool_expansions.clone(),
                 open_tools: self.expanded_tool_rows.clone(),
+                tool_visuals: self.tool_visuals.clone(),
                 language: self.language,
                 search: search.clone(),
                 assistant_name: self.assistant_name(),
@@ -413,12 +416,41 @@ pub(super) fn colored_transcript_with_name(
     language: Language,
     assistant_name: &str,
 ) -> Text<'static> {
+    colored_transcript_rows(entries, search_query, width, language, assistant_name, true)
+}
+
+/// 单条记录不知道自己是否为聊天区末尾，不自行添加等待输入提示。
+pub(super) fn colored_transcript_entry_with_name(
+    entry: &str,
+    search_query: Option<&str>,
+    width: usize,
+    language: Language,
+    assistant_name: &str,
+) -> Text<'static> {
+    colored_transcript_rows(
+        &[entry.to_owned()],
+        search_query,
+        width,
+        language,
+        assistant_name,
+        false,
+    )
+}
+
+fn colored_transcript_rows(
+    entries: &[String],
+    search_query: Option<&str>,
+    width: usize,
+    language: Language,
+    assistant_name: &str,
+    prompt_last: bool,
+) -> Text<'static> {
     let label = assistant_display_name(assistant_name);
     let last = entries.len().saturating_sub(1);
     let mut lines = Vec::new();
     for (index, raw) in entries.iter().enumerate() {
         // 「轮到你」只属于最后一行。逐行画的路径先统一拿掉，这里再补回来。
-        let displayed = if index == last {
+        let displayed = if prompt_last && index == last {
             with_your_turn(raw, language)
         } else {
             divider_without_your_turn(raw, language)
@@ -497,7 +529,7 @@ pub(super) fn colored_transcript_with_name(
     text
 }
 
-fn thought_entry_parts(value: &str) -> Option<(&str, &str, bool)> {
+pub(super) fn thought_entry_parts(value: &str) -> Option<(&str, &str, bool)> {
     let (expanded, prefix) = if let Some(rest) = value.strip_prefix("· + Thought: ") {
         (false, rest)
     } else if let Some(rest) = value.strip_prefix("· − Thought: ") {
@@ -550,8 +582,8 @@ mod tool_row_style_tests {
         assert_eq!(status.lines[0].style.fg, Some(Color::DarkGray));
     }
 
-    /// 用户消息与 Thought 之间、回复后和下一轮用户开口前各留一行；
-    /// 连续两条助手回复之间也留一行。空行由整段渲染补上，逐条上色看不到下一条记录。
+    /// 用户消息与 Thought 之间、下一轮用户开口前各留一行；
+    /// 回复与本轮分隔线紧贴。空行由整段渲染补上，逐条上色看不到下一条记录。
     #[test]
     fn the_turn_divider_keeps_one_blank_row_before_the_next_user_message() {
         let text = message_time::render_with_times(
@@ -576,11 +608,11 @@ mod tool_row_style_tests {
         assert_eq!(rows[1], "");
         assert!(rows[2].contains("Thought: 3.0s"), "{rows:?}");
         assert_eq!(rows[3], "WillDeep: done");
-        assert_eq!(rows[4], "");
-        assert!(rows[5].contains("turn finished"), "{rows:?}");
-        assert_eq!(rows[6], "");
-        assert_eq!(rows[7].trim(), "next");
-        assert_eq!(rows.len(), 8, "{rows:?}");
+        assert!(rows[4].contains("turn finished"), "{rows:?}");
+        assert!(!rows[4].contains("your turn"), "{rows:?}");
+        assert_eq!(rows[5], "");
+        assert_eq!(rows[6].trim(), "next");
+        assert_eq!(rows.len(), 7, "{rows:?}");
     }
 
     /// 用户直接开口、中间没有「本轮结束」分隔线时，前面也要让开一行。
@@ -628,14 +660,13 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows.len(), 7, "{rows:?}");
+        assert_eq!(rows.len(), 6, "{rows:?}");
         assert_eq!(rows[0].trim(), "question");
         assert_eq!(rows[1], "");
         assert!(rows[2].ends_with(": first"), "{rows:?}");
         assert_eq!(rows[3], "");
         assert!(rows[4].ends_with(": second"), "{rows:?}");
-        assert_eq!(rows[5], "");
-        assert!(rows[6].starts_with("── turn finished"), "{rows:?}");
+        assert!(rows[5].starts_with("── turn finished"), "{rows:?}");
     }
 
     /// 起过名的实例，回复行显示那个名字而不是 WillDeep；记录原文仍是默认前缀。
@@ -936,6 +967,63 @@ mod tool_row_style_tests {
         );
     }
 
+    #[test]
+    fn folded_dividers_touch_the_reply_and_prompt_only_at_the_end() {
+        for (language, divider) in [
+            (Language::ZhCn, "── 本轮结束 ──"),
+            (Language::En, "── turn finished ──"),
+            (Language::Ja, "── ターン終了 ──"),
+        ] {
+            let prompt = your_turn_label(language);
+            let entries = [
+                format!("{ASSISTANT_ROW_PREFIX}first paragraph\n\nlast line"),
+                with_your_turn(divider, language),
+                "You: next".to_owned(),
+                format!("{ASSISTANT_ROW_PREFIX}current reply"),
+                divider.to_owned(),
+            ];
+            for width in [32, 100] {
+                for spacing in [0, 2] {
+                    for end in [4, 5] {
+                        let frame = message_time::render_transcript(
+                            &entries[..end],
+                            &[Some("6m ago · fixture/model".to_owned())],
+                            None,
+                            width,
+                            language,
+                            &BTreeMap::new(),
+                            &BTreeMap::new(),
+                            &[],
+                            "fixture",
+                            spacing,
+                        );
+                        let rows = text_rows(&frame.text);
+                        let dividers = rows
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, row)| row.starts_with(TURN_DIVIDER_PREFIX))
+                            .collect::<Vec<_>>();
+                        assert_eq!(dividers.len(), end - 3, "{rows:?}");
+                        for (index, _) in &dividers {
+                            assert!(*index > 0 && !rows[index - 1].is_empty(), "{rows:?}");
+                            assert_ne!(
+                                frame.sources.rows[index - 1].fallback.part,
+                                rendering::source::SourcePart::Decoration,
+                                "{rows:?}"
+                            );
+                        }
+                        assert!(!dividers[0].1.contains(prompt), "{rows:?}");
+                        assert_eq!(
+                            rows.iter().filter(|row| row.contains(prompt)).count(),
+                            usize::from(end == entries.len()),
+                            "{rows:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// 「轮到你」只属于最后一行。后面有了新输出，旧分隔线就不再说这话。
     #[test]
     fn your_turn_appears_only_on_the_last_divider() {
@@ -956,8 +1044,15 @@ mod tool_row_style_tests {
         assert!(drawn[1].ends_with("· 轮到你 ──"), "{drawn:?}");
 
         // 旧版本把「轮到你」写进了记录：画的时候先拿掉，再只补最后一行。
-        let legacy = divider_without_your_turn("── turn finished · your turn ──", Language::En);
-        assert_eq!(legacy, "── turn finished ──");
+        for stored in [Language::ZhCn, Language::En, Language::Ja] {
+            let legacy = with_your_turn("── turn finished ──", stored);
+            for current in [Language::ZhCn, Language::En, Language::Ja] {
+                assert_eq!(
+                    divider_without_your_turn(&legacy, current),
+                    "── turn finished ──"
+                );
+            }
+        }
     }
 }
 
@@ -1826,8 +1921,11 @@ pub(super) fn divider_without_your_turn(row: &str, language: Language) -> String
     else {
         return row.to_owned();
     };
-    let label = your_turn_label(language);
-    let body = body.strip_suffix(&format!(" · {label}")).unwrap_or(body);
+    // 历史记录可能来自其他界面语言；切换语言也不能保留旧等待提示。
+    let body = [language, Language::ZhCn, Language::En, Language::Ja]
+        .into_iter()
+        .find_map(|language| body.strip_suffix(&format!(" · {}", your_turn_label(language))))
+        .unwrap_or(body);
     format!("{TURN_DIVIDER_PREFIX}{body} ──")
 }
 

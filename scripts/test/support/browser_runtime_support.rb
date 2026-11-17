@@ -51,7 +51,7 @@ module BrowserRuntime
       'XDG_CONFIG_HOME' => File.join(home, '.config'), 'XDG_DATA_HOME' => File.join(home, '.local/share'),
       'XDG_CACHE_HOME' => File.join(home, '.cache'), 'TMPDIR' => File.join(root, 'tmp'),
       'TMP' => File.join(root, 'tmp'), 'TEMP' => File.join(root, 'tmp'),
-      'TERM' => 'xterm-256color', 'LANG' => 'en_US.UTF-8', 'WILLDEEP_LANGUAGE' => 'en',
+      'TERM' => 'xterm-256color', 'LANG' => 'en_US.UTF-8',
       'WILLDEEP_LOCAL_DISCOVERY' => '0', 'WILLDEEP_TELEMETRY_DISABLED' => '1', 'DO_NOT_TRACK' => '1',
       'NO_PROXY' => '127.0.0.1,localhost', 'no_proxy' => '127.0.0.1,localhost',
       'SSH_CONNECTION' => '127.0.0.1 40000 127.0.0.1 22'

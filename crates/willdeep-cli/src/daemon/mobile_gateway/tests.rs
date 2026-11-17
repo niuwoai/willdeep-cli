@@ -24,6 +24,8 @@ impl Harness {
             std::env::temp_dir().join(format!("willdeep-mobile-gateway-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("project")).unwrap();
         let root = root.canonicalize().unwrap();
+        // The real control plane loads defaults from this Runtime's home.
+        std::fs::write(root.join("config.toml"), "").unwrap();
         let workspace = root.join("project");
         // Use the production layout: the execution Harness reads the persisted
         // confirmation policy from this same Runtime Turn ledger.

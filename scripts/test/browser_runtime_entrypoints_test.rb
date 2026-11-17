@@ -229,6 +229,10 @@ class BrowserRuntimeEntrypoints
       expected_statuses = scenario == 'success' ? {'completed' => 10} : {'completed' => 3, 'interrupted' => 1}
       assert(tools.group_by { |tool| tool.fetch('status') }.transform_values(&:length) == expected_statuses,
         "Runtime tool receipts do not match #{scenario}: #{tools}")
+      settled_turn = api('turn.get', id: turn.fetch('id'))
+      evidence[:settled_turn] = settled_turn
+      assert(settled_turn.fetch('status') == wanted && settled_turn['completed_at'],
+        "Runtime Turn lost terminal status after tool/resource cleanup: #{settled_turn['status']}")
       if process
         evidence[:cli_result] = process.result(seconds: 10)
         if scenario == 'success'
@@ -308,7 +312,7 @@ class BrowserRuntimeEntrypoints
   end
 
   def artifact_files
-    Dir.glob(File.join(@manifest.fetch('artifacts'), '*'), File::FNM_DOTMATCH)
+    Dir.glob(File.join(@manifest.fetch('artifacts'), '**', '*'), File::FNM_DOTMATCH)
       .select { |path| File.file?(path) }.map { |path| File.realpath(path) }.sort
   end
 

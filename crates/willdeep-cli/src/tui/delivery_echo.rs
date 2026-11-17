@@ -10,6 +10,9 @@ pub(super) struct PendingRuntimeEcho {
     pub(super) status: DeliveryStatus,
     pub(super) text: String,
     pub(super) record: Option<usize>,
+    // Snapshots can advance status before the ordered start event arrives.
+    // Only that event establishes the record's position in the conversation.
+    positioned: bool,
     pub(super) priority_requested: bool,
     pub(super) independence_confirmed: bool,
     held: bool,
@@ -186,6 +189,7 @@ impl App {
             status: DeliveryStatus::Unconfirmed,
             text: willdeep_core::conversation::visible_user_text(text).to_owned(),
             record,
+            positioned: false,
             priority_requested: false,
             independence_confirmed: false,
             held,
@@ -228,6 +232,7 @@ impl App {
             status: DeliveryStatus::from_turn(turn, held),
             text: visible.to_owned(),
             record: Some(record),
+            positioned: false,
             priority_requested: false,
             independence_confirmed: false,
             held,
@@ -247,19 +252,53 @@ impl App {
         else {
             return false;
         };
+        if !self.pending_runtime_echoes[index].positioned {
+            self.finish_runtime_input_boundary();
+            if let Some(record) = self.pending_runtime_echoes[index].record {
+                self.move_transcript_row_to_end(record);
+            }
+            self.pending_runtime_echoes[index].positioned = true;
+        }
         let echo = &mut self.pending_runtime_echoes[index];
         if echo.is_pending() {
             echo.text = willdeep_core::conversation::visible_user_text(text).to_owned();
         }
         echo.advance(DeliveryStatus::Started);
         self.render_runtime_echo(index);
+        self.clear_started_delivery_notice();
         true
+    }
+
+    fn finish_runtime_input_boundary(&mut self) {
+        // The preceding turn may still own a live/held display buffer. Commit
+        // it before positioning the next user; do not reset the new turn's clock.
+        self.finish_thought();
+        self.finish_reply_stream();
+        self.flush_held_narration();
+    }
+
+    fn clear_started_delivery_notice(&mut self) {
+        if !self
+            .pending_runtime_echoes
+            .iter()
+            .any(PendingRuntimeEcho::is_pending)
+            && [
+                DeliveryStatus::Queued,
+                DeliveryStatus::Held,
+                DeliveryStatus::Unconfirmed,
+            ]
+            .iter()
+            .any(|status| self.notice.as_deref() == Some(status.feedback(self.language)))
+        {
+            self.notice = None;
+        }
     }
 
     pub(super) fn note_runtime_input_started(&mut self, turn_id: uuid::Uuid, text: &str) {
         if self.claim_runtime_echo(turn_id, text) {
             return;
         }
+        self.finish_runtime_input_boundary();
         let text = willdeep_core::conversation::visible_user_text(text).to_owned();
         let record = self.transcript.len();
         self.append_transcript(format!("You: {}", terminal_safe_text(&text)));
@@ -270,6 +309,7 @@ impl App {
             status: DeliveryStatus::Started,
             text: text.clone(),
             record: Some(record),
+            positioned: true,
             priority_requested: false,
             independence_confirmed: false,
             held: false,
@@ -315,7 +355,8 @@ impl App {
             }
         }
         // A start event may arrive before a lost receipt is recovered. Merge
-        // only proven identities, preserving the earlier record and metadata.
+        // only proven identities: keep its established position, carrying the
+        // original submission metadata across from the earlier placeholder.
         let mut index = 0;
         while index < self.pending_runtime_echoes.len() {
             let turn_id = self.pending_runtime_echoes[index].turn_id;
@@ -328,8 +369,24 @@ impl App {
                         .remove(duplicate)
                         .expect("known duplicate");
                     self.pending_runtime_echoes[index].advance(other.status);
-                    let kept = self.pending_runtime_echoes[index].record;
-                    if let Some(removed) = other.record.filter(|record| Some(*record) != kept) {
+                    let original = self.pending_runtime_echoes[index].record;
+                    let prefer_positioned = !self.pending_runtime_echoes[index].positioned
+                        && other.positioned
+                        && original.is_some()
+                        && other.record.is_some();
+                    let (kept, removed) = if prefer_positioned {
+                        let kept = other.record.expect("positioned record");
+                        let removed = original.expect("original placeholder");
+                        self.message_times.copy_time(removed, kept);
+                        self.viewport_merge_record(removed, kept);
+                        self.pending_runtime_echoes[index].record = Some(kept);
+                        self.pending_runtime_echoes[index].text = other.text;
+                        (Some(kept), Some(removed))
+                    } else {
+                        (original, other.record)
+                    };
+                    self.pending_runtime_echoes[index].positioned |= other.positioned;
+                    if let Some(removed) = removed.filter(|record| Some(*record) != kept) {
                         if let Some(kept) = kept
                             && self.transcript_attachments[kept].is_empty()
                         {

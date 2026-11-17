@@ -144,6 +144,32 @@ fn task_diagnostics_reports_the_failing_tool_that_events_redact() {
 }
 
 #[test]
+fn continue_task_without_session_is_rejected_before_startup() {
+    let _serial = process_test_guard();
+    let root = temporary_root();
+    let home = root.join("home");
+    let _guard = TestGuard::new(root.clone(), home.clone());
+    for local in [false, true] {
+        let mut command = willdeep(&home);
+        command.args(["run", "--continue-task"]);
+        if local {
+            command.arg("--local");
+        }
+        let output = command.arg("inspect").output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("--continue-task requires an existing Session")
+        );
+        assert!(
+            !home.exists(),
+            "invalid continuation must not initialize state"
+        );
+    }
+}
+
+#[test]
 fn explicit_verification_survives_runtime_restart_and_config_removal() {
     let _serial = process_test_guard();
     let root = temporary_root();
@@ -182,7 +208,7 @@ fn explicit_verification_survives_runtime_restart_and_config_removal() {
             "json",
         ]);
         if let Some(session) = session {
-            command.args(["--session", session]);
+            command.args(["--session", session, "--continue-task"]);
         }
         command.arg("complete the objective").output().unwrap()
     };
@@ -235,6 +261,53 @@ fn explicit_verification_survives_runtime_restart_and_config_removal() {
     assert_eq!(independent["type"], "completed");
     assert_ne!(independent["session_id"], session);
     assert_eq!(provider.requests(), 7);
+
+    let old_messages = willdeep_core::SessionStore::new(&home)
+        .load(session.parse().unwrap())
+        .unwrap()
+        .messages
+        .len();
+    let question = willdeep(&home)
+        .args([
+            "run",
+            "--config",
+            path_text(&config),
+            "--workspace",
+            path_text(&workspace),
+            "--session",
+            session,
+            "--output",
+            "json",
+            "你是谁",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&question, "ordinary input does not continue the old task");
+    let question: serde_json::Value = serde_json::from_slice(&question.stdout).unwrap();
+    assert_eq!(question["type"], "completed");
+    assert_eq!(question["stop_reason"], "finished");
+    assert_eq!(question["turns"], 1);
+    assert_eq!(question["session_id"], session);
+    assert_eq!(provider.requests(), 8);
+    let saved = willdeep_core::SessionStore::new(&home)
+        .load(session.parse().unwrap())
+        .unwrap();
+    let checkpoint = saved.execution_checkpoint.unwrap();
+    assert_eq!(
+        checkpoint.status,
+        willdeep_core::checkpoint::CheckpointStatus::Partial
+    );
+    assert_eq!(
+        checkpoint.required_verifications,
+        ["cargo test --workspace"]
+    );
+    assert!(saved.messages[old_messages..].iter().all(|message| {
+        message.tool_calls.is_empty()
+            && message.role != willdeep_core::Role::Tool
+            && !message
+                .content
+                .contains("[completion-verification-required]")
+    }));
     guard.stop_daemon();
 }
 
@@ -1399,6 +1472,7 @@ puts JSON.generate({code: code, timeout: timeout, injected: injected, observed: 
             path_text(&workspace),
             "--session",
             id,
+            "--continue-task",
             "--output",
             "json",
             "Continue without repeating the completed marker write",

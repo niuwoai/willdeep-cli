@@ -545,7 +545,19 @@ pub async fn pin_new(
     if request.profile.is_none() {
         request.profile = workspace_profile;
     }
-    let loaded = LoadedConfig::load_runtime(request.config.as_deref())?;
+    // A private Runtime must use its own config rather than the process user's default.
+    // Keep the loading path separate from explicit CLI choices below.
+    let path = request
+        .config
+        .clone()
+        .unwrap_or_else(|| home.join("config.toml"));
+    let loaded = if request.config.is_some() || path.exists() {
+        LoadedConfig::load_runtime(Some(&path))?
+    } else {
+        LoadedConfig {
+            file: ConfigFile::default(),
+        }
+    };
     let mut cli = crate::Cli::bare();
     cli.config = request.config.clone();
     cli.profile = request.profile.clone();

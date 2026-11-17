@@ -365,9 +365,13 @@ struct RunArgs {
     #[arg(long, value_name = "PATH")]
     attachment: Vec<PathBuf>,
 
-    /// Resume a saved Session by UUID or `latest`.
+    /// Load a saved Session for a new input by UUID or `latest`.
     #[arg(long, value_name = "ID|latest")]
     session: Option<String>,
+
+    /// Continue the saved task with its original verification requirements. Requires --session or --resume.
+    #[arg(long)]
+    continue_task: bool,
 
     /// Output the final result as text, one JSON object, or NDJSON events.
     #[arg(long, value_enum, default_value = "text")]
@@ -505,6 +509,15 @@ fn administrative_language(cli: &Cli) -> anyhow::Result<i18n::Language> {
 
 fn invalid_run_input(message: impl Into<String>) -> anyhow::Error {
     RunInputError(message.into()).into()
+}
+
+fn validate_run_session(args: &RunArgs, resume: Option<&str>) -> Result<()> {
+    if args.continue_task && args.session.is_none() && resume.is_none() {
+        return Err(invalid_run_input(
+            "--continue-task requires an existing Session selected by --session or --resume",
+        ));
+    }
+    Ok(())
 }
 
 fn stable_exit_code(error: &anyhow::Error) -> i32 {
@@ -646,6 +659,7 @@ async fn run() -> Result<()> {
     let mut cli = Cli::parse();
     let run_args = match cli.command.take() {
         Some(CliCommand::Run(args)) => {
+            validate_run_session(&args, cli.resume.as_deref())?;
             if args.quiet && args.output != RunOutput::Text {
                 return Err(invalid_run_input(
                     "--quiet cannot be combined with --output json or ndjson",
@@ -675,6 +689,7 @@ async fn run() -> Result<()> {
                 input: Some(prepared.brief_path),
                 attachment: Vec::new(),
                 session: Some(prepared.session_id.to_string()),
+                continue_task: false,
                 output: RunOutput::Text,
                 quiet: false,
                 local: false,
@@ -1102,6 +1117,7 @@ async fn run() -> Result<()> {
         harness::ExecutionOptions {
             allow_compress_command,
             replay_existing_user_message: false,
+            continue_task: run_args.as_ref().is_some_and(|args| args.continue_task),
             ownership: None,
         },
     )
@@ -1238,6 +1254,7 @@ async fn run_with_runtime(
             model: session.model.clone(),
             prompt,
             attachments,
+            continue_task: run_args.is_some_and(|args| args.continue_task),
         },
         |event| emit_headless_runtime_event(event, machine_events, quiet),
     )
@@ -2157,6 +2174,9 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
                 "name": call.name,
                 "is_error": is_error
             });
+            if let Some(display) = tui::tool_visuals_receipt(&call.name, &output, is_error) {
+                value["edit_display"] = display;
+            }
             if !is_error
                 && call.name == "update_plan"
                 && let Some(mut receipt) = willdeep_core::planning::receipt(&output)

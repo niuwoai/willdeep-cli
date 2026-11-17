@@ -322,6 +322,8 @@ struct CommitReport {
     recovery_failed: Vec<Problem>,
     cleanup_failed: Vec<Problem>,
     versions: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edit_display: Option<super::edit_display::EditDisplay>,
 }
 
 impl CommitReport {
@@ -337,6 +339,7 @@ impl CommitReport {
             recovery_failed: Vec::new(),
             cleanup_failed: Vec::new(),
             versions: HashMap::new(),
+            edit_display: None,
         }
     }
 
@@ -607,7 +610,7 @@ impl ToolRegistry {
         Ok(preview)
     }
 
-    fn change_receipt_path(&self, path: &Path) -> Result<String, ToolError> {
+    pub(super) fn change_receipt_path(&self, path: &Path) -> Result<String, ToolError> {
         path.strip_prefix(&self.workspace)
             .ok()
             .and_then(Path::to_str)
@@ -617,7 +620,7 @@ impl ToolRegistry {
             })
     }
 
-    fn new_change_path(&self, requested: &str) -> Result<PathBuf, ToolError> {
+    pub(super) fn new_change_path(&self, requested: &str) -> Result<PathBuf, ToolError> {
         let lexical = self.resolve_new(requested)?;
         // No directory creation in preview/preflight: every destination has an
         // existing, resolved parent which can be bound and later revalidated.
@@ -797,8 +800,23 @@ impl ToolRegistry {
             .iter()
             .map(|change| change.reported_path.clone())
             .collect();
+        #[cfg(test)]
+        self.inject_cleanup_failure(&staged);
         cleanup(&mut staged, &mut report);
         if report.cleanup_failed.is_empty() {
+            report.edit_display = Some(super::edit_display::from_snapshots(
+                preview.changes.iter().map(|change| {
+                    let before = change
+                        .before
+                        .as_ref()
+                        .map_or(&[][..], |snapshot| snapshot.bytes.as_slice());
+                    (
+                        change.reported_path.as_str(),
+                        before,
+                        change.after.as_slice(),
+                    )
+                }),
+            ));
             Ok(serde_json::to_string(&report).expect("serializable commit report"))
         } else {
             report.status = "applied_with_cleanup_failure";
@@ -1024,10 +1042,28 @@ struct TestFault {
     #[cfg(unix)]
     external_link: Option<(PathBuf, PathBuf)>,
     fail_recovery: bool,
+    fail_cleanup: bool,
 }
 
 #[cfg(test)]
 impl ToolRegistry {
+    fn inject_cleanup_failure(&self, staged: &[disk::StagedFile]) {
+        if self
+            .file_changes
+            .fault
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|fault| fault.fail_cleanup)
+        {
+            // A successfully installed create retains its staging hard link.
+            // Replace that link with a directory so the real unlink fails.
+            let path = staged[0].temporary_path();
+            std::fs::remove_file(&path).expect("injected cleanup staging link");
+            std::fs::create_dir(path).expect("injected cleanup directory");
+        }
+    }
+
     fn inject_commit_failure(&self, index: usize) -> Result<(), ToolError> {
         let mut fault = self.file_changes.fault.lock().unwrap();
         if let Some(fault) = fault.as_mut()

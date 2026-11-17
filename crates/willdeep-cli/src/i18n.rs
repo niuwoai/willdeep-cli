@@ -75,6 +75,14 @@ impl Language {
         }
     }
 
+    pub fn subagent_configuration_hint(self) -> &'static str {
+        self.text(
+            "[subagents.*] 仅覆盖内置工种参数，不能创建自定义智能体。自定义定义请使用 willdeep agents create/import，模型与窗口绑定请使用 willdeep agents bind <definition_id>。若已安装，请先保留并移出误放的整个配置段，再使用完整的智能体 ID。",
+            "[subagents.*] only overrides built-in worker settings; it does not define custom agents. Use willdeep agents create/import for definitions and willdeep agents bind <definition_id> for model/window bindings. If already installed, preserve and remove the entire misplaced section, then use the full agent ID.",
+            "[subagents.*] は組み込みロールの設定専用です。カスタム定義には willdeep agents create/import、モデルとウィンドウの設定には willdeep agents bind <definition_id> を使用してください。インストール済みなら、誤ったセクション全体を保存して設定から外し、完全なエージェント ID を使用してください。",
+        )
+    }
+
     pub fn compression_configuration_error(self) -> &'static str {
         self.text(
             "压缩配置无法加载，请检查配置文件后重试",

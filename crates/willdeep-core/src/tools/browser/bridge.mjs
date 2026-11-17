@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -11,11 +12,16 @@ const MAX_NODES = 200;
 const MAX_PNG = 8 * 1024 * 1024;
 const RPC_TIMEOUT = 15_000;
 const STATUS_TIMEOUT = 1000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
+const MAX_STARTUP_TIMEOUT_MS = 60_000;
+const STARTUP_POLL_MS = 25;
+const MAX_CHROME_STDERR_BYTES = 8192;
 const CONTROL_WORLD = 'willdeep-controlled-dom';
 let chrome, cdp, profile, origins, pageSession, pageTarget, context;
+let chromeStderr, launchFailure;
 let epoch = 1, pageUrl = 'about:blank', documentId, blocked = 0, mainStatus = null;
 let fatal, initialized = false, creatingPage = false, pageReady;
-let cleanupStarted = false;
+let cleanupStarted = false, navigation;
 const configured = new Set();
 const error = (code, message) => Object.assign(new Error(message), { code });
 
@@ -46,6 +52,7 @@ function checkedUrl(raw) {
   return url.href;
 }
 function permitted(raw) { try { checkedUrl(raw); return true; } catch { return false; } }
+const frameUrl = frame => frame.url + (frame.urlFragment ?? '');
 function checkEpoch(expected) {
   if (!Number.isSafeInteger(expected) || expected !== epoch) {
     throw error('STALE_PAGE', 'Page epoch changed; obtain a new snapshot');
@@ -59,9 +66,60 @@ function status() {
     network_boundary: 'navigation and intercepted requests; not process network isolation' };
 }
 
+function captureChromeStderr(stream) {
+  let bytes = Buffer.alloc(MAX_CHROME_STDERR_BYTES), length = 0;
+  let capturing = true, truncated = false, readFailed = false;
+  stream.on('data', chunk => {
+    // Always drain the pipe, including after successful startup. Retain only a
+    // bounded prefix; a full pipe must never block Chrome or its CDP transport.
+    if (!capturing) return;
+    const remaining = bytes.length - length;
+    length += chunk.copy(bytes, length, 0, Math.min(chunk.length, remaining));
+    truncated ||= chunk.length > remaining;
+  });
+  stream.on('error', () => { readFailed = true; });
+  return {
+    stop() { capturing = false; bytes.fill(0); bytes = Buffer.alloc(0); length = 0; },
+    summary() {
+      // Only fixed labels leave this collector. Never echo arbitrary stderr,
+      // which can contain environment values, credentials, paths or remote URLs.
+      const text = bytes.toString('utf8', 0, length);
+      const tags = [
+        ['sandbox_unavailable', /No usable sandbox|SUID sandbox|Running as root without --no-sandbox|Failed to move to new namespace/iu],
+        ['permission_denied', /Permission denied|Operation not permitted/iu],
+        ['profile_unavailable', /SingletonLock|ProcessSingleton|Failed to create.*(?:directory|profile)/iu],
+        ['missing_runtime_library', /error while loading shared libraries|Library not loaded|dyld\[/iu],
+        ['display_unavailable', /Missing X server|cannot open display/iu],
+        ['resource_exhausted', /Cannot allocate memory|Too many open files|Resource temporarily unavailable/iu],
+        ['browser_crash', /FATAL:|Check failed|Segmentation fault|Received signal/iu],
+      ].filter(([, pattern]) => pattern.test(text)).map(([tag]) => tag);
+      return `stderr_tags=${tags.join(',') || (length ? 'unclassified' : 'none')}; stderr_bytes=${length}; stderr_truncated=${truncated}; stderr_read_failed=${readFailed}`;
+    },
+  };
+}
+function startupError(message, code = 'UNKNOWN') {
+  const exitCode = Number.isInteger(chrome?.exitCode) ? chrome.exitCode : 'none';
+  const signal = /^SIG[A-Z0-9]{1,12}$/u.test(chrome?.signalCode) ? chrome.signalCode : 'none';
+  return error(code, `${message}; spawn_error=${launchFailure ?? 'none'}; exit_code=${exitCode}; exit_signal=${signal}; ${chromeStderr.summary()}`);
+}
+function startupRemaining(deadline, stage) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw startupError(`Chrome ${stage} startup timed out`);
+  return remaining;
+}
+function checkStartupProcess(code = 'MISSING_DEPENDENCY') {
+  if (launchFailure || chrome.exitCode !== null || chrome.signalCode !== null) {
+    throw startupError('Chrome exited before startup completed', code);
+  }
+}
+
 class Cdp {
-  constructor(socket) {
+  constructor(socket, startupDeadline) {
     this.socket = socket; this.next = 1; this.pending = new Map();
+    this.startupDeadline = startupDeadline;
+    chrome.once('exit', () => {
+      if (this.startupDeadline !== undefined) this.fail(startupError('Chrome exited before startup completed'));
+    });
     socket.addEventListener('message', event => {
       try {
         if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > MAX_FRAME) {
@@ -84,11 +142,17 @@ class Cdp {
   }
   send(method, params = {}, sessionId, timeout = RPC_TIMEOUT) {
     if (fatal) return Promise.reject(fatal);
+    if (this.startupDeadline !== undefined) {
+      try { timeout = Math.min(timeout, startupRemaining(this.startupDeadline, 'CDP')); }
+      catch (reason) { this.fail(reason); return Promise.reject(reason); }
+    }
     const id = this.next++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        const reason = error('UNKNOWN', `CDP ${method} timed out; no automatic retry`);
+        const reason = this.startupDeadline !== undefined
+          ? startupError(`Chrome CDP ${method} startup timed out`)
+          : error('UNKNOWN', `CDP ${method} timed out; no automatic retry`);
         reject(reason); this.fail(reason);
       }, timeout);
       this.pending.set(id, { resolve, reject, timer, method });
@@ -100,10 +164,49 @@ class Cdp {
     fatal ??= reason instanceof Error ? reason : error('UNKNOWN', 'CDP failed');
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(fatal); }
     this.pending.clear();
+    navigation?.fail(fatal);
     chrome?.kill('SIGKILL');
   }
 }
 const send = (method, params = {}) => cdp.send(method, params, pageSession);
+
+class Navigation {
+  constructor() {
+    this.frames = new Map(); this.ready = new Set(); this.within = new Map();
+    this.check = () => {};
+  }
+  observe(message) {
+    if (message.sessionId !== pageSession) return;
+    const p = message.params ?? {};
+    if (message.method === 'Page.frameNavigated' && !p.frame.parentId) {
+      this.frames.set(p.frame.id, p.frame.loaderId);
+    } else if (message.method === 'Page.lifecycleEvent' && ['DOMContentLoaded','load'].includes(p.name)) {
+      this.ready.add(JSON.stringify([p.frameId, p.loaderId]));
+    } else if (message.method === 'Page.navigatedWithinDocument') {
+      this.within.set(p.frameId, p.url);
+    }
+    this.check();
+  }
+  wait(result, url) {
+    if (fatal) return Promise.reject(fatal);
+    if (typeof result.frameId !== 'string' || (result.loaderId !== undefined && typeof result.loaderId !== 'string')) {
+      return Promise.reject(error('UNKNOWN', 'Chrome omitted navigation identity; no automatic retry'));
+    }
+    return new Promise((resolve, reject) => {
+      this.reject = reject;
+      this.timer = setTimeout(() => cdp.fail(error('UNKNOWN', 'Navigation commit/readiness timed out; no automatic retry')), RPC_TIMEOUT);
+      this.check = () => {
+        const complete = result.loaderId !== undefined
+          ? this.frames.get(result.frameId) === result.loaderId && this.ready.has(JSON.stringify([result.frameId, result.loaderId]))
+          : this.within.get(result.frameId) === url;
+        if (complete) { this.dispose(); resolve(); }
+      };
+      this.check();
+    });
+  }
+  fail(reason) { this.dispose(); this.reject?.(reason); }
+  dispose() { clearTimeout(this.timer); this.check = () => {}; }
+}
 
 async function liveStatus() {
   // Probe the browser transport and the owned renderer independently. A live
@@ -115,7 +218,7 @@ async function liveStatus() {
     cdp.send('Browser.getVersion', {}, undefined, STATUS_TIMEOUT),
     cdp.send('Page.getFrameTree', {}, pageSession, STATUS_TIMEOUT),
   ]);
-  if (!frameTree?.frame || frameTree.frame.url !== pageUrl) {
+  if (!frameTree?.frame || frameUrl(frameTree.frame) !== pageUrl) {
     throw error('STALE_PAGE', 'Live page and bridge epoch disagree');
   }
   return { ...status(), cdp_verified: true };
@@ -125,7 +228,7 @@ async function isolatedWorld(expected) {
   checkEpoch(expected);
   const { frameTree } = await send('Page.getFrameTree');
   checkEpoch(expected);
-  if (!frameTree?.frame || frameTree.frame.url !== pageUrl) throw error('STALE_PAGE', 'Controlled frame changed');
+  if (!frameTree?.frame || frameUrl(frameTree.frame) !== pageUrl) throw error('STALE_PAGE', 'Controlled frame changed');
   const { executionContextId } = await send('Page.createIsolatedWorld', {
     frameId: frameTree.frame.id, worldName: CONTROL_WORLD,
   });
@@ -199,7 +302,7 @@ async function onEvent(message) {
       await cdp.send('Fetch.continueRequest', { requestId: p.requestId }, message.sessionId);
     }
   } else if (message.sessionId === pageSession && message.method === 'Page.frameNavigated' && !p.frame.parentId) {
-    epoch++; pageUrl = p.frame.url; documentId = undefined;
+    epoch++; pageUrl = frameUrl(p.frame); documentId = undefined;
     if (pageUrl !== 'about:blank' && !permitted(pageUrl)) throw error('ORIGIN_DENIED', 'Page navigated outside allowed origins');
   } else if (message.sessionId === pageSession && message.method === 'Page.navigatedWithinDocument') {
     epoch++; pageUrl = p.url;
@@ -215,11 +318,17 @@ async function onEvent(message) {
   } else if (message.method === 'Page.fileChooserOpened') {
     throw error('UPLOAD_DISABLED', 'File chooser/upload is disabled');
   }
+  navigation?.observe(message);
 }
 
 async function initialize(request) {
-  keys(request, ['id','action','chrome_path','profile','allowed_origins'], ['chrome_path','profile','allowed_origins']);
+  keys(request, ['id','action','chrome_path','profile','allowed_origins','startup_timeout_ms'], ['chrome_path','profile','allowed_origins']);
   if (initialized || chrome) throw error('INVALID_ARGUMENTS', 'Bridge can be initialized only once');
+  const startupTimeout = Object.hasOwn(request, 'startup_timeout_ms') ? request.startup_timeout_ms : DEFAULT_STARTUP_TIMEOUT_MS;
+  if (!Number.isSafeInteger(startupTimeout) || startupTimeout < 1 || startupTimeout > MAX_STARTUP_TIMEOUT_MS) {
+    throw error('INVALID_ARGUMENTS', 'Startup timeout must be an integer between 1 and 60000 milliseconds');
+  }
+  const startupDeadline = performance.now() + startupTimeout;
   if (Number(process.versions.node.split('.')[0]) < 24 || typeof WebSocket !== 'function') {
     throw error('MISSING_DEPENDENCY', 'Browser bridge requires Node 24 or newer with built-in WebSocket');
   }
@@ -252,28 +361,44 @@ async function initialize(request) {
   ];
   const cleanEnv = Object.fromEntries(['HOME','TMPDIR','TMP','TEMP','LANG','SystemRoot','WINDIR']
     .filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
-  chrome = spawn(request.chrome_path, flags, { env: cleanEnv, stdio: 'ignore', detached: false });
-  let launchFailure;
-  chrome.on('error', () => { launchFailure = true; });
+  chrome = spawn(request.chrome_path, flags, { env: cleanEnv, stdio: ['ignore', 'ignore', 'pipe'], detached: false });
+  chromeStderr = captureChromeStderr(chrome.stderr);
+  chrome.on('error', reason => {
+    // Spawn error messages include executable paths. Expose only known OS codes.
+    launchFailure = ['EACCES','EPERM','ENOENT','ENOEXEC','ENOMEM','EMFILE','ENFILE','ETXTBSY','EAGAIN'].includes(reason.code) ? reason.code : 'OTHER';
+  });
   let portFile;
-  for (let attempt = 0; attempt < 200; attempt++) {
-    if (launchFailure || chrome.exitCode !== null || chrome.signalCode !== null) throw error('MISSING_DEPENDENCY', 'Configured Chrome failed to start');
-    try { portFile = await readFile(join(profile, 'DevToolsActivePort'), 'utf8'); break; }
+  while (portFile === undefined) {
+    checkStartupProcess();
+    startupRemaining(startupDeadline, 'CDP');
+    try { portFile = await readFile(join(profile, 'DevToolsActivePort'), 'utf8'); }
     catch (reason) { if (reason.code !== 'ENOENT') throw reason; }
-    await delay(25);
+    checkStartupProcess();
+    const remaining = startupRemaining(startupDeadline, 'CDP');
+    if (portFile === undefined) await delay(Math.min(STARTUP_POLL_MS, remaining));
   }
-  if (!portFile) throw error('UNKNOWN', 'Chrome CDP startup timed out');
   const [port, path] = portFile.trim().split('\n');
   if (!/^\d{1,5}$/u.test(port) || Number(port) < 1 || Number(port) > 65535 || !/^\/devtools\/browser\/[\w-]+$/u.test(path)) {
-    throw error('UNKNOWN', 'Invalid Chrome CDP endpoint');
+    throw startupError('Invalid Chrome CDP endpoint');
   }
   const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`);
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(error('UNKNOWN', 'Chrome WebSocket startup timed out')), 5000);
-    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-    socket.addEventListener('error', () => { clearTimeout(timer); reject(error('UNKNOWN', 'Chrome WebSocket failed')); }, { once: true });
+    const finish = reason => {
+      clearTimeout(timer);
+      socket.removeEventListener('open', opened); socket.removeEventListener('error', failed);
+      chrome.removeListener('exit', exited); chrome.removeListener('error', exited);
+      if (reason) { socket.close(); reject(reason); } else resolve();
+    };
+    const opened = () => finish();
+    const failed = () => finish(startupError('Chrome WebSocket failed during startup'));
+    const exited = () => finish(startupError('Chrome exited before startup completed'));
+    const timer = setTimeout(() => finish(startupError('Chrome WebSocket startup timed out')),
+      startupRemaining(startupDeadline, 'WebSocket'));
+    socket.addEventListener('open', opened, { once: true });
+    socket.addEventListener('error', failed, { once: true });
+    chrome.once('exit', exited); chrome.once('error', exited);
   });
-  cdp = new Cdp(socket);
+  cdp = new Cdp(socket, startupDeadline);
   const version = await cdp.send('Browser.getVersion');
   await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny', eventsEnabled: true });
   const targets = await cdp.send('Target.getTargets');
@@ -283,10 +408,16 @@ async function initialize(request) {
   await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
   creatingPage = true;
   const target = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId: context });
-  for (let attempt = 0; !pageReady && attempt < 100; attempt++) await delay(10);
-  if (!pageReady || target.targetId !== pageTarget) throw error('UNKNOWN', 'Could not attach isolated page');
+  for (let attempt = 0; !pageReady && attempt < 100; attempt++) {
+    checkStartupProcess('UNKNOWN');
+    await delay(Math.min(10, startupRemaining(startupDeadline, 'page attachment')));
+  }
+  if (!pageReady || target.targetId !== pageTarget) throw startupError('Could not attach isolated page');
   await pageReady; creatingPage = false; initialized = true;
   await send('DOM.enable');
+  startupRemaining(startupDeadline, 'CDP');
+  cdp.startupDeadline = undefined;
+  chromeStderr.stop();
   return { ...status(), chrome_version: version.product };
 }
 
@@ -378,18 +509,35 @@ async function action(request) {
   if (request.action === 'snapshot') return snapshot(request.expected_epoch);
   if (request.action === 'open') {
     const url = checkedUrl(request.url);
+    // Same-document Page.navigate replies omit loaderId. Bind them to the actual
+    // document before dispatch so a later document cannot inherit their receipt.
+    const { frameTree: before } = await send('Page.getFrameTree');
+    checkEpoch(request.expected_epoch);
+    if (!before?.frame || frameUrl(before.frame) !== pageUrl) throw error('STALE_PAGE', 'Controlled frame changed');
     mainStatus = null;
-    const result = await send('Page.navigate', { url });
-    if (result.errorText) throw error('NAVIGATION_FAILED', 'Chrome rejected navigation; no automatic retry');
-    await settle();
-    // Wait for document readiness without executing page-supplied source.
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const contextId = await isolatedWorld(epoch);
-      const ready = await send('Runtime.evaluate', { expression: 'document.readyState', contextId, returnByValue: true });
-      if (['interactive','complete'].includes(ready.result.value)) break;
-      await delay(25);
-    }
-    return { ...status(), action: 'open' };
+    // Observe before dispatch: commit/readiness events can precede the navigate
+    // response. Its frame/loader, never the previous document's readyState,
+    // identifies the navigation whose normal epoch changes this action owns.
+    navigation = new Navigation();
+    try {
+      const result = await send('Page.navigate', { url });
+      if (result.errorText) throw error('NAVIGATION_FAILED', 'Chrome rejected navigation; no automatic retry');
+      const loaderId = result.loaderId ?? before.frame.loaderId;
+      if (typeof loaderId !== 'string') throw error('UNKNOWN', 'Chrome omitted navigation loader identity; no automatic retry');
+      await navigation.wait(result, url);
+      // Synchronize DOM's document after readiness, then verify that the live
+      // frame still belongs to this navigation before issuing its epoch receipt.
+      await tree();
+      const generation = epoch;
+      const { frameTree } = await send('Page.getFrameTree');
+      checkEpoch(generation);
+      if (!frameTree?.frame || frameTree.frame.id !== result.frameId || frameUrl(frameTree.frame) !== pageUrl
+          || frameTree.frame.loaderId !== loaderId
+          || (result.loaderId === undefined && (result.frameId !== before.frame.id || pageUrl !== url))) {
+        throw error('STALE_PAGE', 'Committed navigation and live page disagree');
+      }
+      return { ...status(), action: 'open' };
+    } finally { navigation.dispose(); navigation = undefined; }
   }
   if (request.action === 'screenshot') {
     const before = epoch;
@@ -458,6 +606,9 @@ async function cleanup() {
     await Promise.race([new Promise(resolve => chrome.once('exit', resolve)), delay(1000)]);
   }
   cdp?.socket.close();
+  // An inherited stderr writer must not keep Node alive after owned cleanup.
+  chrome?.stderr?.destroy();
+  chromeStderr?.stop();
   if (profile) await rm(profile, { recursive: true, force: true });
 }
 process.on('SIGTERM', () => { cleanup().finally(() => process.exit(0)); });

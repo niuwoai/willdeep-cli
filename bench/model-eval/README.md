@@ -69,7 +69,20 @@ ruby scripts/test/p0_eval_tasks_test.rb --report-dir target/p0-eval-contracts
 ruby scripts/agent_reliability_regression.rb --check-manifest
 ```
 
-完整基线需要显式 `--with-browser`，并通过重复 `--browser-arg` 传入真实二进制、Node、Chrome 和已启动私有夹具的 manifest。完整参数示例在清单中，夹具须先经项目预览入口启动。浏览器核对 CLI/TUI/Web 各自的成功、审批取消、执行取消，共九例；缺任何一例都不能通过。结果保存在指定输出目录的唯一 `run-*` 子目录，提供 JSON、Markdown 和失败日志；不会写入正式模型成绩历史。
+完整基线需要显式 `--with-browser`，并通过重复 `--browser-arg` 传入真实二进制、Node、Chrome 和已启动私有夹具的 manifest。先完成产品构建，再为本轮验收保留固定二进制副本，夹具与验收均使用该副本；并发 Cargo 构建可能重写 `target/debug/willdeep`，即使源码不变也会使摘要检查拒绝旧夹具。夹具须先经项目预览入口启动，以下绝对路径均替换为该夹具 manifest 中的实际值：
+
+```bash
+ruby scripts/agent_reliability_regression.rb \
+  --with-browser \
+  --browser-arg=--binary --browser-arg=/absolute/path/to/willdeep \
+  --browser-arg=--node --browser-arg=/absolute/path/to/node \
+  --browser-arg=--chrome --browser-arg='/absolute/path/to/Google Chrome' \
+  --browser-arg=--fixture --browser-arg=/private/fixture/manifest.json \
+  --timeout 600 \
+  --out target/core-regression
+```
+
+浏览器核对 CLI/TUI/Web 各自的成功、审批取消、执行取消，共九例；缺任何一例都不能通过。结果保存在指定输出目录的唯一 `run-*` 子目录，提供 JSON、Markdown 和失败日志；不会写入正式模型成绩历史。`--timeout` 是单项检查的时间上限，浏览器单项包含九例；它不改变产品动作的超时配置。
 
 此基线不调用模型。费用、Token 和模型误报完成率保持未测量；确定性协议回归不能代替真实模型质量对照。真实 Rust/TypeScript 服务与 AST 的专项验收独立记录，不由假服务测试推定。
 

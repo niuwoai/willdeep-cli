@@ -18,6 +18,8 @@ const EVIDENCE_FORM_HINT: &str = "Only a single test command counts as evidence:
 #[derive(Default)]
 pub(super) struct EvidenceRecords {
     required: std::collections::BTreeSet<String>,
+    /// Configured checks survive new inputs; recovered task checks do not leak.
+    configured_required: std::collections::BTreeSet<String>,
     pub(super) recent: Vec<CommandVerification>,
     latest: std::collections::BTreeMap<
         Option<String>,
@@ -221,6 +223,29 @@ impl ToolRegistry {
     }
 
     pub fn require_verifications(&self, commands: &[String]) -> Result<(), String> {
+        self.merge_required_verifications(commands, true)
+    }
+
+    pub(crate) fn restore_required_verifications(&self, commands: &[String]) -> Result<(), String> {
+        self.merge_required_verifications(commands, false)
+    }
+
+    pub(crate) fn begin_verification_input(&self) {
+        let mut records = self
+            .verification_records
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        records.required = records.configured_required.clone();
+        records.latest.clear();
+        records.recent.clear();
+        // Keep total monotonic for per-run verification accounting.
+    }
+
+    fn merge_required_verifications(
+        &self,
+        commands: &[String],
+        configured: bool,
+    ) -> Result<(), String> {
         Self::validate_required_verifications(commands)?;
         let mut records = self
             .verification_records
@@ -236,6 +261,11 @@ impl ToolRegistry {
             return Err(
                 "configured and restored verification checks exceed the 32-check limit".into(),
             );
+        }
+        if configured {
+            records
+                .configured_required
+                .extend(commands.iter().map(|command| command.trim().to_owned()));
         }
         records.required = merged;
         Ok(())
@@ -761,11 +791,35 @@ fn executes_checks(words: &[String]) -> bool {
     {
         return false;
     }
-    // -n means worker count to pytest, but dry-run to make/Gradle/Maven.
-    let dry_run_short = matches!(
-        words.first().map(String::as_str),
-        Some("make" | "gradle" | "./gradlew" | "mvn")
-    );
+    let rake = words.first().is_some_and(|word| word == "rake")
+        || matches!(words, [bundle, exec, rake, ..]
+            if bundle == "bundle" && exec == "exec" && rake == "rake");
+    // Rake's task inspection and execute-only options do not run the named test task.
+    if rake
+        && words.iter().any(|word| {
+            matches!(
+                word.split('=').next(),
+                Some(
+                    "--tasks"
+                        | "--prereqs"
+                        | "--describe"
+                        | "--where"
+                        | "--execute"
+                        | "--execute-print"
+                )
+            ) || ["-T", "-P", "-D", "-W", "-e", "-p", "-V"]
+                .iter()
+                .any(|prefix| word.starts_with(prefix))
+        })
+    {
+        return false;
+    }
+    // -n means worker count to pytest, but dry-run to Rake/make/Gradle/Maven.
+    let dry_run_short = rake
+        || matches!(
+            words.first().map(String::as_str),
+            Some("make" | "gradle" | "./gradlew" | "mvn")
+        );
     if dry_run_short && words.iter().any(|word| word == "-n") {
         return false;
     }
@@ -829,6 +883,7 @@ pub(super) fn is_verification_command(command: &str) -> bool {
         "ruby test",
         "bundle exec rspec",
         "bundle exec rake test",
+        "rake test",
         "swift test",
         "xcodebuild test",
         "yarn test",
@@ -1811,6 +1866,72 @@ mod tests {
             "cargo test '$(literal)'",
         ] {
             assert!(is_verification_command(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn bare_rake_evidence_unblocks_completion_only_for_a_passing_current_snapshot() {
+        let revision = Arc::new(Mutex::new("changed".to_owned()));
+        let captured = revision.clone();
+        let tools = ToolRegistry::new(std::env::temp_dir(), ApprovalMode::ReadOnly)
+            .unwrap()
+            .with_verification_snapshot(move || Some(captured.lock().unwrap().clone()))
+            .with_verification_reporter(|_| {});
+        assert!(tools.accepts_verification("rake test"));
+        assert!(!tools.completion_has_current_evidence(Some("initial")));
+        for (exit_code, status, passes) in [
+            (1, VerificationStatus::Failed, false),
+            (0, VerificationStatus::Passed, true),
+        ] {
+            report_verification(
+                tools.verification_reporter.as_ref(),
+                "rake test",
+                Some(exit_code),
+                status,
+                "rake result",
+                Some("changed".into()),
+            );
+            assert_eq!(
+                tools.completion_has_current_evidence(Some("initial")),
+                passes
+            );
+        }
+        *revision.lock().unwrap() = "next change".into();
+        assert!(!tools.completion_has_current_evidence(Some("initial")));
+    }
+
+    #[test]
+    fn rake_listing_dry_runs_and_shell_wrappers_do_not_supply_evidence() {
+        for prefix in ["rake test", "bundle exec rake test"] {
+            assert!(is_verification_command(prefix), "{prefix}");
+            for suffix in [
+                "--dry-run",
+                "-n",
+                "-T",
+                "-Ttest",
+                "--tasks",
+                "--tasks=test",
+                "-P",
+                "--prereqs",
+                "-D",
+                "-Dtest",
+                "--describe",
+                "-W",
+                "-Wtest",
+                "--where",
+                "-e 'puts 1'",
+                "--execute 'puts 1'",
+                "-p '1'",
+                "--execute-print '1'",
+                "-V",
+                "|| true",
+                "| tee output",
+                "> output",
+                "&",
+            ] {
+                let command = format!("{prefix} {suffix}");
+                assert!(!is_verification_command(&command), "{command}");
+            }
         }
     }
 

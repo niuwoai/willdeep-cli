@@ -23,7 +23,7 @@ fn paint(app: &mut App, terminal: &mut Terminal<TestBackend>) {
 fn draft_app(mode: crate::config::UiMode, text: &str) -> App {
     let mut app = App::new(Vec::new(), Language::En);
     app.ui.mode = mode;
-    // 所有鼠标测试都禁止自动触碰真实剪贴板；payload 决策另测。
+    // 普通鼠标测试默认禁用自动复制；复制入口测试另行注入剪贴板写入端。
     app.ui.copy_on_select = false;
     app.input.insert(text);
     app
@@ -150,6 +150,242 @@ fn prompt_selection_payload_respects_auto_copy_and_keeps_whitespace() {
     app.input.begin_selection_visual(0, 0, 10);
     app.input.finish_selection();
     assert!(!app.input.selection_active());
+}
+
+const COPY_NOTICE_DRAFT: &str = "中🙂  \n\n  tail ";
+
+type CopyNoticeCase = (Result<code_copy::ClipboardRoute, String>, &'static str);
+
+fn copy_notice_cases() -> [CopyNoticeCase; 3] {
+    [
+        (
+            Ok(code_copy::ClipboardRoute::Terminal),
+            "Sent 13 prompt chars to the terminal clipboard · Esc clears selection",
+        ),
+        (
+            Ok(code_copy::ClipboardRoute::Local),
+            "Copied 13 prompt chars · Esc clears selection",
+        ),
+        (
+            Err("fixture clipboard unavailable".into()),
+            "Copy prompt text to clipboard failed: fixture clipboard unavailable",
+        ),
+    ]
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CopyNoticeTrigger {
+    MouseRelease,
+    ControlC,
+    CommandC,
+}
+
+const COPY_NOTICE_TRIGGERS: [CopyNoticeTrigger; 3] = [
+    CopyNoticeTrigger::MouseRelease,
+    CopyNoticeTrigger::ControlC,
+    CopyNoticeTrigger::CommandC,
+];
+// 绘制和后续操作测试手动移动截止点，不依赖真实的两秒可读窗口。
+const COPY_NOTICE_TEST_HOLD: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn copy_notice_from_interaction(
+    mode: crate::config::UiMode,
+    case: CopyNoticeCase,
+    trigger: CopyNoticeTrigger,
+) -> (App, &'static str, (Instant, Instant)) {
+    let mut app = draft_app(mode, COPY_NOTICE_DRAFT);
+    app.ui.compact_status_line = false;
+    app.ui.copy_on_select = matches!(trigger, CopyNoticeTrigger::MouseRelease);
+    app.code_copy.stub_clipboard(case.0);
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    paint(&mut app, &mut terminal);
+    let body = app.prompt_content_rect();
+    for (kind, column, row) in [
+        (MouseEventKind::Down(MouseButton::Left), body.x, body.y),
+        (
+            MouseEventKind::Drag(MouseButton::Left),
+            body.x + 7,
+            body.y + 2,
+        ),
+    ] {
+        assert!(app.handle_prompt_selection_mouse(mouse(kind, column, row)));
+    }
+    assert_eq!(app.input.selected_text(), Some(COPY_NOTICE_DRAFT));
+    assert!(app.code_copy.clipboard_writes().is_empty());
+    let release = mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        body.x + 7,
+        body.y + 2,
+    );
+    if !matches!(trigger, CopyNoticeTrigger::MouseRelease) {
+        assert!(app.handle_prompt_selection_mouse(release));
+        assert!(app.code_copy.clipboard_writes().is_empty());
+    }
+    let before_copy = Instant::now();
+    match trigger {
+        CopyNoticeTrigger::MouseRelease => {
+            assert!(app.handle_prompt_selection_mouse(release));
+        }
+        CopyNoticeTrigger::ControlC | CopyNoticeTrigger::CommandC => {
+            let modifiers = if matches!(trigger, CopyNoticeTrigger::ControlC) {
+                KeyModifiers::CONTROL
+            } else {
+                KeyModifiers::SUPER
+            };
+            // true 表示事件已消费，主循环不会落到后续 Ctrl+C 退出分支。
+            assert!(app.handle_prompt_selection_key(KeyEvent::new(KeyCode::Char('c'), modifiers)));
+        }
+    }
+    let after_copy = Instant::now();
+    assert_eq!(app.code_copy.clipboard_writes(), vec![COPY_NOTICE_DRAFT]);
+    assert_eq!(app.input.text(), COPY_NOTICE_DRAFT);
+    assert_eq!(app.input.selected_text(), Some(COPY_NOTICE_DRAFT));
+    assert!(!app.input.selection_dragging());
+    assert!(!app.quit_requested);
+    (app, case.1, (before_copy, after_copy))
+}
+
+fn pin_copy_notice_deadline(app: &mut App) -> Instant {
+    let deadline = Instant::now() + COPY_NOTICE_TEST_HOLD;
+    app.notice_hold.as_mut().expect("held copy notice").1 = deadline;
+    deadline
+}
+
+fn app_with_copy_notice(mode: crate::config::UiMode, case: CopyNoticeCase) -> (App, &'static str) {
+    let (mut app, expected, _) =
+        copy_notice_from_interaction(mode, case, CopyNoticeTrigger::ControlC);
+    pin_copy_notice_deadline(&mut app);
+    (app, expected)
+}
+
+#[test]
+fn prompt_selection_copy_interactions_set_a_two_second_notice_hold() {
+    for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
+        for trigger in COPY_NOTICE_TRIGGERS {
+            for case in copy_notice_cases() {
+                let (app, expected, (before_copy, after_copy)) =
+                    copy_notice_from_interaction(mode, case, trigger);
+                let (held, deadline) = app.notice_hold.as_ref().expect("copy notice must be held");
+                assert_eq!(held, expected);
+                assert_eq!(app.notice.as_deref(), Some(expected));
+                let readable_duration = Duration::from_secs(2);
+                assert!(*deadline >= before_copy + readable_duration);
+                assert!(*deadline <= after_copy + readable_duration);
+            }
+        }
+    }
+}
+
+#[test]
+fn prompt_selection_copy_notices_survive_consecutive_frames_in_both_layouts() {
+    for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
+        for trigger in COPY_NOTICE_TRIGGERS {
+            for case in copy_notice_cases() {
+                let (mut app, expected, _) = copy_notice_from_interaction(mode, case, trigger);
+                let deadline = pin_copy_notice_deadline(&mut app);
+                let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+                for frame in 1..=3 {
+                    paint(&mut app, &mut terminal);
+                    let buffer = terminal.backend().buffer();
+                    let screen = buffer
+                        .content
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect::<String>();
+                    assert!(
+                        screen.contains(expected),
+                        "{mode:?}, {trigger:?}, frame {frame}: missing {expected:?}"
+                    );
+                    assert_eq!(app.notice.as_deref(), Some(expected));
+                    assert_eq!(
+                        app.notice_hold.as_ref(),
+                        Some(&(expected.to_owned(), deadline))
+                    );
+                    assert_eq!(app.code_copy.clipboard_writes(), vec![COPY_NOTICE_DRAFT]);
+                    assert_eq!(app.input.text(), COPY_NOTICE_DRAFT);
+                    assert_eq!(app.input.selected_text(), Some(COPY_NOTICE_DRAFT));
+                    assert!(app.queued_prompts.is_empty());
+                    assert!(app.transcript.is_empty());
+                    assert!(!app.running);
+                    assert!(!app.quit_requested);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn prompt_selection_copy_notice_hold_expires_without_sleeping() {
+    for case in copy_notice_cases() {
+        let (mut app, expected) = app_with_copy_notice(crate::config::UiMode::Full, case);
+        assert_eq!(app.status_line(), expected);
+        app.notice_hold.as_mut().expect("held copy notice").1 = Instant::now();
+        // 到期时沿用状态栏取走最后一帧、随后恢复正常状态的语义。
+        assert_eq!(app.status_line(), expected);
+        assert!(app.notice.is_none());
+        assert!(app.notice_hold.is_none());
+        assert!(!app.status_line().contains(expected));
+        assert_eq!(app.input.text(), COPY_NOTICE_DRAFT);
+    }
+}
+
+#[test]
+fn prompt_selection_escape_cancels_held_copy_notice_and_selection_without_sending() {
+    for case in copy_notice_cases() {
+        let (mut app, expected) = app_with_copy_notice(crate::config::UiMode::Full, case);
+        assert_eq!(app.status_line(), expected);
+        assert!(app.handle_prompt_selection_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(!app.input.selection_active());
+        assert_eq!(app.input.text(), COPY_NOTICE_DRAFT);
+        assert!(app.notice.is_none());
+        assert!(!app.status_line().contains(expected));
+        assert!(app.notice_hold.is_none());
+        assert!(!app.status_line().contains(expected));
+        assert!(app.queued_prompts.is_empty());
+        assert!(app.transcript.is_empty());
+        assert!(!app.running);
+    }
+}
+
+#[test]
+fn prompt_selection_copy_notice_hold_yields_to_a_new_notice() {
+    for case in copy_notice_cases() {
+        let (mut app, expected) = app_with_copy_notice(crate::config::UiMode::Full, case);
+        assert_eq!(app.status_line(), expected);
+        app.notice = Some("New action result".into());
+        assert_eq!(app.status_line(), "New action result");
+        assert!(app.notice_hold.is_none());
+        assert!(!app.status_line().contains(expected));
+    }
+}
+
+#[test]
+fn prompt_selection_copy_notice_hold_keeps_asynchronous_approval_first() {
+    let (mut app, expected) = app_with_copy_notice(
+        crate::config::UiMode::Full,
+        copy_notice_cases().into_iter().next().unwrap(),
+    );
+    let (tx, mut rx) = oneshot::channel();
+    app.enqueue_approval(("Run tests".into(), false, tx));
+    for _ in 0..3 {
+        let status = app.status_line();
+        let approval = status.find("Waiting for your approval").unwrap();
+        let copy_notice = status.find(expected).unwrap();
+        assert!(approval < copy_notice, "{status}");
+    }
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SUPER] {
+        assert_eq!(
+            app.prompt_selection_key(KeyEvent::new(KeyCode::Char('c'), modifiers)),
+            PromptSelectionKey::Pass
+        );
+    }
+    let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.handle_prompt_selection_key(key));
+    app.handle_approval_key(key);
+    assert_eq!(rx.try_recv().unwrap(), ApprovalDecision::Deny);
+    assert!(app.approval.is_none());
+    assert_eq!(app.input.text(), COPY_NOTICE_DRAFT);
+    assert!(app.queued_prompts.is_empty());
 }
 
 #[test]

@@ -9,6 +9,8 @@ use crate::tools::{ApprovalDecision, Approver, CreateArgs, ReadArgs};
 
 #[path = "contract_tests.rs"]
 mod contract_tests;
+#[path = "edit_display_tests.rs"]
+mod edit_display_tests;
 #[path = "review_tests.rs"]
 mod review_tests;
 #[path = "typed_preview_tests.rs"]
@@ -82,12 +84,13 @@ async fn request(registry: &ToolRegistry, args: Value) -> Result<String, ToolErr
 }
 
 async fn preview(registry: &ToolRegistry, changes: Vec<Value>) -> Value {
-    serde_json::from_str(
-        &request(registry, json!({"operation":"preview","changes":changes}))
-            .await
-            .unwrap(),
-    )
-    .unwrap()
+    let output = request(registry, json!({"operation":"preview","changes":changes}))
+        .await
+        .unwrap();
+    let report: Value = serde_json::from_str(&output).unwrap();
+    assert!(report.get("edit_display").is_none());
+    assert!(crate::tools::edit_display::extract_edit_display(&output, false).is_none());
+    report
 }
 
 async fn apply(registry: &ToolRegistry, preview: &Value) -> Result<String, ToolError> {
@@ -101,7 +104,10 @@ async fn apply(registry: &ToolRegistry, preview: &Value) -> Result<String, ToolE
 fn failure(result: Result<String, ToolError>) -> Value {
     match result {
         Err(ToolError::FileChange(report)) => {
-            serde_json::from_str(&report).expect("structured failure report")
+            let value: Value = serde_json::from_str(&report).expect("structured failure report");
+            assert!(value.get("edit_display").is_none());
+            assert!(crate::tools::edit_display::extract_edit_display(&report, false).is_none());
+            value
         }
         other => panic!("expected structured FileChange failure, got {other:?}"),
     }

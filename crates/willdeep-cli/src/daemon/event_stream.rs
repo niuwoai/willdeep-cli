@@ -218,6 +218,8 @@ fn redact_task_output(message: &str) -> String {
             // 点开工具行才显示的完整命令。公共事件流同时喂给 Web 和手机中继，
             // 完整命令里的路径不该跟着走；本机 TUI 读未脱敏的 task.diagnostics。
             "expansion",
+            // 本机编辑回执含源码与工作区路径，不进入 Web/手机公共事件。
+            "edit_display",
         ] {
             object.remove(field);
         }
@@ -646,6 +648,20 @@ mod tests {
         assert!(event.message.contains("reason=execution_owner_conflict"));
         assert!(!event.message.contains("test-secret-value"));
         assert!(!event.message.contains("cannot persist"));
+    }
+
+    #[test]
+    fn committed_diff_and_complete_command_stay_in_local_events_only() {
+        let raw = RuntimeEvent {
+            sequence: 4, timestamp: 5, kind: "task.output".to_owned(),
+            message: r#"task_id=abc {"type":"tool_completed","id":"edit-1","name":"edit_file","is_error":false,"expansion":"private command","edit_display":{"files":[{"path":"private/location.rs","diff":"private source"}]}}"#.to_owned(),
+        };
+        let public = public_event(raw.clone());
+        assert!(raw.message.contains("private source"));
+        assert!(public.message.contains("edit-1"));
+        assert!(!public.message.contains("private"));
+        assert!(!public.message.contains("edit_display"));
+        assert!(!public.message.contains("expansion"));
     }
 
     /// 失败的工具事件现在会带上参数和输出，供本机 `task.diagnostics` 排查。

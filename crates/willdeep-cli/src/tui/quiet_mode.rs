@@ -90,28 +90,6 @@ pub(super) fn render(
     // 只能靠松手后剪贴板里是不是真有字来猜。
     app.highlight_chat_selection(&mut colored, offset);
     app.update_user_message_hits(offset, app.transcript_rect.y);
-    app.thought_hit_rows = colored
-        .lines
-        .iter()
-        .enumerate()
-        .filter_map(|(line_index, line)| {
-            let text = line.to_string();
-            if !(text.contains("+ Thought:") || text.contains("− Thought:")) {
-                return None;
-            }
-            let thought_order = app
-                .transcript_rows
-                .iter()
-                .take(offset + line_index + 1)
-                .filter(|row| row.contains("+ Thought:") || row.contains("− Thought:"))
-                .count()
-                .saturating_sub(1);
-            Some((
-                app.transcript_rect.y.saturating_add(line_index as u16),
-                thought_order,
-            ))
-        })
-        .collect();
     frame.render_widget(
         Paragraph::new(colored).block(Block::default().padding(Padding::horizontal(1))),
         app.transcript_rect,

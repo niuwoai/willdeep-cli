@@ -2,6 +2,8 @@ use super::*;
 
 #[cfg(test)]
 mod drain_tests;
+#[cfg(test)]
+mod interaction_tests;
 
 impl TaskManager {
     pub(super) fn notify_peer(&self, session_id: uuid::Uuid) {
@@ -338,15 +340,17 @@ impl TaskManager {
             )?;
             return Ok(Some(interaction));
         }
-        let task_snapshot = {
+        let (task_snapshot, resume_execution) = {
             let mut tasks = self.tasks.write().await;
-            if let Some(task) = tasks.get_mut(&interaction.task_id)
-                && matches!(
+            let mut resume_execution = false;
+            if let Some(task) = tasks.get_mut(&interaction.task_id) {
+                if matches!(
                     task.status,
                     RuntimeTaskStatus::WaitingApproval | RuntimeTaskStatus::WaitingAnswer
-                )
-            {
-                task.status = RuntimeTaskStatus::Running;
+                ) {
+                    task.status = RuntimeTaskStatus::Running;
+                }
+                resume_execution = task.status == RuntimeTaskStatus::Running;
             }
             if let (Some(recorder), Some(task)) =
                 (self.sessions.feedback(), tasks.get(&interaction.task_id))
@@ -375,16 +379,24 @@ impl TaskManager {
                     .with_turn(task.turn_id.map(|id| id.to_string()))
                     .record_approval(kind, decision, latency_ms);
             }
-            tasks.clone()
+            (tasks.clone(), resume_execution)
         };
         persist_interactions(&self.interactions_path, &interaction_snapshot)?;
         persist_tasks(&self.path, &task_snapshot)?;
-        self.agents
-            .set_status_for_task(interaction.task_id, RuntimeAgentStatus::Running, None)?;
-        self.sessions.set_task_waiting(
-            interaction.task_id,
-            session_store::RuntimeTurnStatus::Running,
-        )?;
+        // A failed write may leave only the Task marked Running. Repair the
+        // same Task's Agent and Turn before waking its waiter on replay too.
+        // finish() also resolves gates; terminal and cancelling Tasks stay closed.
+        if resume_execution {
+            self.agents.set_status_for_task(
+                interaction.task_id,
+                RuntimeAgentStatus::Running,
+                None,
+            )?;
+            self.sessions.set_task_waiting(
+                interaction.task_id,
+                session_store::RuntimeTurnStatus::Running,
+            )?;
+        }
         let sender = self
             .interaction_waiters
             .lock()
@@ -829,12 +841,18 @@ impl TaskManager {
             .ok()
             .and_then(|items| items.get(&id).cloned());
         if let Some(cancellation) = cancellation {
-            if let Some(task) = self.get(id).await
-                && let Some(turn_id) = task.turn_id
-            {
+            let _persistence = self.persistence.lock().await;
+            let Some(current) = self.get(id).await else {
+                return Ok(None);
+            };
+            // finish may have committed while this cancellation waited for the
+            // persistence barrier. A copied handle cannot reopen a terminal Task.
+            if !runtime_task_status_is_active(current.status) {
+                return Ok(Some(current));
+            }
+            if let Some(turn_id) = current.turn_id {
                 self.sessions.request_cancel(turn_id)?;
             }
-            let _persistence = self.persistence.lock().await;
             let task = {
                 let mut tasks = self.tasks.write().await;
                 let Some(task) = tasks.get_mut(&id) else {

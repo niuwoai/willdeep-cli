@@ -7,6 +7,24 @@ const ROOT_ENV: &str = "WILLDEEP_BROWSER_TREE_TEST_ROOT";
 const ROLE_ENV: &str = "WILLDEEP_BROWSER_TREE_TEST_ROLE";
 
 #[test]
+fn initialization_transmits_configured_startup_budget_with_response_reserve() {
+    let root = std::env::temp_dir().join("willdeep-browser-init-budget-test");
+    for (seconds, startup_ms) in [(1, 750), (30, 29_000), (60, 59_000)] {
+        let config = BrowserConfig {
+            timeout_seconds: seconds,
+            allowed_origins: vec!["https://example.test".into()],
+            ..BrowserConfig::default()
+        };
+        let request = initialization(&config, &root);
+        assert_eq!(request["action"], "init");
+        assert_eq!(request["startup_timeout_ms"], startup_ms);
+        assert_eq!(request["profile"], json!(root.join("profile")));
+        assert_eq!(request["allowed_origins"], json!(config.allowed_origins));
+        assert!(startup_ms < seconds * 1000);
+    }
+}
+
+#[test]
 #[ignore = "internal subprocess fixture; exits immediately without its private test environment"]
 fn owned_process_tree_fixture() {
     let Some(root) = std::env::var_os(ROOT_ENV).map(PathBuf::from) else {

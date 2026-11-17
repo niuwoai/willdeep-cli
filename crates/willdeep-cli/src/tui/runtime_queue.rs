@@ -350,7 +350,12 @@ fn finish_input_submission(
             if record != Some(row) {
                 app.drop_transcript_row(row);
             }
-            if let Some(record) = record {
+            if let Some(record) = app
+                .pending_runtime_echoes
+                .iter()
+                .find(|echo| echo.turn_id == turn.id)
+                .and_then(|echo| echo.record)
+            {
                 app.transcript_attachments
                     .resize_with(app.transcript.len(), Vec::new);
                 app.transcript_attachments[record] = sent_attachments;
@@ -376,7 +381,9 @@ fn finish_input_submission(
                 app.last_turn_outcome = Some(outcome);
             }
             let feedback = status.feedback(app.language).to_owned();
-            app.append_transcript(format!("System: {feedback}"));
+            // Delivery is already shown on the identity-bound user record and
+            // in the status area. A permanent System row would become stale
+            // as soon as Runtime starts this turn.
             app.notice = Some(feedback);
         }
         Err(error) => {

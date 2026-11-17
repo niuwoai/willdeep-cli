@@ -3,6 +3,8 @@
 use super::*;
 
 const PROMPT_SCROLL_LINES: usize = 3;
+/// 复制结果跨帧保持可读，与代码块复制提示的时长一致。
+const PROMPT_COPY_NOTICE_HOLD: Duration = Duration::from_secs(2);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PromptSelectionKey {
@@ -185,7 +187,16 @@ impl App {
     }
 
     fn copy_prompt_text(&mut self, value: &str) {
-        match self.code_copy.write_clipboard(value) {
+        let result = self.code_copy.write_clipboard(value);
+        self.note_prompt_copy_result(value, result);
+    }
+
+    fn note_prompt_copy_result(
+        &mut self,
+        value: &str,
+        result: Result<code_copy::ClipboardRoute, String>,
+    ) {
+        let notice = match result {
             Ok(route) => {
                 let message = match route {
                     code_copy::ClipboardRoute::Local => self.language.text(
@@ -199,19 +210,18 @@ impl App {
                         "入力文字 {n} 文字を端末のクリップボードへ送信 · Esc で選択解除",
                     ),
                 };
-                self.notice = Some(message.replace("{n}", &value.chars().count().to_string()));
+                message.replace("{n}", &value.chars().count().to_string())
             }
-            Err(error) => {
-                self.notice = Some(format!(
-                    "{}: {error}",
-                    self.language.text(
-                        "复制输入文字到剪贴板失败",
-                        "Copy prompt text to clipboard failed",
-                        "入力文字のクリップボードへのコピーに失敗",
-                    )
-                ));
-            }
-        }
+            Err(error) => format!(
+                "{}: {error}",
+                self.language.text(
+                    "复制输入文字到剪贴板失败",
+                    "Copy prompt text to clipboard failed",
+                    "入力文字のクリップボードへのコピーに失敗",
+                )
+            ),
+        };
+        self.hold_notice(notice, PROMPT_COPY_NOTICE_HOLD);
     }
 
     pub(super) fn render_prompt_selection(&self, frame: &mut ratatui::Frame<'_>) {

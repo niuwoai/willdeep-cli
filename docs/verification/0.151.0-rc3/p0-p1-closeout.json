@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "version": "0.151.0-rc3",
+  "date": "2026-11-17",
+  "status": "historical_stage_superseded_by_0.152.0-rc1",
+  "project_stage": "existing_project_iteration",
+  "scope": {
+    "p0": ["versioned_edit_and_file_changes", "six_scenario_regression", "lsp_queries"],
+    "p1": ["semantic_rename_and_ast", "interactive_browser", "byok_search", "project_model_policy", "execution_evidence_and_audit", "tool_defaults"],
+    "included_parallel_work": ["tui_progress_delivery_viewport_selection_and_copy", "tui_queue_timeline"]
+  },
+  "snapshot": {"source_digest": null, "binary_sha256": null, "binary": null},
+  "checks": {
+    "workspace_tests": {"status": "pending"},
+    "strict_workspace_clippy": {"status": "pending"},
+    "windows_gnu_core_clippy": {"status": "pending", "native_windows_execution": false},
+    "six_scenario_regression": {"status": "pending", "baseline_complete": false},
+    "browser_runtime_entrypoints": {"status": "pending", "required_cases": 9},
+    "tui_interactions": {"status": "pending", "required_checks": 18},
+    "tui_prompt_selection": {"status": "pending", "required_checks": 14},
+    "tui_queue_timeline": {"status": "pending"},
+    "runtime_remaining_boundaries": {"status": "author_tests_passed_source_reviewed_final_workspace_pending", "initial_executed": 15, "initial_passed": 7, "initial_failed": 8, "previous_author_passed": 220, "previous_independent_passed": 220, "late_failure_before": {"executed": 223, "passed": 220, "failed": 3}, "late_failure_after": {"passed": 223, "failed": 0, "ignored": 0}, "terminal_outcome_preserved": true, "failed_replay_repairs_persistence": true},
+    "real_rust_lsp": {"passed": 3, "failed": 0, "provenance": "previous_integrated_source_real_tool_run", "cargo_net_offline": true, "independent_analysis_cache": true},
+    "real_typescript_lsp": {"passed": 4, "failed": 0, "provenance": "previous_integrated_source_real_tool_run"},
+    "real_native_ast": {"passed": 1, "failed": 0, "languages": ["rust", "typescript", "tsx"], "provenance": "previous_integrated_source_real_tool_run"},
+    "real_browser_registry": {"passed": 3, "failed": 0, "ignored": 0, "provenance": "latest_navigation_source_explicit_real_chrome_run"},
+    "browser_node_fixtures": {"startup_passed": 11, "navigation_passed": 11, "independent_additional_navigation_passed": 3, "failed": 0},
+    "copy_entrypoint_native": {"author_passed": 37, "independent_passed": 37, "failed": 0, "real_clipboard_touched": false},
+    "historical_turn_dividers": {"status": "targeted_passed_final_combination_in_0.152.0-rc1", "before": {"executed": 18, "passed": 15, "failed": 3, "ignored": 0}, "after": {"passed": 18, "failed": 0, "ignored": 0}, "real_pty_pending": true},
+    "rake_verification_recognition": {"before": {"passed": 23, "failed": 2}, "after": {"passed": 25, "failed": 0}, "final_workspace_pending": true},
+    "goal_detached_combination": {"passed": 2, "failed": 0, "ignored": 0, "scope": "public ToolRegistry real subprocesses and Goal authority"},
+    "web": {"status": "passed", "test_files": 52, "tests_passed": 430, "tests_failed": 0, "build": "passed", "lint_errors": 0, "lint_warnings": 1, "warning": "Existing ModelPicker Hook dependency warning; build also reports chunk sizes."},
+    "ruby_ci_chain": {
+      "status": "passed",
+      "model_eval": {"runs": 32, "assertions": 748, "failures": 0, "errors": 0, "skips": 0},
+      "p0_eval_tasks": {"runs": 19, "assertions": 116, "failures": 0, "errors": 0, "skips": 0},
+      "regression_runner": {"runs": 13, "assertions": 127, "failures": 0, "errors": 0, "skips": 0},
+      "browser_support": {"runs": 11, "assertions": 41, "failures": 0, "errors": 0, "skips": 0}
+    },
+    "release_version": {"status": "passed", "version": "0.151.0-rc3"},
+    "final_format_lengths_links_and_sensitive_scan": {"status": "pending"}
+  },
+  "historical_failures": "../0.151.0-rc2/p0-p1-closeout.json",
+  "real_model_calls": false,
+  "model_cost": null,
+  "model_tokens": null,
+  "delivery": {
+    "branch": "feat/p0-p1-runtime-tools",
+    "implementation_commit": "662e69c8",
+    "develop_integration_commit": "2744e575",
+    "report_scope": "pre_commit_verification_snapshot",
+    "final_closeout_commit": null,
+    "pushed": false,
+    "pull_request": null,
+    "installed": false,
+    "published": false,
+    "release_tag_created": false,
+    "release_tag_constraint": "Tag only after the commit is merged into the default branch."
+  }
+}

@@ -1,5 +1,7 @@
 use super::*;
 
+mod runtime;
+
 struct Fixture {
     store: Arc<GoalEvidenceStore>,
     snapshot: Arc<Mutex<Result<Option<String>, String>>>,

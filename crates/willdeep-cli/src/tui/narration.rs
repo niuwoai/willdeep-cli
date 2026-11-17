@@ -16,9 +16,9 @@
 use super::*;
 
 /// 工具行状态标记：进行中 / 成功 / 失败。
-const TOOL_PENDING: &str = "…";
-const TOOL_DONE: &str = "✓";
-const TOOL_FAILED: &str = "✗";
+pub(super) const TOOL_PENDING: &str = "…";
+pub(super) const TOOL_DONE: &str = "✓";
+pub(super) const TOOL_FAILED: &str = "✗";
 
 /// 只有最近那段连续工具行会显示，而且只占一行汇总。更早的段完全不显示，
 /// 记录本身不动，`/tools` 展开后照常逐条可见。
@@ -43,7 +43,7 @@ pub(super) fn is_display_only_command(prompt: &str) -> bool {
 }
 
 /// 一行工具记录。`· ` 前缀让渲染层按账目行的灰色画，不与正文抢注意力。
-fn tool_line(marker: &str, name: &str, detail: Option<&str>) -> String {
+pub(super) fn tool_line(marker: &str, name: &str, detail: Option<&str>) -> String {
     match detail.map(str::trim).filter(|detail| !detail.is_empty()) {
         Some(detail) => format!("· {marker} {name} · {detail}"),
         None => format!("· {marker} {name}"),
@@ -242,6 +242,9 @@ impl App {
         }
         shift_map(&mut self.expanded_user_messages, removed);
         shift_map(&mut self.tool_expansions, removed);
+        self.tool_visuals.remap(|source| {
+            (source != removed).then(|| if source > removed { source - 1 } else { source })
+        });
         let tail = self.expanded_tool_rows.split_off(&removed);
         self.expanded_tool_rows.extend(
             tail.into_iter()
@@ -640,7 +643,7 @@ impl App {
     pub(super) fn toggle_tool_row_at(&mut self, y: u16) -> bool {
         // 同一个屏幕行上「收起」优先于工具行本身：窄屏折行时两段会挤到一行，
         // 点下去应该收回而不是再展开一次。
-        let Some((_, source, collapse)) = self
+        let Some((_, source, _collapse)) = self
             .tool_row_hits
             .iter()
             .filter(|(row, _, _)| *row == y)
@@ -651,11 +654,7 @@ impl App {
         let source = *source;
         // 点「收起」，或者点一行已经展开的工具行，都收回；点收着的工具行才展开。
         // 上面已经按「收起优先」挑过命中，这里不用再分两种收回。
-        if *collapse || self.expanded_tool_rows.contains(&source) {
-            self.expanded_tool_rows.remove(&source);
-        } else {
-            self.expanded_tool_rows.insert(source);
-        }
+        self.toggle_tool_projection(source);
         self.transcript_render_cache = None;
         self.tool_row_hits.clear();
         self.refresh_transcript_height();
@@ -663,39 +662,26 @@ impl App {
         true
     }
 
-    /// 记下这一行工具调用点开后要显示的完整内容。按记录位置记，记录本身不改。
-    fn remember_tool_expansion(&mut self, expansion: Option<String>) {
-        let Some(expansion) = expansion.filter(|text| !text.trim().is_empty()) else {
-            return;
-        };
-        let index = self.transcript.len().saturating_sub(1);
-        self.tool_expansions.insert(index, expansion);
-    }
-
     pub(super) fn toggle_thought_at(&mut self, y: u16) -> bool {
-        let Some((_, thought_order)) = self.thought_hit_rows.iter().find(|(row, _)| *row == y)
-        else {
-            return false;
-        };
-        let Some(index) = self
-            .transcript
+        let Some((_, source)) = self
+            .thought_hit_rows
             .iter()
-            .enumerate()
-            .filter(|(index, _)| *index >= self.visible_thought_start())
-            .filter(|(_, row)| {
-                row.starts_with(THOUGHT_ENTRY_PREFIX) || row.starts_with(THOUGHT_EXPANDED_PREFIX)
-            })
-            .nth(*thought_order)
-            .map(|(index, _)| index)
+            .find(|(row, _)| *row == y)
+            .copied()
         else {
             return false;
         };
-        let row = &mut self.transcript[index];
+        let Some(row) = self.transcript.get_mut(source).filter(|row| {
+            row.starts_with(THOUGHT_ENTRY_PREFIX) || row.starts_with(THOUGHT_EXPANDED_PREFIX)
+        }) else {
+            return false;
+        };
         if row.starts_with(THOUGHT_ENTRY_PREFIX) {
             *row = row.replacen(THOUGHT_ENTRY_PREFIX, THOUGHT_EXPANDED_PREFIX, 1);
         } else {
             *row = row.replacen(THOUGHT_EXPANDED_PREFIX, THOUGHT_ENTRY_PREFIX, 1);
         }
+        self.thought_hit_rows.clear();
         self.transcript_render_cache = None;
         self.refresh_transcript_height();
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
@@ -867,14 +853,15 @@ impl App {
     /// 送进正在跑的那一轮却没赶上（任务在下一次调模型前就结束了）的插话：
     /// 说一声，然后排队，本轮结束后照常发出，一句话都不丢。
     pub(super) fn requeue_steering(&mut self, text: String) {
-        self.append_transcript(format!(
-            "System: {}",
-            self.language.text(
-                "上一条插话没赶上本轮，已排队，本轮结束后发送",
-                "The last message missed this turn; queued to send when it finishes",
-                "直前のメッセージはこのターンに間に合わず、終了後に送信するためキューに入れました",
-            )
-        ));
+        self.notice = Some(
+            self.language
+                .text(
+                    "上一条插话没赶上本轮，已排队，本轮结束后发送",
+                    "The last message missed this turn; queued to send when it finishes",
+                    "直前のメッセージはこのターンに間に合わず、終了後に送信するためキューに入れました",
+                )
+                .to_owned(),
+        );
         // A was submitted before B even if B's queued echo was drawn before A's inbox
         // was drained. Keep the original submission order without moving either echo.
         // The instruction inbox trims text before storing it. Match on that same
@@ -1024,10 +1011,20 @@ pub(super) struct FoldedTranscript {
 /// 不留任何具体工具行；更早的段连汇总都不显示。一段连续的思考行只留最后一条，
 /// 更早的指向它（搜索跳转仍落得上）；用户展开过的那条原样留着。`expanded`
 /// 只展开工具行（`/tools`），不展开思考。
+#[cfg(test)]
 pub(super) fn fold_tool_rows(
     entries: &[String],
     expanded: bool,
     language: Language,
+) -> FoldedTranscript {
+    fold_tool_rows_preserving(entries, expanded, language, &BTreeSet::new())
+}
+
+fn fold_tool_rows_preserving(
+    entries: &[String],
+    expanded: bool,
+    language: Language,
+    preserved: &BTreeSet<usize>,
 ) -> FoldedTranscript {
     let mut runs: Vec<(usize, usize)> = Vec::new();
     let mut cursor = 0;
@@ -1071,22 +1068,20 @@ pub(super) fn fold_tool_rows(
             .filter(|row| tool_row_marker(row).is_some())
             .count();
         let is_last = start >= latest_turn && last_run == Some((start, end));
-        // 只显示最近一段：收成一行汇总，一条具体工具行都不留。更早的段连汇总
-        // 都不显示。`/tools` 展开后逐条可见，只有一条时原样保留，不值得配汇总。
-        let keep_tools = if expanded || tool_count == 1 {
-            tool_count
-        } else {
-            0
+        // 当前命令、真实编辑卡和用户点开的历史行保留，其余沿用摘要规则。
+        let hidden_tool = |offset: usize| {
+            tool_row_marker(&run[offset]).is_some()
+                && !expanded
+                && tool_count > 1
+                && !preserved.contains(&(start + offset))
         };
-        let hidden_tools = tool_count - keep_tools;
-        let show_summary = is_last && hidden_tools > 0;
-        // 收起的总是靠前的工具行：正在跑的那条（最新的）永远留着。
         let hidden = run
             .iter()
-            .filter(|row| tool_row_marker(row).is_some())
-            .take(hidden_tools)
-            .cloned()
+            .enumerate()
+            .filter(|(offset, _)| hidden_tool(*offset))
+            .map(|(_, row)| row.clone())
             .collect::<Vec<_>>();
+        let show_summary = is_last && !hidden.is_empty();
         // 一段连续的思考只留最后一条。展开过的不算「被后来的盖住」：用户点开的
         // 那条留在原处，它后面的折叠照旧。被收起的指向留下的那条，搜索跳转仍落得上。
         let kept_thought = run.iter().rposition(|line| is_thought_row(line));
@@ -1101,13 +1096,8 @@ pub(super) fn fold_tool_rows(
         let summary_at = rows.len();
         let mut placed = Vec::with_capacity(run.len());
         let mut emitted = usize::from(show_summary);
-        for (offset, line) in run.iter().enumerate() {
-            let hidden_tool = tool_row_marker(line).is_some()
-                && run[..=offset]
-                    .iter()
-                    .filter(|row| tool_row_marker(row).is_some())
-                    .count()
-                    <= hidden_tools;
+        for (offset, _) in run.iter().enumerate() {
+            let hidden_tool = hidden_tool(offset);
             if hidden_tool && show_summary {
                 placed.push(summary_at);
             } else if hidden_tool {
@@ -1295,7 +1285,15 @@ impl App {
             entries.insert(0, self.archive_placeholder());
             entry_faded.insert(0, false);
         }
-        let mut folded = fold_tool_rows(&entries, self.tool_rows_expanded, self.language);
+        let shift = usize::from(floor > 0);
+        let preserved = visible_indices
+            .iter()
+            .enumerate()
+            .filter(|(_, index)| self.tool_row_open(floor + **index))
+            .map(|(visible, _)| visible + shift)
+            .collect();
+        let mut folded =
+            fold_tool_rows_preserving(&entries, self.tool_rows_expanded, self.language, &preserved);
         remove_faded_rows(&mut folded, &entry_faded);
         let shift = usize::from(floor > 0);
         let mut index_of = Vec::with_capacity(live.len() + shift);
@@ -1412,72 +1410,6 @@ impl App {
     /// 这一轮按简洁风格显示。没显式选过风格即简洁，与提示词侧同一条判定。
     fn concise_turn(&self) -> bool {
         willdeep_core::ResponseStyle::uses_short(self.response_style)
-    }
-
-    /// 工具刚发起：先占一行，完成时原地改标记。
-    ///
-    /// `expansion` 是点开后显示的完整内容，与摘要行分开记：摘要要短、要打码，
-    /// 点开是为了看清整条命令。
-    pub(super) fn note_tool_requested(
-        &mut self,
-        name: &str,
-        detail: Option<&str>,
-        expansion: Option<String>,
-    ) {
-        self.finish_thought();
-        self.finish_reply_stream();
-        self.flush_held_narration();
-        self.transient_thought = None;
-        self.note_turn_phase(turn_status::TurnPhase::Tool(name.to_owned()));
-        // 工具调用是这一轮的第一份可见输出，压缩状态行和等待动画到此为止。
-        self.dismiss_compression_notice();
-        self.dismiss_awaiting_reply();
-        self.append_transcript(tool_line(TOOL_PENDING, name, detail));
-        self.remember_tool_expansion(expansion);
-    }
-
-    /// 工具结束：把最近那条同名的进行中行改成成功/失败。只按名字对行，完成事件
-    /// 不带摘要也能对上；实在找不到（比如重开会话后才收到完成事件）就补一行，
-    /// 宁可多一行也不丢结果。
-    pub(super) fn note_tool_completed(
-        &mut self,
-        name: &str,
-        detail: Option<&str>,
-        expansion: Option<String>,
-        is_error: bool,
-    ) {
-        self.last_progress_at = Some(Instant::now());
-        if matches!(&self.turn_phase, turn_status::TurnPhase::Tool(active) if active == name) {
-            let phase = self
-                .tools
-                .details
-                .iter()
-                .rev()
-                .find_map(|detail| {
-                    detail
-                        .strip_prefix("… ")
-                        .map(|name| turn_status::TurnPhase::Tool(name.to_owned()))
-                })
-                .unwrap_or(turn_status::TurnPhase::Preparing);
-            self.note_turn_phase(phase);
-        }
-        let marker = if is_error { TOOL_FAILED } else { TOOL_DONE };
-        let pending = tool_line(TOOL_PENDING, name, None);
-        let with_detail = format!("{pending} · ");
-        let settled = self
-            .transcript
-            .iter_mut()
-            .rev()
-            .find(|line| **line == pending || line.starts_with(&with_detail))
-            .map(|line| *line = line.replacen(TOOL_PENDING, marker, 1))
-            .is_some();
-        if settled {
-            self.refresh_transcript_height();
-        } else {
-            // 对不上进行中的那行就补一行，完整内容跟着补上的这一行走。
-            self.append_transcript(tool_line(marker, name, detail));
-            self.remember_tool_expansion(expansion);
-        }
     }
 
     /// 收尾文字：只追加还没显示过的部分，返回追加了什么，供会话镜像持久化。
@@ -2101,7 +2033,13 @@ mod tests {
         app.requeue_steering("先别删".to_owned());
         assert_eq!(app.queued_prompts.len(), 1);
         assert_eq!(app.queued_prompts[0].text, "先别删");
-        assert!(app.transcript[0].starts_with("System: The last message missed this turn"));
+        assert!(
+            app.notice
+                .as_deref()
+                .unwrap()
+                .starts_with("The last message missed this turn")
+        );
+        assert_eq!(app.transcript, vec!["You: [queued] 先别删"]);
     }
 
     #[test]

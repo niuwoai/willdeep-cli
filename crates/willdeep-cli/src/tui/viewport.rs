@@ -15,6 +15,96 @@ struct SourceSelection {
     head: SourcePoint,
 }
 
+// Group each attachment's label and body together while retaining SourcePart's
+// prefix/body/attachment/detail ordering.
+fn selection_position(part: SourcePart, byte: usize) -> (SourcePart, SourcePart, usize) {
+    let group = match part {
+        SourcePart::AttachmentBody(index) => SourcePart::AttachmentLabel(index),
+        _ => part,
+    };
+    (group, part, byte)
+}
+
+struct SourceSelectionRange {
+    id: SourceId,
+    part: SourcePart,
+    start: usize,
+    end: usize,
+}
+
+impl SourceSelectionRange {
+    fn contains(&self, point: SourcePoint) -> bool {
+        point.id == self.id
+            && point.part == self.part
+            && (self.start..=self.end).contains(&point.byte)
+    }
+}
+
+impl SourceSelection {
+    fn ranges(self, order: &[SourceId], frame: &SourceFrame) -> Vec<SourceSelectionRange> {
+        let (Some(anchor_rank), Some(head_rank)) = (
+            order.iter().position(|id| *id == self.anchor.id),
+            order.iter().position(|id| *id == self.head.id),
+        ) else {
+            return Vec::new();
+        };
+        let key = |rank, point: SourcePoint| (rank, selection_position(point.part, point.byte));
+        let (start_rank, start, end_rank, end) =
+            if key(anchor_rank, self.anchor) <= key(head_rank, self.head) {
+                (anchor_rank, self.anchor, head_rank, self.head)
+            } else {
+                (head_rank, self.head, anchor_rank, self.anchor)
+            };
+        let ranks = order
+            .iter()
+            .enumerate()
+            .map(|(rank, id)| (*id, rank))
+            .collect::<BTreeMap<_, _>>();
+        // Bound each existing part separately: reconciliation can add attachments
+        // to a selected survivor, and those new bytes were never selected.
+        let mut lengths = frame
+            .parts
+            .iter()
+            .map(|(key, text)| (*key, text.len()))
+            .collect::<BTreeMap<_, _>>();
+        // Selectable role prefixes have mapped bytes but no raw part entry.
+        // Keep raw lengths for folded bodies and supplement those mapped parts.
+        for cell in frame.rows.iter().flat_map(|row| &row.cells) {
+            lengths
+                .entry((cell.source.point.id, cell.source.point.part))
+                .and_modify(|length| *length = (*length).max(cell.source.end))
+                .or_insert(cell.source.end);
+        }
+        lengths
+            .iter()
+            .filter_map(|(&(id, part), &length)| {
+                let rank = *ranks.get(&id)?;
+                let last_byte = length.checked_sub(1)?;
+                let point = |byte| SourcePoint { id, part, byte };
+                if key(rank, point(0)) > key(end_rank, end)
+                    || key(rank, point(last_byte)) < key(start_rank, start)
+                {
+                    return None;
+                }
+                Some(SourceSelectionRange {
+                    id,
+                    part,
+                    start: if id == start.id && part == start.part {
+                        start.byte
+                    } else {
+                        0
+                    },
+                    end: if id == end.id && part == end.part {
+                        end.byte.min(last_byte)
+                    } else {
+                        last_byte
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ViewportState {
     pub(super) frame: SourceFrame,
@@ -25,6 +115,11 @@ pub(super) struct ViewportState {
     held_stream: Option<SourceId>,
     reading: Option<ReadingAnchor>,
     selection: Option<SourceSelection>,
+    // A reordered selection keeps its original record membership; fresh drags
+    // use the current record order, never the numerical value of a stable ID.
+    selection_order: Option<Vec<SourceId>>,
+    // Identity merges can leave disjoint ranges on one surviving source.
+    selection_ranges: Option<Vec<SourceSelectionRange>>,
     selection_text: Option<String>,
     resolved_selection: Option<ChatSelection>,
     last_offset: usize,
@@ -69,6 +164,8 @@ impl ViewportState {
         if selection.is_some() && selection == self.resolved_selection && self.selection.is_some() {
             return;
         }
+        self.selection_order = None;
+        self.selection_ranges = None;
         self.selection = selection.and_then(|selection| {
             Some(SourceSelection {
                 anchor: self.frame.point_at(selection.anchor)?,
@@ -81,7 +178,28 @@ impl ViewportState {
         self.resolved_selection = selection;
     }
 
+    fn source_order(&self) -> Vec<SourceId> {
+        let mut order = vec![SourceId::Archive];
+        order.extend(self.records.iter().copied());
+        let mut seen = order.iter().copied().collect::<BTreeSet<_>>();
+        for row in &self.frame.rows {
+            if seen.insert(row.fallback.id) {
+                order.push(row.fallback.id);
+            }
+        }
+        order
+    }
+
     fn migrate(&mut self, from: SourceId, to: SourceId) {
+        if let Some(ranges) = &mut self.selection_ranges {
+            // Keep both copies' bounds, including gaps between selected bytes.
+            // Picking one position for a duplicate ID would lose that union.
+            for range in ranges {
+                if range.id == from {
+                    range.id = to;
+                }
+            }
+        }
         if let Some(anchor) = self.reading.as_mut()
             && anchor.point.id == from
         {
@@ -95,6 +213,15 @@ impl ViewportState {
                 selection.head.id = to;
             }
         }
+        if let Some(order) = &mut self.selection_order {
+            let mut seen = BTreeSet::new();
+            for id in order.iter_mut() {
+                if *id == from {
+                    *id = to;
+                }
+            }
+            order.retain(|id| seen.insert(*id));
+        }
         self.frame.rebase(&BTreeMap::from([(from, to)]));
         self.observed = std::mem::take(&mut self.observed)
             .into_iter()
@@ -107,6 +234,7 @@ impl App {
     /// Call whenever a different transcript/session replaces the current one.
     pub(super) fn reset_transcript_viewport(&mut self) {
         self.viewport = ViewportState::default();
+        self.thought_hit_rows.clear();
         self.follow_bottom = true;
         self.scroll_from_bottom = 0;
         self.transcript_render_offset = 0;
@@ -128,6 +256,8 @@ impl App {
     /// Freeze the frame actually under the pointer, even if an unpainted delta
     /// has already changed the calculated transcript height.
     pub(super) fn viewport_pause_for_selection(&mut self) {
+        // Mouse Down starts a new gesture even when merged endpoints coincide.
+        self.viewport_clear_selection();
         self.follow_bottom = false;
         self.viewport.capture_reading(self.transcript_render_offset);
     }
@@ -141,6 +271,56 @@ impl App {
         self.viewport.indicator = Rect::default();
     }
 
+    /// Call BEFORE reordering transcript[index]. Identity and source byte offsets
+    /// survive; deletion's tombstones and adjacent-record fallback do not apply.
+    pub(super) fn viewport_move_record_to_end(&mut self, index: usize) {
+        self.viewport.ensure_records(self.transcript.len());
+        if index >= self.viewport.records.len() {
+            return;
+        }
+        self.viewport.capture_selection(self.chat_selection);
+        if !self.follow_bottom && self.viewport.reading.is_none() {
+            self.viewport.capture_reading(self.transcript_render_offset);
+        }
+        if self.viewport.selection.is_some()
+            && self.viewport.selection_ranges.is_none()
+            && self.viewport.selection_order.is_none()
+        {
+            self.viewport.selection_order = Some(self.viewport.source_order());
+        }
+        self.viewport.records[index..].rotate_left(1);
+        self.thought_hit_rows.clear();
+    }
+
+    /// Reconcile two proven copies of the same message BEFORE deleting `from`.
+    /// Keep its selected bytes and reading anchor on the surviving record `to`.
+    pub(super) fn viewport_merge_record(&mut self, from: usize, to: usize) {
+        self.viewport.ensure_records(self.transcript.len());
+        let (Some(&from), Some(&to)) = (
+            self.viewport.records.get(from),
+            self.viewport.records.get(to),
+        ) else {
+            return;
+        };
+        self.viewport.capture_selection(self.chat_selection);
+        if !self.follow_bottom && self.viewport.reading.is_none() {
+            self.viewport.capture_reading(self.transcript_render_offset);
+        }
+        if self.viewport.selection_ranges.is_none()
+            && let Some(selection) = self.viewport.selection
+        {
+            let order = self
+                .viewport
+                .selection_order
+                .take()
+                .unwrap_or_else(|| self.viewport.source_order());
+            self.viewport.selection_ranges = Some(selection.ranges(&order, &self.viewport.frame));
+        }
+        self.viewport.migrate(from, to);
+        self.thought_hit_rows.clear();
+        self.transcript_render_cache = None;
+    }
+
     /// Call BEFORE removing transcript[index], including removal of a queued echo.
     pub(super) fn viewport_remove_record(&mut self, index: usize) {
         self.viewport.ensure_records(self.transcript.len());
@@ -152,6 +332,7 @@ impl App {
             self.viewport.capture_reading(self.transcript_render_offset);
         }
         let removed = self.viewport.records.remove(index);
+        self.thought_hit_rows.clear();
         if self
             .viewport
             .selection
@@ -266,6 +447,36 @@ impl App {
         self.viewport.ensure_records(self.transcript.len());
     }
 
+    /// Bind displayed thought headers to their real records after folding,
+    /// wrapping and transient-row insertion. Body text is never a control.
+    pub(super) fn update_thought_hits(&mut self, offset: usize, top: u16) {
+        let records = self
+            .viewport
+            .records
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect::<BTreeMap<_, _>>();
+        self.thought_hit_rows = self
+            .viewport
+            .frame
+            .rows
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(self.viewport_height)
+            .filter_map(|(line, row)| {
+                let point = row.cells.first()?.source.point;
+                if point.part != SourcePart::Prefix {
+                    return None;
+                }
+                let source = *records.get(&point.id)?;
+                rendering::thought_entry_parts(self.transcript.get(source)?)?;
+                Some((top.saturating_add((line - offset) as u16), source))
+            })
+            .collect();
+    }
+
     pub(super) fn viewport_record_sources(&self, sources: &mut SourceFrame) {
         let ids = self
             .viewport
@@ -376,6 +587,8 @@ impl App {
 
     pub(super) fn viewport_clear_selection(&mut self) {
         self.viewport.selection = None;
+        self.viewport.selection_order = None;
+        self.viewport.selection_ranges = None;
         self.viewport.selection_text = None;
         self.viewport.resolved_selection = None;
     }
@@ -420,26 +633,31 @@ impl App {
                 .map(|(anchor, head)| SourceSelection { anchor, head })
         };
         let Some(source) = source else { return };
-        let key = |point: SourcePoint| {
-            let part = match point.part {
-                SourcePart::Prefix => (0, 0, 0),
-                SourcePart::Body => (1, 0, 0),
-                SourcePart::AttachmentLabel(index) => (2, index, 0),
-                SourcePart::AttachmentBody(index) => (2, index, 1),
-                SourcePart::ToolDetail => (3, 0, 0),
-                _ => (4, 0, 0),
+        let current_ranges;
+        let ranges = if self.chat_selection == self.viewport.resolved_selection
+            && let Some(ranges) = &self.viewport.selection_ranges
+        {
+            ranges
+        } else {
+            let current_order;
+            let order = if self.chat_selection == self.viewport.resolved_selection
+                && let Some(order) = &self.viewport.selection_order
+            {
+                order
+            } else {
+                current_order = self.viewport.source_order();
+                &current_order
             };
-            (point.id, part, point.byte)
+            current_ranges = source.ranges(order, &self.viewport.frame);
+            &current_ranges
         };
-        let start = key(source.anchor).min(key(source.head));
-        let end = key(source.anchor).max(key(source.head));
         for (local, line) in text.lines.iter_mut().enumerate() {
             let Some(mapped) = self.viewport.frame.rows.get(offset + local) else {
                 continue;
             };
             let mut selected = Text::from(line.clone());
             for cell in &mapped.cells {
-                if key(cell.source.point) >= start && key(cell.source.point) <= end {
+                if ranges.iter().any(|range| range.contains(cell.source.point)) {
                     rendering::highlight_text_selection_at_offset(
                         &mut selected,
                         (0, cell.columns.start),

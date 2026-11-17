@@ -92,6 +92,9 @@ mod session_picker_ui;
 mod sidebar;
 mod splash;
 mod status_line;
+mod tool_visuals;
+mod transcript_order;
+pub(crate) use tool_visuals::receipt as tool_visuals_receipt;
 mod turn_status;
 mod update_notice;
 mod user_message;
@@ -526,6 +529,7 @@ struct App {
     expanded_tool_rows: BTreeSet<usize>,
     /// 工具行点开后要显示的完整内容，按记录位置记。命令在这里，不在那一行摘要里。
     tool_expansions: BTreeMap<usize, String>,
+    tool_visuals: tool_visuals::ToolVisuals,
     /// 这一帧里可点击的工具行与「收起」行：屏幕行号、记录位置、是不是「收起」。
     tool_row_hits: Vec<(u16, usize, bool)>,
     /// 折叠视图里的点击位置：样式行号、记录位置、是不是「收起」。
@@ -1624,28 +1628,6 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
             app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
         app.transcript_render_offset = offset;
         app.update_user_message_hits(offset, areas[0].y.saturating_add(1));
-        app.thought_hit_rows = colored
-            .lines
-            .iter()
-            .enumerate()
-            .filter_map(|(line_index, line)| {
-                let text = line.to_string();
-                if !(text.contains("+ Thought:") || text.contains("− Thought:")) {
-                    return None;
-                }
-                let thought_order = app
-                    .transcript_rows
-                    .iter()
-                    .take(offset + line_index + 1)
-                    .filter(|row| row.contains("+ Thought:") || row.contains("− Thought:"))
-                    .count()
-                    .saturating_sub(1);
-                Some((
-                    areas[0].y.saturating_add(1).saturating_add(line_index as u16),
-                    thought_order,
-                ))
-            })
-            .collect();
         app.highlight_chat_selection(&mut colored, offset);
         f.render_widget(
             Paragraph::new(colored)
