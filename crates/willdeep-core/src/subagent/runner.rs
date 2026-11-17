@@ -62,11 +62,15 @@ impl EventSink for ChildEventSink {
                     is_error,
                 })
             }
-            AgentEvent::Usage(usage) => {
+            AgentEvent::Usage { usage, model } => {
                 if let Some(goal) = &self.goal {
                     goal.record_tokens(usage.billable_tokens());
                 }
-                Some(AgentEvent::SubagentUsage { id: self.id, usage })
+                Some(AgentEvent::SubagentUsage {
+                    id: self.id,
+                    usage,
+                    model,
+                })
             }
             AgentEvent::ProviderProgress(crate::provider::ProviderEvent::RetryWait {
                 attempt,

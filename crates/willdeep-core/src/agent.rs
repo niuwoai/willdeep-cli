@@ -163,7 +163,11 @@ pub enum AgentEvent {
         output: String,
         is_error: bool,
     },
-    Usage(Usage),
+    Usage {
+        usage: Usage,
+        /// 发出该笔用量请求时的模型，不能用会话的当前模型替代。
+        model: Option<String>,
+    },
     /// Deterministic routing decision made by the runtime, before provider
     /// prompting. Deep events are emitted only after admission succeeds.
     RouteDecided {
@@ -255,6 +259,7 @@ pub enum AgentEvent {
     SubagentUsage {
         id: uuid::Uuid,
         usage: Usage,
+        model: Option<String>,
     },
     SubagentRetryWait {
         id: uuid::Uuid,
@@ -592,6 +597,7 @@ impl Agent {
         mut call: crate::usage_ledger::ModelCall,
         usage: Option<&Usage>,
         outcome: crate::usage_ledger::Outcome,
+        model: Option<String>,
     ) {
         let mut recorded = usage.cloned();
         if let Some(usage) = recorded.as_mut() {
@@ -607,7 +613,10 @@ impl Agent {
         let sequence = match &recorded {
             Some(usage) => {
                 self.sink
-                    .emit_sequenced(AgentEvent::Usage(usage.clone()))
+                    .emit_sequenced(AgentEvent::Usage {
+                        usage: usage.clone(),
+                        model,
+                    })
                     .await
             }
             None => None,
@@ -1414,7 +1423,8 @@ impl Agent {
             // Record only admitted requests, never a call refused by the budget.
             // 同一时刻记下这一轮请求打到的模型：本轮产出的 assistant 消息都盖
             // 这个章，中途切模型不影响已经在飞的这一轮。
-            let (model_call, reply_model) = match self.provider() {
+            let provider_for_request = self.provider();
+            let (model_call, reply_model) = match &provider_for_request {
                 Ok(provider) => (
                     self.begin_model_call(self.loop_usage_kind(), provider.as_ref()),
                     provider.ledger_identity().map(|identity| identity.model),
@@ -1432,7 +1442,12 @@ impl Agent {
             .with_plan_tools(&self.tools)
             .with_model(reply_model.clone());
             let response = match stream
-                .wait(self.complete_or_preempt(&request_messages, &definitions, &stream))
+                .wait(self.complete_or_preempt(
+                    provider_for_request,
+                    &request_messages,
+                    &definitions,
+                    &stream,
+                ))
                 .await
             {
                 Ok(response) => response,
@@ -1487,7 +1502,7 @@ impl Agent {
                 let call = model_call
                     .take()
                     .unwrap_or_else(crate::usage_ledger::ModelCall::inert);
-                self.settle_model_call(call, partial.usage.as_ref(), outcome)
+                self.settle_model_call(call, partial.usage.as_ref(), outcome, reply_model.clone())
                     .await;
                 checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             }
@@ -1556,8 +1571,13 @@ impl Agent {
                 let call = model_call
                     .take()
                     .unwrap_or_else(crate::usage_ledger::ModelCall::inert);
-                self.settle_model_call(call, Some(&usage), crate::usage_ledger::Outcome::Ok)
-                    .await;
+                self.settle_model_call(
+                    call,
+                    Some(&usage),
+                    crate::usage_ledger::Outcome::Ok,
+                    reply_model.clone(),
+                )
+                .await;
                 let mut partial_history = messages.clone();
                 if !completion.content.is_empty() {
                     partial_history.push(
@@ -1582,8 +1602,13 @@ impl Agent {
                 }
             } else if let Some(call) = model_call.take() {
                 // 协议没报 usage：照样记一次调用，Token 留空，不估算。
-                self.settle_model_call(call, None, crate::usage_ledger::Outcome::Ok)
-                    .await;
+                self.settle_model_call(
+                    call,
+                    None,
+                    crate::usage_ledger::Outcome::Ok,
+                    reply_model.clone(),
+                )
+                .await;
             }
             if self.has_bounded_usage() && !usage_known {
                 return Err(AgentError::TokenBudgetUsageUnknown);
@@ -2015,11 +2040,12 @@ impl Agent {
     /// 记录和事件队列都原样留着，下一轮从保留的上下文继续。
     async fn complete_or_preempt(
         &self,
+        provider: Result<Arc<dyn Provider>, ProviderError>,
         messages: &[Message],
         definitions: &[crate::types::ToolDefinition],
         events: &dyn crate::provider::ProviderEventSink,
     ) -> Result<Option<crate::types::Completion>, ProviderError> {
-        let provider = self.provider()?;
+        let provider = provider?;
         self.sink.emit(AgentEvent::ModelRequestStarted).await;
         let Some(kernel) = self.kernel.clone() else {
             return provider

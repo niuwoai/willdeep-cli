@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn ndjson_usage_keeps_the_model_that_was_billed() {
+    let event = AgentEvent::Usage {
+        usage: willdeep_core::types::Usage {
+            input_tokens: Some(30),
+            output_tokens: Some(4),
+            cache_read_tokens: Some(10),
+            ..Default::default()
+        },
+        model: Some("actual-provider-model".to_owned()),
+    };
+    let value = agent_event_json(event);
+    assert_eq!(value["model"], "actual-provider-model");
+    assert_eq!(value["input_tokens"], 30);
+    assert_eq!(value["cache_read_tokens"], 10);
+    let child = agent_event_json(AgentEvent::SubagentUsage {
+        id: uuid::Uuid::nil(),
+        usage: willdeep_core::types::Usage {
+            input_tokens: Some(8),
+            cache_read_tokens: Some(3),
+            ..Default::default()
+        },
+        model: Some("worker-model".to_owned()),
+    });
+    assert_eq!(child["model"], "worker-model");
+    assert_eq!(child["cache_read_tokens"], 3);
+}
+
+#[test]
 fn headless_run_defaults_to_runtime_and_keeps_cli_secret_overrides_local() {
     let runtime = Cli::try_parse_from(["willdeep", "run", "inspect"]).unwrap();
     let Some(CliCommand::Run(runtime_args)) = runtime.command.as_ref() else {

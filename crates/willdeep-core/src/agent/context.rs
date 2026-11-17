@@ -645,6 +645,7 @@ impl Agent {
             }
             let model = crate::provider::provider_model(provider.as_ref())
                 .unwrap_or_else(|| format!("candidate #{}", index + 1));
+            let request_model = provider.ledger_identity().map(|id| id.model);
             let request = if *hosted_prompt {
                 Message::user(source.clone())
             } else {
@@ -672,7 +673,8 @@ impl Agent {
             let recorded = usage.map(&mut *record_usage);
             // Emits `AgentEvent::Usage` when there is a bill, and writes one
             // usage-ledger line for this request either way.
-            self.settle_model_call(call, usage, outcome).await;
+            self.settle_model_call(call, usage, outcome, request_model)
+                .await;
             if self.has_bounded_usage() && usage.is_none() {
                 return Err(AgentError::TokenBudgetUsageUnknown);
             }
