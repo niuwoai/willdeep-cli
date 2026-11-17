@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-17 | 当前版本：v0.152.0-rc5
+> 最后更新：2026-11-17 | 当前版本：v0.153.0-rc1
+
+群入口继续复用本机 federation 存储与 Runtime 会话：TUI `/groups` 将群记录投影为可过滤列表，有 session_id 才允许进入，跨工作区切换沿用现有会话路由。Web composer 以 workspace 与 session 双重限定请求生命周期；群成员和普通引用复用名称、值、类型前缀匹配，再按 peer→mcp→agent→file 分组限额，成员插入仍为裸 `@名字`。群面板粘贴接入统一可见弹层优先路由。未修改 intake 服务架构。
 
 Multica 适配器使用独立监护进程管理本地 willdeep 及工具进程组，通过父进程管道断开清理取消任务；逐行翻译公共 NDJSON，终态必须来自 completed/partial 事件。用量事件携带实际发出请求时固定的模型标识，并透传子 Agent 模型与缓存读取量；既有模型请求开始事件和本机 TUI 详细工具回执继续保留。外部消费契约见 [Multica 适配器](MULTICA_ADAPTER.md)。
 

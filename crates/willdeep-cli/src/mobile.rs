@@ -332,27 +332,32 @@ mod tests {
         assert_eq!(host.as_deref(), Some("relay.example.com"));
     }
 
-    /// 最坏情况：桌面名顶满 `MAX_DESKTOP_NAME_LEN` 字节，且每个字节都要百分号转义成三个字符。
-    /// 真实主机名只会比这短，所以这就是二维码尺寸的上界。
+    /// QR 会按凭据内容压缩；数字段可能得到更小的码，尺寸只须不超过弹窗上界。
     #[test]
     fn pairing_qr_fits_the_terminal_popup() {
-        let credentials = RelayCredentials::generate();
-        let worst_case_name = "中".repeat(MAX_DESKTOP_NAME_LEN / "中".len());
-        let payload = credentials.pairing_url_named(&worst_case_name).unwrap();
-        let (width, height) = qr_size(&payload);
-        assert_eq!(
-            (width, height),
-            (MAX_QR_WIDTH, MAX_QR_HEIGHT),
-            "配对二维码尺寸变了（载荷 {} 字节）",
-            payload.len()
-        );
-
-        // 当前环境下的真实二维码不得超过这个上界。
-        let (actual_width, actual_height) = qr_size(&credentials.pairing_url().unwrap());
-        assert!(
-            actual_width <= MAX_QR_WIDTH && actual_height <= MAX_QR_HEIGHT,
-            "实际二维码 {actual_width}×{actual_height} 超出上界 {MAX_QR_WIDTH}×{MAX_QR_HEIGHT}"
-        );
+        let alphabetic = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let numeric = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        for room in [alphabetic, numeric] {
+            let credentials = RelayCredentials {
+                relay_base_url: DEFAULT_RELAY_BASE_URL.to_owned(),
+                room: format!("wd-{}", room.simple()),
+                token: alphabetic.simple().to_string(),
+                enabled: false,
+            };
+            // 15 字节中文重现原失败输入；16 字节百分号覆盖每字节均须转义的上界。
+            for name in [
+                "中".repeat(MAX_DESKTOP_NAME_LEN / "中".len()),
+                "%".repeat(MAX_DESKTOP_NAME_LEN),
+            ] {
+                let payload = credentials.pairing_url_named(&name).unwrap();
+                let (width, height) = qr_size(&payload);
+                assert!(
+                    width <= MAX_QR_WIDTH && height <= MAX_QR_HEIGHT,
+                    "配对二维码 {width}×{height} 超出上界 {MAX_QR_WIDTH}×{MAX_QR_HEIGHT}（载荷 {} 字节）",
+                    payload.len()
+                );
+            }
+        }
     }
 
     fn qr_size(payload: &str) -> (usize, usize) {

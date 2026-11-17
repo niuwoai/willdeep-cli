@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export type Reference = { kind: "mcp" | "agent" | "file"; name: string; value: string };
+export type Reference = { kind: "peer" | "mcp" | "agent" | "file"; name: string; value: string };
 export function referenceQuery(text: string, cursor: number) {
   const match = text.slice(0, cursor).match(/(?:^|\s)@([^\s@"]*)$/u);
   return match ? { start: cursor - match[1].length - 1, cursor, query: match[1] } : undefined;
@@ -10,7 +10,7 @@ export function insertReference(text: string, query: { start: number; cursor: nu
 }
 
 const SEARCH_DELAY_MS = 150;
-export function useComposerReferences(workspace: string, prompt: string, loadFailed: string, onError: (error: string) => void) {
+export function useComposerReferences(workspace: string, sessionId: string, prompt: string, loadFailed: string, onError: (error: string) => void) {
   const [query, setQuery] = useState<(NonNullable<ReturnType<typeof referenceQuery>> & { text: string }) | undefined>();
   const [entries, setEntries] = useState<Reference[]>([]);
   const [selected, setSelected] = useState(0);
@@ -32,7 +32,7 @@ export function useComposerReferences(workspace: string, prompt: string, loadFai
     setLoading(false);
     const epoch = generation; const pendingTimer = timer;
     return () => { epoch.current++; clearTimeout(pendingTimer.current); };
-  }, [workspace]);
+  }, [workspace, sessionId]);
   function update(text: string, cursor: number) {
     const next = referenceQuery(text, cursor);
     const ticket = ++generation.current;
@@ -43,7 +43,8 @@ export function useComposerReferences(workspace: string, prompt: string, loadFai
     setLoading(!!next && !!workspace);
     if (!next || !workspace) return;
     timer.current = setTimeout(() => {
-      void fetch(`/api/composer?workspace=${encodeURIComponent(workspace)}&reference_query=${encodeURIComponent(next.query)}`)
+      const session = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
+      void fetch(`/api/composer?workspace=${encodeURIComponent(workspace)}&reference_query=${encodeURIComponent(next.query)}${session}`)
         .then(async (response) => {
           if (!response.ok) throw new Error(String(response.status));
           return await response.json() as { references: Reference[] };
