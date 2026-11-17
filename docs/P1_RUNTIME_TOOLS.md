@@ -1,6 +1,6 @@
 # Runtime 工具：结构查询、语义预览、浏览器与独立搜索
 
-> 开发版本：0.152.0-rc3。本文记录共享 Runtime 已实现的接口、配置和限制。设计来源见 [P1 决策](decisions/2026-11-17-p1-runtime-tools.md)，历史命令、失败修复及未覆盖范围见 [rc1 本地验收](verification/0.151.0-rc1/p1-runtime-tools.md)与 [rc2 整合经过](verification/0.151.0-rc2/p0-p1-closeout.md)，当前整合检查见 [0.152.0-rc3 验收](verification/0.152.0-rc3/p0-p1-closeout.md)与 [JSON](verification/0.152.0-rc3/p0-p1-closeout.json)；本版本尚未安装或发布。
+> 开发版本：0.152.0-rc3。本文记录共享 Runtime 已实现的接口、配置和限制。设计来源见 [P1 决策](decisions/2026-11-17-p1-runtime-tools.md)，历史命令、失败修复及未覆盖范围见 [rc1 本地验收](verification/0.151.0-rc1/p1-runtime-tools.md)与 [rc2 整合经过](verification/0.151.0-rc2/p0-p1-closeout.md)，当前整合检查见 [0.152.0-rc3 验收](verification/0.152.0-rc3/p0-p1-closeout.md)与 [JSON](verification/0.152.0-rc3/p0-p1-closeout.json)；本版本已[本机安装试用](verification/0.152.0-rc3/local-installation.md)，尚未公开发布。
 
 CLI、TUI 和 Web 中的模型使用同一个工具注册表，沿用 Runtime 审批、取消与权限。工具配置存在、依赖路径存在和真实连接可用是三个不同状态。
 
