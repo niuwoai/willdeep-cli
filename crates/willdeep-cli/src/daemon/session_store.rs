@@ -1706,6 +1706,9 @@ impl RuntimeSessionStore {
         error: Option<String>,
         skipped_host_context: bool,
     ) -> Result<Option<uuid::Uuid>> {
+        // Match bind_task/set_task_waiting: keep the foreground and Turn
+        // snapshot ordered through completion and restoration.
+        let mut sessions = self.lock()?;
         let mut turns = self.turns_lock()?;
         let Some(turn) = turns
             .values_mut()
@@ -1750,29 +1753,17 @@ impl RuntimeSessionStore {
             }
         }
         persist_turns(&self.turns_path, &turns)?;
-        let resume = turns
-            .values()
-            .filter(|other| {
-                other.metadata.session_id == session_id
-                    && matches!(
-                        other.metadata.status,
-                        RuntimeTurnStatus::WaitingApproval
-                            | RuntimeTurnStatus::WaitingAnswer
-                            | RuntimeTurnStatus::Running
-                    )
-            })
-            .min_by_key(|other| other.metadata.queue_sequence)
-            .map(|other| (other.metadata.id, other.metadata.status));
-        drop(turns);
-        let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
+        let resume = completion_foreground(&turns, session);
+        drop(turns);
         session.active_turn_id = resume.map(|(id, _)| id);
         session.status = if let Some((_, status)) = resume {
             match status {
                 RuntimeTurnStatus::WaitingAnswer => RuntimeSessionStatus::WaitingAnswer,
                 RuntimeTurnStatus::WaitingApproval => RuntimeSessionStatus::WaitingApproval,
+                RuntimeTurnStatus::Queued => RuntimeSessionStatus::Queued,
                 _ => RuntimeSessionStatus::Running,
             }
         } else if skipped_host_context
@@ -1796,6 +1787,9 @@ impl RuntimeSessionStore {
         task_id: uuid::Uuid,
         turn_status: RuntimeTurnStatus,
     ) -> Result<()> {
+        // Keep the Turn and foreground Session update ordered with binding and
+        // completion. A delayed gate/resume must never reopen a finished Turn.
+        let mut sessions = self.lock()?;
         let mut turns = self.turns_lock()?;
         let Some(turn) = turns
             .values_mut()
@@ -1803,15 +1797,21 @@ impl RuntimeSessionStore {
         else {
             return Ok(());
         };
-        turn.metadata.status = turn_status;
+        if turn_status_is_terminal(turn.metadata.status) {
+            return Ok(());
+        }
+        let previous_status = turn.metadata.status;
         let session_id = turn.metadata.session_id;
         let turn_id = turn.metadata.id;
-        persist_turns(&self.turns_path, &turns)?;
-        drop(turns);
-        let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
+        let previous_session = session.clone();
+        turn.metadata.status = turn_status;
+        if let Err(error) = persist_turns(&self.turns_path, &turns) {
+            turns.get_mut(&turn_id).unwrap().metadata.status = previous_status;
+            return Err(error);
+        }
         if turn_status == RuntimeTurnStatus::Running {
             session.active_turn_id = Some(turn_id);
         }
@@ -1824,7 +1824,17 @@ impl RuntimeSessionStore {
             _ => RuntimeSessionStatus::Running,
         };
         session.updated_at = now();
-        persist_sessions(&self.path, &sessions)
+        if let Err(error) = persist_sessions(&self.path, &sessions) {
+            sessions.insert(session_id, previous_session);
+            turns.get_mut(&turn_id).unwrap().metadata.status = previous_status;
+            persist_turns(&self.turns_path, &turns).with_context(|| {
+                format!(
+                    "rollback gate state for Turn {turn_id} after Session write failed: {error:#}"
+                )
+            })?;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn request_cancel(&self, turn_id: uuid::Uuid) -> Result<CancelRuntimeTurn> {
@@ -1901,41 +1911,44 @@ impl RuntimeSessionStore {
     }
 
     pub fn complete_claim_failure(&self, turn_id: uuid::Uuid, error: String) -> Result<()> {
+        let mut sessions = self.lock()?;
         let mut turns = self.turns_lock()?;
         let turn = turns.get_mut(&turn_id).context("Runtime Turn not found")?;
-        turn.metadata.status = RuntimeTurnStatus::Failed;
-        turn.metadata.completed_at = Some(now());
-        turn.metadata.error = Some(error.clone());
+        if turn_status_is_terminal(turn.metadata.status)
+            && turn.metadata.status != RuntimeTurnStatus::Failed
+        {
+            return Ok(());
+        }
+        // Failed replays must finish partial Session writes without changing the first outcome.
+        if turn.metadata.status != RuntimeTurnStatus::Failed {
+            turn.metadata.status = RuntimeTurnStatus::Failed;
+            turn.metadata.completed_at = Some(now());
+            turn.metadata.error = Some(error);
+        }
+        let error = turn.metadata.error.clone();
         let session_id = turn.metadata.session_id;
-        let resume = turns
-            .values()
-            .filter(|other| {
-                other.metadata.session_id == session_id
-                    && matches!(
-                        other.metadata.status,
-                        RuntimeTurnStatus::WaitingApproval | RuntimeTurnStatus::WaitingAnswer
-                    )
-            })
-            .min_by_key(|other| other.metadata.queue_sequence)
-            .map(|other| (other.metadata.id, other.metadata.status));
         persist_turns(&self.turns_path, &turns)?;
-        drop(turns);
-        let mut sessions = self.lock()?;
         let session = sessions
             .get_mut(&session_id)
             .context("Runtime Session not found")?;
+        let resume = completion_foreground(&turns, session);
+        drop(turns);
         session.active_turn_id = resume.map(|(id, _)| id);
         session.status = match resume.map(|(_, status)| status) {
             Some(RuntimeTurnStatus::WaitingAnswer) => RuntimeSessionStatus::WaitingAnswer,
             Some(RuntimeTurnStatus::WaitingApproval) => RuntimeSessionStatus::WaitingApproval,
+            Some(RuntimeTurnStatus::Running) => RuntimeSessionStatus::Running,
+            Some(RuntimeTurnStatus::Queued) => RuntimeSessionStatus::Queued,
             _ => RuntimeSessionStatus::Failed,
         };
         session.updated_at = now();
-        session.last_error = Some(error);
+        session.last_error = error;
         persist_sessions(&self.path, &sessions)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<uuid::Uuid, RuntimeSession>>> {
+        #[cfg(test)]
+        completion_tests::before_session_lock();
         self.sessions
             .lock()
             .map_err(|_| anyhow::anyhow!("Runtime Session store lock poisoned"))
@@ -1948,6 +1961,34 @@ impl RuntimeSessionStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("Runtime Turn store lock poisoned"))
     }
+}
+
+fn completion_foreground(
+    turns: &HashMap<uuid::Uuid, StoredRuntimeTurn>,
+    session: &RuntimeSession,
+) -> Option<(uuid::Uuid, RuntimeTurnStatus)> {
+    turns
+        .values()
+        .filter(|other| {
+            let turn = &other.metadata;
+            turn.session_id == session.id
+                && (matches!(
+                    turn.status,
+                    RuntimeTurnStatus::WaitingApproval
+                        | RuntimeTurnStatus::WaitingAnswer
+                        | RuntimeTurnStatus::Running
+                ) || (turn.status == RuntimeTurnStatus::Queued
+                    && session.active_turn_id == Some(turn.id)))
+        })
+        // An existing foreground reservation belongs to its claimant. Ordinary
+        // unclaimed Queued messages cannot enter this candidate set.
+        .min_by_key(|other| {
+            (
+                session.active_turn_id != Some(other.metadata.id),
+                other.metadata.queue_sequence,
+            )
+        })
+        .map(|other| (other.metadata.id, other.metadata.status))
 }
 
 fn normalized_title(title: String) -> Result<String> {
@@ -2948,5 +2989,7 @@ fn persist_turns(path: &Path, turns: &HashMap<uuid::Uuid, StoredRuntimeTurn>) ->
     write_json_atomic(path, &turns)
 }
 
+#[cfg(test)]
+mod completion_tests;
 #[cfg(test)]
 mod tests;

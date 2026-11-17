@@ -174,12 +174,13 @@ impl LibraryHost {
             crate::agent_registry::capture_scope(&self.home)? == self.scope,
             "agent_scope_conflict: account changed before catalog refresh"
         );
-        let profiles = crate::agent_registry::runtime_profiles(
+        let mut profiles = crate::agent_registry::runtime_profiles(
             &self.home,
             &self.base_profiles,
             &self.file,
             &self.parent,
         )?;
+        super::worker_profiles::bind_library_policy(&mut profiles, &self.parent)?;
         self.catalog.replace_specialist_profiles(profiles)?;
         Ok(())
     }

@@ -190,6 +190,25 @@ pub(crate) async fn run(action: FeedbackAction, cli: &crate::Cli) -> Result<()> 
                     .map_err(anyhow::Error::msg)?;
                 let mut configuration =
                     crate::harness::resolve_parent_provider_config(cli, &loaded, None)?;
+                let session = evidence
+                    .session_id
+                    .map(|id| willdeep_core::SessionStore::new(&home).load(id))
+                    .transpose()
+                    .context("load project ownership for feedback assessment")?;
+                // Evidence belongs to its recorded session, even when the CLI
+                // happens to be invoked from another project's directory.
+                configuration.policy_context = Some(match session {
+                    Some(session) => {
+                        willdeep_core::SessionStore::new(&home).model_policy_context(&session)?
+                    }
+                    None if cli.workspace.is_some() || cli.project.is_some() => {
+                        let workspace = crate::harness::resolve_workspace(cli, None)?;
+                        willdeep_core::provider::ModelPolicyContext::for_workspace(&workspace)?
+                    }
+                    None => bail!(
+                        "feedback assessment requires a recorded session or explicit --workspace/--project"
+                    ),
+                });
                 configuration.max_output_tokens = 512;
                 let provider = willdeep_core::build_provider(configuration)?;
                 let identity = provider.ledger_identity();

@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "id": "core-regression-v1",
+  "source": "docs/research/2026-11-17-willdeep-cli-gap-analysis.md:74",
+  "execution_mode": "offline_deterministic_runtime_tests",
+  "entrypoint": "ruby scripts/agent_reliability_regression.rb",
+  "run": "ruby scripts/agent_reliability_regression.rb --with-browser --out target/core-regression",
+  "registration_check": "ruby scripts/agent_reliability_regression.rb --check-manifest",
+  "browser_stage": {
+    "prerequisite": "Start scripts/test/support/browser_runtime_fixture.rb with preview_start first; reuse its private manifest, real binary, existing Node and Chrome. This runner never starts a server or installs dependencies.",
+    "standalone": "ruby scripts/test/browser_runtime_entrypoints_test.rb --binary /absolute/path/to/willdeep --node /absolute/path/to/node --chrome /absolute/path/to/chrome --fixture /private/fixture/manifest.json --report-dir target/browser-runtime",
+    "regression_arguments": ["--with-browser", "--browser-arg=--binary", "--browser-arg=/absolute/path/to/willdeep", "--browser-arg=--node", "--browser-arg=/absolute/path/to/node", "--browser-arg=--chrome", "--browser-arg=/absolute/path/to/chrome", "--browser-arg=--fixture", "--browser-arg=/private/fixture/manifest.json"],
+    "output": "A unique run directory owns browser-runtime-entrypoints.json and stdout/stderr. All nine entry/scenario names, actual execution, version, binary SHA and current-run timestamp must match."
+  },
+  "limits": [
+    "No paid provider or dependency installation. Rust compilation uses Cargo offline and locked; browser prerequisites must already exist.",
+    "Exact test names, nonzero execution, no ignored/skipped tests, current Cargo package version and executable hash are required.",
+    "Deterministic protocol/fixture regression is not a live-model quality or false-completion-rate measurement. Unknown model cost and usage remain null.",
+    "Browser execution is explicitly selected with --with-browser. Omitting it leaves browser_interaction unverified and the full baseline incomplete.",
+    "Rust/TypeScript coding fixtures use the existing independent ModelEval verifier. LSP refresh tests use a local fake language server; actual rust-analyzer/tsserver quality is outside this baseline."
+  ],
+  "cases": [
+    {
+      "id": "stale_edit",
+      "title": "陈旧读取与多文件预检冲突",
+      "fixture": {
+        "description": "Existing isolated file_changes fixture: read a.txt, mutate it externally, then submit a stale edit; a two-file preview is invalidated by external changes to b.txt.",
+        "paths": ["crates/willdeep-core/src/tools/file_changes/tests.rs"]
+      },
+      "criteria": [
+        "陈旧读取产生 EditConflict 且外部写入逐字保留",
+        "显式陈旧版本优先于新隐式基线",
+        "多文件预检失败时实际写集为空、两文件内容保留且预览不可重放"
+      ],
+      "checks": [
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "tools::file_changes::tests::unread_edit_is_rejected_and_actual_read_establishes_full_file_baseline"},
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "tools::file_changes::tests::explicit_stale_version_wins_over_fresh_implicit_baseline"},
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "tools::file_changes::tests::preflight_conflict_writes_nothing_and_consumes_stale_preview"}
+      ]
+    },
+    {
+      "id": "cross_file_references",
+      "title": "跨文件引用与独立红绿验证",
+      "fixture": {
+        "description": "Reuse existing Rust checkout/invoice/pricing and TypeScript formatter/view coding tasks, reconstructed independent verifiers, plus the local two-document LSP refresh fixture.",
+        "paths": [
+          "bench/model-eval/tasks/p0-rust-cross-file-references/task.json",
+          "bench/model-eval/tasks/p0-typescript-symbol-key-references/task.json",
+          "scripts/test/p0_eval_tasks_test.rb",
+          "crates/willdeep-core/src/tools/lsp/tests.rs"
+        ]
+      },
+      "criteria": [
+        "Rust 与 TypeScript 原夹具各自失败、完整参考修改经独立 verifier 通过",
+        "查询 A 前同步已打开 B 的实际文本与版本",
+        "跨文件查询期间任一已检查文件变化时丢弃陈旧结果"
+      ],
+      "checks": [
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "tools::lsp::tests::querying_a_refreshes_previously_opened_b_and_rejects_mid_query_changes"},
+        {"type": "minitest", "script": "scripts/test/p0_eval_tasks_test.rb", "name": "test_p0_rust_cross_file_references_original_is_red_and_solution_is_green"},
+        {"type": "minitest", "script": "scripts/test/p0_eval_tasks_test.rb", "name": "test_p0_typescript_symbol_key_references_original_is_red_and_solution_is_green"}
+      ]
+    },
+    {
+      "id": "browser_interaction",
+      "title": "真实本地网页三端交互",
+      "fixture": {
+        "description": "Explicit existing local browser Runtime fixture with disposable HOME, local provider, HTTP form and private Chrome profile. The Task C entrypoint owns setup and cleanup.",
+        "paths": ["scripts/test/browser_runtime_entrypoints_test.rb", "scripts/test/support/browser_runtime_support.rb", "scripts/test/support/browser_runtime_fixture.rb"]
+      },
+      "criteria": [
+        "真实 CLI、TUI、Web 入口分别触发浏览器操作并检查实际业务结果",
+        "本轮固定检查名与 passed 结果必须完整匹配，未运行或零测试不得通过",
+        "报告版本必须等于当前工作区版本；不接受历史报告作为本轮执行"
+      ],
+      "checks": [
+        {"type": "browser_runtime", "stage": "browser", "script": "scripts/test/browser_runtime_entrypoints_test.rb", "name": "browser_runtime_entrypoints", "expected_tests": ["cli/success", "cli/approval_cancel", "cli/executing_cancel", "tui/success", "tui/approval_cancel", "tui/executing_cancel", "web/success", "web/approval_cancel", "web/executing_cancel"]}
+      ]
+    },
+    {
+      "id": "compression_constraints",
+      "title": "压缩后保留约束与工具协议",
+      "fixture": {
+        "description": "Existing context history with 43 messages, system/user constraints and completed tool-call batches; summarizer is deterministic and local.",
+        "paths": ["crates/willdeep-core/src/agent/context/tests.rs"]
+      },
+      "criteria": [
+        "自动压缩生成真实摘要且逐字保留 system/user 约束",
+        "压缩不拆开工具调用与结果，不修改原持久历史",
+        "手动压缩减少历史且保留用户指令及完整最近工具批次"
+      ],
+      "checks": [
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "agent::context::tests::automatic_compression_preserves_constraints_and_tool_protocol"},
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "agent::context::tests::manual_compression_keeps_user_instructions_and_whole_tool_batches"}
+      ]
+    },
+    {
+      "id": "multitask_recovery",
+      "title": "多任务持久恢复与安全重试",
+      "fixture": {
+        "description": "Existing isolated durable WorkflowStore with dependent tasks a/b, a completed task, a failed task and an uncertain interrupted task; no external provider.",
+        "paths": ["crates/willdeep-core/src/workflow/tests.rs", "crates/willdeep-core/src/workflow/tests/lifecycle.rs"]
+      },
+      "criteria": [
+        "失败后的新执行身份复用成功任务，仅重新调度失败依赖节点",
+        "复用结果不重复记模型用量且原执行记录保留",
+        "不确定中断任务在显式恢复前无 ready 工作，恢复后生成新 request 身份"
+      ],
+      "checks": [
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "workflow::tests::lifecycle::retry_has_new_identity_and_reuses_successes_without_new_model_usage"},
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "workflow::tests::lifecycle::resume_does_not_replay_uncertain_work_until_explicitly_requested"}
+      ]
+    },
+    {
+      "id": "false_completion",
+      "title": "错误完成被真实验收门拒绝",
+      "fixture": {
+        "description": "Existing local scripted providers claim done without required verification, or change the workspace while claiming goal completion; actual Agent outcome is inspected.",
+        "paths": ["crates/willdeep-core/src/agent/tests.rs"]
+      },
+      "criteria": [
+        "显式必需验证进入实际模型请求，未执行验证时 AgentStopReason 为 Unverified",
+        "工作区变化后历史验证不能支撑完成，goal complete 文案不能越过当前快照验收",
+        "检查真实 Agent 终态和 continuation，而非把完成文案当成功"
+      ],
+      "checks": [
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "agent::tests::configured_verification_reaches_the_model_and_blocks_unchecked_completion"},
+        {"type": "rust", "package": "willdeep-core", "target": "lib", "name": "agent::tests::changed_workspace_cannot_finish_without_current_verification"}
+      ]
+    }
+  ]
+}

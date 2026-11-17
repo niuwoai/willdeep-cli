@@ -31,7 +31,12 @@ pub(super) fn content_width(width: usize) -> usize {
 }
 
 /// 只移除记录生成的角色前缀；用户正文不再经过角色或 Markdown 解析。
-pub(super) fn render_body(row: &str, search: Option<&str>, width: usize) -> Text<'static> {
+pub(super) fn render_body(
+    row: &str,
+    search: Option<&str>,
+    width: usize,
+    id: rendering::source::SourceId,
+) -> (Text<'static>, Vec<rendering::source::SourceRow>) {
     let body = row.strip_prefix("You: ").unwrap_or(row);
     let mut text = Text::from(
         body.split('\n')
@@ -41,7 +46,7 @@ pub(super) fn render_body(row: &str, search: Option<&str>, width: usize) -> Text
     if let Some(query) = search {
         rendering::highlight_matches(&mut text, query);
     }
-    wrap_styled_text(text, width)
+    rendering::source::wrap_literal(text, id, rendering::source::SourcePart::Body, body, width)
 }
 
 /// 消息块靠右、块内各行左对齐。缩进是透明的，只有正文和左右内边距带背景。
@@ -71,6 +76,35 @@ pub(super) fn style_block(entry: &mut Text<'static>, width: usize) -> Vec<std::o
         *line = Line::from(spans);
     }
     content_bounds
+}
+
+/// Tint only the identity-bound receipt cell. Never recognize status from a
+/// user's text, recolor its body, or change provenance/selection coordinates.
+fn style_delivery_symbol(line: &mut Line<'static>, column: usize, color: Color) {
+    let mut offset = 0;
+    for index in 0..line.spans.len() {
+        let span = &line.spans[index];
+        if (offset..offset + span.width()).contains(&column) {
+            let Some((byte, character)) = span.content.char_indices().find(|(byte, _)| {
+                UnicodeWidthStr::width(&span.content[..*byte]) == column - offset
+            }) else {
+                return;
+            };
+            let end = byte + character.len_utf8();
+            let span = line.spans.remove(index);
+            let parts = [
+                Span::styled(span.content[..byte].to_owned(), span.style),
+                Span::styled(
+                    span.content[byte..end].to_owned(),
+                    span.style.fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(span.content[end..].to_owned(), span.style),
+            ];
+            line.spans.splice(index..index, parts);
+            return;
+        }
+        offset += span.width();
+    }
 }
 
 impl App {
@@ -125,23 +159,24 @@ impl App {
             .enumerate()
             .skip(floor)
             .filter(|(_, row)| narration::is_tool_display_row(row))
-            .filter_map(|(source, row)| {
+            .filter_map(|(source, _)| {
                 let target = *folded.index_of.get(source - floor + shift)?;
-                let visible = folded.rows.get(target)?;
-                if visible != row {
+                if folded.sources.get(target) != Some(&Some(source)) {
                     return None;
                 }
                 // 行本身一直可点，但完整命令只在点开之后才画出来。
                 // 记下的展开内容不管展开状态，收起时照样留着，下次点开还在。
                 let expansion = self
-                    .expanded_tool_rows
-                    .contains(&source)
+                    .tool_row_open(source)
                     .then(|| self.tool_expansions.get(&source).cloned())
                     .flatten();
-                Some((target, (source, expansion)))
+                Some((
+                    target,
+                    (source, expansion, self.tool_visuals.is_diff(source)),
+                ))
             })
             .collect();
-        message_time::render_transcript(
+        let mut frame = message_time::render_transcript(
             &folded.rows[..end],
             &labels[..end],
             search,
@@ -152,10 +187,102 @@ impl App {
             &self.transcript_attachments,
             &self.assistant_name(),
             self.ui.line_spacing,
-        )
+        );
+        use rendering::source::{SourceId, SourcePart};
+        // Folded indices are layout positions. Translate them through index_of,
+        // then prepare_transcript_frame translates original indices to stable IDs.
+        let mut representatives = BTreeMap::new();
+        let mut exact = BTreeSet::new();
+        for (target, source) in folded.sources.iter().take(end).enumerate() {
+            if let Some(source) = source {
+                representatives.insert(target, *source);
+                exact.insert(target);
+            }
+        }
+        for source in floor..self.transcript.len() {
+            if let Some(&target) = folded.index_of.get(source - floor + shift)
+                && target < end
+            {
+                representatives.entry(target).or_insert(source);
+            }
+        }
+        let mut ids = BTreeMap::new();
+        for target in 0..end {
+            let id = if target == 0 && floor > 0 {
+                SourceId::Archive
+            } else {
+                representatives
+                    .get(&target)
+                    .map_or(SourceId::Archive, |source| SourceId::Record(*source))
+            };
+            ids.insert(SourceId::Record(target), id);
+            if !exact.contains(&target) {
+                for row in &mut frame.sources.rows {
+                    if row.fallback.id == SourceId::Record(target) {
+                        row.cells.clear();
+                        row.fallback.part = SourcePart::Control;
+                    }
+                }
+            }
+        }
+        frame.sources.rebase(&ids);
+        // Status prefixes belong to a receipt, not the user's original body.
+        // Their byte length can change from queued to started without moving it.
+        for echo in &self.pending_runtime_echoes {
+            let Some(record) = echo.record else { continue };
+            let Some(raw) = self.transcript.get(record) else {
+                continue;
+            };
+            let body = terminal_safe_text(&echo.text);
+            let prefix = rendering::source::record_body(raw)
+                .len()
+                .saturating_sub(body.len());
+            let id = SourceId::Record(record);
+            for (line, row) in frame.text.lines.iter_mut().zip(&mut frame.sources.rows) {
+                if row.fallback.id != id {
+                    continue;
+                }
+                if let Some(cell) = row.cells.iter().find(|cell| {
+                    cell.source.point.part == SourcePart::Body && cell.source.point.byte == 0
+                }) {
+                    style_delivery_symbol(line, cell.columns.start, echo.status.color());
+                }
+                row.cells.retain_mut(|cell| {
+                    if cell.source.point.part != SourcePart::Body {
+                        return true;
+                    }
+                    if cell.source.point.byte < prefix {
+                        return false;
+                    }
+                    cell.source.point.byte -= prefix;
+                    cell.source.end -= prefix;
+                    true
+                });
+                if row.fallback.part == SourcePart::Body {
+                    row.fallback.byte = row.fallback.byte.saturating_sub(prefix);
+                }
+            }
+            frame.sources.parts.insert((id, SourcePart::Body), body);
+        }
+        for source in 0..floor {
+            frame
+                .sources
+                .aliases
+                .insert(SourceId::Record(source), SourceId::Archive);
+        }
+        for source in floor..self.transcript.len() {
+            if let Some(target) = folded.index_of.get(source - floor + shift)
+                && let Some(id) = ids.get(&SourceId::Record(*target))
+                && *id != SourceId::Record(source)
+            {
+                frame.sources.aliases.insert(SourceId::Record(source), *id);
+            }
+        }
+        frame
     }
 
     pub(super) fn update_user_message_hits(&mut self, offset: usize, top: u16) {
+        self.update_thought_hits(offset, top);
         self.user_message_hit_rows = self
             .user_message_controls
             .iter()
@@ -234,27 +361,17 @@ impl App {
             return false;
         };
         let collapsing = self.expanded_user_messages.get(&source) == Some(row);
-        let mut offset = self.transcript_render_offset;
         if collapsing {
-            let width = content_width(self.transcript_width);
-            let body_height = render_body(row, None, width).lines.len();
-            if let Some((control, _)) = self
-                .user_message_controls
-                .iter()
-                .find(|(_, index)| *index == source)
-            {
-                offset = offset.min(control.saturating_sub(body_height));
-            }
             self.expanded_user_messages.remove(&source);
         } else {
             self.expanded_user_messages.insert(source, row.clone());
         }
         self.transcript_render_cache = None;
-        self.chat_selection = None;
         self.user_message_hit_rows.clear();
-        self.refresh_transcript_height();
         self.follow_bottom = false;
-        self.scroll_from_bottom = self.max_scroll().saturating_sub(offset);
+        // Preserve the old frame's source; prepare_transcript_frame resolves it
+        // after folding, falling back to this message's title if it is hidden.
+        self.refresh_transcript_height();
         true
     }
 }

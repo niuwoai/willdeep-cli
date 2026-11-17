@@ -1,6 +1,6 @@
 # 生命周期挂钩（Hooks）
 
-> 状态：**可用**。当前覆盖 `pre_tool` / `post_tool` 两个触发点。
+> 状态：**可用**。当前覆盖 `pre_tool` / `post_tool` / `approval_resolved`；审批结果接线修复属于 `0.150.0-rc3`，契约见[审批结果决策](decisions/2026-11-17-approval-resolved-hooks.md)。
 
 审计要的是"谁在什么时候做了什么"，合规要的是"没批准就不许干"。这两件事都不能
 交给一条可以丢的通知。
@@ -22,12 +22,12 @@ webhook 那条设计成"永远不会让一个轮次失败"是对的——没人�
 
 每条 hook 是一条 shell 命令：
 
-1. 事件 JSON 从 **stdin** 喂进去（一行 UTF-8，上限 16 KB）。
+1. 事件 JSON 从 **stdin** 喂进去（一行 UTF-8，上限 16 KiB）。超出预算时先裁剪字段并标明截断，再序列化，仍保持合法 JSON。
 2. **退出码 0 = 放行。** 阻塞式 hook 的**非零退出 = 拦截**，stderr 前 2 KB
    作为拒绝理由回给模型和用户。
 3. 超时（默认 10 秒）按 `on_error` 处置。
 
-非阻塞 hook 的退出码不影响流程——它就是来留痕的，自己挂了不该连累这次调用。
+非阻塞 hook 的退出码不影响流程。非零退出、启动失败或超时会向 stderr 输出结构化警告，包含脱敏后的 Hook 名、事件、失败类别和可用的退出码，不记录命令、事件载荷或原始 stderr。
 
 ### 事件载荷
 
@@ -53,9 +53,15 @@ webhook 那条设计成"永远不会让一个轮次失败"是对的——没人�
 |---|---|---|
 | `pre_tool` | 工具即将执行 | **能** |
 | `post_tool` | 工具执行完毕 | 不能——事情已经发生了 |
-| `approval_resolved` | 一次审批有了结果 | 不能 |
+| `approval_resolved` | 审批器返回决定，或 AI 判官最终放行 | 不能 |
 
-在 `post_tool` 上写 `blocking = true` 会被配置检查直接拒绝启动，而不是默默失效。
+审批器结果的 `tool` 是审批请求动作名；判官放行命令时为 `run_command`。`detail` 复用凭据脱敏，`session_id` / `workspace` 绑定当前 Registry。`extra.source=approver` 时，`outcome` 为 `allow_once`、`always_allow` 或 `deny`；`extra.source=judge` 时为 `allow`；`extra.mode` 记录投递时的审批模式。判官拒绝或不可用后转审批器，只投递后者实际返回的最终决定。超长载荷带 `extra.truncated="true"`，裁剪后的字段不能当作完整命令或 Diff。
+
+`approver` 不等于人工来源：无人交互、通道关闭或取消也可能返回 `deny`。人工拒绝与取消的细分仍看 Runtime 反馈账本。`always_allow` 仅表示审批器返回该决定，不证明后续授权持久化成功；审批结果也不证明工具已经执行或成功。
+
+静态放行、白名单命中、FullAccess 免审、审批前硬拒绝及 `ask_user` 问答不产生这类事件。事件在当前调用链内有界等待；失败不能改变审批决定，取消或进程退出仍可能中断投递，不提供持久队列或崩溃补发。
+
+在 `post_tool` 或 `approval_resolved` 上写 `blocking = true` 会被配置检查直接拒绝启动。
 一个拦不住任何东西却看起来像门禁的配置，比没有配置更危险。
 
 ## 失败时默认拦，不默认放
@@ -110,7 +116,7 @@ on_error = "deny"
 ## 现在还没有的
 
 - **只有三个触发点。** 没有 `session_start` / `turn_end` / `pre_write`。
-- **`approval_resolved` 尚未接线。** 事件类型已定义，审批路径还没往外发。
+- **审批结果不保证持久送达。** 取消或崩溃可中断 Hook；它不替代 Runtime 人工处置反馈账本和工具执行证据。
 - **hook 改不了参数。** 它只能放行或拦截，不能重写模型请求的命令——能改的话
   就得回答"改完之后审批过的还算不算数"，那是另一个设计。
 
@@ -119,3 +125,4 @@ on_error = "deny"
 - [审批与自动化](APPROVALS.md) — 进程内的三道闸门
 - [OS 级写入围栏](SANDBOX.md) — 内核裁决的第四道
 - [配置指南](CONFIGURATION.md) — 完整 TOML 结构
+- [rc3 审批 Hook 验收](verification/0.150.0-rc3/clippy-approval-hooks.md) — 实际命令、真实 stdin 与文件效果、失败历史和未验证项

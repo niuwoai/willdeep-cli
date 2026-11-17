@@ -1,0 +1,28 @@
+{
+  "passed": false,
+  "checks": [
+    {
+      "mode": "compact",
+      "name": "model waiting is visible before output",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "streaming updates new-content feedback and preserves the visible history anchor",
+      "passed": false,
+      "error": "reading indicator contains stale cells: \"\\u2594New content \\u00B7 End to latest                                                                       \\u2594\""
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "19e0aa9b5d05c889f23f45b2be01ae793e3bfa242792e78abecf419139a25c3f",
+  "scope": "full/compact real PTY: progress, accepted queue, reading anchor and draft preservation",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace; loopback synthetic SSE; no inherited credentials.",
+  "clipboard": {
+    "transport": "OSC 52 forced by private-process SSH_CONNECTION; captured PTY only, no host clipboard bridge",
+    "copies": []
+  },
+  "resize_frames": [],
+  "version": "willdeep 0.152.0-rc4",
+  "error": "RuntimeError: reading indicator contains stale cells: \"\\u2594New content \\u00B7 End to latest                                                                       \\u2594\"",
+  "checks_passed": 1
+}

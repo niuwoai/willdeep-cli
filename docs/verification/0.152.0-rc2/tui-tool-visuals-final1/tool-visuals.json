@@ -1,0 +1,221 @@
+{
+  "passed": false,
+  "checks": [
+    {
+      "mode": "full",
+      "name": "requested layout is painted through the default Runtime TUI",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/00-layout-ready.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/00-layout-ready.ansi",
+        "application_frame": 2,
+        "columns": 132,
+        "rows": 70,
+        "activity_panel": true
+      }
+    },
+    {
+      "mode": "full",
+      "name": "historical ending touches AI/time and hides your turn",
+      "passed": true,
+      "evidence": {
+        "answer_row": 6,
+        "divider_row": 7,
+        "rows": [
+          "│HISTORY_AI_LAST_LINE · now · fixture                                                                                              │",
+          "│── turn finished · first reply 0.34s · total 0.42s ──                                                                             │"
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/01-historical-ending.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/01-historical-ending.ansi",
+        "application_frame": 35
+      }
+    },
+    {
+      "mode": "full",
+      "name": "running command 1 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/02-command-1-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/02-command-1-running.ansi",
+        "application_frame": 37,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-1.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-1.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-1.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_1_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_1_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_1_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "full",
+      "name": "completed command 1 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/03-command-1-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/03-command-1-collapsed.ansi",
+        "application_frame": 42
+      }
+    },
+    {
+      "mode": "full",
+      "name": "running command 2 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/02-command-2-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/full/02-command-2-running.ansi",
+        "application_frame": 44,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-2.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-2.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-2.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_2_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_2_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_2_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "requested layout is painted through the default Runtime TUI",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/00-layout-ready.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/00-layout-ready.ansi",
+        "application_frame": 3,
+        "columns": 132,
+        "rows": 70,
+        "activity_panel": false
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "historical ending touches AI/time and hides your turn",
+      "passed": true,
+      "evidence": {
+        "answer_row": 5,
+        "divider_row": 6,
+        "rows": [
+          " HISTORY_AI_LAST_LINE · now · fixture",
+          " ── turn finished · first reply 0.35s · total 0.47s ──            "
+        ],
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/01-historical-ending.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/01-historical-ending.ansi",
+        "application_frame": 34
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "running command 1 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/02-command-1-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/02-command-1-running.ansi",
+        "application_frame": 38,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-1.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-1.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-1.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_1_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_1_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_1_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "completed command 1 collapses while next Provider waits",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/03-command-1-collapsed.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/03-command-1-collapsed.ansi",
+        "application_frame": 41
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "running command 2 expands past the 96-character summary",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/02-command-2-running.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/docs/verification/0.152.0-rc2/tui-tool-visuals-final1/compact/02-command-2-running.ansi",
+        "application_frame": 43,
+        "command": "/opt/homebrew/Cellar/ruby@3.2/3.2.4/bin/ruby -e File.open\\(\\\"command-2.lock\\\",\\ \\'r\\'\\)\\ \\{\\ \\|gate\\|\\ File.write\\(\\\"command-2.started\\\",\\ \\'ready\\'\\)\\;\\ gate.flock\\(File::LOCK_SH\\)\\ \\}\\;\\ File.write\\(\\\"command-2.finished\\\",\\ \\'complete\\'\\)\\;\\ puts\\ \\\"WD_COMMAND_2_OK\\\" -- command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding-command-visual-padding- WD_COMMAND_TAIL_2_VISIBLE",
+        "tail": "WD_COMMAND_TAIL_2_VISIBLE",
+        "tail_character_offset": 458
+      }
+    },
+    {
+      "mode": "binary",
+      "name": "binary SHA256 unchanged",
+      "passed": true
+    }
+  ],
+  "errors": [
+    "full: RuntimeError: command 2 returns to summary: timed out\nLast terminal rows:\n│  0.9s · Runtime · turn 3                                                                                                         │\n└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Prompt [focused] · F2 expand · Shift/Alt+Enter newline · Turn running · Enter sends text · Ctrl+Q queue · Esc stops · Full access ┐\n│                                                                                                                                  │\n│                                                                                                                                  │\n│                                                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘\n◒ Waiting for model · 34s without a new event · elapsed 35.4s · Focus: Prompt · context 0% · latest ↑0 ↓0 · Esc Esc×2 interrupt · F1",
+    "compact: RuntimeError: command 2 returns to summary: timed out\nLast terminal rows:\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n                                                                                                                                    \n                                                                                                                                    \n                                                                                                                                    \n◒ Waiting for model · 34s without a new event · elapsed 35.3s · Focus: Prompt · context 0% · latest ↑0 ↓0 · Esc Esc×2 interrupt · F1"
+  ],
+  "cleanup": [
+    {
+      "mode": "full",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "release owned command locks",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned loopback Provider",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "release owned command locks",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned loopback Provider",
+      "passed": true
+    }
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/p0-p1-rc152-rc2-20261117-final1/willdeep",
+  "binary_sha256_before": "0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5",
+  "fixture_root": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-tui-tool-visuals-20261117-74058-6l8dkk",
+  "real_model_requests": false,
+  "layouts": [
+    "full",
+    "compact"
+  ],
+  "scope": "real Runtime/full+compact PTY; gated command expansion/collapse; committed create/edit/file_changes diffs; historical AI/time/divider adjacency",
+  "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; file-lock synchronization; OSC52 captured in owned PTY.",
+  "boundary": "No final finish after writes: the last Provider request remains gated until private Runtime shutdown. Does not verify real models, public-event redaction, Web/mobile, manual expansion, parallel calls or cross-platform behavior.",
+  "version": "willdeep 0.152.0-rc2",
+  "binary_sha256_after": "0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5",
+  "checks_passed": 11,
+  "fixture_retained": true
+}

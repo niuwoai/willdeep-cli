@@ -50,6 +50,11 @@ impl App {
     pub(super) fn handle_chat_selection_mouse(&mut self, mouse: MouseEvent) -> bool {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.reading_indicator_hit(mouse.column, mouse.row) {
+                    self.viewport_return_to_latest();
+                    self.pending_chat_click = None;
+                    return true;
+                }
                 let Some(point) = self.transcript_selection_point(mouse.column, mouse.row, false)
                 else {
                     // 点在聊天区外（通常是输入框）：退出选区，让这一下照常去切焦点。
@@ -60,10 +65,14 @@ impl App {
                     }
                     return false;
                 };
+                // Stop following on Down, before any delta can arrive in the
+                // interval before the first Drag event.
+                self.viewport_pause_for_selection();
                 self.chat_selection = Some(ChatSelection {
                     anchor: point,
                     head: point,
                 });
+                self.viewport_capture_selection();
                 self.pending_chat_click = None;
                 self.focus = FocusPane::Chat;
                 self.selection_mode
@@ -78,6 +87,7 @@ impl App {
                 };
                 selection.head = point;
                 self.chat_selection = Some(selection);
+                self.viewport_capture_selection();
                 // 真拖起来了：按下时记的「单击点开」作废，别在松手后又把那一行
                 // 展开一次——用户要的是选字，不是展开。
                 self.pending_chat_click = None;
@@ -89,6 +99,7 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) if self.chat_selection.is_some() => {
                 if !self.selection_mode {
                     self.chat_selection = None;
+                    self.viewport_clear_selection();
                     // 没拖动就是一次单击：按下时先记下那一行，到松手才点开，
                     // 这样从用户消息或工具行上起手拖选不会被点开动作打断。
                     if let Some(y) = self.pending_chat_click.take() {
@@ -106,6 +117,7 @@ impl App {
                 {
                     selection.head = point;
                 }
+                self.viewport_capture_selection();
                 // 拖完松手就复制（Claude Code 的手感），不用再按键。有人只是拖一下
                 // 看看，不想把剪贴板里已经复制的网址顶掉——那是 `[ui] copy_on_select
                 // = false` 的事；默认开，是因为「选完还要记着按 Ctrl+C」更容易忘。
@@ -145,6 +157,9 @@ impl App {
         self.selection_mode = true;
         self.native_selection_mode = true;
         self.chat_selection = None;
+        self.viewport_clear_selection();
+        self.follow_bottom = false;
+        self.viewport_scrolled();
         self.focus = FocusPane::Chat;
     }
 
@@ -168,6 +183,7 @@ impl App {
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
+        self.viewport_clear_selection();
         self.code_copy.clear();
     }
 
@@ -180,6 +196,9 @@ impl App {
         let Some(selection) = self.chat_selection else {
             return String::new();
         };
+        if let Some(text) = self.viewport_selected_text() {
+            return text;
+        }
         let (start, end) = selection.ordered_range();
         selected_text(
             &self.transcript_rows,
@@ -201,19 +220,21 @@ impl App {
 
     /// 写剪贴板并把结果说清楚：失败时保留错误原因，不假装复制成功。
     fn write_selection_to_clipboard(&mut self, value: &str, chars: usize) {
-        match arboard::Clipboard::new()
-            .and_then(|mut clipboard| clipboard.set_text(value.to_owned()))
-        {
-            Ok(()) => {
-                self.notice = Some(
-                    self.language
-                        .text(
-                            "已复制 {n} 字到剪贴板 · q 引用 · Esc 取消",
-                            "Copied {n} chars to clipboard · q quotes · Esc cancels",
-                            "{n} 文字をクリップボードにコピー · q で引用 · Esc で解除",
-                        )
-                        .replace("{n}", &chars.to_string()),
-                );
+        match self.code_copy.write_clipboard(value) {
+            Ok(route) => {
+                let message = match route {
+                    code_copy::ClipboardRoute::Local => self.language.text(
+                        "已复制 {n} 字到剪贴板 · q 引用 · Esc 取消",
+                        "Copied {n} chars to clipboard · q quotes · Esc cancels",
+                        "{n} 文字をクリップボードにコピー · q で引用 · Esc で解除",
+                    ),
+                    code_copy::ClipboardRoute::Terminal => self.language.text(
+                        "已发送 {n} 字到终端剪贴板 · q 引用 · Esc 取消",
+                        "Sent {n} chars to the terminal clipboard · q quotes · Esc cancels",
+                        "{n} 文字を端末のクリップボードへ送信しました · q で引用 · Esc で解除",
+                    ),
+                };
+                self.notice = Some(message.replace("{n}", &chars.to_string()));
             }
             Err(error) => {
                 self.notice = Some(format!(
@@ -267,6 +288,7 @@ impl App {
         self.selection_mode = false;
         self.native_selection_mode = false;
         self.chat_selection = None;
+        self.viewport_clear_selection();
         self.code_copy.clear_selection();
         self.focus = FocusPane::Prompt;
         self.notice = Some(

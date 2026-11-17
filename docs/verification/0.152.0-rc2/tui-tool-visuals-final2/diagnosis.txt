@@ -1,0 +1,41 @@
+TUI 工具视觉验收故障诊断（保留失败，不代表完整验收通过）
+
+工作区：/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter
+二进制：/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/p0-p1-rc152-rc2-20261117-final1/willdeep
+版本：willdeep 0.152.0-rc2
+验收前、验收后及独立复核 SHA256 均为：
+0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5
+
+首次失败（tui-tool-visuals-final1）
+full/compact 各完成 5 项检查，均在 command 2 returns to summary 超时。
+full/last-frame.json application_frame=117，第 11 行；compact/last-frame.json application_frame=116，第 10 行均显示：
+· ⋯ 2 tool calls folded · /tools to expand
+两条命令的完整尾部均已隐藏；各布局第 4 个 Provider 请求包含 visual-command-1/2 的唯一成功工具回执，exit_code: 0，stdout 分别为 WD_COMMAND_1_OK、WD_COMMAND_2_OK。
+产品 narration.rs 的 fold_tool_rows_preserving 在同段工具超过一条时合并汇总；tool_visuals.rs 完成事件移除 commands 中的自动展开状态。首次脚本却只计逐条 ✓ run_command，误把产品既有汇总当作未收起。
+仅修改 scripts/verify_tui_tool_visuals.rb：单条成功命令行及无失败后缀的既有折叠汇总共同计数。实际 shell 执行、锁、开始/完成标记、唯一工具回执、当前命令展开与历史尾部隐藏、Thought 点击、磁盘字节、diff 行号及颜色断言均保留。
+首次 34 个证据文件未改动。按相对路径排序，将每个「相对路径 + NUL + 文件 SHA256 + LF」串联再取 SHA256，修改前后均为：
+aefb4cecc8dcdd99fda34df8ea0b165fc95a489a25586f9cdad27f3482eee95f
+首次失败夹具仍保留：/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-tui-tool-visuals-20261117-74058-6l8dkk
+
+第二次执行（本目录）
+执行一次 ruby -E UTF-8 scripts/verify_tui_tool_visuals.rb <上述二进制> <本目录>，后台自动通知结束，退出码 1。没有轮询、覆盖证据或静默重试。
+JSON 和 Markdown 的逐项结果一致：17 PASS（full 8、compact 8、binary 1），2 FAIL。
+两布局均通过布局、历史结束行、两条命令运行展开/完成收起、最后 Thought 点击、create_file 字节/行号/绿色断言。
+两布局均失败：
+RuntimeError: missing numbered diff row for visual-edit.txt: 1/1  EDIT_CONTEXT_BEFORE
+后续 file_changes preview/apply 和最终历史命令断言没有执行。
+
+第二次失败是产品缺陷
+full/last-frame.json application_frame=63 第 23 行，compact/last-frame.json application_frame=63 第 22 行显示：
+    1 │     1 │ EDIT_CONTEXT_BEFORE
+逐格证据：第三列分隔符 x=15，x=16 为空格，x=17 已是 E。预期分隔空格后还应保留 unified diff 的 context 标记空格。
+两布局 visual-edit 工具回执 status=applied，edit_display.diff 正确包含前导空格；磁盘均为 EDIT_CONTEXT_BEFORE\nEDIT_NEW_LINE\nEDIT_CONTEXT_AFTER\n。
+精确原因：crates/willdeep-cli/src/tui/tool_visuals.rs 的 safe_text 调用 willdeep_core::judge::redact_credentials；crates/willdeep-core/src/judge.rs 的该函数使用 split_whitespace / join(" ")，丢弃 context 前导空格并压扁代码缩进、连续空格。不是写入或工具回执缺陷，不能放宽 diff 断言掩盖。
+缺陷已先报告主协调方。主随后指派最小产品修复与相关原生回归；本目录仍记录修复前 rc2 二进制的真实失败，未用旧二进制重验。
+
+清理与隔离
+第二次 cleanup 12/12 PASS：两布局分别保存最后帧/Provider 工具回执、关闭私有 PTY/VT 解码器、释放私有锁、停止私有 Runtime、关闭回环 Provider。
+独立检查私有 Runtime pid=85069、85186 均不存在。
+第二次失败夹具仍保留：/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-tui-tool-visuals-20261117-85065-grgg7a
+未读取环境转储、私有夹具配置或凭据；未触及真实 HOME/剪贴板或真实模型。
+未运行工作区或其他验收套件；未提交、推送、安装或编辑版本。后续 rc3 完整工程、冻结和最终重验由主协调方负责。

@@ -164,7 +164,6 @@ module AgentReliabilityEval
         unless interruption && preparation_elapsed < options[:seconds]
           next {case: id, executed: true, seeded_red: true, status: 'interruption_not_verified', verified_success: false, false_completion: false, interruption_injected: false, elapsed_seconds: preparation_elapsed.round(3), input_tokens: nil, output_tokens: nil, human_interventions: 0}
         end
-        command += ['--resume', interruption[:session_id]]
         prompt = 'The previous process was interrupted. Continue the original repair under its original constraints. Inspect saved tool results and progress.log with read_file; do not repeat or replace the completed append. Finish the repair and validate it.'
       end
       if id == 'compression_constraints'
@@ -181,7 +180,9 @@ module AgentReliabilityEval
         command += ['--resume', session_id]
       end
       ndjson = id == 'subtask_integration'
-      command += ['run', '--local', '--output', ndjson ? 'ndjson' : 'json', prompt]
+      command += ['run', '--local', '--output', ndjson ? 'ndjson' : 'json']
+      command += ['--session', interruption[:session_id], '--continue-task'] if id == 'interruption_recovery'
+      command << prompt
       code, timed_out, elapsed = run_process(command, { 'WILLDEEP_HOME' => home }, workspace, options[:seconds] - preparation_elapsed, home)
       elapsed += preparation_elapsed
       result, events = AgentEvalObservation.cli_output(File.join(home, 'stdout.log'), ndjson: ndjson)

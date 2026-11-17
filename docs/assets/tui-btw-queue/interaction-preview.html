@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>/btw 与待发消息 · 交互草图</title>
+<style>
+:root{color-scheme:dark;--page:#12141b;--terminal:#1d2030;--surface:#272b3d;--border:#454b66;--muted:#a2a9bf;--text:#eceef6;--accent:#b5acff;--cyan:#8dd5e5;--amber:#f0cd79;--user:#24303e;--danger:#ed9c9c}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--text);font-family:system-ui,-apple-system,sans-serif;padding:32px 24px}main{max-width:1080px;margin:auto}header{display:flex;align-items:start;justify-content:space-between;gap:20px;margin-bottom:20px}h1{font-size:24px;margin:0 0 8px;font-weight:650}p{margin:0;color:var(--muted);font-size:14px;line-height:1.7}.badge{white-space:nowrap;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:6px 10px;font-size:12px}.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 16px}button{cursor:pointer;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:8px 12px;font:inherit;font-size:13px}button:hover{border-color:var(--accent)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:3px}button.primary{border-color:var(--accent);color:var(--accent)}.terminal{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--terminal);box-shadow:0 18px 54px #0003;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.titlebar{padding:10px 18px;border-bottom:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:12px}.viewport{padding:24px;min-height:540px;display:flex;flex-direction:column;gap:0;font-size:15px;line-height:1.8}.history{min-height:155px}.user{background:var(--user);color:var(--cyan);max-width:80%;margin-left:auto;padding:4px 12px;display:table}.time{color:var(--muted);text-align:right;font-size:11px;padding-top:4px}.reply{margin-top:22px}.reply span{color:var(--cyan)}.progress{color:var(--muted);font-size:13px;margin:12px 0 20px}.activity{display:flex;gap:10px;align-items:center;min-height:30px;margin:8px 0 20px;color:var(--muted);font-size:13px}.pulse{color:var(--amber);display:inline-block;animation:pulse 1.5s ease-in-out infinite}.queue{margin-top:auto;padding-top:8px}.queue-title{color:var(--muted);font-size:12px;margin-bottom:7px}.queue-row{width:100%;text-align:left;border:0;border-radius:2px;background:#ffffff09;margin-bottom:5px;padding:5px 10px;display:flex;gap:10px;font:inherit;font-size:14px}.queue-row:hover{background:#ffffff13}.queue-number{color:var(--muted);min-width:14px}.queue-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-tag{color:var(--muted);font-size:11px;white-space:nowrap}.hint{color:var(--muted);font-size:12px;min-height:24px}.composer{border-top:1px solid var(--accent);border-bottom:1px solid var(--border);margin-top:14px;padding:10px 0;display:flex;gap:12px}.chevron{color:var(--accent)}input,textarea{background:transparent;color:var(--text);border:0;outline:none;font:inherit;line-height:1.8;min-width:0;width:100%;resize:vertical}input::placeholder,textarea::placeholder{color:var(--muted)}.side{border-top:2px solid var(--accent);margin-top:auto;padding:17px 12px 0;min-height:250px}.side-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px}.side-label{color:var(--amber)}.side button{font-size:11px;padding:3px 8px;background:transparent}.question{color:var(--text);margin-bottom:18px;white-space:pre-wrap}.question b{color:var(--amber);font-weight:500}.answer{font-size:14px;min-height:80px;white-space:pre-wrap}.side-footer{margin-top:18px;color:var(--muted);font-size:12px}.edit{border-top:1px solid var(--accent);margin-top:auto;padding-top:16px}.edit-title{color:var(--amber);font-size:13px;margin-bottom:10px}.edit textarea{min-height:92px;background:#ffffff06;border:1px solid var(--border);border-radius:4px;padding:8px 10px}.edit-actions{display:flex;gap:8px;margin-top:9px}.note{margin-top:17px;display:grid;grid-template-columns:1fr 1fr;gap:10px 30px;font-size:13px;color:var(--muted);line-height:1.8}.note strong{color:var(--text);font-weight:550}.status{color:var(--cyan);font-size:12px;min-height:23px;margin-top:10px}[hidden]{display:none!important}@keyframes pulse{50%{opacity:.35}}@media(max-width:640px){body{padding:18px 12px}header{display:block}.badge{display:inline-block;margin-top:12px}.viewport{padding:16px;min-height:560px;font-size:13px}.note{grid-template-columns:1fr}.titlebar{font-size:10px}.user{max-width:92%}}@media(prefers-reduced-motion:reduce){.pulse{animation:none}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1 id="heading"></h1><p id="intro"></p></div><span class="badge" id="badge"></span></header>
+<nav class="toolbar" aria-label="预览操作"><button id="show-queue" class="primary"></button><button id="show-btw"></button><button id="show-edit"></button><button id="reset"></button></nav>
+<section class="terminal" aria-label="TUI 交互草图">
+<div class="titlebar"><span id="terminal-title"></span><span id="terminal-context"></span></div>
+<div class="viewport">
+<div class="history"><div class="user"><div id="user-message"></div><div class="time" id="message-time"></div></div><div class="reply"><span id="assistant-name"></span> <span id="assistant-message" style="color:var(--text)"></span></div><div class="progress" id="progress"></div></div>
+<div class="activity"><span class="pulse">✶</span><span id="activity"></span></div>
+<div id="normal" class="queue"><div class="queue-title" id="queue-title"></div><div id="queue-list"></div><div class="hint" id="queue-hint"></div><div class="composer"><span class="chevron">❯</span><input id="composer" autocomplete="off"></div></div>
+<div id="btw" class="side" hidden><div class="side-head"><span class="side-label" id="side-title"></span><div><button id="clear-side"></button> <button id="close-btw"></button></div></div><div id="side-input-state"><div class="composer"><span class="chevron">❯</span><input id="side-input" autocomplete="off"><button id="ask-side"></button></div><div class="hint" id="side-input-hint"></div></div><div id="side-result" hidden><div class="question"><b>/btw </b><span id="side-question"></span></div><div class="answer" id="side-answer" aria-live="polite"></div></div><div class="side-footer" id="side-footer"></div></div>
+<div id="editor" class="edit" hidden><div class="edit-title" id="edit-title"></div><textarea id="queue-editor"></textarea><div class="hint" id="attachment-hint"></div><div class="edit-actions"><button id="save-edit" class="primary"></button><button id="cancel-edit"></button></div><div class="side-footer" id="edit-footer"></div></div>
+</div></section>
+<div class="status" id="status" aria-live="polite"></div>
+<div class="note"><p id="note-btw"></p><p id="note-queue"></p></div>
+</main>
+<script>
+'use strict';
+// 独立交互草图：只修改本页内存，不连接 Runtime、Provider 或真实会话。
+const copy = Object.freeze({
+  heading:'/btw 与待发消息', intro:'终端交互草图。点击按钮体验临时问答、Esc 关闭和队列原位编辑。', badge:'设计提案 · 功能尚未实现',
+  showQueue:'查看待发队列', showBtw:'打开 /btw', showEdit:'编辑下一条', reset:'重置草图',
+  terminalTitle:'willdeep · TUI', terminalContext:'模拟会话 / 主任务进行中',
+  userMessage:'策划并实现 TUI 的消息队列交互。', messageTime:'刚刚', assistantName:'willdeep:',
+  assistantMessage:'正在核对输入事件与持久队列的对应关系。',
+  progress:'⌞ 模拟进度：检查事件路由与消息身份',
+  activity:seconds=>`主任务继续运行 · ${seconds} 秒 · 已排队 2 条（模拟）`,
+  queueTitle:'待发送 · 2', queueHint:'↑ 编辑下一条 · Ctrl+Q 管理全部',
+  composerPlaceholder:'输入新消息；空输入按 ↑ 编辑待发消息',
+  sideTitle:'临时问答', closeBtw:'Esc 关闭', clearSide:'清除临时问答', askSide:'Enter 提问',
+  sideInputPlaceholder:'例如：队列里的消息会打断现在的任务吗？',
+  sideInputHint:'仅支持文字；草图展示预设答案，不连接模型。',
+  sideReopened:'已重开最近的已完成答案，没有重新生成。',
+  sideCleared:'临时问答已清除（仅本页演示）。',
+  sideQuestion:'队列里的消息会打断现在的任务吗？',
+  answering:'正在回答…',
+  answer:'普通入队会等待当前轮次结束。在管理面板选择“停止当前并发送”，才会请求停止当前轮次并优先处理该消息。\n\n/btw 自己走独立问答通道，关闭这个面板不会停止主任务。',
+  sideFooter:'基于提问时的上下文 · 不进入主对话 · Esc 关闭',
+  editTitle:'编辑待发消息 · 保留原来的队列位置',
+  attachmentHint:'附件 1 · 修改文字时仍归属这条消息', noAttachments:'无附件',
+  saveEdit:'Enter 保存', cancelEdit:'Esc 取消',
+  editFooter:'原消息仍留在 Runtime 队列；实际保存须由服务端校验它尚未开始。',
+  saved:'已保存编辑（仅本页演示）。', cancelled:'已取消编辑，原消息保留。',
+  closed:'已关闭临时问答，主任务继续；主输入草稿保留。',
+  queueManagement:'完整列表继续使用 Ctrl+Q /queue；立即发送的中断语义须明确提示。',
+  placeholderSubmit:'这是交互草图，普通消息不会提交到真实 Runtime。',
+  noteBtwTitle:'/btw：', noteBtw:' 独立回答，不改主任务；首版不调用工具。主任务完成后，面板仍留给你阅读。',
+  noteQueueTitle:'待发消息：', noteQueue:' 固定在输入框上方，保留顺序与附件；↑ 进入专用编辑器，Esc 取消。',
+  rowOne:'完成后再检查窄屏下的排版。', rowTwo:'把新的快捷键写进使用指南。', attachmentTag:'附件 1',
+  resetStatus:'草图已重置。', emptyEdit:'消息不能为空；删除操作放在完整队列面板。'
+});
+const el=id=>document.getElementById(id);
+const initialQueue=()=>[{id:'message-a',text:copy.rowOne,attachments:1},{id:'message-b',text:copy.rowTwo,attachments:0}];
+const previewLimits=Object.freeze({retainedQuestions:20,answerTickMs:60,charactersPerTick:4,loadingOffset:-18});
+let queued=initialQueue(),mode='normal',editingId=null,seconds=0,sideTimer=null,generation=0,composing=false;
+let sideHistory=[];
+let mainSelection={start:0,end:0,direction:'none'};
+function setText(id,text){el(id).textContent=text;}
+const labels={heading:copy.heading,intro:copy.intro,badge:copy.badge,'show-queue':copy.showQueue,'show-btw':copy.showBtw,'show-edit':copy.showEdit,reset:copy.reset,'terminal-title':copy.terminalTitle,'terminal-context':copy.terminalContext,'user-message':copy.userMessage,'message-time':copy.messageTime,'assistant-name':copy.assistantName,'assistant-message':copy.assistantMessage,progress:copy.progress,'queue-title':copy.queueTitle,'queue-hint':copy.queueHint,'side-title':copy.sideTitle,'close-btw':copy.closeBtw,'side-question':copy.sideQuestion,'side-footer':copy.sideFooter,'edit-title':copy.editTitle,'save-edit':copy.saveEdit,'cancel-edit':copy.cancelEdit,'edit-footer':copy.editFooter};
+Object.entries(labels).forEach(([id,text])=>setText(id,text));
+el('composer').placeholder=copy.composerPlaceholder;
+el('composer').setAttribute('aria-label',copy.composerPlaceholder);
+el('queue-editor').setAttribute('aria-label',copy.editTitle);
+setText('clear-side',copy.clearSide);setText('ask-side',copy.askSide);setText('side-input-hint',copy.sideInputHint);
+el('side-input').placeholder=copy.sideInputPlaceholder;
+el('side-input').setAttribute('aria-label',copy.sideInputPlaceholder);
+function note(id,title,text){const strong=document.createElement('strong');strong.textContent=title;el(id).append(strong,document.createTextNode(text));}
+note('note-btw',copy.noteBtwTitle,copy.noteBtw);note('note-queue',copy.noteQueueTitle,copy.noteQueue);
+function renderQueue(){
+  el('queue-list').replaceChildren();
+  queued.forEach((item,index)=>{
+    const row=document.createElement('button');row.className='queue-row';
+    const number=document.createElement('span');number.className='queue-number';number.textContent=String(index+1);
+    const text=document.createElement('span');text.className='queue-text';text.textContent=item.text;
+    row.append(number,text);
+    if(item.attachments){const tag=document.createElement('span');tag.className='queue-tag';tag.textContent=copy.attachmentTag;row.append(tag);}
+    row.addEventListener('click',()=>openEdit(item.id));el('queue-list').append(row);
+  });
+}
+function stopSide(){generation++;if(sideTimer!==null){clearInterval(sideTimer);sideTimer=null;}}
+function switchMode(next){mode=next;el('normal').hidden=mode!=='normal';el('btw').hidden=mode!=='btw';el('editor').hidden=mode!=='edit';}
+function restoreMainFocus(){el('composer').focus();el('composer').setSelectionRange(mainSelection.start,mainSelection.end,mainSelection.direction);}
+function closeSide(){stopSide();switchMode('normal');setText('status',copy.closed);restoreMainFocus();}
+function showSideInput(){el('side-input-state').hidden=false;el('side-result').hidden=true;el('side-input').value='';el('side-input').focus();}
+function openSide(question=''){
+  if(mode==='normal')mainSelection={start:el('composer').selectionStart,end:el('composer').selectionEnd,direction:el('composer').selectionDirection};
+  stopSide();switchMode('btw');setText('status','');
+  const text=question.trim();
+  if(!text){
+    const recent=sideHistory[sideHistory.length-1];
+    if(!recent){showSideInput();return;}
+    el('side-input-state').hidden=true;el('side-result').hidden=false;
+    setText('side-question',recent.question);setText('side-answer',recent.answer);setText('status',copy.sideReopened);el('close-btw').focus();return;
+  }
+  el('side-input-state').hidden=true;el('side-result').hidden=false;
+  setText('side-question',text);setText('side-answer',copy.answering);
+  const requestGeneration=generation;let offset=previewLimits.loadingOffset;
+  sideTimer=setInterval(()=>{
+    if(generation!==requestGeneration||mode!=='btw')return;
+    offset+=previewLimits.charactersPerTick;
+    if(offset>0)setText('side-answer',copy.answer.slice(0,offset));
+    if(offset>=copy.answer.length){
+      clearInterval(sideTimer);sideTimer=null;
+      sideHistory.push({question:text,answer:copy.answer});
+      sideHistory=sideHistory.slice(-previewLimits.retainedQuestions);
+    }
+  },previewLimits.answerTickMs);el('close-btw').focus();
+}
+function openEdit(id=queued[0].id){
+  stopSide();editingId=id;const item=queued.find(row=>row.id===id);if(!item)return;
+  switchMode('edit');el('queue-editor').value=item.text;setText('attachment-hint',item.attachments?copy.attachmentHint:copy.noAttachments);setText('status','');el('queue-editor').focus();
+}
+function closeEditor(save){
+  if(save){const text=el('queue-editor').value;if(!text.trim()){setText('status',copy.emptyEdit);return;}const item=queued.find(row=>row.id===editingId);if(item)item.text=text;renderQueue();}
+  editingId=null;switchMode('normal');setText('status',save?copy.saved:copy.cancelled);el('composer').focus();
+}
+el('show-queue').addEventListener('click',()=>{stopSide();switchMode('normal');setText('status','');el('composer').focus();});
+el('show-btw').addEventListener('click',()=>openSide());el('close-btw').addEventListener('click',closeSide);
+el('ask-side').addEventListener('click',()=>{if(el('side-input').value.trim())openSide(el('side-input').value);});
+el('clear-side').addEventListener('click',()=>{stopSide();sideHistory=[];showSideInput();setText('status',copy.sideCleared);});
+el('show-edit').addEventListener('click',()=>openEdit());el('save-edit').addEventListener('click',()=>closeEditor(true));el('cancel-edit').addEventListener('click',()=>closeEditor(false));
+el('reset').addEventListener('click',()=>{stopSide();queued=initialQueue();sideHistory=[];seconds=0;editingId=null;mainSelection={start:0,end:0,direction:'none'};el('composer').value='';switchMode('normal');renderQueue();setText('status',copy.resetStatus);});
+document.addEventListener('compositionstart',()=>{composing=true;});
+document.addEventListener('compositionend',()=>{composing=false;});
+document.addEventListener('keydown',event=>{
+  if(event.isComposing||composing||event.keyCode===229)return;
+  if(mode==='btw'&&event.target===el('side-input')&&event.key==='Enter'){
+    event.preventDefault();if(el('side-input').value.trim())openSide(el('side-input').value);return;
+  }
+  if(event.key==='Escape'){
+    if(mode==='btw'){event.preventDefault();closeSide();return;}
+    if(mode==='edit'){event.preventDefault();closeEditor(false);return;}
+  }
+  if(mode==='edit'&&event.key==='Enter'&&!event.shiftKey&&!event.altKey&&!event.ctrlKey){event.preventDefault();closeEditor(true);return;}
+  if(mode==='normal'&&event.target===el('composer')){
+    if(event.key==='ArrowUp'&&!el('composer').value){event.preventDefault();openEdit();return;}
+    if(event.key==='Enter'){
+      event.preventDefault();const value=el('composer').value;
+      if(/^\/btw(?:\s|$)/.test(value)){const question=value.replace(/^\/btw\s*/,'');el('composer').value='';openSide(question);}
+      else setText('status',copy.placeholderSubmit);
+    }
+  }
+  if(event.ctrlKey&&event.key.toLowerCase()==='q'){event.preventDefault();setText('status',copy.queueManagement);}
+});
+renderQueue();setText('activity',copy.activity(seconds));
+setInterval(()=>{seconds++;setText('activity',copy.activity(seconds));},1000);
+</script>
+</body>
+</html>

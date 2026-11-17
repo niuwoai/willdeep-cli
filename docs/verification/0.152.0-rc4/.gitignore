@@ -1,0 +1,5 @@
+# Retain full raw PTY evidence locally; commit reports and selected visual frames.
+**/*.ansi
+**/*.svg
+**/0*.json
+**/last-frame.json

@@ -4,7 +4,7 @@ use super::*;
 // Extend the existing parent-only catalog without duplicating its entries.
 pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &{
     let inherited = super::agent_control::PARENT_ONLY_TOOLS;
-    let mut tools = [""; super::agent_control::PARENT_ONLY_TOOLS.len() + 3];
+    let mut tools = [""; super::agent_control::PARENT_ONLY_TOOLS.len() + 4];
     let mut index = 0;
     while index < inherited.len() {
         tools[index] = inherited[index];
@@ -13,6 +13,7 @@ pub(crate) const PARENT_ONLY_TOOLS: &[&str] = &{
     tools[index] = "configuration_read";
     tools[index + 1] = "configuration_write";
     tools[index + 2] = "rename_instance";
+    tools[index + 3] = "browser";
     tools
 };
 
@@ -34,6 +35,8 @@ fn child_read_tool(name: &str) -> bool {
             | "read_file"
             | "list_directory"
             | "get_job_output"
+            | "tool_status"
+            | "web_search_status"
             | "ask_user"
             | "update_plan"
     )
@@ -59,7 +62,7 @@ impl ToolRegistry {
     pub(crate) fn policy_allows_tool(&self, name: &str) -> bool {
         (!self.delegation_read_only || child_read_tool(name))
             && !(self.parent_approval_mode.is_some()
-                && matches!(name, "configuration_read" | "configuration_write"))
+                && matches!(name, "configuration_read" | "configuration_write" | "browser"))
             // Configuration apply validates its saved plan before the read-only denial.
             && !(self.approval_mode() == ApprovalMode::ReadOnly
                 && (child_mutation(name)
@@ -70,6 +73,10 @@ impl ToolRegistry {
                             | "monitor"
                             | "create_file"
                             | "edit_file"
+                            | "file_changes"
+                            | "lsp"
+                            | "ast_grep"
+                            | "browser"
                             | "create_worktree"
                             | "call_mcp_tool"
                             | "agent_library_manage"

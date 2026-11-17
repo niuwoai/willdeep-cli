@@ -1,0 +1,10 @@
+{
+  "id": "p0-typescript-symbol-key-references",
+  "title": "TypeScript 属性与同名符号区分（Node >=22.18.0）",
+  "kind": "feature",
+  "language": "typescript",
+  "split": "validation",
+  "requires": ["ruby", "node"],
+  "editable": ["src/formatter.ts", "src/view.ts"],
+  "verify": [["ruby", "test/verify.rb"]]
+}

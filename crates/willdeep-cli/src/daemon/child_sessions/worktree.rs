@@ -688,6 +688,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn worktree_policy_owner_survives_takeover_detach_and_local_policy_expansion() {
+        use willdeep_core::provider::{ApiDialect, ProviderConfig, ProviderError, ProviderKind};
+        for action in ["session.child.takeover", "session.child.detach"] {
+            let fixture = UserOpenFixture::new(ChildSessionWorkspaceMode::Worktree);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let policy_path = fixture.repo.join(".willdeep/model-policy.json");
+            std::fs::create_dir_all(policy_path.parent().unwrap()).unwrap();
+            let allow = |model| {
+                serde_json::to_vec(&serde_json::json!({"version":1,"allow":[{
+                    "provider":"openai-compatible","model":model,"base_url":base,
+                }]}))
+                .unwrap()
+            };
+            std::fs::write(&policy_path, allow("fixture")).unwrap();
+            let store = willdeep_core::SessionStore::new(&fixture.home);
+            let parent = store.load(fixture.parent).unwrap();
+            let context = store.model_policy_context(&parent).unwrap();
+            let mut config = ProviderConfig::new(
+                ProviderKind::OpenAiCompatible,
+                ApiDialect::ChatCompletions,
+                base.clone(),
+                "fixture",
+                "fixture",
+            );
+            config.policy_context = Some(context);
+            willdeep_core::provider::policy::check_route(
+                &config,
+                "fixture",
+                &reqwest::Url::parse(&base).unwrap(),
+            )
+            .unwrap();
+            fixture.revoke(action);
+            let execution = PathBuf::from(fixture.link().workspace);
+            assert!(
+                prepare_child_workspace_for_user_open(
+                    &fixture.home,
+                    fixture.parent,
+                    fixture.task.child_session_id,
+                    &execution,
+                )
+                .await
+                .unwrap()
+            );
+            fixture.no_turns();
+            assert_ne!(execution, fixture.repo);
+            // A writable child policy cannot replace the original project's authority.
+            std::fs::create_dir_all(execution.join(".willdeep")).unwrap();
+            std::fs::write(
+                execution.join(".willdeep/model-policy.json"),
+                allow("escape"),
+            )
+            .unwrap();
+            std::fs::write(policy_path, br#"{"version":1,"allow":[]}"#).unwrap();
+            let restored = willdeep_core::SessionStore::new(&fixture.home);
+            let child = restored.load(fixture.task.child_session_id).unwrap();
+            assert_eq!(child.workspace, execution);
+            assert_eq!(
+                child.model_policy_workspace.as_deref(),
+                Some(fixture.repo.as_path())
+            );
+            let fork = child.fork_snapshot();
+            assert_eq!(fork.model_policy_workspace, child.model_policy_workspace);
+            config.policy_context = Some(restored.model_policy_context(&child).unwrap());
+            config.model = "escape".into();
+            let provider = willdeep_core::build_provider(config).unwrap();
+            assert!(matches!(
+                provider.complete(&[], &[]).await,
+                Err(ProviderError::PolicyDenied(_))
+            ));
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn explicit_user_open_prepares_waiting_worktree_after_takeover_or_detach_without_turns() {
         for (action, expected) in [
             (

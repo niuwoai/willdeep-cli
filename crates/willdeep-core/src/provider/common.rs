@@ -251,7 +251,14 @@ async fn send_once(
     request: RequestBuilder,
     config: &ProviderConfig,
 ) -> Result<reqwest::Response, ProviderError> {
-    let response = request.send().await?;
+    let (client, request) = request.build_split();
+    let request = request?;
+    let wire_model = if config.policy_context.is_some() {
+        super::policy::wire_model(config, &request)?
+    } else {
+        config.model.clone()
+    };
+    let response = super::policy::execute(config, client, request, &wire_model).await?;
     if response.status().is_success() {
         return Ok(response);
     }

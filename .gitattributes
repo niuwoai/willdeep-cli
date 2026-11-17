@@ -3,3 +3,9 @@
 /bench/agent-rsi/reproduction-free-v1/** text eol=lf
 /bench/agent-rsi/review-output-v2/** text eol=lf
 /docs/examples/agent-rsi-golden.json text eol=lf
+
+# Raw terminal captures preserve meaningful padding and control bytes.
+/docs/verification/**/*.ansi -text -whitespace
+# This historical failure report embeds the original padded terminal screen.
+/docs/verification/0.151.0-rc3/queue-timeline-before/queue-timeline.md -whitespace
+/docs/verification/0.152.0-rc4/status-symbols-attempt1/status-symbols.md -whitespace

@@ -140,7 +140,8 @@ willdeep --project "项目名"
 willdeep run "检查当前项目并总结风险"
 printf '检查测试失败原因' | willdeep run --output json
 willdeep run --input prompt.txt --attachment error.log --attachment screenshot.png
-willdeep run --session latest --output ndjson "继续修复"
+willdeep run --session latest --output ndjson "解释一下刚才的改动"
+willdeep run --session latest --continue-task --output ndjson "继续完成原任务"
 willdeep run --quiet "只用退出码报告成败"
 willdeep run --local "显式使用进程内兼容 Harness"
 ```
@@ -149,12 +150,15 @@ willdeep run --local "显式使用进程内兼容 Harness"
 |---|---|
 | `--input <PATH\|->` | 从 UTF-8 文件或 stdin 读取任务 |
 | `--attachment <PATH>` | 附加文本或 PNG/JPEG/WebP/GIF，可重复 |
-| `--session <ID\|latest>` | 续接已有 Session |
+| `--session <ID\|latest>` | 加载已有 Session，默认处理新的输入 |
+| `--continue-task` | 继续原未竟任务及其验证要求；必须同时提供 `--session` 或根级 `--resume` |
 | `--output <FMT>` | `text`（默认）/ `json` / `ndjson` |
 | `--quiet` | 成功时不输出；错误仍走 stderr 与非零退出码 |
 | `--local` | 使用旧的进程内 Harness |
 
 `run` 默认把任务提交到持久 Runtime：Session/Turn、事件和终态可恢复，CLI 断开不会终止任务，`Ctrl+C` 只停止本次提交的精确 Turn。
+
+加载历史与继续旧任务分开：普通 `--session` 使用新的输入范围，历史未竟状态及证据保留；`--continue-task` 恢复原验证基线、必需检查、完成契约与未知副作用门禁，已有成功写入不盲目重放。新问题完成不等于旧任务完成。该开关在默认 Runtime 和 `--local` 中一致，缺少会话选择时返回输入错误码 `2`，不根据提示词里的“继续”等文字推断。
 
 `--api-key`、`--api-base`、Provider/API 方言和本轮限制等进程级覆盖不会写入 Runtime；使用这些覆盖时自动保留本地路径。需要持久 Runtime 时请把配置写入受保护的 TOML Profile。
 

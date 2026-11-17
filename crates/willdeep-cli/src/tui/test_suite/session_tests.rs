@@ -727,11 +727,16 @@ fn runtime_hands_back_undelivered_steering_and_the_tui_requeues_it() {
     assert_eq!(app.queued_prompts.len(), 1);
     assert_eq!(app.queued_prompts[0].text, "先别删，只改 handler");
     assert!(
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("The last message missed this turn")),
+        "{:?}",
+        app.notice
+    );
+    assert!(
         app.transcript
             .iter()
-            .any(|line| line.starts_with("System: The last message missed this turn")),
-        "{:?}",
-        app.transcript
+            .all(|line| !line.starts_with("System:"))
     );
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -2119,7 +2124,8 @@ fn working_summary_distinguishes_progress_waiting_and_silence() {
         Duration::from_secs(18),
         Duration::from_secs(9),
     );
-    assert!(waiting.contains("等待 Runtime / 模型返回"));
+    assert!(waiting.contains("正在使用 read_file"));
+    assert!(waiting.contains("等待新事件"));
 
     let silent = format_working_summary(
         Language::ZhCn,
@@ -2128,8 +2134,9 @@ fn working_summary_distinguishes_progress_waiting_and_silence() {
         Duration::from_secs(48),
         Duration::from_secs(31),
     );
-    assert!(silent.contains("暂未收到新事件"));
-    assert!(silent.contains("已等待 31s"));
+    assert!(silent.contains("正在使用 read_file"));
+    assert!(silent.contains("未收到新事件"));
+    assert!(silent.contains("31s"));
 
     let long = format_working_summary(
         Language::ZhCn,
@@ -2441,10 +2448,13 @@ fn undelivered_steering_returns_to_the_queue_when_compression_ends() {
     assert_eq!(app.queued_prompts[0].text, "压缩完再看这一段");
     assert!(app.deferred_steering.is_empty());
     assert!(
-        app.transcript.iter().any(|row| row.contains("没赶上")),
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("没赶上")),
         "the user is told it missed this turn: {:?}",
-        app.transcript
+        app.notice
     );
+    assert!(app.transcript.iter().all(|row| !row.starts_with("System:")));
     app.finish_turn();
     assert!(!app.compression_in_progress());
     assert_eq!(
@@ -2711,6 +2721,7 @@ fn modal_colours_do_not_come_from_the_theme_palette() {
 #[test]
 fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     let mut app = App::new(vec!["hello world".to_owned()], Language::En);
+    app.ui.copy_on_select = false;
     app.transcript_rect = Rect::new(0, 0, 20, 6);
     // 完整 UI 的正文矩形：边框往里一格，宽高各少两格。
     app.transcript_content = Rect::new(1, 1, 18, 4);

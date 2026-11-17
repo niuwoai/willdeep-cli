@@ -816,6 +816,38 @@ pub(crate) struct PluginAiHost<'a> {
     pub workspaces: Vec<PathBuf>,
 }
 
+impl PluginAiHost<'_> {
+    pub(crate) fn model_policy_context(
+        &self,
+    ) -> Result<Option<willdeep_core::provider::ModelPolicyContext>, PluginWebError> {
+        if let Some((id, _)) = &self.usage_context {
+            let store = willdeep_core::SessionStore::new(self.home);
+            match store.load(*id) {
+                Ok(session) => {
+                    return store
+                        .model_policy_context(&session)
+                        .map(Some)
+                        .map_err(|error| PluginWebError::BadRequest(error.to_string()));
+                }
+                Err(willdeep_core::session::SessionError::Io(error))
+                    if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    return Err(PluginWebError::BadRequest(
+                        "sessionPolicyOwnerUnavailable".into(),
+                    ));
+                }
+            }
+        }
+        willdeep_core::provider::ModelPolicyContext::unambiguous_workspace(
+            self.usage_context
+                .as_ref()
+                .map(|(_, workspace)| workspace.as_path()),
+            &self.workspaces,
+        )
+        .map_err(|error| PluginWebError::BadRequest(error.to_string()))
+    }
+}
+
 /// 请求本身不合法（该由调用方改参数）的错误码。插件 MCP 反向请求把它们报成
 /// JSON-RPC -32602，其余报 -32000，与 macOS 宿主一致。
 pub(crate) const INVALID_REQUEST_CODES: [&str; 16] = [
@@ -909,11 +941,28 @@ pub(crate) async fn generate_image(
     let (base, key) = someim_credentials(&config.file)
         .ok_or_else(|| PluginWebError::BadRequest("unavailable".to_owned()))?;
 
-    // 参照图先换成网关能取的 URL：网关只接 URL，不接字节。
+    let mut policy_config = willdeep_core::provider::ProviderConfig::new(
+        willdeep_core::provider::ProviderKind::SomeIm,
+        willdeep_core::provider::ApiDialect::ChatCompletions,
+        &base,
+        "",
+        &model,
+    );
+    policy_config.policy_context = host.model_policy_context()?;
+    policy_config.request_timeout_secs = 300;
+    let endpoint = reqwest::Url::parse(&format!(
+        "{}/images/generations",
+        base.trim_end_matches('/')
+    ))
+    .map_err(|_| PluginWebError::BadRequest("invalidEndpoint".into()))?;
+    willdeep_core::provider::policy::check_route(&policy_config, &model, &endpoint)
+        .map_err(|error| PluginWebError::BadRequest(error.to_string()))?;
+
+    // Check generation permission before uploading reference bytes.
     let mut references = Vec::new();
     for path in &request.reference_image_paths {
         let resolved = resolve_reference_path(host.home, path, &host.workspaces)?;
-        references.push(upload_reference_image(&base, &key, &resolved).await?);
+        references.push(upload_reference_image(&base, &key, &resolved, &policy_config).await?);
     }
 
     let mut body = json!({"model": model, "prompt": prompt, "size": size});
@@ -924,18 +973,18 @@ pub(crate) async fn generate_image(
         body["image_urls"] = json!(references);
         body["reference_image_urls"] = json!(references);
     }
-    let endpoint = format!("{}/images/generations", base.trim_end_matches('/'));
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|error| PluginWebError::Internal(error.to_string()))?;
-    let response = client
-        .post(&endpoint)
-        .bearer_auth(&key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| PluginWebError::BadRequest(format!("unavailable: {error}")))?;
+    let response = willdeep_core::provider::policy::send_bound_request(
+        &policy_config,
+        client.post(endpoint).bearer_auth(&key).json(&body),
+        &model,
+    )
+    .await
+    .map_err(|error| PluginWebError::BadRequest(format!("unavailable: {error}")))?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         return Err(PluginWebError::BadRequest(format!("httpFailed: {status}")));
@@ -956,11 +1005,25 @@ pub(crate) async fn generate_image(
             .decode(encoded)
             .map_err(|_| PluginWebError::BadRequest("invalidResponse".to_owned()))?
     } else if let Some(url) = first.get("url").and_then(Value::as_str) {
-        client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| PluginWebError::BadRequest(format!("downloadFailed: {error}")))?
+        let mut download_config = policy_config.clone();
+        let mut scope = reqwest::Url::parse(url)
+            .map_err(|_| PluginWebError::BadRequest("downloadFailed".into()))?;
+        scope.set_query(None);
+        download_config.base_url = scope.to_string();
+        let response = willdeep_core::provider::policy::send_bound_request(
+            &download_config,
+            client.get(url),
+            &model,
+        )
+        .await
+        .map_err(|error| PluginWebError::BadRequest(format!("downloadFailed: {error}")))?;
+        if !response.status().is_success() {
+            return Err(PluginWebError::BadRequest(format!(
+                "downloadFailed: {}",
+                response.status().as_u16()
+            )));
+        }
+        response
             .bytes()
             .await
             .map_err(|error| PluginWebError::BadRequest(format!("downloadFailed: {error}")))?
@@ -1046,6 +1109,7 @@ async fn upload_reference_image(
     base: &str,
     key: &str,
     path: &Path,
+    policy_config: &willdeep_core::provider::ProviderConfig,
 ) -> Result<String, PluginWebError> {
     let bytes = std::fs::read(path)
         .map_err(|error| PluginWebError::BadRequest(format!("unreadable: {error}")))?;
@@ -1062,13 +1126,19 @@ async fn upload_reference_image(
         .unwrap_or_else(|| base.to_owned());
     let part = reqwest::multipart::Part::bytes(bytes).file_name(name);
     let form = reqwest::multipart::Form::new().part("file", part);
-    let response = reqwest::Client::new()
-        .post(format!("{origin}/api/v1/customer/tmp-files"))
-        .bearer_auth(key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|error| PluginWebError::BadRequest(format!("uploadFailed: {error}")))?;
+    let endpoint = format!("{origin}/api/v1/customer/tmp-files");
+    let mut upload_config = policy_config.clone();
+    upload_config.base_url = endpoint.clone();
+    let response = willdeep_core::provider::policy::send_bound_request(
+        &upload_config,
+        reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(key)
+            .multipart(form),
+        &policy_config.model,
+    )
+    .await
+    .map_err(|error| PluginWebError::BadRequest(format!("uploadFailed: {error}")))?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         return Err(PluginWebError::BadRequest(format!(
@@ -1093,6 +1163,10 @@ async fn upload_reference_image(
     }
     Err(PluginWebError::BadRequest("uploadFailed".to_owned()))
 }
+
+#[cfg(test)]
+#[path = "plugin_capabilities_image_download_tests.rs"]
+mod image_download_tests;
 
 #[cfg(test)]
 mod tests {

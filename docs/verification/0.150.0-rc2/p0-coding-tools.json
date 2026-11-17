@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-11-17",
+  "version": "0.150.0-rc2",
+  "feature_introduced_in": "0.150.0-rc1",
+  "verification_status": "p0_local_checks_complete_with_limitations",
+  "subsequent_report": {
+    "version": "0.150.0-rc3",
+    "path": "../0.150.0-rc3/clippy-approval-hooks.json",
+    "scope": "Resolves the three historical CLI Clippy failures and adds approval hook and question-input verification; rc2 results below remain unchanged"
+  },
+  "source": {
+    "head": "ba894a5906982921411e33486fa699f6f356e43e",
+    "branch": "fix/tui-queue-during-compression",
+    "uncommitted_changes": true,
+    "shared_worktree": true,
+    "scope": "P0 coding tools and regression baseline; concurrent TUI work is not attributed to this task"
+  },
+  "contains_model_runs": false,
+  "model_success_rate": null,
+  "model_tokens": null,
+  "model_cost": null,
+  "delivery": {
+    "committed": false,
+    "pushed": false,
+    "tagged": false,
+    "pull_request_created": false,
+    "installed": false,
+    "published": false,
+    "dependencies_auto_installed": false
+  },
+  "implemented": [
+    "Whole-file SHA-256 read versions with a separate numbered-content budget",
+    "Exact edits require an explicit version or this Registry's actual read baseline",
+    "One-shot immutable multi-file create/replace previews, permission revalidation, recovery and retained-write receipts",
+    "Fixed Rust and TypeScript LSP status/diagnostics/definition/references/symbols through shared Runtime gates",
+    "Worker write facts, unknown-effect retry approval, Runtime Diff and native read-proof compatibility",
+    "Three offline coding tasks using the existing Task/Verifier/Report engine"
+  ],
+  "checks": [
+    {
+      "id": "core_full",
+      "command": "cargo test -p willdeep-core --locked --no-fail-fast",
+      "status": "passed",
+      "exit_code": 0,
+      "unit_passed": 1108,
+      "unit_ignored": 6,
+      "provider_contracts_passed": 5,
+      "real_lsp_ignored_in_default_suite": 2,
+      "unit_seconds": 420.64,
+      "evidence_task": "b6cv8wls2",
+      "scope": "Predates the last independent-review file-change fixes; later dedicated file-change suite covers those fixes"
+    },
+    {
+      "id": "file_changes_latest",
+      "command": "cargo test -p willdeep-core --locked --lib tools::file_changes",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 34,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "baj23vttq"
+    },
+    {
+      "id": "lsp_offline_latest",
+      "command": "cargo test -p willdeep-core --locked --lib tools::lsp",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 24,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "birovhzej"
+    },
+    {
+      "id": "cli_full",
+      "command": "cargo test -p willdeep --locked --no-fail-fast",
+      "status": "passed",
+      "exit_code": 0,
+      "unit_passed": 1648,
+      "unit_ignored": 5,
+      "detached_jobs_passed": 18,
+      "detached_jobs_ignored": 1,
+      "nested_probe_passed": 1,
+      "headless_runtime_passed": 62,
+      "workspace_versions_passed": 1,
+      "native_read_proof_passed": true,
+      "native_worker_real_read_passed": true,
+      "runtime_batch_diff_ownership_passed": true,
+      "evidence_task": "b0qsl9onh"
+    },
+    {
+      "id": "runtime_client_protocol",
+      "command": "cargo test -p willdeep-runtime-client -p willdeep-runtime-protocol --locked",
+      "status": "passed",
+      "exit_code": 0,
+      "client_unit_passed": 7,
+      "client_doctest_passed": 1,
+      "protocol_unit_passed": 57,
+      "evidence_task": "b6vktocjf"
+    },
+    {
+      "id": "real_typescript_lsp",
+      "command": "cargo test -p willdeep-core --locked --test lsp_tools -- --ignored --nocapture",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 2,
+      "server": "typescript-language-server 5.3.0",
+      "node": "v24.8.0",
+      "evidence_task": "bjol1iw3b",
+      "scope": "Both configured and inferred projects: first cross-file definition, references, symbols, refresh of another open document; not real-server diagnostics"
+    },
+    {
+      "id": "model_eval_framework",
+      "command": "ruby -E UTF-8:UTF-8 scripts/test/model_eval_test.rb",
+      "status": "passed",
+      "exit_code": 0,
+      "runs": 32,
+      "assertions": 748,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "evidence_task": "bmd5o52gk"
+    },
+    {
+      "id": "p0_fixture_contracts",
+      "command": "ruby -E UTF-8:UTF-8 scripts/test/p0_eval_tasks_test.rb --report-dir target/p0-eval-contracts",
+      "status": "passed",
+      "exit_code": 0,
+      "runs": 19,
+      "assertions": 116,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "contract_rows": 29,
+      "evidence_task": "bwuhey8n0"
+    },
+    {
+      "id": "task_integrity",
+      "command": "ruby -E UTF-8:UTF-8 scripts/model_eval.rb --check-tasks",
+      "status": "passed",
+      "exit_code": 0,
+      "tasks": 23,
+      "invalid": 0,
+      "validation_tasks": 11,
+      "evidence_task": "bufkefnf5"
+    },
+    {
+      "id": "web_bridge_offline",
+      "command": "node --test scripts/test/config_web_bridge_test.mjs",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 6,
+      "evidence_task": "buhmxih0f",
+      "scope": "Configuration bridge data/error contracts; not browser interaction"
+    },
+    {
+      "id": "web_interaction",
+      "status": "passed",
+      "driver": "Browser pane preview_fill / preview_click / preview_eval assertions",
+      "fixture": "scripts/web_runtime_retry_fixture.mjs",
+      "scenario_reference": "scripts/web_chat_stop_test.cjs",
+      "playwright_script_executed": false,
+      "origin": "http://localhost:19849",
+      "fixture_version": "0.150.0-rc2",
+      "isolated_home": true,
+      "inherited_environment_cleared": true,
+      "real_daemon_used": false,
+      "real_model_used": false,
+      "resource_origins": ["http://localhost:19849"],
+      "scenarios": [
+        {
+          "name": "submitted-waiting-stop",
+          "passed": true,
+          "turn": "qa-turn-1",
+          "waiting_visible_before_stop": true,
+          "stop_request_count": 1,
+          "stream_closed": true,
+          "send_restored": true,
+          "stop_removed": true,
+          "waiting_removed": true
+        },
+        {
+          "name": "pending-before-submitted-stop",
+          "passed": true,
+          "turn": "qa-turn-2",
+          "stop_request_count_before_submitted": 0,
+          "stop_request_count_after_submitted": 1,
+          "stream_closed": true,
+          "send_restored": true,
+          "stop_removed": true,
+          "waiting_removed": true
+        }
+      ],
+      "scope": "Real production React DOM and synthetic local SSE backend; no model or editing/LSP-through-Web end-to-end claim",
+      "known_fixture_noise": "Unsupported setup/identity/default-model routes return 404 and show a configuration alert; not counted as a clean console or full backend acceptance"
+
+    },
+    {
+      "id": "core_host_clippy",
+      "command": "cargo clippy -p willdeep-core --all-targets --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "birovhzej"
+    },
+    {
+      "id": "core_windows_clippy",
+      "command": "cargo clippy -p willdeep-core --all-targets --target x86_64-pc-windows-gnu --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "birovhzej",
+      "native_windows_execution": false
+    },
+    {
+      "id": "core_windows_check",
+      "command": "cargo check -p willdeep-core --all-targets --target x86_64-pc-windows-gnu --locked",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "baj23vttq",
+      "scope": "Two test cfg warnings in this run were subsequently fixed; strict target Clippy then passed"
+    },
+    {
+      "id": "workspace_clippy",
+      "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "b9z1xqwk4",
+      "remaining_diagnostics": [
+        { "file": "crates/willdeep-cli/src/daemon/task_manager.rs", "line": 879, "lint": "dead_code", "symbol": "wait_until_idle" },
+        { "file": "crates/willdeep-cli/src/tui/app_state.rs", "line": 1855, "lint": "dead_code", "symbol": "handle_question_text" },
+        { "file": "crates/willdeep-cli/src/tui/human_gate_ui.rs", "line": 130, "lint": "drop_non_drop", "symbol": "drop(append)" }
+      ],
+      "scope": "Remaining diagnostics are outside the P0 change; no blanket lint suppression applied"
+    },
+    {
+      "id": "format",
+      "command": "cargo fmt --all -- --check",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "release_metadata",
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_release_version.rb 0.150.0-rc2",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "source_size",
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_source_size.rb",
+      "status": "passed",
+      "exit_code": 0,
+      "reviewed_files": 1571,
+      "max_lines": 3000,
+      "violations": []
+    },
+    {
+      "id": "diff_whitespace",
+      "command": "git diff --check",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "ci_yaml",
+      "status": "passed",
+      "exit_code": 0,
+      "scope": "YAML safe parse with aliases; no remote CI run"
+    },
+    {
+      "id": "fixture_report_freshness",
+      "status": "passed",
+      "exit_code": 0,
+      "scope": "Current ModelEval::Task content hashes match every original report row"
+    }
+  ],
+  "fixture_contracts": {
+    "evaluation_mode": "offline_fixture_contract_checks",
+    "contains_model_runs": false,
+    "original_report": "target/p0-eval-contracts/reports/2026-11-16/offline-fixture-contracts-no-model.180829Z.json",
+    "archive_date_basis": "UTC",
+    "task_count": 3,
+    "rows": 29,
+    "assertions_passed": 29,
+    "candidates_expected_accepted": 3,
+    "note": "Each passed row means an assertion matches its expectation; rejection fixtures must be rejected. This is not a model pass rate.",
+    "task_sha256": {
+      "p0-rust-cross-file-references": "490f41a9572ac11973091f290b6ec83585b4db3f2cc4bbf31a61533dae93d6b5",
+      "p0-typescript-symbol-key-references": "b36d8ff9b50aef4190a2a3bc63be0eb5cda00a167ac7f1138ba699965cd5823a",
+      "p0-protected-multifile-config": "d656fee9db13af3c086e0e205207aef477df36bf94cf3709cb2ad468bfe01aaf"
+    },
+    "results": [
+      { "task": "p0-rust-cross-file-references/protected-change", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/tampered-tests", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/protected-change", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/missing-edit-src/pricing.rs", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/missing-edit-src/invoice.rs", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/missing-edit-src/checkout.rs", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/hardcoded-config", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/constant-chunks", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/config-workaround", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/missing-edit-lib/batching.rb", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/missing-edit-lib/manifest.rb", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/tampered-tests", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/tampered-tests", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/original-red", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/solution-green", "status": "passed", "expected_candidate_accepted": true, "observed_candidate_accepted": true },
+      { "task": "p0-protected-multifile-config/original-red", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/solution-green", "status": "passed", "expected_candidate_accepted": true, "observed_candidate_accepted": true },
+      { "task": "p0-typescript-symbol-key-references/missing-edit-src/formatter.ts", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/missing-edit-src/view.ts", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-protected-multifile-config/extra-file", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/constant-label", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/broad-text-rename", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/stale-string-key", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-typescript-symbol-key-references/unrelated-literal-renamed", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/constant-price", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/broad-text-rename", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/original-red", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false },
+      { "task": "p0-rust-cross-file-references/solution-green", "status": "passed", "expected_candidate_accepted": true, "observed_candidate_accepted": true },
+      { "task": "p0-typescript-symbol-key-references/protected-change", "status": "passed", "expected_candidate_accepted": false, "observed_candidate_accepted": false }
+    ]
+  },
+  "coverage_map": [
+    { "scenario": "stale/unread edits, exact matching, concurrency, approvals, recovery", "checks": ["file_changes_latest"] },
+    { "scenario": "cross-file Rust references, TypeScript string-key references, protected multi-file fixes", "checks": ["p0_fixture_contracts"], "model_run": false },
+    { "scenario": "compression preserves constraints and unknown effects", "checks": ["core_full"], "new_fixed_model_task": false },
+    { "scenario": "multi-task recovery and missing-receipt replay guards", "checks": ["core_full", "file_changes_latest"], "new_fixed_model_task": false },
+    { "scenario": "test-only false completion and protected test contracts", "checks": ["core_full", "p0_fixture_contracts"] },
+    { "scenario": "web configuration data and errors", "checks": ["web_bridge_offline"], "real_browser": false },
+    { "scenario": "real TypeScript cross-file queries and overlays", "checks": ["real_typescript_lsp"] },
+    { "scenario": "Runtime Diff ownership and native real-read evidence", "checks": ["cli_full"], "status": "passed" },
+    { "scenario": "submitted-waiting stop and pending-before-submitted stop in real React DOM", "checks": ["web_interaction"], "real_browser": true, "backend_is_fixture": true }
+  ],
+  "limits": [
+    "No cross-file filesystem transaction or arbitrary external-writer CAS; identical-content ABA is not detected",
+    "Commit/recovery are synchronous, but later PostTool or delivery cancellation can lose the receipt",
+    "Unknown-effect retry matching uses exact tool name and normalized JSON arguments; changed arguments and direct Registry calls do not inherit the same historical protection",
+    "Only UTF-8 text create/replace, no directory creation, delete or rename",
+    "LSP processes are external code and are not a host-read isolation boundary",
+    "TypeScript initial compatibility excludes config extends, nonempty plugins, project references and symlink configs",
+    "Unpublished, unversioned, stale, filtered or truncated diagnostics cannot establish a clean current snapshot",
+    "Real Rust language server unavailable through the installed rustup proxy; not auto-installed or smoke-tested",
+    "Real TypeScript smoke does not cover real diagnostics, every project layout or large workspace behavior",
+    "Windows target compiled/linted only; no native Windows tests",
+    "Non-UTF-8 root filesystem I/O regression is compiled only on non-macOS Unix and was not run here; macOS serialization regression passed",
+    "TypeScript fixture verification uses Node type stripping plus fixed shape/behavior assertions, not full TypeScript type checking",
+    "Default ignored live-fire and benchmark tests are not counted as passed",
+    "No paid model, Pi/OMP runtime comparison, native browser tool, semantic rename, AST or DAP delivery"
+  ],
+  "test_counts_are_additive": false
+}

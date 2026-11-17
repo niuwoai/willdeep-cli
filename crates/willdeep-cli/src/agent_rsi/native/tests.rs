@@ -73,7 +73,7 @@ fn control(origin: &str) -> (PathBuf, PathBuf) {
 #[tokio::test]
 async fn preview_captures_real_worker_request_without_network_or_oracle_leak() {
     let (dir, path) = control("http://127.0.0.1:1");
-    let observed = execute(&path, true).await.unwrap();
+    let observed = execute(&path, true, &dir).await.unwrap();
     assert_eq!(observed["worker_status"], "preview_stopped_before_network");
     assert_eq!(observed["request_receipts"], json!([]));
     assert_eq!(observed["usage_complete"], false);
@@ -102,7 +102,7 @@ async fn native_worker_uses_only_broker_and_real_read_file_with_receipts_and_raw
             .with_state(broker.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let (dir, path) = control(&origin);
-        let observed = execute(&path, false).await.unwrap();
+        let observed = execute(&path, false, &dir).await.unwrap();
         assert!(
             !serde_json::to_string(&observed)
                 .unwrap()
@@ -155,6 +155,28 @@ async fn native_worker_uses_only_broker_and_real_read_file_with_receipts_and_raw
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+#[tokio::test]
+async fn native_project_policy_blocks_broker_despite_unrestricted_temporary_fixture() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (dir, path) = control(&origin);
+    std::fs::create_dir_all(dir.join(".willdeep")).unwrap();
+    std::fs::write(
+        dir.join(".willdeep/model-policy.json"),
+        br#"{"version":1,"allow":[]}"#,
+    )
+    .unwrap();
+    let observed = execute(&path, false, &dir).await.unwrap();
+    assert_eq!(observed["request_receipts"], json!([]));
+    assert_ne!(observed["worker_status"], "completed");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+            .await
+            .is_err()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn rejects_remote_broker_and_unapproved_control_before_execution() {
     assert!(BrokerProvider::new("https://some.im", "fake".into(), "trial".into(), false).is_err());
@@ -194,8 +216,9 @@ fn read_proof_requires_exact_fixture_result_in_a_delivered_request() {
     let content = "one\ntwo\n";
     private_write(&fixture, content.as_bytes()).unwrap();
     private_write(&dir.join("other.txt"), content.as_bytes()).unwrap();
+    let version = format!("[version: sha256:{}]\n", digest(content.as_bytes()));
     let row = json!({"sequence":2,"transport_valid":true,"request_id":"r2","receipt_id":"b2",
-        "read_results_in_request":[{"tool_call_id":"call1","arguments":{"path":"fixture.txt"},"tool_result_sha256":digest(b"     1  one\n     2  two\n")}]});
+        "read_results_in_request":[{"tool_call_id":"call1","arguments":{"path":"fixture.txt"},"tool_result_sha256":digest(format!("{version}     1  one\n     2  two\n").as_bytes())}]});
     assert_eq!(
         validated_fixture_reads(std::slice::from_ref(&row), &fixture, content).len(),
         1
@@ -206,6 +229,24 @@ fn read_proof_requires_exact_fixture_result_in_a_delivered_request() {
     let mut wrong_result = row.clone();
     wrong_result["read_results_in_request"][0]["tool_result_sha256"] = digest(b"spoof").into();
     assert!(validated_fixture_reads(&[wrong_result], &fixture, content).is_empty());
+    let mut legacy = row.clone();
+    legacy["read_results_in_request"][0]["tool_result_sha256"] =
+        digest(b"     1  one\n     2  two\n").into();
+    assert!(validated_fixture_reads(&[legacy], &fixture, content).is_empty());
+    let mut paged = row.clone();
+    paged["read_results_in_request"][0]["arguments"]["max_bytes"] = 12.into();
+    paged["read_results_in_request"][0]["tool_result_sha256"] =
+        digest(format!("{version}     1  one\n[truncated; continue with offset 2]\n").as_bytes())
+            .into();
+    assert_eq!(
+        validated_fixture_reads(&[paged], &fixture, content).len(),
+        1
+    );
+    let mut metadata_only = row.clone();
+    metadata_only["read_results_in_request"][0]["arguments"]["offset"] = 999.into();
+    metadata_only["read_results_in_request"][0]["tool_result_sha256"] =
+        digest(version.as_bytes()).into();
+    assert!(validated_fixture_reads(&[metadata_only], &fixture, content).is_empty());
     let mut undelivered = row;
     undelivered["transport_valid"] = false.into();
     assert!(validated_fixture_reads(&[undelivered], &fixture, content).is_empty());

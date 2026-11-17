@@ -1,0 +1,23 @@
+{
+  "passed": false,
+  "checks": [
+    {
+      "mode": "compact",
+      "name": "queued inputs do not start early",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "first dequeued user follows the complete preceding reply",
+      "passed": false,
+      "error": "wrong first dequeue order:  hugo: QUEUE_TIMELINE_READY\n                \n                                                                      [started] FIRST_TIMELINE_REQUEST · now \n                      \n                                                                         [started] QUEUED_TIMELINE_ONE · now \n                         \n System: Runtime accepted and queued the message; waiting to start                                           \n System: The current turn is still running; no new progress received yet\n                                                                  \n                                                               [accepted · queued] QUEUED_TIMELINE_TWO · now \n                                                                                                         \n System: Runtime accepted and queued the message; waiting to start                                           \n hugo: FIRST_TIMELINE_HEAD\n FIRST_TIMELINE_TAIL · now · fixture                              \n                                               \n ── turn finished · first reply 0.44s · total 1.04s · in 1.00K · out 100 · sending queued messages next ·\n your turn ── · your turn\n hugo · replying: SECOND_TIMELINE_REPLY\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n UNSENT_TIMELINE_DRAFT                                                                                        \n                                                                                                              \n                                                                                                              \n◐ Receiving reply · elapsed 0.3s · Focus: Prompt · context 0% · latest ↑1.00K ↓100 · queued 2 · Esc Esc×2 inte"
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "b416dafd4718f270745e2a5a0631a7ebcadf144e0f19fffefe01a15a3fb6c06d",
+  "scope": "full/compact real Runtime PTY; two queued turns, late preceding output, receipt cleanup and draft preservation",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace, loopback synthetic provider, captured OSC 52 only.",
+  "version": "willdeep 0.151.0-rc2",
+  "error": "RuntimeError: wrong first dequeue order:  hugo: QUEUE_TIMELINE_READY\n                \n                                                                      [started] FIRST_TIMELINE_REQUEST · now \n                      \n                                                                         [started] QUEUED_TIMELINE_ONE · now \n                         \n System: Runtime accepted and queued the message; waiting to start                                           \n System: The current turn is still running; no new progress received yet\n                                                                  \n                                                               [accepted · queued] QUEUED_TIMELINE_TWO · now \n                                                                                                         \n System: Runtime accepted and queued the message; waiting to start                                           \n hugo: FIRST_TIMELINE_HEAD\n FIRST_TIMELINE_TAIL · now · fixture                              \n                                               \n ── turn finished · first reply 0.44s · total 1.04s · in 1.00K · out 100 · sending queued messages next ·\n your turn ── · your turn\n hugo · replying: SECOND_TIMELINE_REPLY\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n UNSENT_TIMELINE_DRAFT                                                                                        \n                                                                                                              \n                                                                                                              \n◐ Receiving reply · elapsed 0.3s · Focus: Prompt · context 0% · latest ↑1.00K ↓100 · queued 2 · Esc Esc×2 inte",
+  "checks_passed": 1
+}

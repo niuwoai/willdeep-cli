@@ -29,7 +29,7 @@ impl Provider for EditingThenWaitingProvider {
                 id: "edit".into(),
                 name: "edit_file".into(),
                 arguments:
-                    serde_json::json!({"path":"fix.rs","old_string":"before","new_string":"after"})
+                    serde_json::json!({"path":"fix.rs","old_string":"before","new_string":"after","expected_version":format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"before"))})
                         .to_string(),
             }],
             finish_reason: Some("tool_calls".into()),

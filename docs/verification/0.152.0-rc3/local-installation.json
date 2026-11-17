@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-17",
+  "version": "0.152.0-rc3",
+  "installed": true,
+  "published": false,
+  "source_commit": "aff3f6b6f787ac8858ab84bd252bdba7f3b0b33e",
+  "source_sha256": "b1a7b55af7ae8ac297c001e1ced1f531b98b1777f19342b2098aab397e076d58",
+  "pr": "https://github.com/niuwoai/willdeep-cli/pull/157",
+  "commands": [
+    {"command": "yarn --cwd web build", "exit_code": 0},
+    {"command": "cargo install --offline --path crates/willdeep-cli --locked --force", "exit_code": 0},
+    {"command": "willdeep daemon upgrade --timeout 300", "exit_code": 0}
+  ],
+  "installed_sha256": "69e161f57d6403ebb8838d7252384ad6e2e8d32961568e790357e29e3dde7ce1",
+  "entries": [
+    {"path": "~/.cargo/bin/willdeep", "version": "0.152.0-rc3"},
+    {"path": "/opt/homebrew/bin/willdeep", "version": "0.152.0-rc3", "kind": "local_trial_override", "resolved_path": "/opt/homebrew/Cellar/willdeep-cli/0.149.0-rc12/bin/willdeep", "formula_version_changed": false}
+  ],
+  "backup": {
+    "directory": "~/.local/share/willdeep/backups/20261117T103010Z-before-0.152.0-rc3",
+    "version": "0.149.0-rc12",
+    "entries": [
+      {"name": "cargo-willdeep", "sha256": "78562d226d060e4ebf606764f736694186309a8a041a1add9de9cca17be9ec9a"},
+      {"name": "homebrew-willdeep", "sha256": "0a6bc1849011717b574d5a4dc90ed26ca079401095380af26a97a933109967e3"}
+    ],
+    "byte_identity_verified": true
+  },
+  "runtime": {
+    "status": "running",
+    "old_pid": 80906,
+    "pid": 96806,
+    "version": "0.152.0-rc3",
+    "executable": "~/.cargo/bin/willdeep",
+    "handoff_exit_code": 0,
+    "health_verified": true,
+    "pending_human_gates": 0
+  },
+  "cancelled_task": {
+    "id": "c7cd5cc0-285b-431d-acd3-a8227359efca",
+    "authorization": "User selected 取消旧任务并升级",
+    "previous_status": "WaitingApproval",
+    "status_after_handoff": "Cancelled",
+    "history_preserved": true
+  },
+  "checks": {"both_entrypoints_version_and_hash_match": true, "continuation_help_option_present": true, "runtime_version_matches_cli": true, "runtime_executable_matches_installation": true, "source_unchanged_after_install": true},
+  "scope": "Local optimized installation after rebuilding ignored web/dist; distinct from the frozen debug acceptance application. No public release, tag, tap update or model call.",
+  "non_blocking_build_warnings": ["Cargo reported existing locked chacha20 0.10.1 and clipboard-win 5.4.1 as yanked; locked offline installation exited 0 without modifying Cargo.lock.", "Vite reported a minified chunk larger than 500 kB; frontend build exited 0."]
+}

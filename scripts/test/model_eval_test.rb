@@ -121,7 +121,7 @@ class TaskLoadingTest < Minitest::Test
     end
     tasks = ModelEval::Task.load_all(File.expand_path('../../bench/model-eval', __dir__))
     counts = tasks.group_by(&:split).transform_values(&:size)
-    assert_equal({ 'holdout' => 4, 'regression' => 4, 'train' => 4, 'validation' => 8 }, counts.sort.to_h)
+    assert_equal({ 'holdout' => 4, 'regression' => 4, 'train' => 4, 'validation' => 11 }, counts.sort.to_h)
   end
 
   def test_test_kind_requires_mutants_and_mutants_must_not_touch_editable

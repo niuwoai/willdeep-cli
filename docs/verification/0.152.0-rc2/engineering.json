@@ -1,0 +1,40 @@
+{
+  "version": "0.152.0-rc2",
+  "date": "2026-11-17",
+  "passed": true,
+  "exit_code": 0,
+  "source_unchanged_by_verifier": true,
+  "commands": [
+    {"command": "cargo fmt --all -- --check", "status": "passed", "exit_code": 0},
+    {"command": "cargo test --offline --locked --workspace --no-fail-fast", "status": "passed", "exit_code": 0},
+    {"command": "cargo clippy --offline --locked --workspace --all-targets -- -D warnings", "status": "passed", "exit_code": 0},
+    {"command": "cargo build --offline --locked -p willdeep --bin willdeep", "status": "passed", "exit_code": 0}
+  ],
+  "targets": [
+    {"name": "willdeep", "kind": "unit", "passed": 1838, "failed": 0, "ignored": 5},
+    {"name": "detached_jobs", "kind": "integration", "passed": 18, "failed": 0, "ignored": 1},
+    {"name": "headless_runtime", "kind": "integration", "passed": 63, "failed": 0, "ignored": 0},
+    {"name": "workspace_versions", "kind": "integration", "passed": 1, "failed": 0, "ignored": 0},
+    {"name": "willdeep_core", "kind": "unit", "passed": 1331, "failed": 0, "ignored": 7},
+    {"name": "ast_grep_tools", "kind": "integration", "passed": 2, "failed": 0, "ignored": 1},
+    {"name": "browser_tools", "kind": "integration", "passed": 4, "failed": 0, "ignored": 3},
+    {"name": "goal_evidence", "kind": "integration", "passed": 13, "failed": 0, "ignored": 0},
+    {"name": "lsp_rust_tools", "kind": "integration", "passed": 0, "failed": 0, "ignored": 3},
+    {"name": "lsp_tools", "kind": "integration", "passed": 0, "failed": 0, "ignored": 4},
+    {"name": "model_policy", "kind": "integration", "passed": 16, "failed": 0, "ignored": 0},
+    {"name": "provider_contracts", "kind": "integration", "passed": 5, "failed": 0, "ignored": 0},
+    {"name": "search_tools", "kind": "integration", "passed": 12, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_client", "kind": "unit", "passed": 10, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_protocol", "kind": "unit", "passed": 57, "failed": 0, "ignored": 0},
+    {"name": "willdeep_core", "kind": "doc", "passed": 0, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_client", "kind": "doc", "passed": 1, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_protocol", "kind": "doc", "passed": 0, "failed": 0, "ignored": 0}
+  ],
+  "summary": {"top_level_targets": 18, "passed": 3371, "failed": 0, "ignored": 24},
+  "raw_result_records": {"records": 19, "passed": 3372, "failed": 0, "ignored": 24, "extra_child_helper": "detached_jobs::tests::spawn_and_exit_helper", "extra_child_helper_passed": 1},
+  "ignored_scope": ["manual diagnostics and performance probes", "real public relay and paid livefire", "long preflight and explicit ledger benchmark", "internal subprocess helper entrypoints", "real LSP/AST/browser tests requiring explicit prerequisites; separately executed evidence is listed in the closeout report"],
+  "log": "target/p0-p1-final-engineering-20261117T084903Z-83222.log",
+  "log_sha256": "7ce8a81b9c21cbbe7923c3caaf630f0d06fa2e58f4b15192e875ad332eadb063",
+  "installed": false,
+  "published": false
+}

@@ -36,6 +36,7 @@ pub(super) fn fingerprint(session: &Session) -> Result<[u8; 32], SessionError> {
             session.version,
             session.id,
             &session.workspace,
+            &session.model_policy_workspace,
             session.created_at,
             &session.messages,
             &session.current_plan,
@@ -54,6 +55,7 @@ pub(super) fn copy(source: &Session, target: &mut Session) {
     target.version = source.version;
     target.id = source.id;
     target.workspace = source.workspace.clone();
+    target.model_policy_workspace = source.model_policy_workspace.clone();
     target.created_at = source.created_at;
     target.messages = source.messages.clone();
     target.current_plan = source.current_plan.clone();

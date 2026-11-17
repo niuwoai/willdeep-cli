@@ -47,6 +47,7 @@ async fn independent(
     let mut config = crate::magpie_integration::resolve(&cli, &loaded, Some(&core))
         .await?
         .config;
+    config.policy_context = Some(state.sessions.model_policy_context(session.id)?);
     config.max_output_tokens = 256;
     config.request_timeout_secs = CLASSIFIER_TIMEOUT.as_secs();
     let provider = willdeep_core::build_provider(config)?;
@@ -378,7 +379,7 @@ impl TaskManager {
         Ok(())
     }
 
-    async fn deliver_buffered_decisions(&self) -> Result<()> {
+    pub(super) async fn deliver_buffered_decisions(&self) -> Result<()> {
         let buffered = self
             .interactions
             .read()

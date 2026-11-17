@@ -66,6 +66,11 @@ pub struct RunCheckpoint {
 }
 
 pub trait CheckpointSink: Send + Sync {
+    /// Ordinary operator input starts a verification scope; recovery and host
+    /// continuations keep the unfinished task's original scope.
+    fn is_new_input(&self) -> bool {
+        false
+    }
     fn current_plan(&self) -> Result<Option<crate::conversation::Plan>, String> {
         Ok(None)
     }
@@ -211,10 +216,13 @@ impl<'a> CheckpointRecorder<'a> {
             .transpose()
             .map_err(AgentError::Checkpoint)?
             .unwrap_or_default();
+        if self.sink.is_some_and(|sink| sink.is_new_input()) {
+            tools.begin_verification_input();
+        }
         tools.restore_verification_evidence(evidence);
         if let Some(sink) = self.sink {
             tools
-                .require_verifications(
+                .restore_required_verifications(
                     &sink
                         .required_verifications()
                         .map_err(AgentError::Checkpoint)?,
@@ -466,6 +474,19 @@ impl Drop for CheckpointRecorder<'_> {
 }
 
 impl CheckpointMetadata {
+    pub fn new_input_notice(&self) -> Option<Message> {
+        (self.status != CheckpointStatus::Completed).then(|| {
+            Message::host_instruction(format!(
+                "[execution-context] Earlier work remains {:?}, not verified complete. \
+                 Address the current user input; earlier work is not automatically resumed. \
+                 Do not claim that earlier work passed verification. Preserve existing changes. \
+                 Calls without a recorded result: {:?}. Their effects remain UNKNOWN; \
+                 reconcile actual effects before any retry and retain normal approval rules.",
+                self.status, self.pending_call_ids,
+            ))
+        })
+    }
+
     pub fn recovery_notice(&self) -> Option<Message> {
         if self.status == CheckpointStatus::Completed {
             return None;
@@ -506,6 +527,98 @@ pub struct ClaimedSessionCheckpointSink {
     inner: SessionCheckpointSink,
     _ownership: crate::session::ExecutionGuard,
     active: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ClaimedSessionCheckpointSink {
+    /// Use only for a new operator input, never replay or a host/Goal continuation.
+    /// The borrowed scope lasts one run; subsequent continuations use this sink.
+    pub fn for_new_input(
+        &self,
+    ) -> Result<NewInputCheckpointSink<'_>, crate::session::SessionError> {
+        let previous = self
+            .inner
+            .store
+            .load(self.inner.session_id)?
+            .execution_checkpoint
+            .filter(|checkpoint| checkpoint.status != CheckpointStatus::Completed);
+        Ok(NewInputCheckpointSink {
+            inner: self,
+            previous,
+        })
+    }
+}
+
+pub struct NewInputCheckpointSink<'a> {
+    inner: &'a ClaimedSessionCheckpointSink,
+    previous: Option<CheckpointMetadata>,
+}
+
+impl CheckpointSink for NewInputCheckpointSink<'_> {
+    fn is_new_input(&self) -> bool {
+        true
+    }
+    fn current_plan(&self) -> Result<Option<crate::conversation::Plan>, String> {
+        self.inner.current_plan()
+    }
+    fn completion_patch(&self) -> Result<Option<CompletionPatchEvidence>, String> {
+        // Explicit patch contracts cannot be removed by sending another input.
+        self.inner.completion_patch()
+    }
+    fn acquire_run(&self) -> Result<Option<Box<dyn Send + Sync>>, String> {
+        self.inner.acquire_run()
+    }
+    fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
+        let mut checkpoint = checkpoint.clone();
+        if let Some(previous) = &self.previous {
+            let current = &mut checkpoint.metadata;
+            // Finishing the new input does not certify the outstanding task.
+            if current.status == CheckpointStatus::Completed {
+                current.status = previous.status;
+            }
+            current.verification_baseline = previous
+                .verification_baseline
+                .clone()
+                .or(current.verification_baseline.take());
+            current
+                .required_verifications
+                .extend(previous.required_verifications.clone());
+            current.required_verifications.sort();
+            current.required_verifications.dedup();
+            current.completion_patch = previous
+                .completion_patch
+                .clone()
+                .or(current.completion_patch.take());
+            let mut evidence = previous.verification_evidence.clone();
+            for record in std::mem::take(&mut current.verification_evidence) {
+                if let Some(old) = evidence.iter_mut().find(|old| {
+                    old.snapshot_id == record.snapshot_id && old.command == record.command
+                }) {
+                    use crate::tools::VerificationStatus;
+                    // Only a real pass may resolve an earlier real failure.
+                    if record.status == VerificationStatus::Passed
+                        || (record.status != VerificationStatus::InvocationError
+                            && !matches!(
+                                old.status,
+                                VerificationStatus::Failed
+                                    | VerificationStatus::TimedOut
+                                    | VerificationStatus::LaunchFailed
+                            ))
+                    {
+                        *old = record;
+                    }
+                } else {
+                    evidence.push(record);
+                }
+            }
+            current.verification_evidence = evidence;
+            current
+                .pending_call_ids
+                .extend(previous.pending_call_ids.clone());
+            current.pending_call_ids.sort();
+            current.pending_call_ids.dedup();
+        }
+        self.inner.save(&checkpoint)
+    }
 }
 
 struct ActiveRun(std::sync::Arc<std::sync::atomic::AtomicBool>);
@@ -694,6 +807,8 @@ pub fn preserve_federation_notices(messages: &mut Vec<Message>, persisted: &[Mes
     }
 }
 
+#[cfg(test)]
+mod input_scope_tests;
 #[cfg(test)]
 mod stream_tests;
 #[cfg(test)]

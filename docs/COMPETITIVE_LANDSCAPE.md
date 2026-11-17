@@ -3,6 +3,7 @@
 > 分析日期：2026-09-20 | 基于 develop @ v0.78.0-rc12（代码实况盘点）。
 > 上一版 2026-08-21 @ 0.39.0-rc1；两版之间发了 39 个 rc，本版按代码实况重写，竞品栏未做新一轮外部调研，时效仍标 2026-08-21。
 > 结论供产品与路线图决策参考；落地顺序以 `docs/decisions/2026-09-20-experience-baseline-and-model-eval.md` 为准。
+> 本页保留历史快照。2026-11-17 的 [Pi / OMP 文章与图片资料记录](research/2026-11-17-pi-omp-materials.md)、[willdeep 当前能力差距分析](research/2026-11-17-willdeep-cli-gap-analysis.md)和 [Claude Code 终端体验观察](research/2026-11-17-claude-code-terminal-experience.md)使用独立文件维护；本页旧“无 MCP / 无回退”等条目不能作为当前版本缺口。
 
 ## 一句话结论
 

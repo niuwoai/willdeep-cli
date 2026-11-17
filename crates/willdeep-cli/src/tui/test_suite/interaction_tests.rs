@@ -232,7 +232,10 @@ async fn session_switch_replaces_the_open_session_without_restarting_tui() {
     let (tx, rx) = mpsc::unbounded_channel();
     target.profile = Some("target-provider".to_owned());
     target.model = Some("target-model".to_owned());
-    target.config = Some(root.join("target-config.toml"));
+    let config = root.join("target-config.toml");
+    // A missing target config falls back to the real user's default during approval restoration.
+    std::fs::write(&config, "").unwrap();
+    target.config = Some(config);
     store.save(&mut target).unwrap();
     let mut runtime = TuiRuntime {
         home: root.clone(),

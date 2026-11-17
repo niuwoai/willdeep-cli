@@ -165,6 +165,76 @@ fn nullable_fields_are_still_required_by_contract() {
 }
 
 #[tokio::test]
+async fn coding_tools_respect_definition_capabilities_and_base_role() {
+    use crate::provider::{Provider, ProviderError};
+    use crate::types::{Completion, Message, ToolDefinition};
+    use std::sync::Arc;
+    struct ProjectionProvider;
+    #[async_trait::async_trait]
+    impl Provider for ProjectionProvider {
+        async fn complete(
+            &self,
+            _: &[Message],
+            _: &[ToolDefinition],
+        ) -> std::result::Result<Completion, ProviderError> {
+            unreachable!("capability projection must not call the provider")
+        }
+    }
+    let bases = crate::builtin_profiles(Arc::new(ProjectionProvider));
+    let implementer = bases
+        .iter()
+        .find(|profile| profile.id == "implementer")
+        .unwrap();
+    let mut definition = fixture();
+    definition.base_role = "implementer".into();
+    definition.tools = vec!["workspace.read".into()];
+    let projected = definition.project(implementer).unwrap();
+    assert!(
+        !projected
+            .tool_names
+            .iter()
+            .any(|tool| matches!(tool.as_str(), "file_changes" | "lsp" | "ast_grep"))
+    );
+    definition.tools.push("workspace.edit".into());
+    let projected = definition.project(implementer).unwrap();
+    assert!(
+        projected
+            .tool_names
+            .iter()
+            .any(|tool| tool == "file_changes")
+    );
+    for process_tool in ["lsp", "ast_grep"] {
+        assert!(!projected.tool_names.iter().any(|tool| tool == process_tool));
+    }
+    definition.tools.push("process.verify".into());
+    let projected = definition.project(implementer).unwrap();
+    for process_tool in ["lsp", "ast_grep"] {
+        assert!(projected.tool_names.iter().any(|tool| tool == process_tool));
+    }
+    definition
+        .tools
+        .retain(|capability| capability != "workspace.read");
+    let projected = definition.project(implementer).unwrap();
+    for process_tool in ["lsp", "ast_grep"] {
+        assert!(!projected.tool_names.iter().any(|tool| tool == process_tool));
+    }
+    definition.tools.push("workspace.read".into());
+    definition.base_role = "reviewer".into();
+    let reviewer = bases
+        .iter()
+        .find(|profile| profile.id == "reviewer")
+        .unwrap();
+    assert!(
+        !definition
+            .project(reviewer)
+            .unwrap()
+            .tool_names
+            .iter()
+            .any(|tool| matches!(tool.as_str(), "file_changes" | "lsp" | "ast_grep"))
+    );
+}
+
+#[tokio::test]
 async fn dispatch_injects_locked_definition_without_expanding_role_permissions() {
     use crate::provider::{Provider, ProviderError};
     use crate::types::{Completion, Message, ToolDefinition};

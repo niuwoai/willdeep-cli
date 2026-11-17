@@ -1,0 +1,112 @@
+{
+  "passed": true,
+  "max_lines": 3000,
+  "reviewed_files": 1644,
+  "violations": [],
+  "responsibility_review": [
+    {
+      "path": "crates/willdeep-cli/src/config.rs",
+      "lines": 2953
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/session_store.rs",
+      "lines": 2952
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui/app_state.rs",
+      "lines": 2944
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui.rs",
+      "lines": 2923
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/intake.rs",
+      "lines": 2907
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui/test_suite/session_tests.rs",
+      "lines": 2892
+    },
+    {
+      "path": "crates/willdeep-cli/src/web.rs",
+      "lines": 2890
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui/narration.rs",
+      "lines": 2882
+    },
+    {
+      "path": "crates/willdeep-cli/tests/headless_runtime.rs",
+      "lines": 2873
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon.rs",
+      "lines": 2870
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/diff_review.rs",
+      "lines": 2869
+    },
+    {
+      "path": "crates/willdeep-core/src/tools.rs",
+      "lines": 2829
+    },
+    {
+      "path": "CHANGELOG.md",
+      "lines": 2754
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/control_api.rs",
+      "lines": 2611
+    },
+    {
+      "path": "crates/willdeep-cli/src/audit_cmd.rs",
+      "lines": 2554
+    },
+    {
+      "path": "crates/willdeep-core/src/agent/tests.rs",
+      "lines": 2482
+    },
+    {
+      "path": "crates/willdeep-cli/src/plugin_web.rs",
+      "lines": 2472
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui/event_loop.rs",
+      "lines": 2430
+    },
+    {
+      "path": "crates/willdeep-runtime-protocol/src/lib.rs",
+      "lines": 2416
+    },
+    {
+      "path": "crates/willdeep-cli/src/main.rs",
+      "lines": 2383
+    },
+    {
+      "path": "scripts/test/fixtures/config_page.js",
+      "lines": 2308
+    },
+    {
+      "path": "crates/willdeep-cli/src/harness.rs",
+      "lines": 2263
+    },
+    {
+      "path": "crates/willdeep-core/src/agent.rs",
+      "lines": 2227
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/tui_bridge.rs",
+      "lines": 2096
+    },
+    {
+      "path": "crates/willdeep-cli/src/tui/rendering.rs",
+      "lines": 2096
+    },
+    {
+      "path": "crates/willdeep-cli/src/daemon/tests.rs",
+      "lines": 2065
+    }
+  ]
+}

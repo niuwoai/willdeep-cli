@@ -227,22 +227,39 @@ async fn real_runs_invalidate_summaries_after_prefix_or_rule_changes() {
 
 #[tokio::test]
 async fn live_plan_goal_and_deadline_survive_compression_without_invalidating_it() {
-    let (agent, provider, compressor) = loop_agent(true);
+    let (mut agent, provider, compressor) = loop_agent(true);
+    let source = agent.tools.workspace().join("current.txt");
+    agent.tools = agent
+        .tools
+        .with_session_id(Some("compression-goal-fixture".into()))
+        .with_fallible_verification_snapshot(move || {
+            std::fs::read_to_string(&source)
+                .map(Some)
+                .map_err(|error| error.to_string())
+        });
     let goal = Arc::new(GoalContinuation::new());
     goal.activate("inspect the fixture", crate::goal::GoalBudget::default());
+    let agent = agent.with_goal_continuation(goal.clone());
+    let record = agent
+        .tools
+        .goal_evidence_handle()
+        .record_human_observation(
+            &goal.snapshot().unwrap().goal_id,
+            "host inspected the isolated current.txt fixture",
+        )
+        .unwrap();
     goal.update_plan(crate::goal::PlanUpdate {
         criteria: Some(vec!["the fixture is read".to_owned()]),
         checklist: vec![crate::goal::ChecklistUpdate {
             index: 1,
             done: true,
-            evidence: Some("read current.txt".to_owned()),
+            evidence: Some("host inspected current.txt".to_owned()),
+            evidence_ref: Some(record.reference),
         }],
         ..crate::goal::PlanUpdate::default()
     })
     .expect("one evidenced criterion lets the completion marker close the goal");
-    let agent = agent
-        .with_goal_continuation(goal)
-        .with_time_budget(std::time::Duration::from_secs(60));
+    let agent = agent.with_time_budget(std::time::Duration::from_secs(60));
     let result = agent.run_with_history(history(), "continue").await;
     std::fs::remove_dir_all(agent.tools.workspace()).unwrap();
     assert_eq!(result.unwrap().stop_reason, AgentStopReason::GoalComplete);

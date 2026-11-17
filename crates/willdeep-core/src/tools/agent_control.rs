@@ -38,16 +38,17 @@ pub(crate) fn update_plan_definition() -> ToolDefinition {
 Use merge=true for partial updates by stable id; omitted fields keep their values. New steps require a title. \
 Start independent ready steps concurrently using available background workers/read tools, subject to permissions, budgets and resource conflicts. \
 Mark work in_progress when starting it, and done only after verifying its result. Dependencies must all be done before a step starts or finishes. \
-Only with an active /goal: record acceptance criteria, mark criteria done with evidence, or record what blocks the goal. \
-The goal can only be declared complete when every acceptance criterion is marked done with evidence and no delegated worker is still running. \
-Define concrete, checkable criteria early; mark one done only with proof (command output, test name, file path, commit). \
+Only with an active /goal: record acceptance criteria, mark criteria done with evidence_ref, or record what blocks the goal. \
+The goal can only be declared complete when every acceptance criterion has a valid runtime evidence_ref for the current session, goal and workspace snapshot, and no delegated worker is still running. \
+Define concrete, checkable criteria early. Copy evidence_ref from the [goal-evidence] receipt of a real verification; evidence is optional explanation only. Text, file paths, test names and self-reported human observations cannot prove completion. \
 All fields are optional; only the fields you pass change. No approval is needed.",
         json!({"type":"object","properties":{
             "criteria":{"type":"array","maxItems":24,"items":{"type":"string"},"description":"Replace the full list of acceptance criteria. A criterion keeps its done state and evidence only when its text is unchanged; any change in wording starts that criterion over as not done."},
             "checklist":{"type":"array","items":{"type":"object","properties":{
                 "index":{"type":"integer","minimum":1,"description":"1-based criterion number."},
                 "done":{"type":"boolean"},
-                "evidence":{"type":"string","description":"Required when done is true."}
+                "evidence":{"type":"string","description":"Optional explanation of how the referenced record supports this criterion; never proof by itself."},
+                "evidence_ref":{"type":"string","description":"Required when done is true. Exact reference from a runtime [goal-evidence] receipt; must still resolve to successful evidence on the current snapshot."}
             },"required":["index","done"],"additionalProperties":false}},
             "merge":{"type":"boolean","description":"true: update steps by id and append new ids; false or omitted: replace the full step plan."},
             "steps":{"type":"array","maxItems":24,"items":{"type":"object","properties":{

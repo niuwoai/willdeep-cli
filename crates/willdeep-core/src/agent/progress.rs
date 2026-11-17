@@ -99,7 +99,7 @@ mod tests {
             _: &[ToolDefinition],
         ) -> Result<Completion, ProviderError> {
             let calls = if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                vec![ToolCall { id: "test-only".into(), name: "edit_file".into(), arguments: serde_json::json!({"path":"tests/check.rs", "old_string":"original test", "new_string":"weakened test"}).to_string() }]
+                vec![ToolCall { id: "test-only".into(), name: "edit_file".into(), arguments: serde_json::json!({"path":"tests/check.rs", "old_string":"original test", "new_string":"weakened test", "expected_version": format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"original test"))}).to_string() }]
             } else {
                 Vec::new()
             };

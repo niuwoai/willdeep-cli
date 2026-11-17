@@ -1,0 +1,39 @@
+{
+  "version": "0.152.0-rc3",
+  "date": "2026-11-17",
+  "passed": true,
+  "source_unchanged_by_verifier": true,
+  "commands": [
+    {"command": "cargo fmt --all -- --check", "status": "passed", "exit_code": 0, "log": "target/p0-p1-rc152-rc3-engineering-final1/fmt.log", "sha256": "9ee8ddbc1f705d5cad80decea71573a77c4bf3d3e817fbb4e7c644c51b31e747"},
+    {"command": "cargo test --offline --locked --workspace --no-fail-fast", "status": "passed", "exit_code": 0, "log": "target/p0-p1-rc152-rc3-engineering-final1/test.log", "sha256": "a963caa8cc05d8302b1ad0584d039b9658c1491b7ca2a5b7d7b89a925acffca8"},
+    {"command": "cargo clippy --offline --locked --workspace --all-targets -- -D warnings", "status": "passed", "exit_code": 0, "log": "target/p0-p1-rc152-rc3-engineering-final1/clippy.log", "sha256": "5633d680c68bf5bb4624dd2c7b33731863792930177fc3a6451ac4683c8211a6"},
+    {"command": "cargo build --offline --locked -p willdeep --bin willdeep", "status": "passed", "exit_code": 0, "log": "target/p0-p1-rc152-rc3-engineering-final1/build.log", "sha256": "7ec5ad7fbe54c015c561f71d30a1832d063d91ca74ac2841b3134c79b768c15b"}
+  ],
+  "targets": [
+    {"name": "willdeep", "kind": "unit", "passed": 1840, "failed": 0, "ignored": 5},
+    {"name": "detached_jobs", "kind": "integration", "passed": 18, "failed": 0, "ignored": 1},
+    {"name": "headless_runtime", "kind": "integration", "passed": 63, "failed": 0, "ignored": 0},
+    {"name": "workspace_versions", "kind": "integration", "passed": 1, "failed": 0, "ignored": 0},
+    {"name": "willdeep_core", "kind": "unit", "passed": 1332, "failed": 0, "ignored": 7},
+    {"name": "ast_grep_tools", "kind": "integration", "passed": 2, "failed": 0, "ignored": 1},
+    {"name": "browser_tools", "kind": "integration", "passed": 4, "failed": 0, "ignored": 3},
+    {"name": "goal_evidence", "kind": "integration", "passed": 13, "failed": 0, "ignored": 0},
+    {"name": "lsp_rust_tools", "kind": "integration", "passed": 0, "failed": 0, "ignored": 3},
+    {"name": "lsp_tools", "kind": "integration", "passed": 0, "failed": 0, "ignored": 4},
+    {"name": "model_policy", "kind": "integration", "passed": 16, "failed": 0, "ignored": 0},
+    {"name": "provider_contracts", "kind": "integration", "passed": 5, "failed": 0, "ignored": 0},
+    {"name": "search_tools", "kind": "integration", "passed": 12, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_client", "kind": "unit", "passed": 10, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_protocol", "kind": "unit", "passed": 57, "failed": 0, "ignored": 0},
+    {"name": "willdeep_core", "kind": "doc", "passed": 0, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_client", "kind": "doc", "passed": 1, "failed": 0, "ignored": 0},
+    {"name": "willdeep_runtime_protocol", "kind": "doc", "passed": 0, "failed": 0, "ignored": 0}
+  ],
+  "summary": {"top_level_targets": 18, "passed": 3374, "failed": 0, "ignored": 24},
+  "nested_helper_summaries_excluded": 1,
+  "ignored_scope": ["manual diagnostics and performance probes", "public relay and paid livefire", "long preflight and explicit ledger benchmark", "subprocess helper entrypoints", "explicit real LSP, AST and browser prerequisites; separately executed evidence is linked from the closeout report"],
+  "layout_regressions_observed_passed": ["judge::tests::credentials_layout_preserves_whitespace_even_when_values_are_redacted", "tui::tool_visuals::tests::committed_diff_preserves_context_indentation_spacing_and_redaction", "tui::tool_visuals::tests::literal_diff_escapes_controls_after_redacting_without_flattening", "daemon::mobile_gateway::tests::redaction_keeps_the_message_layout"],
+  "snapshot": {"binary": "target/p0-p1-rc152-rc3-20261117-final1/willdeep", "version": "willdeep 0.152.0-rc3", "binary_sha256": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb", "mode": "0555", "source_digest": "b1a7b55af7ae8ac297c001e1ced1f531b98b1777f19342b2098aab397e076d58"},
+  "installed": false,
+  "published": false
+}

@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-17",
+  "version": "0.150.0-rc2",
+  "scope": "TUI unsent draft selection, modal priority, SSH clipboard routing and related regression checks",
+  "passed": true,
+  "rust_suites": [
+    {"filter": "prompt_selection", "passed": 19, "failed": 0},
+    {"filter": "editor::tests", "passed": 10, "failed": 0},
+    {"filter": "tui::overlay_dismiss::tests", "passed": 11, "failed": 0},
+    {"filter": "tui::quiet_mode::tests", "passed": 9, "failed": 0},
+    {"filter": "tui::code_copy::tests", "skip": "prompt_selection", "passed": 11, "failed": 0}
+  ],
+  "rust_total": {"passed": 60, "failed": 0, "deduplicated": true},
+  "pty": {
+    "version": "willdeep 0.150.0-rc2",
+    "scenarios": ["compact", "full", "compact-ssh", "full-ssh"],
+    "checks_per_scenario": ["cross-line Unicode selection highlight", "Esc clears selection and preserves draft", "y/q remain draft input"],
+    "ssh_additional_check": "Ctrl+C emits exact original selection in OSC 52, shows Sent feedback and preserves the live draft",
+    "ssh_copy_enabled": true,
+    "passed": 14,
+    "failed": 0,
+    "artifacts": "build/verification/0.150.0-rc2/prompt-selection"
+  },
+  "baseline": {"version": "0.149.0-rc10", "ssh_copy_enabled": false, "result": "expected failure", "failure": "compact: cross-line highlight timed out"},
+  "corrected_test_failure": {
+    "test": "prompt_selection_preserves_tabs_and_crlf_in_original_coordinates",
+    "failure": "Selection ended before x because the fixture treated Tab as zero columns",
+    "resolution": "Use the renderer's one-column Tab/CR string widths; keep exact original-text assertions",
+    "rerun": "19 passed; 0 failed"
+  },
+  "build": "passed",
+  "targeted_rustfmt": "passed",
+  "ruby_syntax": "passed",
+  "release_metadata": "passed",
+  "diff_check": "passed",
+  "real_clipboard_written": false,
+  "model_requests_sent": false,
+  "installed": false,
+  "published": false,
+  "limitations": [
+    "OS clipboard side effect was not executed; local and fallback routes use injected writers in unit tests",
+    "SSH behavior was simulated in isolated PTYs; OSC 52 was captured, not forwarded to a real terminal",
+    "Full workspace tests and cross-platform CI were not run as part of this selection verification"
+  ]
+}

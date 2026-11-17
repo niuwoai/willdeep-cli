@@ -1,4 +1,4 @@
-//! web_fetch 与 web_search 的边界：公网判定、重定向、响应体上限和 HTML 转文本。
+//! web_fetch 的边界：公网判定、重定向、响应体上限和 HTML 转文本。
 //!
 //! 与工具派发分开放，是为了让 SSRF 规则只有一处。TUI 里用户点击下载媒体
 //! 也走 [`validate_public_url`]，不能和代理的 web 工具各自判一遍。
@@ -8,6 +8,17 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use futures_util::StreamExt;
 
 use super::ToolError;
+
+// The type remains in tools.rs for compatibility. Its declaration must derive
+// Clone only; formatting a legacy SomeIm config must not expose its key either.
+impl std::fmt::Debug for super::WebToolConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebToolConfig")
+            .field("some_im_base_url", &"[configured]")
+            .field("api_key", &"[redacted]")
+            .finish()
+    }
+}
 
 pub(super) const MAX_WEB_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
 pub(super) const MAX_WEB_REQUEST_BYTES: usize = 1024 * 1024;
@@ -201,50 +212,4 @@ pub(super) fn truncate_chars(value: &str, max_chars: usize) -> String {
         "{}\n[content truncated]",
         value.chars().take(max_chars).collect::<String>()
     )
-}
-
-pub(super) fn format_search_results(body: &str) -> Result<String, ToolError> {
-    let value: serde_json::Value = serde_json::from_str(body)
-        .map_err(|error| ToolError::Network(format!("invalid search response: {error}")))?;
-    let data = value.get("data").unwrap_or(&value);
-    let items = data
-        .get("results")
-        .or_else(|| data.get("items"))
-        .or_else(|| data.as_array().map(|_| data))
-        .and_then(serde_json::Value::as_array);
-    let Some(items) = items else {
-        return serde_json::to_string_pretty(data)
-            .map_err(|error| ToolError::Network(error.to_string()));
-    };
-    let lines = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let title = item
-                .get("title")
-                .and_then(|value| value.as_str())
-                .unwrap_or("Untitled");
-            let url = item
-                .get("url")
-                .or_else(|| item.get("link"))
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            let snippet = item
-                .get("snippet")
-                .or_else(|| item.get("content"))
-                .or_else(|| item.get("description"))
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            format!(
-                "{}. {title}\n{url}\n{}",
-                index + 1,
-                super::truncate_line(snippet, 1_000)
-            )
-        })
-        .collect::<Vec<_>>();
-    Ok(if lines.is_empty() {
-        "No search results.".to_owned()
-    } else {
-        lines.join("\n\n")
-    })
 }

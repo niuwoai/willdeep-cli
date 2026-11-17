@@ -36,8 +36,21 @@ pub(super) fn render(
     chat_canvas: Rect,
 ) -> std::rc::Rc<[Rect]> {
     let canvas = frame.area();
-    // Hiding routine statistics must not hide a warning or action result.
-    let show_status = app.ui.compact_status_line || app.notice.is_some();
+    // Hiding routine statistics must not hide ongoing work or an action result.
+    let show_status = app.ui.compact_status_line
+        || app.notice.is_some()
+        || app.running
+        || app.awaiting_since.is_some()
+        || app.human_turn_wait().is_some()
+        || matches!(
+            app.last_turn_outcome,
+            Some(
+                turn_status::TurnOutcome::Partial
+                    | turn_status::TurnOutcome::Failed
+                    | turn_status::TurnOutcome::Interrupted
+                    | turn_status::TurnOutcome::Cancelled
+            )
+        );
     let width = canvas.width.saturating_sub(2).max(1) as usize;
     let lines = if app.composer_expanded {
         canvas.height.saturating_sub(3)
@@ -75,43 +88,17 @@ pub(super) fn render(
     app.transcript_render_offset = offset;
     // 简洁 UI 同样画出选区：拖选时没有高亮，用户根本看不出选中了哪几行，
     // 只能靠松手后剪贴板里是不是真有字来猜。
-    if let Some(selection) = app.chat_selection {
-        let (start, end) = selection.ordered_range();
-        rendering::highlight_text_selection_at_offset(&mut colored, start, end, offset);
-    }
+    app.highlight_chat_selection(&mut colored, offset);
     app.update_user_message_hits(offset, app.transcript_rect.y);
-    app.thought_hit_rows = colored
-        .lines
-        .iter()
-        .enumerate()
-        .filter_map(|(line_index, line)| {
-            let text = line.to_string();
-            if !(text.contains("+ Thought:") || text.contains("− Thought:")) {
-                return None;
-            }
-            let thought_order = app
-                .transcript_rows
-                .iter()
-                .take(offset + line_index + 1)
-                .filter(|row| row.contains("+ Thought:") || row.contains("− Thought:"))
-                .count()
-                .saturating_sub(1);
-            Some((
-                app.transcript_rect.y.saturating_add(line_index as u16),
-                thought_order,
-            ))
-        })
-        .collect();
     frame.render_widget(
         Paragraph::new(colored).block(Block::default().padding(Padding::horizontal(1))),
         app.transcript_rect,
     );
-
     app.activity_rect = Rect::default();
     app.prompt_rect = areas[3];
     let (row, col) = app.input.cursor_visual(width);
     let visible = areas[3].height.saturating_sub(1).max(1) as usize;
-    app.prompt_scroll = row.saturating_sub(visible - 1);
+    app.update_prompt_scroll(row, visible);
     let suggestion = app.composer_suggestion_text();
     let suggestion_visible = suggestion.is_some();
     let show_placeholder = !suggestion_visible
@@ -180,6 +167,8 @@ pub(super) fn render(
         input
     };
     frame.render_widget(input, areas[3]);
+    app.render_reading_indicator(frame);
+    app.render_prompt_selection(frame);
     if show_status {
         frame.render_widget(
             Paragraph::new(app.status_line()).style(style.fg(Color::Gray)),
@@ -187,6 +176,7 @@ pub(super) fn render(
         );
     }
     if app.focus == FocusPane::Prompt
+        && !app.input.selection_active()
         && !app.has_open_overlay()
         && areas[3].height > 1
         && canvas.width > 2
@@ -279,6 +269,35 @@ mod tests {
         assert!(app.quiet_drawn);
         assert_eq!(app.input.text(), "first character");
         assert!(!screen(&terminal).contains("Activity"));
+    }
+
+    #[test]
+    fn hidden_routine_footer_keeps_active_work_and_failure_visible() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        let mut app = compact_app();
+        app.ui.compact_status_line = false;
+        app.begin_turn(false, "Preparing".into());
+        app.note_turn_phase(turn_status::TurnPhase::WaitingModel);
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
+        assert!(screen(&terminal).contains("Waiting for model"));
+
+        app.note_turn_outcome(turn_status::TurnOutcome::Failed);
+        app.finish_turn();
+        draw(
+            &mut terminal,
+            &mut app,
+            &SkillCatalog::default(),
+            &quiet_test_session(),
+        )
+        .unwrap();
+        assert!(screen(&terminal).to_lowercase().contains("failed"));
+        assert!(screen(&terminal).contains("retained answer"));
     }
 
     #[test]

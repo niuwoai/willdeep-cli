@@ -1,6 +1,39 @@
 use super::*;
 use std::io::{Read, Write};
 
+#[path = "local_provider_discovery_policy_tests.rs"]
+mod policy_tests;
+
+struct WorkspaceFixture(std::path::PathBuf);
+
+impl WorkspaceFixture {
+    fn new() -> Self {
+        let root =
+            std::env::temp_dir().join(format!("wd-discovery-policy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        Self(root)
+    }
+
+    fn context(&self) -> ModelPolicyContext {
+        ModelPolicyContext::for_workspace(&self.0).unwrap()
+    }
+
+    fn policy(&self, allow: Value) {
+        std::fs::create_dir_all(self.0.join(".willdeep")).unwrap();
+        std::fs::write(
+            self.0.join(".willdeep/model-policy.json"),
+            serde_json::to_vec(&serde_json::json!({"version": 1, "allow": allow})).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+impl Drop for WorkspaceFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn fixture(name: &'static str, valid: bool) -> (String, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -39,11 +72,13 @@ async fn probes_both_services_without_cloud_credentials() {
         .timeout(PROBE_TIMEOUT)
         .build()
         .unwrap();
+    let workspace = WorkspaceFixture::new();
+    let context = workspace.context();
     let (ollama, first) = fixture("ollama", true);
     let (magpie, second) = fixture("magpie", true);
     let (a, b) = tokio::join!(
-        probe(&client, "ollama", Some(ollama)),
-        probe(&client, "magpie", Some(magpie))
+        probe(&client, "ollama", Some(ollama), &context),
+        probe(&client, "magpie", Some(magpie), &context)
     );
     assert_eq!(a.unwrap().models, ["qwen:local"]);
     assert_eq!(b.unwrap().models, ["group/coder"]);
@@ -58,9 +93,11 @@ async fn unrelated_http_service_is_not_magpie_or_ollama() {
         .timeout(PROBE_TIMEOUT)
         .build()
         .unwrap();
+    let workspace = WorkspaceFixture::new();
+    let context = workspace.context();
     for name in ["ollama", "magpie"] {
         let (base, worker) = fixture(name, false);
-        assert!(probe(&client, name, Some(base)).await.is_none());
+        assert!(probe(&client, name, Some(base), &context).await.is_none());
         worker.join().unwrap();
     }
 }

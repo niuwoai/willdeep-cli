@@ -50,7 +50,7 @@ pub enum HookEvent {
     PreTool,
     /// 工具执行完毕。审计用，拦不住已经发生的事。
     PostTool,
-    /// 一次审批有了结果（人批的或 judge 批的）。审计用。
+    /// 一次审批有了结果（approver 或 judge 返回）。审计用。
     ApprovalResolved,
 }
 
@@ -194,6 +194,12 @@ impl HookOutcome {
 /// 喂给 hook 的 JSON 上限。一次 300KB 的工具输出灌进 stdin，慢的是 agent 不是
 /// hook；审计要的是"谁在什么时候做了什么"，不是完整副本。
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
+/// 超限时优先保留各个标识字段，并给命令/多文件 diff 留出一半帧空间。
+const MAX_METADATA_BYTES: usize = 1024;
+const MAX_DETAIL_BYTES: usize = 8 * 1024;
+/// extra 已有截断标记，新增成员的引号、冒号与逗号共占六字节。
+const EXTRA_ENTRY_OVERHEAD_BYTES: usize = 6;
+const TRUNCATED_KEY: &str = "truncated";
 /// 拒绝理由上限。它会进模型上下文，不能让一条 hook 的调试输出吃掉整个窗口。
 const MAX_REASON_BYTES: usize = 2 * 1024;
 
@@ -217,6 +223,11 @@ impl HookRegistry {
         self.hooks.len()
     }
 
+    /// 没有相应观察者时，调用方不必构造和脱敏载荷。
+    pub(crate) fn has_event(&self, event: HookEvent) -> bool {
+        self.hooks.iter().any(|hook| hook.event == event)
+    }
+
     /// 触发某个事件上的全部 hook，按配置顺序。
     ///
     /// 第一条拦截即短路：后面的 hook 不再跑。动作已经不会发生了，再跑下去只是
@@ -233,11 +244,13 @@ impl HookRegistry {
 }
 
 async fn run_hook(hook: &Hook, payload: &HookPayload) -> HookOutcome {
-    let body = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_owned());
-    let body = truncate_utf8(body, MAX_PAYLOAD_BYTES);
+    let body = serialize_payload(payload);
 
     match tokio::time::timeout(hook.timeout, spawn_hook(hook, body)).await {
         Ok(Ok(output)) => {
+            if !output.status.success() {
+                warn_hook_failure(hook, "nonzero_exit", output.status.code());
+            }
             if output.status.success() || !hook.blocks() {
                 HookOutcome::Allow
             } else {
@@ -252,15 +265,33 @@ async fn run_hook(hook: &Hook, payload: &HookPayload) -> HookOutcome {
         }
         // 起不来和超时走同一条处置：两种情况下 hook 都没能给出判断，而
         // 「没能给出判断」正是 on_error 要回答的问题。
-        Ok(Err(error)) => hook_failed(hook, &format!("hook 无法执行：{error}")),
+        Ok(Err(error)) => hook_failed(hook, "spawn_failed", &format!("hook 无法执行：{error}")),
         Err(_) => hook_failed(
             hook,
+            "timeout",
             &format!("hook 超时（{} 秒内没有返回）", hook.timeout.as_secs()),
         ),
     }
 }
 
-fn hook_failed(hook: &Hook, reason: &str) -> HookOutcome {
+/// 日志只给诊断字段，不包含命令、载荷或原始 stderr；写日志失败也不能改变裁决。
+fn warn_hook_failure(hook: &Hook, failure: &str, exit_code: Option<i32>) {
+    use std::io::Write;
+
+    let record = serde_json::json!({
+        "level": "warn",
+        "component": "hooks",
+        "hook": crate::judge::redact_credentials(&hook.name),
+        "event": hook.event.as_str(),
+        "failure": failure,
+        "exit_code": exit_code,
+        "blocking": hook.blocks(),
+    });
+    let _ = writeln!(std::io::stderr().lock(), "{record}");
+}
+
+fn hook_failed(hook: &Hook, failure: &str, reason: &str) -> HookOutcome {
+    warn_hook_failure(hook, failure, None);
     if hook.blocks() && hook.on_error == HookFailure::Deny {
         HookOutcome::Deny {
             hook: hook.name.clone(),
@@ -290,6 +321,86 @@ async fn spawn_hook(hook: &Hook, body: String) -> std::io::Result<std::process::
     child.wait_with_output().await
 }
 
+/// 先裁字段再序列化，不能截断整个 JSON。预算计入 JSON 转义、键和结构开销；
+/// public 字段即便绕过 builder 塞进巨大标识或 extra，也不能把帧撑破。
+fn serialize_payload(payload: &HookPayload) -> String {
+    let body = serde_json::to_string(payload).expect("HookPayload contains only JSON primitives");
+    if body.len() <= MAX_PAYLOAD_BYTES {
+        return body;
+    }
+
+    let mut bounded = HookPayload {
+        event: String::new(),
+        session_id: payload.session_id.as_ref().map(|_| String::new()),
+        workspace: payload.workspace.as_ref().map(|_| String::new()),
+        tool: payload.tool.as_ref().map(|_| String::new()),
+        detail: payload.detail.as_ref().map(|_| String::new()),
+        outcome: payload.outcome.as_ref().map(|_| String::new()),
+        exit_code: payload.exit_code,
+        extra: BTreeMap::from([(TRUNCATED_KEY.to_owned(), "true".to_owned())]),
+    };
+    // 空字符串占位保留 Some/None 和 exit_code 的准确结构开销，也预留截断标记。
+    let overhead = serde_json::to_string(&bounded)
+        .expect("HookPayload contains only JSON primitives")
+        .len();
+    let mut budget = MAX_PAYLOAD_BYTES - overhead;
+    bounded.event = budget_string(&payload.event, &mut budget, MAX_METADATA_BYTES);
+    for (target, source) in [
+        (&mut bounded.session_id, &payload.session_id),
+        (&mut bounded.workspace, &payload.workspace),
+        (&mut bounded.tool, &payload.tool),
+        (&mut bounded.outcome, &payload.outcome),
+    ] {
+        if let Some(value) = source {
+            *target = Some(budget_string(value, &mut budget, MAX_METADATA_BYTES));
+        }
+    }
+    if let Some(detail) = &payload.detail {
+        bounded.detail = Some(budget_string(detail, &mut budget, MAX_DETAIL_BYTES));
+    }
+    for (key, value) in &payload.extra {
+        if key == TRUNCATED_KEY {
+            continue;
+        }
+        if budget < EXTRA_ENTRY_OVERHEAD_BYTES {
+            break;
+        }
+        let mut entry_budget = budget - EXTRA_ENTRY_OVERHEAD_BYTES;
+        let bounded_key = budget_string(key, &mut entry_budget, MAX_METADATA_BYTES);
+        if bounded_key.len() != key.len() {
+            // 不改写键名，避免两个被裁短的键碰撞并改变字段含义。
+            continue;
+        }
+        let bounded_value = budget_string(value, &mut entry_budget, MAX_PAYLOAD_BYTES);
+        bounded.extra.insert(bounded_key, bounded_value);
+        budget = entry_budget;
+    }
+    let body = serde_json::to_string(&bounded).expect("HookPayload contains only JSON primitives");
+    debug_assert!(body.len() <= MAX_PAYLOAD_BYTES);
+    body
+}
+
+/// 以 JSON 字符串内容的编码长度计费，不切 UTF-8 字符；引号由结构预算承担。
+fn budget_string(value: &str, budget: &mut usize, field_limit: usize) -> String {
+    let limit = (*budget).min(field_limit);
+    let mut used = 0;
+    let mut end = 0;
+    for (index, character) in value.char_indices() {
+        let encoded = match character {
+            '"' | '\\' | '\u{0008}' | '\t' | '\n' | '\u{000c}' | '\r' => 2,
+            '\u{0000}'..='\u{001f}' => 6,
+            _ => character.len_utf8(),
+        };
+        if used + encoded > limit {
+            break;
+        }
+        used += encoded;
+        end = index + character.len_utf8();
+    }
+    *budget -= used;
+    value[..end].to_owned()
+}
+
 /// 按字节截断但不切碎 UTF-8。切碎的话，接收端 `jq` 会直接吐一个解析错误，
 /// 而那个错误看起来像 hook 自己写错了。
 fn truncate_utf8(mut value: String, limit: usize) -> String {
@@ -303,6 +414,9 @@ fn truncate_utf8(mut value: String, limit: usize) -> String {
     value.truncate(end);
     value
 }
+
+#[cfg(test)]
+mod payload_tests;
 
 #[cfg(test)]
 mod tests {

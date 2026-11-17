@@ -141,6 +141,9 @@ pub enum AgentEvent {
     TurnStarted {
         turn: usize,
     },
+    /// The foreground request is prepared and is entering the provider call.
+    /// This boundary follows compression; it does not imply a response exists.
+    ModelRequestStarted,
     /// 宿主签发的抢占事件取消了这一轮的 provider 请求。转录与工具记录都还在，
     /// 下一轮从保留的上下文继续——用户看到的应该是「插了一件急事」，不是
     /// 「刚才那步白做了」。
@@ -901,6 +904,7 @@ impl Agent {
     /// 不挂等于关闭长程续推，`run_*` 的行为与本改动前完全一致。
     pub fn with_goal_continuation(mut self, continuation: Arc<GoalContinuation>) -> Self {
         if !self.tools.delegation_read_only() {
+            continuation.set_evidence_resolver(self.tools.goal_evidence_handle());
             self.goal_continuation = Some(continuation);
         }
         self
@@ -1029,6 +1033,16 @@ impl Agent {
             self.restore_team_for_execution().await?;
         }
         preparation.mark("restore_team");
+        if sink.is_some_and(|sink| sink.is_new_input())
+            && self
+                .goal_continuation
+                .as_ref()
+                .is_some_and(|goal| goal.is_active())
+        {
+            return Err(AgentError::Checkpoint(
+                "An active Goal must retain its task verification scope; use the recovery checkpoint sink.".into(),
+            ));
+        }
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
         let deadline = self
             .time_budget
@@ -2006,6 +2020,7 @@ impl Agent {
         events: &dyn crate::provider::ProviderEventSink,
     ) -> Result<Option<crate::types::Completion>, ProviderError> {
         let provider = self.provider()?;
+        self.sink.emit(AgentEvent::ModelRequestStarted).await;
         let Some(kernel) = self.kernel.clone() else {
             return provider
                 .complete_with_events(messages, definitions, events)
@@ -2216,5 +2231,7 @@ fn routing_request_from_message(content: &str) -> &str {
 mod delegation_tests;
 #[cfg(test)]
 mod peer_session_tests;
+#[cfg(test)]
+mod request_progress_tests;
 #[cfg(test)]
 mod tests;

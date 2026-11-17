@@ -122,6 +122,18 @@ AgentRun 记录普通父派工或 workflow 节点归属。`await_agents` 与普�
 
 派工前落盘意图和稳定 request ID，重启先与 AgentRun 对账；已确认成功的结果可复用，不再调用模型。未知副作用标为 `interrupted`，不会盲目重放。整组停止先取消并收拢真实 Worker，停止请求不等于所有任务已经终结。retry/resume 在原 run 进入终态后创建新 run，保留原终态、`source_run_id` 和节点 `reused_from` 来源；复用结果不计作新执行用量。
 
+### 自定义智能体与内置工种配置
+
+`config.toml` 的 `[subagents.<工种>]` 只覆盖内置工种的模型与执行参数，不能用来创建自定义智能体。例如，自定义文档专家的完整 ID 是 `user/doc-multilingual`，不应额外写入 `[subagents.doc-multilingual]`；未知工种会使整份配置校验失败，进而阻止 CLI 启动。报错前缀 `Local Provider discovery` 表示自动发现流程先读到了这份无效配置，不代表本地 Provider 本身故障。
+
+定义通过 `willdeep agents create` 或 `willdeep agents import` 安装，已安装项可用 `willdeep agents list` 查看。模型、窗口与轮次使用安装项自己的本地绑定：
+
+```bash
+willdeep agents bind user/doc-multilingual --provider-profile my-provider --model my-model --context-window 65536
+```
+
+绑定会替换整组本地参数，应同时写入需要保留的 Provider、模型、窗口和轮次。若误写了同名 TOML 段，先将该段参数迁移到已安装项，再完整注释或移出该段并保留原值；不能只注释表头，否则字段可能落入上一个表。随后运行 `willdeep config check`，派工时使用完整 `user/...` ID。已有定义、历史版本及其他工种无需删除。完整契约见 [智能体库](AGENT_LIBRARY.md#本机执行配置)。
+
 ### 专业目录更新与执行快照
 
 父会话通过 `agent_library_read` / `agent_library_manage` 管理专业定义，写操作使用宿主 scope、request 收据和安装代数 CAS。保存并刷新目录成功后，同轮后续新派工使用新目录；在途、排队及续做/恢复仍使用派工时完整定义、技能、Provider/model 绑定及执行限制快照，当前权限、基础职责与预算另行核验。稳定 `profile` 字符串 Schema 配合按需读取目录，新增 ID 不需要重写本轮历史。官方正文先 fork，包 v1 不变，细节见 [AGENT_LIBRARY.md](AGENT_LIBRARY.md)。

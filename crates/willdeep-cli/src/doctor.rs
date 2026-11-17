@@ -7,6 +7,9 @@ use serde::Serialize;
 
 use crate::config::{LoadedConfig, default_config_path};
 
+mod optional_tools;
+use optional_tools::check_optional_tools;
+
 #[derive(Clone, Debug)]
 pub(crate) struct DoctorOptions {
     pub config_path: Option<PathBuf>,
@@ -268,6 +271,7 @@ async fn collect(options: &DoctorOptions) -> DoctorReport {
     check_sandbox(options, &mut checks);
     check_web_assets(&mut checks);
     check_plugins(options, &mut checks).await;
+    check_optional_tools(options, &mut checks).await;
     check_runtime(options, &mut checks).await;
     let overall = if checks.iter().any(|check| check.status == CheckStatus::Fail) {
         CheckStatus::Fail

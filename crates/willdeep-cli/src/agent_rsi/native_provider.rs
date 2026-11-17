@@ -29,6 +29,7 @@ pub(super) struct BrokerProvider {
     trial_id: String,
     sequence: AtomicUsize,
     preview: bool,
+    policy_config: Option<willdeep_core::provider::ProviderConfig>,
     pub captured: Arc<Mutex<Captured>>,
 }
 impl BrokerProvider {
@@ -57,8 +58,25 @@ impl BrokerProvider {
             trial_id,
             sequence: AtomicUsize::new(0),
             preview,
+            policy_config: None,
             captured: Arc::new(Mutex::new(Captured::default())),
         })
+    }
+
+    /// The trial's temporary fixture is not its owning project. The command
+    /// must explicitly pass the selected project before any billable request.
+    pub fn with_workspace(mut self, workspace: &std::path::Path) -> Result<Self> {
+        let mut config = willdeep_core::provider::ProviderConfig::new(
+            willdeep_core::provider::ProviderKind::SomeIm,
+            willdeep_core::provider::ApiDialect::ChatCompletions,
+            self.endpoint.as_str().trim_end_matches("/chat/completions"),
+            "",
+            MODEL,
+        );
+        config.bind_workspace(workspace)?;
+        config.request_timeout_secs = 120;
+        self.policy_config = Some(config);
+        Ok(self)
     }
 }
 fn invalid(message: &str) -> ProviderError {
@@ -90,6 +108,10 @@ fn body(messages: &[Message], tools: &[ToolDefinition]) -> Result<Value, Provide
 }
 #[async_trait::async_trait]
 impl Provider for BrokerProvider {
+    fn policy_context(&self) -> Option<willdeep_core::provider::ModelPolicyContext> {
+        self.policy_config.as_ref()?.policy_context.clone()
+    }
+
     fn ledger_identity(&self) -> Option<ProviderIdentity> {
         Some(ProviderIdentity {
             provider: "some-im".into(),
@@ -120,16 +142,25 @@ impl Provider for BrokerProvider {
             serde_json::to_vec(&body).map_err(|_| invalid("cannot encode native request"))?;
         let request_sha = willdeep_core::agent_definition::digest(&bytes);
         let started = std::time::Instant::now();
-        let response = self
-            .client
-            .post(self.endpoint.clone())
-            .bearer_auth(&self.capability)
-            .header("X-RSI-Trial-Id", &self.trial_id)
-            .header("X-RSI-Request-Sequence", sequence)
-            .header("X-RSI-Proposal-Sha256", PROPOSAL)
-            .json(&body)
-            .send()
-            .await;
+        let config = self.policy_config.as_ref().ok_or_else(|| {
+            eprintln!("{}", json!({"event":"model_policy","level":"warn","outcome":"not_sent","reason":"broker_project_missing"}));
+            ProviderError::PolicyDenied("broker_project_missing".into())
+        })?;
+        let response = willdeep_core::provider::policy::send_bound_request(
+            config,
+            self.client
+                .post(self.endpoint.clone())
+                .bearer_auth(&self.capability)
+                .header("X-RSI-Trial-Id", &self.trial_id)
+                .header("X-RSI-Request-Sequence", sequence)
+                .header("X-RSI-Proposal-Sha256", PROPOSAL)
+                .json(&body),
+            MODEL,
+        )
+        .await;
+        if let Err(ProviderError::PolicyDenied(_)) = &response {
+            return response.map(|_| Completion::default());
+        }
         let mut receipt = json!({"sequence":sequence,"request_sha256":request_sha,"request_utf8_bytes":bytes.len(),"status":null,"request_id":null,"routed_model":null,"receipt_id":null,"response_id":null,"usage":null});
         receipt["read_results_in_request"] = read_results(messages);
         let outcome = async {

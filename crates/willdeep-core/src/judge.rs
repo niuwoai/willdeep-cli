@@ -331,6 +331,30 @@ pub fn redact_credentials(command: &str) -> String {
     output.join(" ")
 }
 
+/// Apply the command redactor without flattening source text or message layout.
+/// Each input token currently produces one redacted token. If that changes,
+/// return the redacted text rather than risk exposing an unmatched input token.
+pub fn redact_credentials_preserving_layout(text: &str) -> String {
+    let redacted = redact_credentials(text);
+    if redacted.split(' ').filter(|word| !word.is_empty()).count()
+        != text.split_whitespace().count()
+    {
+        return redacted;
+    }
+    let mut replacements = redacted.split(' ').filter(|word| !word.is_empty());
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(|character: char| !character.is_whitespace()) {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        output.push_str(replacements.next().unwrap_or("[REDACTED]"));
+        rest = &rest[end..];
+    }
+    output.push_str(rest);
+    output
+}
+
 pub(crate) fn key_looks_sensitive(key: &str) -> bool {
     let lowered = key.to_ascii_lowercase();
     SENSITIVE_KEY_MARKERS
@@ -383,6 +407,24 @@ mod tests {
             redact_credentials("cargo test -p willdeep-core"),
             "cargo test -p willdeep-core"
         );
+    }
+
+    #[test]
+    fn credentials_layout_preserves_whitespace_even_when_values_are_redacted() {
+        for (input, expected) in [
+            ("", ""),
+            (" \t\r\n\u{2003}", " \t\r\n\u{2003}"),
+            (
+                "\n    let pair = (left,  right);  \n\n",
+                "\n    let pair = (left,  right);  \n\n",
+            ),
+            (
+                "  API_KEY=example  --session\tplaceholder\n\nAuthorization:\u{2003}Bearer\tplaceholder\r\n  next  ",
+                "  API_KEY=[REDACTED]  --session\t[REDACTED]\n\nAuthorization:\u{2003}Bearer\t[REDACTED]\r\n  next  ",
+            ),
+        ] {
+            assert_eq!(redact_credentials_preserving_layout(input), expected);
+        }
     }
 
     #[test]
