@@ -30,6 +30,8 @@ pub(crate) mod workflows;
 #[cfg(test)]
 pub(crate) mod manual_compression_tests;
 #[cfg(test)]
+mod model_policy_tests;
+#[cfg(test)]
 mod ownership_tests;
 
 /// 把三个 Worker 档位各自解析成一个模型绑定。
@@ -108,6 +110,7 @@ fn resolve_tier_bindings(
             // 说明「要了这一档但模型没换」，不再静默。
             continue;
         };
+        provider_config.policy_context = parent.policy_context.clone();
         provider_config.model = model.clone();
         let binding = willdeep_core::TierBinding {
             provider: build_provider(provider_config).with_context(|| {
@@ -915,6 +918,12 @@ pub(crate) async fn build(
         }
     }
     let loaded = &effective;
+    // Resolve and validate ownership before any capability/model-directory probe.
+    let workspace = resolve_workspace(cli, resumed)?;
+    let policy_context = match resumed {
+        Some(session) => willdeep_core::SessionStore::new(home).model_policy_context(session)?,
+        None => willdeep_core::provider::ModelPolicyContext::for_workspace(&workspace)?,
+    };
     let max_turns = cli
         .max_turns
         .or(loaded.file.agent.max_turns)
@@ -931,6 +940,7 @@ pub(crate) async fn build(
     let selected_profile = selection.profile;
     let profile = selected_profile.as_ref();
     let mut provider_config = selection.config;
+    provider_config.policy_context = Some(policy_context);
     let configured_dialect = provider_config.dialect;
     // 网关能力表（some.im / tokenhub 的 /v1/model-capabilities）：取不到时一切照旧。
     let gateway = gateway_adjustments(
@@ -991,7 +1001,6 @@ pub(crate) async fn build(
             .then(|| level.clone());
     }
     // 缺省值与上限见 config.rs：命令行、配置、缺省三级取值，同一把尺子校验。
-    let workspace = resolve_workspace(cli, resumed)?;
     let delegation_read_only = resumed.is_some_and(|session| session.delegation_read_only);
     // A child may be read-only or a writable isolated worktree, but it never
     // gains the parent's full access and never creates further child sessions.
@@ -1062,7 +1071,11 @@ pub(crate) async fn build(
     // 一换全跟着换；显式配了模型的照旧是自己那一份。
     let main_model = willdeep_core::provider::MainModelHandle::new(provider.clone());
     let follow_main = main_model.follower();
-    let local_auxiliary_config = local_auxiliary_provider_config(&loaded.file.local_model);
+    let local_auxiliary_config =
+        local_auxiliary_provider_config(&loaded.file.local_model).map(|mut config| {
+            config.policy_context = parent_provider_config.policy_context.clone();
+            config
+        });
     let host_input = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
         if delegation::is_host_input(usage_origin.origin_client.as_deref()));
     let turn_id = match &frontend {
@@ -1124,8 +1137,9 @@ pub(crate) async fn build(
     let mcp_home = home.to_path_buf();
     let mcp_future = async move {
         if delegation_read_only {
-            // Connecting a stdio MCP server already executes an external program.
-            Ok(willdeep_core::McpRegistry::default())
+            // Preserve offline discovery without starting a stdio process or
+            // connecting HTTP / loading OAuth credentials in a read-only child.
+            Ok(willdeep_core::McpRegistry::configuration_only(&mcp_servers))
         } else {
             willdeep_core::McpRegistry::connect_in(Some(&mcp_home), &mcp_servers)
                 .await
@@ -1302,6 +1316,7 @@ pub(crate) async fn build(
         .with_sandbox(sandbox.clone())
         .with_workspace_sandbox(workspace_sandbox)
         .with_hooks(hooks)
+        .with_session_id(Some(session_id.to_string()))
         .with_approver(approver)
         .with_approval_reporter(move |trace| {
             record_approval_trace(&approval_log, Some(session_id), &trace);
@@ -1352,6 +1367,8 @@ pub(crate) async fn build(
             });
         })
         .with_web_tools(web_tools)
+        .with_search_settings(loaded.file.search.resolve()?)
+        .with_browser_config(loaded.file.browser.clone())?
         // Only the main agent is told a failure is delegable: a subagent
         // cannot spawn anything, so the hint would be an instruction it has
         // no way to act on.
@@ -1444,12 +1461,14 @@ pub(crate) async fn build(
             kind,
         )?;
         let base_profiles = subagent_profiles.clone();
-        subagent_profiles.extend(crate::agent_registry::runtime_profiles(
+        let mut library_profiles = crate::agent_registry::runtime_profiles(
             home,
             &subagent_profiles,
             &loaded.file,
             &parent_provider_config,
-        )?);
+        )?;
+        worker_profiles::bind_library_policy(&mut library_profiles, &parent_provider_config)?;
+        subagent_profiles.extend(library_profiles);
         tools
             .require_verifications(&loaded.file.agent.verification_commands)
             .map_err(anyhow::Error::msg)?;
@@ -1532,6 +1551,17 @@ pub(crate) async fn build(
                 &binding_parent,
                 fallback,
             )
+            .and_then(|provider| {
+                if (binding.provider_profile.is_some() || binding.model.is_some())
+                    && let Some(context) = &binding_parent.policy_context
+                {
+                    provider
+                        .with_policy_context(context.clone())
+                        .map_err(anyhow::Error::from)
+                } else {
+                    Ok(provider)
+                }
+            })
             .map_err(|error| {
                 willdeep_core::AgentError::SubagentBlocked(format!(
                     "restore specialist model binding: {error:#}"
@@ -1875,6 +1905,7 @@ fn compressor_candidate_configs(
         if let Some(compressor_model) = loaded.file.agent.compressor_model.clone() {
             compressor_config.model = compressor_model;
         }
+        compressor_config.policy_context = parent.policy_context.clone();
         return Ok(vec![(compressor_config, false)]);
     }
     if let Some(compressor_model) = loaded.file.agent.compressor_model.clone() {
@@ -1915,8 +1946,9 @@ pub(crate) fn auxiliary_providers(
 ) -> Result<Vec<Arc<dyn willdeep_core::provider::Provider>>> {
     let mut auxiliaries = Vec::new();
     if loaded.file.local_model.prefer_for_titles
-        && let Some(local_config) = local_auxiliary_provider_config(&loaded.file.local_model)
+        && let Some(mut local_config) = local_auxiliary_provider_config(&loaded.file.local_model)
     {
+        local_config.policy_context = parent.policy_context.clone();
         auxiliaries
             .push(build_provider(local_config).context("initialize local session title model")?);
     }
@@ -1940,11 +1972,13 @@ pub(crate) fn input_suggestion_providers(
     loaded: &LoadedConfig,
     profile: Option<&str>,
     model: Option<String>,
+    policy_context: willdeep_core::provider::ModelPolicyContext,
 ) -> Result<Vec<Arc<dyn willdeep_core::provider::Provider>>> {
     let mut cli = <Cli as clap::Parser>::try_parse_from(["willdeep"])
         .context("build default CLI settings")?;
     cli.model = model;
-    let parent = resolve_parent_provider_config(&cli, loaded, profile)?;
+    let mut parent = resolve_parent_provider_config(&cli, loaded, profile)?;
+    parent.policy_context = Some(policy_context);
     auxiliary_providers(loaded, &parent, None)
 }
 

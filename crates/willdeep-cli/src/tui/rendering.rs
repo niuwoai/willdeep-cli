@@ -1,5 +1,9 @@
 use super::*;
 
+#[path = "viewport_source.rs"]
+pub(super) mod source;
+use source as viewport_source;
+
 /// 一个 Markdown 代码块在聊天区样式行里的范围，以及去掉围栏后的原文。
 /// `start` 含、`end` 不含；`content` 是复制时真正要拿走的正文。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +17,11 @@ pub(super) struct CodeBlockLines {
 /// wrapped rows instead of parsing Markdown twice for every token.
 pub(super) struct TranscriptRenderCache {
     source: Vec<String>,
+    sources: source::SourceFrame,
+    archive_floor: usize,
+    show_thinking: bool,
+    expanded_users: BTreeMap<usize, String>,
+    models: Vec<Option<String>>,
     width: usize,
     expanded: bool,
     /// 点开的工具行和它的完整内容。内容不在记录里，缓存键必须带上，否则点开没有变化。
@@ -28,6 +37,7 @@ pub(super) struct TranscriptRenderCache {
     line_spacing: u8,
     /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
     code_blocks: Vec<CodeBlockLines>,
+    selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     text: Text<'static>,
 }
 
@@ -55,12 +65,17 @@ impl App {
         Option<(usize, Text<'static>)>,
         Option<(usize, Text<'static>)>,
     ) {
+        self.viewport_begin_frame();
         let time_labels =
             self.message_times
                 .labels(self.transcript.len(), self.language, message_time::now());
         let search = self.active_search_query();
         let valid = self.transcript_render_cache.as_ref().is_some_and(|cache| {
             cache.width == self.transcript_width
+                && cache.archive_floor == self.archive_floor
+                && cache.show_thinking == self.ui.show_thinking
+                && cache.expanded_users == self.expanded_user_messages
+                && cache.models == self.transcript_models
                 && cache.expanded == self.tool_rows_expanded
                 && cache.expanded_tools == self.tool_expansions
                 && cache.open_tools == self.expanded_tool_rows
@@ -78,17 +93,25 @@ impl App {
                 self.render_user_transcript(&folded, &labels, search.as_deref(), folded.rows.len());
             let message_time::FoldedFrame {
                 text,
+                mut sources,
                 user_controls,
                 tool_controls,
                 attachment_hits,
                 code_blocks,
+                selection_bounds,
             } = frame;
+            self.viewport_record_sources(&mut sources);
             self.user_message_controls = user_controls;
             self.tool_row_controls = tool_controls;
             self.attachment_controls = attachment_hits;
             self.transcript_rows = text_rows(&text);
             self.transcript_render_cache = Some(TranscriptRenderCache {
                 source: self.transcript.clone(),
+                sources,
+                archive_floor: self.archive_floor,
+                show_thinking: self.ui.show_thinking,
+                expanded_users: self.expanded_user_messages.clone(),
+                models: self.transcript_models.clone(),
                 width: self.transcript_width,
                 expanded: self.tool_rows_expanded,
                 expanded_tools: self.tool_expansions.clone(),
@@ -99,21 +122,20 @@ impl App {
                 line_spacing: self.ui.line_spacing,
                 time_labels,
                 code_blocks,
+                selection_bounds,
                 text,
             });
         }
-        let history = &self
+        let cached = self
             .transcript_render_cache
             .as_ref()
-            .expect("prepared history")
-            .text;
-        let cached_code_blocks = self
-            .transcript_render_cache
-            .as_ref()
-            .expect("prepared history")
-            .code_blocks
-            .clone();
-        self.transcript_rows.truncate(history.lines.len());
+            .expect("prepared history");
+        let cached_code_blocks = cached.code_blocks.clone();
+        let mut sources = cached.sources.clone();
+        self.transcript_selection_bounds
+            .clone_from(&cached.selection_bounds);
+        // Every frame starts from history, not yesterday's inserted waiting row.
+        self.transcript_rows = text_rows(&cached.text);
         // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
         // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
         // 插入点按缓存里的样式行算，点名和点击命中都走 `transcript_rows`，插完才对得上。
@@ -137,6 +159,17 @@ impl App {
         let mut code_blocks = cached_code_blocks;
         for (at, drawn) in [notice.as_ref(), waiting.as_ref()].into_iter().flatten() {
             shift_code_block_rows(&mut code_blocks, *at, drawn.lines.len());
+            let id = sources
+                .rows
+                .get(at.saturating_sub(1))
+                .map_or(source::SourceId::Archive, |row| row.fallback.id);
+            sources.rows.splice(
+                *at..*at,
+                (0..drawn.lines.len())
+                    .map(|_| source::SourceRow::empty(id, source::SourcePart::Decoration, 0)),
+            );
+            self.transcript_selection_bounds
+                .splice(*at..*at, std::iter::repeat_n(None, drawn.lines.len()));
         }
         self.code_copy.set_blocks(
             code_blocks
@@ -148,6 +181,7 @@ impl App {
                 })
                 .collect(),
         );
+        let stream_id = self.viewport_stream_id();
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
@@ -167,33 +201,87 @@ impl App {
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                let mut transient = wrap_styled_text(colored, self.transcript_width);
+                let mappings = if self.transient_kind == StreamKind::Reply {
+                    if let Some(body) = self.transient_thought.as_deref() {
+                        sources
+                            .parts
+                            .insert((stream_id, source::SourcePart::Body), body.to_owned());
+                        let prefix =
+                            format!("{} · {}: ", self.assistant_name(), self.transient_label());
+                        let mut mappings =
+                            source::literal_lines(stream_id, source::SourcePart::Body, body);
+                        if let Some(first) = mappings.first_mut() {
+                            let mut chars = source::SourceLine::literal(
+                                stream_id,
+                                source::SourcePart::Prefix,
+                                &prefix,
+                                0,
+                            )
+                            .chars;
+                            chars.append(&mut first.chars);
+                            first.chars = chars;
+                        }
+                        mappings.truncate(colored.lines.len());
+                        mappings
+                    } else {
+                        colored
+                            .lines
+                            .iter()
+                            .map(|line| {
+                                source::SourceLine::synthetic(
+                                    stream_id,
+                                    source::SourcePart::Decoration,
+                                    &line.to_string(),
+                                )
+                            })
+                            .collect()
+                    }
+                } else {
+                    colored
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            source::SourceLine::synthetic(
+                                stream_id,
+                                source::SourcePart::Decoration,
+                                &line.to_string(),
+                            )
+                        })
+                        .collect()
+                };
+                let (mut transient, mut mapped) =
+                    wrap_styled_text_sourced(colored, self.transcript_width, &mappings);
                 if self
                     .transcript
                     .last()
                     .is_some_and(|row| row.starts_with("You: "))
                 {
                     transient.lines.insert(0, Line::default());
+                    mapped.insert(
+                        0,
+                        source::SourceRow::empty(stream_id, source::SourcePart::Decoration, 0),
+                    );
                 }
+                sources.rows.extend(mapped);
                 transient
             });
         self.transcript_rows.extend(text_rows(&transient));
+        self.transcript_selection_bounds
+            .resize(self.transcript_rows.len(), None);
         self.transcript_height = self.transcript_rows.len();
+        debug_assert_eq!(sources.rows.len(), self.transcript_rows.len());
+        self.viewport_finish_frame(sources);
         (transient, notice, waiting)
     }
 
     /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行，紧贴着插。
     /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
     fn compression_notice_insert_at(&self) -> usize {
-        self.transcript_rows
+        self.transcript_selection_bounds
             .iter()
-            .rposition(|row| row.trim_start().starts_with("You:"))
-            .map_or(self.transcript_rows.len(), |user| {
-                let body = self.transcript_rows[user..]
-                    .iter()
-                    .position(|row| row.is_empty())
-                    .unwrap_or(self.transcript_rows.len() - user);
-                (user + body).min(self.transcript_rows.len())
+            .rposition(Option::is_some)
+            .map_or(self.transcript_rows.len(), |last_user_line| {
+                last_user_line + 1
             })
     }
 
@@ -484,14 +572,14 @@ mod tool_row_style_tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(rows[0].trim(), "You: first");
+        assert_eq!(rows[0].trim(), "first");
         assert_eq!(rows[1], "");
         assert!(rows[2].contains("Thought: 3.0s"), "{rows:?}");
         assert_eq!(rows[3], "WillDeep: done");
         assert_eq!(rows[4], "");
         assert!(rows[5].contains("turn finished"), "{rows:?}");
         assert_eq!(rows[6], "");
-        assert_eq!(rows[7].trim(), "You: next");
+        assert_eq!(rows[7].trim(), "next");
         assert_eq!(rows.len(), 8, "{rows:?}");
     }
 
@@ -517,7 +605,7 @@ mod tool_row_style_tests {
             .collect::<Vec<_>>();
         assert_eq!(
             rows.iter().map(|row| row.trim()).collect::<Vec<_>>(),
-            vec!["You: first", "", "WillDeep: done", "", "You: next"]
+            vec!["first", "", "WillDeep: done", "", "next"]
         );
     }
 
@@ -541,7 +629,7 @@ mod tool_row_style_tests {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         assert_eq!(rows.len(), 7, "{rows:?}");
-        assert_eq!(rows[0].trim(), "You: question");
+        assert_eq!(rows[0].trim(), "question");
         assert_eq!(rows[1], "");
         assert!(rows[2].ends_with(": first"), "{rows:?}");
         assert_eq!(rows[3], "");
@@ -572,7 +660,7 @@ mod tool_row_style_tests {
         assert_eq!(frame.text.lines[0].spans[1].content, ": ");
         assert_eq!(frame.text.lines[0].spans[1].style.fg, Some(Color::Green));
         assert_eq!(frame.text.lines[0].spans[2].style.fg, Some(Color::Green));
-        assert_eq!(rows.last().map(|row| row.trim()), Some("You: 嗯"));
+        assert_eq!(rows.last().map(|row| row.trim()), Some("嗯"));
         // 没起名时画面不变。
         let plain = message_time::render_with_times(
             &["WillDeep: 你好".to_owned()],
@@ -651,7 +739,8 @@ mod tool_row_style_tests {
         );
         let rows = text_rows(&frame.text);
         assert!(
-            rows.iter().any(|row| row.starts_with("WILLDEEP  v")),
+            rows.iter()
+                .any(|row| row.starts_with(&banner::name_line("v"))),
             "{rows:?}"
         );
         assert!(
@@ -672,6 +761,13 @@ mod tool_row_style_tests {
         assert_eq!(greeting.spans[0].content, "滚小滚");
         assert_eq!(greeting.spans[0].style.fg, Some(Color::Cyan));
         assert_eq!(greeting.spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn legacy_wordmark_welcomes_still_relabel_the_assistant_greeting() {
+        let legacy = format!("willdeep  v0.1.0\n\n{ASSISTANT_ROW_PREFIX}Hello");
+        let text = colored_transcript_with_name(&[legacy], None, 80, Language::En, "demo");
+        assert!(text_rows(&text).iter().any(|row| row == "demo: Hello"));
     }
 
     #[test]
@@ -767,7 +863,7 @@ mod tool_row_style_tests {
         // 用户与助手之间基础间距一行，再加配置的两行。
         let blanks = rows.iter().filter(|row| row.is_empty()).count();
         assert_eq!(blanks, 3, "{rows:?}");
-        assert_eq!(rows.first().map(|row| row.trim()), Some("You: 一"));
+        assert_eq!(rows.first().map(|row| row.trim()), Some("一"));
         assert_eq!(rows.last().map(String::as_str), Some("WillDeep: 二"));
         // 行距为 0 时仍保留角色之间的基础空行。
         let tight = message_time::render_transcript(
@@ -787,7 +883,7 @@ mod tool_row_style_tests {
                 .iter()
                 .map(|row| row.trim())
                 .collect::<Vec<_>>(),
-            vec!["You: 一", "", "WillDeep: 二"]
+            vec!["一", "", "WillDeep: 二"]
         );
         // 最后一条后面不加：单独一条记录时行距不产生任何空白。
         let single = message_time::render_transcript(
@@ -865,7 +961,7 @@ mod tool_row_style_tests {
     }
 }
 
-fn highlight_matches(text: &mut Text<'static>, query: &str) {
+pub(super) fn highlight_matches(text: &mut Text<'static>, query: &str) {
     let Ok(pattern) = RegexBuilder::new(&regex::escape(query))
         .case_insensitive(true)
         .build()
@@ -917,9 +1013,27 @@ pub(super) fn rendered_transcript_height(entries: &[String], width: usize) -> us
 }
 
 pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'static> {
+    wrap_styled_text_sourced(text, width, &[]).0
+}
+
+pub(super) fn wrap_styled_text_sourced(
+    text: Text<'static>,
+    width: usize,
+    sources: &[viewport_source::SourceLine],
+) -> (Text<'static>, Vec<viewport_source::SourceRow>) {
+    use viewport_source::{SourceId, SourcePart, SourcePoint, SourceRow};
     let width = width.max(1);
     let mut rows = Vec::new();
-    for source in text.lines {
+    for (source_index, source) in text.lines.into_iter().enumerate() {
+        let mapping = sources.get(source_index);
+        let fallback = mapping.map_or(
+            SourcePoint {
+                id: SourceId::Archive,
+                part: SourcePart::Decoration,
+                byte: 0,
+            },
+            |line| line.fallback,
+        );
         // A `Line` carries a style of its own, and `Line::styled` puts the
         // colour *there* while leaving its spans raw. Flattening to characters
         // has to fold that base in, or every line coloured that way — the whole
@@ -937,12 +1051,21 @@ pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'stati
                         character,
                         style,
                         width: UnicodeWidthChar::width(character).unwrap_or(0),
+                        source: None,
                     })
                     .collect::<Vec<_>>()
             })
+            .enumerate()
+            .map(|(index, mut cell)| {
+                cell.source = mapping
+                    .and_then(|line| line.chars.get(index))
+                    .copied()
+                    .flatten();
+                cell
+            })
             .collect::<Vec<_>>();
         if cells.is_empty() {
-            rows.push(Line::default());
+            rows.push((fallback, Vec::new()));
             continue;
         }
         let mut line = Vec::new();
@@ -971,51 +1094,87 @@ pub(super) fn wrap_styled_text(text: Text<'static>, width: usize) -> Text<'stati
             let word = &cells[word_start..index];
             let whitespace_width = whitespace.iter().map(|cell| cell.width).sum::<usize>();
             let word_width = word.iter().map(|cell| cell.width).sum::<usize>();
-            if word_width <= width {
+            if word_width <= width
+                && (line_width > 0 || whitespace_width.saturating_add(word_width) <= width)
+            {
                 if line_width > 0
                     && line_width
                         .saturating_add(whitespace_width)
                         .saturating_add(word_width)
                         > width
                 {
-                    rows.push(Line::from(std::mem::take(&mut line)));
+                    rows.push((fallback, std::mem::take(&mut line)));
                     line_width = 0;
                     whitespace.clear();
                 }
-                append_styled_cells(&mut line, &whitespace);
+                line.extend_from_slice(&whitespace);
                 line_width = line_width.saturating_add(whitespace_width);
                 whitespace.clear();
-                append_styled_cells(&mut line, word);
+                line.extend_from_slice(word);
                 line_width = line_width.saturating_add(word_width);
                 continue;
             }
             if line_width > 0 && line_width.saturating_add(whitespace_width) >= width {
-                rows.push(Line::from(std::mem::take(&mut line)));
+                rows.push((fallback, std::mem::take(&mut line)));
                 line_width = 0;
                 whitespace.clear();
             }
             for cell in whitespace.drain(..).chain(word.iter().copied()) {
                 if line_width > 0 && line_width.saturating_add(cell.width) > width {
-                    rows.push(Line::from(std::mem::take(&mut line)));
+                    rows.push((fallback, std::mem::take(&mut line)));
                     line_width = 0;
                 }
-                push_styled_character(&mut line, cell.character, cell.style);
+                line.push(cell);
                 line_width = line_width.saturating_add(cell.width);
             }
         }
         for cell in whitespace {
             if line_width > 0 && line_width.saturating_add(cell.width) > width {
-                rows.push(Line::from(std::mem::take(&mut line)));
+                rows.push((fallback, std::mem::take(&mut line)));
                 line_width = 0;
             }
-            push_styled_character(&mut line, cell.character, cell.style);
+            line.push(cell);
             line_width = line_width.saturating_add(cell.width);
         }
         if !line.is_empty() {
-            rows.push(Line::from(line));
+            rows.push((fallback, line));
         }
     }
-    Text::from(rows)
+    let mut text = Text::default();
+    let mut mappings = Vec::with_capacity(rows.len());
+    for (fallback, cells) in rows {
+        let mut spans = Vec::new();
+        let mut mapped = SourceRow {
+            fallback,
+            cells: Vec::new(),
+        };
+        let mut column = 0;
+        for cell in cells {
+            push_styled_character(&mut spans, cell.character, cell.style);
+            if let Some(source) = cell.source {
+                let columns = if cell.width == 0 {
+                    mapped
+                        .cells
+                        .last()
+                        .map_or(column..column, |previous| previous.columns.clone())
+                } else {
+                    column..column + cell.width
+                };
+                mapped.cells.push(viewport_source::SourceCell {
+                    columns,
+                    source,
+                    character: cell.character,
+                });
+            }
+            column += cell.width;
+        }
+        if let Some(first) = mapped.cells.first() {
+            mapped.fallback = first.source.point;
+        }
+        text.lines.push(Line::from(spans));
+        mappings.push(mapped);
+    }
+    (text, mappings)
 }
 
 #[derive(Clone, Copy)]
@@ -1023,6 +1182,7 @@ struct StyledCharacter {
     character: char,
     style: Style,
     width: usize,
+    source: Option<viewport_source::SourceChar>,
 }
 
 /// 折行时可以在它后面断开的字符。
@@ -1066,12 +1226,6 @@ fn wrap_break_after(character: char) -> bool {
     )
 }
 
-fn append_styled_cells(spans: &mut Vec<Span<'static>>, cells: &[StyledCharacter]) {
-    for cell in cells {
-        push_styled_character(spans, cell.character, cell.style);
-    }
-}
-
 fn push_styled_character(spans: &mut Vec<Span<'static>>, character: char, style: Style) {
     if let Some(last) = spans.last_mut()
         && last.style == style
@@ -1094,16 +1248,29 @@ pub(super) fn text_rows(text: &Text<'static>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn selected_text(rows: &[String], start: (usize, usize), end: (usize, usize)) -> String {
+pub(super) fn selected_text(
+    rows: &[String],
+    bounds: &[Option<std::ops::Range<usize>>],
+    start: (usize, usize),
+    end: (usize, usize),
+) -> String {
     if rows.is_empty() || start >= end {
         return String::new();
     }
     let last_row = end.0.min(rows.len().saturating_sub(1));
     (start.0..=last_row)
         .map(|row| {
-            let start_column = if row == start.0 { start.1 } else { 0 };
-            let end_column = if row == end.0 { end.1 } else { usize::MAX };
-            display_column_slice(&rows[row], start_column, end_column)
+            let mut start_column = if row == start.0 { start.1 } else { 0 };
+            let mut end_column = if row == end.0 { end.1 } else { usize::MAX };
+            if let Some(Some(content)) = bounds.get(row) {
+                start_column = start_column.max(content.start);
+                end_column = end_column.min(content.end);
+            }
+            if start_column >= end_column {
+                String::new()
+            } else {
+                display_column_slice(&rows[row], start_column, end_column)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1205,77 +1372,8 @@ fn render_assistant_markdown_annotated(
     width: usize,
     label: &str,
 ) -> (Vec<Line<'static>>, Vec<CodeBlockLines>) {
-    let mut output = Vec::new();
-    let mut blocks = Vec::new();
-    let mut code_block = false;
-    let mut code_start = 0;
-    let mut code_content = Vec::new();
-    let lines = content.lines().collect::<Vec<_>>();
-    let mut index = 0;
-    while index < lines.len() {
-        let raw = lines[index];
-        if raw.trim_start().starts_with("```") {
-            if code_block {
-                push_code_block(&mut blocks, code_start, output.len(), &code_content);
-            } else {
-                code_start = output.len();
-                code_content.clear();
-            }
-            code_block = !code_block;
-            index += 1;
-            continue;
-        }
-        if code_block {
-            code_content.push(raw.to_owned());
-            let mut spans = assistant_prefix(index == 0, label);
-            spans.push(Span::styled(
-                raw.to_owned(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            output.push(Line::from(spans));
-            index += 1;
-            continue;
-        }
-
-        if index + 1 < lines.len()
-            && parse_table_row(raw).is_some()
-            && is_table_separator(lines[index + 1])
-        {
-            let mut rows = vec![parse_table_row(raw).expect("table header was checked")];
-            index += 2;
-            while index < lines.len() {
-                let Some(row) = parse_table_row(lines[index]) else {
-                    break;
-                };
-                rows.push(row);
-                index += 1;
-            }
-            if output.is_empty() {
-                output.push(Line::from(assistant_prefix(true, label)));
-            }
-            output.extend(render_markdown_table(&rows, width));
-            continue;
-        }
-
-        let normalized = normalize_html_breaks(raw);
-        for (piece_index, piece) in normalized.split('\n').enumerate() {
-            output.push(render_markdown_line(
-                piece,
-                index == 0 && piece_index == 0,
-                label,
-            ));
-        }
-        index += 1;
-    }
-    // 没闭合的围栏一直画到记录末尾，复制也照这个范围来。
-    if code_block {
-        push_code_block(&mut blocks, code_start, output.len(), &code_content);
-    }
-    if output.is_empty() {
-        output.push(Line::from(assistant_prefix_with_suffix(label, ":")));
-    }
+    // Ordinary rendering discards provenance, but uses the same parser.
+    let (output, blocks, _) = source::assistant(content, width, label, source::SourceId::Archive);
     (output, blocks)
 }
 
@@ -1294,6 +1392,7 @@ fn push_code_block(blocks: &mut Vec<CodeBlockLines>, start: usize, end: usize, c
 
 /// 画一条 `WillDeep: ` 记录，同时给出代码块折行后的行号范围。
 /// 每个输出行单独折行（空行也占一行），所以行号可以逐行累加，不需要再解析一遍。
+#[cfg(test)]
 pub(super) fn render_assistant_entry_with_code_blocks(
     row: &str,
     search: Option<&str>,
@@ -1305,41 +1404,14 @@ pub(super) fn render_assistant_entry_with_code_blocks(
         let text = wrap_styled_text(colored_transcript_at_width(&rows, search, width), width);
         return (text, Vec::new());
     };
-    let label = assistant_display_name(assistant_name);
-    let (lines, blocks) = render_assistant_markdown_annotated(content, width, label);
-    let mut text = Text::from(lines);
-    if let Some(query) = search {
-        highlight_matches(&mut text, query);
-    }
-    let heights = text
-        .lines
-        .iter()
-        .map(|line| {
-            wrap_styled_text(Text::from(vec![line.clone()]), width)
-                .lines
-                .len()
-        })
-        .collect::<Vec<_>>();
-    let wrapped = wrap_styled_text(text, width);
-    let mut offsets = Vec::with_capacity(heights.len() + 1);
-    offsets.push(0);
-    for height in heights {
-        offsets.push(offsets.last().copied().unwrap_or_default() + height);
-    }
-    debug_assert_eq!(
-        offsets.last().copied().unwrap_or_default(),
-        wrapped.lines.len(),
-        "code block row mapping must cover the wrapped entry exactly"
+    let (text, blocks, _) = source::assistant_entry(
+        content,
+        search,
+        width,
+        assistant_name,
+        source::SourceId::Archive,
     );
-    let blocks = blocks
-        .into_iter()
-        .map(|block| CodeBlockLines {
-            start: offsets[block.start],
-            end: offsets[block.end],
-            content: block.content,
-        })
-        .collect();
-    (wrapped, blocks)
+    (text, blocks)
 }
 
 fn assistant_prefix(show: bool, label: &str) -> Vec<Span<'static>> {
@@ -1707,7 +1779,11 @@ fn assistant_display_name(name: &str) -> &str {
 
 fn is_welcome_entry(value: &str) -> bool {
     value.contains("\nWillDeep: ")
-        && value.starts_with(&banner::art_rows().join("\n"))
+        && (value
+            .lines()
+            .next()
+            .is_some_and(|line| banner::styled_name_line(line).is_some())
+            || value.starts_with(&banner::art_rows().join("\n")))
         && value
             .lines()
             .any(|line| banner::styled_name_line(line).is_some())
@@ -1847,7 +1923,7 @@ pub(super) fn cache_hit_rate(usage: &willdeep_core::types::Usage) -> Option<f64>
     Some(cached as f64 / input as f64 * 100.0)
 }
 
-/// 首屏：吉祥物 + 产品名与版本。版本取自 crate，跟着发版走。
+/// 首屏：吉祥物 + 产品名与版本。图形按实际聊天宽度适配，记录保持完整。
 fn welcome_header() -> String {
     let art = banner::art_rows().join("\n");
     format!(

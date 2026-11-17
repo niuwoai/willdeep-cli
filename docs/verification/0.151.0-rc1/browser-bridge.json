@@ -1,0 +1,27 @@
+{
+  "version": "0.151.0-rc1",
+  "suite": "browser-bridge-protocol",
+  "started_at": "2026-11-16T23:43:08Z",
+  "fixture_origin": "http://127.0.0.1:19851",
+  "tests": [
+    {
+      "name": "isolated_profile_clean_environment_and_dependencies",
+      "status": "failed",
+      "error": "Bridge result mismatch: {\"code\"=>\"UNKNOWN\", \"message\"=>\"Chrome CDP startup timed out\", \"retryable\"=>false}"
+    }
+  ],
+  "boundaries": [
+    "Real Node/Chrome CDP bridge; Rust host and shared execute/approval not compiled or executed by this script.",
+    "Navigation/request origin controls and Chrome background flags; not whole-process network isolation.",
+    "One disposable profile per process, clean environment; no dependency installation or external service."
+  ],
+  "not_verified": [
+    "Rust compilation/unit tests",
+    "Runtime approval and host ref binding",
+    "Windows process job",
+    "OS-level network isolation"
+  ],
+  "failure": "Bridge result mismatch: {\"code\"=>\"UNKNOWN\", \"message\"=>\"Chrome CDP startup timed out\", \"retryable\"=>false}",
+  "finished_at": "2026-11-16T23:43:14Z",
+  "passed": false
+}

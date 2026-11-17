@@ -1245,6 +1245,7 @@ pub(crate) async fn complete(
         .max_output_tokens
         .unwrap_or(1_024)
         .clamp(1, MAX_AI_OUTPUT_TOKENS);
+    provider_config.policy_context = host.model_policy_context()?;
     configure_metered_request(&mut provider_config, host.usage_context.is_some());
     let model_name = provider_config.model.clone();
 

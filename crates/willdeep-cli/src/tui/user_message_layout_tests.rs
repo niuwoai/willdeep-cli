@@ -2,6 +2,65 @@ use super::*;
 use ratatui::backend::TestBackend;
 
 #[test]
+fn user_prefix_is_hidden_without_reinterpreting_literal_body_text() {
+    let body =
+        format!("You: literal\n{ASSISTANT_ROW_PREFIX}quoted\n· + Thought: literal\n**plain**");
+    let row = format!("You: {body}");
+    let rendered = message_time::render_with_times(
+        std::slice::from_ref(&row),
+        &[Some("now".into())],
+        None,
+        200,
+        Language::En,
+    );
+    let rows = text_rows(&rendered);
+    assert_eq!(rows[0].trim(), "You: literal");
+    assert_eq!(rows[1].trim(), format!("{ASSISTANT_ROW_PREFIX}quoted"));
+    assert_eq!(rows[2].trim(), "· + Thought: literal");
+    assert_eq!(rows[3].trim(), "**plain** · now");
+
+    let mut app = App::new(vec![row.clone()], Language::En);
+    app.transcript_width = 200;
+    app.prepare_transcript_frame();
+    app.chat_selection = Some(ChatSelection {
+        anchor: ChatSelectionPoint { row: 0, column: 0 },
+        head: ChatSelectionPoint {
+            row: 3,
+            column: 199,
+        },
+    });
+    assert_eq!(app.selected_chat_text(), body);
+    assert_eq!(app.transcript, [row]);
+}
+
+#[test]
+fn fold_threshold_uses_body_width_without_the_generated_prefix() {
+    let width = 40;
+    let body = "x".repeat(content_width(width) * PREVIEW_LINES);
+    let mut app = App::new(vec![format!("You: {body}")], Language::En);
+    app.transcript_width = width;
+    app.viewport_height = 30;
+    app.prepare_transcript_frame();
+    assert_eq!(app.transcript_rows.len(), PREVIEW_LINES);
+    assert!(app.user_message_controls.is_empty());
+
+    app.transcript[0].push('x');
+    app.prepare_transcript_frame();
+    let (control, _) = app.user_message_controls[0];
+    assert_eq!(control, PREVIEW_LINES);
+    app.update_user_message_hits(0, 0);
+    assert!(app.toggle_user_message_at(control as u16));
+    app.prepare_transcript_frame();
+    let (control, _) = app.user_message_controls[0];
+    assert_eq!(control, PREVIEW_LINES + 1);
+    app.update_user_message_hits(0, 0);
+    assert!(app.toggle_user_message_at(control as u16));
+    app.prepare_transcript_frame();
+    assert_eq!(app.user_message_controls[0].0, PREVIEW_LINES);
+    assert_eq!(app.transcript, [format!("You: {body}x")]);
+}
+
+#[test]
 fn user_blocks_share_a_right_edge_and_keep_body_lines_left_aligned() {
     for width in [8, 19, 20, 40, 80, 200] {
         let row = format!("You: {}\nsecond line\n\nlast", "中文内容 ".repeat(10));
@@ -71,6 +130,105 @@ fn user_background_preserves_search_highlights_and_visual_selection_columns() {
 }
 
 #[test]
+fn indented_user_lines_fit_without_losing_characters() {
+    let payload = "x".repeat(60);
+    for width in [20, 40, 80] {
+        let row = format!("You: code\n{}{payload}", " ".repeat(20));
+        let rendered = message_time::render_with_times(&[row], &[None], None, width, Language::En);
+        assert!(
+            rendered.lines.iter().all(|line| line.width() <= width),
+            "user lines overflow the {width}-column viewport"
+        );
+        let mut terminal = Terminal::new(TestBackend::new(width as u16, 20)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(Paragraph::new(rendered.clone()), frame.area());
+            })
+            .unwrap();
+        let visible = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert_eq!(
+            visible.chars().filter(|&ch| ch == 'x').count(),
+            payload.len()
+        );
+    }
+}
+
+#[test]
+fn multiline_copy_and_quote_exclude_layout_spaces_and_keep_user_indentation() {
+    let mut app = App::new(
+        vec!["You: first\n    second\n\nlast  ".into()],
+        Language::En,
+    );
+    app.transcript_width = 80;
+    for _ in 0..2 {
+        app.prepare_transcript_frame();
+        let first = &app.transcript_rows[0];
+        let last = app.transcript_rows.len() - 1;
+        app.chat_selection = Some(ChatSelection {
+            anchor: ChatSelectionPoint {
+                row: 0,
+                column: first.find("first").unwrap(),
+            },
+            head: ChatSelectionPoint {
+                row: last,
+                column: 79,
+            },
+        });
+        assert_eq!(app.selected_chat_text(), "first\n    second\n\nlast  ");
+    }
+    app.quote_chat_selection();
+    assert_eq!(app.input.text(), "> first\n>     second\n> \n> last  ");
+}
+
+#[test]
+fn user_copy_bounds_follow_cached_waiting_and_compression_rows() {
+    let mut app = App::new(vec!["You: first\n    second".into()], Language::En);
+    app.transcript_width = 80;
+    app.note_awaiting_reply();
+    for phase in 0..3 {
+        if phase == 1 {
+            app.note_compression_started();
+        } else if phase == 2 {
+            app.dismiss_compression_notice();
+            app.stream_transient(StreamKind::Reply, "answer");
+            app.transcript_width = 40;
+        }
+        for _ in 0..2 {
+            app.prepare_transcript_frame();
+            assert_eq!(
+                app.transcript_selection_bounds.len(),
+                app.transcript_rows.len()
+            );
+            let start = app.transcript_rows[0].find("first").unwrap();
+            let end = app.transcript_rows[1].find("second").unwrap() + "second".len() - 1;
+            // 反向拖选使用相同的正文范围。
+            app.chat_selection = Some(ChatSelection {
+                anchor: ChatSelectionPoint {
+                    row: 1,
+                    column: end,
+                },
+                head: ChatSelectionPoint {
+                    row: 0,
+                    column: start,
+                },
+            });
+            assert_eq!(app.selected_chat_text(), "first\n    second");
+            assert!(
+                app.transcript_selection_bounds[2..]
+                    .iter()
+                    .all(Option::is_none)
+            );
+        }
+    }
+}
+
+#[test]
 fn rendered_buffers_paint_only_the_user_block_in_full_and_compact_layouts() {
     for mode in [crate::config::UiMode::Full, crate::config::UiMode::Compact] {
         let mut app = App::new(
@@ -89,10 +247,11 @@ fn rendered_buffers_paint_only_the_user_block_in_full_and_compact_layouts() {
         let user_row = app
             .transcript_rows
             .iter()
-            .position(|row| row.contains("You: hello"))
+            .position(|row| row.contains("hello"))
             .unwrap();
         let user = &app.transcript_rows[user_row];
-        let start = user.find("You:").unwrap();
+        assert!(!user.contains("You:"));
+        let start = user.find("hello").unwrap();
         let y = app.transcript_content.y + user_row as u16;
         let x = app.transcript_content.x + start as u16;
         let buffer = terminal.backend().buffer();
@@ -123,7 +282,7 @@ fn streaming_replies_keep_the_same_role_gap_as_completed_replies() {
     let user = app
         .transcript_rows
         .iter()
-        .position(|row| row.contains("You:"))
+        .position(|row| row.contains("question"))
         .unwrap();
     assert!(app.transcript_rows[user + 1].is_empty());
     assert!(app.transcript_rows[user + 2].contains("streaming answer"));

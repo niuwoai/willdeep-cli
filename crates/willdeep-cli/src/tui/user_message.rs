@@ -30,15 +30,37 @@ pub(super) fn content_width(width: usize) -> usize {
         .max(1)
 }
 
+/// 只移除记录生成的角色前缀；用户正文不再经过角色或 Markdown 解析。
+pub(super) fn render_body(
+    row: &str,
+    search: Option<&str>,
+    width: usize,
+    id: rendering::source::SourceId,
+) -> (Text<'static>, Vec<rendering::source::SourceRow>) {
+    let body = row.strip_prefix("You: ").unwrap_or(row);
+    let mut text = Text::from(
+        body.split('\n')
+            .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::Cyan)))
+            .collect::<Vec<_>>(),
+    );
+    if let Some(query) = search {
+        rendering::highlight_matches(&mut text, query);
+    }
+    rendering::source::wrap_literal(text, id, rendering::source::SourcePart::Body, body, width)
+}
+
 /// 消息块靠右、块内各行左对齐。缩进是透明的，只有正文和左右内边距带背景。
 /// 不添加样式行，折叠按钮和附件标签的纵向命中位置保持不变。
-pub(super) fn style_block(entry: &mut Text<'static>, width: usize) {
+pub(super) fn style_block(entry: &mut Text<'static>, width: usize) -> Vec<std::ops::Range<usize>> {
     let width = width.max(1);
     let padding = block_padding(width);
     let body_width = entry.lines.iter().map(Line::width).max().unwrap_or(0);
     let block_width = body_width.saturating_add(2 * padding).min(width);
     let indent = width.saturating_sub(block_width);
+    let mut content_bounds = Vec::with_capacity(entry.lines.len());
     for line in &mut entry.lines {
+        let start = indent + padding;
+        content_bounds.push(start..start + line.width());
         let trailing = block_width.saturating_sub(padding + line.width());
         let base = line.style.bg(BLOCK_BG);
         let mut spans = vec![
@@ -53,6 +75,7 @@ pub(super) fn style_block(entry: &mut Text<'static>, width: usize) {
         spans.push(Span::styled(" ".repeat(trailing), base));
         *line = Line::from(spans);
     }
+    content_bounds
 }
 
 impl App {
@@ -107,10 +130,9 @@ impl App {
             .enumerate()
             .skip(floor)
             .filter(|(_, row)| narration::is_tool_display_row(row))
-            .filter_map(|(source, row)| {
+            .filter_map(|(source, _)| {
                 let target = *folded.index_of.get(source - floor + shift)?;
-                let visible = folded.rows.get(target)?;
-                if visible != row {
+                if folded.sources.get(target) != Some(&Some(source)) {
                     return None;
                 }
                 // 行本身一直可点，但完整命令只在点开之后才画出来。
@@ -123,7 +145,7 @@ impl App {
                 Some((target, (source, expansion)))
             })
             .collect();
-        message_time::render_transcript(
+        let mut frame = message_time::render_transcript(
             &folded.rows[..end],
             &labels[..end],
             search,
@@ -134,7 +156,93 @@ impl App {
             &self.transcript_attachments,
             &self.assistant_name(),
             self.ui.line_spacing,
-        )
+        );
+        use rendering::source::{SourceId, SourcePart};
+        // Folded indices are layout positions. Translate them through index_of,
+        // then prepare_transcript_frame translates original indices to stable IDs.
+        let mut representatives = BTreeMap::new();
+        let mut exact = BTreeSet::new();
+        for (target, source) in folded.sources.iter().take(end).enumerate() {
+            if let Some(source) = source {
+                representatives.insert(target, *source);
+                exact.insert(target);
+            }
+        }
+        for source in floor..self.transcript.len() {
+            if let Some(&target) = folded.index_of.get(source - floor + shift)
+                && target < end
+            {
+                representatives.entry(target).or_insert(source);
+            }
+        }
+        let mut ids = BTreeMap::new();
+        for target in 0..end {
+            let id = if target == 0 && floor > 0 {
+                SourceId::Archive
+            } else {
+                representatives
+                    .get(&target)
+                    .map_or(SourceId::Archive, |source| SourceId::Record(*source))
+            };
+            ids.insert(SourceId::Record(target), id);
+            if !exact.contains(&target) {
+                for row in &mut frame.sources.rows {
+                    if row.fallback.id == SourceId::Record(target) {
+                        row.cells.clear();
+                        row.fallback.part = SourcePart::Control;
+                    }
+                }
+            }
+        }
+        frame.sources.rebase(&ids);
+        // Status prefixes belong to a receipt, not the user's original body.
+        // Their byte length can change from queued to started without moving it.
+        for echo in &self.pending_runtime_echoes {
+            let Some(record) = echo.record else { continue };
+            let Some(raw) = self.transcript.get(record) else {
+                continue;
+            };
+            let body = terminal_safe_text(&echo.text);
+            let prefix = rendering::source::record_body(raw)
+                .len()
+                .saturating_sub(body.len());
+            let id = SourceId::Record(record);
+            for row in &mut frame.sources.rows {
+                if row.fallback.id != id {
+                    continue;
+                }
+                row.cells.retain_mut(|cell| {
+                    if cell.source.point.part != SourcePart::Body {
+                        return true;
+                    }
+                    if cell.source.point.byte < prefix {
+                        return false;
+                    }
+                    cell.source.point.byte -= prefix;
+                    cell.source.end -= prefix;
+                    true
+                });
+                if row.fallback.part == SourcePart::Body {
+                    row.fallback.byte = row.fallback.byte.saturating_sub(prefix);
+                }
+            }
+            frame.sources.parts.insert((id, SourcePart::Body), body);
+        }
+        for source in 0..floor {
+            frame
+                .sources
+                .aliases
+                .insert(SourceId::Record(source), SourceId::Archive);
+        }
+        for source in floor..self.transcript.len() {
+            if let Some(target) = folded.index_of.get(source - floor + shift)
+                && let Some(id) = ids.get(&SourceId::Record(*target))
+                && *id != SourceId::Record(source)
+            {
+                frame.sources.aliases.insert(SourceId::Record(source), *id);
+            }
+        }
+        frame
     }
 
     pub(super) fn update_user_message_hits(&mut self, offset: usize, top: u16) {
@@ -216,32 +324,17 @@ impl App {
             return false;
         };
         let collapsing = self.expanded_user_messages.get(&source) == Some(row);
-        let mut offset = self.transcript_render_offset;
         if collapsing {
-            let width = content_width(self.transcript_width);
-            let body_height = wrap_styled_text(
-                colored_transcript_at_width(std::slice::from_ref(row), None, width),
-                width,
-            )
-            .lines
-            .len();
-            if let Some((control, _)) = self
-                .user_message_controls
-                .iter()
-                .find(|(_, index)| *index == source)
-            {
-                offset = offset.min(control.saturating_sub(body_height));
-            }
             self.expanded_user_messages.remove(&source);
         } else {
             self.expanded_user_messages.insert(source, row.clone());
         }
         self.transcript_render_cache = None;
-        self.chat_selection = None;
         self.user_message_hit_rows.clear();
-        self.refresh_transcript_height();
         self.follow_bottom = false;
-        self.scroll_from_bottom = self.max_scroll().saturating_sub(offset);
+        // Preserve the old frame's source; prepare_transcript_frame resolves it
+        // after folding, falling back to this message's title if it is hidden.
+        self.refresh_transcript_height();
         true
     }
 }

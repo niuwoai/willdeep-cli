@@ -10,6 +10,25 @@ fn packages() -> (AgentPackage, AgentPackage) {
     )
 }
 
+#[tokio::test]
+async fn native_trial_requires_an_explicit_project_before_reading_control() {
+    use clap::Parser;
+    let home = home();
+    let cli = crate::Cli::try_parse_from(["willdeep"]).unwrap();
+    let error = run(
+        RsiAction::NativeTrial {
+            control: home.join("missing-control.json"),
+            preview: false,
+        },
+        &home,
+        &cli,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("explicit --workspace/--project"));
+    assert!(!home.exists());
+}
+
 #[test]
 fn account_switches_hide_other_experiment_namespaces() {
     let home = home();

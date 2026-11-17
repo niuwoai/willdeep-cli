@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-17",
+  "version": "0.151.0-rc1",
+  "scope": "TUI execution progress, message delivery, stable reading and existing prompt-selection regression",
+  "passed": true,
+  "binary": {
+    "path": "target/debug/willdeep",
+    "sha256": "81537596bde5bcc649664c5b1c4d6ba1db01008df8aa81551f2ef52d08301577",
+    "hash_checked_at_start_and_end_of_each_pty_suite": true
+  },
+  "native_tests": {
+    "tui": {"passed": 622, "failed": 0, "ignored": 2},
+    "editor": {"passed": 11, "failed": 0},
+    "event_json_schema": {"passed": 1, "failed": 0},
+    "core_request_progress": {"passed": 2, "failed": 0},
+    "distinct_passed": 636,
+    "final_turn_status_recheck": {"passed": 19, "included_in_tui_count": true},
+    "ignored_reason": "Two explicitly manual streaming performance/latency measurements"
+  },
+  "engineering_checks": {
+    "cli_strict_clippy": true,
+    "cli_debug_build": true,
+    "targeted_rustfmt": true,
+    "git_diff_check": true,
+    "version_consistency": true,
+    "source_size_limit_3000_lines": true,
+    "ruby_syntax": true,
+    "node_decoder_syntax": true
+  },
+  "real_pty": {
+    "interactions": {
+      "passed": 18,
+      "failed": 0,
+      "layouts": ["compact", "full"],
+      "report": "build/verification/0.151.0-rc1/tui-interactions-verified/integration.json",
+      "exact_chat_osc52_copies": 2,
+      "resize_application_frames_verified": 4
+    },
+    "prompt_selection": {
+      "passed": 14,
+      "failed": 0,
+      "layouts_and_routes": ["compact", "full", "compact-ssh", "full-ssh"],
+      "report": "build/verification/0.151.0-rc1/tui-prompt-selection-verified/integration.json",
+      "exact_prompt_osc52_copies": 2
+    },
+    "private_home_workspace_xdg": true,
+    "inherited_credentials": false,
+    "real_model_requests": false,
+    "provider": "Controlled loopback synthetic SSE",
+    "final_clipboard_transport": "Captured private PTY OSC 52 only; never forwarded to the host clipboard"
+  },
+  "prior_attempts": [
+    {"result": "blocked", "reason": "Shared plugin test required Debug on an error supporting Display; test failure output adjusted"},
+    {"result": "blocked", "reason": "Shared local discovery probe_config helper temporarily missing; restored by parallel work"},
+    {"result": "failed", "tui_passed": 618, "tui_failed": 4, "resolution": "Fixed current-phase and explicit-outcome precedence; corrected background label and wide-cell test decoding"},
+    {"result": "failed", "reason": "Three strict Clippy condition simplification diagnostics", "resolution": "Equivalent expressions simplified; final strict Clippy passed"},
+    {"result": "failed", "reason": "PTY fixture pressed Enter while Chat remained focused after selection", "resolution": "Clicked the visible composer before submitting; strict queue assertion retained"}
+  ],
+  "earlier_clipboard_deviation": {
+    "host_clipboard_write_attempted": true,
+    "write_success_verified": false,
+    "resolution": "Unified chat, prompt and code-block clipboard routing before final isolated PTY runs",
+    "osc52_terminal_write_acknowledgement_available": false
+  },
+  "limits": [
+    "Local macOS PTYs use English; Chinese/Japanese status and both layouts covered by native tests",
+    "Lost receipts, stale edits and reconnect identity races verified by isolated native tests rather than real external network failures",
+    "No whole-workspace test run or cross-platform CI",
+    "No live model or external terminal clipboard integration test",
+    "Two manual performance tests not run",
+    "Other parallel 0.151.0-rc1 features are outside this report"
+  ],
+  "queue_protocol_changed": false,
+  "runtime_event_added": "model_request_started",
+  "committed": false,
+  "installed": false,
+  "published": false
+}

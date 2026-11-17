@@ -56,7 +56,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Model eval task set self-check
         if: runner.os == 'Linux'
-        run: ruby scripts/test/model_eval_test.rb && ruby scripts/model_eval.rb --check-tasks
+        run: ruby scripts/test/model_eval_test.rb && ruby scripts/test/p0_eval_tasks_test.rb --report-dir target/p0-eval-contracts && ruby scripts/test/agent_reliability_regression_test.rb && ruby scripts/test/support/browser_runtime_support_test.rb && ruby scripts/agent_reliability_regression.rb --check-manifest && ruby scripts/model_eval.rb --check-tasks
       - name: Agent metrics publish self-check
         if: runner.os == 'Linux'
         run: ruby scripts/test/agent_metrics_test.rb

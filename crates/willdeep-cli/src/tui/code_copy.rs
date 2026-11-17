@@ -73,8 +73,8 @@ enum FeedbackKind {
     Failed,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ClipboardRoute {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClipboardRoute {
     Local,
     Terminal,
 }
@@ -92,6 +92,10 @@ impl CodeCopyState {
             hosted,
             ..Self::default()
         }
+    }
+
+    pub(super) fn write_clipboard(&self, text: &str) -> Result<ClipboardRoute, String> {
+        write_code_clipboard(text, self.hosted)
     }
 
     pub(super) fn set_blocks(&mut self, blocks: Vec<CodeBlock>) {
@@ -475,20 +479,35 @@ fn write_code_clipboard(text: &str, hosted: bool) -> Result<ClipboardRoute, Stri
     let ssh = ["SSH_CONNECTION", "SSH_TTY"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
-    let mut terminal = (hosted || ssh) && crate::gallery::write_osc52(text).is_ok();
-    let local = if ssh {
-        None
-    } else {
-        Some(
-            arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text.to_owned())),
-        )
-    };
+    write_clipboard_with(
+        text,
+        hosted,
+        ssh,
+        |value| crate::gallery::write_osc52(value).is_ok(),
+        |value| {
+            arboard::Clipboard::new()
+                .and_then(|mut clipboard| clipboard.set_text(value.to_owned()))
+                .map_err(|error| error.to_string())
+        },
+    )
+}
+
+/// 注入写入端以验证路由和原文 payload，测试无需访问系统剪贴板或真实终端。
+fn write_clipboard_with(
+    text: &str,
+    hosted: bool,
+    ssh: bool,
+    mut write_terminal: impl FnMut(&str) -> bool,
+    mut write_local: impl FnMut(&str) -> Result<(), String>,
+) -> Result<ClipboardRoute, String> {
+    let mut terminal = (hosted || ssh) && write_terminal(text);
+    let local = if ssh { None } else { Some(write_local(text)) };
     if let Some(Ok(())) = &local {
         return Ok(ClipboardRoute::Local);
     }
     if !terminal && !hosted {
         // 普通终端里 arboard 失败时也试一次 OSC 52；写不出去就明确报错。
-        terminal = crate::gallery::write_osc52(text).is_ok();
+        terminal = write_terminal(text);
     }
     if terminal {
         return Ok(ClipboardRoute::Terminal);
@@ -530,6 +549,83 @@ mod tests {
             row: 2,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn prompt_selection_ssh_clipboard_routes_original_text_only_to_terminal() {
+        let original = "\t中👩‍💻👍🏽🇨🇳e\u{301}  \r\n\n  tail \n";
+        for hosted in [false, true] {
+            let mut sent = Vec::new();
+            let route = write_clipboard_with(
+                original,
+                hosted,
+                true,
+                |value| {
+                    sent.push(value.to_owned());
+                    true
+                },
+                |_| panic!("SSH copying must not access the remote system clipboard"),
+            );
+            assert_eq!(route, Ok(ClipboardRoute::Terminal));
+            assert_eq!(sent, vec![original]);
+        }
+    }
+
+    #[test]
+    fn prompt_selection_clipboard_keeps_local_and_fallback_routes() {
+        let original = "中🙂  \n\n  tail ";
+        let mut sent = Vec::new();
+        let mut local = Vec::new();
+        assert_eq!(
+            write_clipboard_with(
+                original,
+                false,
+                false,
+                |value| {
+                    sent.push(value.to_owned());
+                    true
+                },
+                |value| {
+                    local.push(value.to_owned());
+                    Ok(())
+                },
+            ),
+            Ok(ClipboardRoute::Local)
+        );
+        assert!(sent.is_empty());
+        assert_eq!(local, vec![original]);
+        assert_eq!(
+            write_clipboard_with(
+                original,
+                false,
+                false,
+                |value| {
+                    sent.push(value.to_owned());
+                    true
+                },
+                |_| Err("fixture local clipboard failure".into()),
+            ),
+            Ok(ClipboardRoute::Terminal)
+        );
+        assert_eq!(sent, vec![original]);
+        assert_eq!(
+            write_clipboard_with(original, true, false, |_| true, |_| Ok(()),),
+            Ok(ClipboardRoute::Local)
+        );
+        assert_eq!(
+            write_clipboard_with(original, true, true, |_| false, |_| unreachable!()),
+            Err("terminal clipboard unavailable".into())
+        );
+        assert_eq!(
+            write_clipboard_with(
+                original,
+                false,
+                false,
+                |_| false,
+                |_| Err("fixture local clipboard failure".into()),
+            ),
+            Err("fixture local clipboard failure".into())
+        );
     }
 
     #[test]

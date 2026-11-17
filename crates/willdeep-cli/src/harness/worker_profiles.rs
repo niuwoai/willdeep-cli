@@ -39,6 +39,19 @@ impl FollowingWorker {
 
 #[async_trait::async_trait]
 impl Provider for FollowingWorker {
+    fn policy_context(&self) -> Option<willdeep_core::provider::ModelPolicyContext> {
+        self.parent.policy_context()
+    }
+    fn with_policy_context(
+        &self,
+        context: willdeep_core::provider::ModelPolicyContext,
+    ) -> std::result::Result<Arc<dyn Provider>, willdeep_core::provider::ProviderError> {
+        Ok(Arc::new(Self {
+            parent: self.parent.with_policy_context(context)?,
+            model: self.model.clone(),
+            hosted: self.hosted,
+        }))
+    }
     fn ledger_identity(&self) -> Option<willdeep_core::provider::ProviderIdentity> {
         self.current().ok()?.ledger_identity()
     }
@@ -72,6 +85,21 @@ impl Provider for FollowingWorker {
     }
 }
 
+/// Rebind library-defined connections without freezing inherited followers.
+pub(super) fn bind_library_policy(
+    profiles: &mut [SubagentProfile],
+    parent: &ProviderConfig,
+) -> Result<()> {
+    if let Some(context) = &parent.policy_context {
+        for profile in profiles {
+            if profile.definition_model_bound {
+                profile.provider = profile.provider.with_policy_context(context.clone())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 组装全部内置工种，套上 `[subagents.*]` 的覆盖。
 ///
 /// 解析阶梯（与 `model_routing::profile_settings` 同一条）：
@@ -86,7 +114,7 @@ impl Provider for FollowingWorker {
 /// 第 3 种情况 `model` 留空，展示与派工记录在派工那一刻按 follower 现取。
 pub(super) fn configure_worker_profiles(
     file: &ConfigFile,
-    _parent: &ProviderConfig,
+    parent: &ProviderConfig,
     follow_main: &Arc<dyn Provider>,
     kind: ProviderKind,
 ) -> Result<Vec<SubagentProfile>> {
@@ -111,6 +139,7 @@ pub(super) fn configure_worker_profiles(
         if let Some(settings) = crate::config::subagent_settings(file, &subagent.id) {
             if let Some(provider_name) = settings.provider_profile.as_deref() {
                 let mut configured = provider_config_from_profile(file, provider_name)?;
+                configured.policy_context = parent.policy_context.clone();
                 if let Some(model) = &settings.model {
                     configured.model = model.clone();
                 }

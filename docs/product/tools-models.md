@@ -12,11 +12,12 @@
 
 - 前台、Runtime 与 Worker 共用 Profile 解析，支持标准地址环境变量与 `api_base_env`，配置使用安全凭据引用；Session 保留所选 Provider/模型与配置。只改 Worker 模型时继承父连接，显式绑定 Provider 时保留自身档案，运行中的切换边界见[Worker 专题](../SUBAGENTS.md)。
 - Provider 模型目录可搜索、刷新或手动输入。some.im/tokenhub 模型能力表参与视觉判定、上下文缺省及协议回落，取不到声明则沿用原规则；`qwen3-vl-plus` 为 some.im 纯文本模型提供图片描述降级。
-- 本机发现仅探测已运行的 Ollama/Magpie 回环服务，尊重已保存的本地端口和地址变量；绕过代理、不带云端凭据、不启动服务或下载模型、不覆盖默认 Provider。`WILLDEEP_LOCAL_DISCOVERY=0` 可关闭。Magpie Profile 独立于原供应商，本地网关后的远程推理不计作本地模型。
+- 本机发现仅探测已运行的 Ollama/Magpie 回环服务，尊重已保存的本地端口和地址变量；绕过代理、不带云端凭据、不启动服务或下载模型、不覆盖默认 Provider。受项目模型策略约束时，发现前尚不知实际模型，因此跳过探测；恢复与启动选择器沿持久项目归属检查，不借执行目录绕过。`WILLDEEP_LOCAL_DISCOVERY=0` 可关闭。Magpie Profile 独立于原供应商，本地网关后的远程推理不计作本地模型。
 - Root 与 Worker 配置、上下文、最大轮次、自动派工和专家预算经 `/routing` 与 Web 共用持久设置，保存检测版本冲突。职责与模型档正交，五职责 × 三档；S/M/L 部署基线与 `standard/advanced/expert` Worker 档也分别建模，旧 `deep` 名字不再代表独立公开职责。约束与映射见[模型档位](../MODEL_TIERS.md)。
 - 本机智能体窗口/最大轮次支持 Web 模型绑定和 `agents bind`，明确预算在档位选择后应用，本机安装设置不进入可分享定义包；Worker 最大轮次与主会话统一允许至 1000，保存前校验。
 - 完整子会话可在父 Provider 配置内覆盖模型；创建前校验可用目录、工具能力、图片兼容性与真实上下文窗口，窗口快照写入子会话，不继承父模型数值。worktree 子会话可派 Worker，父子共享家族并发/队列；用量账本携带家族根并按记录 ID 去重，主回合、Worker、压缩和辅助调用不因新 Session 重置或双计，未知/不完整计量仍 fail closed。
 - `config init/check/show` 安全创建、严格校验与脱敏展示，旧字段以 legacy 提示；无配置时可由已存在环境凭据推断 Provider/缺省模型，首启无需重复引导。保存能解析不表示远端认证或账户余额已经验证。
+- 项目 `.willdeep/model-policy.json` 按 Provider、最终模型与精确端点约束内置 HTTP 出口；运行期重读与首次生效可信集合取交集，只能收窄。Worker、辅助调用、模型切换和子会话保留项目归属，启用后策略非法或丢失失败关闭。扩大允许集需宿主审查后重启所属 Runtime；不构成任意进程或插件的网络隔离。配置与覆盖边界见[Runtime 工具指南](../P1_RUNTIME_TOOLS.md)。
 
 ### 上下文、压缩与推理
 
@@ -31,8 +32,12 @@
 
 ### 工具、Skills、规则与 MCP
 
-- 文件搜索、读取、创建、精确编辑；`rg` 优先且有跨平台扫描兜底。Git 状态、Diff、受限历史、逐行归因、Worktree 与 Shell 执行受工作区及审批保护，命令不能借参数或替换扩权。
-- 网页搜索和正文读取受审批；Fetch 对每次跳转重新校验公网目标，同域跟随、跨域重新审批，限制环路、次数、超时及流式 3MiB 响应。网络边界归[安全模块](security-verification.md)。
+- 文件搜索、读取、创建、精确编辑；`rg` 优先且有跨平台扫描兜底。读取返回整文件 SHA-256 版本，编辑要求显式版本或实际读取基线并拒绝陈旧内容。`file_changes` 提供绑定差异与版本的多文件创建/替换预览和一次性应用，复用审批与 Worker 写集，失败报告恢复和实际遗留路径；不支持删除/重命名，不承诺跨文件原子事务。协议见[P0 编码工具](../decisions/2026-11-17-p0-coding-tools.md)。
+- `lsp` 提供 Rust 与 TypeScript/TSX 的状态、诊断、定义、引用、符号和 `rename_preview`，使用固定本地语言服务和 0-based UTF-16 定位。重命名在两阶段同步后转为既有 `file_changes` 预览：版本化 WorkspaceEdit 严格匹配 URI/version；固定 TypeScript 服务的原生 `changes` 绑定最终请求前已同步的精确 URI、文本与 SHA-256，不伪造服务端版本，Rust 不开放该兼容路径。实际写入单独审批应用，服务端 applyEdit 始终拒绝。启动沿用命令审批、平台围栏及依赖检查，不自动安装。未发布/无版本诊断不能自证当前代码通过；协议及真实服务覆盖见[Runtime 工具指南](../P1_RUNTIME_TOOLS.md)与[P1 分层验收](../verification/0.151.0-rc1/p1-runtime-tools.md)。
+- `ast_grep` 使用固定本地 `ast-grep` 做 Rust/TypeScript/TSX 结构查询；宿主快照与 UTF-8 字节范围绑定，不开放自动改写、用户配置或自定义解析器。`tool_status` 统一提供可选工具离线配置状态，不能将依赖路径存在当成服务连接可用。P1 配置与接口见[Runtime 工具指南](../P1_RUNTIME_TOOLS.md)，真实依赖和本地回归的实际覆盖见[P1 分层验收](../verification/0.151.0-rc1/p1-runtime-tools.md)。
+- Git 状态、Diff、受限历史、逐行归因、Worktree 与 Shell 执行受工作区及审批保护，命令不能借参数或替换扩权。
+- 网页搜索支持独立 SearXNG 和 `auto` SomeIm 兼容，显式后端失败不回退；密钥只经显式环境引用，搜索响应硬限 1 MiB，并分别报告空结果、认证失败和限流。正文 Fetch 对每次跳转重新校验公网目标，同域跟随、跨域重新审批，限制环路、次数、超时及流式 3MiB 响应。两者均受审批，私网搜索开关不改变 Fetch 公网边界。
+- 受控 `browser` 使用明确配置的 Node/Chrome 和内置 CDP 桥，默认关闭、独立临时 profile，固定导航/快照/输入/点击/截图/断言动作。宿主引用绑定页面代次，副作用逐次审批；取消销毁所属进程树，来源限制不等同于全进程网络隔离。当前 parent-only，启用 OS 围栏时拒绝启动。网络边界归[安全模块](security-verification.md)。
 - Codex 兼容 Skills 发现、目录与按需正文读取，`$skill-name` 显式触发，额外技能根可配置；配置工作台可管理技能并从 GitHub 安装。工具 Schema 不全量常驻每轮上下文。
 - 全局及项目/目录 `AGENTS.md`、`CLAUDE.md` 加载，执行前刷新；Shell/MCP/派工的目录规则发现不受搜索忽略影响，读取失败或超长明确报错。`[rules].files` 可启用、排序多文件/目录，缺省沿用全局规则；首次规则目录不存在时写入内置精简规则，已存在则不覆盖。
 - 产品概览是参考资料，适用项目指令仍来自规则文件。根概览不超过 20,000 Unicode 字符才直接注入；超限只注入固定超限提示，不会自动读取摘要、索引或子页。详见[实际加载实现](../../crates/willdeep-core/src/project_rules.rs)。
@@ -42,9 +47,11 @@
 
 - 共享 `model-catalog.v1` 已有严格 Rust 解析/校验及跨端设计，通过 `credential_ref` 分开目录与凭据；**尚未替换现有 Provider 路由和凭据来源**，不能当成已切换的运行配置体系。
 - 压缩仍沿用 Provider `max_output_tokens`，没有独立输出上限；思考占同一额度，过小会截断摘要并导致无正文错误。缺省 16384 并非模型真实上限，已有显式档案不会随缺省修复，见[输出上限说明](../CONFIGURATION.md)。原问题、示例和报错完整留在历史归档。
-- MCP 服务端主动请求与 GET 事件流未接；LSP 诊断、自动记忆及流式真实 reasoning 摘要仍是待办。运行阶段显示不能冒充模型思考内容。
+- MCP 服务端主动请求与 GET 事件流未接；自动记忆及流式真实 reasoning 摘要仍是待办。LSP 重命名已接预览协议，真实服务覆盖、依赖及诊断限制按本轮验收分层记录；运行阶段显示不能冒充模型思考内容。
 - 旧“Provider 原生 token streaming 待做”与已有流式实现/验收冲突，仅保留历史状态，不再用作当前整体未实现结论。Hooks、插件与平台沙箱已有单独能力，不继续合并写成缺口，见[集成](integrations.md)和[安全](security-verification.md)。
 
 ## 详细指南与证据
+
+版本化编辑、多文件协议与 LSP 的本轮实际检查见[P0 分层验收](../verification/0.150.0-rc2/p0-coding-tools.md)，区分离线协议、固定夹具、真实语言服务及尚未运行的模型评测。
 
 [配置指南](../CONFIGURATION.md)、[Provider 协议](../PROVIDER_PROTOCOLS.md)、[some.im 集成](../SOMEIM_INTEGRATION.md)、[Magpie](../MAGPIE.md)、[模型档位](../MODEL_TIERS.md)、[共享模型目录](../SHARED_MODEL_CATALOG.md)、[Skills 与 MCP](../SKILLS_AND_MCP.md)是对应契约入口。压缩与流式的既有验证见[可靠性评测](../AGENT_RELIABILITY_EVALUATION.md)和[流式验收](../verification/0.114.0-rc2/README.md)，原始逐版记录见[历史快照](history/overview-through-0.142.0-rc1.md)。

@@ -24,6 +24,7 @@ impl App {
             question_queue: VecDeque::new(),
             scroll_from_bottom: 0,
             follow_bottom: true,
+            viewport: viewport::ViewportState::default(),
             transcript_width: 78,
             transcript_content: Rect::default(),
             pending_chat_click: None,
@@ -85,6 +86,8 @@ impl App {
             runtime_submitted_task: None,
             turn_started: None,
             last_progress_at: None,
+            turn_phase: turn_status::TurnPhase::default(),
+            last_turn_outcome: None,
             runtime_turn: false,
             waiting_background: false,
             overlay_close_hits: Vec::new(),
@@ -151,6 +154,7 @@ impl App {
             native_selection_mode: false,
             chat_selection: None,
             transcript_rows: Vec::new(),
+            transcript_selection_bounds: Vec::new(),
             transcript_render_cache: None,
             transcript_render_offset: 0,
             skill_selected: 0,
@@ -292,6 +296,9 @@ impl App {
         self.waiting_background = false;
         self.turn_started = None;
         self.last_progress_at = None;
+        self.turn_phase = turn_status::TurnPhase::default();
+        self.last_turn_outcome = None;
+        self.reset_transcript_viewport();
         self.runtime_turn = false;
         self.turn_narration = None;
         self.held_narration = None;
@@ -914,6 +921,7 @@ impl App {
         self.scroll_from_bottom = total
             .saturating_sub(through_match)
             .min(total.saturating_sub(self.viewport_height));
+        self.viewport_scrolled();
     }
     pub(super) fn edit_input(&mut self, edit: impl FnOnce(&mut PromptEditor)) {
         self.prompt_history = None;
@@ -1204,14 +1212,9 @@ impl App {
     pub(super) fn finish_turn(&mut self) {
         let was_running = self.running;
         self.finish_thought();
-        // 简洁模式把中途文字只摆在状态行上。正常收尾已经在 `note_reply` 里落过正文
-        // 并拿走它；走到这里还留着，是中断或状态复位，补写进去，别让最后一句话随状态行消失。
-        if let Some(held) = self.held_narration.take() {
-            let held = held.trim();
-            if !held.is_empty() {
-                self.append_transcript(format!("WillDeep: {held}"));
-            }
-        }
+        self.finish_reply_stream();
+        // 正常结束、中断或状态恢复都只补写一次已定稿的阶段说明。
+        self.flush_held_narration();
         if let Some(started) = self.turn_started.take() {
             self.last_elapsed = Some(started.elapsed());
         }
@@ -1234,16 +1237,7 @@ impl App {
         self.turn_narration = None;
         // 这一轮的产出模型只对这一轮的正文行有效，收尾即清空。
         self.reply_model = None;
-        self.activity_line = if self.queued_prompts.is_empty() {
-            self.language.text("就绪", "Ready", "準備完了")
-        } else {
-            self.language.text(
-                "待发消息等待发送",
-                "Queued messages waiting to send",
-                "送信待ちがあります",
-            )
-        }
-        .to_owned();
+        self.activity_line = self.idle_turn_status();
         // 铃声只给审批、提问和后台任务的话，盯着别处的用户不知道轮到自己了。
         self.bell_pending |= was_running && self.composer_ready();
     }
@@ -1392,6 +1386,8 @@ impl App {
         self.stale_awaiting_reply_snapshots = 0;
         self.turn_started = Some(now);
         self.last_progress_at = Some(now);
+        self.turn_phase = turn_status::TurnPhase::Preparing;
+        self.last_turn_outcome = None;
         self.last_elapsed = None;
         self.turn_input_tokens = 0;
         self.turn_output_tokens = 0;
@@ -1444,7 +1440,7 @@ impl App {
         session_id: uuid::Uuid,
         snapshot_sequence: Option<u64>,
     ) -> bool {
-        let has_active_task = tasks.iter().any(|task| {
+        let active_task = tasks.iter().find(|task| {
             task.session_id == Some(session_id)
                 && matches!(
                     task.status,
@@ -1457,12 +1453,14 @@ impl App {
         });
         // Runtime 不可达时序号为 None：那份快照什么都不能证明。
         let fresh = snapshot_sequence.is_some_and(|sequence| sequence >= self.runtime_event_cursor);
-        if has_active_task {
+        if let Some(active_task) = active_task {
             self.stale_runtime_turn_snapshots = 0;
             self.stale_runtime_turn_recovery_reported = false;
             self.stale_awaiting_reply_snapshots = 0;
             if !self.running && fresh {
                 self.ensure_runtime_turn();
+                self.runtime_submitted_task = Some(active_task.id);
+                self.runtime_submitted_turn = active_task.turn_id;
             }
             return false;
         }
@@ -1470,7 +1468,10 @@ impl App {
             // 等待中的回显表示提交/重试仍未落到 Runtime 事件流。快照的暂时空闲
             // 不能据此撤掉动画；收到回显或提交失败后，pending 状态会自行解除。
             if self.runtime_queue_submission.is_some()
-                || !self.pending_runtime_echoes.is_empty()
+                || self
+                    .pending_runtime_echoes
+                    .iter()
+                    .any(|echo| echo.is_pending())
                 || self.runtime_submitted_turn.is_some()
             {
                 self.stale_awaiting_reply_snapshots = 0;
@@ -1830,33 +1831,8 @@ impl App {
     }
 
     pub(super) fn working_summary(&self) -> Option<String> {
-        let started = self.turn_started?;
-        if self.waiting_background && self.approval.is_none() && self.question.is_none() {
-            return Some(self.language.text(
-                "后台任务运行中 · 可以继续输入，普通消息回车后发送 · 完成后自动通知",
-                "Background running · Keep typing; Enter sends text · Completion will be reported",
-                "バックグラウンド実行中 · 入力して Enter で送信 · 完了後に通知",
-            ).to_owned());
-        }
-        let elapsed = started.elapsed();
-        let idle = self
-            .last_progress_at
-            .map(|progress| progress.elapsed())
-            .unwrap_or(elapsed);
-        Some(format_working_summary(
-            self.language,
-            self.runtime_turn,
-            &self.activity_line,
-            elapsed,
-            idle,
-        ))
+        self.turn_phase_summary()
     }
-    pub(super) fn handle_question_text(&mut self, value: &str) {
-        if let Some(dialog) = self.question.as_mut() {
-            dialog.answer.insert(value);
-        }
-    }
-
     pub(super) fn handle_question_key(&mut self, key: KeyEvent) {
         let Some(dialog) = self.question.as_mut() else {
             return;
@@ -1940,21 +1916,26 @@ impl App {
             return;
         }
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(n).min(max);
+        self.viewport_scrolled();
     }
     pub(super) fn scroll_down(&mut self, n: usize) {
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(n);
         if self.scroll_from_bottom == 0 {
-            self.follow_bottom = true;
+            self.scroll_to_bottom();
+        } else {
+            self.viewport_scrolled();
         }
     }
     pub(super) fn scroll_to_top(&mut self) {
         let max = self.max_scroll();
         self.follow_bottom = max == 0;
         self.scroll_from_bottom = max;
+        self.viewport_scrolled();
     }
     pub(super) fn scroll_to_bottom(&mut self) {
         self.follow_bottom = true;
         self.scroll_from_bottom = 0;
+        self.viewport_return_to_latest();
     }
     /// 长会话只把最近这些轮次留在渲染循环里；更早的仍存在内存中，翻到顶再放回来。
     const LIVE_ROUNDS: usize = 100;
@@ -2065,22 +2046,6 @@ impl App {
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
 
-    /// 新落进记录的这一行该盖哪个模型的章。
-    ///
-    /// 只有助手正文行才盖这一轮事件带来的产出模型。用户输入、工具行、系统行
-    /// 和分隔线都留空；不知道回复模型时也不拿当前会话模型代替。
-    fn model_for_row(&self, row: &str) -> Option<String> {
-        let source = if row.starts_with(ASSISTANT_ROW_PREFIX) {
-            self.reply_model.as_deref()
-        } else {
-            None
-        };
-        source
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .map(str::to_owned)
-    }
-
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
     /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
     pub(super) fn paste_goes_inline(value: &str) -> bool {
@@ -2090,6 +2055,7 @@ impl App {
     }
 
     pub(super) fn handle_paste(&mut self, value: String) {
+        self.input.clear_selection();
         self.prompt_history = None;
         if Self::paste_goes_inline(&value) {
             self.input.insert(&value);
@@ -2134,6 +2100,9 @@ impl App {
     ) {
         // 这一下按下还没松手：先清掉上一次的待点开，等真的没拖动再点开。
         self.pending_chat_click = None;
+        if human_gate_ui::handle_question_mouse(self, x, y) {
+            return;
+        }
         if self.search.is_some() && self.search_rect.contains((x, y).into()) {
             if let Some(search) = &mut self.search {
                 search.editor.set_cursor_visual(
@@ -2151,38 +2120,6 @@ impl App {
                 .copied()
             {
                 self.resolve_approval(|_| decision);
-            }
-        } else if self.question.is_some() && self.question_rect.contains((x, y).into()) {
-            if x <= self.question_rect.x + 1 || x >= self.question_rect.right().saturating_sub(2) {
-                return;
-            }
-            if let Some((_, selected)) = self
-                .question_hits
-                .iter()
-                .find(|(row, _)| *row == y)
-                .copied()
-            {
-                let multi = self
-                    .question
-                    .as_ref()
-                    .is_some_and(|dialog| dialog.request.multi_select);
-                if multi {
-                    if let Some(dialog) = &mut self.question {
-                        dialog.selected = selected;
-                        dialog.checked[selected] = !dialog.checked[selected];
-                    }
-                } else if let Some(dialog) = self.question.take() {
-                    let answer = dialog.request.options.get(selected).cloned();
-                    let _ = dialog.sender.send(answer);
-                    self.promote_next_question();
-                }
-            } else if self.question_footer_row == Some(y) {
-                let code = if x < self.question_rect.x + self.question_rect.width / 2 {
-                    KeyCode::Esc
-                } else {
-                    KeyCode::Enter
-                };
-                self.handle_question_key(KeyEvent::new(code, KeyModifiers::NONE));
             }
         } else if self.palette.is_some() && self.palette_rect.contains((x, y).into()) {
             if let Some((_, position)) =
@@ -2241,13 +2178,7 @@ impl App {
         } else if self.prompt_rect.contains((x, y).into()) {
             self.focus = FocusPane::Prompt;
             self.composer_placeholder_dismissed = true;
-            let row = y.saturating_sub(self.prompt_rect.y + 1) as usize + self.prompt_scroll;
-            let col = x.saturating_sub(self.prompt_rect.x + 1) as usize;
-            self.input.set_cursor_visual(
-                row,
-                col,
-                self.prompt_rect.width.saturating_sub(2) as usize,
-            );
+            self.position_prompt_cursor(x, y);
         }
     }
     pub(super) fn handle_slash_command(&mut self, prompt: &str, skills: &SkillCatalog) -> bool {
@@ -2588,6 +2519,13 @@ impl App {
                 self.transcript.clear();
                 self.transcript_attachments.clear();
                 self.transcript_models.clear();
+                for echo in &mut self.pending_runtime_echoes {
+                    echo.record = None;
+                }
+                for queued in &mut self.queued_prompts {
+                    queued.transcript_row = None;
+                }
+                self.reset_transcript_viewport();
                 self.expanded_user_messages.clear();
                 self.pending_notice_rows.clear();
                 // 清空之后也是首屏：给回欢迎语，而不是留一整屏空白。

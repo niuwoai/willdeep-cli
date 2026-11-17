@@ -1,0 +1,10 @@
+{
+  "id": "p0-protected-multifile-config",
+  "title": "受保护配置下的多文件批处理修复",
+  "kind": "fix",
+  "language": "ruby",
+  "split": "validation",
+  "requires": ["ruby"],
+  "editable": ["lib/batching.rb", "lib/manifest.rb"],
+  "verify": [["ruby", "test/contract_test.rb"]]
+}

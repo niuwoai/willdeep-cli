@@ -1,5 +1,56 @@
 use super::*;
 
+/// Human gates are drawn above permission pickers and receive their keys first.
+pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if app.question.is_some() {
+        app.prompt_history = None;
+        app.handle_question_key(key);
+    } else if app.approval.is_some() {
+        app.prompt_history = None;
+        app.handle_approval_key(key);
+    } else {
+        return false;
+    }
+    true
+}
+
+/// Consume clicks while a question is visible, including clicks outside it.
+pub(super) fn handle_question_mouse(app: &mut App, x: u16, y: u16) -> bool {
+    if app.question.is_none() {
+        return false;
+    }
+    if !app.question_rect.contains((x, y).into())
+        || x <= app.question_rect.x + 1
+        || x >= app.question_rect.right().saturating_sub(2)
+    {
+        return true;
+    }
+    if let Some((_, selected)) = app.question_hits.iter().find(|(row, _)| *row == y).copied() {
+        let multi = app
+            .question
+            .as_ref()
+            .is_some_and(|dialog| dialog.request.multi_select);
+        if multi {
+            if let Some(dialog) = &mut app.question {
+                dialog.selected = selected;
+                dialog.checked[selected] = !dialog.checked[selected];
+            }
+        } else if let Some(dialog) = app.question.take() {
+            let answer = dialog.request.options.get(selected).cloned();
+            let _ = dialog.sender.send(answer);
+            app.promote_next_question();
+        }
+    } else if app.question_footer_row == Some(y) {
+        let code = if x < app.question_rect.x + app.question_rect.width / 2 {
+            KeyCode::Esc
+        } else {
+            KeyCode::Enter
+        };
+        app.handle_question_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    true
+}
+
 pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
     app.approval_rect = Rect::default();
     app.approval_action_hits.clear();
@@ -15,7 +66,12 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
             approval_title(app.language, app.approval_queue.len()),
             Color::LightYellow,
         )
-        .title_alignment(Alignment::Center);
+        .title_alignment(Alignment::Center)
+        .title_bottom(app.language.text(
+            " Ctrl+X 停止当前轮次 ",
+            " Ctrl+X Stop current turn ",
+            " Ctrl+X 現在のターンを停止 ",
+        ));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
         let button_height = 1;
@@ -127,7 +183,6 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
         ));
     }
     append(String::new(), Style::default());
-    drop(append);
     let answer_prefix = format!(
         "{}: ",
         app.language
@@ -139,26 +194,29 @@ fn render_question(f: &mut ratatui::Frame<'_>, app: &mut App) {
     } else {
         dialog.answer.text().to_owned()
     };
-    let mut answer_text = Text::from(Line::from(vec![
-        Span::styled(
-            answer_prefix.clone(),
-            Style::default().fg(Color::LightYellow),
-        ),
-        Span::styled(
-            answer_value,
-            Style::default()
-                .fg(Color::LightYellow)
-                .add_modifier(Modifier::UNDERLINED),
-        ),
-    ]));
-    for line in &mut answer_text.lines {
-        line.style = Style::default();
+    // Use the editor's exact visual rows for both content and cursor placement.
+    // A single styled Line containing newlines is not a multiline Text, and
+    // word wrapping here would disagree with the editor's character wrapping.
+    let mut answer_editor = PromptEditor::default();
+    answer_editor.insert(&format!("{answer_prefix}{answer_value}"));
+    let wrapped_answer = answer_editor.wrapped_text(content_width);
+    let mut prefix_remaining = answer_prefix.len();
+    for row in wrapped_answer.split('\n') {
+        let prefix_bytes = prefix_remaining.min(row.len());
+        prefix_remaining -= prefix_bytes;
+        lines.push(Line::from(vec![
+            Span::styled(
+                row[..prefix_bytes].to_owned(),
+                Style::default().fg(Color::LightYellow),
+            ),
+            Span::styled(
+                row[prefix_bytes..].to_owned(),
+                Style::default()
+                    .fg(Color::LightYellow)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]));
     }
-    let mut wrapped_answer = wrap_styled_text(answer_text, content_width);
-    for line in &mut wrapped_answer.lines {
-        line.style = Style::default();
-    }
-    lines.extend(wrapped_answer.lines);
     let help = if dialog.request.multi_select {
         app.language.text(
             "↑/↓ 选择 · Space 勾选 · 输入其他答案 · Enter 发送 · Esc 跳过",

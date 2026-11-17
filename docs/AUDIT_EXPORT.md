@@ -51,9 +51,10 @@ JSON 的 `schema_version` 为 1，顶层 `summary` 与每个 `sessions[]` 项的
 
 ## 已知缺口
 
-- hook 拦截没有独立日志，只能从会话记录里的工具结果反推；hook 自己收到的载荷在 hook 那边，
-  hook 侧的 `approval_resolved` 事件也还没接线（见 `docs/HOOKS.md`）。人的审批处置与耗时
-  已经进了反馈账本（`approval_resolved` 信号），在「反馈信号」一节里计数。
+- hook 拦截没有独立日志，只能从会话记录里的工具结果反推；hook 自己收到的载荷在 hook 那边。
+  从 0.150.0-rc3 起，`approval_resolved` 投递审批器返回决定和判官最终放行（见 [Hooks](HOOKS.md)），
+  没有持久送达保证，也不直接并入本导出。人的审批处置与耗时另进反馈账本（`approval_resolved` 信号），
+  在「反馈信号」一节里计数；不能把 Hook 的 `approver/deny` 自动认定为人的拒绝。
 - 只回滚已跟踪文件的撤销不留回收记录：`git restore` 不进 `runtime/recovery/`，报告的「回滚」段里看不到。从 0.148.0-rc4 起「还在工作区」一列能看出结果（已不在），但看不出是谁还原的、什么时候还原的。未跟踪文件挪进回收区的撤销仍能从目录名反推。
 - `runtime/events.ndjson` 还没并进来：它的会话关联靠消息文本，且 `diff-attributions.json`
   只保留最近 1000 条，久远会话的改动归属可能已被裁掉。

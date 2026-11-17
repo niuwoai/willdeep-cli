@@ -694,7 +694,9 @@ async fn run() -> Result<()> {
             }
             CliCommand::Completions { shell } => generate_completions(shell),
             CliCommand::Man => generate_man_page(),
-            CliCommand::Agents { action } => agent_registry::run(action, &willdeep_home()?).await,
+            CliCommand::Agents { action } => {
+                agent_registry::run(action, &willdeep_home()?, &cli).await
+            }
             CliCommand::Session { action } => daemon::handle_session(action).await,
             CliCommand::Schedule { action } => {
                 println!("{}", schedule_cmd::run(action, &willdeep_home()?).await?);
@@ -774,7 +776,7 @@ async fn run() -> Result<()> {
     if !administrative
         && !cli.onboarding
         && !magpie_integration::claims_configuration(&cli)
-        && let Err(error) = local_provider_discovery::discover(cli.config.as_deref()).await
+        && let Err(error) = local_provider_discovery::discover_for_cli(&cli).await
     {
         eprintln!("Local Provider discovery: {error}");
     }
@@ -1933,6 +1935,7 @@ impl EventSink for TerminalSink {
             AgentEvent::AssistantText { .. }
             | AgentEvent::BackgroundWait { .. }
             | AgentEvent::TurnStarted { .. }
+            | AgentEvent::ModelRequestStarted
             | AgentEvent::RunScoped { .. } => {}
         }
     }
@@ -2093,6 +2096,9 @@ pub(crate) fn agent_event_json(event: AgentEvent) -> serde_json::Value {
         }
         AgentEvent::TurnStarted { turn } => {
             serde_json::json!({"type": "turn_started", "turn": turn})
+        }
+        AgentEvent::ModelRequestStarted => {
+            serde_json::json!({"type": "model_request_started"})
         }
         AgentEvent::TurnPreempted { turn } => {
             serde_json::json!({"type": "turn_preempted", "turn": turn})

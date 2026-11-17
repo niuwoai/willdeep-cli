@@ -21,6 +21,53 @@ fn home() -> PathBuf {
 }
 
 #[tokio::test]
+async fn binding_profiles_and_models_keep_parent_policy_before_library_rebinding() {
+    let home = home();
+    std::fs::create_dir_all(home.join(".willdeep")).unwrap();
+    std::fs::write(
+        home.join(".willdeep/model-policy.json"),
+        br#"{"version":1,"allow":[]}"#,
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let file: crate::config::ConfigFile = toml::from_str(&format!(
+        "version=1\n[providers.fixture]\nprovider='openai-compatible'\napi_base='http://{}/v1'\napi_key='fixture'\nmodel='alternate'\n", listener.local_addr().unwrap(),
+    )).unwrap();
+    let mut parent = crate::provider_config_from_profile(&file, "fixture").unwrap();
+    parent.bind_workspace(&home).unwrap();
+    let fallback = willdeep_core::build_provider(parent.clone()).unwrap();
+    for (profile, model) in [
+        (Some("fixture"), None),
+        (None, Some("override")),
+        (Some("fixture"), Some("override")),
+    ] {
+        let binding = willdeep_core::agent_definition::store::ModelBinding {
+            provider_profile: profile.map(str::to_owned),
+            model: model.map(str::to_owned),
+            context_window: None,
+            max_turns: None,
+        };
+        let configured = binding_config(&binding, &file, &parent).unwrap();
+        assert_eq!(
+            configured.policy_context.as_ref().unwrap().workspace(),
+            parent.policy_context.as_ref().unwrap().workspace()
+        );
+        let provider =
+            resolve_binding_provider(&home, &binding, &file, &parent, fallback.clone()).unwrap();
+        assert!(matches!(
+            provider.complete(&[], &[]).await,
+            Err(willdeep_core::provider::ProviderError::PolicyDenied(_))
+        ));
+    }
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+            .await
+            .is_err()
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
 async fn foreign_import_binding_is_atomic_and_never_replaces_an_existing_id() {
     let home = home();
     let definition = fixture();

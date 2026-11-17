@@ -1,5 +1,6 @@
 //! Display-only message times. Old Runtime processes need no schema changes.
 use super::narration::FoldedTranscript;
+use super::rendering::source::{self, SourceFrame, SourceId, SourcePart, SourceRow};
 use super::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -58,9 +59,6 @@ pub(super) struct MessageTimes {
     path: Option<PathBuf>,
     dirty: bool,
     offsets: HashMap<String, usize>,
-    /// 记过时间、但还没进记录的消息条数。简洁模式的中途文字先挂在状态行上，
-    /// 收尾落进记录时从这里对上，沿用定稿那一刻的时间。
-    reserved: HashMap<String, usize>,
     pub(super) event_time: Option<u64>,
 }
 
@@ -138,41 +136,10 @@ impl MessageTimes {
         let digest = key(last);
         let ordinal = previous.iter().filter(|row| *row == last).count()
             + self.offsets.get(&digest).copied().unwrap_or_default();
-        // 这条是之前挂在状态行上、现在才进记录的：时间已经记过，对上就行。
-        if self.reserved.get(&digest).copied().unwrap_or_default() > 0 {
-            *self.reserved.get_mut(&digest).expect("reserved count") -= 1;
-            self.rows[previous.len()] = self
-                .known
-                .get(&digest)
-                .and_then(|times| times.get(ordinal))
-                .copied()
-                .flatten();
-            return;
-        }
         let times = self.known.entry(digest).or_default();
         times.resize(times.len().max(ordinal + 1), None);
         times[ordinal] = Some(current);
         self.rows[previous.len()] = Some(current);
-        self.dirty = true;
-    }
-
-    /// 记住一条还没进记录的消息的时间。简洁模式的中途文字先只摆在状态行上，
-    /// 收尾落进记录时按正文对上，沿用它定稿那一刻的时间，而不是收尾时刻。
-    /// 同一段文字再次定稿（模型把进度重发了一遍）刷新成最新的时刻。
-    pub(super) fn reserve(&mut self, row: &str, sent_at: u64) {
-        if !is_message(row) {
-            return;
-        }
-        let digest = key(row);
-        let held = self.reserved.entry(digest.clone()).or_default();
-        let times = self.known.entry(digest).or_default();
-        if *held > 0 {
-            let index = times.len() - *held;
-            times[index] = Some(sent_at);
-            return;
-        }
-        times.push(Some(sent_at));
-        *held += 1;
         self.dirty = true;
     }
 
@@ -346,6 +313,9 @@ pub(super) fn render_with_times(
 /// 工具点击位置是（样式行号，记录位置，是不是「收起」那一行）。
 pub(super) struct FoldedFrame {
     pub(super) text: Text<'static>,
+    pub(super) sources: SourceFrame,
+    /// 与显示行对齐，用户行只允许复制此范围，其他行没有额外边界。
+    pub(super) selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     pub(super) user_controls: Vec<(usize, usize)>,
     pub(super) tool_controls: Vec<(usize, usize, bool)>,
     /// 附件标签所在的样式行：行号、记录位置、附件序号（从 0 起）。
@@ -397,11 +367,17 @@ pub(super) fn render_transcript(
 ) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
+    let mut selection_bounds = Vec::new();
     let mut controls = Vec::new();
     let mut tool_controls = Vec::new();
     let mut attachment_hits = Vec::new();
     let mut code_blocks = Vec::new();
+    let mut sources = SourceFrame::default();
     for (index, row) in rows.iter().enumerate() {
+        let id = SourceId::Record(index);
+        sources
+            .parts
+            .insert((id, SourcePart::Body), source::record_body(row).to_owned());
         // 这里按行画，调用方可能只传入到某个命中为止的切片，所以「轮到你」只在
         // 真正画整段聊天区的最后一行时才补上。
         // 单行渲染自己不补「轮到你」：那是整段聊天区最后一行的事，这里补了一次，
@@ -413,29 +389,24 @@ pub(super) fn render_transcript(
         } else {
             width
         };
-        // 助手记录走带代码块标注的 Markdown 路径；其余记录还是原来的上色 + 折行。
-        // 名字只影响画面，不参与正文解析或修改记录（欢迎语的助手行藏在多行记录里）。
-        let (mut entry, mut row_code_blocks) = if displayed.starts_with(ASSISTANT_ROW_PREFIX) {
-            rendering::render_assistant_entry_with_code_blocks(
-                &displayed,
-                search,
-                width,
-                assistant_name,
-            )
+        // 用户只画正文；角色判断先于移除前缀，正文里的角色文本不再被解释。
+        // 助手走带代码块标注的 Markdown 路径；名字只影响画面，不修改记录。
+        let (mut entry, mut row_code_blocks, mut entry_sources) = if is_user {
+            let (text, mapped) = user_message::render_body(&displayed, search, entry_width, id);
+            (text, Vec::new(), mapped)
+        } else if let Some(body) = displayed.strip_prefix(ASSISTANT_ROW_PREFIX) {
+            source::assistant_entry(body, search, width, assistant_name, id)
         } else {
-            (
-                wrap_styled_text(
-                    rendering::colored_transcript_with_name(
-                        std::slice::from_ref(&displayed),
-                        search,
-                        entry_width,
-                        language,
-                        assistant_name,
-                    ),
-                    entry_width,
-                ),
-                Vec::new(),
-            )
+            let text = rendering::colored_transcript_with_name(
+                std::slice::from_ref(&displayed),
+                search,
+                entry_width,
+                language,
+                assistant_name,
+            );
+            let mappings = source::ordinary_lines(id, &displayed, &text);
+            let (text, mapped) = rendering::wrap_styled_text_sourced(text, entry_width, &mappings);
+            (text, Vec::new(), mapped)
         };
         // 附件接在这句话下面：标签行可点，文本附件把正文也摊出来（超长一起折叠）。
         let user = users.get(&index).copied();
@@ -443,8 +414,15 @@ pub(super) fn render_transcript(
             && let Some(list) = attachments.get(source)
         {
             for (attachment_index, attachment) in list.iter().enumerate() {
-                let (lines, label_lines) =
-                    attachment_lines(attachment, attachment_index, language, entry_width);
+                let (lines, label_lines, mapped) = attachment_lines(
+                    attachment,
+                    attachment_index,
+                    language,
+                    entry_width,
+                    id,
+                    &mut sources,
+                );
+                entry_sources.extend(mapped);
                 let label_at = text.lines.len() + entry.lines.len();
                 for offset in 0..label_lines {
                     attachment_hits.push((label_at + offset, source, attachment_index));
@@ -457,6 +435,7 @@ pub(super) fn render_transcript(
         {
             if !expanded {
                 entry.lines.truncate(user_message::PREVIEW_LINES);
+                entry_sources.truncate(user_message::PREVIEW_LINES);
                 // 折掉的那部分里的附件标签看不见，也就点不了。
                 let visible_until = text.lines.len() + user_message::PREVIEW_LINES;
                 attachment_hits.retain(|(line, _, _)| *line < visible_until);
@@ -479,6 +458,9 @@ pub(super) fn render_transcript(
                 (0..control.lines.len())
                     .map(|line| (text.lines.len() + entry.lines.len() + line, source)),
             );
+            entry_sources.extend(
+                (0..control.lines.len()).map(|_| SourceRow::empty(id, SourcePart::Control, 0)),
+            );
             entry.lines.extend(control.lines);
         }
         // 工具行整行可点。点开后完整命令接在它下面，再跟一行「收起」，那一行单独可点。
@@ -488,16 +470,26 @@ pub(super) fn render_transcript(
                 (0..entry.lines.len()).map(|line| (text.lines.len() + line, source, false)),
             );
             if let Some(detail) = expansion {
-                entry.lines.extend(
-                    wrap_styled_text(
-                        Text::from(Line::styled(
-                            detail.clone(),
-                            Style::default().fg(Color::DarkGray),
-                        )),
-                        width,
-                    )
-                    .lines,
+                sources
+                    .parts
+                    .insert((id, SourcePart::ToolDetail), detail.clone());
+                let detail_rendered = Text::from(
+                    detail
+                        .split('\n')
+                        .map(|line| {
+                            Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray))
+                        })
+                        .collect::<Vec<_>>(),
                 );
+                let (detail_text, detail_sources) = source::wrap_literal(
+                    detail_rendered,
+                    id,
+                    SourcePart::ToolDetail,
+                    detail,
+                    width,
+                );
+                entry.lines.extend(detail_text.lines);
+                entry_sources.extend(detail_sources);
                 let collapse = wrap_styled_text(
                     Text::from(Line::styled(
                         narration::tool_collapse_label(language).to_owned(),
@@ -510,6 +502,9 @@ pub(super) fn render_transcript(
                 tool_controls.extend(
                     (0..collapse.lines.len())
                         .map(|line| (text.lines.len() + entry.lines.len() + line, source, true)),
+                );
+                entry_sources.extend(
+                    (0..collapse.lines.len()).map(|_| SourceRow::empty(id, SourcePart::Control, 0)),
                 );
                 entry.lines.extend(collapse.lines);
             }
@@ -537,6 +532,7 @@ pub(super) fn render_transcript(
                     // 否则双击范围会少最后一行、徽标也会错位。
                     let at = last + 1;
                     entry.lines.insert(at, Line::from(span));
+                    entry_sources.insert(at, SourceRow::empty(id, SourcePart::Time, 0));
                     for block in &mut row_code_blocks {
                         if block.start >= at {
                             block.start += 1;
@@ -556,8 +552,15 @@ pub(super) fn render_transcript(
                 line.push_span(Span::raw(label));
             }
         }
+        selection_bounds.resize(text.lines.len(), None);
         if is_user {
-            user_message::style_block(&mut entry, width);
+            let bounds = user_message::style_block(&mut entry, width);
+            for (mapped, bound) in entry_sources.iter_mut().zip(&bounds) {
+                mapped.shift_columns(bound.start);
+            }
+            selection_bounds.extend(bounds.into_iter().map(Some));
+        } else {
+            selection_bounds.resize(text.lines.len() + entry.lines.len(), None);
         }
         let block_base = text.lines.len();
         code_blocks.extend(
@@ -569,6 +572,8 @@ pub(super) fn render_transcript(
                     content: block.content,
                 }),
         );
+        debug_assert_eq!(entry_sources.len(), entry.lines.len());
+        sources.rows.extend(entry_sources);
         text.lines.extend(entry.lines);
         // 用户消息前后、连续回复之间和回复后的轮次分隔线前各留一行。
         // 思考与工具行仍紧贴同一轮的回复；最后一条记录后不留空行。
@@ -587,10 +592,16 @@ pub(super) fn render_transcript(
         if blanks > 0 && index != last {
             let grown = text.lines.len() + blanks;
             text.lines.resize_with(grown, Line::default);
+            sources
+                .rows
+                .resize_with(grown, || SourceRow::empty(id, SourcePart::Decoration, 0));
         }
     }
+    selection_bounds.resize(text.lines.len(), None);
     FoldedFrame {
         text,
+        sources,
+        selection_bounds,
         user_controls: controls,
         tool_controls,
         attachment_hits,
@@ -604,7 +615,9 @@ fn attachment_lines(
     index: usize,
     language: Language,
     width: usize,
-) -> (Vec<Line<'static>>, usize) {
+    id: SourceId,
+    sources: &mut SourceFrame,
+) -> (Vec<Line<'static>>, usize, Vec<SourceRow>) {
     let number = index + 1;
     let (name, dimensions, body) = match attachment {
         MessageAttachment::Text { name, content } => (name.clone(), None, Some(content.clone())),
@@ -622,30 +635,41 @@ fn attachment_lines(
     if let Some((width, height)) = dimensions {
         label.push_str(&format!(" · {width}×{height}"));
     }
-    let label = wrap_styled_text(
-        Text::from(Line::styled(
-            label,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
+    sources
+        .parts
+        .insert((id, SourcePart::AttachmentLabel(index)), label.clone());
+    let label_text = Text::from(Line::styled(
+        label.clone(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let (label_text, mut mapped) = source::wrap_literal(
+        label_text,
+        id,
+        SourcePart::AttachmentLabel(index),
+        &label,
         width,
     );
-    let label_lines = label.lines.len();
-    let mut lines = label.lines;
+    let label_lines = label_text.lines.len();
+    let mut lines = label_text.lines;
     if let Some(content) = body {
-        let body = wrap_styled_text(
-            Text::from(
-                terminal_safe_text(&content)
-                    .lines()
-                    .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray)))
-                    .collect::<Vec<_>>(),
-            ),
-            width,
+        let content = terminal_safe_text(&content);
+        sources
+            .parts
+            .insert((id, SourcePart::AttachmentBody(index)), content.clone());
+        let text = Text::from(
+            content
+                .split('\n')
+                .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::DarkGray)))
+                .collect::<Vec<_>>(),
         );
-        lines.extend(body.lines);
+        let (text, body_sources) =
+            source::wrap_literal(text, id, SourcePart::AttachmentBody(index), &content, width);
+        lines.extend(text.lines);
+        mapped.extend(body_sources);
     }
-    (lines, label_lines)
+    (lines, label_lines, mapped)
 }
 
 #[cfg(test)]

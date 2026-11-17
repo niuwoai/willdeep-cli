@@ -15,6 +15,7 @@
 
 mod http;
 pub mod oauth;
+mod status;
 mod stdio;
 #[cfg(test)]
 mod test_http;
@@ -320,6 +321,8 @@ pub struct McpRegistry {
     /// 连接时各服务 `tools/list` 的原始结果，插件宿主拿它刷新工具目录。
     listed: BTreeMap<String, Value>,
     lazy: Option<Arc<dyn LazyToolSource>>,
+    /// Offline, sanitized configuration and observations from existing startup.
+    status: BTreeMap<String, status::ServerStatus>,
 }
 
 #[derive(Clone)]
@@ -333,6 +336,7 @@ struct McpServer {
     name: String,
     transport: Transport,
     timeout: Duration,
+    observation: Arc<status::RequestObservation>,
 }
 
 /// 两个变体都装 Box：一个带子进程、读任务与管子，一个带 reqwest 客户端、头表与
@@ -372,10 +376,23 @@ impl McpRegistry {
         configs: &BTreeMap<String, McpServerConfig>,
         handler: Option<Arc<dyn HostRequestHandler>>,
     ) -> Result<Self, McpError> {
-        let mut registry = Self::default();
+        let mut registry = Self::configuration_only(configs);
         for (name, config) in configs.iter().filter(|(_, c)| c.enabled) {
             let kind = config.validated_transport(name)?;
-            let server = match McpServer::start(home, name, config, kind, handler.clone()).await {
+            let observation = registry.status[name].observation.clone();
+            let started = McpServer::start(
+                home,
+                name,
+                config,
+                kind,
+                handler.clone(),
+                observation.clone(),
+            )
+            .await;
+            if started.is_err() {
+                observation.record(&started);
+            }
+            let server = match started {
                 Ok(server) => Arc::new(server),
                 // 远程服务连不上、没登录、对方 5xx：都不该让宿主起不来。
                 // 报到 stderr，跳过这一个，其余服务照常。
@@ -629,6 +646,7 @@ impl McpServer {
         config: &McpServerConfig,
         kind: McpTransportKind,
         handler: Option<Arc<dyn HostRequestHandler>>,
+        observation: Arc<status::RequestObservation>,
     ) -> Result<Self, McpError> {
         // 反向请求只开给 stdio：宿主要把响应写回这条连接的 stdin。
         let (transport, initialize) = match kind {
@@ -651,6 +669,7 @@ impl McpServer {
             name: name.to_owned(),
             transport,
             timeout: Duration::from_secs(config.startup_timeout_seconds.clamp(1, 300)),
+            observation,
         };
         let result = server.request("initialize", initialize).await?;
         if let Transport::Http(http) = &server.transport {
@@ -662,19 +681,24 @@ impl McpServer {
         Ok(server)
     }
     async fn request(&self, method: &str, params: Value) -> Result<Value, McpError> {
-        match &self.transport {
+        let result = match &self.transport {
             // stdio 自己算超时：排队不计时，宿主处理反向请求期间也不计时。
             Transport::Stdio(connection) => {
                 connection
                     .request(&self.name, method, params, self.timeout)
                     .await
             }
-            Transport::Http(connection) => tokio::time::timeout(self.timeout, async {
+            Transport::Http(connection) => match tokio::time::timeout(self.timeout, async {
                 connection.lock().await.request(method, params).await
             })
             .await
-            .map_err(|_| McpError::Timeout(self.name.clone()))?,
-        }
+            {
+                Ok(result) => result,
+                Err(_) => Err(McpError::Timeout(self.name.clone())),
+            },
+        };
+        self.observation.record(&result);
+        result
     }
     async fn notify(&self, method: &str, params: Value) -> Result<(), McpError> {
         tokio::time::timeout(self.timeout, async {

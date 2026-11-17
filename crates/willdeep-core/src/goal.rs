@@ -4,11 +4,15 @@
 //!
 //! 核心立场：目标未达 + 预算未尽 = 无条件注入 continuation。模型「不调工具就算完成」
 //! 只是一个**候选**停止点，不是终态；只有模型显式声明完成、或预算耗尽，才真的停。
-//! 本模块只负责判定与话术，不碰 provider、不碰磁盘——便于纯逻辑单测。状态可以
+//! 本模块负责判定与话术；证据与快照 IO 委托宿主 resolver，并在 Goal 锁外执行。状态可以
 //! 快照成 [`GoalState`] 交给宿主落盘，下次运行再 [`GoalContinuation::restore`] /
 //! [`GoalContinuation::park`] 回来：预算与验收清单跨轮次、跨进程累计。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+mod evidence;
+mod evidence_state;
+pub use evidence::GoalEvidenceResolver;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -125,8 +129,8 @@ pub enum GoalStatus {
     BudgetLimited,
 }
 
-/// 一条验收标准。标成完成必须附证据（命令输出、文件路径、测试名……），
-/// 没有证据的「完成」不算完成（long-horizon.v1 §2.3）。
+/// 一条验收标准。完成必须引用宿主生成、仍与当前快照匹配的真实记录。
+/// `evidence` 只解释该记录与标准的关系，不能自证完成。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalCriterion {
     pub text: String,
@@ -134,15 +138,16 @@ pub struct GoalCriterion {
     pub done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ref: Option<String>,
+    /// Process-local cache only. Deserialized/legacy text is never verified.
+    #[serde(skip)]
+    pub evidence_verified: bool,
 }
 
 impl GoalCriterion {
     fn satisfied(&self) -> bool {
-        self.done
-            && self
-                .evidence
-                .as_deref()
-                .is_some_and(|evidence| !evidence.trim().is_empty())
+        self.done && self.evidence_verified && self.evidence_ref.is_some()
     }
 }
 
@@ -180,6 +185,9 @@ pub struct GoalStep {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalState {
     pub statement: String,
+    /// Stable across restore; a newly activated goal receives a fresh identity.
+    #[serde(default)]
+    pub goal_id: String,
     #[serde(default)]
     pub criteria: Vec<GoalCriterion>,
     #[serde(default)]
@@ -205,6 +213,7 @@ impl GoalState {
     pub fn new(statement: impl Into<String>) -> Self {
         Self {
             statement: statement.into(),
+            goal_id: uuid::Uuid::new_v4().to_string(),
             ..Self::default()
         }
     }
@@ -226,8 +235,11 @@ impl GoalState {
     /// 两个写者（TUI 与 daemon）各自带着一份状态回来时，同一目标的计数取
     /// 单调较大者：预算只能往前走，不能被较旧的一份拨回去。
     pub fn merged_over(mut self, previous: Option<&GoalState>) -> Self {
+        // Legacy records may merge only with another legacy record. Once a
+        // runtime assigns an identity, a repeated statement is a new budget.
         if let Some(previous) = previous
             && previous.statement == self.statement
+            && previous.goal_id == self.goal_id
         {
             self.elapsed_ms = self.elapsed_ms.max(previous.elapsed_ms);
             self.continuations = self.continuations.max(previous.continuations);
@@ -262,6 +274,11 @@ impl GoalState {
                     .filter(|_| criterion.satisfied())
                 {
                     out.push_str(&format!(" — evidence: {}", truncate(evidence, 160)));
+                }
+                if criterion.satisfied()
+                    && let Some(reference) = &criterion.evidence_ref
+                {
+                    out.push_str(&format!(" — evidence_ref: {}", truncate(reference, 160)));
                 }
                 out.push('\n');
             }
@@ -320,6 +337,8 @@ pub struct ChecklistUpdate {
     pub done: bool,
     #[serde(default)]
     pub evidence: Option<String>,
+    #[serde(default)]
+    pub evidence_ref: Option<String>,
 }
 
 /// 单条验收标准 / 步骤 / 证据的长度上限，免得清单本身把上下文吃掉。
@@ -368,6 +387,9 @@ impl ActiveGoal {
 
 #[derive(Default)]
 struct Slots {
+    /// Changes whenever a writer could invalidate an out-of-lock validation.
+    revision: u64,
+    resolver: Option<Arc<dyn GoalEvidenceResolver>>,
     active: Option<ActiveGoal>,
     /// 从会话里读回来、但还没被本轮确认的目标：只有本轮带着同一句目标来，
     /// 才接着用它的计数与清单；没带就不激活，免得已关掉的目标「复活」。
@@ -412,6 +434,7 @@ impl GoalContinuation {
             && let Some(active) = slots.active.as_mut()
         {
             active.state.tokens_used = active.state.tokens_used.saturating_add(tokens);
+            slots.revision = slots.revision.wrapping_add(1);
         }
     }
 
@@ -421,44 +444,51 @@ impl GoalContinuation {
     /// （上次运行留下的持久化状态）在这里被接回来。
     pub fn activate(&self, statement: impl Into<String>, budget: GoalBudget) {
         let statement = statement.into().trim().to_owned();
-        let Ok(mut slots) = self.slots.lock() else {
-            return;
-        };
         if statement.is_empty() {
-            *slots = Slots {
-                running: slots.running,
-                ..Slots::default()
-            };
+            self.clear();
             return;
         }
-        if let Some(active) = slots.active.as_mut()
-            && active.state.statement == statement
         {
-            active.budget = budget;
-            return;
+            let Ok(mut slots) = self.slots.lock() else {
+                return;
+            };
+            slots.revision = slots.revision.wrapping_add(1);
+            if let Some(active) = slots.active.as_mut()
+                && active.state.statement == statement
+            {
+                active.budget = budget;
+            } else {
+                let mut state = match slots.parked.take() {
+                    Some(parked) if parked.statement == statement => parked,
+                    _ => GoalState::new(statement),
+                };
+                Self::forget_verified(&mut state);
+                slots.finished = None;
+                let running = slots.running;
+                slots.active = Some(ActiveGoal::new(state, budget, running));
+            }
         }
-        let state = match slots.parked.take() {
-            Some(parked) if parked.statement == statement => parked,
-            _ => GoalState::new(statement),
-        };
-        slots.finished = None;
-        let running = slots.running;
-        slots.active = Some(ActiveGoal::new(state, budget, running));
+        self.sync_evidence_goal();
     }
 
     /// 用持久化的状态直接恢复为激活目标（宿主已确认这就是当前目标时用）。
     /// 已收尾的状态不恢复。
-    pub fn restore(&self, state: GoalState, budget: GoalBudget) {
-        let Ok(mut slots) = self.slots.lock() else {
-            return;
-        };
+    pub fn restore(&self, mut state: GoalState, budget: GoalBudget) {
         if state.status != GoalStatus::Active || state.statement.trim().is_empty() {
             return;
         }
-        slots.parked = None;
-        slots.finished = None;
-        let running = slots.running;
-        slots.active = Some(ActiveGoal::new(state, budget, running));
+        Self::forget_verified(&mut state);
+        {
+            let Ok(mut slots) = self.slots.lock() else {
+                return;
+            };
+            slots.revision = slots.revision.wrapping_add(1);
+            slots.parked = None;
+            slots.finished = None;
+            let running = slots.running;
+            slots.active = Some(ActiveGoal::new(state, budget, running));
+        }
+        self.sync_evidence_goal();
     }
 
     /// 停放一份持久化状态：等本轮用同一句目标 [`Self::activate`] 时再接回来。
@@ -475,6 +505,7 @@ impl GoalContinuation {
     pub fn resume(&self) {
         if let Ok(mut slots) = self.slots.lock() {
             slots.running = true;
+            slots.revision = slots.revision.wrapping_add(1);
             if let Some(active) = slots.active.as_mut()
                 && active.segment_start.is_none()
             {
@@ -487,6 +518,7 @@ impl GoalContinuation {
     pub fn pause(&self) {
         if let Ok(mut slots) = self.slots.lock() {
             slots.running = false;
+            slots.revision = slots.revision.wrapping_add(1);
             if let Some(active) = slots.active.as_mut() {
                 active.pause();
             }
@@ -496,10 +528,13 @@ impl GoalContinuation {
     pub fn clear(&self) {
         if let Ok(mut slots) = self.slots.lock() {
             *slots = Slots {
+                revision: slots.revision.wrapping_add(1),
+                resolver: slots.resolver.clone(),
                 running: slots.running,
                 ..Slots::default()
             };
         }
+        self.sync_evidence_goal();
     }
 
     pub fn is_active(&self) -> bool {
@@ -520,23 +555,30 @@ impl GoalContinuation {
 
     /// 可落盘的状态：激活中的目标，或刚收尾的那个（带最终状态）。
     pub fn snapshot(&self) -> Option<GoalState> {
-        let slots = self.slots.lock().ok()?;
-        slots
-            .active
-            .as_ref()
-            .map(ActiveGoal::snapshot)
-            .or_else(|| slots.finished.clone())
+        let (mut state, resolver) = {
+            let slots = self.slots.lock().ok()?;
+            (
+                slots
+                    .active
+                    .as_ref()
+                    .map(ActiveGoal::snapshot)
+                    .or_else(|| slots.finished.clone())?,
+                slots.resolver.clone(),
+            )
+        };
+        let _ = Self::validate_evidence(&mut state, resolver.as_ref());
+        Some(state)
     }
 
     /// 钉在 system 消息里的目标块；没有激活目标时为 `None`。
     pub fn pin(&self, workers_in_flight: usize) -> Option<String> {
-        let slots = self.slots.lock().ok()?;
-        let active = slots.active.as_ref()?;
-        Some(
-            active
-                .snapshot()
-                .render_pin(active.budget, workers_in_flight),
-        )
+        let (mut state, budget, resolver) = {
+            let slots = self.slots.lock().ok()?;
+            let active = slots.active.as_ref()?;
+            (active.snapshot(), active.budget, slots.resolver.clone())
+        };
+        let _ = Self::validate_evidence(&mut state, resolver.as_ref());
+        Some(state.render_pin(budget, workers_in_flight))
     }
 
     /// 已经注入过收尾引导——此后模型的第一次自然收口应当被接受。
@@ -568,14 +610,23 @@ impl GoalContinuation {
     ///
     /// 校验失败返回 `Err`，什么都不改，也不消耗续推预算。
     pub fn update_plan(&self, update: PlanUpdate) -> Result<String, String> {
-        let mut slots = self
-            .slots
-            .lock()
-            .map_err(|_| "goal state is unavailable".to_owned())?;
-        let active = slots.active.as_mut().ok_or_else(|| {
-            "there is no active goal; update_plan only applies while a /goal is active".to_owned()
-        })?;
-        let mut next = active.state.clone();
+        let (mut next, revision, resolver) = {
+            let slots = self
+                .slots
+                .lock()
+                .map_err(|_| "goal state is unavailable".to_owned())?;
+            let active = slots.active.as_ref().ok_or_else(|| {
+                "there is no active goal; update_plan only applies while a /goal is active"
+                    .to_owned()
+            })?;
+            (active.state.clone(), slots.revision, slots.resolver.clone())
+        };
+        let claimed_indices: Vec<_> = update
+            .checklist
+            .iter()
+            .filter(|item| item.done)
+            .map(|item| item.index)
+            .collect();
         if let Some(criteria) = update.criteria {
             if criteria.len() > MAX_PLAN_ITEMS {
                 return Err(format!(
@@ -605,8 +656,7 @@ impl GoalContinuation {
                     })
                     .unwrap_or(GoalCriterion {
                         text,
-                        done: false,
-                        evidence: None,
+                        ..GoalCriterion::default()
                     });
                 replaced.push(kept);
             }
@@ -628,11 +678,21 @@ impl GoalContinuation {
                 .evidence
                 .map(|evidence| evidence.trim().to_owned())
                 .filter(|evidence| !evidence.is_empty());
-            if item.done && evidence.is_none() {
+            let evidence_ref = item
+                .evidence_ref
+                .map(|reference| reference.trim().to_owned())
+                .filter(|reference| !reference.is_empty());
+            if item.done && evidence_ref.is_none() {
                 return Err(format!(
-                    "criterion {} cannot be marked done without evidence: cite the command output, test name, file path or commit that proves it",
+                    "criterion {} cannot be marked done without evidence_ref from a real runtime verification receipt; evidence text is explanation only",
                     item.index
                 ));
+            }
+            if evidence_ref
+                .as_ref()
+                .is_some_and(|reference| reference.len() > MAX_PLAN_TEXT_CHARS)
+            {
+                return Err("evidence_ref is too long".into());
             }
             if let Some(evidence) = &evidence
                 && evidence.chars().count() > MAX_PLAN_TEXT_CHARS
@@ -643,6 +703,8 @@ impl GoalContinuation {
             }
             criterion.done = item.done;
             criterion.evidence = if item.done { evidence } else { None };
+            criterion.evidence_ref = if item.done { evidence_ref } else { None };
+            criterion.evidence_verified = false;
         }
         if let Some(steps) = update.steps {
             if steps.len() > MAX_PLAN_ITEMS {
@@ -662,6 +724,28 @@ impl GoalContinuation {
             next.blocked_reason =
                 (!reason.is_empty()).then(|| truncate(reason, MAX_PLAN_TEXT_CHARS));
         }
+        // Revalidate all retained claims, but reject the transaction only if a
+        // completion claimed by this update is invalid. Historical stale refs
+        // stay open and cannot block recovery of another item one at a time.
+        let validation = Self::validate_evidence(&mut next, resolver.as_ref());
+        if claimed_indices.iter().any(|index| {
+            next.criteria
+                .get(index - 1)
+                .is_some_and(|criterion| criterion.done && !criterion.evidence_verified)
+        }) {
+            return Err(validation
+                .err()
+                .unwrap_or_else(|| "goal evidence is unavailable".into()));
+        }
+        let mut slots = self
+            .slots
+            .lock()
+            .map_err(|_| "goal state is unavailable".to_owned())?;
+        if slots.revision != revision {
+            return Err("goal changed while validating evidence; retry update_plan against the current goal".into());
+        }
+        slots.revision = slots.revision.wrapping_add(1);
+        let active = slots.active.as_mut().ok_or("goal is no longer active")?;
         if next != active.state {
             active.plan_changed = true;
         }
@@ -675,7 +759,7 @@ impl GoalContinuation {
             if active.state.criteria.is_empty() {
                 "No acceptance criteria are recorded yet."
             } else if open == 0 {
-                "All criteria are met with evidence; declare completion when the work is verified."
+                "All criteria have current runtime evidence; completion will revalidate the references and workspace snapshot."
             } else {
                 "Keep working on the open criteria."
             }
@@ -706,11 +790,42 @@ impl GoalContinuation {
         reply: &str,
         observation: &RoundObservation,
     ) -> Option<ContinuationDecision> {
-        let Ok(mut guard) = self.slots.lock() else {
-            return None;
+        let checked = if declares_complete(reply) {
+            let (mut state, revision, resolver, needs_validation) = {
+                let slots = self.slots.lock().ok()?;
+                let active = slots.active.as_ref()?;
+                (
+                    active.state.clone(),
+                    slots.revision,
+                    slots.resolver.clone(),
+                    !active.state.wrap_up_injected
+                        && budget_reason(active, active.elapsed()).is_none(),
+                )
+            };
+            if needs_validation {
+                let _ = Self::validate_evidence(&mut state, resolver.as_ref());
+            }
+            Some((state, revision))
+        } else {
+            None
         };
+        let mut guard = self.slots.lock().ok()?;
         let slots = &mut *guard;
+        let revision = slots.revision;
+        slots.revision = slots.revision.wrapping_add(1);
         let goal = slots.active.as_mut()?;
+        if let Some((checked, expected)) = checked {
+            // A concurrent writer must not have its state replaced by our earlier
+            // snapshot. Deny completion conservatively and let the next round retry.
+            for (index, criterion) in goal.state.criteria.iter_mut().enumerate() {
+                criterion.evidence_verified = revision == expected
+                    && checked.goal_id == goal.state.goal_id
+                    && checked
+                        .criteria
+                        .get(index)
+                        .is_some_and(|c| c.evidence_verified);
+            }
+        }
 
         // 收尾引导已注入过：这一轮无论说什么都收口，不再无限追问。状态保留为
         // 「预算耗尽」，以后可以接着做。
@@ -809,7 +924,7 @@ fn rejection_steering(state: &GoalState, observation: &RoundObservation) -> Stri
         }
     }
     steering.push_str(
-        "\nEither finish the open work, or, if a criterion is already met, verify it now and record the evidence with `update_plan` (checklist index, done=true, evidence). \
+        "\nEither finish the open work, or, if a criterion is already met, verify it now and record the evidence with `update_plan` (checklist index, done=true, evidence_ref from the runtime receipt; evidence is optional explanation). \
 If a criterion turned out to be wrong or impossible, say so explicitly and replace the criteria with `update_plan` — do not mark it done without proof. \
 Then declare completion again.\n",
     );
@@ -1085,6 +1200,9 @@ In this turn produce a handover snapshot with exactly these sections:\n\
 }
 
 #[cfg(test)]
+mod evidence_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1099,8 +1217,25 @@ mod tests {
         RoundObservation::default()
     }
 
+    struct TestEvidence;
+
+    impl GoalEvidenceResolver for TestEvidence {
+        fn bind_goal(&self, _: Option<&str>) {}
+        fn validate(&self, _: &str, references: &[&str]) -> Result<(), String> {
+            if references
+                .iter()
+                .all(|reference| *reference == "test-record")
+            {
+                Ok(())
+            } else {
+                Err("unknown test reference".into())
+            }
+        }
+    }
+
     fn goal_with(budget: GoalBudget) -> GoalContinuation {
         let continuation = GoalContinuation::new();
+        continuation.set_evidence_resolver(Arc::new(TestEvidence));
         continuation.activate("ship the release", budget);
         continuation
     }
@@ -1158,11 +1293,13 @@ mod tests {
                 text: "all parser tests pass".to_owned(),
                 done: false,
                 evidence: None,
+                ..GoalCriterion::default()
             },
             GoalCriterion {
                 text: "docs updated".to_owned(),
                 done: true,
                 evidence: Some("docs/PARSER.md".to_owned()),
+                ..GoalCriterion::default()
             },
         ];
         state.steps = vec![
@@ -1178,7 +1315,10 @@ mod tests {
         let prompt = resume_after_restart_prompt(&state);
         assert!(prompt.starts_with("<goal>\nmigrate the parser\n</goal>\n[goal-resume]"));
         assert!(prompt.contains("1. all parser tests pass"));
-        assert!(!prompt.contains("docs updated"));
+        assert!(
+            prompt.contains("docs updated"),
+            "legacy text is still open after restart"
+        );
         assert!(prompt.contains("port the grammar"));
         assert!(!prompt.contains("port the lexer"));
         assert!(prompt.ends_with("Continue until this goal is genuinely complete."));
@@ -1538,8 +1678,8 @@ mod tests {
         update(
             &continuation,
             serde_json::json!({"checklist": [
-                {"index": 1, "done": true, "evidence": "cargo test: 612 passed"},
-                {"index": 2, "done": true, "evidence": "CHANGELOG.md [Unreleased]"}
+                {"index": 1, "done": true, "evidence": "cargo test: 612 passed", "evidence_ref": "test-record"},
+                {"index": 2, "done": true, "evidence": "CHANGELOG.md [Unreleased]", "evidence_ref": "test-record"}
             ]}),
         )
         .unwrap();
@@ -1567,7 +1707,7 @@ mod tests {
         update(
             &continuation,
             serde_json::json!({"checklist": [
-                {"index": 1, "done": true, "evidence": "cargo test: 612 passed"}
+                {"index": 1, "done": true, "evidence": "cargo test: 612 passed", "evidence_ref": "test-record"}
             ]}),
         )
         .unwrap();
@@ -1613,7 +1753,7 @@ mod tests {
         update(
             &continuation,
             serde_json::json!({"checklist": [
-                {"index": 1, "done": true, "evidence": "cargo test: 612 passed"}
+                {"index": 1, "done": true, "evidence": "cargo test: 612 passed", "evidence_ref": "test-record"}
             ]}),
         )
         .unwrap();
@@ -1698,7 +1838,7 @@ mod tests {
             &continuation,
             serde_json::json!({
                 "criteria": ["a", "b"],
-                "checklist": [{"index": 1, "done": true, "evidence": "proof"}],
+                "checklist": [{"index": 1, "done": true, "evidence": "proof", "evidence_ref": "test-record"}],
                 "steps": [{"title": "write code", "status": "in_progress"}],
                 "blocked_reason": "waiting on CI"
             }),
@@ -1709,16 +1849,26 @@ mod tests {
         let snapshot = continuation.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         let decoded: GoalState = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded, snapshot);
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
+        assert!(
+            decoded
+                .criteria
+                .iter()
+                .all(|criterion| !criterion.evidence_verified)
+        );
 
         let resumed = GoalContinuation::new();
         resumed.restore(decoded, GoalBudget::default());
         let state = resumed.snapshot().unwrap();
         assert_eq!(state.continuations, 2);
-        assert_eq!(state.open_criteria().len(), 1);
+        assert_eq!(
+            state.open_criteria().len(),
+            2,
+            "restored references require a live resolver"
+        );
         assert_eq!(state.steps[0].status, StepStatus::InProgress);
         let pin = resumed.pin(1).unwrap();
-        assert!(pin.contains("1. [x] a — evidence: proof"));
+        assert!(pin.contains("1. [ ] a"));
         assert!(pin.contains("2. [ ] b"));
         assert!(pin.contains("[in_progress] write code"));
         assert!(pin.contains("BLOCKED: waiting on CI"));
@@ -1777,7 +1927,7 @@ mod tests {
         let mut older = GoalState::new("g");
         older.continuations = 9;
         older.elapsed_ms = 50_000;
-        let mut newer = GoalState::new("g");
+        let mut newer = older.clone();
         newer.continuations = 3;
         newer.elapsed_ms = 60_000;
         older.tokens_used = 4_000;
@@ -1789,6 +1939,30 @@ mod tests {
         );
         let different = GoalState::new("h").merged_over(Some(&older));
         assert_eq!(different.continuations, 0);
+    }
+
+    #[test]
+    fn repeated_statements_with_new_identities_do_not_inherit_old_budget() {
+        let mut old = GoalState::new("repeat this task");
+        old.elapsed_ms = 99_000;
+        old.continuations = 20;
+        old.tokens_used = 40_000;
+        let fresh = GoalState::new(old.statement.clone()).merged_over(Some(&old));
+        assert_ne!(fresh.goal_id, old.goal_id);
+        assert_eq!(
+            (fresh.elapsed_ms, fresh.continuations, fresh.tokens_used),
+            (0, 0, 0)
+        );
+        let mut legacy = old.clone();
+        legacy.goal_id.clear();
+        let fresh = GoalState::new(old.statement.clone()).merged_over(Some(&legacy));
+        assert_eq!(
+            fresh.tokens_used, 0,
+            "legacy text cannot identify a new goal"
+        );
+        let mut same_legacy = legacy.clone();
+        same_legacy.tokens_used = 0;
+        assert_eq!(same_legacy.merged_over(Some(&legacy)).tokens_used, 40_000);
     }
 
     #[test]

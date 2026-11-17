@@ -36,51 +36,138 @@ pub(super) fn goal_command_to_start(prompt: &str) -> Option<&str> {
     (command == "/goal" && !goal.is_empty() && !goal.eq_ignore_ascii_case("off")).then_some(goal)
 }
 
+/// Keep editor coordinates, selection and expansion until submission is confirmed.
+pub(super) struct SubmissionDraft {
+    editor: PromptEditor,
+    expanded: bool,
+}
+
+impl SubmissionDraft {
+    pub(super) fn capture(app: &App) -> Self {
+        Self {
+            editor: app.input.clone(),
+            expanded: app.composer_expanded,
+        }
+    }
+
+    pub(super) fn take(app: &mut App) -> Self {
+        Self {
+            editor: std::mem::take(&mut app.input),
+            expanded: std::mem::replace(&mut app.composer_expanded, false),
+        }
+    }
+
+    pub(super) fn restore(self, app: &mut App) {
+        app.input = self.editor;
+        app.composer_expanded = self.expanded;
+    }
+}
+
 pub(super) async fn submit_turn(
     app: &mut App,
     session: &mut Session,
     store: &SessionStore,
     runtime: &TuiRuntime,
     prompt: String,
+    submission_record: Option<usize>,
 ) -> Result<()> {
     let submitted_at = Instant::now();
-    let attachments: Vec<MessageAttachment> = std::mem::take(&mut app.attachments)
-        .into_iter()
-        .map(|value| value.message)
+    let attachments: Vec<MessageAttachment> = app
+        .attachments
+        .iter()
+        .map(|value| value.message.clone())
         .collect();
+    let visible = prompt.clone();
     let prompt = app.enrich_prompt(&prompt, &runtime.skills);
-    persist_missing_core_session(session, store)?;
-    // 发送本身就是「我还在用这条会话」：它若已经被归档，先解除再提交，
-    // 否则服务端会以 Runtime Session is archived 拒绝入队。
-    resume_archived_for_send(app, session, runtime).await?;
-    let remote_session = crate::daemon::ensure_runtime_session(
-        &runtime.home,
-        session.id,
-        &session.workspace,
-        session.profile.clone(),
-        session.model.clone(),
-    )
-    .await?;
-    super::permission_commands::sync_session(app, session, runtime).await?;
-    // The first submission may have just started a stopped Runtime. Read its
-    // durable head now, rather than bookmarking zero before it existed.
-    let event_head = crate::daemon::runtime_event_head(&runtime.home)
-        .await
-        .unwrap_or(app.runtime_event_cursor);
-    session.runtime_managed = true;
-    initialize_submission_cursor(app, session, event_head);
-    // Persist ownership before scheduling the Turn. A very fast Harness must
-    // never be overwritten by this client's stale history.
-    store.save(session)?;
-    let turn = crate::daemon::submit_runtime_turn(
-        &runtime.home,
-        remote_session.id,
-        prompt,
-        attachments,
-        crate::Surface::Tui,
-    )
-    .await?;
-    begin_submitted_turn(app, submitted_at, event_head, turn.id, turn.active_task_id);
+    let request_id =
+        runtime_queue::submission_request_id(app, &prompt, &attachments, session.id, false)?;
+    let result = async {
+        persist_missing_core_session(session, store)?;
+        // 发送本身就是「我还在用这条会话」：它若已经被归档，先解除再提交，
+        // 否则服务端会以 Runtime Session is archived 拒绝入队。
+        resume_archived_for_send(app, session, runtime).await?;
+        let remote_session = crate::daemon::ensure_runtime_session(
+            &runtime.home,
+            session.id,
+            &session.workspace,
+            session.profile.clone(),
+            session.model.clone(),
+        )
+        .await?;
+        super::permission_commands::sync_session(app, session, runtime).await?;
+        // The first submission may have just started a stopped Runtime. Read its
+        // durable head now, rather than bookmarking zero before it existed.
+        let event_head = crate::daemon::runtime_event_head(&runtime.home)
+            .await
+            .unwrap_or(app.runtime_event_cursor);
+        session.runtime_managed = true;
+        initialize_submission_cursor(app, session, event_head);
+        // Persist ownership before scheduling the Turn. A very fast Harness must
+        // never be overwritten by this client's stale history.
+        store.save(session)?;
+        let turn = crate::daemon::submit_runtime_turn_with_id(
+            &runtime.home,
+            remote_session.id,
+            prompt,
+            attachments.clone(),
+            crate::Surface::Tui,
+            request_id,
+        )
+        .await?;
+        Ok::<_, anyhow::Error>((event_head, turn))
+    }
+    .await;
+    let (event_head, turn) = match result {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            app.note_runtime_submission_unconfirmed(&visible, request_id, false, submission_record);
+            if let Some(record) = submission_record {
+                app.transcript_attachments[record] = attachments;
+            }
+            app.dismiss_awaiting_reply();
+            app.notice = Some(
+                delivery_echo::DeliveryStatus::Unconfirmed
+                    .feedback(app.language)
+                    .to_owned(),
+            );
+            return Err(error);
+        }
+    };
+    app.runtime_queue_submission = None;
+    let record = app.echo_runtime_submission(&visible, &turn, false, submission_record);
+    if let Some(placeholder) = submission_record.filter(|placeholder| Some(*placeholder) != record)
+    {
+        app.drop_transcript_row(placeholder);
+    }
+    app.attachments.clear();
+    app.selected_attachment = 0;
+    app.publish_gallery();
+    if let Some(record) = record {
+        app.transcript_attachments
+            .resize_with(app.transcript.len(), Vec::new);
+        app.transcript_attachments[record] = attachments;
+    }
+    let status = app
+        .pending_runtime_echoes
+        .iter()
+        .find(|echo| echo.turn_id == turn.id)
+        .expect("submission receipt registered")
+        .status;
+    if matches!(
+        turn.status,
+        willdeep_runtime_protocol::TurnStatus::Queued
+            | willdeep_runtime_protocol::TurnStatus::Running
+            | willdeep_runtime_protocol::TurnStatus::WaitingApproval
+            | willdeep_runtime_protocol::TurnStatus::WaitingAnswer
+    ) {
+        begin_submitted_turn(app, submitted_at, event_head, turn.id, turn.active_task_id);
+    } else {
+        app.dismiss_awaiting_reply();
+        if !app.running {
+            app.last_turn_outcome = status.outcome();
+        }
+    }
+    app.notice = Some(status.feedback(app.language).to_owned());
     Ok(())
 }
 
@@ -328,9 +415,6 @@ fn belongs_to_submission(app: &mut App, event: &crate::daemon::RemoteRuntimeEven
     if event.sequence <= app.runtime_first_reply_after {
         return false;
     }
-    let Some(turn_id) = app.runtime_submitted_turn else {
-        return true;
-    };
     let task_id = event
         .message
         .split_whitespace()
@@ -339,6 +423,9 @@ fn belongs_to_submission(app: &mut App, event: &crate::daemon::RemoteRuntimeEven
     if task_id.is_some() && task_id == app.runtime_submitted_task {
         return true;
     }
+    let Some(turn_id) = app.runtime_submitted_turn else {
+        return app.runtime_submitted_task.is_none();
+    };
     let event_turn = if event.kind == "task.output" {
         event
             .message
@@ -373,6 +460,17 @@ fn belongs_to_submission(app: &mut App, event: &crate::daemon::RemoteRuntimeEven
     false
 }
 
+fn is_queued_input_event(event: &crate::daemon::RemoteRuntimeEvent) -> bool {
+    event.kind == "task.output"
+        && event
+            .message
+            .split_once(' ')
+            .and_then(|(_, payload)| serde_json::from_str::<serde_json::Value>(payload).ok())
+            .is_some_and(|value| {
+                value.get("type").and_then(|kind| kind.as_str()) == Some("queued_user_message")
+            })
+}
+
 fn apply_runtime_event(
     app: &mut App,
     event: &crate::daemon::RemoteRuntimeEvent,
@@ -381,15 +479,22 @@ fn apply_runtime_event(
     // clock, or let subsequent replay lower the submission's event boundary.
     if app.running
         && app.runtime_turn
-        && app.runtime_first_reply_eligible
+        && (app.runtime_first_reply_eligible || app.runtime_submitted_task.is_some())
         && !belongs_to_submission(app, event)
     {
+        // Filtering another Turn's progress must not discard its user input.
+        // Input ownership is reconciled by Turn ID independently of the active
+        // turn's first-reply clock and terminal-state filter.
+        if is_queued_input_event(event) {
+            return apply_runtime_output(app, &event.message);
+        }
         return None;
     }
     match event.kind.as_str() {
         "task.output" => return apply_runtime_output(app, &event.message),
         "task.queued" | "task.started" => {
             app.ensure_runtime_turn();
+            app.note_turn_phase(turn_status::TurnPhase::Preparing);
             app.record_progress(
                 app.language
                     .text(
@@ -437,11 +542,17 @@ fn apply_runtime_event(
         // 撞轮次上限、预算耗尽这类「没收敛」的收尾走 partial，不是 completed。
         // 漏了它界面就一直挂着「工作中」，直到快照对账强行复位。
         "task.completed" | "turn.completed" | "task.partial" | "turn.partial" => {
+            app.note_turn_outcome(if event.kind.ends_with("partial") {
+                turn_status::TurnOutcome::Partial
+            } else {
+                turn_status::TurnOutcome::Completed
+            });
             app.finish_turn();
             // 正常收尾（含没收敛的 partial）才值得预测下一句；失败与中断不预测。
             app.runtime_turn_settled = true;
         }
-        "task.failed" => {
+        "task.failed" | "turn.failed" => {
+            app.note_turn_outcome(turn_status::TurnOutcome::Failed);
             // 事件里带着 `exit_code=…` 这类活下来的线索，此前被整条丢掉，
             // 只打印一句固定文案。完整命令与错误在侧栏详情里（`task.diagnostics`）。
             app.append_transcript(format!(
@@ -467,7 +578,8 @@ fn apply_runtime_event(
             );
             app.finish_turn();
         }
-        "task.interrupted" => {
+        "task.interrupted" | "turn.interrupted" => {
+            app.note_turn_outcome(turn_status::TurnOutcome::Interrupted);
             app.append_transcript(format!(
                 "Error: {}",
                 app.language.text(
@@ -478,7 +590,8 @@ fn apply_runtime_event(
             ));
             app.finish_turn();
         }
-        "task.cancelled" => {
+        "task.cancelled" | "turn.cancelled" => {
+            app.note_turn_outcome(turn_status::TurnOutcome::Cancelled);
             app.append_transcript(format!(
                 "System: {}",
                 app.language.text(
@@ -582,6 +695,25 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
         return None;
     };
     let output_type = value.get("type").and_then(|value| value.as_str());
+    if output_type == Some("queued_user_message") {
+        if let (Some(id), Some(text)) = (
+            value.get("turn_id").and_then(|v| v.as_str()),
+            value.get("text").and_then(|v| v.as_str()),
+        ) && let Ok(turn_id) = id.parse::<uuid::Uuid>()
+        {
+            let first_seen = app.seen_runtime_inputs.insert(turn_id.to_string());
+            if first_seen
+                || app
+                    .pending_runtime_echoes
+                    .iter()
+                    .any(|echo| echo.turn_id == turn_id)
+            {
+                app.note_runtime_input_started(turn_id, text);
+            }
+        }
+        // A repeated start input must not restart an already finished UI turn.
+        return None;
+    }
     // 必须先于 ensure_runtime_turn：回放会恢复界面运行态，但不能从回放时刻
     // 捏造首答。tool_requested 只在完整模型响应后发出，也为不报 usage 的纯工具
     // 响应兜底。与 /local 一致，空字符串不算正文，非空空白增量仍属于正文流。
@@ -634,21 +766,6 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 );
             }
         }
-        Some("queued_user_message") => {
-            if let (Some(id), Some(text)) = (
-                value.get("turn_id").and_then(|v| v.as_str()),
-                value.get("text").and_then(|v| v.as_str()),
-            ) && app.seen_runtime_inputs.insert(id.to_owned())
-                // 忙时提交已经回显过这句。事件要等下一轮任务启动才来，中间记录
-                // 还在长，所以认领看的是挂起的回显，不只是最后一行。
-                && !app.claim_runtime_echo(text)
-            {
-                let row = format!("You: {}", terminal_safe_text(text));
-                if app.transcript.last() != Some(&row) {
-                    app.append_transcript(row);
-                }
-            }
-        }
         Some("assistant_text_delta") => {
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
                 app.stream_transient(StreamKind::Reply, text);
@@ -659,6 +776,9 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
             if let Some(text) = value.get("text").and_then(|value| value.as_str()) {
                 app.stream_transient(StreamKind::Reasoning, text);
             }
+        }
+        Some("model_request_started") => {
+            app.note_turn_phase(turn_status::TurnPhase::WaitingModel);
         }
         Some("turn_started") => {
             app.waiting_background = false;
@@ -860,6 +980,12 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
             }
         }
         Some("provider_retry_started" | "subagent_retry_started") => {
+            if output_type == Some("provider_retry_started") {
+                app.note_turn_phase(turn_status::TurnPhase::Retrying {
+                    attempt: value.get("attempt").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                    delay: None,
+                });
+            }
             app.record_progress(format!(
                 "Runtime · {} · {}",
                 short_event_agent(&value),
@@ -876,6 +1002,12 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
                 .get("delay_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or_default();
+            if output_type == Some("provider_retry_wait") {
+                app.note_turn_phase(turn_status::TurnPhase::Retrying {
+                    attempt: attempt as u32,
+                    delay: Some(Duration::from_millis(delay)),
+                });
+            }
             app.record_progress(format!(
                 "Runtime · {} {id} · {} {attempt} · {}s",
                 app.language
@@ -926,6 +1058,11 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
             let goal_complete =
                 value.get("stop_reason").and_then(|value| value.as_str()) == Some("goal_complete");
             let partial = value.get("type").and_then(|value| value.as_str()) == Some("partial");
+            app.note_turn_outcome(if partial {
+                turn_status::TurnOutcome::Partial
+            } else {
+                turn_status::TurnOutcome::Completed
+            });
             if partial {
                 let stop_reason = value
                     .get("stop_reason")
@@ -966,6 +1103,14 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
     }
     None
 }
+
+#[cfg(test)]
+#[path = "runtime_status_tests.rs"]
+mod progress_tests;
+
+#[cfg(test)]
+#[path = "runtime_submission_tests.rs"]
+mod submission_tests;
 
 #[cfg(test)]
 mod background_queue_tests {

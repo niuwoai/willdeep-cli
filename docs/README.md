@@ -43,6 +43,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [Runtime 工具配置与边界](P1_RUNTIME_TOOLS.md) | 语义重命名、AST、浏览器、独立搜索、项目模型策略及 Goal 执行证据 |
 | [some.im 集成](SOMEIM_INTEGRATION.md) | 登录、自动识别、请求头、视觉回退、web_search |
 | [Magpie 本地网关](MAGPIE.md) | 标准地址变量、共享 Profile、Runtime 环境与隔离联调 |
 | [Magpie 社区 Agent](MAGPIE_AGENT_PLAN.md) | 独立 JSON 连接、临时 `magpie-cli` Provider、双端插件与验收边界 |
@@ -103,7 +104,15 @@
 | [长程自主执行引用与落地映射](LONG_HORIZON_AUTONOMY.md) | 续推契约 / 预算与软停 / 计划工具化 / 重启可续（canonical 在 Xedit 仓库） |
 | [Xedit 工具能力对照](XEDIT_TOOL_PARITY.md) | 工具覆盖度与 Computer Use 路线 |
 | [Xedit 联动现状与路径](XEDIT_INTEROP_STATUS.md) | 文件层/契约层/运行时层三段式现状、漂移清单、建议路径（2026-08-21） |
-| [竞争力分析](COMPETITIVE_LANDSCAPE.md) | vs pi / Claude Code / Codex / dsh，护城河与短板排序（2026-08-21） |
+| [Pi / OMP 资料记录](research/2026-11-17-pi-omp-materials.md) | 用户文章与两图转录、固定上游快照、官方核查及材料修正（2026-11-17） |
+| [willdeep 对照 Pi / OMP 的差距分析](research/2026-11-17-willdeep-cli-gap-analysis.md) | 当前源码能力边界、差距、补齐优先级及验收建议（0.149.0-rc10 工作区，2026-11-17） |
+| [P0 编码工具协议](decisions/2026-11-17-p0-coding-tools.md) | 版本化编辑、多文件预览/应用、Rust/TypeScript LSP、固定回归与验收边界（0.150.0-rc1） |
+| [P0 编码工具验收](verification/0.150.0-rc2/p0-coding-tools.md) | 实际命令与分层结果、场景覆盖、离线夹具和真实语言服务的区别、未验证项（0.150.0-rc2；附 JSON） |
+| [审批结果 Hook 决策](decisions/2026-11-17-approval-resolved-hooks.md) | 裁决来源、会话归属、合法有界 JSON、观察失败与取消边界（0.150.0-rc3） |
+| [Clippy 与审批 Hook 验收](verification/0.150.0-rc3/clippy-approval-hooks.md) | 三处 lint、提问输入与折行、审批接线的实际回归和未验证边界（0.150.0-rc3；附 JSON） |
+| [P1 Runtime 工具实施契约](decisions/2026-11-17-p1-runtime-tools.md) | 语义重命名、AST、隔离浏览器、独立搜索、项目模型策略与 Goal 执行证据（0.151.0-rc1） |
+| [P1 Runtime 工具验收](verification/0.151.0-rc1/p1-runtime-tools.md) | 实际命令、失败与修复、真实工具/离线回归及未验证项（0.151.0-rc1；附 JSON） |
+| [竞争力分析（历史）](COMPETITIVE_LANDSCAPE.md) | willdeep 实况为 2026-09-20，pi / Claude Code / Codex / dsh 外部材料沿用 2026-08-21 |
 | [Herdr 研究与集成方案](HERDR_RESEARCH_AND_INTEGRATION.md) | 终端复用器集成的取舍与边界 |
 | [需求单：rc29 收尾](decisions/2026-09-21-input-suggestion-followups.md) | 发布 rc29、Web 端下一句预测、README 演示 GIF、预测质量实弹、英文 README（待实现，给新会话开工用） |
 

@@ -549,6 +549,10 @@ fn tool_detail_answers_what_ran_without_leaking_paths_or_secrets() {
 #[test]
 fn agent_event_json_has_stable_runtime_schema() {
     assert_eq!(
+        agent_event_json(AgentEvent::ModelRequestStarted),
+        serde_json::json!({"type": "model_request_started"})
+    );
+    assert_eq!(
         agent_event_json(AgentEvent::TurnStarted { turn: 3 }),
         serde_json::json!({"type": "turn_started", "turn": 3})
     );

@@ -8,8 +8,10 @@ use tokio::{io::AsyncReadExt, process::Command};
 use crate::sandbox::SandboxSpec;
 
 mod line_stream;
+mod stdin_capture;
+pub(crate) use stdin_capture::run_capture_stdin;
 #[cfg(windows)]
-mod windows_job;
+pub(crate) mod windows_job;
 
 pub(crate) use line_stream::{LineStreamEnd, run_line_stream};
 

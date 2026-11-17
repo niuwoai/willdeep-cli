@@ -1,9 +1,89 @@
 //! Credential-free, bounded loopback discovery. No prompts or cloud keys are sent.
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use willdeep_core::provider::{ApiDialect, ModelPolicyContext, ProviderConfig, ProviderKind};
+
+/// Resolve durable ownership before the startup probe, including resumed children
+/// whose execution worktree differs from their original project.
+pub(crate) async fn discover_for_cli(cli: &crate::Cli) -> Result<usize> {
+    let store = willdeep_core::SessionStore::new(crate::willdeep_home()?);
+    let context = policy_context_for_cli(cli, &store)?;
+    discover(cli.config.as_deref(), &context).await
+}
+
+fn policy_context_for_cli(
+    cli: &crate::Cli,
+    store: &willdeep_core::SessionStore,
+) -> Result<ModelPolicyContext> {
+    if cli.web {
+        let mut roots = Vec::new();
+        if let Some(project) = cli.project.as_deref() {
+            roots.extend(crate::projects::resolve_folders(project)?);
+        }
+        roots.extend(cli.workspace.iter().cloned());
+        roots.extend(cli.web_workspaces.iter().cloned());
+        if roots.is_empty() {
+            roots.push(std::env::current_dir()?);
+        }
+        let roots = roots
+            .into_iter()
+            .map(std::fs::canonicalize)
+            .collect::<std::io::Result<Vec<_>>>()?;
+        return ModelPolicyContext::unambiguous_workspace(None, &roots)?
+            .context("local Provider discovery requires project ownership");
+    }
+    if let Some(session) = crate::load_session(store, cli.resume.as_deref())? {
+        return Ok(store.model_policy_context(&session)?);
+    }
+    let workspace = crate::harness::resolve_workspace(cli, None)?;
+    let interactive = cli.prompt.is_empty()
+        && !cli.no_tui
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal();
+    if crate::session_startup::eligible(cli, interactive, false)
+        && cli.session_startup != Some(crate::session_startup::StartupMode::New)
+    {
+        return policy_context_before_startup_selection(store, &workspace);
+    }
+    Ok(ModelPolicyContext::for_workspace(&workspace)?)
+}
+
+fn policy_context_before_startup_selection(
+    store: &willdeep_core::SessionStore,
+    workspace: &Path,
+) -> Result<ModelPolicyContext> {
+    // The chooser has not run yet. Discovery must be safe for either a fresh
+    // session or the latest eligible saved session, including a legacy child.
+    let latest = store
+        .digests()
+        .into_iter()
+        .filter(|digest| !digest.bridged && digest.has_user_input)
+        .filter(|digest| digest.workspace.is_absolute())
+        .filter(|digest| {
+            digest
+                .workspace
+                .canonicalize()
+                .is_ok_and(|root| root == workspace)
+        })
+        .max_by_key(|digest| (digest.updated_at, digest.id));
+    let mut roots = vec![workspace.to_path_buf()];
+    if let Some(digest) = latest {
+        let session = store.load(digest.id)?;
+        let owner = store.model_policy_context(&session)?;
+        let root = owner
+            .workspace()
+            .context("local Provider discovery requires project ownership")?;
+        if root != workspace {
+            roots.push(root.to_path_buf());
+        }
+    }
+    ModelPolicyContext::unambiguous_workspace(None, &roots)?
+        .context("local Provider discovery requires project ownership")
+}
 
 const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
@@ -15,8 +95,37 @@ struct LocalProvider {
     models: Vec<String>,
 }
 
-pub(crate) async fn discover(config: Option<&Path>) -> Result<usize> {
+pub(crate) async fn discover(
+    config: Option<&Path>,
+    policy_context: &ModelPolicyContext,
+) -> Result<usize> {
     if std::env::var("WILLDEEP_LOCAL_DISCOVERY").is_ok_and(|value| value == "0") {
+        return Ok(0);
+    }
+    discover_with_bases(
+        config,
+        policy_context,
+        loopback_base(
+            &std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".into()),
+        ),
+        magpie_base(),
+    )
+    .await
+}
+
+async fn discover_with_bases(
+    config: Option<&Path>,
+    policy_context: &ModelPolicyContext,
+    ollama: Option<String>,
+    magpie: Option<String>,
+) -> Result<usize> {
+    let Some(base) = ollama.as_deref().or(magpie.as_deref()) else {
+        return Ok(0);
+    };
+    let unknown_model = probe_config(base, policy_context);
+    let endpoint = reqwest::Url::parse(&unknown_model.base_url)?;
+    // Skip before config loading too: a first-run load may seed bundled files.
+    if willdeep_core::provider::policy::check_route(&unknown_model, "", &endpoint).is_err() {
         return Ok(0);
     }
     let path = config
@@ -30,13 +139,9 @@ pub(crate) async fn discover(config: Option<&Path>) -> Result<usize> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(PROBE_TIMEOUT)
         .build()?;
-    let ollama = loopback_base(
-        &std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".into()),
-    );
-    let magpie = magpie_base();
     let (ollama, magpie) = tokio::join!(
-        probe(&client, "ollama", ollama),
-        probe(&client, "magpie", magpie),
+        probe(&client, "ollama", ollama, policy_context),
+        probe(&client, "magpie", magpie, policy_context),
     );
     let providers = [magpie, ollama].into_iter().flatten().collect::<Vec<_>>();
     if providers.is_empty() {
@@ -102,8 +207,14 @@ fn magpie_base() -> Option<String> {
     loopback_base(&format!("http://127.0.0.1:{port}"))
 }
 
-async fn json(client: &reqwest::Client, url: String) -> Option<Value> {
-    let mut response = client.get(url).send().await.ok()?.error_for_status().ok()?;
+async fn json(client: &reqwest::Client, config: &ProviderConfig, url: String) -> Option<Value> {
+    let mut response =
+        willdeep_core::provider::policy::send_bound_request(config, client.get(url), &config.model)
+            .await
+            .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
@@ -120,22 +231,39 @@ async fn json(client: &reqwest::Client, url: String) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
+fn probe_config(base: &str, policy_context: &ModelPolicyContext) -> ProviderConfig {
+    // Discovery has no selected model. Empty model attribution cannot match a
+    // valid policy rule, so policy-bound projects skip every probe before HTTP.
+    // The normal transport remains available to projects without a policy.
+    let mut config = ProviderConfig::new(
+        ProviderKind::OpenAiCompatible,
+        ApiDialect::ChatCompletions,
+        format!("{base}/v1"),
+        "",
+        "",
+    );
+    config.policy_context = Some(policy_context.clone());
+    config
+}
+
 async fn probe(
     client: &reqwest::Client,
     name: &'static str,
     base: Option<String>,
+    policy_context: &ModelPolicyContext,
 ) -> Option<LocalProvider> {
     let base = base?;
+    let config = probe_config(&base, policy_context);
     let (path, field, id) = if name == "ollama" {
         ("/api/tags", "models", "name")
     } else {
-        let info = json(client, format!("{base}/api/hello")).await?;
+        let info = json(client, &config, format!("{base}/api/hello")).await?;
         if info.get("name")?.as_str()? != "magpie" {
             return None;
         }
         ("/v1/models", "data", "id")
     };
-    let value = json(client, format!("{base}{path}")).await?;
+    let value = json(client, &config, format!("{base}{path}")).await?;
     let items = value.get(field)?.as_array()?;
     let mut models = items
         .iter()

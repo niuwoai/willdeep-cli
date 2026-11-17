@@ -97,9 +97,10 @@ pub use subagent::{
 };
 pub use subagent_worktree::SubagentWorktreePolicy;
 pub use tools::{
-    ApprovalDecision, ApprovalMode, Approver, CommandVerification, ConfigurationHost,
-    SharedApprovalMode, ToolRegistry, UserQuestion, VerificationStatus, VerificationWorkspaceView,
-    WebToolConfig, run_background_supervisor,
+    ApprovalDecision, ApprovalMode, Approver, BrowserConfig, CommandVerification,
+    ConfigurationHost, GoalEvidenceRecord, GoalEvidenceSource, GoalEvidenceStore, SearchBackend,
+    SearchSettings, SharedApprovalMode, ToolRegistry, UserQuestion, VerificationStatus,
+    VerificationWorkspaceView, WebToolConfig, run_background_supervisor,
 };
 pub use types::{Message, MessageAttachment, Role, ToolCall};
 pub use worker_tier::{

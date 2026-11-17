@@ -21,15 +21,25 @@ use crate::safety::CommandSafety;
 use crate::sandbox::{SandboxPolicy, SandboxSpec};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::{McpRegistry, SkillCatalog};
+mod ast_grep;
+mod browser;
 mod child_sessions;
 mod delegation;
+mod file_changes;
+mod goal_evidence;
 mod host_tools;
+mod integration_status;
+mod lsp;
 mod peer_sessions;
 mod plan_jobs;
+mod search;
+pub use browser::BrowserConfig;
+pub use goal_evidence::{GoalEvidenceRecord, GoalEvidenceSource, GoalEvidenceStore};
 pub use host_tools::{
     AgentDefinitionHost, ConfigurationHost, GroupConversationHost, WorkflowHost, WorkflowNotice,
 };
 pub use peer_sessions::{HostContextCommit, SessionCollaboration};
+pub use search::{SearchBackend, SearchSettings};
 
 const DEFAULT_MAX_RESULTS: usize = 60;
 const MAX_RESULTS: usize = 200;
@@ -82,7 +92,7 @@ pub struct VerificationWorkspaceView {
 }
 type VerificationDirtyPaths = Arc<dyn Fn() -> VerificationWorkspaceView + Send + Sync>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WebToolConfig {
     pub some_im_base_url: String,
     pub api_key: String,
@@ -151,6 +161,20 @@ pub enum ToolError {
     EditTextNotUnique { path: String, count: usize },
     #[error("old_string and new_string must differ")]
     IdenticalEdit,
+    #[error(
+        "file changed since the expected version in {path}: expected {expected}, found {actual}; read the file again before editing"
+    )]
+    EditConflict {
+        path: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("read the file before editing or supply expected_version: {0}")]
+    ReadRequired(String),
+    #[error("file change operation failed: {0}")]
+    FileChange(String),
+    #[error("language server operation failed: {0}")]
+    LanguageServer(String),
     #[error("invalid regular expression: {0}")]
     InvalidRegex(String),
     #[error("invalid filename glob: {0}")]
@@ -182,6 +206,10 @@ impl ToolError {
             Self::EditTextNotFound(_) => "edit_text_not_found",
             Self::EditTextNotUnique { .. } => "edit_text_not_unique",
             Self::IdenticalEdit => "identical_edit",
+            Self::EditConflict { .. } => "edit_conflict",
+            Self::ReadRequired(_) => "read_required",
+            Self::FileChange(_) => "file_change",
+            Self::LanguageServer(_) => "language_server",
             Self::InvalidRegex(_) => "invalid_regex",
             Self::InvalidGlob(_) => "invalid_glob",
             Self::Io(_) => "io",
@@ -201,6 +229,11 @@ pub struct ToolRegistry {
     session_collaboration: Option<Arc<dyn SessionCollaboration>>,
     completion_contract: Option<CompletionContract>,
     execution_deadline: Mutex<Option<tokio::time::Instant>>,
+    file_changes: file_changes::FileChangeState,
+    lsp: lsp::LspManager,
+    browser: browser::BrowserManager,
+    search: SearchSettings,
+    goal_evidence: Arc<GoalEvidenceStore>,
     workspace: PathBuf,
     approval_mode: SharedApprovalMode,
     delegation_read_only: bool,
@@ -353,6 +386,11 @@ impl ToolRegistry {
             delegation_read_only: false,
             completion_contract: None,
             execution_deadline: Mutex::new(None),
+            file_changes: file_changes::FileChangeState::default(),
+            lsp: lsp::LspManager::default(),
+            browser: browser::BrowserManager::default(),
+            search: SearchSettings::default(),
+            goal_evidence: Arc::new(GoalEvidenceStore::default()),
             output_store: crate::tool_output::ToolOutputStore::new(
                 &std::env::temp_dir().join("willdeep-tool-outputs"),
                 &workspace,
@@ -415,6 +453,8 @@ impl ToolRegistry {
     /// 带上会话标识，hook 的审计记录里才对得上是哪一次会话。
     pub fn with_session_id(mut self, session_id: Option<String>) -> Self {
         self.session_id = session_id;
+        self.goal_evidence
+            .bind_scope(self.session_id.as_deref(), &self.workspace);
         self
     }
 
@@ -511,6 +551,8 @@ impl ToolRegistry {
         F: Fn() -> Result<Option<String>, String> + Send + Sync + 'static,
     {
         self.verification_snapshot = Some(Arc::new(capture));
+        self.goal_evidence
+            .set_snapshot(self.verification_snapshot.clone());
         self
     }
     /// 列出当前快照里与 HEAD 不一致的路径，以及 cargo 目标名到目录的映射。
@@ -524,37 +566,10 @@ impl ToolRegistry {
         self
     }
     pub fn with_always_allow_store(mut self, path: PathBuf) -> Result<Self, ToolError> {
-        #[cfg(unix)]
-        if path.exists() {
-            use std::os::unix::fs::PermissionsExt;
-            if std::fs::metadata(&path)?.permissions().mode() & 0o077 != 0 {
-                return Err(ToolError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "always-allow store must have 0600 permissions",
-                )));
-            }
-        }
-        let stored = if path.exists() {
-            serde_json::from_str::<Vec<String>>(&std::fs::read_to_string(&path)?).map_err(
-                |error| ToolError::Network(format!("invalid always-allow store: {error}")),
-            )?
-        } else {
-            Vec::new()
-        };
-        // Rules minted before the credential guard can still be sitting in the
-        // file with a secret inside them. Drop them on load and rewrite, so the
-        // exposure ends at the next start rather than waiting for someone to
-        // read a file whose whole purpose is to stop being read. They are dead
-        // weight regardless: `command_signature` no longer mints a signature
-        // that could match them.
-        let (kept, dropped): (Vec<String>, Vec<String>) = stored
-            .into_iter()
-            .partition(|rule| !rule_carries_credentials(rule));
-        self.always_allowed = Arc::new(Mutex::new(kept.into_iter().collect()));
+        // Loading and credential pruning use the same file transaction as additions.
+        let rules = Self::load_always_allowed(&path)?;
+        self.always_allowed = Arc::new(Mutex::new(rules));
         self.always_allow_path = Some(path);
-        if !dropped.is_empty() {
-            self.persist_always_allowed()?;
-        }
         Ok(self)
     }
     pub fn with_allowed_tools(mut self, names: impl IntoIterator<Item = String>) -> Self {
@@ -785,14 +800,14 @@ impl ToolRegistry {
             ),
             definition(
                 "read_file",
-                "Read a UTF-8 text file inside the workspace. Returns line-numbered content and a continuation hint when truncated.",
+                "Read a UTF-8 text file inside the workspace. Returns its whole-file SHA-256 version, line-numbered content and a continuation hint when truncated. Records the version as the baseline for subsequent edits.",
                 json!({
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Workspace-relative path."},
                         "offset": {"type": "integer", "minimum": 1, "description": "1-based starting line."},
                         "limit": {"type": "integer", "minimum": 1, "description": "Maximum lines."},
-                        "max_bytes": {"type": "integer", "minimum": 1, "description": "Defaults to 64KB, capped at 256KB."}
+                        "max_bytes": {"type": "integer", "minimum": 1, "description": "Budget for numbered content, excluding version and continuation metadata. Defaults to 64KB, capped at 256KB."}
                     },
                     "required": ["path"], "additionalProperties": false
                 }),
@@ -896,8 +911,13 @@ impl ToolRegistry {
                 json!({"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"multi_select":{"type":"boolean"}},"required":["question"],"additionalProperties":false}),
             ),
             definition(
+                "web_search_status",
+                "Inspect search configuration without DNS or network requests.",
+                json!({"type":"object","properties":{},"additionalProperties":false}),
+            ),
+            definition(
                 "web_search",
-                "Search the public web through the configured some.im managed search. Network access requires approval.",
+                "Search using the configured independent backend or compatible SomeIm search. Network access follows Runtime approval.",
                 json!({"type":"object","properties":{"query":{"type":"string"},"count":{"type":"integer","minimum":1,"maximum":20}},"required":["query"],"additionalProperties":false}),
             ),
             definition(
@@ -936,19 +956,27 @@ impl ToolRegistry {
             ),
             definition(
                 "edit_file",
-                "Edit an existing UTF-8 file by exact string replacement. old_string must be unique unless replace_all is true. Requires approval.",
+                "Edit an existing UTF-8 file by exact string replacement. Requires expected_version or this registry's actual read_file baseline; rejects stale versions. old_string must be unique unless replace_all is true. Requires approval. Returns the new version.",
                 json!({
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Workspace-relative existing file path."},
                         "old_string": {"type": "string", "description": "Exact text currently in the file."},
                         "new_string": {"type": "string", "description": "Literal replacement text."},
-                        "replace_all": {"type": "boolean", "description": "Replace every occurrence. Defaults to false."}
+                        "replace_all": {"type": "boolean", "description": "Replace every occurrence. Defaults to false."},
+                        "expected_version": {"type": "string", "description": "Whole-file sha256:<hex> returned by read_file. If omitted, uses this registry's last actual read baseline."}
                     },
                     "required": ["path", "old_string", "new_string"], "additionalProperties": false
                 }),
             ),
         ];
+        tools.extend([
+            file_changes::definition(),
+            lsp::definition(),
+            ast_grep::definition(),
+            browser::definition(),
+            integration_status::definition(),
+        ]);
         tools.extend(self.monitors.as_ref().map(|_| monitor::definition()));
         if self.board.is_some() {
             tools.extend(board_tools::definitions());
@@ -990,7 +1018,14 @@ impl ToolRegistry {
     }
 
     pub async fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
-        self.check_tool_policy(&call.name)?;
+        // This fixed, read-only diagnostic never enters lifecycle hooks or MCP
+        // name discovery: either could execute code while inspecting status.
+        if call.name == "tool_status" {
+            return self.integration_status(call).await;
+        }
+        if !self.browser_cleanup_call(call) {
+            self.check_tool_policy(&call.name)?;
+        }
         // hook 在这里拦，是因为这是「工具即将执行」唯一的收口。放在各个工具
         // 内部就得逐个记得加，而漏掉的那个恰好会是出事的那个。
         if !self.delegation_read_only && !self.hooks.is_empty() {
@@ -1061,6 +1096,11 @@ impl ToolRegistry {
             "search_files" => self.search_files(parse(call)?),
             "grep_files" => self.grep_files(parse(call)?),
             "read_file" => self.read_file(parse(call)?).await,
+            "file_changes" => self.file_changes(call).await,
+            "lsp" => self.lsp(call).await,
+            "ast_grep" => self.ast_grep(parse(call)?).await,
+            "browser" => self.browser(parse(call)?).await,
+            "tool_status" => self.integration_status(call).await,
             "list_directory" => self.list_directory(parse(call)?).await,
             "git_status" => self.git_status().await,
             "git_diff" => self.git_diff(parse(call)?).await,
@@ -1074,6 +1114,10 @@ impl ToolRegistry {
             "board_post" => self.board_post(parse(call)?),
             "board_read" => self.board_read(parse(call)?),
             "ask_user" => self.ask_user(parse(call)?).await,
+            "web_search_status" => {
+                let _: EmptyStatusArgs = parse(call)?;
+                self.web_search_status()
+            }
             "web_search" => self.web_search(parse(call)?).await,
             "web_fetch" => self.web_fetch(parse(call)?).await,
             "run_command" => self.run_command(parse(call)?).await,
@@ -1312,21 +1356,24 @@ impl ToolRegistry {
 
     async fn read_file(&self, args: ReadArgs) -> Result<String, ToolError> {
         let path = self.resolve_existing(&args.path)?;
-        let content = tokio::fs::read_to_string(path).await?;
+        let content = tokio::fs::read_to_string(&path).await?;
+        let version = self.file_changes.observe(&path, content.as_bytes());
         let offset = args.offset.unwrap_or(1).max(1);
         let limit = args.limit.unwrap_or(usize::MAX);
         let max_bytes = args
             .max_bytes
             .unwrap_or(DEFAULT_READ_BYTES)
             .clamp(1, self.read_bytes_limit());
-        let mut output = String::new();
+        let mut output = format!("[version: {version}]\n");
+        let mut content_bytes = 0;
         let mut next_line = None;
         for (index, line) in content.lines().enumerate().skip(offset - 1).take(limit) {
             let row = format!("{:>6}  {}\n", index + 1, line);
-            if output.len() + row.len() > max_bytes {
+            if content_bytes + row.len() > max_bytes {
                 next_line = Some(index + 1);
                 break;
             }
+            content_bytes += row.len();
             output.push_str(&row);
         }
         if let Some(line) = next_line {
@@ -1518,45 +1565,6 @@ impl ToolRegistry {
             "created worktree {} on branch {branch}",
             target.display()
         ))
-    }
-
-    async fn web_search(&self, args: WebSearchArgs) -> Result<String, ToolError> {
-        let config = self.web.as_ref().ok_or_else(|| {
-            ToolError::Network("web_search requires a some.im provider".to_owned())
-        })?;
-        let query = args.query.trim();
-        if query.is_empty() {
-            return Err(ToolError::Network("search query is empty".to_owned()));
-        }
-        self.require_network_read_approval(&format!("search the public web for: {query}"))
-            .await?;
-        let mut endpoint = reqwest::Url::parse(&config.some_im_base_url)
-            .map_err(|error| ToolError::Network(format!("invalid some.im API base: {error}")))?;
-        endpoint.set_path("/api/v1/customer/web-search");
-        endpoint.set_query(None);
-        let response = web_client()?
-            .post(endpoint)
-            .bearer_auth(&config.api_key)
-            .json(&json!({
-                "query": query,
-                "count": args.count.unwrap_or(8).clamp(1, 20),
-                "provider": "auto"
-            }))
-            .send()
-            .await
-            .map_err(|error| ToolError::Network(error.to_string()))?;
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|error| ToolError::Network(error.to_string()))?;
-        if !status.is_success() {
-            return Err(ToolError::Network(format!(
-                "some.im web search returned HTTP {status}: {}",
-                truncate_line(&body, 500)
-            )));
-        }
-        format_search_results(&body)
     }
 
     async fn web_fetch(&self, args: WebFetchArgs) -> Result<String, ToolError> {
@@ -1790,6 +1798,9 @@ impl ToolRegistry {
             });
         }
         if args.run_in_background.unwrap_or(false) || automatic_delay.is_some() {
+            // A new asynchronous attempt revokes old success immediately. Detached
+            // jobs cannot publish Goal evidence without this live authority.
+            let _ = self.begin_goal_verification(&evidence_command, accepted_verification);
             let timeout = command_duration.as_secs();
             if timeout == 0 {
                 return Err(ToolError::CommandTimeout {
@@ -1824,6 +1835,7 @@ impl ToolRegistry {
             let verification_reporter = self.verification_reporter.clone();
             let verification_snapshot = self.verification_snapshot.clone();
             let verification_dirty_paths = self.verification_dirty_paths.clone();
+            let goal_evidence = self.goal_evidence_handle();
             let id = self.background.start_retriable(
                 BackgroundTaskKind::Shell,
                 description,
@@ -1835,7 +1847,11 @@ impl ToolRegistry {
                     let verification_reporter = verification_reporter.clone();
                     let verification_snapshot = verification_snapshot.clone();
                     let verification_dirty_paths = verification_dirty_paths.clone();
+                    let goal_evidence = goal_evidence.clone();
                     async move {
+                        let goal_attempt = accepted_verification
+                            .then(|| goal_evidence.begin_command(&evidence_command))
+                            .flatten();
                         let snapshot_id = verification::capture_accepted_snapshot(
                             verification_snapshot.as_ref(),
                             accepted_verification,
@@ -1876,6 +1892,14 @@ impl ToolRegistry {
                             snapshot_id,
                             finished.observed_snapshot_id,
                         );
+                        if let Some(receipt) = Self::finish_goal_verification(
+                            &goal_evidence,
+                            goal_attempt,
+                            finished.status,
+                            result.exit_code,
+                        ) {
+                            result.output.push_str(&receipt);
+                        }
                         result
                     }
                 },
@@ -1887,6 +1911,7 @@ impl ToolRegistry {
                 automatic_delay,
             ));
         }
+        let goal_attempt = self.begin_goal_verification(&evidence_command, accepted_verification);
         let snapshot_id = verification::capture_accepted_snapshot(
             self.verification_snapshot.as_ref(),
             accepted_verification,
@@ -1917,9 +1942,18 @@ impl ToolRegistry {
                     snapshot_id,
                     None,
                 );
+                let mut error_text = error.to_string();
+                if let Some(receipt) = Self::finish_goal_verification(
+                    &self.goal_evidence,
+                    goal_attempt,
+                    VerificationStatus::TimedOut,
+                    None,
+                ) {
+                    error_text.push_str(&receipt);
+                }
                 return Err(ToolError::CommandTimeout {
                     seconds: timeout,
-                    output: error.to_string(),
+                    output: error_text,
                 });
             }
             Err(error) => {
@@ -1929,12 +1963,21 @@ impl ToolRegistry {
                         .filter(|_| accepted_verification),
                     &evidence_command,
                     None,
-                    VerificationStatus::Failed,
+                    VerificationStatus::LaunchFailed,
                     &error.to_string(),
                     snapshot_id,
                     None,
                 );
-                return Err(error.into());
+                let mut error_text = error.to_string();
+                if let Some(receipt) = Self::finish_goal_verification(
+                    &self.goal_evidence,
+                    goal_attempt,
+                    VerificationStatus::LaunchFailed,
+                    None,
+                ) {
+                    error_text.push_str(&receipt);
+                }
+                return Err(std::io::Error::new(error.kind(), error_text).into());
             }
         };
         let mut text = format!(
@@ -1974,6 +2017,12 @@ impl ToolRegistry {
             snapshot_id,
             finished.observed_snapshot_id,
         );
+        let goal_receipt = Self::finish_goal_verification(
+            &self.goal_evidence,
+            goal_attempt,
+            finished.status,
+            output.status.code(),
+        );
         let mut text = truncate_bytes(text, self.command_output_limit());
         // 把「命令自己错了」和「命令被围栏拦了」分开说。不分开的话，用户看到的
         // 是一句 `Operation not permitted`，然后花二十分钟怀疑自己的代码。
@@ -1991,6 +2040,9 @@ impl ToolRegistry {
         {
             text.push_str(&delegation_hint(profile, &args.command));
         }
+        if let Some(receipt) = goal_receipt {
+            text.push_str(&receipt);
+        }
         Ok(text)
     }
 
@@ -1998,6 +2050,9 @@ impl ToolRegistry {
         self.require_write_target(&args.path, true)?;
         self.require_approval(&format!("create file: {}", args.path), true)
             .await?;
+        let _write_guard = file_changes::write_lock().await;
+        self.check_tool_policy("create_file")?;
+        self.require_write_target(&args.path, true)?;
         let path = self.resolve_new(&args.path)?;
         if path.exists() {
             return Err(ToolError::FileAlreadyExists(args.path));
@@ -2017,33 +2072,7 @@ impl ToolRegistry {
     }
 
     async fn edit_file(&self, args: EditArgs) -> Result<String, ToolError> {
-        self.require_write_target(&args.path, false)?;
-        if args.old_string == args.new_string {
-            return Err(ToolError::IdenticalEdit);
-        }
-        self.require_approval(&format!("edit file: {}", args.path), true)
-            .await?;
-        let path = self.resolve_existing(&args.path)?;
-        let content = tokio::fs::read_to_string(&path).await?;
-        let old_string = match_edit_text(&content, &args.old_string)
-            .ok_or_else(|| ToolError::EditTextNotFound(args.path.clone()))?;
-        let count = content.matches(&old_string).count();
-        if count == 0 {
-            return Err(ToolError::EditTextNotFound(args.path));
-        }
-        if count > 1 && !args.replace_all.unwrap_or(false) {
-            return Err(ToolError::EditTextNotUnique {
-                path: args.path,
-                count,
-            });
-        }
-        let updated = if args.replace_all.unwrap_or(false) {
-            content.replace(&old_string, &args.new_string)
-        } else {
-            content.replacen(&old_string, &args.new_string, 1)
-        };
-        atomic_write(&path, updated.as_bytes()).await?;
-        Ok(format!("edited {} ({count} replacement(s))", args.path))
+        self.edit_file_versioned(args).await
     }
 
     /// Approval gate for shell commands.
@@ -2347,31 +2376,6 @@ fn validate_workspace_relative(requested: &str) -> Result<(), ToolError> {
         return Err(ToolError::OutsideWorkspace(requested.to_owned()));
     }
     Ok(())
-}
-
-async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), std::io::Error> {
-    let permissions = tokio::fs::metadata(path).await?.permissions();
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("file");
-    let temporary = path.with_file_name(format!(
-        ".{file_name}.willdeep-tmp-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let result = async {
-        let mut file = tokio::fs::File::create(&temporary).await?;
-        file.write_all(content).await?;
-        file.flush().await?;
-        drop(file);
-        tokio::fs::set_permissions(&temporary, permissions).await?;
-        tokio::fs::rename(&temporary, path).await
-    }
-    .await;
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temporary).await;
-    }
-    result
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> Result<T, ToolError> {
@@ -2790,6 +2794,11 @@ fn sanitize_branch(value: &str) -> Result<String, ToolError> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyStatusArgs {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WebSearchArgs {
     query: String,
     count: Option<usize>,
@@ -2816,6 +2825,7 @@ struct EditArgs {
     old_string: String,
     new_string: String,
     replace_all: Option<bool>,
+    expected_version: Option<String>,
 }
 
 #[cfg(test)]

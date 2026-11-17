@@ -1,0 +1,10 @@
+{
+  "id": "p0-rust-cross-file-references",
+  "title": "Rust 跨文件引用与别名迁移（rustc >=1.56 / Rust 2021）",
+  "kind": "feature",
+  "language": "rust",
+  "split": "validation",
+  "requires": ["ruby", "rustc"],
+  "editable": ["src/pricing.rs", "src/invoice.rs", "src/checkout.rs"],
+  "verify": [["ruby", "test/verify.rb"]]
+}

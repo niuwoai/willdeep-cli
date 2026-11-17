@@ -260,7 +260,7 @@ async fn build_capabilities(
         models.extend(active_model.iter().cloned());
     }
     let (remote_models, models_status) =
-        provider_models(server, &config, queried_profile.as_deref()).await;
+        provider_models(server, &config, queried_profile.as_deref(), &session).await;
     models.extend(remote_models);
     let models = models.into_iter().map(|id| json!({"is_active": Some(&id) == active_model.as_ref(), "id": id, "title": id, "subtitle": queried_profile})).collect::<Vec<_>>();
     let catalog = catalog(&session, &config, &workspace);
@@ -343,18 +343,34 @@ async fn provider_models(
     server: &ServerState,
     config: &crate::config::LoadedConfig,
     profile: Option<&str>,
+    session: &session_store::RuntimeSession,
 ) -> (Vec<String>, &'static str) {
     use std::hash::{Hash, Hasher};
     let Some(profile) = profile else {
         return (Vec::new(), "configured");
     };
-    let Ok(provider) = crate::provider_config_from_profile(&config.file, profile) else {
+    let Ok(mut provider) = crate::provider_config_from_profile(&config.file, profile) else {
         return (Vec::new(), "unavailable");
     };
+    let Ok(context) = server.sessions.model_policy_context(session.id) else {
+        return (Vec::new(), "unavailable");
+    };
+    let owner = context.workspace().map(std::path::Path::to_path_buf);
+    provider.policy_context = Some(context);
+    // Recheck even cache hits: narrowing or removing a policy cannot return an
+    // earlier successful discovery as if the current route remained permitted.
+    let Ok(base) = reqwest::Url::parse(&provider.base_url) else {
+        return (Vec::new(), "unavailable");
+    };
+    if willdeep_core::provider::policy::check_route(&provider, &provider.model, &base).is_err() {
+        return (Vec::new(), "unavailable");
+    }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     // 凭据只参与内存 hash，不进入缓存键文本、日志、文件或手机回包。
     (
         &server.home,
+        &owner,
+        &session.workspace,
         profile,
         &provider.base_url,
         &provider.api_key,
@@ -389,4 +405,89 @@ async fn provider_models(
     }
     cache.insert(key, (Instant::now(), models.clone(), status));
     (models, status)
+}
+
+#[cfg(test)]
+mod model_policy_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn mobile_model_cache_is_project_scoped_and_rechecks_narrowing() {
+        let root =
+            std::env::temp_dir().join(format!("mobile-model-policy-{}", uuid::Uuid::new_v4()));
+        let first = root.join("first");
+        let second = root.join("second");
+        for workspace in [&first, &second] {
+            std::fs::create_dir_all(workspace.join(".willdeep")).unwrap();
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let seen = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({"data":[{"id":"remote"}]}))
+                }
+            }),
+        );
+        let api = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let allow = serde_json::to_vec(&serde_json::json!({"version":1,"allow":[{
+            "provider":"openai-compatible","model":"fixture","base_url":base,
+        }]}))
+        .unwrap();
+        let deny = br#"{"version":1,"allow":[]}"#;
+        std::fs::write(first.join(".willdeep/model-policy.json"), &allow).unwrap();
+        std::fs::write(second.join(".willdeep/model-policy.json"), deny).unwrap();
+        let sessions = crate::daemon::tests::test_runtime_session_store(&root);
+        let make = |workspace| {
+            sessions
+                .create(session_store::CreateRuntimeSession {
+                    id: None,
+                    workspace,
+                    profile: Some("fixture".into()),
+                    model: Some("fixture".into()),
+                    config: None,
+                    title: None,
+                })
+                .unwrap()
+        };
+        let allowed = make(first.clone());
+        let blocked = make(second);
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let server =
+            crate::daemon::tests::test_server_state_with_scheduler(&root, sessions, sender);
+        let config = crate::config::LoadedConfig { file: toml::from_str(&format!(
+            "version=1\n[providers.fixture]\nprovider='openai-compatible'\napi_base='{base}'\napi_key='fixture'\nmodel='fixture'\n",
+        )).unwrap() };
+        for _ in 0..2 {
+            assert_eq!(
+                provider_models(&server, &config, Some("fixture"), &allowed).await,
+                (vec!["remote".to_owned()], "complete")
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            provider_models(&server, &config, Some("fixture"), &blocked).await,
+            (Vec::new(), "unavailable")
+        );
+        std::fs::write(first.join(".willdeep/model-policy.json"), deny).unwrap();
+        assert_eq!(
+            provider_models(&server, &config, Some("fixture"), &allowed).await,
+            (Vec::new(), "unavailable")
+        );
+        std::fs::write(first.join(".willdeep/model-policy.json"), allow).unwrap();
+        assert_eq!(
+            provider_models(&server, &config, Some("fixture"), &allowed).await,
+            (Vec::new(), "unavailable")
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        api.abort();
+        drop(server);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -1,0 +1,80 @@
+┌nova · work┐
+│     ▄     │
+│    ▄▀▄    │
+│ ▄███████▄ │
+│███████████│
+│███████████│
+│ ▀███████▀ │
+│   ▀███▀   │
+│           │
+│WILLDEEP   │
+│v0.149.0-  │
+│rc10       │
+│           │
+│nova:      │
+│Hello, I’m │
+│in         │
+│workspace. │
+│Tell me    │
+│what you   │
+│want to    │
+│build,     │
+│fix, or in │
+│vestigate; │
+│I’ll       │
+│inspect    │
+│the        │
+│project    │
+│before     │
+│making     │
+│changes.   │
+│Type `/    │
+│help` for  │
+│every      │
+│command,   │
+│or `/      │
+│model` to  │
+│switch     │
+│models.    │
+│System:    │
+│Switched   │
+│to full UI │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+│           │
+└───────────┘
+┌Activity · ┐
+│           │
+└───────────┘
+┌Prompt [foc┐
+│           │
+│           │
+│           │
+└───────────┘
+Ready · Focus

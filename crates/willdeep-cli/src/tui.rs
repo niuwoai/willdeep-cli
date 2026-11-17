@@ -58,10 +58,12 @@ mod command_catalog;
 mod composer_attention;
 mod confirmation_example;
 mod daemon_commands;
+mod delivery_echo;
 mod diff_review_ui;
 mod dispatch;
 mod human_gate_ui;
 mod media_ui;
+mod message_model;
 mod message_time;
 mod mobile_qr_ui;
 mod model_commands;
@@ -69,11 +71,13 @@ mod model_picker_ui;
 mod model_provider;
 mod narration;
 mod overlay_dismiss;
+mod paste;
 mod peer_commands;
 mod permission_commands;
 mod plan_ui;
 mod prompt_history;
 mod prompt_queue;
+mod prompt_selection;
 mod quiet_mode;
 mod reasoning_commands;
 mod redraw;
@@ -88,8 +92,10 @@ mod session_picker_ui;
 mod sidebar;
 mod splash;
 mod status_line;
+mod turn_status;
 mod update_notice;
 mod user_message;
+mod viewport;
 mod webapp_commands;
 mod workflow_ui;
 mod workspace_approval;
@@ -333,6 +339,7 @@ struct App {
     question_queue: VecDeque<AskDialog>,
     scroll_from_bottom: usize,
     follow_bottom: bool,
+    viewport: viewport::ViewportState,
     transcript_width: usize,
     transcript_height: usize,
     viewport_height: usize,
@@ -448,6 +455,8 @@ struct App {
     runtime_submitted_task: Option<uuid::Uuid>,
     turn_started: Option<Instant>,
     last_progress_at: Option<Instant>,
+    turn_phase: turn_status::TurnPhase,
+    last_turn_outcome: Option<turn_status::TurnOutcome>,
     runtime_turn: bool,
     waiting_background: bool,
     overlay_close_hits: Vec<(overlay_dismiss::DismissibleOverlay, Rect)>,
@@ -532,9 +541,8 @@ struct App {
     deferred_steering: Vec<DeliveredPrompt>,
     /// 本轮最近一段已落进聊天区的中途文字；收尾文字据此去重，不重复最后一段。
     turn_narration: Option<String>,
-    /// 简洁模式里还没写进记录的最近一段中途文字。聊天区只用它替换那一行
-    /// 状态；轮次收尾再落成正文，干活过程中不把每段话都堆成一条 WillDeep。
-    held_narration: Option<String>,
+    /// 当前已定稿的阶段说明，保留接收时的模型与时间；下一个步骤或收尾时落入记录。
+    held_narration: Option<turn_status::HeldNarration>,
     /// `/tools`：临时展开聊天区里收起的工具行。只影响显示，记录不动。
     tool_rows_expanded: bool,
     /// 临时行此刻流的是思维链还是正文，决定标签与何时清缓冲。
@@ -546,6 +554,8 @@ struct App {
     chat_selection: Option<ChatSelection>,
     code_copy: code_copy::CodeCopyState,
     transcript_rows: Vec<String>,
+    /// 用户显示行的正文列范围；复制时排除靠右布局产生的空白。
+    transcript_selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     transcript_render_cache: Option<rendering::TranscriptRenderCache>,
     transcript_render_offset: usize,
     skill_selected: usize,
@@ -907,6 +917,7 @@ impl TuiRuntime {
             return Ok(());
         };
         let mut config = crate::provider_config_from_profile(&loaded.file, &profile_name)?;
+        config.policy_context = self.provider_config.policy_context.clone();
         if let Some(model) = &self.runtime_submit.model {
             config.model = model.clone();
         }
@@ -1289,6 +1300,7 @@ async fn interrupt_local_turn(app: &mut App, agent: &Arc<Agent>) {
     handle.abort();
     let _ = handle.await;
     event_loop::requeue_undelivered_steering(app, agent);
+    app.note_turn_outcome(turn_status::TurnOutcome::Interrupted);
     app.finish_turn();
 }
 
@@ -1473,6 +1485,7 @@ fn format_elapsed_span(seconds: f32, seconds_decimals: usize) -> String {
     }
 }
 
+#[cfg(test)]
 fn format_working_summary(
     language: Language,
     runtime_turn: bool,
@@ -1480,47 +1493,7 @@ fn format_working_summary(
     elapsed: Duration,
     idle: Duration,
 ) -> String {
-    let phase = if idle >= PROGRESS_STALE_AFTER {
-        format!(
-            "{} {}",
-            language.text(
-                "暂未收到新事件 · 已等待",
-                "No new event yet · waiting",
-                "新しいイベントなし · 待機"
-            ),
-            format_elapsed_span(idle.as_secs_f32(), 0)
-        )
-    } else if idle >= PROGRESS_WAITING_AFTER {
-        language
-            .text(
-                if runtime_turn {
-                    "等待 Runtime / 模型返回"
-                } else {
-                    "等待模型 / 工具返回"
-                },
-                if runtime_turn {
-                    "Waiting for Runtime / model"
-                } else {
-                    "Waiting for model / tool"
-                },
-                if runtime_turn {
-                    "Runtime / モデルの応答待ち"
-                } else {
-                    "モデル / ツールの応答待ち"
-                },
-            )
-            .to_owned()
-    } else if activity_line.is_empty() {
-        language.text("正在处理", "Working", "処理中").to_owned()
-    } else {
-        activity_line.to_owned()
-    };
-    format!(
-        "{} {phase} · {} {}",
-        progress_spinner(elapsed),
-        language.text("已运行", "elapsed", "経過"),
-        format_elapsed_span(elapsed.as_secs_f32(), 1)
-    )
+    turn_status::format_working_summary(language, runtime_turn, activity_line, elapsed, idle)
 }
 
 #[allow(private_interfaces)]
@@ -1673,10 +1646,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
                 ))
             })
             .collect();
-        if let Some(selection) = app.chat_selection {
-            let (start, end) = selection.ordered_range();
-            rendering::highlight_text_selection_at_offset(&mut colored, start, end, offset);
-        }
+        app.highlight_chat_selection(&mut colored, offset);
         f.render_widget(
             Paragraph::new(colored)
                 .block(
@@ -1691,6 +1661,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
                 ),
             app.transcript_rect,
         );
+        app.render_reading_indicator(f);
         // 分凉来源单独占标题正下方的一行，不进聊天记录，换会话时跟着换。
         if let Some(lineage) = lineage
             && app.transcript_rect.width > 2
@@ -1823,7 +1794,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         let width = areas[3].width.saturating_sub(2).max(1) as usize;
         let (row, col) = app.input.cursor_visual(width);
         let visible = areas[3].height.saturating_sub(2).max(1) as usize;
-        app.prompt_scroll = row.saturating_sub(visible - 1);
+        app.update_prompt_scroll(row, visible);
         let wrapped_input = app.input.wrapped_text(width);
         // 空输入框里的灰字预测：顶替正文而不是叠加，「Tab 采用」的提示跟在后面。
         let suggestion_visible = app.visible_input_suggestion().is_some();
@@ -1890,9 +1861,14 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
             composer
         };
         f.render_widget(composer, areas[3]);
+        app.render_prompt_selection(f);
         let cursor_y = areas[3].y + 1 + (row.saturating_sub(app.prompt_scroll) as u16);
         let cursor_x = areas[3].x + 1 + (col.min(width.saturating_sub(1)) as u16);
-        if app.focus == FocusPane::Prompt && !app.help_visible && app.task_detail.is_none() {
+        if app.focus == FocusPane::Prompt
+            && !app.input.selection_active()
+            && !app.help_visible
+            && app.task_detail.is_none()
+        {
             f.set_cursor_position((cursor_x, cursor_y));
         }
         let status = app.status_line();
@@ -2878,13 +2854,13 @@ fn attention_style(status: RuntimeStatus) -> Style {
 fn help_content(language: Language) -> String {
     let content = match language {
         Language::ZhCn => {
-            "全局\n  F1 / 空输入时 ?  打开帮助    Ctrl+C 退出\n  Ctrl+P 全局命令面板           Ctrl+R 或 /history 搜索历史会话并继续\n  Esc 中断当前轮次（运行中）      Ctrl+W 输入/聊天/活动/状态栏切换\n  Ctrl+B 或 /sidebar 显示/隐藏状态栏（默认隐藏）\n  Ctrl+S 文本选择/复制模式\n\n输入\n  空输入时 ↑ 历史输入选择（回填不发送）\n  Enter 发送                    Shift/Alt+Enter 或 Ctrl+J 换行\n  F3 管理附件（保留草稿）\n  F2 展开/恢复大输入空间         Ctrl+A/E 行首/行尾\n  / 命令候选                    $ 技能候选\n  ↑/↓ 选择候选                  Enter/Tab 插入，Esc 关闭\n  Ctrl/Command+Shift+V 粘贴图片 Ctrl+D 删除附件\n  Ctrl+G 用外部编辑器编辑（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\n聊天与活动\n  直接拖动选择聊天文字           Ctrl/Cmd+C 或 Y 复制，Q 引用\n  双击代码块复制整块             MuseTerm 里点右上角 ⧉ 复制\n  Ctrl+F 搜索，Enter/Shift+Enter 前后跳转\n  PageUp/PageDown 翻页           Alt+↑/↓ 逐行滚动\n  Ctrl+Home/End 顶部/底部        Ctrl+O 展开工具活动\n  点击活动区聚焦，Enter/Space 展开或收起\n\n状态栏\n  Tab/Shift+Tab 选择分组         ↑/↓ 选择 Inbox 条目\n  Enter 详情，K 停止，R 重试     M 已读，Space 折叠，Esc 返回\n  点击标题折叠，点击条目看详情，滚轮滚动内容"
+            "全局\n  F1 / 空输入时 ?  打开帮助    Ctrl+C 退出\n  Ctrl+P 全局命令面板           Ctrl+R 或 /history 搜索历史会话并继续\n  Ctrl+X 停止当前轮次（含等待审批）\n  Esc 连按两次中断（无弹层时）    Ctrl+W 输入/聊天/活动/状态栏切换\n  Ctrl+B 或 /sidebar 显示/隐藏状态栏（默认隐藏）\n  Ctrl+S 文本选择/复制模式\n\n输入\n  空输入时 ↑ 历史输入选择（回填不发送）\n  Enter 发送                    Shift/Alt+Enter 或 Ctrl+J 换行\n  F3 管理附件（保留草稿）\n  F2 展开/恢复大输入空间         Ctrl+A/E 行首/行尾\n  / 命令候选                    $ 技能候选\n  ↑/↓ 选择候选                  Enter/Tab 插入，Esc 关闭\n  Ctrl/Command+Shift+V 粘贴图片 Ctrl+D 删除附件\n  Ctrl+G 用外部编辑器编辑（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\n聊天与活动\n  直接拖动选择聊天文字           Ctrl/Cmd+C 或 Y 复制，Q 引用\n  双击代码块复制整块             MuseTerm 里点右上角 ⧉ 复制\n  Ctrl+F 搜索，Enter/Shift+Enter 前后跳转\n  PageUp/PageDown 翻页           Alt+↑/↓ 逐行滚动\n  Ctrl+Home/End 顶部/底部        Ctrl+O 展开工具活动\n  点击活动区聚焦，Enter/Space 展开或收起\n\n状态栏\n  Tab/Shift+Tab 选择分组         ↑/↓ 选择 Inbox 条目\n  Enter 详情，K 停止，R 重试     M 已读，Space 折叠，Esc 返回\n  点击标题折叠，点击条目看详情，滚轮滚动内容"
         }
         Language::En => {
-            "Global\n  F1 / ? on empty prompt  Open help    Ctrl+C Exit\n  Ctrl+P Command palette     Ctrl+R or /history Search and continue a Session\n  Esc Interrupt the running turn   Ctrl+W Switch Prompt/Chat/Activity/Status\n  Ctrl+B or /sidebar Show/hide Status (hidden by default)\n  Ctrl+S Text selection mode\n\nPrompt\n  ↑ on empty prompt: history (insert without sending)\n  Enter Send                 Shift/Alt+Enter or Ctrl+J Newline\n  F3 Manage attachments (keep draft)\n  F2 Expand/restore composer Ctrl+A/E Line start/end\n  / Command suggestions      $ Skill suggestions\n  ↑/↓ Select                 Enter/Tab Insert, Esc Close\n  Ctrl/Command+Shift+V Paste image      Ctrl+D Remove attachment\n  Ctrl+G Edit in external editor ($WILLDEEP_EDITOR / $VISUAL / $EDITOR)\n\nChat and activity\n  Drag to select chat text   Ctrl/Cmd+C or Y copy, Q quote\n  Double-click a code block to copy it whole\n  MuseTerm: click ⧉ Copy at the block's top-right\n  Ctrl+F Search, Enter/Shift+Enter Previous/next match\n  PageUp/PageDown Page        Alt+↑/↓ Scroll one line\n  Ctrl+Home/End Top/Bottom    Ctrl+O Expand tool activity\n  Click activity to focus, Enter/Space to expand or collapse\n\nStatus sidebar\n  Tab/Shift+Tab Select section     ↑/↓ Select Inbox item\n  Enter Details, K Stop, R Retry   M Read, Space Toggle, Esc Return\n  Click headers to toggle, items for details, wheel to scroll"
+            "Global\n  F1 / ? on empty prompt  Open help    Ctrl+C Exit\n  Ctrl+P Command palette     Ctrl+R or /history Search and continue a Session\n  Ctrl+X Stop current turn (including approval waits)\n  Esc twice Interrupt (without a modal)   Ctrl+W Switch Prompt/Chat/Activity/Status\n  Ctrl+B or /sidebar Show/hide Status (hidden by default)\n  Ctrl+S Text selection mode\n\nPrompt\n  ↑ on empty prompt: history (insert without sending)\n  Enter Send                 Shift/Alt+Enter or Ctrl+J Newline\n  F3 Manage attachments (keep draft)\n  F2 Expand/restore composer Ctrl+A/E Line start/end\n  / Command suggestions      $ Skill suggestions\n  ↑/↓ Select                 Enter/Tab Insert, Esc Close\n  Ctrl/Command+Shift+V Paste image      Ctrl+D Remove attachment\n  Ctrl+G Edit in external editor ($WILLDEEP_EDITOR / $VISUAL / $EDITOR)\n\nChat and activity\n  Drag to select chat text   Ctrl/Cmd+C or Y copy, Q quote\n  Double-click a code block to copy it whole\n  MuseTerm: click ⧉ Copy at the block's top-right\n  Ctrl+F Search, Enter/Shift+Enter Previous/next match\n  PageUp/PageDown Page        Alt+↑/↓ Scroll one line\n  Ctrl+Home/End Top/Bottom    Ctrl+O Expand tool activity\n  Click activity to focus, Enter/Space to expand or collapse\n\nStatus sidebar\n  Tab/Shift+Tab Select section     ↑/↓ Select Inbox item\n  Enter Details, K Stop, R Retry   M Read, Space Toggle, Esc Return\n  Click headers to toggle, items for details, wheel to scroll"
         }
         Language::Ja => {
-            "グローバル\n  F1 / 空入力で ?  ヘルプ       Ctrl+C 終了\n  Ctrl+P コマンドパレット        Ctrl+R または /history 履歴セッションを検索して再開\n  Esc 実行中のターンを中断          Ctrl+W 入力/チャット/アクティビティ/状態を切替\n  Ctrl+B または /sidebar で状態欄を表示/非表示（既定は非表示）\n  Ctrl+S テキスト選択モード\n\n入力\n  空入力で ↑ 入力履歴（挿入のみ）\n  Enter 送信                     Shift/Alt+Enter または Ctrl+J 改行\n  F3 添付を管理（下書き保持）\n  F2 入力欄を拡大/復元            Ctrl+A/E 行頭/行末\n  / コマンド候補                 $ スキル候補\n  ↑/↓ 選択                       Enter/Tab 挿入、Esc 閉じる\n  Ctrl/Command+Shift+V 画像貼付   Ctrl+D 添付削除\n  Ctrl+G 外部エディタで編集（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\nチャットとアクティビティ\n  ドラッグで文字選択              Ctrl/Cmd+C / Y コピー、Q 引用\n  コードブロックをダブルクリックで全体コピー\n  MuseTerm では右上の ⧉ コピーをクリック\n  Ctrl+F 検索、Enter/Shift+Enter 前後の一致へ\n  PageUp/PageDown ページ移動      Alt+↑/↓ 1 行スクロール\n  Ctrl+Home/End 先頭/末尾         Ctrl+O ツール詳細\n  アクティビティをクリックして、Enter/Space で開閉\n\n状態サイドバー\n  Tab/Shift+Tab セクション選択    ↑/↓ Inbox 項目選択\n  Enter 詳細、K 停止、R 再実行    M 既読、Space 開閉、Esc 入力へ\n  見出しで開閉、項目で詳細、ホイールでスクロール"
+            "グローバル\n  F1 / 空入力で ?  ヘルプ       Ctrl+C 終了\n  Ctrl+P コマンドパレット        Ctrl+R または /history 履歴セッションを検索して再開\n  Ctrl+X 現在のターンを停止（承認待ちも対象）\n  Esc 2回 中断（モーダルなし）    Ctrl+W 入力/チャット/アクティビティ/状態を切替\n  Ctrl+B または /sidebar で状態欄を表示/非表示（既定は非表示）\n  Ctrl+S テキスト選択モード\n\n入力\n  空入力で ↑ 入力履歴（挿入のみ）\n  Enter 送信                     Shift/Alt+Enter または Ctrl+J 改行\n  F3 添付を管理（下書き保持）\n  F2 入力欄を拡大/復元            Ctrl+A/E 行頭/行末\n  / コマンド候補                 $ スキル候補\n  ↑/↓ 選択                       Enter/Tab 挿入、Esc 閉じる\n  Ctrl/Command+Shift+V 画像貼付   Ctrl+D 添付削除\n  Ctrl+G 外部エディタで編集（$WILLDEEP_EDITOR / $VISUAL / $EDITOR）\n\nチャットとアクティビティ\n  ドラッグで文字選択              Ctrl/Cmd+C / Y コピー、Q 引用\n  コードブロックをダブルクリックで全体コピー\n  MuseTerm では右上の ⧉ コピーをクリック\n  Ctrl+F 検索、Enter/Shift+Enter 前後の一致へ\n  PageUp/PageDown ページ移動      Alt+↑/↓ 1 行スクロール\n  Ctrl+Home/End 先頭/末尾         Ctrl+O ツール詳細\n  アクティビティをクリックして、Enter/Space で開閉\n\n状態サイドバー\n  Tab/Shift+Tab セクション選択    ↑/↓ Inbox 項目選択\n  Enter 詳細、K 停止、R 再実行    M 既読、Space 開閉、Esc 入力へ\n  見出しで開閉、項目で詳細、ホイールでスクロール"
         }
     };
     content
@@ -2937,6 +2913,8 @@ pub fn channel() -> (
 mod human_gate_ui_tests;
 #[cfg(test)]
 mod test_suite;
+#[cfg(test)]
+mod welcome_layout_tests;
 
 /// 渲染测试用的空会话。谱系行只在 `started_by` 有值时出现，这些测试不设它。
 #[cfg(test)]

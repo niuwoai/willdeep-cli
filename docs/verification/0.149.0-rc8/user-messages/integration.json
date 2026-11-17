@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "version": "0.149.0-rc8",
+  "checks": [
+    {
+      "name": "compact",
+      "passed": true,
+      "columns": 120,
+      "rows": 35
+    },
+    {
+      "name": "full",
+      "passed": true,
+      "columns": 120,
+      "rows": 35
+    },
+    {
+      "name": "narrow",
+      "passed": true,
+      "columns": 60,
+      "rows": 35
+    }
+  ],
+  "model_requests": 2,
+  "isolation": "Temporary WILLDEEP_HOME, loopback provider; no real credentials or model calls.",
+  "previews": "SVG reconstructed from the actual TUI ANSI cells; terminal font/palette may differ."
+}

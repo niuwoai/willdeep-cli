@@ -21,6 +21,7 @@ use super::{
     ApprovalDecision, ToolError, ToolRegistry, WEB_POST_SIGNATURE_PREFIX, command_signature,
     registrable_domain,
 };
+use crate::hooks::{HookEvent, HookPayload};
 use crate::judge::{JudgeRequest, JudgeVerdict};
 use crate::safety::CommandSafety;
 use crate::sandbox::{SandboxPolicy, SandboxSpec};
@@ -359,6 +360,8 @@ impl ToolRegistry {
                     ApprovalSource::Judge,
                     format!("AI review ({model}): bounded and consistent with the current task"),
                 );
+                self.fire_approval_resolved("run_command", command, "allow", "judge")
+                    .await;
                 Ok(())
             }
             JudgeVerdict::Deny => {
@@ -484,6 +487,53 @@ impl ToolRegistry {
         self.require_approval(description, false).await
     }
 
+    /// Record the approver's decision before callers apply replay or persistence rules.
+    /// A returned Deny may also mean cancellation or a noninteractive approver.
+    async fn resolve_approval(
+        &self,
+        description: &str,
+        always_allow_available: bool,
+    ) -> ApprovalDecision {
+        let decision = self
+            .approver
+            .approve(description, always_allow_available)
+            .await;
+        let outcome = match decision {
+            ApprovalDecision::AllowOnce => "allow_once",
+            ApprovalDecision::AlwaysAllow => "always_allow",
+            ApprovalDecision::Deny => "deny",
+        };
+        self.fire_approval_resolved(description, description, outcome, "approver")
+            .await;
+        decision
+    }
+
+    async fn fire_approval_resolved(
+        &self,
+        action: &str,
+        detail: &str,
+        outcome: &str,
+        source: &str,
+    ) {
+        if self.delegation_read_only || !self.hooks.has_event(HookEvent::ApprovalResolved) {
+            return;
+        }
+        // Approval action names may themselves include command arguments or URLs.
+        let mut payload = HookPayload::new(HookEvent::ApprovalResolved)
+            .with_tool(crate::judge::redact_credentials(action), detail)
+            .with_session(
+                self.session_id.clone(),
+                Some(self.workspace.display().to_string()),
+            )
+            .with_outcome(outcome);
+        payload.extra.insert("source".to_owned(), source.to_owned());
+        payload
+            .extra
+            .insert("mode".to_owned(), self.approval_mode().as_str().to_owned());
+        // This observer cannot change a decision that has already been made.
+        let _ = self.hooks.fire(HookEvent::ApprovalResolved, &payload).await;
+    }
+
     pub(super) async fn require_approval(
         &self,
         description: &str,
@@ -497,7 +547,7 @@ impl ToolRegistry {
         if workspace_write_allowed {
             return Ok(());
         }
-        match self.approver.approve(description, false).await {
+        match self.resolve_approval(description, false).await {
             ApprovalDecision::AllowOnce | ApprovalDecision::AlwaysAllow => Ok(()),
             ApprovalDecision::Deny => Err(ToolError::ApprovalDenied(description.to_owned())),
         }
@@ -513,7 +563,7 @@ impl ToolRegistry {
             "Retry {} with the same arguments as an interrupted call whose effects are unknown? This may repeat an external or file side effect. Approval applies only to this attempt.",
             call.name
         );
-        match self.approver.approve(&description, false).await {
+        match self.resolve_approval(&description, false).await {
             ApprovalDecision::AllowOnce => Ok(()),
             _ => Err(ToolError::ApprovalDenied(
                 "uncertain replay requires one-time approval".into(),
@@ -534,56 +584,27 @@ impl ToolRegistry {
         {
             return Ok(());
         }
-        match self.approver.approve(description, true).await {
+        match self.resolve_approval(description, true).await {
             ApprovalDecision::AllowOnce => Ok(()),
             ApprovalDecision::AlwaysAllow => {
-                self.always_allowed
-                    .lock()
-                    .expect("always allow rules")
-                    .insert(signature);
-                self.persist_always_allowed()?;
+                // Only pre-commit failures deny this attempt. A committed rule
+                // remains active when directory durability is unconfirmed.
+                self.persist_always_allowed(signature)
+                    .await?
+                    .warn_if_unconfirmed();
                 Ok(())
             }
             ApprovalDecision::Deny => Err(ToolError::ApprovalDenied(description.to_owned())),
         }
     }
-
-    pub(super) fn persist_always_allowed(&self) -> Result<(), ToolError> {
-        let Some(path) = &self.always_allow_path else {
-            return Ok(());
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut rules = self
-            .always_allowed
-            .lock()
-            .expect("always allow rules")
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        rules.sort();
-        let bytes = serde_json::to_vec_pretty(&rules)
-            .map_err(|error| ToolError::Network(error.to_string()))?;
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).write(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        use std::io::Write;
-        let mut file = options.open(path)?;
-        file.write_all(&bytes)?;
-        file.flush()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    }
 }
+
+#[path = "always_allow.rs"]
+mod always_allow;
+
+#[cfg(test)]
+#[path = "approval_hook_tests.rs"]
+mod hook_tests;
 
 #[cfg(test)]
 mod tests {

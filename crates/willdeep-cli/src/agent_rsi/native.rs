@@ -77,7 +77,11 @@ fn read_control(path: &Path) -> Result<Control> {
     Ok(control)
 }
 
-pub(super) async fn execute(control_path: &Path, preview: bool) -> Result<Value> {
+pub(super) async fn execute(
+    control_path: &Path,
+    preview: bool,
+    project_workspace: &Path,
+) -> Result<Value> {
     let control = read_control(control_path)?;
     let package = read_package(&control.agent_package)?;
     ensure!(
@@ -96,12 +100,15 @@ pub(super) async fn execute(control_path: &Path, preview: bool) -> Result<Value>
         .iter()
         .find(|task| task.task_id == control.task_id)
         .context("native task not in frozen suite")?;
-    let provider = Arc::new(BrokerProvider::new(
-        &control.broker_origin,
-        control.capability,
-        control.trial_id.clone(),
-        preview,
-    )?);
+    let provider = Arc::new(
+        BrokerProvider::new(
+            &control.broker_origin,
+            control.capability,
+            control.trial_id.clone(),
+            preview,
+        )?
+        .with_workspace(project_workspace)?,
+    );
     // Never put a task label, host oracle, control or credentials into this random workspace.
     let workspace = std::env::temp_dir().join(format!("willdeep-native-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&control.output_directory)
@@ -291,24 +298,27 @@ fn validated_fixture_reads(receipts: &[Value], fixture: &Path, content: &str) ->
                 .as_u64()
                 .unwrap_or(u64::MAX)
                 .min(usize::MAX as u64) as usize;
+            const DEFAULT_FIXTURE_READ_BYTES: u64 = 64 * 1024;
+            const MAX_FIXTURE_READ_BYTES: u64 = 256 * 1024;
             let max_bytes = args["max_bytes"]
                 .as_u64()
-                .unwrap_or(u64::MAX)
-                .max(1)
-                .min(usize::MAX as u64) as usize;
-            let mut expected = String::new();
+                .unwrap_or(DEFAULT_FIXTURE_READ_BYTES)
+                .clamp(1, MAX_FIXTURE_READ_BYTES) as usize;
+            let mut expected = format!("[version: sha256:{}]\n", digest(content.as_bytes()));
+            let mut numbered_bytes = 0;
             for (index, line) in content.lines().enumerate().skip(offset - 1).take(limit) {
                 let row = format!("{:>6}  {}\n", index + 1, line);
-                if expected.len() + row.len() > max_bytes {
+                if numbered_bytes + row.len() > max_bytes {
                     expected.push_str(&format!(
                         "[truncated; continue with offset {}]\n",
                         index + 1
                     ));
                     break;
                 }
+                numbered_bytes += row.len();
                 expected.push_str(&row);
             }
-            if expected.is_empty() || read["tool_result_sha256"] != digest(expected.as_bytes()) {
+            if numbered_bytes == 0 || read["tool_result_sha256"] != digest(expected.as_bytes()) {
                 continue;
             }
             proofs.push(json!({"request_sequence":receipt["sequence"],"request_id":receipt["request_id"],"receipt_id":receipt["receipt_id"],

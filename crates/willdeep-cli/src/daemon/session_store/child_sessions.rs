@@ -98,6 +98,17 @@ pub(super) fn inherited_child_start_confirmation(
 }
 
 impl RuntimeSessionStore {
+    pub(in crate::daemon) fn model_policy_context(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<willdeep_core::provider::ModelPolicyContext> {
+        let core = self
+            .core
+            .load(id)
+            .context("load model policy owning Session")?;
+        Ok(self.core.model_policy_context(&core)?)
+    }
+
     /// Origin and inherited policy come from persisted host state, never tool arguments.
     pub(in crate::daemon) fn child_start_requires_confirmation(
         &self,
@@ -120,12 +131,29 @@ impl RuntimeSessionStore {
     ) -> Result<RuntimeSession> {
         let read_only = link.workspace_mode == ChildSessionWorkspaceMode::SharedReadOnly;
         let workspace = PathBuf::from(&link.workspace);
+        let policy = self.model_policy_context(source.id)?;
+        let policy_workspace = policy
+            .workspace()
+            .context("child model policy owner missing")?
+            .to_path_buf();
         if let Some(existing) = self.get(task.child_session_id)? {
             anyhow::ensure!(
                 existing.parent_session_id == Some(source.id)
                     && existing.delegation_read_only == read_only,
                 "prepared Session identity conflicts with another Session"
             );
+            let core = self.core.load(existing.id)?;
+            anyhow::ensure!(
+                core.model_policy_workspace
+                    .as_ref()
+                    .is_none_or(|root| root == &policy_workspace),
+                "prepared child model policy owner changed"
+            );
+            if core.model_policy_workspace.is_none() {
+                self.core.update(existing.id, |core| {
+                    core.model_policy_workspace = Some(policy_workspace.clone());
+                })?;
+            }
             return Ok(existing);
         }
         let id = task.child_session_id;
@@ -153,6 +181,7 @@ impl RuntimeSessionStore {
                 core.parent_session_id = Some(source.id);
                 core.delegation_read_only = read_only;
                 core.model_context_window = link.model_context_window;
+                core.model_policy_workspace = Some(policy_workspace.clone());
                 core.runtime_managed = true;
                 core.started_by = None;
                 core.profile = source.profile.clone();
@@ -165,6 +194,13 @@ impl RuntimeSessionStore {
             }
             Err(error) => return Err(error).context("load prepared child Core"),
         };
+        anyhow::ensure!(
+            core.model_policy_workspace
+                .as_ref()
+                .is_none_or(|root| root == &policy_workspace),
+            "prepared child Core model policy owner changed"
+        );
+        core.model_policy_workspace = Some(policy_workspace);
         self.core.save(&mut core)?;
         let session = RuntimeSession {
             schema: RUNTIME_SESSION_SCHEMA,

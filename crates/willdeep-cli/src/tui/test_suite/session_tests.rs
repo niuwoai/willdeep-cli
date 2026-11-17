@@ -1309,7 +1309,7 @@ fn text_selection_mode_uses_escape_or_ctrl_s_without_treating_copy_as_exit() {
 #[test]
 fn internal_chat_selection_copies_unicode_display_columns() {
     let rows = vec!["你好吗".to_owned(), "second".to_owned()];
-    assert_eq!(selected_text(&rows, (0, 2), (1, 3)), "好吗\nsec");
+    assert_eq!(selected_text(&rows, &[], (0, 2), (1, 3)), "好吗\nsec");
     assert_eq!(quote_selected_text("第一行\n第二行"), "> 第一行\n> 第二行");
 }
 
@@ -2119,7 +2119,8 @@ fn working_summary_distinguishes_progress_waiting_and_silence() {
         Duration::from_secs(18),
         Duration::from_secs(9),
     );
-    assert!(waiting.contains("等待 Runtime / 模型返回"));
+    assert!(waiting.contains("正在使用 read_file"));
+    assert!(waiting.contains("等待新事件"));
 
     let silent = format_working_summary(
         Language::ZhCn,
@@ -2128,8 +2129,9 @@ fn working_summary_distinguishes_progress_waiting_and_silence() {
         Duration::from_secs(48),
         Duration::from_secs(31),
     );
-    assert!(silent.contains("暂未收到新事件"));
-    assert!(silent.contains("已等待 31s"));
+    assert!(silent.contains("正在使用 read_file"));
+    assert!(silent.contains("未收到新事件"));
+    assert!(silent.contains("31s"));
 
     let long = format_working_summary(
         Language::ZhCn,
@@ -2711,6 +2713,7 @@ fn modal_colours_do_not_come_from_the_theme_palette() {
 #[test]
 fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     let mut app = App::new(vec!["hello world".to_owned()], Language::En);
+    app.ui.copy_on_select = false;
     app.transcript_rect = Rect::new(0, 0, 20, 6);
     // 完整 UI 的正文矩形：边框往里一格，宽高各少两格。
     app.transcript_content = Rect::new(1, 1, 18, 4);
@@ -2742,27 +2745,20 @@ fn clicking_outside_the_chat_after_selecting_releases_the_click_for_focus() {
     assert!(app.chat_selection.is_none());
 }
 
-/// 首屏是一整条多行记录：只在「整条记录开头」认吉祥物会全部落空，
-/// 这里按行核对，顺带保证产品名那一行用的是强调色而不是默认黄色。
+/// 首屏是一整条多行记录：鲸鱼逐行上色，产品名保留强调色。
 #[test]
 fn the_welcome_banner_is_drawn_row_by_row_with_colour() {
     let welcome = welcome_message(std::path::Path::new("/tmp/willdeep-rs"), Language::En);
+    assert!(welcome.starts_with(&super::super::banner::art_rows().join("\n")));
     let text = colored_transcript(&[welcome], None, 120, Language::En);
     let rows = text_rows(&text);
-
-    for art_row in super::super::banner::art_rows() {
-        let index = rows
-            .iter()
-            .position(|row| row == art_row)
-            .unwrap_or_else(|| panic!("mascot row missing from the transcript: {art_row:?}"));
-        let colours: Vec<_> = text.lines[index]
-            .spans
-            .iter()
-            .filter_map(|span| span.style.fg)
-            .collect();
+    for (index, row) in super::super::banner::art_rows().iter().enumerate() {
+        assert_eq!(&rows[index], row);
         assert!(
-            !colours.is_empty(),
-            "mascot row {index} lost its colours and fell back to one style"
+            text.lines[index]
+                .spans
+                .iter()
+                .any(|span| span.style.fg.is_some())
         );
     }
 

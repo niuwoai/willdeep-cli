@@ -24,7 +24,7 @@ function browserLanguage(): Language {
 const token = decodeURIComponent(location.pathname.split("/").filter(Boolean).at(-1) ?? "");
 const t = shareText(browserLanguage());
 
-function SharePage() {
+export function SharePage() {
   const [snapshot, setSnapshot] = useState<ShareSnapshot | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");

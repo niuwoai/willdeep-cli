@@ -231,6 +231,8 @@ fn tool_may_modify_workspace(name: &str) -> bool {
         name,
         "create_file"
             | "edit_file"
+            | "file_changes"
+            | "lsp"
             | "run_command"
             | "create_worktree"
             | "computer_use"

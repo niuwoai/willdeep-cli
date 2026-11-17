@@ -155,10 +155,12 @@ pub fn builtin_profiles(worker: Arc<dyn Provider>) -> Vec<SubagentProfile> {
                     "list_directory",
                     "git_status",
                     "run_command",
-                    // 只有带了已批准写集合的那一次才拿得到这两个：没声明写
-                    // 范围时它们在 `runner` 里被摘掉。
+                    "lsp",
+                    "ast_grep",
+                    // 写工具仅在声明并批准写集合后提供。
                     "create_file",
                     "edit_file",
+                    "file_changes",
                     // 动态 MCP 网关。只有兜底工种有——窄工种的价值就是范围窄，
                     // 给它们开一条通往任意外部服务的门等于把这个价值抵消掉。
                     "list_mcp_tools",
@@ -204,8 +206,11 @@ pub fn builtin_profiles(worker: Arc<dyn Provider>) -> Vec<SubagentProfile> {
                     "grep_files",
                     "list_directory",
                     "read_file",
+                    "lsp",
+                    "ast_grep",
                     "create_file",
                     "edit_file",
+                    "file_changes",
                     "run_command",
                 ],
                 prompt: "Your trade is BOUNDED IMPLEMENTATION. Complete the requested multi-file change inside the declared file set. Inspect neighboring code with bounded reads, then implement once the cause is understood. Preserve public behaviour outside the task. Check the original failing example against its required result and use the verifier when one is supplied, relative to your active workspace. Do not change existing tests when forbidden or redefine expectations to fit the patch. Before reporting completion, inspect the implementation diff; diagnostic files alone are not an implementation fix. You may create or edit only paths declared in task.write_files (legacy packets use task.relevant_files). Report changed files, verification and remaining uncertainty.",

@@ -99,6 +99,10 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_context_window: Option<u64>,
     pub workspace: PathBuf,
+    /// Host-selected model-policy owner. A delegated worktree keeps the original
+    /// project even when its execution directory or control state changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_policy_workspace: Option<PathBuf>,
     pub profile: Option<String>,
     /// Distinguishes an implicit default pinned at creation from a user choice
     /// when the TUI starts a *new* session. Restoring never reapplies defaults.
@@ -201,6 +205,7 @@ impl Session {
             delegation_read_only: false,
             delegation_detached: false,
             model_context_window: None,
+            model_policy_workspace: Some(workspace.clone()),
             workspace,
             provider_selection_explicit: profile.is_some(),
             profile,
@@ -316,6 +321,36 @@ impl SessionStore {
     }
     pub fn load(&self, id: Uuid) -> Result<Session, SessionError> {
         self.read(id, false)
+    }
+
+    /// Resolve host-owned model attribution independently of an execution worktree.
+    /// Legacy children recover their owner through durable ancestry; missing or
+    /// cyclic ancestry never falls back to an unrestricted temporary directory.
+    pub fn model_policy_context(
+        &self,
+        session: &Session,
+    ) -> Result<crate::provider::ModelPolicyContext, crate::provider::ProviderError> {
+        use crate::provider::{ModelPolicyContext, policy::denied};
+        if let Some(root) = &session.model_policy_workspace {
+            return ModelPolicyContext::for_workspace(root);
+        }
+        let mut root = session.workspace.clone();
+        let mut parent = session.parent_session_id;
+        let mut visited = HashSet::from([session.id]);
+        while let Some(id) = parent {
+            if !visited.insert(id) {
+                return Err(denied("session_policy_ancestry_cycle"));
+            }
+            let source = self
+                .load(id)
+                .map_err(|_| denied("session_policy_parent_unavailable"))?;
+            if let Some(root) = &source.model_policy_workspace {
+                return ModelPolicyContext::for_workspace(root);
+            }
+            root = source.workspace;
+            parent = source.parent_session_id;
+        }
+        ModelPolicyContext::for_workspace(&root)
     }
 
     /// 加载并算好执行指纹。
@@ -992,6 +1027,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
         delegation_read_only: false,
         delegation_detached: false,
         model_context_window: None,
+        model_policy_workspace: Some(PathBuf::from(workspace)),
         workspace: PathBuf::from(workspace),
         profile: None,
         provider_selection_explicit: true,

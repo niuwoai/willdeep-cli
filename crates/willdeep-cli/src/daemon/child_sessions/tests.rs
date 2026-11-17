@@ -947,6 +947,61 @@ fn fork_rejects_open_tool_calls_and_stale_compression_boundaries() {
     assert!(format!("{error:?}").contains("compression"), "{error:?}");
 }
 
+#[tokio::test]
+async fn model_preflight_denied_by_parent_policy_never_connects() {
+    let fixture = Fixture::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source = fixture.state.sessions.get(fixture.parent).unwrap().unwrap();
+    std::fs::create_dir_all(source.workspace.join(".willdeep")).unwrap();
+    std::fs::write(
+        source.workspace.join(".willdeep/model-policy.json"),
+        br#"{"version":1,"allow":[]}"#,
+    )
+    .unwrap();
+    let path = fixture.root.join("model-policy-config.toml");
+    std::fs::write(&path, format!(
+        "version = 1\n[providers.fixture]\nprovider = 'openai-compatible'\napi_base = 'http://{}/v1'\napi_key = 'fixture'\nmodel = 'parent'\n", listener.local_addr().unwrap(),
+    )).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let parent = fixture
+        .state
+        .sessions
+        .create(session_store::CreateRuntimeSession {
+            id: None,
+            workspace: source.workspace,
+            profile: Some("fixture".into()),
+            model: Some("parent".into()),
+            config: Some(path),
+            title: None,
+        })
+        .unwrap();
+    let request = ApiRequest::new(
+        "session.child.start",
+        serde_json::json!({
+            "parent_session_id":parent.id, "title":"Child", "prompt":"Read", "model":"override",
+        }),
+    );
+    let result = preflight(&fixture.state, &request).await;
+    assert!(result.is_err());
+    assert!(
+        fixture
+            .state
+            .sessions
+            .children
+            .transaction(|ledger| Ok(ledger.assignments.is_empty()))
+            .unwrap()
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+            .await
+            .is_err()
+    );
+}
+
 #[test]
 fn model_override_persists_its_resolved_window_not_the_parent_window() {
     let fixture = Fixture::new();

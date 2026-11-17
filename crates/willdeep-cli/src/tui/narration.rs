@@ -4,8 +4,8 @@
 //! 工具调用只进活动区，折叠态只露最近两条。几十次工具调用的任务跑十分钟，聊天区
 //! 一片空白，用户分不清是在干活还是卡死了。现在：
 //!
-//! - 详细模式里每段定稿的中途文字都作 `WillDeep:` 行落进记录；简洁模式只留最近
-//!   一段，画在聊天区底部那一行会替换的状态上，轮次收尾才落成正文；
+//! - 每段定稿的中途文字都保留；简洁模式只把最新一段暂放状态行，下一段、工具调用
+//!   或模型步骤开始前把它落入记录，保留定稿时的来源模型与时间；
 //! - 流式增量仍走临时行预览，压过那一行状态；
 //! - 每次工具调用先落一行 `· … 名字 · 摘要`，完成后原地改成 `✓` / `✗`；
 //! - 收尾文字只追加还没显示过的部分（比如轮次上限提示），不重复最后一段；
@@ -206,6 +206,8 @@ impl App {
 
     /// 删掉记录里的一行，连同它的附件槽、模型章和时间一起，保持逐行对齐。
     pub(super) fn drop_transcript_row(&mut self, index: usize) {
+        self.delivery_record_removed(index);
+        self.viewport_remove_record(index);
         for queued in &mut self.queued_prompts {
             if let Some(row) = queued.transcript_row.as_mut() {
                 if *row == index {
@@ -391,8 +393,8 @@ pub(super) fn tail_within_rows(prefix: &str, text: &str, width: usize, rows: usi
 
 impl App {
     /// 聊天区底部多出来的那一行。正在流的内容优先：思维链只显示耗时摘要，
-    /// 正文显示最近一段回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
-    /// 摆在这里——干活过程中永远只有这一行在变，收尾才写进记录。
+    /// 正文显示完整的当前回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
+    /// 摆在这里；后续定稿、工具、模型步骤或收尾时把它写进记录。
     pub(super) fn live_transcript_row(&self) -> Option<String> {
         self.transient_row().or_else(|| self.concise_status_row())
     }
@@ -403,6 +405,8 @@ impl App {
     /// 卡住了。活动区那行照旧记（`record_progress`），这里只管聊天区这一行。
     /// 这一行说的比等待动画具体，所以动画让位，不两行叠在一起。
     pub(super) fn note_compression_started(&mut self) {
+        self.flush_held_narration();
+        self.note_turn_phase(turn_status::TurnPhase::Compressing);
         self.dismiss_awaiting_reply();
         self.compression = Some(CompressionNotice {
             started: Instant::now(),
@@ -412,6 +416,7 @@ impl App {
 
     /// 压缩完成：同一行整行换成「上下文已压缩」，不再读秒。正文或工具一来就撤掉。
     pub(super) fn note_compression_completed(&mut self) {
+        self.note_turn_phase(turn_status::TurnPhase::Preparing);
         if let Some(notice) = self.compression.as_mut() {
             notice.done = true;
         }
@@ -544,19 +549,27 @@ impl App {
         ))
     }
 
-    /// 流式增量进临时行：只留最后 [`THOUGHT_PREVIEW_CHARS`] 字，进程内轮次与
-    /// Runtime 轮次共用。思考型模型正文常为空，思维链那行是用户唯一能看到的
-    /// 「它此刻在干嘛」。
+    /// 流式增量进临时行；完整正文留作阅读与选区的稳定源文本，不按尾部裁剪。
+    /// 进程内与 Runtime 共用，非空增量只刷新心跳，不逐块追加活动日志。
     pub(super) fn stream_transient(&mut self, kind: StreamKind, text: &str) {
         let text = terminal_safe_text(text);
+        if text.is_empty() {
+            return;
+        }
         if self.transient_kind != kind {
             if self.transient_kind == StreamKind::Reasoning {
                 self.finish_thought();
             } else {
-                self.transient_thought = None;
+                self.finish_reply_stream();
             }
             self.transient_kind = kind;
         }
+        // Committing the previous Reply can update its own phase. The new
+        // nonempty delta is the authority for the current foreground activity.
+        self.note_turn_phase(match kind {
+            StreamKind::Reasoning => turn_status::TurnPhase::Reasoning,
+            StreamKind::Reply => turn_status::TurnPhase::ReceivingReply,
+        });
         if kind == StreamKind::Reasoning && self.thought_started_at.is_none() {
             self.thought_started_at = Some(Instant::now());
         }
@@ -571,16 +584,9 @@ impl App {
         // 流式输出一开始，压缩状态行和等待动画都让位：用户已经看到 AI 在动了。
         self.dismiss_compression_notice();
         self.dismiss_awaiting_reply();
-        let mut content = self.transient_thought.take().unwrap_or_default();
-        content.push_str(&text);
-        if kind == StreamKind::Reply {
-            let skip = content
-                .chars()
-                .count()
-                .saturating_sub(THOUGHT_PREVIEW_CHARS);
-            content = content.chars().skip(skip).collect();
-        }
-        self.transient_thought = Some(content);
+        self.transient_thought
+            .get_or_insert_with(String::new)
+            .push_str(&text);
     }
 
     fn thought_elapsed_label(&self) -> String {
@@ -596,13 +602,34 @@ impl App {
         }
         if let Some(thought) = self
             .transient_thought
-            .take()
+            .as_ref()
             .filter(|text| !text.trim().is_empty())
         {
             let elapsed = self.thought_elapsed_label();
-            self.append_transcript(format!("{THOUGHT_ENTRY_PREFIX}{elapsed}\n{thought}"));
+            let row = format!("{THOUGHT_ENTRY_PREFIX}{elapsed}\n{thought}");
+            let index = self.transcript.len();
+            self.append_transcript(row);
+            self.viewport_commit_stream(index, StreamKind::Reasoning);
         }
+        self.transient_thought = None;
         self.thought_started_at = None;
+    }
+
+    /// Tool/model/source boundaries may arrive before the finalized text event.
+    /// Preserve the actual Reply source before replacing that preview.
+    pub(super) fn finish_reply_stream(&mut self) {
+        if self.transient_kind != StreamKind::Reply {
+            return;
+        }
+        if let Some(text) = self
+            .transient_thought
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+        {
+            self.note_narration(&text);
+            self.flush_held_narration();
+        }
+        self.transient_thought = None;
     }
 
     /// 点工具行展开，点它下面的「收起」收回。
@@ -809,6 +836,11 @@ impl App {
     }
 
     pub(super) fn set_background_wait(&mut self, waiting: bool) {
+        self.note_turn_phase(if waiting {
+            turn_status::TurnPhase::Background
+        } else {
+            turn_status::TurnPhase::Preparing
+        });
         if waiting && !self.waiting_background {
             let message = self.language.text(
                 "后台等待中，可以继续输入；普通消息回车后自动发送，后台任务继续运行",
@@ -916,7 +948,10 @@ impl App {
     pub(super) fn note_model_step_started(&mut self) {
         self.waiting_background = false;
         self.finish_thought();
+        self.finish_reply_stream();
+        self.flush_held_narration();
         self.transient_thought = None;
+        self.note_turn_phase(turn_status::TurnPhase::Preparing);
         self.flush_deferred_steering();
     }
 
@@ -924,22 +959,6 @@ impl App {
         for message in std::mem::take(&mut self.deferred_steering) {
             self.append_transcript_at(format!("You: {}", message.text), message.sent_at);
         }
-    }
-
-    /// 忙时提交一成功就回显，不等下一轮任务启动才发的那条事件。
-    /// 行文与事件到来时拼的那行一致，事件认领时直接对上，不会再写一行。
-    pub(super) fn echo_runtime_submission(&mut self, text: &str) {
-        let visible = willdeep_core::conversation::visible_user_text(text);
-        let row = format!("You: {}", terminal_safe_text(visible));
-        self.append_transcript(row.clone());
-        // 忙时回显的这句同样是「已发出、还没人接」：本轮结束后它才被处理。
-        self.note_awaiting_reply();
-        self.pending_runtime_echoes
-            .push_back(runtime_queue::PendingRuntimeEcho {
-                text: visible.to_owned(),
-                row,
-            });
-        self.note_prompt_submitted(visible);
     }
 
     /// 向上箭头在会话文件落盘前也要能找回刚发出的这句。同一句只留最近一次。
@@ -965,53 +984,6 @@ impl App {
                     && willdeep_core::conversation::visible_user_text(&message.content) == text
             })
         });
-    }
-
-    /// 下一轮任务启动时的 `queued_user_message` 认领已经回显的那一行。
-    /// 对上了就不再写；对不上（别的端发来的、或本端没来得及回显）照旧补一行。
-    pub(super) fn claim_runtime_echo(&mut self, text: &str) -> bool {
-        let visible = willdeep_core::conversation::visible_user_text(text);
-        let row = format!("You: {}", terminal_safe_text(visible));
-        let claimed = self
-            .pending_runtime_echoes
-            .iter()
-            .position(|echo| echo.row == row)
-            .or_else(|| {
-                self.pending_runtime_echoes
-                    .iter()
-                    .position(|echo| echo.text == visible)
-            });
-        if let Some(position) = claimed {
-            self.pending_runtime_echoes.remove(position);
-            return true;
-        }
-        false
-    }
-
-    /// 队列里这条消息被删掉或改掉了：还挂着的回显行改成「未发送」。
-    /// 已经认领过的（下一轮已经开始）不动，那句话确实发出去了。
-    /// 同文多行时改最早那条，与入队顺序一致。
-    pub(super) fn retract_runtime_echoes(&mut self, remaining: &[&str]) {
-        let mut kept = VecDeque::new();
-        for echo in std::mem::take(&mut self.pending_runtime_echoes) {
-            if remaining.contains(&echo.text.as_str()) {
-                kept.push_back(echo);
-                continue;
-            }
-            if let Some(index) = self.transcript.iter().position(|row| *row == echo.row) {
-                // 没发出去，附件也不该再挂在这行下面。
-                if let Some(slot) = self.transcript_attachments.get_mut(index) {
-                    slot.clear();
-                }
-                self.transcript[index] = format!(
-                    "You: {}{}",
-                    self.language
-                        .text("［未发送］ ", "[not sent] ", "［未送信］ ",),
-                    terminal_safe_text(&echo.text)
-                );
-            }
-        }
-        self.pending_runtime_echoes = kept;
     }
 
     /// 测试里模拟旧记录无行号的发送路径。
@@ -1040,6 +1012,8 @@ impl App {
 /// 折叠后的聊天区视图：只给显示层用，记录本身一行不动。
 pub(super) struct FoldedTranscript {
     pub(super) rows: Vec<String>,
+    /// Exact input index for a real row; generated summaries/placeholders have none.
+    pub(super) sources: Vec<Option<usize>>,
     /// 每条原始记录在折叠视图里的位置；被收起的工具行指向替它们说话的汇总行，
     /// 搜索跳转命中它们时就落在汇总上。
     pub(super) index_of: Vec<usize>,
@@ -1077,6 +1051,7 @@ pub(super) fn fold_tool_rows(
         .rposition(|row| row.starts_with("You: "))
         .unwrap_or(0);
     let mut rows = Vec::with_capacity(entries.len());
+    let mut sources = Vec::with_capacity(entries.len());
     let mut index_of = Vec::with_capacity(entries.len());
     let mut next_run = 0;
     let mut cursor = 0;
@@ -1084,6 +1059,7 @@ pub(super) fn fold_tool_rows(
         let Some(&(start, end)) = runs.get(next_run).filter(|(start, _)| *start == cursor) else {
             index_of.push(rows.len());
             rows.push(entries[cursor].clone());
+            sources.push(Some(cursor));
             cursor += 1;
             continue;
         };
@@ -1154,6 +1130,7 @@ pub(super) fn fold_tool_rows(
         }
         if show_summary {
             rows.push(fold_summary(&hidden, language));
+            sources.push(None);
         }
         // 不显示的段没有自己的行，那些越界编号留到最后统一夹到最后一行：
         // 搜索跳转落在那里。这里不能夹——本段还没输出完，当时的行数恰好等于
@@ -1161,6 +1138,7 @@ pub(super) fn fold_tool_rows(
         for (offset, line) in run.iter().enumerate() {
             if placed[offset] == rows.len() && !folded_thought(offset) {
                 rows.push(line.clone());
+                sources.push(Some(start + offset));
             }
             index_of.push(placed[offset]);
         }
@@ -1178,7 +1156,11 @@ pub(super) fn fold_tool_rows(
             .find(|target| *target != HIDDEN_RUN_ROW);
         index_of[index] = after.unwrap_or(tail);
     }
-    FoldedTranscript { rows, index_of }
+    FoldedTranscript {
+        rows,
+        sources,
+        index_of,
+    }
 }
 
 /// 折叠完成后把淡出的回执行从视图里删掉。它们折叠时仍占着位置、充当工具行的
@@ -1218,6 +1200,12 @@ fn remove_faded_rows(folded: &mut FoldedTranscript, faded: &[bool]) {
     for target in &mut folded.index_of {
         *target = placed[*target];
     }
+    folded.sources = folded
+        .sources
+        .iter()
+        .zip(&removed)
+        .filter_map(|(source, removed)| (!removed).then_some(*source))
+        .collect();
     folded.rows = folded
         .rows
         .iter()
@@ -1325,6 +1313,12 @@ impl App {
             );
         }
         folded.index_of = index_of;
+        for source in &mut folded.sources {
+            *source = source
+                .and_then(|entry| entry.checked_sub(shift))
+                .and_then(|entry| visible_indices.get(entry))
+                .map(|index| floor + index);
+        }
         folded
     }
 
@@ -1376,9 +1370,8 @@ impl App {
 
     /// 模型这一轮定稿的一段话。记住它，收尾时据此去重。
     ///
-    /// 详细模式逐段落进记录。简洁模式只留最近一段：干活过程中聊天区只该有计划
-    /// 卡片和一行状态，每段话都落一行会把过程堆成详细模式。计划围栏例外，它要
-    /// 原位更新卡片，两种模式都直接进记录。
+    /// 简洁模式只把最新一段暂放状态行；下一段到达前先落下上一段，避免定稿被覆盖。
+    /// 详细模式与计划卡片照常立即进入记录。
     pub(super) fn note_narration(&mut self, text: &str) {
         // 目标完成标签是给引擎认的协议，不往聊天区送；存储层仍保留原文。
         let text = willdeep_core::conversation::visible_assistant_text(text).trim();
@@ -1386,24 +1379,33 @@ impl App {
             return;
         }
         self.finish_thought();
-        self.transient_thought = None;
         // 正文到了，压缩那一行和等待动画都不用再解释「为什么还没动静」。
         self.dismiss_compression_notice();
         self.dismiss_awaiting_reply();
+        self.note_turn_phase(turn_status::TurnPhase::ReceivingReply);
         self.activity_line = self
             .language
             .text("正在整理思路", "Working through it", "考えを整理中")
             .to_owned();
+        let row = format!("{ASSISTANT_ROW_PREFIX}{text}");
+        let held = turn_status::HeldNarration {
+            text: text.to_owned(),
+            model: self.model_for_row(&row),
+            recorded_at: self.message_times.recording_time(),
+        };
+        // 先落上一段，再保留本段；切换回复风格或收到计划卡片也不能吞掉上一段。
+        self.flush_held_narration();
         if self.concise_turn() && !willdeep_core::conversation::is_plan_reply(text) {
-            // 时间按最终落进记录的那行记：进记录前还会过一遍终端安全处理。
-            let row = terminal_safe_text(&format!("WillDeep: {text}"));
-            self.message_times
-                .reserve(&row, self.message_times.recording_time());
-            self.held_narration = Some(text.to_owned());
+            self.viewport_hold_stream();
+            self.held_narration = Some(held);
         } else {
-            self.append_transcript(format!("WillDeep: {text}"));
-            self.held_narration = None;
+            let index = self.transcript.len();
+            self.append_held_narration(held);
+            if self.transcript.len() > index {
+                self.viewport_commit_stream(index, StreamKind::Reply);
+            }
         }
+        self.transient_thought = None;
         self.turn_narration = Some(text.to_owned());
     }
 
@@ -1423,7 +1425,10 @@ impl App {
         expansion: Option<String>,
     ) {
         self.finish_thought();
+        self.finish_reply_stream();
+        self.flush_held_narration();
         self.transient_thought = None;
+        self.note_turn_phase(turn_status::TurnPhase::Tool(name.to_owned()));
         // 工具调用是这一轮的第一份可见输出，压缩状态行和等待动画到此为止。
         self.dismiss_compression_notice();
         self.dismiss_awaiting_reply();
@@ -1441,6 +1446,21 @@ impl App {
         expansion: Option<String>,
         is_error: bool,
     ) {
+        self.last_progress_at = Some(Instant::now());
+        if matches!(&self.turn_phase, turn_status::TurnPhase::Tool(active) if active == name) {
+            let phase = self
+                .tools
+                .details
+                .iter()
+                .rev()
+                .find_map(|detail| {
+                    detail
+                        .strip_prefix("… ")
+                        .map(|name| turn_status::TurnPhase::Tool(name.to_owned()))
+                })
+                .unwrap_or(turn_status::TurnPhase::Preparing);
+            self.note_turn_phase(phase);
+        }
         let marker = if is_error { TOOL_FAILED } else { TOOL_DONE };
         let pending = tool_line(TOOL_PENDING, name, None);
         let with_detail = format!("{pending} · ");
@@ -1463,40 +1483,39 @@ impl App {
     /// 收尾文字：只追加还没显示过的部分，返回追加了什么，供会话镜像持久化。
     pub(super) fn note_reply(&mut self, final_text: &str) -> Option<String> {
         self.finish_thought();
-        self.transient_thought = None;
         // 与中途文字同一条投影：先剥协议标签，再比「这段是不是已经显示过」。
         let final_text = willdeep_core::conversation::visible_assistant_text(final_text);
         let remainder = unshown_reply(final_text, self.turn_narration.as_deref());
-        // 简洁模式的中途文字只摆在状态行上。收尾是它进记录的时候：正文与它
-        // 相同就落这一段，正文在它前面拼了提示就两段都落。之后清掉，免得
-        // 轮次复位再补写一遍。
+        // 最后一段可能还在状态行，也可能早已在工具/模型步骤边界落入记录。
+        // 追加前取走 held，收尾和重复终态都不会再补写它；元数据始终沿用原事件。
         let held = self.held_narration.take();
-        if let Some(held) = held
-            .as_deref()
-            .map(str::trim)
-            .filter(|held| !held.is_empty())
-        {
-            let narrated = self.turn_narration.as_deref().map(str::trim);
-            if narrated == Some(held)
-                && let Some(head) = &remainder
-                && final_text.trim() != head.trim()
-            {
-                self.append_transcript(format!("WillDeep: {head}"));
-                self.append_transcript(format!("WillDeep: {held}"));
-                return Some(final_text.trim().to_owned());
+        let prepend = held.as_ref().is_some_and(|held| {
+            self.turn_narration.as_deref().map(str::trim) == Some(held.text.trim())
+                && remainder
+                    .as_ref()
+                    .is_some_and(|head| final_text.trim() != head.trim())
+        });
+        let mut appended = Vec::new();
+        if prepend && let Some(head) = &remainder {
+            self.append_transcript(format!("{ASSISTANT_ROW_PREFIX}{head}"));
+            appended.push(head.clone());
+        }
+        if let Some(held) = held {
+            appended.push(self.append_held_narration(held));
+        }
+        if !prepend && let Some(text) = remainder {
+            let index = self.transcript.len();
+            self.append_transcript(format!("{ASSISTANT_ROW_PREFIX}{text}"));
+            if self.transcript.len() > index {
+                self.viewport_commit_stream(index, StreamKind::Reply);
             }
-            self.append_transcript(format!("WillDeep: {held}"));
+            appended.push(text);
         }
-        if let Some(text) = &remainder {
-            self.append_transcript(format!("WillDeep: {text}"));
+        self.transient_thought = None;
+        if !final_text.trim().is_empty() {
+            self.turn_narration = Some(final_text.trim().to_owned());
         }
-        match (&held, &remainder) {
-            (Some(held), Some(head)) if final_text.trim() != head.trim() => {
-                Some(format!("{head}\n\n{held}"))
-            }
-            (Some(held), _) => Some(held.clone()),
-            (None, remainder) => remainder.clone(),
-        }
+        (!appended.is_empty()).then(|| appended.join("\n\n"))
     }
 }
 
@@ -1580,7 +1599,7 @@ mod tests {
         let rows = &app.transcript_rows;
         let user = rows
             .iter()
-            .position(|row| row.trim_start().starts_with("You:"))
+            .position(|row| row.contains("别磨叽了"))
             .unwrap();
         assert_eq!(rows[user + 1], ".", "{rows:?}");
 
@@ -1655,7 +1674,8 @@ mod tests {
             (Duration::from_secs(2), "..."),
         ] {
             let lines = stage(&mut app, elapsed);
-            let message = lines.iter().position(|line| line.contains("You:")).unwrap();
+            // TestBackend 的宽字符续格带空白，用正文里的 ASCII 词定位实际画面。
+            let message = lines.iter().position(|line| line.contains("main")).unwrap();
             // 边框是 `│`，中间那一格才是内容。紧贴消息的下一行应该只有那几个点。
             let below = lines[message + 1]
                 .trim_matches(|ch: char| "│ ".contains(ch))
@@ -2007,7 +2027,7 @@ mod tests {
             app.transient_thought
                 .as_deref()
                 .map(|value| value.chars().count()),
-            Some(THOUGHT_PREVIEW_CHARS)
+            Some("好的".chars().count() + THOUGHT_PREVIEW_CHARS * 2)
         );
     }
 
@@ -2236,7 +2256,11 @@ mod tests {
         assert!(app.transcript.last().unwrap().contains("240s"));
         app.set_background_wait(true);
         assert!(app.composer_state().0.contains("Keep typing"));
-        assert!(app.working_summary().unwrap().contains("Enter sends text"));
+        assert!(
+            app.working_summary()
+                .unwrap()
+                .contains(&turn_status::TurnPhase::Background.label(Language::En))
+        );
         assert_eq!(app.input.text(), "unsent draft");
         app.set_background_wait(false);
         assert!(app.composer_state().0.contains("Enter sends text"));
@@ -2308,74 +2332,64 @@ mod tests {
     }
 
     #[test]
-    fn concise_narration_stays_on_one_status_row_until_the_turn_ends() {
+    fn concise_narration_commits_earlier_paragraphs_and_keeps_one_live_row() {
         let mut app = App::new(Vec::new(), Language::ZhCn);
         app.begin_turn(true, "working".to_owned());
         app.note_narration("先看日志");
+        assert!(app.transcript.is_empty());
         app.note_narration("再改这一行");
-        assert!(
-            app.transcript.is_empty(),
-            "concise mode keeps mid-turn prose out of the transcript: {:?}",
-            app.transcript
-        );
+        assert_eq!(app.transcript, [format!("{ASSISTANT_ROW_PREFIX}先看日志")]);
         let row = app.live_transcript_row().unwrap();
-        assert!(row.contains("再改这一行"), "{row}");
-        assert!(
-            !row.contains("先看日志"),
-            "only the latest line shows: {row}"
-        );
-        assert!(
-            row.contains('s'),
-            "the status row carries the elapsed time: {row}"
-        );
+        assert!(row.contains("再改这一行") && row.contains('s'), "{row}");
+        assert!(!row.contains("先看日志"), "{row}");
 
-        // 流式增量压过状态行；定稿后又回到状态行。
         app.stream_transient(StreamKind::Reply, "正在写");
         assert!(app.live_transcript_row().unwrap().contains("正在写"));
         app.note_narration("写完了");
         assert!(app.live_transcript_row().unwrap().contains("写完了"));
-
-        // 计划围栏照旧进记录，原位更新卡片；它就是最新一段，状态行让位给卡片。
-        app.note_narration("```plan\n1. 验证接口\n2. 发布\n```");
-        assert_eq!(app.transcript.len(), 1);
-        assert!(decode_plan_entry(&app.transcript[0]).is_some());
-        assert!(app.live_transcript_row().is_none());
-
-        // 收尾与最后一段相同：落成一段正文，不再重复，状态行随之撤掉。
-        assert_eq!(app.note_reply("写完了"), Some("写完了".to_owned()));
         assert_eq!(app.transcript.len(), 2);
-        assert!(app.transcript[1].contains("写完了"));
+        assert!(app.transcript[1].ends_with("再改这一行"));
+
+        let plan = "```plan\n1. 验证接口\n2. 发布\n```";
+        app.note_narration(plan);
+        assert_eq!(app.transcript.len(), 4);
+        assert!(app.transcript[2].ends_with("写完了"));
+        assert!(decode_plan_entry(&app.transcript[3]).is_some());
+        assert!(app.live_transcript_row().is_none());
+        assert_eq!(app.note_reply(plan), None);
         app.finish_turn();
+        assert_eq!(app.transcript.len(), 4);
         assert!(app.live_transcript_row().is_none());
 
-        // 忙时发出的那句是记录里的一行，不进状态行，也不被状态行盖住。
         app.begin_turn(true, "working".to_owned());
         app.note_narration("还在查");
-        app.echo_runtime_submission("限定用 postgres");
-        assert!(
-            app.transcript
-                .iter()
-                .any(|row| row == "You: 限定用 postgres")
-        );
-        let row = app.live_transcript_row().unwrap();
-        assert!(row.contains("还在查"), "{row}");
-        assert!(
-            !row.contains("postgres"),
-            "the echo is not the status row: {row}"
-        );
-
-        // 收尾在最后一段前面拼了提示：两段都落，镜像拿到完整文字。
-        app.begin_turn(true, "working".to_owned());
-        app.note_narration("写完了");
-        assert_eq!(app.note_reply("写完了"), Some("写完了".to_owned()));
-        assert!(!app.transcript.iter().any(|row| row.contains("轮次上限")));
+        let receipt = willdeep_runtime_protocol::RuntimeTurn {
+            execution_session_id: None,
+            id: uuid::Uuid::new_v4(),
+            session_id: uuid::Uuid::new_v4(),
+            request_id: uuid::Uuid::new_v4(),
+            queue_sequence: 1,
+            status: willdeep_runtime_protocol::TurnStatus::Queued,
+            active_task_id: None,
+            attempts: 0,
+            created_at: 1,
+            started_at: None,
+            completed_at: None,
+            message_start: None,
+            message_end: None,
+            message_generation: 0,
+            workspace_checkpoint: None,
+        };
+        let record = app
+            .echo_runtime_submission("限定用 postgres", &receipt, false, None)
+            .unwrap();
         assert_eq!(
-            app.transcript
-                .iter()
-                .filter(|row| row.contains("写完了"))
-                .count(),
-            2
+            app.pending_runtime_echoes.back().unwrap().turn_id,
+            receipt.id
         );
+        assert!(app.transcript[record].ends_with("限定用 postgres"));
+        let row = app.live_transcript_row().unwrap();
+        assert!(row.contains("还在查") && !row.contains("postgres"), "{row}");
     }
 
     /// 压缩期间聊天区一行都不长，用户盯着自己刚发的那句会以为卡住了。状态行就挂在
@@ -2461,7 +2475,7 @@ mod tests {
         let rows = app.transcript_rows.clone();
         let user = rows
             .iter()
-            .position(|row| row.trim_start().starts_with("You:"))
+            .position(|row| row.contains("现在结果怎么样了？"))
             .unwrap();
         let notice_row = &rows[user + 1];
         assert!(

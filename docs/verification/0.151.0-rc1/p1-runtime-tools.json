@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-11-17",
+  "version": "0.151.0-rc1",
+  "verification_status": "local_acceptance_passed_with_declared_gaps",
+  "source": {
+    "head": "ba894a5906982921411e33486fa699f6f356e43e",
+    "branch": "fix/tui-queue-during-compression",
+    "uncommitted_changes": true,
+    "scope": "P1 shared Runtime tools, model policy, Goal execution evidence and integration status; concurrent TUI work is preserved and not attributed to this task"
+  },
+  "previous_report": "../0.150.0-rc3/clippy-approval-hooks.json",
+  "environment": {
+    "host_platform": "macOS",
+    "rustc": "1.94.1",
+    "cargo": "1.94.1",
+    "ruby": "3.2.4",
+    "node": "24.8.0",
+    "chrome": "157.0.8103.79",
+    "typescript_language_server": "5.3.0"
+  },
+  "dependency_probes": [
+    {"command": "ast-grep --version", "exit_code": 127, "availability": "missing", "installed_by_this_task": false},
+    {"command": "rust-analyzer --version", "exit_code": 1, "availability": "rustup proxy present but actual language-server binary unavailable", "installed_by_this_task": false}
+  ],
+  "contains_model_runs": false,
+  "model_success_rate": null,
+  "model_tokens": null,
+  "model_cost": null,
+  "delivery": {
+    "committed": false,
+    "pushed": false,
+    "tagged": false,
+    "pull_request_created": false,
+    "installed": false,
+    "published": false,
+    "dependencies_auto_installed": false
+  },
+  "checks": [
+    {
+      "id": "core_production_initial",
+      "command": "cargo check -p willdeep-core --lib --locked",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "b7bqjau3t",
+      "scope": "Before the TypeScript native changes compatibility adjustment"
+    },
+    {
+      "id": "core_suite_initial",
+      "command": "cargo test -p willdeep-core --lib --tests --locked --no-fail-fast",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "bmzw0krpt",
+      "unit_passed": 1243,
+      "unit_failed": 1,
+      "unit_ignored": 7,
+      "failure": "checkpoint budget fixture created a new Goal ID while expecting stale same-ID budget merging: actual (2,10000), expected (7,120000)",
+      "integration_results": {
+        "ast_grep_tools": {"passed": 2, "ignored": 1},
+        "browser_tools": {"passed": 4, "ignored": 3},
+        "goal_evidence": {"passed": 13, "ignored": 0},
+        "lsp_tools": {"passed": 0, "ignored": 3},
+        "model_policy": {"passed": 16, "ignored": 0},
+        "provider_contracts": {"passed": 5, "ignored": 0},
+        "search_tools": {"passed": 12, "ignored": 0}
+      }
+    },
+    {
+      "id": "core_suite_after_typescript_integration",
+      "command": "cargo test -p willdeep-core --lib --tests --locked --no-fail-fast",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "bnxxf3ge3",
+      "unit_duration_seconds": 420.74,
+      "unit_passed": 1246,
+      "unit_failed": 2,
+      "unit_ignored": 7,
+      "failure": "Two browser process-tree fixtures read an empty descendant.pid between file creation and write; the fixture now publishes the completed PID file by same-directory rename",
+      "resolved_previous_failure": "Same-ID checkpoint budget merging and distinct new-Goal budget assertions passed",
+      "all_ordinary_integrations_passed": true
+    },
+    {
+      "id": "core_suite_final",
+      "command": "cargo test -p willdeep-core --lib --tests --locked --no-fail-fast",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bljns3z8h",
+      "unit_duration_seconds": 420.69,
+      "unit_passed": 1248,
+      "unit_failed": 0,
+      "unit_ignored": 7,
+      "integration_passed": 52,
+      "integration_failed": 0,
+      "integration_ignored": 7,
+      "integration_results": {
+        "ast_grep_tools": {"passed": 2, "ignored": 1},
+        "browser_tools": {"passed": 4, "ignored": 3},
+        "goal_evidence": {"passed": 13, "ignored": 0},
+        "lsp_tools": {"passed": 0, "ignored": 3},
+        "model_policy": {"passed": 16, "ignored": 0},
+        "provider_contracts": {"passed": 5, "ignored": 0},
+        "search_tools": {"passed": 12, "ignored": 0}
+      },
+      "scope": "After TypeScript integration, checkpoint identity correction, browser readiness atomic publication and core lint fixes; real browser/LSP tests are explicitly executed separately"
+    },
+    {
+      "id": "real_typescript_after_native_changes_compatibility",
+      "command": "cargo test -p willdeep-core --test lsp_tools --locked -- --ignored --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "by47u7zk2",
+      "passed": 3,
+      "scope": "Actual installed typescript-language-server 5.3.0; definition/references/symbols, inferred project and cross-file string-key/UTF-16 rename preview/application"
+    },
+    {
+      "id": "cli_compile_and_primary_regressions",
+      "commands": [
+        "cargo test -p willdeep --bin willdeep --locked --no-run",
+        "cargo test -p willdeep --bin willdeep --locked policy -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked local_provider_discovery -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked image_download_tests -- --test-threads=1",
+        "cargo test -p willdeep --bin willdeep --locked config:: -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked doctor:: -- --test-threads=4"
+      ],
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bi58a9ls8",
+      "per_filter_passed": [27, 15, 2, 58, 4],
+      "unique_passed": 96,
+      "deduplication": "Full Rust test names; policy overlaps discovery and config",
+      "scope": "Auxiliary/Worker/fallback/model-switch/library/mobile/worktree/native trial policy, startup durable ownership, no-policy compatibility, non-2xx and redirect image downloads, browser/search configuration and redacted offline doctor"
+    },
+    {
+      "id": "cli_snapshot_worker_binding_and_child_regressions",
+      "commands": [
+        "cargo test -p willdeep --bin willdeep --locked harness::verification -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked daemon::diff_review:: -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked agent_rsi::native::tests -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked agent_registry::tests -- --test-threads=4",
+        "cargo test -p willdeep --bin willdeep --locked daemon::child_sessions:: -- --test-threads=4"
+      ],
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "b8835ps2x",
+      "per_filter_passed": [5, 27, 6, 7, 88],
+      "ignored": 1,
+      "scope": "Production Git snapshot callback, staged/unstaged/untracked/nested repositories, native Worker, library binding, child ownership and recovery"
+    },
+    {
+      "id": "workspace_clippy_initial",
+      "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "bauvv3vnw",
+      "failure": "One search fixture unused_io_amount and two concurrent TUI cloned_ref_to_slice_refs warnings"
+    },
+    {
+      "id": "workspace_clippy_final",
+      "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bfs38wle1"
+    },
+    {
+      "id": "windows_cross_clippy_initial",
+      "command": "cargo clippy -p willdeep-core --all-targets --target x86_64-pc-windows-gnu --locked -- -D warnings",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "bloni0vv2",
+      "failure": "Two Unix-only mutations left unused mut on Windows; also the search fixture unused_io_amount"
+    },
+    {
+      "id": "windows_cross_clippy_final",
+      "command": "cargo clippy -p willdeep-core --all-targets --target x86_64-pc-windows-gnu --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bjcrm0rkp",
+      "scope": "Windows GNU target compilation/lint only, not Windows native execution"
+    },
+    {
+      "id": "format_before_tui_coordination",
+      "command": "cargo fmt --all -- --check",
+      "status": "failed",
+      "exit_code": 1,
+      "evidence_task": "bcdyrb6h4",
+      "failure": "Formatting remained in concurrent prompt_queue_delivery_tests.rs; delegated to its existing owning session without overwriting TUI work"
+    },
+    {
+      "id": "format_final",
+      "command": "cargo fmt --all -- --check",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bc6410nk0",
+      "scope": "Entire current workspace after coordination with the concurrent TUI owner"
+    },
+    {
+      "id": "version_consistency",
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_release_version.rb 0.151.0-rc1",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "source_size",
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_source_size.rb --output docs/verification/0.151.0-rc1/source-size",
+      "status": "passed",
+      "exit_code": 0,
+      "reviewed_files": 1644,
+      "max_lines": 3000,
+      "violations": [],
+      "report": "source-size.json"
+    },
+    {
+      "id": "script_syntax",
+      "commands": [
+        "node --check scripts/p1_tools_fixture.mjs",
+        "node --check crates/willdeep-core/src/tools/browser/bridge.mjs",
+        "ruby -E UTF-8:UTF-8 -c scripts/test_p1_browser.rb"
+      ],
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "documentation_consistency",
+      "method": "Read-only Ruby checks of relative Markdown links and product-overview character budget",
+      "status": "passed",
+      "exit_code": 0,
+      "checked_documents": 10,
+      "relative_links": 349,
+      "broken_links": [],
+      "product_overview_characters": 17170,
+      "product_overview_max_characters": 20000
+    },
+    {
+      "id": "report_consistency",
+      "method": "Parse the completed core/CLI task outputs and browser JSON; assert reported counts, full-test-name deduplication, final gate results, unknown model metrics and unchanged delivery flags",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "diff_whitespace",
+      "command": "git diff --check",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "real_host_initial",
+      "command": "WILLDEEP_TEST_BROWSER_NODE=<Node24> WILLDEEP_TEST_BROWSER_CHROME=<Chrome> cargo test -p willdeep-core --test browser_tools --test lsp_tools --locked -- --ignored --test-threads=1",
+      "status": "failed",
+      "exit_code": 101,
+      "evidence_task": "bf3w756vo",
+      "browser_passed": 3,
+      "typescript_query_passed": 2,
+      "typescript_rename_failed": 1,
+      "failure": "typescript-language-server 5.3.0 returns native changes despite advertising documentChanges; strict host rejected that shape"
+    },
+    {
+      "id": "browser_bridge_first_attempt",
+      "status": "failed",
+      "exit_code": 1,
+      "report": "browser-bridge.json",
+      "failure": "Chrome CDP startup timed out before functional tests",
+      "evidence_task": "blqxoa52h"
+    },
+    {
+      "id": "browser_bridge_retry",
+      "command": "ruby -E UTF-8:UTF-8 scripts/test_p1_browser.rb --node <Node24> --chrome <Chrome> --report-prefix docs/verification/0.151.0-rc1/browser-bridge-retry",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 11,
+      "report": "browser-bridge-retry.json",
+      "evidence_task": "buwqyyl69",
+      "scope": "Real Node/CDP bridge; Rust host is covered separately"
+    }
+  ],
+  "ignored_test_scope": {
+    "core_unit_7": "Three internal subprocess entry points, paid live-fire evaluations, explicitly selected corpus preflight and ledger benchmark; internal entries are also invoked by their parent tests",
+    "core_integrations_7": "One real ast-grep test remains unavailable; three actual browser host and three TypeScript LSP cases are separately executed and passed",
+    "cli_1": "Manual diagnostic snapshot requires an explicitly selected diagnostic workspace"
+  },
+  "cli_regression_summary": {
+    "test_executions_passed": 239,
+    "unique_test_names_passed": 224,
+    "ignored": 1,
+    "deduplication": "Full Rust test names across the two CLI regression batches; filter counts must not be added as unique cases",
+    "scope": "CLI binary unit tests, not the complete workspace test suite"
+  },
+  "integration_compilation_failures": [
+    {"evidence_task": "b4lj2mt9o", "error": "AlwaysAllow tests still used the prior persistence API; subsequent core suite compiled and ran the updated tests"},
+    {"evidence_task": "bmlsv2zv4", "error": "CLI no-run observed an in-progress TypeScript Target field migration (E0609); stopped-writer CLI no-run subsequently passed"}
+  ],
+  "pending": [],
+  "review": {
+    "scope": "TypeScript native changes compatibility and conversion into the existing file preview",
+    "method": "Independent read-only source review; no Cargo or test execution by the reviewer",
+    "confirmed_findings": 0,
+    "limitations": "Static review is separate from compilation, offline regressions and real language-server execution; the reviewer reported an unintended nested skill dispatch and independently rechecked the source"
+  },
+  "not_verified": [
+    "Native ast-grep executable: dependency absent; offline protocol and permission regressions are separate",
+    "Real rust-analyzer: installed rustup proxy reports its actual binary unavailable",
+    "Windows native execution and process Job behavior",
+    "External SearXNG/SomeIm authentication or paid model runs",
+    "Browser whole-process network isolation; current browser requires effective OS sandbox Off",
+    "Non-Unix screenshot persistence: explicitly refused"
+  ]
+}

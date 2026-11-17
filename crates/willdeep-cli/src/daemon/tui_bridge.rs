@@ -724,13 +724,22 @@ pub(crate) async fn remote_latest_turn(
     home: &Path,
     session_id: uuid::Uuid,
 ) -> Result<Option<willdeep_runtime_protocol::RuntimeTurn>> {
+    Ok(remote_turns(home, session_id).await?.pop())
+}
+
+/// Reconcile delivery by durable Turn identity, including items already claimed
+/// by the scheduler and therefore absent from the pending queue snapshot.
+pub(crate) async fn remote_turns(
+    home: &Path,
+    session_id: uuid::Uuid,
+) -> Result<Vec<willdeep_runtime_protocol::RuntimeTurn>> {
     let state = require_running(home).await?;
     let mut turns = api_data(runtime_client(&state)?.turns(session_id).await?)?;
     if turns.iter().any(|turn| turn.session_id != session_id) {
         bail!("Runtime returned a Turn owned by another Session")
     }
     turns.sort_by_key(|turn| turn.queue_sequence);
-    Ok(turns.pop())
+    Ok(turns)
 }
 
 pub(crate) async fn runtime_event_head(home: &Path) -> Result<u64> {

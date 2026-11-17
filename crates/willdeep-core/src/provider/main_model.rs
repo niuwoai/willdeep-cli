@@ -20,11 +20,13 @@ use crate::types::{Completion, Message, ToolDefinition};
 #[derive(Clone)]
 pub struct MainModelHandle {
     current: Arc<RwLock<Arc<dyn Provider>>>,
+    policy_context: Option<super::ModelPolicyContext>,
 }
 
 impl MainModelHandle {
     pub fn new(provider: Arc<dyn Provider>) -> Self {
         Self {
+            policy_context: provider.policy_context(),
             current: Arc::new(RwLock::new(provider)),
         }
     }
@@ -45,6 +47,10 @@ impl MainModelHandle {
 
     /// Replace the complete connection, including endpoint, credentials and dialect.
     pub fn set_provider(&self, configured: Arc<dyn Provider>) -> Result<(), ProviderError> {
+        let configured = match &self.policy_context {
+            Some(context) => configured.with_policy_context(context.clone())?,
+            None => configured,
+        };
         *self
             .current
             .write()
@@ -76,6 +82,17 @@ struct FollowMainModel {
 
 #[async_trait]
 impl Provider for FollowMainModel {
+    fn policy_context(&self) -> Option<super::ModelPolicyContext> {
+        self.handle.policy_context.clone()
+    }
+
+    fn with_policy_context(
+        &self,
+        context: super::ModelPolicyContext,
+    ) -> Result<Arc<dyn Provider>, ProviderError> {
+        self.handle.current()?.with_policy_context(context)
+    }
+
     fn ledger_identity(&self) -> Option<ProviderIdentity> {
         self.handle.current().ok()?.ledger_identity()
     }

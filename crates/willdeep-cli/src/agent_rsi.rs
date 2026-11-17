@@ -75,10 +75,26 @@ pub(crate) async fn run_free_review_standalone() -> Option<Result<()>> {
     free_review::run_standalone(std::env::args_os().collect()).await
 }
 
-pub async fn run(action: RsiAction, home: &Path) -> Result<()> {
+pub async fn run(action: RsiAction, home: &Path, cli: &crate::Cli) -> Result<()> {
     let value = match action {
         RsiAction::FreeReview(arguments) => free_review::execute(arguments).await?,
-        RsiAction::NativeTrial { control, preview } => native::execute(&control, preview).await?,
+        RsiAction::NativeTrial { control, preview } => {
+            let store = willdeep_core::SessionStore::new(home);
+            let resumed = crate::load_session(&store, cli.resume.as_deref())?;
+            anyhow::ensure!(
+                resumed.is_some() || cli.workspace.is_some() || cli.project.is_some(),
+                "native trial requires a recorded session or explicit --workspace/--project"
+            );
+            let workspace = crate::harness::resolve_workspace(cli, resumed.as_ref())?;
+            let context = match &resumed {
+                Some(session) => store.model_policy_context(session)?,
+                None => willdeep_core::provider::ModelPolicyContext::for_workspace(&workspace)?,
+            };
+            let owner = context
+                .workspace()
+                .context("native trial requires an owning project")?;
+            native::execute(&control, preview, owner).await?
+        }
         RsiAction::Check { file } => {
             let v = contract::parse_json(&std::fs::read(file)?)?;
             contract::validate(&v)?;

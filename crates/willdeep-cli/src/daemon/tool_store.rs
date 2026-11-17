@@ -201,6 +201,36 @@ impl ToolStore {
         Ok(Some(result))
     }
 
+    /// Closing an execution future prevents its pending foreground tools from
+    /// emitting ToolCompleted. Close only this task's records; supervised
+    /// background shells keep their own lifecycle and completion observations.
+    pub(super) fn interrupt_task(&self, task_id: uuid::Uuid) -> Result<Vec<RuntimeTool>> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Tool activity index lock poisoned"))?;
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Tool activity store lock poisoned"))?;
+        let completed_at = now_ms();
+        let mut interrupted = Vec::new();
+        for record in records.iter_mut().filter(|record| {
+            record.task_id == task_id
+                && record.status == ToolStatus::Running
+                && !record.name.starts_with("background_shell:")
+        }) {
+            record.status = ToolStatus::Interrupted;
+            record.completed_at_ms = Some(completed_at);
+            interrupted.push(record.clone());
+        }
+        if !interrupted.is_empty() {
+            persist_records(&self.path, &records)?;
+            active.retain(|_, id| !interrupted.iter().any(|record| record.id == *id));
+        }
+        Ok(interrupted)
+    }
+
     pub(super) fn get(&self, id: uuid::Uuid) -> Result<Option<RuntimeTool>> {
         Ok(self
             .records
@@ -269,6 +299,73 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_interruption_is_scoped_durable_and_does_not_rewrite_completed_or_background_tools() {
+        let root =
+            std::env::temp_dir().join(format!("willdeep-tool-stop-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("tools.json");
+        let task_id = uuid::Uuid::new_v4();
+        let other_task = uuid::Uuid::new_v4();
+        let agent_id = uuid::Uuid::new_v4();
+        let store = ToolStore::open(path.clone()).unwrap();
+        let start = |task_id, correlation: &str, name: &str| {
+            store
+                .start(StartTool {
+                    session_id: None,
+                    turn_id: None,
+                    task_id,
+                    agent_id,
+                    correlation: correlation.to_owned(),
+                    name: name.to_owned(),
+                })
+                .unwrap()
+        };
+        let done = start(task_id, "root:done", "browser");
+        store.finish("root:done", false).unwrap();
+        let pending = start(task_id, "root:pending", "browser");
+        let other = start(other_task, "root:other", "browser");
+        let background = start(task_id, "background:owned", "background_shell:owned");
+        let interrupted = store.interrupt_task(task_id).unwrap();
+        assert_eq!(interrupted.len(), 1);
+        assert_eq!(interrupted[0].id, pending.id);
+        assert_eq!(interrupted[0].status, ToolStatus::Interrupted);
+        assert!(interrupted[0].completed_at_ms.is_some());
+        assert!(store.interrupt_task(task_id).unwrap().is_empty());
+        assert!(store.finish("root:pending", false).unwrap().is_none());
+        for (id, status) in [
+            (done.id, ToolStatus::Completed),
+            (pending.id, ToolStatus::Interrupted),
+            (other.id, ToolStatus::Running),
+            (background.id, ToolStatus::Running),
+        ] {
+            assert_eq!(store.get(id).unwrap().unwrap().status, status);
+        }
+        let persisted: Vec<RuntimeTool> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            persisted
+                .iter()
+                .find(|record| record.id == pending.id)
+                .unwrap()
+                .status,
+            ToolStatus::Interrupted
+        );
+        assert_eq!(
+            store.finish("root:other", false).unwrap().unwrap().status,
+            ToolStatus::Completed
+        );
+        assert_eq!(
+            store
+                .finish_with_status("background:owned", ToolStatus::Interrupted)
+                .unwrap()
+                .unwrap()
+                .status,
+            ToolStatus::Interrupted
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn persists_filters_and_interrupts_running_tools_without_payloads() {

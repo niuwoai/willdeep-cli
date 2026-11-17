@@ -115,9 +115,9 @@ pub enum AgentAction {
     },
 }
 
-pub async fn run(action: AgentAction, home: &Path) -> Result<()> {
+pub async fn run(action: AgentAction, home: &Path, cli: &crate::Cli) -> Result<()> {
     if let AgentAction::Rsi { action } = action {
-        return crate::agent_rsi::run(action, home).await;
+        return crate::agent_rsi::run(action, home, cli).await;
     }
     let value = match action {
         AgentAction::Create { id, name, purpose, role, instructions_file, tools } => management::cli_write(home, "create", json!({"definition": {
@@ -461,6 +461,7 @@ fn binding_config(
     if let Some(model) = &binding.model {
         configured.model = model.clone();
     }
+    configured.policy_context = parent.policy_context.clone();
     Ok(configured)
 }
 

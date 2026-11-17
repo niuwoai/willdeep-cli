@@ -84,7 +84,9 @@ pub(crate) async fn run(action: PromptAction, cli: &crate::Cli) -> Result<()> {
             bail!("--count must be between 1 and {MAX_PROPOSALS}");
         }
         let loaded = crate::config::LoadedConfig::load(cli.config.as_deref())?;
-        let config = crate::harness::resolve_parent_provider_config(cli, &loaded, None)?;
+        let workspace = crate::harness::resolve_workspace(cli, None)?;
+        let mut config = crate::harness::resolve_parent_provider_config(cli, &loaded, None)?;
+        config.bind_workspace(&workspace)?;
         let provider = willdeep_core::provider::build_provider(config)
             .context("initialize the provider that drafts prompt variants")?;
         let provider =

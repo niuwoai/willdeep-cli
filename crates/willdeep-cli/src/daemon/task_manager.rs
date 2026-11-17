@@ -876,6 +876,7 @@ impl TaskManager {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn wait_until_idle(&self) {
         loop {
             let has_active_tasks = {
@@ -1021,6 +1022,22 @@ impl TaskManager {
             (task.clone(), tasks.clone())
         };
         persist_tasks(&self.path, &snapshot)?;
+        if matches!(
+            status,
+            RuntimeTaskStatus::Cancelled
+                | RuntimeTaskStatus::Interrupted
+                | RuntimeTaskStatus::Failed
+        ) {
+            for tool in self.tools.interrupt_task(id)? {
+                self.events.append(
+                    "tool.interrupted",
+                    format!(
+                        "task_id={id} tool_id={} agent_id={} reason=task_terminated",
+                        tool.id, tool.agent_id
+                    ),
+                )?;
+            }
+        }
         self.agents
             .set_status_for_task(id, agent_status(status), error.clone())?;
         self.events.append(

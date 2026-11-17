@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-16 | 当前版本：v0.149.0-rc7
+> 最后更新：2026-11-17 | 当前版本：v0.151.0-rc2
+
+P1 实现沿用[共享 Runtime 工具与证据决策](decisions/2026-11-17-p1-runtime-tools.md)：语义预览、结构查询、浏览器、搜索与执行证据均接入共享工具注册表、审批及调用前策略。项目模型策略保留持久归属，配置状态采用离线投影；具体配置见[Runtime 工具指南](P1_RUNTIME_TOOLS.md)，实际检查与未覆盖范围见[本地验收](verification/0.151.0-rc1/p1-runtime-tools.md)。
 
 ## 分发
 
@@ -10,7 +12,7 @@ macOS 发行构建固定使用 `macos-26-intel`，以同一 macOS 主版本的 I
 
 ## 边界
 
-当前实现以同一个 Agent Runtime 支撑一次性 CLI、TUI 与内嵌 Web 模式。子 Agent、后台任务与常驻 Runtime Daemon 均已接入，任务在 Daemon 进程内执行并可跨客户端断连恢复（见 [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)）；Computer Use 与 Browser Use 仍在后续范围内。
+当前实现以同一个 Agent Runtime 支撑一次性 CLI、TUI 与内嵌 Web 模式。子 Agent、后台任务与常驻 Runtime Daemon 均已接入，任务在 Daemon 进程内执行并可跨客户端断连恢复（见 [Runtime Daemon 与工作区](RUNTIME_DAEMON.md)）。P1 浏览器使用共享 Registry 的受控 Node/CDP 桥，默认关闭；Computer Use/AX 控制仍在后续范围内。
 
 Runtime 的事件日志按大小在启动时归档。新日志先写入归档前的末尾序号，再接续递增；启动时若发现旧版归档序号高于当前日志，会把当前日志中已保存的事件顺序重编号并保留供旧游标补读，本次启动暂缓归档。当前日志为空时写入续号边界；归档清理在游标恢复之后进行。若超限日志存在损坏事件，原文件整份归档，取最后一条可读事件及旧归档的较大序号作为新日志边界，避免损坏行阻断启动。TUI 通过 NDJSON 订阅实时事件，任务归属的暂时性查询失败不确认事件，重连后从原游标补读；任务暂时不存在时短暂重试且不缓存缺失结果；建立长连接或读取连接超时后也会重连。会话正文另由 Runtime 持久化，重开会话从持久记录恢复。
 
@@ -36,6 +38,48 @@ Agent Loop ── 工具注册表 ── 工作区边界与审批
 ```
 
 ## 核心设计
+
+### 版本化编辑、多文件应用与 LSP
+
+`ToolRegistry` 统一登记文件实际读取的 SHA-256 版本；`edit_file` 要求显式版本或当前 Registry 的实际读取基线，精确替换和版本条件同时满足才写入。`file_changes` 将创建/替换列表预览成一次性 ID，绑定真实路径、原版本、新内容和差异；审批前后完整预检，逐文件原子安装，失败尝试恢复并报告实际遗留写集。所有 Registry 的文件写入口共用进程内协调锁；不承诺对任意外部写入者的文件系统 CAS 或跨文件原子事务。Worker 写集、只读上限、未知副作用恢复及事实报告沿用同一边界。
+
+`lsp` 是工作区查询工具，首版固定 Rust / TypeScript 语言服务，提供状态、诊断、定义、引用和符号；定位使用 0-based UTF-16。Rust 初始化声明 `experimental.serverStatusNotification`，等待 `rust-analyzer` 的健康、静止项目状态；普通查询与两轮重命名请求前后复核状态修订，装载周期跨越响应则丢弃结果。Cargo 元数据允许自动重载以完成首次 VFS 装载后的 crate 图，build scripts、过程宏和自动编译检查仍关闭。服务随 Registry 生命周期复用，通过现有命令审批、有效围栏启动，限制 build scripts、宏和 TypeScript 插件等自动执行入口；拒绝服务端 applyEdit。JSON-RPC 有界，取消/超时使不确定客户端失效，进程树随持有者释放。语言服务进程并非读取隔离沙箱，依赖缺失或诊断尚未发布不能宣称检查通过。协议与默认限制见[P0 编码工具决策](decisions/2026-11-17-p0-coding-tools.md)，实际检查见[P0 分层验收](verification/0.150.0-rc2/p0-coding-tools.md)。
+
+### P1 结构工具、受控浏览器与搜索
+
+`lsp.rename_preview` 先发现编辑目标，逐个打开同步并保留文本后再发最终请求；版本化 `documentChanges` 精确匹配 URI 和同步版本。固定 TypeScript 服务的原生 `changes` 仅按请求前同步快照绑定，不补造服务端版本；Rust 仍要求版本化响应。未知目标、未同步别名、快照变化或非法编辑整批拒绝，宿主转换成绑定 SHA-256 的 `file_changes` 一次性预览，不执行服务端 applyEdit。`ast_grep` 通过固定外部可执行文件、私有空配置及 stdin 快照做结构查询，有界原始输出与 UTF-8 字节范围绑定宿主 SHA-256；不开放改写或自定义解析器。
+
+`browser` 持有独占 Node/CDP 桥与独立 Chrome profile，审批绑定动作和页面代次，ref 与截图路径由宿主生成。固定 DOM 操作使用独立执行环境，在线 status 探测浏览器及页面；Unix 截图持有目录句柄，阻塞写入在专用线程完成，最终检查后才提交，取消清理未提交产物。其他平台暂拒绝截图落盘。超时/取消清理所属进程树，清理线程不依赖调用方 Tokio Runtime；父 Registry 切只读后仍可严格调用自身 close。当前只供父 Registry，要求有效 OS sandbox 为 Off。来源拦截属于页面导航/请求控制，不是全进程网络隔离。`[search]` 独立选择 SearXNG 或兼容 SomeIm，审批先于 DNS、禁代理和跳转、固定地址，响应流限 1 MiB；私网开关不放宽 `web_fetch`。`tool_status` 和 doctor 使用离线配置投影，不联系 CDP/语言服务/搜索服务。具体协议见[Runtime 工具指南](P1_RUNTIME_TOOLS.md)。
+
+`tool_status` 同时投影 LSP、AST、浏览器、搜索与 MCP 配置，以统一 `permission.state/reason` 区分策略允许、运行期检查、待审批和禁止。该入口跳过 Hooks 与动态工具发现，不启动进程、连接服务或读取 OAuth 凭据文件；MCP 只保留脱敏配置摘要及既有请求观察，未知认证保持未知。只读委派与 doctor 使用配置专用 Registry；doctor 同时检查 LSP 配置和依赖，而非只看路径。
+
+Runtime 取消、失败或中断的收尾将该任务遗留的前台工具记录结为 `interrupted` 并持久化，迟到的完成事件不能重写终态；独立后台 Shell 继续由自己的监督器报告实际生命周期，其他并行任务不受影响。TUI 的 `Ctrl+X` 在人工弹层与选区之前进入同一 Runtime 停止请求，客户端等待真实终态，审批 `Esc` 保留拒绝语义。
+
+### 项目模型策略与 Goal 证据
+
+`ModelPolicyContext` 绑定规范项目路径；`.willdeep/model-policy.json` 允许组合约束实际 Provider、最终 wire model 和端点。真实发送、重试和能力探测共用门禁，派工、模型替换、恢复及临时 worktree 保留持久项目归属；启用策略时跳过模型未知的本机自动发现，图片下载非 2xx 拒绝且不落盘。进程内共享可信基线与每次读取策略取交集，Agent 修改文件不能扩权；非法、不可读和启用后删除失败关闭。该能力约束已接入 HTTP 出口，不代替 OS 围栏；跨入口覆盖按验收分层记录。
+
+`GoalEvidenceStore` 与父 Registry 共用身份和快照回调，真实命令尝试生成不可猜引用，勾选及完成通过 `GoalEvidenceResolver` 再核验。较新尝试立即撤销旧成功资格；超时、启动失败、非零退出、取消与起止/当前快照不符均不能完成。人工观察仅由宿主 API 创建；恢复状态不序列化已验证缓存。证据快照复用生产 Git Diff 范围，不承诺覆盖 ignored 文件或外部状态。Goal 锁外进行快照 IO，以 revision 检查并发更新和预算记账。
+
+### 审批结果 Hook
+
+共享工具审批入口在审批器返回 `allow_once` / `always_allow` / `deny` 后投递 `approval_resolved`，判官最终放行投递 `allow`；判官拒绝或不可用后的人工升级只投递最终审批器结果。来源区分 `approver` / `judge`，不能将审批器返回拒绝一律解释为人类拒绝。Harness 将实际会话 ID 注入 Registry，Hook 复用会话/工作区上下文、凭据脱敏和有界合法 JSON。事件不能改变裁决，也不证明授权已持久化或工具执行成功；静态放行、缓存命中和问答不补造事件，取消或崩溃不保证送达。契约见[审批结果 Hook 决策](decisions/2026-11-17-approval-resolved-hooks.md)。
+
+### TUI 消息展示与元数据
+
+`message_model` 在记录新增行时只为助手正文关联该轮实际产出模型；用户、工具、系统与分隔行不附模型，不用当前会话模型补填未知归属。`message_time` 管理显示时间，`user_message` 管理用户消息的右侧背景块与正文选择范围，原始 transcript 保留内部角色标记。模型归属逻辑从 `app_state` 独立移出，保持状态文件不超过 3000 行，记录与模型选择行为不变。
+
+`banner` 根据聊天区内宽在原 24 列、12 列鲸鱼及更窄的整幅网格采样之间切换，始终保留 7 个终端行；渲染与缓存复用同一宽度，避免通用正文折行拆散像素行。图片验收通过真实 TUI 的 ANSI 单元格还原，半块图形按精确矩形绘制。显示规范见[用户消息决策](decisions/2026-11-16-tui-user-message-blocks.md)，实际检查见[rc10 验收](verification/0.149.0-rc10/README.md)。
+
+输入草稿的选择与聊天选区分别维护。输入区鼠标落点和高亮沿用编辑器的视觉折行与滚动坐标，复制从原始草稿提取文字，避免把屏幕软折行写成换行；完整与简洁布局共用选择逻辑。选区建立后若异步出现审批、提问等弹层，输入选择将按键交回既有弹层分发。`paste::route` 是实际粘贴事件的同步分发入口：先处理最上层提问，再处理审批和底层编辑器；`human_gate_ui` 的按键与提问鼠标入口同样优先于隐藏的权限选择器及审批按钮。提问覆盖权限选择器、附件和队列时保留草稿及选区。多行答案与光标使用同一编辑器视觉行；整行后的显式换行复用已有行尾，不额外插入空行。输入与聊天选区复制复用代码块的剪贴板路由：SSH 只发送 OSC 52，不访问远端系统剪贴板；本机写入成功与仅发送终端序列分别提示「已复制」「已发送」。选区不提交消息、不变更 Runtime 协议。
+
+### TUI 执行、送达与阅读投影
+
+`turn_status` 维护可验证的前台阶段和明确终态。Core 的 `TurnStarted` 只进入请求准备；压缩和准备完成、进入 Provider 调用前发送 `ModelRequestStarted`，Runtime 在原事件通道投影为 `model_request_started`。流式推理、正文与工具事件更新阶段及心跳，审批/提问在显示时优先。静默时间附加在阶段之后，状态清理不推断成功。已定稿阶段说明保存接收时的文本、模型和时间，再按一次性落记录规则与最终回复去重。
+
+`delivery_echo` 以提交回执中的 Turn/request 身份维护本机回显账本，复用既有会话轮次查询补足待处理队列中已经被领取的项目。相同 ID 重放幂等，同文不同 ID 保留；队列离项不证明未提交。已开始或终态身份继续用于消除重放，不再计为待处理。编辑保留远端身份与原始内容，领取竞态和失败不会静默生成新提交。没有新增队列命令或改变调度协议。
+
+`viewport` 与排版来源映射维护记录身份、内容部分和原文位置。排版前捕捉阅读及选区来源，重排后恢复到新坐标，鼠标按下即退出自动跟随；流式片段落历史时迁移来源。完整与简洁布局共用映射与返回最新入口，历史归档边界参与缓存键。后台事件和持久化照常进行，来源映射不进入模型上下文。范围和验收见[TUI 交互决策](decisions/2026-11-17-tui-progress-delivery-viewport.md)。
 
 ### Web 失败与可操作会话投影
 
@@ -128,9 +172,9 @@ Agent Loop 只理解：
 本阶段没有复制 Swift 源码，而是迁移其行为契约：
 
 - 工具名称和参数尽量一致；
-- `read_file` 使用行号、offset、limit、max_bytes；
-- 新文件只能由 `create_file` 创建；
-- `edit_file` 使用精确字符串替换并要求唯一匹配；
+- `read_file` 使用行号、offset、limit、max_bytes，并返回整文件 SHA-256 版本；
+- 新文件可由 `create_file` 或 `file_changes` 的显式 create 变更创建，替换操作不能隐式创建；
+- `edit_file` 使用版本前置条件和精确字符串替换，默认要求唯一匹配；
 - 原生 Anthropic 的系统消息、tool_use/tool_result 和 Token 上限规则；
 - Responses 的 typed input、function_call/function_call_output；
 - some.im 专属上下文头不得包含路径。
@@ -160,7 +204,7 @@ Runtime 侧每个轮次在 `runtime/turns.json` 里记着自己在会话消息�
 
 Skill Catalog 只扫描配置根目录的直接子目录，读取入口固定为 `SKILL.md`；附属资源 canonicalize 后必须仍位于 Skill 根目录，单次读取最多 48,000 字符。
 
-MCP server 由 TOML 声明：stdio 服务给 command、args、env，Streamable HTTP 服务给 url、静态 headers 与鉴权方式（`bearer_token_env` 或 `oauth`），两者二选一，规则在 `willdeep-core::mcp::McpServerConfig::validate` 里只定一份，配置校验与连接共用。stdio 建长连接；HTTP 每条 JSON-RPC 一个 POST，JSON 与 SSE 响应都认，维护 `Mcp-Session-Id` 与协商到的协议版本头，会话过期重握手一次，退出时 DELETE。OAuth 由 `mcp::oauth` 实现（授权码 + PKCE、回环回调、RFC 9728 / 8414 / 7591 / 8707），token 存 `$WILLDEEP_HOME/mcp-oauth/`，连接时自动带上并刷新。两种传输都执行 initialize/initialized/tools/list，并以 `mcp__<server>__<tool>` 建立内部索引；远程服务连不上只警告跳过，本地 stdio 配置错误直接失败。Provider 侧只常驻 `list_mcp_tools` / `call_mcp_tool` 两个固定工具，匹配 Schema 按需加载，避免全量目录占满小上下文。MCP 调用在 `strict`、`smart`、`workspace-write` 三种模式下都进入审批链（后两种只免审当前工作区内的 `create_file`、`edit_file`）；`full-access` 下免审并记审计。MCP stderr 继承到宿主终端，stdout 仅作为 JSON-RPC 通道。
+MCP server 由 TOML 声明：stdio 服务给 command、args、env，Streamable HTTP 服务给 url、静态 headers 与鉴权方式（`bearer_token_env` 或 `oauth`），两者二选一，规则在 `willdeep-core::mcp::McpServerConfig::validate` 里只定一份，配置校验与连接共用。stdio 建长连接；HTTP 每条 JSON-RPC 一个 POST，JSON 与 SSE 响应都认，维护 `Mcp-Session-Id` 与协商到的协议版本头，会话过期重握手一次，退出时 DELETE。OAuth 由 `mcp::oauth` 实现（授权码 + PKCE、回环回调、RFC 9728 / 8414 / 7591 / 8707），token 存 `$WILLDEEP_HOME/mcp-oauth/`，连接时自动带上并刷新。两种传输都执行 initialize/initialized/tools/list，并以 `mcp__<server>__<tool>` 建立内部索引；远程服务连不上只警告跳过，本地 stdio 配置错误直接失败。Provider 侧只常驻 `list_mcp_tools` / `call_mcp_tool` 两个固定工具，匹配 Schema 按需加载，避免全量目录占满小上下文。MCP 调用在 `strict`、`smart`、`workspace-write` 三种模式下都进入审批链（后两种仅对符合工作区及写集约束的文件创建、版本化编辑与多文件应用免除人工审批）；`full-access` 下免审并记审计。MCP stderr 继承到宿主终端，stdout 仅作为 JSON-RPC 通道。
 
 ### Prompt 与附件
 
