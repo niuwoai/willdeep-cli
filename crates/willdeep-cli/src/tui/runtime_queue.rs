@@ -313,12 +313,16 @@ fn prepare_input_submission(app: &mut App, deferred: bool) -> (PromptEditor, boo
         app.language.text("正在提交", "submitting", "送信中")
     };
     let row = app.transcript.len();
-    // 占位行是 `You: [正在提交]`，要等提交结果回来才换成真正的回显。
-    // 这一段网络往返期间聊天区也得有动静，不能干等。
+    // 提交尚无回执，用未确认符号占位；详细反馈仍留在状态区。
+    // 不在请求返回之前显示代表已接收或成功的符号。
     if !deferred {
         app.note_awaiting_reply();
     }
-    app.append_transcript(format!("You: [{status}] {}", draft.text()));
+    app.append_transcript(format!(
+        "You: {} {}",
+        delivery_echo::DeliveryStatus::Unconfirmed.symbol(),
+        draft.text()
+    ));
     app.notice = Some(status.to_owned());
     // Queueing a supplement must not move a reader away from their source.
     // Existing follow mode still follows the appended placeholder naturally.

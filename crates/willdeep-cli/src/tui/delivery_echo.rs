@@ -67,19 +67,30 @@ impl DeliveryStatus {
         }
     }
 
-    pub(super) fn label(self, language: Language) -> &'static str {
+    /// Static, single-cell receipts: Started also covers human gates, so it
+    /// must not animate indefinitely or imply that a completed turn succeeded.
+    pub(super) fn symbol(self) -> &'static str {
         match self {
-            Self::Unconfirmed => {
-                language.text("提交未确认", "submission unconfirmed", "送信未確認")
-            }
-            Self::Queued => language.text("已接收·排队", "accepted · queued", "受信済み・順番待ち"),
-            Self::Held => language.text("已接收·暂缓", "accepted · held", "受信済み・保留中"),
-            Self::Started => language.text("已开始处理", "started", "処理開始済み"),
-            Self::Completed => language.text("已完成", "completed", "完了"),
-            Self::Partial => language.text("部分完成", "partially completed", "部分完了"),
-            Self::Failed => language.text("处理失败", "failed", "処理失敗"),
-            Self::Interrupted => language.text("已中断", "interrupted", "中断済み"),
-            Self::Cancelled => language.text("已取消", "cancelled", "キャンセル済み"),
+            Self::Unconfirmed => "?",
+            Self::Queued => "◇",
+            Self::Held => "‖",
+            Self::Started => "▶",
+            Self::Completed => "✓",
+            Self::Partial => "◒",
+            Self::Failed => "✗",
+            Self::Interrupted => "■",
+            Self::Cancelled => "×",
+        }
+    }
+
+    pub(super) fn color(self) -> Color {
+        match self {
+            Self::Unconfirmed | Self::Held | Self::Partial => Color::Yellow,
+            Self::Queued => Color::Gray,
+            Self::Started => Color::Cyan,
+            Self::Completed => Color::Green,
+            Self::Failed => Color::Red,
+            Self::Interrupted | Self::Cancelled => Color::DarkGray,
         }
     }
 
@@ -100,16 +111,7 @@ impl DeliveryStatus {
                 "Runtime accepted and held the message; it will not auto-send · release with S in Ctrl+Q",
                 "Runtime が受信して保留しました。自動送信しません · Ctrl+Q の S で解除",
             ),
-            Self::Started => language.text(
-                "Runtime 已开始处理这条消息",
-                "Runtime has started processing this message",
-                "Runtime はこのメッセージの処理を開始しました",
-            ),
-            Self::Completed => language.text(
-                "Runtime 已完成这条消息对应的轮次",
-                "Runtime has completed the turn for this message",
-                "Runtime はこのメッセージのターンを完了しました",
-            ),
+            Self::Started | Self::Completed => self.symbol(),
             Self::Partial => language.text(
                 "Runtime 已结束此轮，但任务仅部分完成",
                 "Runtime ended this turn with partial completion",
@@ -155,14 +157,14 @@ impl PendingRuntimeEcho {
     }
 
     fn row(&self, language: Language) -> String {
-        let mut status = self.status.label(language).to_owned();
+        let mut status = self.status.symbol().to_owned();
         if self.is_pending() && self.priority_requested {
             status.push_str(language.text("·优先", " · priority", "・優先"));
         }
         if self.is_pending() && self.independence_confirmed {
             status.push_str(language.text("·独立处理", " · independent", "・独立処理"));
         }
-        format!("You: [{status}] {}", terminal_safe_text(&self.text))
+        format!("You: {status} {}", terminal_safe_text(&self.text))
     }
 }
 

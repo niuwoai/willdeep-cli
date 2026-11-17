@@ -1,0 +1,162 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "compact",
+      "name": "model waiting is visible before output",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "streaming updates new-content feedback and preserves the visible history anchor",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "the full original selection survives incoming output",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "the full original selection survives resize and copies through isolated OSC 52",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "busy follow-up is accepted without starting another provider request",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "queue exposes the actual priority-send effect",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "accepted follow-up starts exactly once and preserves the composer draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "return-to-latest affordance reveals buffered output without sending the draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "completed synthetic responses were persisted by Runtime",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "model waiting is visible before output",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "streaming updates new-content feedback and preserves the visible history anchor",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "the full original selection survives incoming output",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "the full original selection survives resize and copies through isolated OSC 52",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "busy follow-up is accepted without starting another provider request",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "queue exposes the actual priority-send effect",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "accepted follow-up starts exactly once and preserves the composer draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "return-to-latest affordance reveals buffered output without sending the draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "completed synthetic responses were persisted by Runtime",
+      "passed": true
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "a776238e14831a97592c56704e3d56945ddb6500ea48ad0fde1eb99ac7511e44",
+  "scope": "full/compact real PTY: progress, accepted queue, reading anchor and draft preservation",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace; loopback synthetic SSE; no inherited credentials.",
+  "clipboard": {
+    "transport": "OSC 52 forced by private-process SSH_CONNECTION; captured PTY only, no host clipboard bridge",
+    "copies": [
+      {
+        "target": "c",
+        "text": "HIST026.0 中文 original history line with stable coordinates.",
+        "bytes": 63,
+        "output_end_byte": 19718,
+        "mode": "compact",
+        "expected_text": "HIST026.0 中文 original history line with stable coordinates.",
+        "matched": true
+      },
+      {
+        "target": "c",
+        "text": "HIST027.2 中文 original history line with stable coordinates.",
+        "bytes": 63,
+        "output_end_byte": 27396,
+        "mode": "full",
+        "expected_text": "HIST027.2 中文 original history line with stable coordinates.",
+        "matched": true
+      }
+    ]
+  },
+  "resize_frames": [
+    {
+      "columns": 84,
+      "rows": 32,
+      "previous_frame": 28,
+      "frame": 29,
+      "resize_output_boundary": 13006,
+      "frame_start": 13006,
+      "mode": "compact"
+    },
+    {
+      "columns": 100,
+      "rows": 32,
+      "previous_frame": 29,
+      "frame": 30,
+      "resize_output_boundary": 16276,
+      "frame_start": 16276,
+      "mode": "compact"
+    },
+    {
+      "columns": 84,
+      "rows": 32,
+      "previous_frame": 28,
+      "frame": 29,
+      "resize_output_boundary": 17944,
+      "frame_start": 17944,
+      "mode": "full"
+    },
+    {
+      "columns": 100,
+      "rows": 32,
+      "previous_frame": 29,
+      "frame": 30,
+      "resize_output_boundary": 22488,
+      "frame_start": 22488,
+      "mode": "full"
+    }
+  ],
+  "version": "willdeep 0.152.0-rc4",
+  "checks_passed": 18
+}

@@ -68,9 +68,12 @@ begin
     new_content_pattern = /\b(?:\d+\s+)?new (?:content|updates|messages)\b(?:\s*[:(]?\s*\d+\)?)?/i
     new_content = lambda do |screen|
       screen.fetch('lines').filter_map do |line|
-        # Compare only the feedback phrase/count, excluding spinners and the
-        # ordinary "End to latest" hint that already exists in reading mode.
-        line[new_content_pattern]&.gsub(/\s+/, ' ')&.strip&.downcase
+        next unless line.match?(new_content_pattern)
+        # Check the complete row, including its blank tail. Extracting only the
+        # phrase used to allow old history characters to survive underneath it.
+        hint = line.strip.sub(/\A[└╰▔]/, '').sub(/[┘╯▔]\z/, '').strip
+        raise "reading indicator contains stale cells: #{line.inspect}" unless hint == 'New content · End to latest'
+        hint.downcase
       end
     end
     styles = ->(cells) { cells&.map { |cell| cell.values_at('bg', 'fg', 'inverse') } }
@@ -194,7 +197,17 @@ begin
       end
       provider.delta(1, "SECOND_INTERACTION_REPLY\n")
       provider.finish(1)
-      tui.pump(0.5)
+      tui.wait('second response persisted before resolving the click target') do |_screen|
+        saved = JSON.parse(File.read(session_path, encoding: 'UTF-8'))
+        saved.fetch('messages').any? { |message| message['role'] == 'assistant' && message['content'].to_s.include?('SECOND_INTERACTION_REPLY') }
+      end
+      # Completion changes the full layout's activity height. Resolve the mouse
+      # target from a fresh completed frame, not a buffered running-turn frame.
+      completion_boundary = tui.raw.bytesize
+      tui.wait('completed application frame before return-to-latest', frame_started_after: completion_boundary) do |screen|
+        screen.fetch('lines').last.start_with?('✓') && !new_content.call(screen).empty?
+      end
+      tui.snapshot(directory, '06-completed-before-click')
       check.call('return-to-latest affordance reveals buffered output without sending the draft') do
         # The reading indicator is a direct mouse target in both layouts.
         indicator = tui.screen.fetch('lines').each_with_index.find { |line, _y| line.match?(new_content_pattern) }

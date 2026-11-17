@@ -672,8 +672,9 @@ impl App {
         }
     }
 
-    /// Overlay the existing bottom body row. It does not reserve or shrink rows,
-    /// and the complete row (including x=4) is one return-to-latest click target.
+    /// Use the existing separator outside the body: the full chat's bottom border
+    /// or the compact composer's top border. Reading never overwrites source rows
+    /// or changes viewport geometry; the complete hint row remains clickable.
     pub(super) fn render_reading_indicator(&mut self, frame: &mut Frame<'_>) {
         self.viewport.indicator = Rect::default();
         if self.follow_bottom
@@ -683,10 +684,17 @@ impl App {
             return;
         }
         let rect = Rect {
-            y: self.transcript_content.bottom().saturating_sub(1),
+            y: if self.quiet_drawn {
+                self.prompt_rect.y
+            } else {
+                self.transcript_rect.bottom().saturating_sub(1)
+            },
             height: 1,
             ..self.transcript_content
         };
+        if rect.y < self.transcript_content.bottom() || rect.y >= frame.area().bottom() {
+            return;
+        }
         let text = if self.viewport.new_content > 0 {
             self.language.text(
                 "有新内容 · End 返回最新",
@@ -700,6 +708,9 @@ impl App {
                 "履歴を表示中 · End で最新へ",
             )
         };
+        // Paragraph only writes its own characters; clear old border cells too,
+        // including the continuation cells of wide glyphs.
+        frame.render_widget(Clear, rect);
         frame.render_widget(
             Paragraph::new(text).style(Style::default().fg(Color::Cyan).bg(Color::Black)),
             rect,

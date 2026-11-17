@@ -427,7 +427,7 @@ fn duplicate_records_keep_identity_when_a_preceding_record_is_removed() {
 }
 
 #[test]
-fn indicator_overlays_the_bottom_body_row_and_the_whole_row_is_clickable() {
+fn indicator_uses_the_separator_outside_the_body_and_the_whole_row_is_clickable() {
     for mode in MODES {
         for language in [Language::ZhCn, Language::En, Language::Ja] {
             let (mut app, mut terminal) =
@@ -442,12 +442,29 @@ fn indicator_overlays_the_bottom_body_row_and_the_whole_row_is_clickable() {
             assert!(app.viewport.new_content > 0);
             let height = app.viewport_height;
             let content = app.transcript_content;
-            terminal
-                .draw(|frame| app.render_reading_indicator(frame))
-                .unwrap();
+            paint(&mut app, &mut terminal);
             assert_eq!(app.viewport_height, height);
             assert_eq!(app.transcript_content, content);
-            let y = content.bottom() - 1;
+            let indicator = app.viewport.indicator;
+            let y = indicator.y;
+            assert!(y >= content.bottom());
+            assert_eq!(
+                y,
+                if mode == UiMode::Compact {
+                    app.prompt_rect.y
+                } else {
+                    app.transcript_rect.bottom() - 1
+                }
+            );
+            let expected = language.text(
+                "有新内容 · End 返回最新",
+                "New content · End to latest",
+                "新しい内容 · End で最新へ",
+            );
+            let tail = indicator.x + UnicodeWidthStr::width(expected) as u16;
+            for x in tail..indicator.right() {
+                assert_eq!(terminal.backend().buffer()[(x, y)].symbol(), " ");
+            }
             for x in [content.x, 4, content.right() - 1] {
                 assert!(app.reading_indicator_hit(x, y));
             }
@@ -462,6 +479,98 @@ fn indicator_overlays_the_bottom_body_row_and_the_whole_row_is_clickable() {
             assert_eq!(app.scroll_from_bottom, 0);
             assert_eq!(app.viewport.new_content, 0);
             assert!(!app.reading_indicator_hit(4, y));
+        }
+    }
+}
+
+#[test]
+fn footer_keeps_its_complete_cells_during_click_drag_new_content_and_resize() {
+    for mode in MODES {
+        for language in [Language::ZhCn, Language::En, Language::Ja] {
+            let footer = language.text(
+                "── 本轮结束 · 首答 8.62s · 总耗时 9.53s · 输入 77.53K · 输出 106 ──",
+                "── Turn ended · first reply 8.62s · total 9.53s · in 77.53K · out 106 ──",
+                "── ターン終了 · 初答 8.62s · 合計 9.53s · 入力 77.53K · 出力 106 ──",
+            );
+            let (mut app, mut terminal) = fixture(
+                mode,
+                vec![
+                    format!("{ASSISTANT_ROW_PREFIX}{}", history()),
+                    footer.into(),
+                ],
+            );
+            app.language = language;
+            // Match the normal UI: a copy notice must not introduce a new status
+            // row and shrink the viewport while comparing the bottom statistics.
+            app.ui.compact_status_line = true;
+            app.input.insert("keep this draft");
+            resize(&mut app, &mut terminal, 120, 32);
+            let point = original(&app, 1, SourcePart::Body, 0);
+            let row = app.viewport.frame.resolve(point).unwrap().row;
+            let y = app.transcript_content.y + (row - app.transcript_render_offset) as u16;
+            assert_eq!(y, app.transcript_content.bottom() - 1);
+            let cells = |app: &App, terminal: &Terminal<TestBackend>| {
+                // Status feedback can change the compact footer's height. Resolve
+                // the original statistics again instead of inspecting an old y.
+                let row = app.viewport.frame.resolve(point).unwrap().row;
+                let y = app.transcript_content.y + (row - app.transcript_render_offset) as u16;
+                assert!(y < app.transcript_content.bottom());
+                let left = app.transcript_content.x;
+                (left..left + UnicodeWidthStr::width(footer) as u16)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol().to_owned())
+                    .collect::<Vec<_>>()
+            };
+            let before = cells(&app, &terminal);
+            let down = mouse_at(&app, MouseEventKind::Down(MouseButton::Left), point);
+            app.handle_chat_selection_mouse(down);
+            paint(&mut app, &mut terminal);
+            assert_eq!(
+                cells(&app, &terminal),
+                before,
+                "Down changed {mode:?}/{language:?} footer"
+            );
+            assert!(!app.follow_bottom);
+            assert!(app.viewport.indicator.y > y);
+            let up = mouse_at(&app, MouseEventKind::Up(MouseButton::Left), point);
+            app.handle_chat_selection_mouse(up);
+            paint(&mut app, &mut terminal);
+            assert_eq!(
+                cells(&app, &terminal),
+                before,
+                "single click changed footer"
+            );
+            let end = original(&app, 1, SourcePart::Body, footer.rfind('─').unwrap());
+            let down = mouse_at(&app, MouseEventKind::Down(MouseButton::Left), point);
+            app.handle_chat_selection_mouse(down);
+            let drag = mouse_at(&app, MouseEventKind::Drag(MouseButton::Left), end);
+            app.handle_chat_selection_mouse(drag);
+            let up = mouse_at(&app, MouseEventKind::Up(MouseButton::Left), end);
+            app.handle_chat_selection_mouse(up);
+            paint(&mut app, &mut terminal);
+            assert_eq!(cells(&app, &terminal), before, "drag changed footer");
+            let copied = app.selected_chat_text();
+            assert!(
+                copied.is_empty(),
+                "generated footer must remain outside body copying"
+            );
+            for width in [84, 120] {
+                resize(&mut app, &mut terminal, width, 32);
+                assert_eq!(app.selected_chat_text(), copied);
+                assert!(app.viewport.indicator.y >= app.transcript_content.bottom());
+            }
+            assert_eq!(cells(&app, &terminal), before, "resize changed footer");
+            app.stream_transient(StreamKind::Reply, "new content\n");
+            paint(&mut app, &mut terminal);
+            assert!(app.viewport.new_content > 0);
+            assert_eq!(
+                cells(&app, &terminal),
+                before,
+                "new content covered the anchored footer"
+            );
+            assert_eq!(app.input.text(), "keep this draft");
+            app.viewport_return_to_latest();
+            paint(&mut app, &mut terminal);
+            assert_eq!(app.viewport.indicator, Rect::default());
         }
     }
 }

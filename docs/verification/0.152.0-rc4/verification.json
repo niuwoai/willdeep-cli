@@ -1,0 +1,53 @@
+{
+  "version": "0.152.0-rc4",
+  "date": "2026-11-17",
+  "passed": true,
+  "scope": "TUI status symbols and reading indicator outside transcript; native regressions and isolated real CLI/Runtime PTY",
+  "binary": {
+    "path": ".claude/scratch/tui-rc4-final2/willdeep",
+    "sha256": "a776238e14831a97592c56704e3d56945ddb6500ea48ad0fde1eb99ac7511e44",
+    "version_output": "willdeep 0.152.0-rc4",
+    "build_command": "cargo build --offline --locked --release -p willdeep"
+  },
+  "native": {
+    "command": "cargo test --offline --locked -p willdeep --bin willdeep tui:: --no-fail-fast",
+    "passed": 670,
+    "failed": 0,
+    "ignored": 2,
+    "ignored_scope": "existing manual deterministic and paced streaming performance measurements",
+    "languages": ["zh-CN", "en", "ja"]
+  },
+  "checks": {
+    "strict_clippy": true,
+    "cargo_fmt": true,
+    "release_version_consistency": true,
+    "git_diff_check": true,
+    "ruby_syntax": true,
+    "all_pty_reports_match_final_binary": true
+  },
+  "pty": {
+    "passed": 56,
+    "failed": 0,
+    "reports": [
+      {"path": "status-symbols-final2/status-symbols.json", "passed": 28},
+      {"path": "tui-interactions-final3/integration.json", "passed": 18},
+      {"path": "queue-timeline-final2/queue-timeline.json", "passed": 10}
+    ],
+    "layouts": ["full", "compact"],
+    "status_symbol_languages": ["en", "zh-CN"],
+    "isolation": "Private HOME/WILLDEEP_HOME/workspace, loopback synthetic SSE, unsetenv_others, captured OSC 52 only",
+    "real_model_requests": false,
+    "host_clipboard_writes": false,
+    "failures_preserved": "verification-history.md"
+  },
+  "not_run": [
+    "full Rust workspace regression for rc4",
+    "Web full test suite for rc4",
+    "manual streaming performance tests",
+    "real or paid models",
+    "Windows native terminal"
+  ],
+  "local_installation_report": "local-installation.json",
+  "public_release": false,
+  "release_tag_created": false
+}

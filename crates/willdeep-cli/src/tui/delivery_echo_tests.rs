@@ -171,8 +171,8 @@ fn cancelling_one_of_two_identical_inputs_changes_only_its_exact_record() {
     );
     second.status = TurnStatus::Cancelled;
     app.reconcile_runtime_deliveries(&[second]);
-    assert!(app.transcript[0].contains("queued"));
-    assert!(app.transcript[1].contains("cancelled"));
+    assert!(app.transcript[0].starts_with("You: ◇ "));
+    assert!(app.transcript[1].starts_with("You: × "));
     assert_eq!(app.pending_runtime_echoes.len(), 2);
 }
 
@@ -263,7 +263,7 @@ fn held_priority_and_independence_are_visible_in_all_three_languages() {
         let mut app = App::new(Vec::new(), language);
         let receipt = turn(TurnStatus::Queued);
         app.echo_runtime_submission("later", &receipt, true, None);
-        assert!(app.transcript[0].contains(DeliveryStatus::Held.label(language)));
+        assert!(app.transcript[0].contains(DeliveryStatus::Held.symbol()));
         assert!(DeliveryStatus::Held.feedback(language).contains("Ctrl+Q"));
         let mut item = queued(&receipt, "later");
         item.held = true;
@@ -296,7 +296,7 @@ fn receipt_status_follows_the_actual_turn_including_human_waits() {
             expected
         };
         assert_eq!(app.pending_runtime_echoes[0].status, expected);
-        assert!(app.transcript[0].contains(expected.label(Language::En)));
+        assert!(app.transcript[0].contains(expected.symbol()));
     }
 }
 
@@ -372,6 +372,77 @@ fn runtime_input_boundary_commits_the_previous_live_or_held_output_first() {
         assert!(app.transient_thought.is_none());
         assert!(app.held_narration.is_none());
     }
+}
+
+#[test]
+fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
+    let body = "✓ 中文😀\n  keep  spaces";
+    for language in [Language::ZhCn, Language::En, Language::Ja] {
+        for width in [8, 40, 100] {
+            for (status, held, symbol, color) in [
+                (TurnStatus::Queued, false, "◇", Color::Gray),
+                (TurnStatus::Queued, true, "‖", Color::Yellow),
+                (TurnStatus::Running, false, "▶", Color::Cyan),
+                (TurnStatus::WaitingApproval, false, "▶", Color::Cyan),
+                (TurnStatus::WaitingAnswer, false, "▶", Color::Cyan),
+                (TurnStatus::Completed, false, "✓", Color::Green),
+                (TurnStatus::Partial, false, "◒", Color::Yellow),
+                (TurnStatus::Failed, false, "✗", Color::Red),
+                (TurnStatus::Interrupted, false, "■", Color::DarkGray),
+                (TurnStatus::Cancelled, false, "×", Color::DarkGray),
+            ] {
+                let mut app = App::new(Vec::new(), language);
+                app.transcript_width = width;
+                app.echo_runtime_submission(body, &turn(status), held, None);
+                assert_eq!(app.transcript[0], format!("You: {symbol} {body}"));
+                let folded = app.display_transcript();
+                let frame = app.render_user_transcript(
+                    &folded,
+                    &vec![None; folded.rows.len()],
+                    None,
+                    folded.rows.len(),
+                );
+                assert!(frame.text.lines.iter().all(|line| line.width() <= width));
+                assert!(
+                    frame
+                        .text
+                        .lines
+                        .iter()
+                        .flat_map(|line| &line.spans)
+                        .any(|span| {
+                            span.content == symbol
+                                && span.style.fg == Some(color)
+                                && span.style.add_modifier.contains(Modifier::BOLD)
+                                && span.style.bg == Some(user_message::BLOCK_BG)
+                        })
+                );
+                app.prepare_transcript_frame();
+                app.chat_selection = Some(ChatSelection {
+                    anchor: ChatSelectionPoint { row: 0, column: 0 },
+                    head: ChatSelectionPoint {
+                        row: app.transcript_rows.len() - 1,
+                        column: width - 1,
+                    },
+                });
+                assert_eq!(app.selected_chat_text(), body);
+            }
+        }
+    }
+}
+
+#[test]
+fn unconfirmed_submission_has_no_acceptance_or_success_symbol() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.note_runtime_submission_unconfirmed("still a draft", uuid::Uuid::new_v4(), false, None);
+    // A missing placeholder is not revived by an unconfirmed receipt.
+    assert!(app.transcript.is_empty());
+    app.append_transcript("You: still a draft".into());
+    app.note_runtime_submission_unconfirmed("still a draft", uuid::Uuid::new_v4(), false, Some(0));
+    assert_eq!(app.transcript, ["You: ? still a draft"]);
+    assert_eq!(
+        app.pending_runtime_echoes[1].status,
+        DeliveryStatus::Unconfirmed
+    );
 }
 
 #[test]

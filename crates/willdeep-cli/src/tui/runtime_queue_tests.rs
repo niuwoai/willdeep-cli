@@ -61,7 +61,7 @@ fn unconfirmed_submission_retains_editor_cursor_attachments_and_request_key() {
         submission_request_id(&mut app, "keep cursor", &attachments, session_id, false).unwrap();
     let (draft, expanded, row) = prepare_input_submission(&mut app, false);
     assert!(app.input.is_empty());
-    assert_eq!(app.transcript[row], "You: [submitting] keep cursor");
+    assert_eq!(app.transcript[row], "You: ? keep cursor");
     finish_input_submission(
         &mut app,
         draft,
@@ -78,7 +78,13 @@ fn unconfirmed_submission_retains_editor_cursor_attachments_and_request_key() {
             .collect::<Vec<_>>(),
         vec![image.id, note.id]
     );
-    assert!(app.transcript[row].contains("submission unconfirmed"));
+    assert_eq!(app.transcript[row], "You: ? keep cursor");
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("Submission unconfirmed")
+    );
     assert_eq!(app.pending_runtime_echoes[0].request_id, request_id);
     assert!(app.pending_runtime_echoes[0].needs_reconciliation());
     assert!(!app.transcript[row].contains("not sent"));
@@ -165,7 +171,7 @@ fn held_submission_keeps_its_attachment_and_does_not_claim_automatic_delivery() 
         true,
         &Ok(turn(TurnStatus::Queued)),
     );
-    assert!(app.transcript[row].contains("held"));
+    assert_eq!(app.transcript[row], "You: ‖ later");
     assert_eq!(app.transcript_attachments[row].len(), 1);
     assert!(
         app.notice

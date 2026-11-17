@@ -78,6 +78,35 @@ pub(super) fn style_block(entry: &mut Text<'static>, width: usize) -> Vec<std::o
     content_bounds
 }
 
+/// Tint only the identity-bound receipt cell. Never recognize status from a
+/// user's text, recolor its body, or change provenance/selection coordinates.
+fn style_delivery_symbol(line: &mut Line<'static>, column: usize, color: Color) {
+    let mut offset = 0;
+    for index in 0..line.spans.len() {
+        let span = &line.spans[index];
+        if (offset..offset + span.width()).contains(&column) {
+            let Some((byte, character)) = span.content.char_indices().find(|(byte, _)| {
+                UnicodeWidthStr::width(&span.content[..*byte]) == column - offset
+            }) else {
+                return;
+            };
+            let end = byte + character.len_utf8();
+            let span = line.spans.remove(index);
+            let parts = [
+                Span::styled(span.content[..byte].to_owned(), span.style),
+                Span::styled(
+                    span.content[byte..end].to_owned(),
+                    span.style.fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(span.content[end..].to_owned(), span.style),
+            ];
+            line.spans.splice(index..index, parts);
+            return;
+        }
+        offset += span.width();
+    }
+}
+
 impl App {
     /// 普通 Enter 的本地反馈先准备好，调用方立刻绘制，再执行命令或提交 Runtime。
     pub(super) fn take_prompt_for_submission(&mut self) -> String {
@@ -209,9 +238,14 @@ impl App {
                 .len()
                 .saturating_sub(body.len());
             let id = SourceId::Record(record);
-            for row in &mut frame.sources.rows {
+            for (line, row) in frame.text.lines.iter_mut().zip(&mut frame.sources.rows) {
                 if row.fallback.id != id {
                     continue;
+                }
+                if let Some(cell) = row.cells.iter().find(|cell| {
+                    cell.source.point.part == SourcePart::Body && cell.source.point.byte == 0
+                }) {
+                    style_delivery_symbol(line, cell.columns.start, echo.status.color());
                 }
                 row.cells.retain_mut(|cell| {
                     if cell.source.point.part != SourcePart::Body {

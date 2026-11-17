@@ -1,0 +1,41 @@
+{
+  "version": "0.152.0-rc4",
+  "date": "2026-11-17",
+  "passed": true,
+  "method": "Atomically replace both local executable files with the exact frozen release binary after isolated PTY verification",
+  "verified_binary_sha256": "a776238e14831a97592c56704e3d56945ddb6500ea48ad0fde1eb99ac7511e44",
+  "installed_entries": [
+    {"entry": "~/.cargo/bin/willdeep", "version": "0.152.0-rc4", "sha256": "a776238e14831a97592c56704e3d56945ddb6500ea48ad0fde1eb99ac7511e44"},
+    {"entry": "/opt/homebrew/bin/willdeep", "target": "/opt/homebrew/Cellar/willdeep-cli/0.149.0-rc12/bin/willdeep", "version": "0.152.0-rc4", "sha256": "a776238e14831a97592c56704e3d56945ddb6500ea48ad0fde1eb99ac7511e44"}
+  ],
+  "runtime": {
+    "command": "~/.cargo/bin/willdeep daemon upgrade --timeout 300",
+    "exit_code": 0,
+    "previous_version": "0.152.0-rc3",
+    "previous_pid": 96806,
+    "version": "0.152.0-rc4",
+    "pid": 25984,
+    "address": "127.0.0.1:51433",
+    "health": "running",
+    "executable": "/Users/rocky/.cargo/bin/willdeep",
+    "actual_executable_confirmed_with": ["ps", "lsof"],
+    "both_cli_entries_query_same_runtime": true,
+    "forced_restart": false,
+    "tasks_cancelled_during_this_upgrade": false
+  },
+  "backup": {
+    "directory": "~/.local/share/willdeep/backups/20261117-rc3-before-rc4",
+    "files": ["cargo-willdeep", "homebrew-willdeep"],
+    "version": "0.152.0-rc3",
+    "sha256": "69e161f57d6403ebb8838d7252384ad6e2e8d32961568e790357e29e3dde7ce1",
+    "compared_to_installed_files_before_replacement": true,
+    "rechecked_after_installation": true
+  },
+  "rollback_instructions": "local-installation.md",
+  "rollback_executed": false,
+  "database_migration_added": false,
+  "database_down_executed": false,
+  "remote_tap_or_formula_updated": false,
+  "public_release": false,
+  "release_tag_created": false
+}

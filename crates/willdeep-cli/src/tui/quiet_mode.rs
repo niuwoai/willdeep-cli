@@ -94,8 +94,6 @@ pub(super) fn render(
         Paragraph::new(colored).block(Block::default().padding(Padding::horizontal(1))),
         app.transcript_rect,
     );
-    app.render_reading_indicator(frame);
-
     app.activity_rect = Rect::default();
     app.prompt_rect = areas[3];
     let (row, col) = app.input.cursor_visual(width);
@@ -169,6 +167,7 @@ pub(super) fn render(
         input
     };
     frame.render_widget(input, areas[3]);
+    app.render_reading_indicator(frame);
     app.render_prompt_selection(frame);
     if show_status {
         frame.render_widget(

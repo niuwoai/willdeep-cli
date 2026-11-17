@@ -84,7 +84,7 @@ impl TurnOutcome {
 
     pub(super) fn label(self, language: Language) -> &'static str {
         match self {
-            Self::Completed => language.text("本轮已完成", "Turn completed", "ターン完了"),
+            Self::Completed => delivery_echo::DeliveryStatus::Completed.symbol(),
             Self::Partial => language.text("本轮未完成", "Turn incomplete", "ターン未完了"),
             Self::Failed => language.text("本轮失败", "Turn failed", "ターン失敗"),
             Self::Interrupted => language.text("本轮已中断", "Turn interrupted", "ターン中断"),
@@ -118,11 +118,7 @@ pub(super) fn format_working_summary(
     elapsed: Duration,
     idle: Duration,
 ) -> String {
-    let phase = if activity_line.is_empty() {
-        language.text("正在处理", "Working", "処理中")
-    } else {
-        activity_line
-    };
+    let phase_separator = if activity_line.is_empty() { "" } else { " " };
     let silence = if idle >= PROGRESS_STALE_AFTER {
         format!(
             " · {} {}",
@@ -142,7 +138,7 @@ pub(super) fn format_working_summary(
         String::new()
     };
     format!(
-        "{} {phase}{silence} · {} {}",
+        "{}{phase_separator}{activity_line}{silence} · {} {}",
         progress_spinner(elapsed),
         language.text("已运行", "elapsed", "経過"),
         format_elapsed_span(elapsed.as_secs_f32(), 1),

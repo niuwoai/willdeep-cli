@@ -98,11 +98,11 @@ class InteractionPty
 
   attr_reader :screen, :raw, :columns, :rows, :frame_serial, :clipboard_writes
 
-  def initialize(binary, environment, config, workspace, session_id, columns: 100, rows: 32)
+  def initialize(binary, environment, config, workspace, session_id, columns: 100, rows: 32, language: 'en')
     raise ArgumentError, 'interaction PTY requires SSH_CONNECTION for isolated OSC 52 copying' if environment.fetch('SSH_CONNECTION', '').empty?
     @columns, @rows = columns, rows
     @reader, @writer, @pid = PTY.spawn(environment, binary, '--config', config,
-      '--workspace', workspace, '--language', 'en', '--resume', session_id,
+      '--workspace', workspace, '--language', language, '--resume', session_id,
       unsetenv_others: true)
     @reader.winsize = [rows, columns]
     @decoder_in, @decoder_out, @decoder_err, @decoder_process = Open3.popen3('node',
