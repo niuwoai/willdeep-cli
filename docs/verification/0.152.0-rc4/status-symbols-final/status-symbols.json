@@ -1,0 +1,219 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "started message uses a symbol without the old status phrase",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "queued symbol does not claim early start or completion",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "started message uses a symbol without the old status phrase",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "queued symbol does not claim early start or completion",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "started message uses a symbol without the old status phrase",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "queued symbol does not claim early start or completion",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "started message uses a symbol without the old status phrase",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "queued symbol does not claim early start or completion",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "19e0aa9b5d05c889f23f45b2be01ae793e3bfa242792e78abecf419139a25c3f",
+  "scope": "full/compact Runtime TUI; status symbols, footer click/drag, resize, isolated OSC 52 copy and unsent draft",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace; loopback synthetic SSE; no real credentials or clipboard.",
+  "cleanup": [
+    {
+      "mode": "compact",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "compact",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "full",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "full",
+      "private_daemon_stop_succeeded": true
+    }
+  ],
+  "version": "willdeep 0.152.0-rc4",
+  "body_copies": [
+    {
+      "mode": "compact",
+      "language": "en",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "text": "STATUS_SYMBOL_QUEUED"
+    }
+  ],
+  "checks_passed": 28
+}

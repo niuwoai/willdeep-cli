@@ -25,6 +25,19 @@ impl ChatCompletionsProvider {
 
 #[async_trait]
 impl Provider for ChatCompletionsProvider {
+    fn policy_context(&self) -> Option<super::ModelPolicyContext> {
+        self.config.policy_context.clone()
+    }
+
+    fn with_policy_context(
+        &self,
+        context: super::ModelPolicyContext,
+    ) -> Result<std::sync::Arc<dyn Provider>, ProviderError> {
+        let mut config = self.config.clone();
+        config.policy_context = Some(context);
+        super::build_provider(config)
+    }
+
     async fn complete_with_events(
         &self,
         messages: &[Message],

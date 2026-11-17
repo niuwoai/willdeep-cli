@@ -209,7 +209,7 @@ fn older_thoughts_do_not_split_tools_or_steal_latest_thought_clicks() {
             .iter()
             .any(|row| row.contains("latest reasoning"))
     );
-    app.thought_hit_rows = vec![(7, 0)];
+    app.thought_hit_rows = vec![(7, 7)];
     assert!(app.toggle_thought_at(7));
     assert!(app.transcript[7].starts_with("· − Thought:"));
     assert!(app.transcript[1].starts_with("· + Thought:"));

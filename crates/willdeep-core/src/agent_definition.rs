@@ -199,7 +199,13 @@ impl AgentDefinition {
             "read_file" | "list_directory" | "search_files" | "grep_files" => {
                 self.tools.iter().any(|c| c == "workspace.read")
             }
-            "edit_file" | "create_file" => self.tools.iter().any(|c| c == "workspace.edit"),
+            "edit_file" | "create_file" | "file_changes" => {
+                self.tools.iter().any(|c| c == "workspace.edit")
+            }
+            "lsp" | "ast_grep" => {
+                self.tools.iter().any(|c| c == "workspace.read")
+                    && self.tools.iter().any(|c| c == "process.verify")
+            }
             "run_command" => self.tools.iter().any(|c| c == "process.verify"),
             "git_status" | "git_diff" | "git_log" | "git_blame" => {
                 self.tools.iter().any(|c| c == "repository.inspect")

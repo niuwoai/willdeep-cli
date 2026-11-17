@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "version": "0.152.0-rc3",
+  "date": "2026-11-17",
+  "status": "verified",
+  "project_stage": "existing_project_iteration",
+  "previous_report": "../0.152.0-rc2/p0-p1-closeout.json",
+  "snapshot": {
+    "source_digest": "b1a7b55af7ae8ac297c001e1ced1f531b98b1777f19342b2098aab397e076d58",
+    "binary_sha256": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb",
+    "binary": "target/p0-p1-rc152-rc3-20261117-final1/willdeep",
+    "binary_version": "willdeep 0.152.0-rc3",
+    "mode": "0555",
+    "source_stable_after_all_application_checks": true,
+    "binary_stable_after_all_application_checks": true
+  },
+  "checks": {
+    "diff_whitespace_and_redaction": {"status": "passed", "native_regressions_observed": 4, "evidence": "engineering.json", "real_pty_evidence": "tui-tool-visuals-final1/tool-visuals.json"},
+    "workspace_tests": {"status": "passed", "top_level_targets": 18, "passed": 3374, "failed": 0, "ignored": 24, "nested_helper_summaries_excluded": 1, "evidence": "engineering.json"},
+    "format": {"status": "passed", "exit_code": 0, "evidence": "engineering.json"},
+    "strict_workspace_clippy": {"status": "passed", "exit_code": 0, "evidence": "engineering.json"},
+    "application_build": {"status": "passed", "exit_code": 0, "evidence": "engineering.json"},
+    "six_scenario_regression": {"status": "passed", "scenarios": 6, "actual_tests": 21, "pending": [], "evidence": "fixed-runtime-regression-final1.json"},
+    "browser_runtime_entrypoints": {"status": "passed", "required_cases": 9, "passed": 9, "same_run": true, "binary_matches": true, "terminal_statuses_verified": true, "all_processes_and_profiles_empty": true, "included_in_six_scenario_count": true, "evidence": "fixed-runtime-regression-final1.json"},
+    "tui_interactions": {"status": "passed", "required_checks": 18, "passed": 18, "evidence": "tui-interactions-final1/integration.json"},
+    "tui_prompt_selection": {"status": "passed", "required_checks": 14, "passed": 14, "evidence": "tui-prompt-selection-final1/integration.json"},
+    "tui_queue_timeline": {"status": "passed", "required_checks": 10, "passed": 10, "evidence": "tui-queue-timeline-final1/queue-timeline.json"},
+    "tui_tool_visuals": {"status": "passed", "passed": 25, "layouts": ["full", "compact"], "cleanup_passed": 12, "evidence": "tui-tool-visuals-final1/tool-visuals.json", "write_turn_finish_covered": false},
+    "custom_subagent_startup": {"status": "passed", "required_checks": 8, "passed": 8, "dedicated_model_and_instructions_observed": true, "evidence": "custom-subagent-final1/custom-subagent-startup.json"},
+    "release_version": {"status": "passed", "version": "0.152.0-rc3", "workspace_lock_runtime_pins_web_npm_manifest_and_documents_consistent": true},
+    "source_size": {"status": "passed", "files": 1102, "above_3000": [], "scope": "tracked and untracked .rs/.rb/.mjs/.js/.ts/.tsx under crates/scripts/web/src"},
+    "final_links_and_sensitive_scan": {"status": "passed", "changed_files": 482, "text_files_scanned": 482, "json_parsed": 193, "local_links_checked": 500, "credentials_printed": false, "issues": [], "diff_check_passed": true}
+  },
+  "entrypoint_summary": {"pty_suites": 4, "pty_checks_passed": 67, "custom_subagent_checks_passed": 8, "combined_checks_passed": 75, "all_use_same_frozen_binary": true, "automatic_retries": 0},
+  "historical_attempts": [
+    {"version": "0.152.0-rc2", "report": "../0.152.0-rc2/p0-p1-closeout.json", "workspace_passed": 3371, "workspace_failed": 0, "workspace_ignored": 24, "fixed_scenarios_passed": 6, "browser_cases_passed": 9, "tui_interaction_checks_passed": 42, "custom_subagent_checks_passed": 8},
+    {"phase": "tool_visuals_final1", "status": "failed", "checks_passed_before_timeouts": 11, "layout_timeouts": 2, "cause": "Acceptance counted individual successful tool rows but the existing TUI folds consecutive completed tools into a summary.", "report": "../0.152.0-rc2/tui-tool-visuals-final1/tool-visuals.json"},
+    {"phase": "tool_visuals_final2", "status": "failed", "checks_passed": 17, "checks_failed": 2, "cause": "Credential redaction collapsed diff context markers and indentation; tool receipt and disk bytes were correct.", "report": "../0.152.0-rc2/tui-tool-visuals-final2/tool-visuals.json"}
+  ],
+  "non_blocking_observations": [
+    {"message": "Runtime Session not found", "scope": "private interactions and prompt-selection daemon logs", "occurrences": {"interactions_full": 1, "interactions_compact": 1, "prompt_full": 1, "prompt_compact": 2, "prompt_compact_ssh": 2, "prompt_full_ssh": 3}, "assertions_passed": true, "daemon_stops_observed": true, "pid_and_socket_metadata_remaining": false, "root_cause_verified": false}
+  ],
+  "real_model_calls": false,
+  "model_cost": null,
+  "model_tokens": null,
+  "coverage_limits": [
+    "Synthetic loopback Provider does not establish real-model quality, token cost or overall coding speed improvement.",
+    "Tool-visuals PTY holds the final Provider after writes; it does not verify final finish or automatic post-write verification.",
+    "Browser cases exercise CLI, private PTY TUI and Web HTTP/SSE, not nine React UI interactions or full Chrome process network isolation.",
+    "Historical Web/LSP/AST/Goal/cross-target evidence retains its original version and scope; it is not claimed as an rc3 rerun.",
+    "Unimplemented efficiency work and out-of-scope P2/platform capabilities remain explicitly documented."
+  ],
+  "delivery": {"branch": "feat/p0-p1-runtime-tools", "report_scope": "pre_commit_verification_snapshot", "final_closeout_commit": null, "pushed": false, "installed": false, "published": false, "release_tag_created": false, "release_tag_constraint": "Tag only after the commit is merged into the default branch.", "git_outcome_recorded_separately_after_this_snapshot": true}
+}

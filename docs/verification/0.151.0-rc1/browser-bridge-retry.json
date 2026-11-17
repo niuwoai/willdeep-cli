@@ -1,0 +1,133 @@
+{
+  "version": "0.151.0-rc1",
+  "suite": "browser-bridge-protocol",
+  "started_at": "2026-11-16T23:44:41Z",
+  "fixture_origin": "http://127.0.0.1:19851",
+  "tests": [
+    {
+      "name": "isolated_profile_clean_environment_and_dependencies",
+      "status": "passed",
+      "seconds": 1.863,
+      "detail": {
+        "node_version": "24.8.0",
+        "chrome_version": "Chrome/157.0.8103.79",
+        "profile_isolated": true,
+        "clean_environment": true
+      }
+    },
+    {
+      "name": "open_and_snapshot_local_form",
+      "status": "passed",
+      "seconds": 0.138,
+      "detail": {
+        "epoch": 4,
+        "node_count": 7,
+        "http_status": 200
+      }
+    },
+    {
+      "name": "fill_submit_and_business_assertion",
+      "status": "passed",
+      "seconds": 0.23,
+      "detail": {
+        "form": "submitted once",
+        "assertion": "status text equals Saved",
+        "passed": true
+      }
+    },
+    {
+      "name": "screenshot_png_hash_mime_and_dimensions",
+      "status": "passed",
+      "seconds": 0.041,
+      "detail": {
+        "mime": "image/png",
+        "width": 1280,
+        "height": 720,
+        "bytes": 21870,
+        "sha256": "d35971e4c67f7ca6279e0dcad7f9771ebc49eac0de1f006019f83227ce4dc923",
+        "persistence": "protocol bytes only; Rust host owns file path"
+      }
+    },
+    {
+      "name": "route_navigation_and_stale_epoch_refusal",
+      "status": "passed",
+      "seconds": 0.113,
+      "detail": {
+        "url": "http://127.0.0.1:19851/next",
+        "stale_epoch_code": "STALE_PAGE"
+      }
+    },
+    {
+      "name": "origin_denial_and_no_arbitrary_actions",
+      "status": "passed",
+      "seconds": 0.001,
+      "detail": {
+        "origin_code": "ORIGIN_DENIED",
+        "arbitrary_action_code": "INVALID_ARGUMENTS"
+      }
+    },
+    {
+      "name": "page_world_dom_spoofing_cannot_redirect_approved_click",
+      "status": "passed",
+      "seconds": 0.119,
+      "detail": {
+        "result": "ELEMENT_DENIED",
+        "target_and_overlay": "untouched",
+        "controller_world": "isolated"
+      }
+    },
+    {
+      "name": "synthetic_application_error_state",
+      "status": "passed",
+      "seconds": 0.115,
+      "detail": {
+        "http_status": 200,
+        "application_status": "Synthetic error",
+        "assertion_passed": true
+      }
+    },
+    {
+      "name": "close_removes_owned_profile",
+      "status": "passed",
+      "seconds": 0.043,
+      "detail": {
+        "closed": true,
+        "profile_removed": true
+      }
+    },
+    {
+      "name": "driver_cancellation_kills_isolated_node_chrome_process_group",
+      "status": "passed",
+      "seconds": 0.968,
+      "detail": {
+        "owned_group_members_before": 12,
+        "executing_members_after": 0,
+        "cancellation": "driver process-group kill; Rust future cancellation is covered separately by native tests"
+      }
+    },
+    {
+      "name": "online_status_probes_hung_chrome_and_fails_within_deadline",
+      "status": "passed",
+      "seconds": 1.899,
+      "detail": {
+        "live_probe": true,
+        "hung_status": "UNKNOWN",
+        "seconds": 1.003,
+        "automatic_retry": false
+      }
+    }
+  ],
+  "boundaries": [
+    "Real Node/Chrome CDP bridge; Rust host and shared execute/approval not compiled or executed by this script.",
+    "Navigation/request origin controls and Chrome background flags; not whole-process network isolation.",
+    "One disposable profile per process, clean environment; no dependency installation or external service."
+  ],
+  "not_verified": [
+    "Rust compilation/unit tests",
+    "Runtime approval and host ref binding",
+    "Windows process job",
+    "OS-level network isolation"
+  ],
+  "finished_at": "2026-11-16T23:44:47Z",
+  "passed": true
+}

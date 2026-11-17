@@ -26,10 +26,27 @@ fn delegation_assignment_and_result_wakes_are_host_input_but_real_chat_is_not() 
     }
 }
 
-#[derive(Default)]
-struct ReadOnlyModel(std::sync::Mutex<Vec<Vec<Message>>>);
+#[derive(Clone, Default)]
+struct ReadOnlyModel {
+    captured: Arc<std::sync::Mutex<Vec<Vec<Message>>>>,
+    policy: Option<willdeep_core::provider::policy::ModelPolicyContext>,
+}
 #[async_trait::async_trait]
 impl Provider for ReadOnlyModel {
+    fn policy_context(&self) -> Option<willdeep_core::provider::policy::ModelPolicyContext> {
+        self.policy.clone()
+    }
+
+    fn with_policy_context(
+        &self,
+        context: willdeep_core::provider::policy::ModelPolicyContext,
+    ) -> Result<Arc<dyn Provider>, ProviderError> {
+        Ok(Arc::new(Self {
+            captured: self.captured.clone(),
+            policy: Some(context),
+        }))
+    }
+
     async fn complete(
         &self,
         messages: &[Message],
@@ -65,7 +82,7 @@ impl Provider for ReadOnlyModel {
         ] {
             assert!(!tools.iter().any(|t| t.name == name), "offered {name}");
         }
-        self.0.lock().unwrap().push(messages.to_vec());
+        self.captured.lock().unwrap().push(messages.to_vec());
         Ok(Completion {
             content: "Read-only investigation complete.".into(),
             finish_reason: Some("stop".into()),
@@ -156,7 +173,15 @@ async fn delegation_harness_rebuilds_main_rules_without_executing_extensions() {
         .run("actual child operator input")
         .await
         .unwrap();
-    let captured = provider.0.lock().unwrap();
+    let policy = built
+        .agent
+        .main_model()
+        .follower()
+        .policy_context()
+        .unwrap();
+    let canonical_workspace = session.workspace.canonicalize().unwrap();
+    assert_eq!(policy.workspace(), Some(canonical_workspace.as_path()));
+    let captured = provider.captured.lock().unwrap();
     assert!(
         captured[0]
             .iter()

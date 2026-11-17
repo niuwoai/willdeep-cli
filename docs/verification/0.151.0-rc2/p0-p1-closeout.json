@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "version": "0.151.0-rc2",
+  "date": "2026-11-17",
+  "status": "not_signed_off_continued_in_rc3",
+  "continued_in_version": "0.151.0-rc3",
+  "project_stage": "existing_project_iteration",
+  "scope": {
+    "p0": ["versioned_edit_and_file_changes", "six_scenario_regression", "lsp_queries"],
+    "p1": ["semantic_rename_and_ast", "interactive_browser", "byok_search", "project_model_policy", "execution_evidence_and_audit", "tool_defaults"],
+    "included_parallel_work": "tui_progress_delivery_viewport_selection_and_copy"
+  },
+  "checks": {
+    "workspace_tests_before_final_closeout_fix": {
+      "command": "cargo test --offline --locked --workspace --no-fail-fast",
+      "exit_code": 0,
+      "passed": 3261,
+      "failed": 0,
+      "ignored": 24,
+      "targets": 19,
+      "cli_unit_passed": 1756,
+      "core_unit_passed": 1306,
+      "note": "Default ignored real-tool tests were subsequently selected explicitly. Final daemon race fix and added combination tests require separate verification."
+    },
+    "delegation_model_policy": {"passed": 1, "failed": 0},
+    "real_rust_lsp": {"passed": 3, "failed": 0, "cargo_net_offline": true, "independent_analysis_cache": true},
+    "real_typescript_lsp": {"passed": 4, "failed": 0},
+    "real_native_ast": {"passed": 1, "failed": 0, "languages": ["rust", "typescript", "tsx"]},
+    "real_browser_registry": {"passed": 3, "failed": 0},
+    "browser_startup_node": {"passed": 11, "failed": 0, "skipped": 0},
+    "browser_runtime_entrypoints": {"status": "older_attempt_passed_latest_frozen_attempt_failed", "required_cases": 9, "previous_passed": 9, "previous_failed": 0, "previous_binary_sha256": "3d341b2d33f032583d5dc682e0be5b3b5d2306759415feb5b638926d6e57a622", "previous_report": "target/browser-entrypoints-rc2-attempt4/browser-runtime-entrypoints.json", "latest_passed": 4, "latest_failed": 5, "latest_binary_sha256": "b416dafd4718f270745e2a5a0631a7ebcadf144e0f19fffefe01a15a3fb6c06d", "latest_report": "target/core-regression/run-20261117-65772-zzjcwk/browser_interaction/0/browser-runtime-entrypoints.json", "first_error": "STALE_PAGE after initial navigation; subsequent cases also affected by shared fixture errors"},
+    "six_scenario_regression": {"status": "frozen_binary_attempt_failed_continued_in_rc3", "baseline_complete": false, "passed_scenarios": 5, "source_stable": true, "report": "target/core-regression/run-20261117-65772-zzjcwk/report.json", "browser_passed": 4, "browser_failed": 5, "previous_browser_rejection": "Cargo rebuilt the mutable target/debug/willdeep after fixture launch; SHA-256 gate rejected the stale fixture before execution."},
+    "goal_detached_combination": {"status": "passed", "passed": 2, "failed": 0, "ignored": 0, "failure_cleanup": "Test-owned detached supervisor is signalled and reaped before fixture cleanup."},
+    "runtime_terminal_race": {"status": "followup_review_requires_two_more_regressions", "first_fix_tests_passed": 64, "first_independent_review_tests_passed": 28, "followup_test_executions_passed": 237, "followup_unique_tests_passed": 215, "followup_independent_tests_passed": 73, "remaining": ["Turn or Session persistence failure must recover through buffered replay", "Claimed but unbound Queued lane reservation must survive completion"]},
+    "tui_pty": {
+      "status": "historical_pass_latest_frozen_attempt_failed",
+      "previous_passed": 32,
+      "previous_failed": 0,
+      "interaction_checks": 18,
+      "prompt_selection_checks": 14,
+      "real_model_requests": false,
+      "host_clipboard_modified": false,
+      "previous_binary_sha256": "8117e4bc570b1ce553b4e49ac7a8a3043236e029cbcf7172963ca971d82ae908",
+      "previous_reports": ["target/tui-interactions-rc2/integration.json", "target/tui-prompt-selection-rc2/integration.json"],
+      "latest_binary_sha256": "b416dafd4718f270745e2a5a0631a7ebcadf144e0f19fffefe01a15a3fb6c06d",
+      "latest_interaction_passed": 18,
+      "latest_prompt_selection_passed_before_timeout": 8,
+      "latest_prompt_selection_passed": false,
+      "latest_error": "SSH copy payload was correct, but the confirmation disappeared after one frame; verification timed out.",
+      "latest_reports": ["target/tui-interactions-rc2-frozen/integration.json", "target/tui-prompt-selection-rc2-frozen/integration.json"]
+    },
+    "web": {"test_files": 52, "tests_passed": 430, "tests_failed": 0, "build": "passed", "lint_errors": 0, "lint_warnings": 1, "warning": "Existing ModelPicker Hook dependency warning; build also reports chunk sizes."},
+    "ruby_ci_chain": {
+      "model_eval": {"runs": 32, "assertions": 748, "failures": 0, "errors": 0, "skips": 0},
+      "p0_eval_tasks": {"runs": 19, "assertions": 116, "failures": 0, "errors": 0, "skips": 0},
+      "regression_runner": {"runs": 13, "assertions": 127, "failures": 0, "errors": 0, "skips": 0},
+      "browser_support": {"runs": 11, "assertions": 41, "failures": 0, "errors": 0, "skips": 0},
+      "manifest_registration": "passed_not_execution",
+      "model_task_registration": "passed"
+    },
+    "strict_workspace_clippy": "pending_stable_source",
+    "windows_gnu_core_clippy": "pending_stable_source",
+    "final_format_version_lengths_links_and_sensitive_scan": "pending"
+  },
+  "failure_history": [
+    {"area": "rust_lsp", "failure": "Unready project returned empty definitions, clean diagnostics or missing rename references.", "resolution": "Require healthy quiescent rust-analyzer server status and unchanged readiness revision; retain build-script/proc-macro restrictions.", "final_real_tests_passed": 3},
+    {"area": "rust_metadata_cache", "failure": "Missing metadata dependencies caused a readiness warning.", "resolution": "Populate isolated analysis cache; keep warning rejection. Final real run used offline mode."},
+    {"area": "delegation_model_policy", "failure": "Old test provider could not bind policy; later path assertion differed between /var and /private/var.", "resolution": "Make test provider retain policy and compare canonical workspace. Production failure-closed behavior retained.", "final_tests_passed": 1},
+    {"area": "browser_attempt1", "passed": false, "cases_failed": 9, "cause": "Fixture inherited parent Git repository.", "resolution": "Initialize independent fixture repository.", "report": "target/browser-entrypoints-rc2-attempt1/browser-runtime-entrypoints.json"},
+    {"area": "browser_attempt2", "passed": false, "cases_failed": 9, "cause": "Language environment override selected local CLI Harness; first browser also hit fixed startup limit; shared fixture errors blocked later cases.", "resolution": "Move language to private configuration; use configured shared startup deadline and bounded redacted diagnostics; recursively inventory owned artifacts.", "report": "target/browser-entrypoints-rc2-attempt2/browser-runtime-entrypoints.json"},
+    {"area": "browser_attempt3", "passed": false, "cases_passed": 7, "cases_failed": 2, "cause": "Approval cleanup restored terminal Turn to running. Web briefly observed cancelled before later regression.", "resolution": "Restrict resume to the current waiting task, protect terminal stores and recheck settled Turn after resource cleanup. Attempt4 passed all nine cases; related followup paths remain under review.", "report": "target/browser-entrypoints-rc2-attempt3/browser-runtime-entrypoints.json"},
+    {"area": "real_ast_selection", "failure": "npm wrapper entry was rejected as non-native.", "resolution": "Use native executable from the same pinned package; retain dependency gate.", "final_tests_passed": 1},
+    {"area": "mutable_binary_during_parallel_verification", "failure": "Workspace Cargo build replaced target/debug/willdeep. Prompt-selection assertions passed but the end SHA-256 check failed; the six-scenario browser stage rejected the old fixture before execution.", "resolution": "Freeze a read-only binary copy and start a fresh fixture without disabling digest gates.", "previous_baseline_report": "target/core-regression/run-20261117-89128-6aezlc/report.json", "previous_tui_report": "target/tui-prompt-selection-rc2-final/integration.json"}
+  ],
+  "boundaries": [
+    "Per-file atomic installation is not a cross-file transaction or CAS against arbitrary external writers.",
+    "TypeScript native unversioned changes bind to pre-request synchronized snapshots; Rust still requires versioned documentChanges.",
+    "Browser origin restrictions are not Chrome whole-process network isolation; effective OS sandbox must be Off and non-Unix screenshots remain rejected.",
+    "Project model policy covers integrated Provider HTTP egress, not arbitrary plugins or external processes.",
+    "Detached verification journal does not mint Goal live evidence authority; restart requires revalidation.",
+    "Deterministic local fixtures do not measure real-model quality, billing, tokens or competitor performance.",
+    "Windows GNU cross lint is not Windows native execution or a release.",
+    "Manual TUI performance benchmarks, paid model/search runs, DAP, Computer Use/AX, voice, ACP, background precompression and /btw are outside this closeout."
+  ],
+  "real_model_calls": false,
+  "model_cost": null,
+  "model_tokens": null,
+  "delivery": {
+    "branch": "feat/p0-p1-runtime-tools",
+    "implementation_commit": "662e69c8",
+    "develop_integration_commit": "2744e575",
+    "final_closeout_commit": null,
+    "pushed": false,
+    "pull_request": null,
+    "installed": false,
+    "published": false,
+    "release_tag_created": false,
+    "release_tag_constraint": "Tag only after the commit is merged into the default branch."
+  }
+}

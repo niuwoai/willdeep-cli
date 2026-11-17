@@ -122,10 +122,14 @@ mod tests {
     fn rejects_non_loopback_even_when_explicit() {
         let root =
             std::env::temp_dir().join(format!("willdeep-webapp-parse-{}", uuid::Uuid::new_v4()));
-        let error =
-            resolve_listen("0.0.0.0:9847", &root, None).expect_err("non-loopback must fail");
+        // Keep the Runtime home absent while avoiding the real user's default config.
+        let config = root.with_extension("toml");
+        std::fs::write(&config, "").unwrap();
+        let error = resolve_listen("0.0.0.0:9847", &root, Some(&config))
+            .expect_err("non-loopback must fail");
         assert!(error.to_string().contains("loopback"));
         assert!(!root.exists());
+        std::fs::remove_file(config).unwrap();
     }
 
     #[test]

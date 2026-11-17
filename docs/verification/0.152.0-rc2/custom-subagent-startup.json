@@ -1,0 +1,76 @@
+{
+  "passed": true,
+  "checks": [
+    "unknown section fails with config path and actionable library guidance",
+    "valid config loads after preserving/removing the misplaced section",
+    "custom definition remains enabled with its independent model and 65536 window binding",
+    "real PTY reaches the interactive greeting with the custom agent installed",
+    "TUI /agents interaction returns the installed custom definition",
+    "local CLI dispatch executes custom instructions and returns its result to the parent",
+    "runtime CLI dispatch executes custom instructions and returns its result to the parent",
+    "both dispatch paths used the specialist model without contacting external providers"
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/debug/willdeep",
+  "sha256": "2d22166189c38c079c12ab04c9cc374cae015317e8926ca3c39dc01c29a2179a",
+  "previous_attempts": [
+    {
+      "passed": false,
+      "checks": [
+        "unknown section fails with config path and actionable library guidance",
+        "valid config loads after preserving/removing the misplaced section",
+        "custom definition remains enabled with its independent model and 65536 window binding",
+        "real PTY reaches the interactive greeting with the custom agent installed"
+      ],
+      "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/debug/willdeep",
+      "sha256": "2d22166189c38c079c12ab04c9cc374cae015317e8926ca3c39dc01c29a2179a",
+      "version": "willdeep 0.152.0-rc2",
+      "error": "RuntimeError: TUI timeout waiting for user/doc-multilingual",
+      "fixture_preserved": true,
+      "fixture": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-custom-subagent-20261117-77414-esi050"
+    },
+    {
+      "passed": false,
+      "checks": [
+        "unknown section fails with config path and actionable library guidance",
+        "valid config loads after preserving/removing the misplaced section",
+        "custom definition remains enabled with its independent model and 65536 window binding",
+        "real PTY reaches the interactive greeting with the custom agent installed",
+        "TUI /agents interaction returns the installed custom definition"
+      ],
+      "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/debug/willdeep",
+      "sha256": "2d22166189c38c079c12ab04c9cc374cae015317e8926ca3c39dc01c29a2179a",
+      "version": "willdeep 0.152.0-rc2",
+      "cleanup_error": "RuntimeError: daemon: error: contact Runtime Daemon: internal Runtime HTTP request failed: error sending request for url (http://127.0.0.1:50627/v1/internal/shutdown): error sending request for url (http://127.0.0.1:50627/v1/internal/shutdown): client error (Connect): tcp connect error: Connection refused (os error 61)\n",
+      "fixture_preserved": true,
+      "fixture": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-custom-subagent-20261117-80621-6mrbiy"
+    },
+    {
+      "passed": false,
+      "checks": [
+        "unknown section fails with config path and actionable library guidance",
+        "valid config loads after preserving/removing the misplaced section",
+        "custom definition remains enabled with its independent model and 65536 window binding",
+        "real PTY reaches the interactive greeting with the custom agent installed",
+        "TUI /agents interaction returns the installed custom definition"
+      ],
+      "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/debug/willdeep",
+      "sha256": "2d22166189c38c079c12ab04c9cc374cae015317e8926ca3c39dc01c29a2179a",
+      "version": "willdeep 0.152.0-rc2",
+      "error": "RuntimeError: owned PTY child could not be reaped",
+      "fixture_preserved": true,
+      "fixture": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-custom-subagent-20261117-34572-uc7vm2"
+    }
+  ],
+  "version": "willdeep 0.152.0-rc2",
+  "observed": [
+    {
+      "model": "specialist-fixture",
+      "instructions_observed": true
+    },
+    {
+      "model": "specialist-fixture",
+      "instructions_observed": true
+    }
+  ],
+  "fixture_preserved": false
+}

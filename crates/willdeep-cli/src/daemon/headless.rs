@@ -1,6 +1,8 @@
 use super::*;
 
 const EVENT_PAGE_LIMIT: usize = 200;
+/// Explicit operator continuation; uses the existing origin field across Runtime restarts.
+pub(crate) const CONTINUE_TASK_ORIGIN: &str = "cli:continue-task";
 
 #[derive(Clone, Debug)]
 pub(crate) struct HeadlessRuntimeOutcome {
@@ -27,6 +29,7 @@ pub(crate) struct HeadlessRuntimeRequest {
     pub model: Option<String>,
     pub prompt: String,
     pub attachments: Vec<willdeep_core::MessageAttachment>,
+    pub continue_task: bool,
 }
 
 pub(crate) async fn execute_headless_turn(
@@ -60,14 +63,27 @@ async fn execute_reported_turn(
         request.model,
     )
     .await?;
-    let submitted = submit_runtime_turn(
-        home,
-        request.session_id,
-        request.prompt,
-        request.attachments,
-        crate::Surface::Cli,
-    )
-    .await?;
+    let submitted = if request.continue_task {
+        tui_bridge::submit_runtime_turn_with_origin(
+            home,
+            request.session_id,
+            request.prompt,
+            request.attachments,
+            CONTINUE_TASK_ORIGIN.to_owned(),
+            uuid::Uuid::new_v4(),
+            false,
+        )
+        .await?
+    } else {
+        submit_runtime_turn(
+            home,
+            request.session_id,
+            request.prompt,
+            request.attachments,
+            crate::Surface::Cli,
+        )
+        .await?
+    };
     let mut task_id = None;
     let mut completed_payload = None;
 

@@ -60,6 +60,10 @@ impl UncertainCalls {
                 | "monitor"
                 | "create_file"
                 | "edit_file"
+                | "file_changes"
+                | "lsp"
+                | "ast_grep"
+                | "browser"
                 | "create_worktree"
                 | "call_mcp_tool"
                 | "configuration_write"
@@ -125,6 +129,46 @@ mod tests {
                 name == "configuration_write"
             );
         }
+    }
+
+    #[test]
+    fn interrupted_browser_and_ast_calls_require_explicit_replay_approval() {
+        for name in ["browser", "ast_grep", "tool_status"] {
+            let call = ToolCall {
+                id: "interrupted-integration".into(),
+                name: name.into(),
+                arguments: json!({"operation":"snapshot"}).to_string(),
+            };
+            let mut history = vec![Message::assistant("working", vec![call.clone()])];
+            let uncertain = UncertainCalls::recover(&mut history);
+            assert_eq!(uncertain.needs_approval(&call), name != "tool_status");
+        }
+    }
+
+    #[test]
+    fn interrupted_language_server_query_requires_approval_before_retry() {
+        let call = ToolCall {
+            id: "lsp-query".into(),
+            name: "lsp".into(),
+            arguments: json!({"operation":"symbols","path":"src/lib.rs"}).to_string(),
+        };
+        let mut history = vec![Message::assistant("querying", vec![call.clone()])];
+        let uncertain = UncertainCalls::recover(&mut history);
+        assert!(uncertain.needs_approval(&call));
+        assert!(has_unknown_effect(&history));
+    }
+
+    #[test]
+    fn missing_file_changes_receipt_requires_approval_before_retry() {
+        let call = ToolCall {
+            id: "batch".into(),
+            name: "file_changes".into(),
+            arguments: json!({"operation":"apply","preview_id":"bound-plan"}).to_string(),
+        };
+        let mut history = vec![Message::assistant("applying", vec![call.clone()])];
+        let uncertain = UncertainCalls::recover(&mut history);
+        assert!(uncertain.needs_approval(&call));
+        assert!(has_unknown_effect(&history));
     }
 
     struct Repeats {

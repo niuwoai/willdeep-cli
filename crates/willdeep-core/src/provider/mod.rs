@@ -7,6 +7,8 @@ pub use error_detail::safe_error_detail;
 pub mod magpie;
 mod main_model;
 pub mod model_metadata;
+pub mod policy;
+pub use policy::ModelPolicyContext;
 mod responses;
 pub mod sse;
 #[cfg(test)]
@@ -102,6 +104,9 @@ impl ReasoningProfile {
         }
         if let Some(parameter) = self.parameter.as_deref() {
             let parts = parameter.split('.').collect::<Vec<_>>();
+            if !reasoning_parameter_allowed(parameter) {
+                return Err("reasoning.parameter cannot overwrite reserved request fields".into());
+            }
             if parameter.len() > 128
                 || parts.is_empty()
                 || parts.len() > 8
@@ -202,6 +207,8 @@ pub struct ProviderConfig {
     /// Externally managed Magpie Agent connection. Only this source receives
     /// loopback pinning and the stricter no-proxy/no-redirect transport.
     pub magpie_integration: bool,
+    /// Explicit project ownership for routing checks; unrelated to ledger identity.
+    pub policy_context: Option<ModelPolicyContext>,
 }
 
 impl ProviderConfig {
@@ -229,7 +236,13 @@ impl ProviderConfig {
             allow_request_replay: true,
             allow_unauthenticated: false,
             magpie_integration: false,
+            policy_context: None,
         }
+    }
+
+    pub fn bind_workspace(&mut self, workspace: &std::path::Path) -> Result<(), ProviderError> {
+        self.policy_context = Some(ModelPolicyContext::for_workspace(workspace)?);
+        Ok(())
     }
 
     /// 这次请求真正填进 `max_tokens` 的数。
@@ -362,8 +375,37 @@ impl ProviderConfig {
             return Ok(());
         };
         let parameter = effective.parameter.as_deref().unwrap_or(default_parameter);
+        if !reasoning_parameter_allowed(parameter) {
+            return Err(ProviderError::InvalidReasoningParameter(
+                parameter.to_owned(),
+            ));
+        }
         set_json_path(body, parameter, effective.value)
     }
+}
+
+fn reasoning_parameter_allowed(path: &str) -> bool {
+    !matches!(
+        path.split('.').next().unwrap_or_default(),
+        "model"
+            | "messages"
+            | "input"
+            | "instructions"
+            | "system"
+            | "tools"
+            | "tool_choice"
+            | "stream"
+            | "stream_options"
+            | "max_tokens"
+            | "max_output_tokens"
+            | "max_completion_tokens"
+            | "metadata"
+            | "user"
+            | "store"
+            | "previous_response_id"
+            | "conversation"
+            | "service_tier"
+    )
 }
 
 fn set_json_path(
@@ -462,6 +504,8 @@ pub enum ProviderError {
     MissingApiKey,
     #[error("model is required")]
     MissingModel,
+    #[error("project model policy denied request before sending: {0}")]
+    PolicyDenied(String),
     #[error("invalid API base URL: {0}")]
     InvalidBaseUrl(String),
     #[error("failed to build HTTP client: {0}")]
@@ -597,6 +641,19 @@ impl ProviderEventSink for NoopProviderEvents {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    fn policy_context(&self) -> Option<ModelPolicyContext> {
+        None
+    }
+
+    /// A connection replacement must retain the original project's boundary.
+    /// Unknown wrappers fail closed instead of claiming policy enforcement.
+    fn with_policy_context(
+        &self,
+        _context: ModelPolicyContext,
+    ) -> Result<Arc<dyn Provider>, ProviderError> {
+        Err(policy::denied("provider_cannot_bind_workspace"))
+    }
+
     /// Who answers this Provider's requests, for the local usage ledger.
     /// Test doubles and wrappers that do not know leave it `None`; the ledger
     /// then records `provider`/`model` as null instead of guessing.

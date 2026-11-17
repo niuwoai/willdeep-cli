@@ -18,11 +18,16 @@ pub(super) fn receive_models(
 
 pub(super) fn discover_local(runtime: &TuiRuntime) {
     let config = runtime.runtime_submit.config.clone();
+    let policy_context = runtime.provider_config.policy_context.clone();
     let tx = runtime.tx.clone();
     tokio::spawn(async move {
-        let result = crate::local_provider_discovery::discover(config.as_deref())
-            .await
-            .map_err(|error| error.to_string());
+        let result = async {
+            let context =
+                policy_context.context("local Provider discovery requires project ownership")?;
+            crate::local_provider_discovery::discover(config.as_deref(), &context).await
+        }
+        .await
+        .map_err(|error: anyhow::Error| error.to_string());
         let _ = tx.send(UiMessage::LocalProvidersDiscovered(result));
     });
 }
@@ -86,24 +91,8 @@ pub(super) async fn handle(
         }
         ModelPickerAction::Refresh => {
             discover_local(runtime);
-            let profile = app
-                .model_picker
-                .as_ref()
-                .and_then(|picker| picker.profile.clone());
-            let result = (|| -> Result<_> {
-                if profile == current_profile(runtime)? {
-                    return Ok(runtime.provider_config.clone());
-                }
-                let loaded =
-                    crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
-                crate::provider_config_from_profile(
-                    &loaded.file,
-                    profile.as_deref().context("Provider is not selected")?,
-                )
-            })();
-            match result {
-                Ok(config) => load_models(app, config, &runtime.tx),
-                Err(error) => app.set_model_picker_result(Err(error.to_string())),
+            if let Err(error) = refresh_models(app, runtime) {
+                app.set_model_picker_result(Err(error.to_string()));
             }
             return Ok(());
         }
@@ -274,6 +263,25 @@ fn load_models(app: &mut App, mut config: willdeep_core::provider::ProviderConfi
     app.refresh_model_picker_matches();
 }
 
+fn refresh_models(app: &mut App, runtime: &TuiRuntime) -> Result<()> {
+    let profile = app
+        .model_picker
+        .as_ref()
+        .and_then(|picker| picker.profile.clone());
+    let mut config = if profile == current_profile(runtime)? {
+        runtime.provider_config.clone()
+    } else {
+        let loaded = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
+        crate::provider_config_from_profile(
+            &loaded.file,
+            profile.as_deref().context("Provider is not selected")?,
+        )?
+    };
+    config.policy_context = runtime.provider_config.policy_context.clone();
+    load_models(app, config, &runtime.tx);
+    Ok(())
+}
+
 pub(super) fn browse(app: &mut App, runtime: &TuiRuntime, profile: Option<String>) -> Result<()> {
     if let Some(profile) = profile {
         if app
@@ -293,11 +301,12 @@ pub(super) fn browse(app: &mut App, runtime: &TuiRuntime, profile: Option<String
         picker.models.clear();
         picker.filtered.clear();
         let loaded = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
-        let config = if current_profile(runtime)?.as_deref() == Some(profile.as_str()) {
+        let mut config = if current_profile(runtime)?.as_deref() == Some(profile.as_str()) {
             runtime.provider_config.clone()
         } else {
             crate::provider_config_from_profile(&loaded.file, &profile)?
         };
+        config.policy_context = runtime.provider_config.policy_context.clone();
         let picker = app
             .model_picker
             .as_mut()
@@ -345,6 +354,7 @@ pub(super) async fn switch(
 ) -> Result<String> {
     let loaded = crate::config::LoadedConfig::load(runtime.runtime_submit.config.as_deref())?;
     let mut config = crate::provider_config_from_profile(&loaded.file, profile)?;
+    config.policy_context = runtime.provider_config.policy_context.clone();
     let model = if config.magpie_integration {
         model
     } else {
@@ -368,6 +378,8 @@ pub(super) async fn switch(
         .cloned();
     let clear_reasoning_level = runtime.reasoning_level.is_some() && selected_level.is_none();
     config.reasoning_level = selected_level.clone();
+    let base = reqwest::Url::parse(&config.base_url)?;
+    willdeep_core::provider::policy::check_route(&config, &config.model, &base)?;
     let provider = willdeep_core::provider::build_provider(config.clone())?;
     if app.running {
         let message = model_commands::defer_model_switch(app, model)?;
@@ -543,6 +555,141 @@ mod tests {
         assert!(app.pending_provider.is_none());
         assert_eq!(app.pending_model.as_deref(), Some("direct-deferred-model"));
         assert_eq!(agent.main_model().model().as_deref(), Some("old"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_policy_covers_browse_refresh_and_connection_switch_without_network() {
+        let root = std::env::temp_dir().join(format!("provider-policy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".willdeep")).unwrap();
+        std::fs::write(
+            root.join(".willdeep/model-policy.json"),
+            br#"{"version":1,"allow":[]}"#,
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let config = root.join("config.toml");
+        std::fs::write(&config, format!(
+            "version=1\ndefault_provider='alpha'\n[providers.alpha]\nprovider='openai-compatible'\napi_base='{base}'\napi_key='fixture'\nmodel='old'\n[providers.beta]\nprovider='openai-compatible'\napi_base='{base}'\napi_key='fixture'\nmodel='new'\n",
+        )).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let loaded = crate::config::LoadedConfig::load(Some(&config)).unwrap();
+        let mut initial = crate::provider_config_from_profile(&loaded.file, "alpha").unwrap();
+        initial.bind_workspace(&root).unwrap();
+        let owner = initial
+            .policy_context
+            .as_ref()
+            .unwrap()
+            .workspace()
+            .unwrap()
+            .to_path_buf();
+        let agent = Arc::new(Agent::new(
+            willdeep_core::provider::build_provider(initial.clone()).unwrap(),
+            willdeep_core::ToolRegistry::new(&root, willdeep_core::ApprovalMode::FullAccess)
+                .unwrap(),
+            willdeep_core::AgentConfig {
+                max_turns: 2,
+                system_prompt: String::new(),
+                context_window: 128_000,
+                token_budget: None,
+            },
+        ));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut runtime = TuiRuntime {
+            home: root.clone(),
+            notifier: crate::notify::Notifier::disabled(),
+            skills: Arc::new(SkillCatalog::default()),
+            kernel: willdeep_core::EventKernel::new(),
+            kernel_store: willdeep_core::kernel_store::KernelStore::new(&root),
+            detached_jobs: willdeep_core::DetachedJobStore::new(&root),
+            context_window: 128_000,
+            background_tasks: Arc::new(BackgroundTaskRegistry::default()),
+            runtime_submit: crate::daemon::RuntimeSubmitOptions {
+                workspace: root.clone(),
+                profile: Some("alpha".into()),
+                model: Some("old".into()),
+                config: Some(config),
+            },
+            provider_config: initial,
+            reasoning_level: None,
+            local_workspace: root.clone(),
+            tx,
+            rx,
+        };
+        runtime.refresh_provider_config().unwrap();
+        assert_eq!(
+            runtime
+                .provider_config
+                .policy_context
+                .as_ref()
+                .unwrap()
+                .workspace(),
+            Some(owner.as_path())
+        );
+        let policy_context = runtime.provider_config.policy_context.take();
+        discover_local(&runtime);
+        let discovery = tokio::time::timeout(Duration::from_secs(2), runtime.rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let UiMessage::LocalProvidersDiscovered(Err(error)) = discovery else {
+            panic!("missing project ownership must reject local discovery");
+        };
+        assert!(error.contains("requires project ownership"));
+        runtime.provider_config.policy_context = policy_context;
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), Some("alpha".into()), "existing");
+        let mut app = App::new(Vec::new(), Language::En);
+        app.open_model_picker("old".into());
+        browse(&mut app, &runtime, Some("beta".into())).unwrap();
+        for refresh in [false, true] {
+            if refresh {
+                refresh_models(&mut app, &runtime).unwrap();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(2), runtime.rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let UiMessage::ModelsLoaded { request_id, result } = result else {
+                panic!("expected model lookup result");
+            };
+            assert!(result.is_err());
+            receive_models(&mut app, request_id, result);
+            assert!(app.model_picker.as_ref().unwrap().error.is_some());
+        }
+        for running in [false, true] {
+            app.running = running;
+            let error = switch(
+                "beta",
+                "new",
+                &mut app,
+                &mut session,
+                &store,
+                &mut runtime,
+                &agent,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<willdeep_core::provider::ProviderError>(),
+                Some(willdeep_core::provider::ProviderError::PolicyDenied(_))
+            ));
+            assert!(app.pending_provider.is_none() && app.pending_model.is_none());
+            assert_eq!(runtime.runtime_submit.profile.as_deref(), Some("alpha"));
+            assert_eq!(session.profile.as_deref(), Some("alpha"));
+            assert_eq!(agent.main_model().model().as_deref(), Some("old"));
+        }
+        assert!(!root.join("runtime/daemon.json").exists());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

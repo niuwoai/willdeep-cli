@@ -5,13 +5,8 @@ pub(super) enum ParkedRemoteDialog {
     Question(AskDialog),
 }
 
-/// 忙时提交后立刻回显的那一行。`queued_user_message` 要等下一轮任务启动才到，
-/// 这段时间记录还会继续长，所以回显行不能只靠「最后一行是不是它」来认。
-#[derive(Clone, Debug)]
-pub(super) struct PendingRuntimeEcho {
-    pub(super) text: String,
-    pub(super) row: String,
-}
+pub(super) use super::delivery_echo::PendingRuntimeEcho;
+use willdeep_runtime_protocol::{QueueAction, QueuedTurnMessage, RuntimeTurn};
 
 pub(super) fn reconcile_parked_dialogs(app: &mut App) {
     let live = app
@@ -55,15 +50,9 @@ impl App {
         &mut self,
         items: Vec<willdeep_runtime_protocol::QueuedTurnMessage>,
     ) {
-        // Editing retains the original identity and expected text. The server
-        // rejects the save if that message changed or started in another client.
-        if self
-            .prompt_queue
-            .as_ref()
-            .is_some_and(|panel| panel.editor.is_some())
-        {
-            return;
-        }
+        // The editor owns its original remote identity and compare-and-set text.
+        // Refresh the list even while editing; never replace that edit target.
+        self.sync_runtime_delivery_queue(&items);
         let selected = self
             .prompt_queue
             .as_ref()
@@ -81,28 +70,18 @@ impl App {
                 transcript_row: None,
             });
         }
-        // 还在队列里的保持原样；被删掉或改掉的，回显行改成「未发送」。
-        // 正在编辑时上面提前返回了，不会把没保存的修改当成删除。
-        let mut remaining = self
-            .queued_prompts
-            .iter()
-            .filter_map(|item| item.remote.as_ref().map(|remote| remote.text.clone()))
-            .collect::<Vec<_>>();
-        // 压缩/忙时本地排队只存在于客户端，不进 turn_queue API。
-        for item in &self.queued_prompts {
-            if item.remote.is_none() {
-                remaining.push(item.text.clone());
-            }
-        }
-        // 忙时插话已提交给 Runtime，但 API 队列里不一定看得见；本轮还在跑时别误标「未发送」。
-        if self.running {
-            for echo in &self.pending_runtime_echoes {
-                remaining.push(echo.text.clone());
-            }
-        }
-        let remaining = remaining.iter().map(String::as_str).collect::<Vec<_>>();
-        self.retract_runtime_echoes(&remaining);
+        // Absence can mean claimed, cancelled, or a stale snapshot. A Turn
+        // query/event, rather than queue absence, confirms delivery state.
+        let edit_conflict = self.prompt_queue.as_ref().and_then(|panel| {
+            panel
+                .remote_edit
+                .as_ref()
+                .and_then(|original| remote_edit_conflict(self, original).map(str::to_owned))
+        });
         if let Some(panel) = self.prompt_queue.as_mut() {
+            if let Some(message) = edit_conflict {
+                panel.set_status(Some(message));
+            }
             panel.selected = selected
                 .and_then(|id| {
                     self.queued_prompts
@@ -280,7 +259,7 @@ pub(super) async fn submit_input(
         session.runtime_managed = true;
         store.save(session)?;
         crate::daemon::turn_queue::list(&runtime.home, session.id).await?;
-        crate::daemon::submit_runtime_turn_with_options(
+        let turn = crate::daemon::submit_runtime_turn_with_options(
             &runtime.home,
             session.id,
             prompt,
@@ -290,7 +269,7 @@ pub(super) async fn submit_input(
             defer_until_released,
         )
         .await?;
-        Ok(())
+        Ok(turn)
     }
     .await;
     finish_input_submission(app, draft, expanded, row, defer_until_released, &result);
@@ -301,7 +280,7 @@ pub(super) async fn submit_input(
     Ok(())
 }
 
-fn submission_request_id(
+pub(super) fn submission_request_id(
     app: &mut App,
     prompt: &str,
     attachments: &[MessageAttachment],
@@ -334,18 +313,19 @@ fn prepare_input_submission(app: &mut App, deferred: bool) -> (PromptEditor, boo
         app.language.text("正在提交", "submitting", "送信中")
     };
     let row = app.transcript.len();
-    // 占位行是 `You: [正在提交]`，要等提交结果回来才换成真正的回显。
-    // 这一段网络往返期间聊天区也得有动静，不能干等。
+    // 提交尚无回执，用未确认符号占位；详细反馈仍留在状态区。
+    // 不在请求返回之前显示代表已接收或成功的符号。
     if !deferred {
         app.note_awaiting_reply();
     }
-    app.append_transcript(if deferred {
-        format!("System: {status}: {}", draft.text())
-    } else {
-        format!("You: [{status}] {}", draft.text())
-    });
+    app.append_transcript(format!(
+        "You: {} {}",
+        delivery_echo::DeliveryStatus::Unconfirmed.symbol(),
+        draft.text()
+    ));
     app.notice = Some(status.to_owned());
-    app.scroll_to_bottom();
+    // Queueing a supplement must not move a reader away from their source.
+    // Existing follow mode still follows the appended placeholder naturally.
     (draft, expanded, row)
 }
 
@@ -355,48 +335,59 @@ fn finish_input_submission(
     expanded: bool,
     row: usize,
     deferred: bool,
-    result: &Result<()>,
+    result: &Result<RuntimeTurn>,
 ) {
     app.input = draft;
     match result {
-        Ok(()) => {
+        Ok(turn) => {
             app.runtime_queue_submission = None;
             let submitted = app.take_submitted_input();
-            // 先把附件拿出来：清掉草稿后回显那一行还要靠它们显示「附件 N」。
             let sent_attachments = std::mem::take(&mut app.attachments)
                 .into_iter()
                 .map(|item| item.message)
                 .collect::<Vec<_>>();
             app.selected_attachment = 0;
             app.publish_gallery();
-            let message = app.language.text(
-                "已加入队列，暂不发送 · Ctrl+Q 里按 S 再发",
-                "Queued for later · press S in Ctrl+Q to send it",
-                "キューに追加しました（未送信）· Ctrl+Q で S を押すと送信",
-            );
-            if deferred {
-                app.transcript[row] =
-                    terminal_safe_text(&format!("System: {message}: {submitted}"));
-            } else {
-                // 串行提交期间没有其他记录插入；用既有的回显/事件认领路径替换占位。
+            // Keep the placeholder's exact record, timestamp and metadata. The
+            // receipt can already be running or terminal after an idempotent retry.
+            let record = app.echo_runtime_submission(&submitted, turn, deferred, Some(row));
+            if record != Some(row) {
                 app.drop_transcript_row(row);
-                app.echo_runtime_submission(&submitted);
-                app.attach_to_latest_user_row(sent_attachments);
             }
-            let feedback = if deferred {
-                message.to_owned()
-            } else {
-                app.language
-                    .text(
-                        "已保存到待发队列，尚未交给当前模型；当前轮次结束后处理",
-                        "Saved to queue, not delivered to the current model; waits for this turn to finish",
-                        "キューに保存しました。現在のモデルには未送達で、ターン終了後に処理します",
-                    )
-                    .to_owned()
-            };
-            if !deferred {
-                app.append_transcript(format!("System: {feedback}"));
+            if let Some(record) = app
+                .pending_runtime_echoes
+                .iter()
+                .find(|echo| echo.turn_id == turn.id)
+                .and_then(|echo| echo.record)
+            {
+                app.transcript_attachments
+                    .resize_with(app.transcript.len(), Vec::new);
+                app.transcript_attachments[record] = sent_attachments;
             }
+            let status = app
+                .pending_runtime_echoes
+                .iter()
+                .find(|echo| echo.turn_id == turn.id)
+                .expect("a successful submit registers a receipt")
+                .status;
+            if !app.running
+                && (deferred
+                    || !app
+                        .pending_runtime_echoes
+                        .iter()
+                        .any(PendingRuntimeEcho::is_pending))
+            {
+                app.dismiss_awaiting_reply();
+            }
+            if !app.running
+                && let Some(outcome) = status.outcome()
+            {
+                app.last_turn_outcome = Some(outcome);
+            }
+            let feedback = status.feedback(app.language).to_owned();
+            // Delivery is already shown on the identity-bound user record and
+            // in the status area. A permanent System row would become stale
+            // as soon as Runtime starts this turn.
             app.notice = Some(feedback);
         }
         Err(error) => {
@@ -404,14 +395,20 @@ fn finish_input_submission(
             app.composer_expanded = expanded;
             let message = format!(
                 "{}: {error:#}",
-                app.language.text(
-                    "提交失败，输入与附件已保留",
-                    "Submission failed; input and attachments retained",
-                    "送信失敗。入力と添付を保持しました",
-                )
+                delivery_echo::DeliveryStatus::Unconfirmed.feedback(app.language)
             );
             app.transcript[row] =
                 terminal_safe_text(&format!("Error: {message}\n{}", app.input.text()));
+            if let Some((_, request_id)) = app.runtime_queue_submission.as_ref() {
+                let request_id = *request_id;
+                let text = app.input.text().to_owned();
+                app.note_runtime_submission_unconfirmed(&text, request_id, deferred, Some(row));
+                app.transcript_attachments[row] = app
+                    .attachments
+                    .iter()
+                    .map(|item| item.message.clone())
+                    .collect();
+            }
             app.notice = Some(message);
         }
     }
@@ -430,14 +427,19 @@ pub(super) async fn handle_key(
     let Some(panel) = app.prompt_queue.as_ref() else {
         return false;
     };
-    let Some(remote) = app
-        .queued_prompts
-        .get(panel.selected)
-        .and_then(|item| item.remote.clone())
-    else {
+    let editing = panel.editor.as_ref();
+    // Saving always targets the original ID and original expected text. The
+    // selected row may now refer to a different item, or the list may be empty.
+    let remote = if editing.is_some() {
+        panel.remote_edit.clone()
+    } else {
+        app.queued_prompts
+            .get(panel.selected)
+            .and_then(|item| item.remote.clone())
+    };
+    let Some(remote) = remote else {
         return false;
     };
-    let editing = panel.editor.as_ref();
     let action = match key.code {
         KeyCode::Enter
             if editing.is_some()
@@ -479,17 +481,28 @@ pub(super) async fn handle_key(
         }
         _ => return false,
     };
+    if action == QueueAction::Edit
+        && let Some(conflict) = remote_edit_conflict(app, &remote)
+    {
+        app.prompt_queue
+            .as_mut()
+            .unwrap()
+            .set_status(Some(conflict.to_owned()));
+        return true;
+    }
     let text = editing.map(|editor| editor.text().to_owned());
     let params = willdeep_runtime_protocol::UpdateTurnQueueParams {
         session_id: session.id,
         action,
         message_id: Some(remote.id),
         text,
-        expected_text: Some(remote.text),
+        expected_text: Some(remote.text.clone()),
     };
     match crate::daemon::turn_queue::update(&runtime.home, &params).await {
         Ok(items) => {
-            app.prompt_queue.as_mut().unwrap().editor = None;
+            let panel = app.prompt_queue.as_mut().unwrap();
+            panel.editor = None;
+            panel.remote_edit = None;
             app.sync_runtime_queue(items);
             app.prompt_queue.as_mut().unwrap().show_feedback(
                 app.language
@@ -502,16 +515,55 @@ pub(super) async fn handle_key(
                 Instant::now(),
             );
         }
-        Err(error) => app.prompt_queue.as_mut().unwrap().set_status(Some(format!(
-            "{}: {error}",
-            app.language.text(
-                "更新失败，消息仍由 Runtime 保管",
-                "Update failed; Runtime retains the message",
-                "更新失敗。メッセージは Runtime に保持されています"
-            )
-        ))),
+        Err(error) => {
+            if let Ok(items) = crate::daemon::turn_queue::list(&runtime.home, session.id).await {
+                app.sync_runtime_queue(items);
+            }
+            let detail = remote_edit_conflict(app, &remote).unwrap_or_else(|| {
+                app.language.text(
+                    "更新未确认；改写已保留，请刷新后重试",
+                    "Update unconfirmed; your rewrite is retained; refresh before retrying",
+                    "更新を確認できません。編集内容を保持しました。更新後に再試行してください",
+                )
+            });
+            app.prompt_queue
+                .as_mut()
+                .unwrap()
+                .set_status(Some(format!("{detail}: {error}")));
+        }
     }
     true
+}
+
+fn remote_edit_conflict(app: &App, original: &QueuedTurnMessage) -> Option<&'static str> {
+    let current = app
+        .queued_prompts
+        .iter()
+        .filter_map(|item| item.remote.as_ref())
+        .find(|item| item.id == original.id);
+    if current.is_some_and(|item| item.text != original.text) {
+        return Some(app.language.text(
+            "原消息正文已变更；改写已保留，不会作为新消息发送",
+            "The original message text changed; your rewrite is retained and will not be sent as a new message",
+            "元のメッセージ本文が変更されました。編集内容を保持し、新規送信はしません",
+        ));
+    }
+    if app
+        .pending_runtime_echoes
+        .iter()
+        .any(|echo| echo.turn_id == original.id && !echo.is_pending())
+    {
+        return Some(app.language.text(
+            "原消息已开始处理或已结束；改写已保留，不会作为新消息发送",
+            "The original message started or settled; your rewrite is retained and will not be sent as a new message",
+            "元のメッセージは処理開始済み、または終了済みです。編集内容を保持し、新規送信はしません",
+        ));
+    }
+    current.is_none().then(|| app.language.text(
+        "原消息已离开待发队列，可能已开始或被删除；改写已保留",
+        "The original message left the queue and may have started or been removed; your rewrite is retained",
+        "元のメッセージはキューを離れ、処理開始または削除された可能性があります。編集内容を保持しました",
+    ))
 }
 
 #[cfg(test)]
@@ -559,17 +611,22 @@ mod tests {
     }
 
     #[test]
-    fn external_refresh_cannot_replace_the_message_being_edited() {
+    fn external_refresh_keeps_the_edit_target_without_freezing_the_list() {
         let mut app = App::new(Vec::new(), Language::En);
         let original = message("original");
         app.sync_runtime_queue(vec![original.clone()]);
         app.open_prompt_queue();
-        app.prompt_queue.as_mut().unwrap().editor = Some(PromptEditor::default());
-        app.sync_runtime_queue(vec![message("replacement")]);
+        app.handle_queue_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let replacement = message("replacement");
+        app.sync_runtime_queue(vec![replacement.clone()]);
         assert_eq!(
             app.queued_prompts[0].remote.as_ref().unwrap().id,
-            original.id
+            replacement.id
         );
+        let panel = app.prompt_queue.as_ref().unwrap();
+        assert_eq!(panel.remote_edit.as_ref().unwrap().id, original.id);
+        assert_eq!(panel.remote_edit.as_ref().unwrap().text, "original");
+        assert_eq!(panel.editor.as_ref().unwrap().text(), "original");
     }
 
     #[test]
@@ -688,226 +745,8 @@ mod tests {
             "Waiting for answer: Which directory?"
         );
     }
-
-    #[test]
-    fn pending_submission_clears_the_composer_without_claiming_runtime_acceptance() {
-        let mut app = App::new(Vec::new(), Language::En);
-        app.begin_turn(true, "working".into());
-        app.input.insert("show immediately");
-        app.composer_expanded = true;
-        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
-        assert_eq!(draft.text(), "show immediately");
-        assert!(expanded);
-        assert!(app.input.is_empty());
-        assert!(!app.composer_expanded);
-        assert_eq!(app.transcript[row], "You: [submitting] show immediately");
-        assert!(app.pending_runtime_echoes.is_empty());
-        assert_eq!(app.notice.as_deref(), Some("submitting"));
-    }
-
-    #[test]
-    fn successful_submission_confirms_the_existing_row_and_claims_runtime_echo_once() {
-        let mut app = App::new(Vec::new(), Language::En);
-        app.begin_turn(true, "working".into());
-        app.input.insert("accepted input");
-        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
-        let before = app.transcript.len();
-        finish_input_submission(&mut app, draft, expanded, row, false, &Ok(()));
-        assert_eq!(app.transcript.len(), before + 1);
-        assert!(
-            app.transcript
-                .last()
-                .unwrap()
-                .contains("not delivered to the current model")
-        );
-        assert_eq!(app.transcript[row], "You: accepted input");
-        assert!(app.input.is_empty());
-        app.append_transcript("WillDeep: still working".into());
-        let before = app.transcript.len();
-        let event = serde_json::json!({
-            "type": "queued_user_message",
-            "turn_id": "confirmed-once",
-            "text": "accepted input"
-        });
-        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
-        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
-        assert_eq!(app.transcript.len(), before);
-        assert!(app.pending_runtime_echoes.is_empty());
-        assert_eq!(
-            app.transcript
-                .iter()
-                .filter(|row| row.as_str() == "You: accepted input")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn failed_submission_restores_draft_attachments_and_reuses_the_request_id() {
-        let mut app = App::new(Vec::new(), Language::En);
-        app.input.insert("keep me");
-        app.input.left();
-        app.composer_expanded = true;
-        let attachment = DraftAttachment {
-            id: uuid::Uuid::new_v4(),
-            message: MessageAttachment::Text {
-                name: "draft.txt".into(),
-                content: "draft attachment".into(),
-            },
-        };
-        app.attachments.push(attachment.clone());
-        let session_id = uuid::Uuid::new_v4();
-        let attachments = vec![attachment.message.clone()];
-        let request_id =
-            submission_request_id(&mut app, "keep me", &attachments, session_id, false).unwrap();
-        let (draft, expanded, row) = prepare_input_submission(&mut app, false);
-        finish_input_submission(
-            &mut app,
-            draft,
-            expanded,
-            row,
-            false,
-            &Err(anyhow::anyhow!("Runtime unavailable")),
-        );
-        assert_eq!(app.input.text(), "keep me");
-        assert!(app.composer_expanded);
-        assert_eq!(app.attachments[0].id, attachment.id);
-        assert!(app.transcript[row].starts_with(
-            "Error: Submission failed; input and attachments retained: Runtime unavailable"
-        ));
-        assert!(app.awaiting_since.is_none());
-        assert!(app.pending_runtime_echoes.is_empty());
-        assert_eq!(
-            submission_request_id(&mut app, "keep me", &attachments, session_id, false).unwrap(),
-            request_id
-        );
-        let (draft, expanded, retry_row) = prepare_input_submission(&mut app, false);
-        finish_input_submission(&mut app, draft, expanded, retry_row, false, &Ok(()));
-        assert!(app.runtime_queue_submission.is_none());
-        assert!(app.attachments.is_empty());
-        assert_eq!(
-            app.transcript
-                .iter()
-                .filter(|row| row.as_str() == "You: keep me")
-                .count(),
-            1
-        );
-        assert_eq!(app.pending_runtime_echoes.len(), 1);
-    }
-
-    #[test]
-    fn deferred_submission_remains_unsent_and_has_a_distinct_request_id() {
-        let mut app = App::new(Vec::new(), Language::En);
-        let session_id = uuid::Uuid::new_v4();
-        let immediate = submission_request_id(&mut app, "later", &[], session_id, false).unwrap();
-        let deferred = submission_request_id(&mut app, "later", &[], session_id, true).unwrap();
-        assert_ne!(immediate, deferred);
-        app.input.insert("later");
-        let (draft, expanded, row) = prepare_input_submission(&mut app, true);
-        assert!(app.transcript[row].starts_with("System: Adding to queue for later"));
-        finish_input_submission(&mut app, draft, expanded, row, true, &Ok(()));
-        assert!(app.transcript[row].starts_with("System: Queued for later"));
-        assert!(app.pending_runtime_echoes.is_empty());
-        assert!(!app.transcript.iter().any(|row| row.starts_with("You: ")));
-    }
-
-    #[test]
-    fn busy_submission_echoes_immediately_and_is_not_repeated() {
-        let mut app = App::new(Vec::new(), Language::ZhCn);
-        app.begin_turn(true, "working".to_owned());
-        app.note_narration("还在查");
-        app.echo_runtime_submission("我们限定一下，这个项目用postgres就行；");
-
-        // 简洁模式照样看得见：回显是记录里的一行，状态行另画。
-        assert!(
-            app.transcript
-                .iter()
-                .any(|row| row == "You: 我们限定一下，这个项目用postgres就行；")
-        );
-        assert!(app.live_transcript_row().unwrap().contains("还在查"));
-
-        // 向上箭头在会话文件落盘前就能找回这句。
-        assert!(
-            app.handle_prompt_history_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &[],)
-        );
-        assert!(
-            app.handle_prompt_history_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &[],)
-        );
-        assert_eq!(app.input.text(), "我们限定一下，这个项目用postgres就行；");
-
-        // 下一轮任务启动时那条事件认领已有的回显，不再写一行。
-        let before = app.transcript.len();
-        let event = serde_json::json!({
-            "type": "queued_user_message",
-            "turn_id": "turn-1",
-            "text": "我们限定一下，这个项目用postgres就行；"
-        });
-        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
-        assert_eq!(app.transcript.len(), before);
-        assert!(app.pending_runtime_echoes.is_empty());
-
-        // 同一条事件重放也不重复。
-        runtime_ui::apply_runtime_output(&mut app, &format!("task-1 {event}"));
-        assert_eq!(app.transcript.len(), before);
-    }
-
-    #[test]
-    fn sync_while_turn_running_keeps_in_flight_steering_echo() {
-        let mut app = App::new(Vec::new(), Language::ZhCn);
-        app.begin_turn(true, "working".to_owned());
-        app.echo_runtime_submission("继续吧");
-        app.sync_runtime_queue(Vec::new());
-        assert!(
-            app.transcript.iter().any(|row| row == "You: 继续吧"),
-            "in-flight steering must not be relabeled while the turn is running: {:?}",
-            app.transcript
-        );
-        assert_eq!(app.pending_runtime_echoes.len(), 1);
-        app.running = false;
-        app.sync_runtime_queue(Vec::new());
-        assert!(
-            app.transcript
-                .iter()
-                .any(|row| row.contains("未发送") && row.contains("继续吧"))
-        );
-    }
-
-    #[test]
-    fn removing_a_queued_message_marks_its_echo_unsent() {
-        let mut app = App::new(Vec::new(), Language::En);
-        app.echo_runtime_submission("keep this");
-        app.echo_runtime_submission("drop this");
-        app.sync_runtime_queue(vec![message("keep this")]);
-        assert!(app.transcript.iter().any(|row| row == "You: keep this"));
-        assert!(
-            app.transcript
-                .iter()
-                .any(|row| row == "You: [not sent] drop this")
-        );
-
-        // 已经认领的（下一轮开始了）不再改口。
-        app.echo_runtime_submission("already running");
-        assert!(app.claim_runtime_echo("already running"));
-        app.sync_runtime_queue(Vec::new());
-        assert!(
-            app.transcript
-                .iter()
-                .any(|row| row == "You: already running")
-        );
-    }
-
-    #[test]
-    fn an_echo_survives_rows_appended_after_it() {
-        let mut app = App::new(Vec::new(), Language::En);
-        app.echo_runtime_submission("sent while busy");
-        app.append_transcript("WillDeep: still working".to_owned());
-        let before = app.transcript.len();
-        let event = serde_json::json!({
-            "type": "queued_user_message",
-            "turn_id": "turn-2",
-            "text": "sent while busy"
-        });
-        runtime_ui::apply_runtime_output(&mut app, &format!("task-2 {event}"));
-        assert_eq!(app.transcript.len(), before);
-    }
 }
+
+#[cfg(test)]
+#[path = "runtime_queue_tests.rs"]
+mod delivery_tests;

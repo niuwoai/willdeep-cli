@@ -98,7 +98,9 @@ use agent_control::AgentCommandStore;
 pub(crate) use agent_control::{AgentCommandWatcher, start_agent_command_watcher};
 use agent_store::{AgentStore, RuntimeAgentStatus};
 use event_stream::EventLog;
-pub(crate) use headless::{HeadlessRuntimeRequest, HeadlessRuntimeStatus, execute_headless_turn};
+pub(crate) use headless::{
+    CONTINUE_TASK_ORIGIN, HeadlessRuntimeRequest, HeadlessRuntimeStatus, execute_headless_turn,
+};
 use local_transport::LocalTransportState;
 pub use mobile_cli::MobileAction;
 use mobile_cli::mobile_cli;
@@ -231,6 +233,8 @@ fn tool_may_modify_workspace(name: &str) -> bool {
         name,
         "create_file"
             | "edit_file"
+            | "file_changes"
+            | "lsp"
             | "run_command"
             | "create_worktree"
             | "computer_use"

@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "date": "2026-11-17",
+  "installed_version": "0.149.0-rc12",
+  "config": "repaired existing user config",
+  "checks": [
+    "Installed CLI reaches the interactive greeting with the repaired real config",
+    "TUI /version returns 0.149.0-rc12",
+    "Owned PTY child is reaped after closing both terminal handles"
+  ],
+  "scope": "Startup and command interaction only; no request sent to the user's external model provider",
+  "prior_harness_failures": [
+    "Blocking Process.wait stalled during PTY cleanup",
+    "Nonblocking wait alone did not complete cleanup while unread terminal output remained"
+  ],
+  "harness_resolution": "Close both PTY handles before bounded nonblocking child reaping",
+  "configuration_repair": {
+    "definition_id": "user/doc-multilingual",
+    "misplaced_section": "subagents.doc-multilingual",
+    "preserved": "Original TOML section retained as comments; agent definition and history preserved",
+    "binding": "Migrated provider, model and context window using agents bind"
+  },
+  "installation": "Existing installed CLI was not replaced"
+}

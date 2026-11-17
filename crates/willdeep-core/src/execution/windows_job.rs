@@ -16,12 +16,12 @@ use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
-pub(super) struct Job(Option<OwnedHandle>);
+pub(crate) struct Job(Option<OwnedHandle>);
 
 const JOB_EXIT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
 impl Job {
-    pub(super) fn new(command: &mut tokio::process::Command) -> io::Result<Self> {
+    pub(crate) fn new(command: &mut tokio::process::Command) -> io::Result<Self> {
         // SAFETY: Null pointers request an unnamed, non-inheritable job.
         let handle = owned(unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) })?;
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -42,7 +42,7 @@ impl Job {
         Ok(Self(Some(handle)))
     }
 
-    pub(super) fn attach_and_resume(&self, child: &tokio::process::Child) -> io::Result<()> {
+    pub(crate) fn attach_and_resume(&self, child: &tokio::process::Child) -> io::Result<()> {
         let process = child
             .raw_handle()
             .ok_or_else(|| io::Error::other("missing suspended process handle"))?;
@@ -59,7 +59,7 @@ impl Job {
         )
     }
 
-    pub(super) fn terminate(&mut self) {
+    pub(crate) fn terminate(&mut self) {
         // Closing the last job handle kills the leader and all descendants.
         self.0.take();
     }

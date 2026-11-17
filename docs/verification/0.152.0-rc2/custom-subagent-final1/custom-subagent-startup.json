@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "checks": [
+    "unknown section fails with config path and actionable library guidance",
+    "valid config loads after preserving/removing the misplaced section",
+    "custom definition remains enabled with its independent model and 65536 window binding",
+    "real PTY reaches the interactive greeting with the custom agent installed",
+    "TUI /agents interaction returns the installed custom definition",
+    "local CLI dispatch executes custom instructions and returns its result to the parent",
+    "runtime CLI dispatch executes custom instructions and returns its result to the parent",
+    "both dispatch paths used the specialist model without contacting external providers"
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/p0-p1-rc152-rc2-20261117-final1/willdeep",
+  "sha256": "0a74c1a765fed6503dead6e52df4405ff70cb5e264c087ca40a46b72adca66a5",
+  "version": "willdeep 0.152.0-rc2",
+  "observed": [
+    {
+      "model": "specialist-fixture",
+      "instructions_observed": true
+    },
+    {
+      "model": "specialist-fixture",
+      "instructions_observed": true
+    }
+  ],
+  "fixture_preserved": false
+}

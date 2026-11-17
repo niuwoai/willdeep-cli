@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "version": "0.152.0-rc3",
+  "created_at": "2026-11-17T10:11:00Z",
+  "passed": true,
+  "report_kind": "portable_verified_summary",
+  "source_sha256": "b1a7b55af7ae8ac297c001e1ced1f531b98b1777f19342b2098aab397e076d58",
+  "source_stable": true,
+  "baseline_complete": true,
+  "pending_scenarios": [],
+  "provider_mode": "not_called",
+  "contains_model_runs": false,
+  "model_cost": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "raw_report": {
+    "path": "target/p0-p1-rc152-rc3-regression-final1/run-20261117-81604-rtghkc/report.json",
+    "sha256": "36bee4ee88da7aac43472a70b7a8d8e6c387b1d069c28918af908a31b376f253"
+  },
+  "fixture_sha256": "339ba05ffd38dc3a9e49a4a5067711342bd7ad76c1516b4bf8a251bc7570312c",
+  "manifest_sha256": "ec5279c048b503cbd21ee019b0b520aef83b6ea54e3c6b5dbaa8f2e2c9320ab6",
+  "core_build": {
+    "command": "cargo test --offline --locked -p willdeep-core --lib --no-run --message-format=json",
+    "exit_code": 0,
+    "timed_out": false,
+    "seconds": 75.444,
+    "artifact": "target/debug/deps/willdeep_core-fcc662a0718dbd89",
+    "version": "0.152.0-rc3",
+    "sha256": "ecd801dc370f09e883ba4a31a758993fbcd808eef86436f2475b7f6ededb78b1"
+  },
+  "scenarios": [
+    {"name": "stale_edit", "status": "passed", "actual_tests": 3, "seconds": 1.630},
+    {"name": "cross_file_references", "status": "passed", "actual_tests": 3, "seconds": 4.151},
+    {"name": "browser_interaction", "status": "passed", "actual_tests": 9, "seconds": 45.389},
+    {"name": "compression_constraints", "status": "passed", "actual_tests": 2, "seconds": 0.155},
+    {"name": "multitask_recovery", "status": "passed", "actual_tests": 2, "seconds": 0.319},
+    {"name": "false_completion", "status": "passed", "actual_tests": 2, "seconds": 0.128}
+  ],
+  "summary": {"scenarios_passed": 6, "scenarios_failed": 0, "actual_tests": 21, "seconds": 51.8},
+  "browser": {
+    "passed": true,
+    "raw_report": "target/p0-p1-rc152-rc3-regression-final1/run-20261117-81604-rtghkc/browser_interaction/0/browser-runtime-entrypoints.json",
+    "raw_report_sha256": "81f199c7eefc294e6b3efd9624e8d4240d9f62423019d7e659143241c2277363",
+    "started_at": "2026-11-17T10:10:13Z",
+    "binary": "target/p0-p1-rc152-rc3-20261117-final1/willdeep",
+    "binary_sha256": "df3dbbc59a3da8bc67ff0931e666ccf90dbacc4afdfdc71e4dc0a20c7b4129eb",
+    "same_run": true,
+    "binary_matches": true,
+    "cases": [
+      {"entry": "cli", "scenario": "success", "status": "passed", "seconds": 12.259, "terminal_status": "completed", "processes_after": [], "profiles_after": []},
+      {"entry": "cli", "scenario": "approval_cancel", "status": "passed", "seconds": 2.838, "terminal_status": "cancelled", "processes_after": [], "profiles_after": []},
+      {"entry": "cli", "scenario": "executing_cancel", "status": "passed", "seconds": 3.285, "terminal_status": "cancelled", "processes_after": [], "profiles_after": [], "held_navigation_socket_closed": true},
+      {"entry": "tui", "scenario": "success", "status": "passed", "seconds": 4.657, "terminal_status": "completed", "processes_after": [], "profiles_after": []},
+      {"entry": "tui", "scenario": "approval_cancel", "status": "passed", "seconds": 6.210, "terminal_status": "cancelled", "processes_after": [], "profiles_after": []},
+      {"entry": "tui", "scenario": "executing_cancel", "status": "passed", "seconds": 3.823, "terminal_status": "cancelled", "processes_after": [], "profiles_after": [], "held_navigation_socket_closed": true},
+      {"entry": "web", "scenario": "success", "status": "passed", "seconds": 4.453, "terminal_status": "completed", "processes_after": [], "profiles_after": []},
+      {"entry": "web", "scenario": "approval_cancel", "status": "passed", "seconds": 3.371, "terminal_status": "cancelled", "processes_after": [], "profiles_after": []},
+      {"entry": "web", "scenario": "executing_cancel", "status": "passed", "seconds": 3.112, "terminal_status": "cancelled", "processes_after": [], "profiles_after": [], "held_navigation_socket_closed": true}
+    ],
+    "preview_server_stopped": true,
+    "runtime_pid": 80271,
+    "runtime_pid_absent_after_stop": true,
+    "scope": "Real CLI, private PTY TUI and Web HTTP/SSE entrypoints with synthetic loopback Provider; not nine React UI interactions or real-model quality."
+  },
+  "installed": false,
+  "published": false
+}

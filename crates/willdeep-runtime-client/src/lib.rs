@@ -60,6 +60,9 @@
 //! accepted; anything else is [`ClientError::UnsafeEndpoint`]. The control plane is not
 //! a remote API: put your own gateway and authentication in front of it if you need one.
 
+mod local_events;
+pub use local_events::LocalEventStream;
+
 use std::pin::Pin;
 
 use bytes::Bytes;
@@ -932,6 +935,12 @@ pub enum ClientError {
     TruncatedNdjson,
     #[error("Runtime NDJSON line exceeds {0} bytes")]
     NdjsonLineTooLarge(usize),
+    #[error("Runtime returned an invalid local SSE event: {0}")]
+    InvalidLocalEvent(serde_json::Error),
+    #[error("Runtime local SSE stream ended in the middle of an event")]
+    TruncatedLocalEvent,
+    #[error("Runtime local SSE event exceeds {0} bytes")]
+    LocalEventTooLarge(usize),
 }
 
 impl ClientError {

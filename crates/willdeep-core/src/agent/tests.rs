@@ -2014,7 +2014,6 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
                 complete(),
                 call(r#"{"checklist":[{"index":1,"done":true}]}"#),
                 call(r#"{"checklist":[{"index":1,"done":true,"evidence":"cargo test: 42 passed"}]}"#),
-                complete(),
             ]
             .into_iter()
             .collect(),
@@ -2029,7 +2028,9 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
     continuation.activate("ship rc7", crate::goal::GoalBudget::default());
     let agent = Agent::new(
         provider.clone(),
-        registry("goal-criteria"),
+        registry("goal-criteria")
+            .with_session_id(Some("goal-criteria-fixture".into()))
+            .with_verification_snapshot(|| Some("isolated-goal-state-v1".into())),
         AgentConfig {
             max_turns: 12,
             system_prompt: "system".to_owned(),
@@ -2044,13 +2045,31 @@ async fn a_goal_with_criteria_completes_only_after_evidence_is_recorded() {
         false,
     ));
 
+    let record = agent
+        .tools
+        .goal_evidence_handle()
+        .record_human_observation(
+            &continuation.snapshot().unwrap().goal_id,
+            "host inspected the isolated goal fixture",
+        )
+        .unwrap();
+    provider.script.lock().unwrap().extend([
+        call(
+            &serde_json::json!({"checklist":[{
+                "index":1,"done":true,"evidence_ref":record.reference,
+                "evidence":"host inspected the isolated goal fixture",
+            }]})
+            .to_string(),
+        ),
+        complete(),
+    ]);
     let outcome = agent.run("go").await.expect("goal run");
     assert_eq!(outcome.stop_reason, AgentStopReason::GoalComplete);
     let final_state = continuation.snapshot().expect("finished state kept");
     assert_eq!(final_state.status, crate::goal::GoalStatus::Complete);
     assert_eq!(
         final_state.criteria[0].evidence.as_deref(),
-        Some("cargo test: 42 passed")
+        Some("host inspected the isolated goal fixture")
     );
 
     let rejected = outcome
@@ -2148,16 +2167,10 @@ async fn a_goal_waits_for_a_delegated_session_before_completing() {
     });
     let continuation = Arc::new(GoalContinuation::new());
     continuation.activate("ship rc7", crate::goal::GoalBudget::default());
-    continuation
-        .update_plan(
-            serde_json::from_value(serde_json::json!({
-                "criteria": ["tests pass"],
-                "checklist": [{"index": 1, "done": true, "evidence": "cargo test: 42 passed"}]
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-    let tools = registry("goal-delegated").with_session_collaboration(delegated.clone());
+    let tools = registry("goal-delegated")
+        .with_session_id(Some("goal-delegated-fixture".into()))
+        .with_verification_snapshot(|| Some("isolated-delegated-state-v1".into()))
+        .with_session_collaboration(delegated.clone());
     let agent = Agent::new(
         provider.clone(),
         tools,
@@ -2169,6 +2182,24 @@ async fn a_goal_waits_for_a_delegated_session_before_completing() {
         },
     )
     .with_goal_continuation(continuation.clone());
+    let record = agent
+        .tools
+        .goal_evidence_handle()
+        .record_human_observation(
+            &continuation.snapshot().unwrap().goal_id,
+            "host inspected the isolated delegated fixture",
+        )
+        .unwrap();
+    continuation
+        .update_plan(
+            serde_json::from_value(serde_json::json!({
+                "criteria":["tests pass"],
+                "checklist":[{"index":1,"done":true,"evidence_ref":record.reference,
+                    "evidence":"host inspected the isolated delegated fixture"}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
 
     let outcome = agent.run("go").await.expect("first claim");
     assert_ne!(

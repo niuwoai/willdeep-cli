@@ -1,0 +1,61 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "compact",
+      "name": "queued inputs do not start early",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "first dequeued user follows the complete preceding reply",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "all dequeued messages and replies follow actual turn order",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "queue acknowledgement is gone after delivery and draft remains",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "name": "Runtime persists the same conversation order",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "queued inputs do not start early",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "first dequeued user follows the complete preceding reply",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "all dequeued messages and replies follow actual turn order",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "queue acknowledgement is gone after delivery and draft remains",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "name": "Runtime persists the same conversation order",
+      "passed": true
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "e7910b9275d4cb85b6389cc6e5a6ea896a65f7aa6139dd7287e80b4251e479a3",
+  "scope": "full/compact real Runtime PTY; two queued turns, late preceding output, receipt cleanup and draft preservation",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace, loopback synthetic provider, captured OSC 52 only.",
+  "version": "willdeep 0.151.0-rc3",
+  "checks_passed": 10
+}

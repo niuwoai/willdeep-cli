@@ -1112,6 +1112,7 @@ fn goal_state_is_persisted_with_the_checkpoint_and_never_rewound() {
         text: "tests pass".to_owned(),
         done: true,
         evidence: Some("cargo test".to_owned()),
+        ..Default::default()
     });
     let save = |goal: crate::goal::GoalState| {
         sink.save(&RunCheckpoint {
@@ -1126,12 +1127,20 @@ fn goal_state_is_persisted_with_the_checkpoint_and_never_rewound() {
     let loaded = sink.store.load(session.id).unwrap();
     assert_eq!(loaded.goal_state.as_ref(), Some(&state));
 
-    let mut stale = crate::goal::GoalState::new("ship rc7");
+    let mut stale = state.clone();
     stale.continuations = 2;
     stale.elapsed_ms = 10_000;
     save(stale);
     let merged = sink.store.load(session.id).unwrap().goal_state.unwrap();
     assert_eq!((merged.continuations, merged.elapsed_ms), (7, 120_000));
+
+    // 相同文本的新目标有独立身份，不继承旧目标的预算。
+    let fresh = crate::goal::GoalState::new("ship rc7");
+    assert_ne!(fresh.goal_id, state.goal_id);
+    save(fresh.clone());
+    let replaced = sink.store.load(session.id).unwrap().goal_state.unwrap();
+    assert_eq!(replaced.goal_id, fresh.goal_id);
+    assert_eq!((replaced.continuations, replaced.elapsed_ms), (0, 0));
 
     // 没有 goal_state 键的旧会话文件。
     let path = session

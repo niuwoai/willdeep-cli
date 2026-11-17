@@ -353,6 +353,12 @@ Web 左栏可直接切换语言，选择保存在当前浏览器的 localStorage
 字段或整份文件的注释。若页面打开后又手改了文件，保存会失败，重新打开设置即可。
 正在运行的 Harness 不热切配置，新值从下一次 Harness/子 Agent 创建开始生效。
 
+## 可选 Runtime 工具
+
+`[search]` 将搜索后端与聊天 Provider 分开，支持 `auto`、`disabled`、`searxng`。`[browser]` 默认关闭，启用时需要 Node/Chrome 绝对路径、精确来源和现有产物目录。完整字段、请求协议、审批和依赖边界见 [Runtime 工具指南](P1_RUNTIME_TOOLS.md)。
+
+`tool_status` 只检查配置、依赖和权限，不启动服务、不做连通性测试。`doctor` 输出同一状态的脱敏摘要；已配置不代表服务在线，浏览器在线状态需要独立检查。0.151.0-rc1 的集成验收仍在进行。
+
 ## 其他配置段
 
 - `[subagents.*]` — 子 Agent 的模型绑定、上下文窗口、工具输出上限（`tool_output_limit`）、验证重试次数（`max_attempts`）、Token 预算、超时与熔断，见 [子 Agent 与后台任务](SUBAGENTS.md) 与 [小上下文 Skill Worker](SKILL_WORKERS.md)；

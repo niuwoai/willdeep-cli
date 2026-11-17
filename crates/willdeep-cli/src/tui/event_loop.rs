@@ -588,8 +588,11 @@ pub(super) async fn event_loop(
     let mut interrupt_esc_deadline: Option<Instant> = None;
     // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
     let mut deferred_events: VecDeque<Event> = VecDeque::new();
-    let (runtime_snapshot_tx, mut runtime_snapshot_rx) =
-        mpsc::unbounded_channel::<Result<crate::daemon::RuntimeSnapshot, String>>();
+    let (runtime_snapshot_tx, mut runtime_snapshot_rx) = mpsc::unbounded_channel::<(
+        uuid::Uuid,
+        Result<crate::daemon::RuntimeSnapshot, String>,
+        Result<Vec<willdeep_runtime_protocol::RuntimeTurn>, String>,
+    )>();
     let snapshot_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (runtime_event_tx, mut runtime_event_rx) =
         mpsc::unbounded_channel::<Vec<crate::daemon::RemoteRuntimeEvent>>();
@@ -792,6 +795,7 @@ pub(super) async fn event_loop(
             && app.queued_prompt_ready()
             && let Some(queued) = app.queued_prompts.pop_front()
         {
+            let draft = runtime_ui::SubmissionDraft::take(&mut app);
             let draft_attachments = std::mem::replace(
                 &mut app.attachments,
                 queued
@@ -805,6 +809,7 @@ pub(super) async fn event_loop(
             );
             let draft_selected_attachment = app.selected_attachment;
             app.selected_attachment = 0;
+            let mut runtime_dispatch = false;
             let result = async {
                 match app.queued_prompt_execution(&queued.text, session, store)? {
                     PromptExecution::Local(prompt) if !prompt.is_empty() => dispatch_prompt(
@@ -818,14 +823,25 @@ pub(super) async fn event_loop(
                     ),
                     PromptExecution::Local(_) => Ok(()),
                     PromptExecution::Runtime(prompt) => {
-                        runtime_ui::submit_turn(&mut app, session, store, runtime, prompt).await
+                        runtime_dispatch = true;
+                        runtime_ui::submit_turn(
+                            &mut app,
+                            session,
+                            store,
+                            runtime,
+                            prompt,
+                            queued.transcript_row,
+                        )
+                        .await
                     }
                 }
             }
             .await;
             app.attachments = draft_attachments;
             app.selected_attachment = draft_selected_attachment;
+            draft.restore(&mut app);
             match result {
+                Ok(()) if runtime_dispatch => {}
                 Ok(()) => {
                     app.mark_queued_prompt_sent_at(&queued.text, queued.transcript_row);
                     app.attach_to_latest_user_row(
@@ -936,19 +952,35 @@ pub(super) async fn event_loop(
                     let session_id=session.id;
                     let home_for_diagnostics=home.clone();
                     let in_flight=snapshot_in_flight.clone();
+                    let reconcile_deliveries = app.pending_runtime_echoes.iter()
+                        .any(delivery_echo::PendingRuntimeEcho::needs_reconciliation);
                     tokio::spawn(async move {
-                        let result=crate::daemon::runtime_snapshot(&home,&workspace,Some(session_id),crate::Surface::Tui)
-                            .await
-                            .map_err(|error| {
+                        // Fetch delivery authority off the UI loop alongside the
+                        // snapshot. A failed/missing Turn never means "not sent".
+                        let (snapshot, turns) = tokio::join!(
+                            crate::daemon::runtime_snapshot(&home,&workspace,Some(session_id),crate::Surface::Tui),
+                            async {
+                                if reconcile_deliveries {
+                                    crate::daemon::tui_bridge::remote_turns(&home, session_id).await
+                                } else {
+                                    Ok(Vec::new())
+                                }
+                            },
+                        );
+                        let turns = turns.map_err(|error| format!("{error:#}"));
+                        let result=snapshot.map_err(|error| {
                                 let home = home_for_diagnostics.display().to_string();
                                 format!("{error:#}").replace(&home, "~")
                             });
                         in_flight.store(false,std::sync::atomic::Ordering::Release);
-                        let _=tx.send(result);
+                        let _=tx.send((session_id, result, turns));
                     });
                 }
             },
-            Some(snapshot_result)=runtime_snapshot_rx.recv()=>{
+            Some((snapshot_session, snapshot_result, turns))=runtime_snapshot_rx.recv()=>{
+                if snapshot_session != session.id {
+                    continue;
+                }
                 let snapshot = match snapshot_result {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
@@ -966,6 +998,9 @@ pub(super) async fn event_loop(
                 if let Some((id, items)) = snapshot.queue
                     && id == session.id {
                     app.sync_runtime_queue(items);
+                }
+                if let Ok(turns) = turns {
+                    app.reconcile_runtime_deliveries(&turns);
                 }
                 runtime.notifier.attention_snapshot(&snapshot.attention);
                 if app.observe_runtime_tasks(&snapshot.tasks,session.id,snapshot.event_sequence) {
@@ -1035,30 +1070,11 @@ pub(super) async fn event_loop(
             // 晚一圈处理会让按键看起来像丢了。
             event=next_terminal_event(&mut events, &mut deferred_events)=>if let Some(event)=event { match event {
                 Event::Paste(value)=>{
-                    if app.permission_picker.is_some() { continue; }
-                    if app.approval.is_none() && app.question.is_none() && app.attachment_panel.is_some() { app.attachment_paste(&value); continue; }
-                    if app.approval.is_none() && app.question.is_none() && let Some(panel)=app.prompt_queue.as_mut() {
-                        if let Some(editor)=panel.editor.as_mut() {editor.insert(&value);}
-                        continue;
-                    }
-                    if app.approval.is_some() {
-                        app.handle_approval_text(&value);
-                    } else if app.routing_settings_paste(&value) {
-                    } else if let Some(picker)=app.model_picker.as_mut() {
-                        picker.editor.insert(&value);
-                        app.refresh_model_picker_matches();
-                    } else if let Some(picker)=app.workspace_picker.as_mut() {
-                        picker.editor.insert(&value);
-                        app.refresh_workspace_picker_matches();
-                    } else if let Some(picker)=app.session_picker.as_mut() {
-                        picker.editor.insert(&value);
+                    if paste::route(&mut app, value) == paste::PasteAction::RefreshSessionPicker {
                         refresh_session_picker(&mut app,runtime,session).await;
-                    } else {
-                        app.handle_paste(value);
                     }
                 },
                 Event::Mouse(mouse)=>{
-                    if app.permission_picker.is_some() { continue; }
                     app.prompt_history = None;
                     interrupt_esc_deadline = None;
                     if app.question.is_some()||app.approval.is_some() {
@@ -1067,6 +1083,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
+                    if app.permission_picker.is_some() { continue; }
                     if app.attachment_panel.is_some() { continue; }
                     if app.prompt_queue.is_some() {
                         if let Some(key) = app.queue_mouse_key(mouse) {
@@ -1158,7 +1175,10 @@ pub(super) async fn event_loop(
                         && app.attention_detail.is_none()
                         && app.worktree_review.is_none()
                     {
-                        // 代码块徽标比选区先接鼠标：点右上角是复制，不是起手拖选。
+                        if app.handle_prompt_selection_mouse(mouse) {
+                            continue;
+                        }
+                        // 代码块徽标比聊天选区先接鼠标：点右上角是复制，不是起手拖选。
                         if let Some(action) = app.handle_code_copy_mouse(mouse, Instant::now()) {
                             match action {
                                 code_copy::CodeCopyAction::Copy(block) => {
@@ -1203,6 +1223,21 @@ pub(super) async fn event_loop(
                         // Esc 也收起代码块徽标；选区模式下面还会再清一次，幂等。
                         app.code_copy.clear();
                     }
+                    // A human gate consumes Esc as deny/dismiss. Keep a distinct
+                    // stop action reachable before every modal and selection.
+                    if app.running && key.code == KeyCode::Char('x')
+                        && key.modifiers == KeyModifiers::CONTROL
+                    {
+                        interrupt_esc_deadline = None;
+                        match interrupt_turn(&mut app,session,runtime,&agent).await {
+                            Ok(message)=>app.notice=Some(message),
+                            Err(error)=>app.notice=Some(format!("{}: {error}",language.text("中断失败","Interrupt failed","中断に失敗"))),
+                        }
+                        continue;
+                    }
+                    if app.handle_prompt_selection_key(key) {
+                        continue;
+                    }
                     if app.native_selection_mode {
                         // 复制键留给终端自己的选区：放行的话 Ctrl+C 会直接退出程序。
                         if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {
@@ -1237,17 +1272,12 @@ pub(super) async fn event_loop(
                         continue;
                     }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('c'){break;}
+                    if human_gate_ui::handle_key(&mut app, key) { continue; }
                     if app.permission_picker.is_some() {
                         workspace_approval::handle_key(key,&mut app,session,store,runtime,&agent).await;
                         continue;
                     }
                     if key.code==KeyCode::Esc&&app.mobile_qr.take().is_some(){continue;}
-                    if app.question.is_some(){app.prompt_history=None;app.handle_question_key(key);continue;}
-                    if app.approval.is_some(){
-                        app.prompt_history=None;
-                        app.handle_approval_key(key);
-                        continue;
-                    }
                     if app.prompt_history.is_some() && app.handle_prompt_history_key(key, &session.messages) { continue; }
                     if app.media.is_open() { let action=app.media.handle_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
                     if app.attachment_panel.is_some() { let action=app.handle_attachment_key(key); dispatch_media_action(action,&mut app,runtime); continue; }
@@ -1850,7 +1880,10 @@ pub(super) async fn event_loop(
                                 }
                             }
                             if child_session_commands::dispatch(&mut app, session, store, runtime).await { continue; }
+                            let submitted_draft=runtime_ui::SubmissionDraft::capture(&app);
+                            let previous_records=app.transcript.len();
                             let prompt=app.take_prompt_for_submission();
+                            let submission_record=(app.transcript.len()>previous_records).then_some(previous_records);
                             // You 行与清空的输入框必须在任何慢操作前真正显示到终端。
                             if !narration::is_display_only_command(&prompt){
                                 redraw::redraw(term, &mut app, &runtime.skills, session)?;
@@ -2033,18 +2066,18 @@ pub(super) async fn event_loop(
                                     // /goal <目标> 同时是执行请求。此前只保存开关就返回，
                                     // 界面立刻显示「轮到你」，必须再发一句「继续」才会开工。
                                     if let Some(goal)=runtime_ui::goal_command_to_start(&prompt) {
-                                        match runtime_ui::submit_turn(&mut app,session,store,runtime,goal.to_owned()).await {
-                                            Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                            Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
+                                        match runtime_ui::submit_turn(&mut app,session,store,runtime,goal.to_owned(),submission_record).await {
+                                            Ok(())=>{},
+                                            Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
                                         }
                                     }
                                     continue;
                                 }
                             }
                             let PromptExecution::Runtime(remote_prompt)=prompt_execution(&prompt) else {unreachable!("local prompts were handled above")};
-                            match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt).await {
-                                Ok(())=>app.notice=Some(language.text("AI 正在处理…","AI is working…","AI が処理しています…").to_owned()),
-                                Err(error)=>app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"))),
+                            match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt,submission_record).await {
+                                Ok(())=>{},
+                                Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
                             }
                         }
                         // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。
@@ -2075,36 +2108,40 @@ pub(super) async fn event_loop(
                 #[cfg(unix)]
                 UiMessage::Gallery(request)=>handle_gallery(&mut app, request, &mut io::stdout()),
                 UiMessage::Agent(AgentEvent::ProviderProgress(event))=>match event {
-                    willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中"))),
+                    willdeep_core::provider::ProviderEvent::RetryStarted{attempt}=>{app.note_turn_phase(turn_status::TurnPhase::Retrying{attempt,delay:None});app.record_progress(format!("{} · {attempt}",language.text("正在重试","Retrying","再試行中")));},
                     willdeep_core::provider::ProviderEvent::TextDelta(text)=>app.stream_transient(StreamKind::Reply,&text),
                     willdeep_core::provider::ProviderEvent::ReasoningDelta(text)=>app.stream_transient(StreamKind::Reasoning,&text),
-                    willdeep_core::provider::ProviderEvent::Usage(usage)=>{app.context_tokens=usage.input_tokens.unwrap_or(app.context_tokens);app.latest_usage=usage;},
-                    willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>app.record_progress(format!("{} · {attempt} · {}s",language.text("等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64())),
+                    willdeep_core::provider::ProviderEvent::Usage(usage)=>{app.last_progress_at=Some(Instant::now());app.context_tokens=usage.input_tokens.unwrap_or(app.context_tokens);app.latest_usage=usage;},
+                    willdeep_core::provider::ProviderEvent::RetryWait{attempt,delay}=>{app.note_turn_phase(turn_status::TurnPhase::Retrying{attempt,delay:Some(delay)});app.record_progress(format!("{} · {attempt} · {}s",language.text("等待后重试","Waiting before provider retry","再試行を待機中"),delay.as_secs_f64()));},
                 },
                 UiMessage::Agent(AgentEvent::BackgroundWait { waiting })=>{app.set_background_wait(waiting);},
                 UiMessage::Agent(AgentEvent::RunScoped { .. })=>{},
                 UiMessage::Agent(AgentEvent::AssistantText{text:v,model})=>{app.reply_model.clone_from(&model);app.note_narration(&v)},
                 UiMessage::Agent(AgentEvent::RouteDecided{tier,profile,confidence,auto_dispatched,model,..})=>app.record_progress(format!("{} {} · {}{} · {confidence}%{}",language.text("模型路由","Model route","モデルルート"),tier.as_str(),profile.as_deref().unwrap_or("root"),model.map(|model|format!(" · {model}")).unwrap_or_default(),if auto_dispatched{language.text(" · 已自动下发"," · auto-dispatched"," · 自動ディスパッチ済み")}else{""})),
                 UiMessage::Agent(AgentEvent::ModelFallback{purpose,used,reason,..})=>app.record_progress(format!("{} · {purpose} → {} · {reason}",language.text("模型已兜底","Model fallback","モデルをフォールバック"),used.as_deref().unwrap_or("-"))),
-                UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在思考 · 准备轮次","Thinking · preparing turn","思考中 · ターンを準備")));},
-                UiMessage::Agent(AgentEvent::TurnPreempted{turn})=>app.record_progress(format!("{} {turn}",language.text("已被运行时事件打断 · 轮次","Preempted by a runtime event · turn","ランタイムイベントで中断 · ターン"))),
-                UiMessage::Agent(AgentEvent::ToolRequested(v))=>{app.record_progress(format!("{} {}",language.text("正在使用","Using","使用中"),v.name));app.tools.requested(&v.name);app.note_tool_requested(&v.name,crate::tool_detail(&v.name,&v.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&v.name,&v.arguments));},
+                UiMessage::Agent(AgentEvent::TurnStarted{turn})=>{app.note_model_step_started();app.record_progress(format!("{} {turn}",language.text("正在准备轮次","Preparing turn","ターンを準備中")));},
+                UiMessage::Agent(AgentEvent::ModelRequestStarted)=>{app.note_turn_phase(turn_status::TurnPhase::WaitingModel);},
+                UiMessage::Agent(AgentEvent::TurnPreempted{turn})=>{app.note_turn_phase(turn_status::TurnPhase::Preparing);app.record_progress(format!("{} {turn}",language.text("已被运行时事件打断 · 轮次","Preempted by a runtime event · turn","ランタイムイベントで中断 · ターン")));},
+                UiMessage::Agent(AgentEvent::ToolRequested(v))=>{app.record_progress(format!("{} {}",language.text("正在使用","Using","使用中"),v.name));app.tools.requested(&v.name);app.note_tool_call_requested(Some(&v.id),&v.name,crate::tool_detail(&v.name,&v.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&v.name,&v.arguments));},
                 UiMessage::WorkflowResult { session_id, operation, result } => {
                     if session_id == session.id { workflow_ui::receive(&mut app, &operation, result); }
                 },
                 UiMessage::Agent(AgentEvent::WorkflowUpdated(run))=>{
-                    if run.parent_session_id == session.id { workflow_ui::update(&mut app.transcript, *run, false); app.refresh_transcript_height(); }
+                    if run.parent_session_id == session.id { app.last_progress_at=Some(Instant::now());workflow_ui::update(&mut app.transcript, *run, false); app.refresh_transcript_height(); }
                 },
                 UiMessage::Agent(AgentEvent::PlanUpdated(plan))=>{
                     // 计划卡片是这一轮的第一份可见输出，压缩状态行到此为止。
+                    app.last_progress_at=Some(Instant::now());
+                    app.flush_held_narration();
                     app.dismiss_compression_notice();
+                    app.dismiss_awaiting_reply();
                     append_plan_result(&mut app.transcript,&serde_json::to_string(&willdeep_core::planning::Receipt::new(plan,false))?);
                 },
                 UiMessage::Agent(AgentEvent::ToolCompleted{call,output,is_error})=>{if !is_error && call.name=="rename_instance" {app.load_assistant_name();}
                     if !is_error && call.name=="update_plan" {append_plan_result(&mut app.transcript, &output);}
                     if !is_error && call.name=="workflow_control" && let Ok(value)=serde_json::from_str::<serde_json::Value>(&output) && let Some(run)=value.get("workflow").and_then(|run|serde_json::from_value(run.clone()).ok()) {workflow_ui::update(&mut app.transcript,run,false);}
-                    if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_completed(&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&call.name,&call.arguments),is_error);if matches!(call.name.as_str(),"create_file"|"edit_file"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
-                UiMessage::Agent(AgentEvent::Usage { usage: v, .. })=>{app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
+                    if !is_error && call.name=="run_command" && let Some(seconds)=willdeep_core::tools::command_wait::notice_wait_seconds(&output){app.note_delayed_command(seconds);}app.record_progress(format!("{} {}",if is_error{language.text("失败","Failed","失敗")}else{language.text("已完成","Finished","完了")},call.name));app.tools.completed(&call.name,is_error);app.note_tool_call_completed(Some(&call.id),&call.name,crate::tool_detail(&call.name,&call.arguments).as_deref(),willdeep_core::conversation::tool_expansion(&call.name,&call.arguments),is_error,tool_visuals::receipt(&call.name,&output,is_error).as_ref());if matches!(call.name.as_str(),"create_file"|"edit_file"|"file_changes"|"lsp"|"run_command"|"create_worktree"){app.workspace_status=workspace_status(&session.workspace,language);app.workspace_attention=workspace_attention(&session.workspace);}},
+                UiMessage::Agent(AgentEvent::Usage { usage: v, .. })=>{app.last_progress_at=Some(Instant::now());app.context_tokens=v.input_tokens.unwrap_or(app.context_tokens);app.record_turn_usage(&v);app.latest_usage=v;},
                 UiMessage::Agent(AgentEvent::CompressionStarted{estimated_tokens})=>{app.context_tokens=estimated_tokens;app.record_progress(language.text("正在压缩上下文","Compressing context","コンテキストを圧縮中").to_owned());app.note_compression_started();},
                 UiMessage::Agent(AgentEvent::CompressionCompleted{estimated_tokens,dropped_messages})=>{app.context_tokens=estimated_tokens;let compressed=language.text("上下文已压缩","Context compressed","コンテキストを圧縮しました");app.record_progress(if dropped_messages>0{language.pick(format!("{compressed} · 本轮请求丢弃 {dropped_messages} 条最旧消息（存档不受影响）"),format!("{compressed} · dropped {dropped_messages} oldest message(s) from this request (the archive is untouched)"),format!("{compressed} · 今回のリクエストから最も古い {dropped_messages} 件を破棄（アーカイブは無変更）"))}else{compressed.to_owned()});app.note_compression_completed();},
                 UiMessage::Agent(AgentEvent::BackgroundShellStarted{id})=>app.record_progress(format!("{} {id}",language.text("后台命令已启动","Background command started","バックグラウンドコマンド開始"))),
@@ -2123,10 +2160,10 @@ pub(super) async fn event_loop(
                 UiMessage::Agent(AgentEvent::GoalBudgetLimited{reason})=>app.record_progress(format!("{} · {reason:?}",language.text("目标预算耗尽 · 转入收尾","Goal budget exhausted · wrapping up","目標の予算を使い切りました · まとめに移ります"))),
                 UiMessage::Approval(v,a,s)=>{let detail=v.clone();if app.enqueue_approval((v,a,s)){runtime.notifier.attention_required(RuntimeStatus::WaitingApproval,"tool_approval",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
                 UiMessage::Question(request,sender)=>{let checked=vec![false;request.options.len()];let detail=request.question.clone();if app.enqueue_question(AskDialog{request,selected:0,checked,answer:PromptEditor::default(),sender}){runtime.notifier.attention_required(RuntimeStatus::WaitingAnswer,"ask_user",detail);execute!(term.backend_mut(),crossterm::style::Print("\x07"))?;}},
-                UiMessage::Finished(Ok(mut outcome), ownership)=>{qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);if let Some(text)=crate::harness::partial_outcome_status_text(outcome.stop_reason,outcome.turns,language){app.append_transcript(format!("System: {text}"));}app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));persist_finished_outcome(session,store,outcome)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
-                UiMessage::Finished(Err(e), ownership)=>{qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
-                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.append_transcript(if changed{"System: Context compressed".to_owned()}else{"System: Context is too short to compress".to_owned()});requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
-                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: context compression failed: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Finished(Ok(mut outcome), ownership)=>{app.note_turn_outcome(turn_status::TurnOutcome::from_stop_reason(outcome.stop_reason));qterm.finished(session.id, if outcome.stop_reason.is_complete() { RuntimeStatus::Done } else { RuntimeStatus::Partial });crate::harness::present_partial_outcome(&mut outcome, language);runtime.notifier.task_stopped(&outcome);if let Some(text)=crate::harness::partial_outcome_status_text(outcome.stop_reason,outcome.turns,language){app.append_transcript(format!("System: {text}"));}app.note_reply(&outcome.final_text);if matches!(outcome.stop_reason,willdeep_core::AgentStopReason::GoalComplete){app.note_goal_completed();}app.append_turn_stats(Some(&outcome));persist_finished_outcome(session,store,outcome)?;drop(ownership);dispatch_retitle(session,&agent,&runtime.tx,false);requeue_undelivered_steering(&mut app,&agent);app.finish_turn();wake_for_kernel_events(&mut app,session,store,&agent,runtime)?;dispatch_input_suggestion(&app,session,&agent,&runtime.tx);},
+                UiMessage::Finished(Err(e), ownership)=>{app.note_turn_outcome(turn_status::TurnOutcome::Failed);qterm.finished(session.id, RuntimeStatus::Failed);store.refresh_execution(session)?;drop(ownership);app.append_transcript(format!("Error: {e}"));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Ok(messages), ownership)=>{store.refresh_execution(session)?;let changed=session.replace_with_compressed_messages(messages);persist_turn_result(session,store)?;drop(ownership);app.note_turn_outcome(turn_status::TurnOutcome::Completed);app.append_transcript(format!("System: {}",if changed{language.text("上下文已压缩","Context compressed","コンテキストを圧縮しました")}else{language.text("上下文过短，无需压缩","Context is too short to compress","コンテキストが短いため圧縮は不要です")}));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
+                UiMessage::Compressed(Err(e), ownership)=>{store.refresh_execution(session)?;drop(ownership);app.note_turn_outcome(turn_status::TurnOutcome::Failed);app.append_transcript(format!("Error: {}: {e}",language.text("上下文压缩失败","Context compression failed","コンテキストの圧縮に失敗")));requeue_undelivered_steering(&mut app,&agent);app.finish_turn();},
                 UiMessage::RuntimeNotice(notice)=>app.notice=Some(notice),
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),

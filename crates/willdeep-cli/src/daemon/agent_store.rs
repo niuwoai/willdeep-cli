@@ -19,6 +19,20 @@ pub(crate) enum RuntimeAgentStatus {
     Interrupted,
 }
 
+impl RuntimeAgentStatus {
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Blocked
+                | Self::Completed
+                | Self::Partial
+                | Self::Failed
+                | Self::Cancelled
+                | Self::Interrupted
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RuntimeAgent {
     #[serde(default)]
@@ -389,6 +403,11 @@ impl AgentStore {
         error: Option<String>,
     ) -> Result<()> {
         self.update_task_agent(task_id, |agent| {
+            // A new task is admitted through ensure_session_root, which resets
+            // execution state explicitly. Late gate updates cannot do that.
+            if agent.status.is_terminal() && !status.is_terminal() {
+                return;
+            }
             agent.status = status;
             agent.retry_wait = None;
             agent.updated_at = now();
@@ -458,10 +477,28 @@ impl AgentStore {
         if child
             && let Some(id) = id
             && let Some(agent) = self.get(id)?
-            && (sequence < agent.run_sequence
+            // Only explicit starts/queues may rebind a restored child. Ordinary
+            // events belong to the Task that currently owns the child, even
+            // when an older Task reports the same run or a legacy event.
+            && ((agent.task_id != task_id
+                && !matches!(
+                    value.get("type").and_then(|value| value.as_str()),
+                    Some("subagent_started" | "subagent_queued")
+                ))
+                || sequence < agent.run_sequence
                 || (sequence == agent.run_sequence
                     && agent.run_id.is_some()
-                    && agent.run_id != run_id))
+                    && agent.run_id != run_id)
+                // Sequenced retries require a fresh run. Legacy explicit starts
+                // and restoration into a new task retain their admission path.
+                || (sequence > 0
+                    && agent.task_id == task_id
+                    && agent.status.is_terminal()
+                    && sequence <= agent.run_sequence
+                    && matches!(
+                        value.get("type").and_then(|value| value.as_str()),
+                        Some("subagent_started" | "subagent_queued")
+                    )))
         {
             return Ok(());
         }
@@ -493,6 +530,9 @@ impl AgentStore {
                 agent.updated_at = now();
             }),
             Some("turn_started") => self.update_task_agent(task_id, |agent| {
+                if agent.status.is_terminal() {
+                    return;
+                }
                 agent.status = RuntimeAgentStatus::Running;
                 agent.completed_at = None;
                 agent.retry_wait = None;
@@ -550,6 +590,9 @@ impl AgentStore {
                 agent.updated_at = now();
             }),
             Some("subagent_turn_started") => self.update_child_from_event(&value, |agent| {
+                if agent.status.is_terminal() {
+                    return;
+                }
                 agent.status = RuntimeAgentStatus::Running;
                 agent.completed_at = None;
                 agent.retry_wait = None;
@@ -958,6 +1001,7 @@ mod retry_tests {
                 store.get(id).unwrap().unwrap().retry_wait.is_none(),
                 "late wait must not revive a terminal agent"
             );
+            let terminal = store.get(id).unwrap().unwrap();
             let kind = if prefix == "subagent" {
                 "subagent_turn_started"
             } else {
@@ -970,12 +1014,20 @@ mod retry_tests {
                 )
                 .unwrap();
             store.apply_harness_event(task, &wait).unwrap();
+            let after = store.get(id).unwrap().unwrap();
+            assert_eq!(after.status, terminal.status);
+            assert_eq!(after.completed_at, terminal.completed_at);
+            assert_eq!(after.current_turn, terminal.current_turn);
+            assert!(after.retry_wait.is_none());
         }
         drop(store);
         let store = AgentStore::open(path.clone()).unwrap();
-        for id in [parent.id, child] {
+        for (id, status) in [
+            (parent.id, RuntimeAgentStatus::Cancelled),
+            (child, RuntimeAgentStatus::Partial),
+        ] {
             let agent = store.get(id).unwrap().unwrap();
-            assert_eq!(agent.status, RuntimeAgentStatus::Interrupted);
+            assert_eq!(agent.status, status);
             assert!(agent.retry_wait.is_none());
             assert!(agent.current_tool.is_none());
             let mut old = serde_json::to_value(agent).unwrap();

@@ -7,6 +7,8 @@ const QUEUE_FEEDBACK_DURATION: Duration = Duration::from_secs(3);
 pub(super) struct QueuePanel {
     pub(super) selected: usize,
     pub(super) editor: Option<PromptEditor>,
+    /// The original remote ID and expected text survive list refresh/removal.
+    pub(super) remote_edit: Option<willdeep_runtime_protocol::QueuedTurnMessage>,
     pub(super) status: Option<String>,
     status_deadline: Option<Instant>,
     scroll: u16,
@@ -235,10 +237,41 @@ impl App {
             .collect::<Vec<_>>()
             .join(" ");
         let mut parts = Vec::new();
-        if queued > 0 {
+        let held = self
+            .queued_prompts
+            .iter()
+            .filter(|item| item.remote.as_ref().is_some_and(|remote| remote.held))
+            .count();
+        if queued > held {
             parts.push(format!(
-                "{} {queued}",
-                self.language.text("待发", "Queued", "送信待ち")
+                "{} {}",
+                self.language.text("待发", "Queued", "送信待ち"),
+                queued - held,
+            ));
+        }
+        if held > 0 {
+            parts.push(format!(
+                "{} {held}",
+                self.language.text(
+                    "暂缓（不会自动发送）",
+                    "Held (will not auto-send)",
+                    "保留中（自動送信なし）",
+                )
+            ));
+        }
+        let priority = self
+            .queued_prompts
+            .iter()
+            .filter(|item| {
+                item.remote
+                    .as_ref()
+                    .is_some_and(|remote| remote.priority_requested)
+            })
+            .count();
+        if priority > 0 {
+            parts.push(format!(
+                "{} {priority}",
+                self.language.text("优先", "Priority", "優先")
             ));
         }
         if delivered > 0 {
@@ -288,19 +321,12 @@ impl App {
                 .transcript_row
                 .filter(|&index| self.transcript.get(index) == Some(&row));
         }
-        // Runtime echoes are synchronized from another process and have no local row identity.
-        let ordinal = self
-            .queued_prompts
+        let id = item.remote.as_ref()?.id;
+        self.pending_runtime_echoes
             .iter()
-            .take(selected)
-            .filter(|p| p.text == item.text)
-            .count();
-        self.transcript
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| **line == row)
-            .nth(ordinal)
-            .map(|(index, _)| index)
+            .find(|echo| echo.turn_id == id)
+            .and_then(|echo| echo.record)
+            .filter(|&index| index < self.transcript.len())
     }
 
     pub(super) fn remove_queued_prompt_row(&mut self, selected: usize) {
@@ -327,6 +353,7 @@ impl App {
             match key.code {
                 KeyCode::Esc => {
                     panel.editor = None;
+                    panel.remote_edit = None;
                     panel.show_feedback(
                         self.language
                             .text("已取消编辑", "Edit cancelled", "編集をキャンセルしました")
@@ -343,6 +370,15 @@ impl App {
                 }
                 KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     editor.insert("\n")
+                }
+                KeyCode::Enter if panel.remote_edit.is_some() => {
+                    // Remote saves are handled by runtime_queue::handle_key,
+                    // including when the original disappeared from the list.
+                    panel.set_status(Some(self.language.text(
+                        "改写已保留，等待 Runtime 确认原消息状态",
+                        "Rewrite retained; waiting for Runtime to confirm the original message",
+                        "編集内容を保持しました。Runtime に元のメッセージの状態を確認します",
+                    ).to_owned()));
                 }
                 KeyCode::Enter if !editor.is_empty() => {
                     let row_index = self.queued_transcript_index(panel.selected);
@@ -401,6 +437,7 @@ impl App {
                     if let Some(item) = self.queued_prompts.get(panel.selected) {
                         let mut editor = PromptEditor::default();
                         editor.insert(&item.text);
+                        panel.remote_edit = item.remote.clone();
                         panel.editor = Some(editor);
                     }
                 }
@@ -432,6 +469,57 @@ impl App {
         self.prompt_queue = Some(panel);
         false
     }
+}
+
+fn send_now_label(app: &App) -> &'static str {
+    let remote = app
+        .prompt_queue
+        .as_ref()
+        .and_then(|panel| app.queued_prompts.get(panel.selected))
+        .is_some_and(|item| item.remote.is_some());
+    if !remote {
+        return app.language.text("S 插话", "S Steer", "S 割り込み");
+    }
+    if !app.runtime_gates.is_empty() || app.approval.is_some() || app.question.is_some() {
+        return app
+            .language
+            .text("S 优先处理", "S Prioritize", "S 優先処理");
+    }
+    if app.running && app.runtime_turn {
+        return app.language.text(
+            "S 停止当前并优先发送",
+            "S Stop current & send first",
+            "S 現在の処理を停止して優先送信",
+        );
+    }
+    app.language
+        .text("S 立即开始", "S Start now", "S 今すぐ開始")
+}
+
+fn remote_queue_status(
+    language: Language,
+    remote: &willdeep_runtime_protocol::QueuedTurnMessage,
+) -> String {
+    let mut flags = vec![if remote.held {
+        language.text(
+            "暂缓·不会自动发送",
+            "held · will not auto-send",
+            "保留中・自動送信なし",
+        )
+    } else {
+        language.text("已接收·排队", "accepted · queued", "受信済み・順番待ち")
+    }];
+    if remote.priority_requested {
+        flags.push(language.text("优先处理", "priority requested", "優先処理を要求済み"));
+    }
+    if remote.independence_confirmed {
+        flags.push(language.text(
+            "已确认独立处理",
+            "independent work confirmed",
+            "独立処理を確認済み",
+        ));
+    }
+    flags.join(" · ")
 }
 
 fn wrapped_rows(text: &str, width: usize) -> usize {
@@ -474,8 +562,8 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
         if !app.queued_prompts.is_empty() {
             if app
                 .queued_prompts
-                .iter()
-                .any(|prompt| prompt.remote.is_some())
+                .get(panel.selected)
+                .is_some_and(|prompt| prompt.remote.is_some())
             {
                 actions.push((
                     KeyCode::Char('i'),
@@ -484,10 +572,7 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 ));
             }
             actions.extend([
-                (
-                    KeyCode::Char('s'),
-                    app.language.text("S 发送", "S Send", "S 送信"),
-                ),
+                (KeyCode::Char('s'), send_now_label(app)),
                 (
                     KeyCode::Char('e'),
                     app.language.text("E 编辑", "E Edit", "E 編集"),
@@ -546,6 +631,15 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                 .to_owned()
         },
     ];
+    if app.queued_prompts.iter().any(|item| item.remote.is_some())
+        && (!app.runtime_gates.is_empty() || app.approval.is_some() || app.question.is_some())
+    {
+        lines.push(app.language.text(
+            "S 只调整优先级，不代替审批或回答；原请求仍等待处理。",
+            "S changes priority without approving or answering; the original request remains pending.",
+            "S は優先度のみ変更し、承認や回答はしません。元のリクエストは保留のままです。",
+        ).to_owned());
+    }
     if let Some(editor) = &panel.editor {
         lines.push(
             app.language
@@ -617,7 +711,17 @@ pub(super) fn render(f: &mut Frame<'_>, app: &mut App) {
                     used <= capacity
                 })
                 .collect();
-            lines.push(format!("{prefix}{preview}{age}"));
+            let state = item
+                .remote
+                .as_ref()
+                .map(|remote| remote_queue_status(app.language, remote))
+                .unwrap_or_default();
+            let state = if state.is_empty() {
+                state
+            } else {
+                format!("\n  {state}")
+            };
+            lines.push(format!("{prefix}{preview}{age}{state}"));
             let count = wrapped_rows(lines.last().unwrap(), available.max(1) as usize);
             list_rows.push((start, count, index));
         }
@@ -753,6 +857,10 @@ fn queue_button_style(code: KeyCode) -> Style {
         .bg(background)
         .add_modifier(Modifier::BOLD)
 }
+
+#[cfg(test)]
+#[path = "prompt_queue_delivery_tests.rs"]
+mod delivery_tests;
 
 #[cfg(test)]
 mod tests {

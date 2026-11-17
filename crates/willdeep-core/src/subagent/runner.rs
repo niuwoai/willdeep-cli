@@ -96,7 +96,12 @@ impl EventSink for ChildEventSink {
 }
 
 /// 会改动工作区的工具。没有已批准写集合时，它们不进 Worker 的工具面。
-const WRITE_TOOLS: &[&str] = &["create_file", "edit_file", "create_worktree"];
+const WRITE_TOOLS: &[&str] = &[
+    "create_file",
+    "edit_file",
+    "file_changes",
+    "create_worktree",
+];
 
 /// 报告的收尾约定。托管工种的报告约定由服务端下发，不加这段。运行时不解析
 /// 这三段；改了哪些文件、验证过没有以运行时的 `<worker-facts>` 为准。
@@ -166,7 +171,7 @@ const MAX_LISTED_FILES: usize = 20;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct WorkerFacts {
     pub turns: usize,
-    /// 成功落盘的 `create_file` / `edit_file` 路径，按首次出现的顺序去重。
+    /// 文件工具实际落盘且未恢复的路径，按首次出现的顺序去重。
     /// 经 shell 改的文件不在这里（独立 worktree 另有 `git status` 附注）。
     pub files_touched: Vec<String>,
     pub tool_failures: usize,
@@ -191,11 +196,36 @@ impl WorkerFacts {
             .iter()
             .filter(|message| message.role == Role::Assistant)
             .flat_map(|message| &message.tool_calls)
-            .filter(|call| matches!(call.name.as_str(), "create_file" | "edit_file"))
+            .filter(|call| {
+                matches!(
+                    call.name.as_str(),
+                    "create_file" | "edit_file" | "file_changes"
+                )
+            })
         {
             let Some(result) = results.get(call.id.as_str()) else {
                 continue;
             };
+            if matches!(call.name.as_str(), "file_changes" | "edit_file") {
+                // Both batch and single-file commits can retain writes when recovery
+                // conflicts. Prefer the runtime receipt over inferred argument paths.
+                let receipt = result
+                    .strip_prefix("tool error: file change operation failed: ")
+                    .unwrap_or(result);
+                if let Ok(receipt) = serde_json::from_str::<serde_json::Value>(receipt)
+                    && let Some(paths) = receipt.get("files_touched").and_then(|v| v.as_array())
+                {
+                    for path in paths.iter().filter_map(|v| v.as_str()) {
+                        if !files_touched.iter().any(|seen| seen == path) {
+                            files_touched.push(path.to_owned());
+                        }
+                    }
+                    continue;
+                }
+                if call.name == "file_changes" {
+                    continue;
+                }
+            }
             if failed(result) {
                 continue;
             }
@@ -1011,6 +1041,73 @@ mod tests {
                 .render("p", "failed", 1, None)
                 .contains("files_touched: none")
         );
+    }
+
+    #[test]
+    fn worker_facts_use_batch_receipts_including_unrecovered_failures() {
+        use crate::types::{Message, ToolCall};
+        let mut messages = Vec::new();
+        for (id, operation, result) in [
+            (
+                "preview",
+                "preview",
+                r#"{"files_touched":[],"changes":[{"path":"untouched.rs"}]}"#,
+            ),
+            (
+                "applied",
+                "apply",
+                r#"{"files_touched":["src/a.rs","src/b.rs"]}"#,
+            ),
+            (
+                "restored",
+                "apply",
+                r#"tool error: file change operation failed: {"files_touched":[],"rolled_back":["src/c.rs"]}"#,
+            ),
+            (
+                "partial",
+                "apply",
+                r#"tool error: file change operation failed: {"files_touched":["src/b.rs","src/d.rs"],"recovery_failed":["src/d.rs"]}"#,
+            ),
+        ] {
+            let call = ToolCall {
+                id: id.into(),
+                name: "file_changes".into(),
+                arguments: serde_json::json!({"operation":operation,"preview_id":id}).to_string(),
+            };
+            messages.push(Message::assistant("batch", vec![call.clone()]));
+            messages.push(Message::tool(&call, result));
+        }
+        let facts = WorkerFacts::observe(&messages, 1);
+        assert_eq!(facts.files_touched, ["src/a.rs", "src/b.rs", "src/d.rs"]);
+        assert_eq!(facts.tool_failures, 2);
+    }
+
+    #[test]
+    fn worker_facts_use_single_edit_receipts_including_unrecovered_failures() {
+        use crate::types::{Message, ToolCall};
+        let mut messages = Vec::new();
+        for (id, result) in [
+            ("applied", r#"{"files_touched":["src/actual.rs"]}"#),
+            (
+                "restored",
+                r#"tool error: file change operation failed: {"files_touched":[],"rolled_back":["src/restored.rs"]}"#,
+            ),
+            (
+                "partial",
+                r#"tool error: file change operation failed: {"files_touched":["src/conflict.rs"],"recovery_failed":["src/conflict.rs"]}"#,
+            ),
+        ] {
+            let call = ToolCall {
+                id: id.into(),
+                name: "edit_file".into(),
+                arguments: serde_json::json!({"path":"ignored-argument.rs"}).to_string(),
+            };
+            messages.push(Message::assistant("edit", vec![call.clone()]));
+            messages.push(Message::tool(&call, result));
+        }
+        let facts = WorkerFacts::observe(&messages, 1);
+        assert_eq!(facts.files_touched, ["src/actual.rs", "src/conflict.rs"]);
+        assert_eq!(facts.tool_failures, 2);
     }
 
     use async_trait::async_trait;

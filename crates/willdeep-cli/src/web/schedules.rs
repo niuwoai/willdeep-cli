@@ -83,6 +83,7 @@ fn writable(state: &WebState) -> Result<(), WebError> {
 #[derive(Default, Deserialize)]
 struct ModelQuery {
     profile: Option<String>,
+    workspace: Option<String>,
 }
 async fn models(
     State(state): State<Arc<WebState>>,
@@ -97,6 +98,20 @@ async fn models(
         .or_else(|| state.profile.clone());
     let mut provider = crate::harness::resolve_parent_provider_config(&cli, &loaded, None)
         .map_err(WebError::from_anyhow)?;
+    let roots = registered_web_workspaces(&state)
+        .await?
+        .into_iter()
+        .map(|workspace| workspace.root)
+        .collect::<Vec<_>>();
+    let explicit = match query.workspace.as_deref() {
+        Some(requested) => Some(select_workspace(&state, Some(requested)).await?.root),
+        None => None,
+    };
+    provider.policy_context = willdeep_core::provider::ModelPolicyContext::unambiguous_workspace(
+        explicit.as_deref(),
+        &roots,
+    )
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
     provider.request_timeout_secs = 15;
     let fallback = provider.model.clone();
     let (mut models, warning) = match willdeep_core::provider::list_models(&provider).await {

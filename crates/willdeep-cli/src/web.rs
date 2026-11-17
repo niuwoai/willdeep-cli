@@ -2595,7 +2595,8 @@ async fn predict_session_input(state: &WebState, id: uuid::Uuid) -> Option<Strin
     let ledger =
         crate::harness::standalone_usage_ledger(&state.home, Some(id), Some(&session.workspace));
     suggest_for_session(&session.messages, running, || {
-        crate::harness::input_suggestion_providers(&loaded, profile.as_deref(), model).map(
+        let context = SessionStore::new(&state.home).model_policy_context(&session)?;
+        crate::harness::input_suggestion_providers(&loaded, profile.as_deref(), model, context).map(
             |providers| {
                 providers
                     .into_iter()

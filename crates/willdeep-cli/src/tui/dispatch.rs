@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod input_scope_tests;
+
 pub(super) fn dispatch_prompt(
     app: &mut App,
     session: &mut Session,
@@ -36,11 +39,20 @@ pub(super) fn dispatch_prompt(
             )
             .to_owned(),
     );
+    let new_input = !agent
+        .goal_continuation()
+        .is_some_and(|goal| goal.is_active());
     let mut history = session.messages.clone();
     if let Some(notice) = session
         .execution_checkpoint
         .as_ref()
-        .and_then(willdeep_core::checkpoint::CheckpointMetadata::recovery_notice)
+        .and_then(|checkpoint| {
+            if new_input {
+                checkpoint.new_input_notice()
+            } else {
+                checkpoint.recovery_notice()
+            }
+        })
     {
         history.push(notice);
     }
@@ -60,12 +72,21 @@ pub(super) fn dispatch_prompt(
     // 句柄留着，Esc 中断本地轮次时要靠它把在途的 Harness 掐掉。
     let summary = session.context_summary.clone();
     app.local_turn = Some(tokio::spawn(async move {
-        let _ = tx.send(UiMessage::Finished(
+        let result = async {
+            let input_checkpoint = new_input
+                .then(|| checkpoint.for_new_input())
+                .transpose()
+                .map_err(|error| willdeep_core::AgentError::Checkpoint(error.to_string()))?;
+            let sink: &dyn willdeep_core::checkpoint::CheckpointSink = input_checkpoint
+                .as_ref()
+                .map(|sink| sink as &dyn willdeep_core::checkpoint::CheckpointSink)
+                .unwrap_or(&checkpoint);
             agent
-                .run_checkpointed_with_summary(history, user, Some(&checkpoint), summary)
-                .await,
-            checkpoint,
-        ));
+                .run_checkpointed_with_summary(history, user, Some(sink), summary)
+                .await
+        }
+        .await;
+        let _ = tx.send(UiMessage::Finished(result, checkpoint));
     }));
     Ok(())
 }

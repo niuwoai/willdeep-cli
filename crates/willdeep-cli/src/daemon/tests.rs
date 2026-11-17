@@ -330,7 +330,7 @@ async fn runtime_sink_attributes_child_agent_file_changes_without_chat_metadata(
     .await;
     let root_call = willdeep_core::ToolCall {
         id: "root-write".to_owned(),
-        name: "create_file".to_owned(),
+        name: "file_changes".to_owned(),
         arguments: "{}".to_owned(),
     };
     sink.emit(willdeep_core::AgentEvent::ToolRequested(root_call.clone()))
@@ -2203,6 +2203,7 @@ async fn interrupted_goals_resume_once_after_a_restart() {
         text: "parser tests pass".to_owned(),
         done: false,
         evidence: None,
+        ..Default::default()
     });
     let mut complete = willdeep_core::GoalState::new("already shipped");
     complete.status = willdeep_core::GoalStatus::Complete;

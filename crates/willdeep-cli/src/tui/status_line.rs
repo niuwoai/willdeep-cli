@@ -60,7 +60,7 @@ impl App {
             if self.running {
                 format!(
                     "{} · {}: {} · {} {context_pct}% · {} ↑{input} ↓{output}{cache}{queued} · Esc {} · F1",
-                    self.working_summary().unwrap_or_else(|| self.language.text("运行中", "Running", "実行中").to_owned()),
+                    self.turn_phase_summary().unwrap_or_else(|| self.language.text("运行中", "Running", "実行中").to_owned()),
                     self.language.text("焦点", "Focus", "フォーカス"),
                     focus_label(self.focus, self.language),
                     self.language.text("上下文", "context", "コンテキスト"),
@@ -76,11 +76,7 @@ impl App {
             } else {
                 format!(
                     "{} · {}: {} · {} {context_pct}% · {} ↑{input} ↓{output}{cache} · {elapsed} · {} · Ctrl+S {} · F1",
-                    if self.queued_prompts.is_empty() {
-                        self.language.text("就绪", "Ready", "準備完了")
-                    } else {
-                        self.language.text("待发消息等待发送", "Queued messages waiting to send", "送信待ちがあります")
-                    },
+                    self.essential_turn_status().unwrap_or_else(|| self.idle_turn_status()),
                     self.language.text("焦点", "Focus", "フォーカス"),
                     focus_label(self.focus, self.language),
                     self.language.text("上下文", "context", "コンテキスト"),
@@ -94,6 +90,28 @@ impl App {
                 )
             }
         })
+        };
+        // 审批/提问是当前必须处理的阻塞点，选择模式和普通通知也不能盖住它。
+        let status = if let Some(wait) = self.human_turn_wait()
+            && !status.contains(wait)
+        {
+            format!(
+                "{} | {status}",
+                self.turn_phase_summary().unwrap_or_else(|| wait.to_owned())
+            )
+        } else {
+            status
+        };
+        // A pending-queue notice must not conceal the explicit result of the
+        // turn that just ended. Keep both until a new turn begins.
+        let status = if !self.running
+            && self.human_turn_wait().is_none()
+            && let Some(outcome) = self.last_turn_outcome
+            && !status.contains(outcome.label(self.language))
+        {
+            format!("{} | {status}", self.idle_turn_status())
+        } else {
+            status
         };
         if self.peer_unread > 0 {
             format!(

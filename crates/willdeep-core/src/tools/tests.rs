@@ -165,7 +165,36 @@ async fn read_file_matches_swift_line_number_contract() {
         })
         .await
         .expect("read");
-    assert_eq!(output, "     2  two\n     3  three\n");
+    assert!(output.starts_with("[version: sha256:"), "{output}");
+    assert_eq!(
+        output.lines().skip(1).collect::<Vec<_>>(),
+        ["     2  two", "     3  three"]
+    );
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn read_version_metadata_preserves_the_numbered_content_budget() {
+    let root = workspace("read-version-budget");
+    std::fs::write(root.join("file.txt"), "a\nb\n").expect("fixture");
+    let registry = ToolRegistry::new(&root, ApprovalMode::Strict).expect("registry");
+    let output = registry
+        .read_file(ReadArgs {
+            path: "file.txt".into(),
+            offset: None,
+            limit: None,
+            max_bytes: Some(10),
+        })
+        .await
+        .expect("read");
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        [
+            format!("[version: {}]", file_changes::version(b"a\nb\n")),
+            "     1  a".into(),
+            "[truncated; continue with offset 2]".into(),
+        ]
+    );
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -247,6 +276,7 @@ async fn workspace_access_applies_exact_edit() {
             old_string: "beta".to_owned(),
             new_string: "gamma".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"alpha beta")),
         })
         .await
         .expect("edit");
@@ -327,7 +357,8 @@ async fn an_observer_hook_sees_the_call_without_blocking_it() {
             arguments: serde_json::json!({
                 "path": "file.txt",
                 "old_string": "unchanged",
-                "new_string": "changed"
+                "new_string": "changed",
+                "expected_version": file_changes::version(b"unchanged")
             })
             .to_string(),
         })
@@ -530,6 +561,7 @@ async fn smart_runs_read_only_shell_but_still_gates_effectful_commands() {
             old_string: "before".to_owned(),
             new_string: "after".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"before")),
         })
         .await
         .expect("workspace edit");
@@ -829,6 +861,7 @@ async fn subagent_write_target_rejects_every_other_file() {
             old_string: "before".to_owned(),
             new_string: "after".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"before")),
         })
         .await
         .expect("approved target");
@@ -838,6 +871,7 @@ async fn subagent_write_target_rejects_every_other_file() {
             old_string: "before".to_owned(),
             new_string: "after".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"before")),
         })
         .await;
     assert!(matches!(denied, Err(ToolError::OutsideWorkspace(_))));
@@ -868,6 +902,7 @@ async fn edit_file_strips_a_copied_read_file_prefix() {
         .expect("read");
     let rendered: Vec<&str> = read
         .lines()
+        .skip(1)
         .filter(|line| !line.trim().is_empty())
         .collect();
     assert_eq!(rendered.len(), 2);
@@ -893,6 +928,7 @@ async fn edit_file_strips_a_copied_read_file_prefix() {
                 old_string: copied,
                 new_string: "          if any(a.is_number && im(a).is_zero is False for a in coords) {\n              raise ValueError('Imaginary coordinates are not permitted.')".to_owned(),
                 replace_all: None,
+                expected_version: Some(file_changes::version(source.as_bytes())),
             })
             .await
             .unwrap_or_else(|error| panic!("{name} copied read prefix is one unique span: {error}"));
@@ -929,6 +965,7 @@ async fn subagent_file_set_allows_every_declared_file_and_nothing_else() {
                 old_string: "before".to_owned(),
                 new_string: "after".to_owned(),
                 replace_all: None,
+                expected_version: Some(file_changes::version(b"before")),
             })
             .await
             .unwrap_or_else(|error| panic!("declared file {name} must be writable: {error}"));
@@ -939,6 +976,7 @@ async fn subagent_file_set_allows_every_declared_file_and_nothing_else() {
             old_string: "before".to_owned(),
             new_string: "after".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"before")),
         })
         .await;
     let Err(ToolError::OutsideWorkspace(message)) = denied else {
@@ -1077,6 +1115,7 @@ async fn an_approved_target_reached_through_a_symlink_is_still_writable() {
             old_string: "before".to_owned(),
             new_string: "after".to_owned(),
             replace_all: None,
+            expected_version: Some(file_changes::version(b"before")),
         })
         .await
         .expect("an approved file stays writable through a symlinked workspace");
@@ -1617,7 +1656,7 @@ async fn a_verification_launch_error_invalidates_previous_success() {
             .last()
             .unwrap()
             .status,
-        VerificationStatus::Failed
+        VerificationStatus::LaunchFailed
     );
 }
 

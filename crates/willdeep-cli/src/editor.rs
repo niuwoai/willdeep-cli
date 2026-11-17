@@ -1,10 +1,20 @@
-use unicode_width::UnicodeWidthChar;
+use ratatui::{style::Style, text::Span};
+use std::ops::Range;
+use unicode_width::UnicodeWidthStr;
 use willdeep_core::MessageAttachment;
 
-#[derive(Default)]
+#[derive(Clone, Copy)]
+struct PromptSelection {
+    anchor: usize,
+    head: usize,
+}
+
+#[derive(Clone, Default)]
 pub struct PromptEditor {
     text: String,
     cursor: usize,
+    selection: Option<PromptSelection>,
+    selection_dragging: bool,
 }
 
 impl PromptEditor {
@@ -15,47 +25,56 @@ impl PromptEditor {
         self.text.trim().is_empty()
     }
     pub fn take(&mut self) -> String {
+        self.clear_selection();
         self.cursor = 0;
         std::mem::take(&mut self.text)
     }
     pub fn insert(&mut self, value: &str) {
+        self.clear_selection();
         self.text.insert_str(self.cursor, value);
         self.cursor += value.len();
     }
     pub fn backspace(&mut self) {
+        self.clear_selection();
         if let Some((index, _)) = self.text[..self.cursor].char_indices().next_back() {
             self.text.replace_range(index..self.cursor, "");
             self.cursor = index;
         }
     }
     pub fn delete(&mut self) {
+        self.clear_selection();
         if let Some(character) = self.text[self.cursor..].chars().next() {
             self.text
                 .replace_range(self.cursor..self.cursor + character.len_utf8(), "");
         }
     }
     pub fn left(&mut self) {
+        self.clear_selection();
         if let Some((index, _)) = self.text[..self.cursor].char_indices().next_back() {
             self.cursor = index;
         }
     }
     pub fn right(&mut self) {
+        self.clear_selection();
         if let Some(character) = self.text[self.cursor..].chars().next() {
             self.cursor += character.len_utf8();
         }
     }
     pub fn home(&mut self) {
+        self.clear_selection();
         self.cursor = self.text[..self.cursor]
             .rfind('\n')
             .map(|i| i + 1)
             .unwrap_or(0);
     }
     pub fn end(&mut self) {
+        self.clear_selection();
         self.cursor += self.text[self.cursor..]
             .find('\n')
             .unwrap_or(self.text.len() - self.cursor);
     }
     pub fn up_visual(&mut self, width: usize) {
+        self.clear_selection();
         let (row, column) = self.cursor_visual(width);
         if row > 0 {
             self.set_cursor_visual(row - 1, column, width);
@@ -103,98 +122,179 @@ impl PromptEditor {
             .then_some((start, query))
     }
     pub fn replace_before_cursor(&mut self, start: usize, value: &str) {
+        self.clear_selection();
         if start <= self.cursor && self.text.is_char_boundary(start) {
             self.text.replace_range(start..self.cursor, value);
             self.cursor = start + value.len();
         }
     }
     pub fn set_cursor_visual(&mut self, target_row: usize, target_column: usize, width: usize) {
+        self.clear_selection();
         self.cursor = byte_at_visual(&self.text, target_row, target_column, width);
+    }
+
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selection_dragging = false;
+    }
+
+    pub(crate) fn selection_active(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    pub(crate) fn selection_dragging(&self) -> bool {
+        self.selection_dragging
+    }
+
+    /// 选区是原文的半开字节范围，鼠标落点对齐终端渲染的完整字素。
+    pub(crate) fn begin_selection_visual(&mut self, row: usize, column: usize, width: usize) {
+        self.set_cursor_visual(row, column, width);
+        self.selection = Some(PromptSelection {
+            anchor: self.cursor,
+            head: self.cursor,
+        });
+        self.selection_dragging = true;
+    }
+
+    pub(crate) fn extend_selection_visual(&mut self, row: usize, column: usize, width: usize) {
+        if let Some(selection) = self.selection.as_mut() {
+            selection.head = byte_at_visual(&self.text, row, column, width);
+        }
+    }
+
+    pub(crate) fn finish_selection(&mut self) {
+        self.selection_dragging = false;
+        if self.selected_text().is_none() {
+            self.clear_selection();
+        }
+    }
+
+    pub(crate) fn selected_text(&self) -> Option<&str> {
+        let selection = self.selection?;
+        let start = selection.anchor.min(selection.head);
+        let end = selection.anchor.max(selection.head);
+        (start < end).then(|| &self.text[start..end])
+    }
+
+    /// 高亮与鼠标命中共享折行边界；显式换行多画一格，空行也看得见。
+    pub(crate) fn selection_visual_ranges(&self, width: usize) -> Vec<(usize, Range<usize>)> {
+        let Some(selection) = self.selection else {
+            return Vec::new();
+        };
+        let start = selection.anchor.min(selection.head);
+        let end = selection.anchor.max(selection.head);
+        let mut selected = Vec::new();
+        for (row, bytes) in visual_row_ranges(&self.text, width).into_iter().enumerate() {
+            let mut column = 0;
+            let mut columns: Option<Range<usize>> = None;
+            for (glyph, size) in visual_glyphs(&self.text[bytes.clone()]) {
+                if (start..end).contains(&(bytes.start + glyph.start)) && size > 0 {
+                    columns.get_or_insert(column..column).end = column + size;
+                }
+                column += size;
+            }
+            if (start..end).contains(&bytes.end)
+                && self.text.as_bytes().get(bytes.end) == Some(&b'\n')
+            {
+                columns.get_or_insert(column..column).end = column + 1;
+            }
+            if let Some(columns) = columns {
+                selected.push((row, columns));
+            }
+        }
+        selected
     }
 }
 
 fn visual_position(text: &str, cursor: usize, width: usize) -> (usize, usize) {
-    let width = width.max(1);
-    let mut row = 0;
-    let mut column = 0;
-    for character in text[..cursor].chars() {
-        if character == '\n' {
-            row += 1;
-            column = 0;
-            continue;
-        }
-        let size = UnicodeWidthChar::width(character).unwrap_or(0);
-        if column + size > width {
-            row += 1;
-            column = 0;
-        }
-        column += size;
-        if column >= width {
-            row += 1;
-            column = 0;
-        }
-    }
+    let rows = visual_row_ranges(text, width);
+    // 软折行边界属于下一行；显式换行则位于上一行的末尾。
+    let row = rows
+        .iter()
+        .rposition(|range| range.start <= cursor && cursor <= range.end)
+        .unwrap_or(0);
+    let column = UnicodeWidthStr::width(&text[rows[row].start..cursor]);
     (row, column)
 }
 
 fn byte_at_visual(text: &str, target_row: usize, target_column: usize, width: usize) -> usize {
-    let width = width.max(1);
-    let mut row = 0;
+    let rows = visual_row_ranges(text, width);
+    let Some(bytes) = rows.get(target_row) else {
+        return text.len();
+    };
     let mut column = 0;
-    for (index, character) in text.char_indices() {
-        if row > target_row || (row == target_row && column >= target_column) {
-            return index;
-        }
-        if character == '\n' {
-            if row == target_row {
-                return index;
-            }
-            row += 1;
-            column = 0;
-            continue;
-        }
-        let size = UnicodeWidthChar::width(character).unwrap_or(0);
-        if column + size > width {
-            row += 1;
-            column = 0;
-            if row > target_row {
-                return index;
-            }
+    for (glyph, size) in visual_glyphs(&text[bytes.clone()]) {
+        if column >= target_column {
+            return bytes.start + glyph.start;
         }
         column += size;
-        if column >= width {
-            row += 1;
-            column = 0;
-        }
     }
-    text.len()
+    bytes.end
 }
 
 fn visual_rows(text: &str, width: usize) -> Vec<String> {
+    visual_row_ranges(text, width)
+        .into_iter()
+        .map(|range| text[range].to_owned())
+        .collect()
+}
+
+/// 每行对应的原文范围，不把软折行变成原文换行，也不丢弃空行与空格。
+fn visual_row_ranges(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
     let mut rows = Vec::new();
-    let mut row = String::new();
+    let mut start = 0;
     let mut column = 0;
-    for character in text.chars() {
-        if character == '\n' {
-            rows.push(std::mem::take(&mut row));
+    for (glyph, size) in visual_glyphs(text) {
+        if &text[glyph.clone()] == "\n" {
+            // An exact-width soft wrap already emitted this physical line.
+            // Consume its newline without creating an additional empty row.
+            if start != glyph.start
+                || rows
+                    .last()
+                    .is_none_or(|row: &Range<usize>| row.end != glyph.start)
+            {
+                rows.push(start..glyph.start);
+            }
+            start = glyph.end;
             column = 0;
             continue;
         }
-        let size = UnicodeWidthChar::width(character).unwrap_or(0);
         if column + size > width {
-            rows.push(std::mem::take(&mut row));
+            rows.push(start..glyph.start);
+            start = glyph.start;
             column = 0;
         }
-        row.push(character);
         column += size;
         if column >= width {
-            rows.push(std::mem::take(&mut row));
+            rows.push(start..glyph.end);
+            start = glyph.end;
             column = 0;
         }
     }
-    rows.push(row);
+    rows.push(start..text.len());
     rows
+}
+
+/// 复用已有 Ratatui 的字素切分，不额外引入依赖；ZWJ emoji、肤色和组合音标
+/// 必须与最终绘制使用相同的边界和宽度，不能把一个显示字符拆成多个格子。
+fn visual_glyphs(text: &str) -> Vec<(Range<usize>, usize)> {
+    let mut glyphs = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let span = Span::raw(body);
+        for glyph in span.styled_graphemes(Style::default()) {
+            let end = offset + glyph.symbol.len();
+            glyphs.push((offset..end, UnicodeWidthStr::width(glyph.symbol)));
+            offset = end;
+        }
+        if line.ends_with('\n') {
+            glyphs.push((offset..offset + 1, 0));
+            offset += 1;
+        }
+    }
+    glyphs
 }
 
 #[derive(Clone)]
@@ -316,6 +416,21 @@ mod tests {
         assert_eq!(editor.wrapped_text(4), "中文\n");
         assert_eq!(editor.cursor_visual(4), (1, 0));
     }
+    #[test]
+    fn exact_width_then_newline_does_not_add_an_extra_blank_row() {
+        for (text, width, expected, cursor) in [
+            ("abcd\nx", 4, "abcd\nx", (1, 1)),
+            ("中文\n\n尾", 4, "中文\n\n尾", (2, 2)),
+            ("\n\n", 4, "\n\n", (2, 0)),
+            ("abcd\n", 4, "abcd\n", (1, 0)),
+        ] {
+            let mut editor = PromptEditor::default();
+            editor.insert(text);
+            assert_eq!(editor.wrapped_text(width), expected);
+            assert_eq!(editor.cursor_visual(width), cursor);
+        }
+    }
+
     #[test]
     fn finds_and_replaces_marker_query_at_cursor() {
         let mut editor = PromptEditor::default();

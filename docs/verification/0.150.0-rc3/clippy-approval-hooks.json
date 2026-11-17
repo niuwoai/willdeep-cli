@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "date_local": "2026-11-17",
+  "version": "0.150.0-rc3",
+  "verification_status": "listed_local_checks_complete_with_limitations",
+  "source": {
+    "head": "ba894a5906982921411e33486fa699f6f356e43e",
+    "branch": "fix/tui-queue-during-compression",
+    "uncommitted_changes": true,
+    "shared_worktree": true,
+    "scope": "Three CLI Clippy fixes, visible-question input and wrapping, approval_resolved hooks, payload framing and Harness session attribution; concurrent changes are not attributed to this task"
+  },
+  "previous_report": "../0.150.0-rc2/p0-coding-tools.json",
+  "contains_model_runs": false,
+  "model_success_rate": null,
+  "model_tokens": null,
+  "model_cost": null,
+  "delivery": {
+    "committed": false,
+    "pushed": false,
+    "tagged": false,
+    "pull_request_created": false,
+    "installed": false,
+    "published": false,
+    "dependencies_auto_installed": false
+  },
+  "implemented": [
+    "Test-only drain helper, production paste routing and removal of ineffective closure drop",
+    "Visible question owns paste, ordinary keys and mouse before hidden approvals and permission pickers",
+    "Question text and cursor share grapheme-aware visual rows; explicit newlines after exact-width wrapping do not create extra rows",
+    "Actual approver decisions and final judge allow emit approval_resolved through shared HookRegistry",
+    "Session/workspace attribution, redacted action and detail, source and mode",
+    "Valid UTF-8 JSON frames within 16384 bytes, escaped-byte budgets and extra.truncated marker",
+    "Structured warnings for hook failure without changing approval outcomes"
+  ],
+  "checks": [
+    {
+      "id": "hooks",
+      "command": "cargo test -p willdeep-core --locked --lib hooks::",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 21,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "biq18647k",
+      "new_payload_tests": 6
+    },
+    {
+      "id": "approval",
+      "command": "cargo test -p willdeep-core --locked --lib tools::approval::",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "biq18647k",
+      "new_hook_tests": 12,
+      "includes_real_registry_create_allow_and_deny": true
+    },
+    {
+      "id": "uncertain",
+      "command": "cargo test -p willdeep-core --locked --lib agent::uncertain",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "biq18647k"
+    },
+    {
+      "id": "delegation",
+      "command": "cargo test -p willdeep-core --locked --lib tools::delegation::tests",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "biq18647k"
+    },
+    {
+      "id": "existing_pre_tool",
+      "command": "cargo test -p willdeep-core --locked --lib tools::tests::a_blocking_hook_stops_the_tool_before_it_runs -- --exact",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bj8108ypb"
+    },
+    {
+      "id": "existing_observer",
+      "command": "cargo test -p willdeep-core --locked --lib tools::tests::an_observer_hook_sees_the_call_without_blocking_it -- --exact",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bj8108ypb"
+    },
+    {
+      "id": "paste",
+      "command": "cargo test -p willdeep --locked --bin willdeep tui::paste",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bp1hhofxr",
+      "render_matrix": {
+        "languages": ["En", "ZhCn", "Ja"],
+        "widths": [120, 30, 9],
+        "height": 30,
+        "answer_shapes": 6,
+        "combinations": 54,
+        "rust_tests_for_matrix": 1,
+        "backend": "ratatui TestBackend",
+        "real_pty_run": false
+      }
+    },
+    {
+      "id": "editor",
+      "command": "cargo test -p willdeep --locked --bin willdeep editor::tests",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bp1hhofxr",
+      "editor_tests": 7,
+      "external_editor_tests": 4
+    },
+    {
+      "id": "prompt_selection",
+      "command": "cargo test -p willdeep --locked --bin willdeep tui::prompt_selection::",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0,
+      "evidence": "Foreground command after correcting the zero-match filter"
+    },
+    {
+      "id": "session",
+      "command": "cargo test -p willdeep --locked --bin willdeep tui::test_suite::session_tests",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 84,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bp1hhofxr"
+    },
+    {
+      "id": "harness",
+      "command": "cargo test -p willdeep --locked --bin willdeep harness::tests",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 30,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bp1hhofxr",
+      "full_harness_to_hook_stdin_e2e": false
+    },
+    {
+      "id": "drain",
+      "command": "cargo test -p willdeep --locked --bin willdeep drain_",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "evidence_task": "bp1hhofxr"
+    },
+    {
+      "id": "workspace_clippy",
+      "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bp1hhofxr"
+    },
+    {
+      "id": "windows_core_clippy",
+      "command": "cargo clippy -p willdeep-core --all-targets --target x86_64-pc-windows-gnu --locked -- -D warnings",
+      "status": "passed",
+      "exit_code": 0,
+      "evidence_task": "bj8108ypb",
+      "native_windows_execution": false
+    },
+    {
+      "id": "format",
+      "command": "cargo fmt --all -- --check",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "version",
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_release_version.rb 0.150.0-rc3",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "diff_whitespace",
+      "command": "git diff --check",
+      "status": "passed",
+      "exit_code": 0
+    }
+  ],
+  "final_document_gates": {
+    "status": "passed",
+    "source_size": {
+      "command": "ruby -E UTF-8:UTF-8 scripts/check_source_size.rb --output target/rc3-source-size",
+      "exit_code": 0,
+      "reviewed_files": 1576,
+      "max_lines": 3000,
+      "violations": 0,
+      "over_2000_line_responsibility_list_retained": true
+    },
+    "documents_and_reports": {
+      "command": "ruby -E UTF-8:UTF-8 target/rc3-document-check.rb",
+      "exit_code": 0,
+      "helper_scope": "Local read-only verification helper in target, not a product runtime feature",
+      "documents": 10,
+      "local_file_links": 277,
+      "missing_links": 0,
+      "anchors_checked": false,
+      "product_overview_characters": 16553,
+      "product_overview_limit": 20000,
+      "json_reports_parsed": 2,
+      "check_commands_consistent": 17,
+      "render_combinations": 54
+    },
+    "final_diff_check": {
+      "command": "git diff --check",
+      "status": "passed",
+      "exit_code": 0
+    }
+  },
+  "independent_reviews": [
+    {
+      "id": "approval_wiring",
+      "run_id": "wf_f3072bc1-02f",
+      "type": "static",
+      "new_confirmed_defects": 0,
+      "cargo_executed_by_reviewer": false,
+      "existing_issue": "Remembered approval is inserted into memory before persistence; failure may retain an in-memory rule"
+    },
+    {
+      "id": "modal_fixes",
+      "run_id": "wf_d423924e-79b",
+      "type": "static",
+      "new_confirmed_defects": 0,
+      "cargo_executed_by_reviewer": false,
+      "original_issues_closed_by_code_reasoning": ["hidden picker key routing", "hidden approval mouse routing", "exact-width newline duplicate row"]
+    }
+  ],
+  "run_history": [
+    {
+      "task": "biq18647k",
+      "status": "stopped_by_assistant",
+      "completed_test_groups": ["hooks", "approval", "uncertain", "delegation"],
+      "reason": "Stopped during subsequent CLI compilation to apply independently discovered modal fixes",
+      "whole_batch_passed": false
+    },
+    {
+      "task": "bpc7zj7me",
+      "status": "failed",
+      "exit_code": 101,
+      "passed": 5,
+      "failed": 1,
+      "later_chained_commands_executed": false,
+      "failure": "Narrow-screen assertion read padding instead of the character before the cursor"
+    },
+    {
+      "task": "bx13s76ch",
+      "status": "failed",
+      "exit_code": 101,
+      "passed": 0,
+      "failed": 1,
+      "diagnostic": {
+        "cursor": [2, 28],
+        "incorrect_previous": [1, 28],
+        "left": " ",
+        "right": "z"
+      },
+      "fix": "Derive content bounds from modal_block(...).inner(rect), retaining the z assertion"
+    },
+    {
+      "task": "bp1hhofxr",
+      "status": "passed",
+      "exit_code": 0,
+      "test_groups": ["paste", "editor", "session", "harness", "drain"],
+      "workspace_clippy_passed": true,
+      "zero_match_command": "cargo test -p willdeep --locked --bin willdeep tui::prompt_selection_tests",
+      "zero_match_counted_as_coverage": false,
+      "zero_match_corrected_by": "prompt_selection"
+    },
+    {
+      "task": "bj8108ypb",
+      "status": "passed",
+      "exit_code": 0,
+      "checks": ["existing_pre_tool", "existing_observer", "windows_core_clippy"]
+    }
+  ],
+  "limitations": [
+    "Full core/CLI suites, real TypeScript LSP and browser fixtures were not rerun this round; rc2 results remain historical evidence",
+    "rust-analyzer is unavailable in the current toolchain; real Rust LSP was not run or installed",
+    "Windows evidence is cross-target core compilation/lint, not native execution",
+    "Real language-server diagnostics publication, large-project combinations and real model evaluations remain unverified",
+    "Hook delivery has no durable queue, exactly-once, cancellation completion or crash replay guarantee",
+    "Approval outcomes do not prove execution or successful AlwaysAllow persistence",
+    "Existing in-memory-before-persistence authorization ordering was not changed; no second-call regression was run after persistence failure",
+    "The 16384-byte limit bounds the output frame, not the first complete serialization's intermediate memory",
+    "No dedicated stderr-capture assertion or forced shell-spawn-failure test was run",
+    "Semantic rename/AST, controlled browser integration, independent BYOK search, all auxiliary model-call policy and structured Goal execution evidence remain unimplemented",
+    "Per-file atomic installation remains distinct from a cross-file transaction or external-writer CAS"
+  ]
+}

@@ -104,29 +104,9 @@ pub(super) fn clip(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// `judge::redact_credentials` 是给命令行用的：按空白切词、再用单个空格拼回去，会把
-/// 助手回复里的换行、缩进和代码块全压扁。它对每个词恰好产出一个词，所以这里按原文
-/// 的空白把打码后的词逐个放回去。词数对不上（将来它的行为变了）就退回压扁的版本——
-/// 宁可难看，也不能让没打码的词漏出去。
+/// 凭据打码与空白保真共用 core 实现，避免压扁回复里的换行、缩进和代码块。
 pub(super) fn redact_preserving_layout(text: &str) -> String {
-    let redacted = willdeep_core::judge::redact_credentials(text);
-    if redacted.split(' ').filter(|word| !word.is_empty()).count()
-        != text.split_whitespace().count()
-    {
-        return redacted;
-    }
-    let mut replacements = redacted.split(' ').filter(|word| !word.is_empty());
-    let mut output = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(|character: char| !character.is_whitespace()) {
-        output.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        output.push_str(replacements.next().unwrap_or("[REDACTED]"));
-        rest = &rest[end..];
-    }
-    output.push_str(rest);
-    output
+    willdeep_core::judge::redact_credentials_preserving_layout(text)
 }
 
 fn is_responding(session: &RuntimeSession) -> bool {

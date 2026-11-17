@@ -266,6 +266,12 @@ pub(in crate::daemon) async fn preflight(
             )))
         })?;
     provider.model = model.clone();
+    provider.policy_context = Some(
+        state
+            .sessions
+            .model_policy_context(parent.id)
+            .map_err(control_api::ApiFailure::internal)?,
+    );
     let capability =
         willdeep_core::provider::capabilities::load_model_capability(&state.home, &provider).await;
     let listed = willdeep_core::provider::list_models(&provider).await;
@@ -275,6 +281,9 @@ pub(in crate::daemon) async fn preflight(
             return Err(control_api::ApiFailure::invalid(
                 "model is not available in the parent Session's Provider profile",
             ));
+        }
+        Err(error @ willdeep_core::provider::ProviderError::PolicyDenied(_)) => {
+            return Err(control_api::ApiFailure::invalid(error.to_string()));
         }
         Err(_) if capability.is_some() => {}
         Err(error) => {

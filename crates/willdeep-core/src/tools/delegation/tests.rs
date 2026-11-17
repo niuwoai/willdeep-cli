@@ -17,6 +17,10 @@ async fn delegation_cap_survives_full_access_and_blocks_forged_calls() {
     let forbidden = [
         "create_file",
         "edit_file",
+        "file_changes",
+        "lsp",
+        "ast_grep",
+        "browser",
         "run_command",
         "git_status",
         "git_diff",
