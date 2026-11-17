@@ -7,7 +7,8 @@ impl App {
         };
         let query = query.to_lowercase();
         let entries = self.references.as_deref().unwrap_or_default();
-        ["mcp", "agent", "file"]
+        // 群成员排在最前：群会话里打 @，第一眼就该看见能点名的人。
+        ["peer", "mcp", "agent", "file"]
             .into_iter()
             .flat_map(|kind| {
                 let query = query.as_str();
@@ -86,6 +87,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame, app: &mut App, prompt: Rect) {
     let mut lines = Vec::new();
     for (index, entry) in matches.iter().enumerate() {
         let category = match entry.kind {
+            "peer" => app.language.text("成员", "Member", "メンバー"),
             "mcp" => "MCP",
             "agent" => app.language.text("智能体", "Agent", "エージェント"),
             _ => app.language.text("文件", "File", "ファイル"),
@@ -178,6 +180,17 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["mcp", "agent", "file"]
         );
+        // 群成员插在最前，选中它插入的是裸 @名字，这样对面才会再开口。
+        app.references.as_mut().unwrap().insert(
+            0,
+            crate::composer_references::Reference {
+                kind: "peer",
+                name: "mira".into(),
+                value: "@mira".into(),
+            },
+        );
+        assert_eq!(app.reference_matches().first().unwrap().kind, "peer");
+        app.references.as_mut().unwrap().remove(0);
         for _ in 0..2 {
             assert!(app.handle_reference_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
         }

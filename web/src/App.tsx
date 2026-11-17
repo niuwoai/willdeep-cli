@@ -403,7 +403,7 @@ export function App() {
   const [composer, setComposer] = useState<ComposerData>({ commands: defaultCommands, skills: [] });
   const [error, setError] = useState("");
   const [runtimeFailure, setRuntimeFailure] = useState<RuntimeFailureReference | null>(null);
-  const references = useComposerReferences(workspace, prompt, t.loadFailed, setError);
+  const references = useComposerReferences(workspace, sessionId, prompt, t.loadFailed, setError);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   function chooseReference(entry: Reference) {
     if (!references.query) return;

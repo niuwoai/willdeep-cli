@@ -65,6 +65,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/local <任务>",
             "/session <操作>",
             "/history [关键词]",
+            "/groups",
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <文本>",
@@ -104,6 +105,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/local <task>",
             "/session <action>",
             "/history [query]",
+            "/groups",
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <text>",
@@ -143,6 +145,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/local <タスク>",
             "/session <操作>",
             "/history [検索語]",
+            "/groups",
             "/new",
             "/workspace [list|switch <id>]",
             "/agent instruct <id> <テキスト>",
@@ -389,6 +392,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "打开最近会话面板并继续",
                 "Open the recent Session panel and resume",
                 "最近のセッションパネルを開いて再開",
+            ),
+        ),
+        (
+            "/groups",
+            language.text(
+                "打开群聊列表面板并进入",
+                "Open the group list and enter one",
+                "グループ一覧を開いて入る",
             ),
         ),
         (

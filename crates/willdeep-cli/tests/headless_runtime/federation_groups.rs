@@ -64,7 +64,20 @@ max_auto_turns = 20
             "start isolated federation Runtime after cold start",
         );
     }
-    wait_until(Duration::from_secs(15), || intake_responds(&listen));
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        match intake_health(&listen) {
+            Ok(()) => break,
+            Err(error) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "intake startup timed out: node={name} address={listen} last_error={error}; inspect isolated log {}",
+                    home.join("runtime/daemon.log").display()
+                );
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
     GroupNode {
         home,
         listen,
@@ -74,24 +87,27 @@ max_auto_turns = 20
 }
 
 fn intake_responds(address: &str) -> bool {
+    intake_health(address).is_ok()
+}
+
+fn intake_health(address: &str) -> std::io::Result<()> {
     use std::io::Read as _;
-    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+    let mut stream = std::net::TcpStream::connect_timeout(
         &address.parse().expect("valid intake address"),
         Duration::from_secs(2),
-    ) else {
-        return false;
-    };
-    if stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .is_err()
-        || stream
-            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .is_err()
-    {
-        return false;
-    }
+    )?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
     let mut response = [0; 32];
-    matches!(stream.read(&mut response), Ok(size) if response[..size].starts_with(b"HTTP/1.1 200"))
+    let size = stream.read(&mut response)?;
+    if response[..size].starts_with(b"HTTP/1.1 200") {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "health did not return HTTP 200 ({size} bytes)"
+        )))
+    }
 }
 
 fn fed(home: &Path, args: &[&str]) -> String {

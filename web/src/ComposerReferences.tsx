@@ -10,9 +10,9 @@ export function ComposerReferences({ entries, selected, loading, messages: t, ch
   useEffect(() => {
     menuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [entries, selected]);
-  const labels = { mcp: t.referenceMcp, agent: t.agents, file: t.referenceFiles };
+  const labels = { peer: t.referenceMembers, mcp: t.referenceMcp, agent: t.agents, file: t.referenceFiles };
   return <div ref={menuRef} className="suggestions reference-suggestions" role="listbox" aria-label={t.references}>
-    {(["mcp", "agent", "file"] as const).map((kind) => {
+    {(["peer", "mcp", "agent", "file"] as const).map((kind) => {
       const group = entries.filter((entry) => entry.kind === kind);
       return group.length > 0 && <div key={kind} role="group" aria-label={labels[kind]}>
         <div className="suggestion-title">{labels[kind]}</div>
