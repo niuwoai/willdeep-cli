@@ -416,6 +416,16 @@ impl ToolRegistry {
         self.completion_verification_feedback(baseline).is_none()
     }
 
+    /// Explicit checks and this input's recorded attempts remain obligations,
+    /// independently of whether a workspace change can be attributed to a tool.
+    pub(crate) fn has_verification_obligations(&self) -> bool {
+        let records = self
+            .verification_records
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        !records.required.is_empty() || !records.latest.is_empty()
+    }
+
     pub(crate) fn completion_verification_feedback(
         &self,
         baseline: Option<&str>,

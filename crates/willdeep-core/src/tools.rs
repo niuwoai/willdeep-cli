@@ -24,6 +24,7 @@ use crate::{McpRegistry, SkillCatalog};
 mod ast_grep;
 mod browser;
 mod child_sessions;
+mod completion_scope;
 mod delegation;
 mod detached_verification;
 pub mod edit_display;

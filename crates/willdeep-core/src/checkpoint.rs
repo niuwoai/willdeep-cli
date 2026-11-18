@@ -31,6 +31,10 @@ pub struct CheckpointMetadata {
     pub verification_evidence: Vec<VerificationEvidence>,
     #[serde(default)]
     pub verification_baseline: Option<String>,
+    /// An unattributed workspace change stopped the previous run. A host
+    /// continuation keeps that pause; it is not a reason to request tests.
+    #[serde(default)]
+    pub completion_scope_uncertain: bool,
     #[serde(default)]
     pub completion_patch: Option<CompletionPatchEvidence>,
     pub status: CheckpointStatus,
@@ -91,6 +95,11 @@ pub trait CheckpointSink: Send + Sync {
     fn verification_baseline(&self) -> Result<Option<String>, String> {
         Ok(None)
     }
+    /// A host continuation inherits an unattributed change from the same run.
+    /// Missing metadata is conservative: the pause stays until it can be read.
+    fn completion_scope_uncertain(&self) -> Result<bool, String> {
+        Ok(false)
+    }
     /// Must durably save before returning. Failure prevents the next side effect.
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String>;
 }
@@ -103,6 +112,8 @@ pub(crate) struct CheckpointRecorder<'a> {
     latest: Option<RunCheckpoint>,
     retain_memory: bool,
     verification_baseline: Option<String>,
+    verification_resumed: bool,
+    completion_scope_uncertain: bool,
     stream_prefix: Option<usize>,
     stream_saved: bool,
     stream_dirty: bool,
@@ -129,6 +140,8 @@ impl<'a> CheckpointRecorder<'a> {
             latest: None,
             retain_memory: false,
             verification_baseline: None,
+            verification_resumed: false,
+            completion_scope_uncertain: false,
             stream_prefix: None,
             stream_saved: false,
             stream_dirty: false,
@@ -255,8 +268,33 @@ impl<'a> CheckpointRecorder<'a> {
             .transpose()
             .map_err(AgentError::Checkpoint)?
             .flatten();
+        // A raw sink denotes a same-task/host run, including the first host
+        // execution before a baseline has been persisted. Only the explicit
+        // new-input wrapper opts into an independent operator scope.
+        let host_continuation = self.sink.is_some_and(|sink| !sink.is_new_input());
+        self.verification_resumed = previous.is_some() || host_continuation;
+        self.completion_scope_uncertain = host_continuation
+            && self
+                .sink
+                .is_some_and(|sink| sink.completion_scope_uncertain().unwrap_or(true));
         self.verification_baseline = previous.or(current);
         Ok(())
+    }
+
+    pub fn is_new_input(&self) -> bool {
+        self.sink.is_some_and(|sink| sink.is_new_input())
+    }
+
+    pub fn verification_resumed(&self) -> bool {
+        self.verification_resumed
+    }
+
+    pub fn completion_scope_uncertain(&self) -> bool {
+        self.completion_scope_uncertain
+    }
+
+    pub fn set_completion_scope_uncertain(&mut self, uncertain: bool) {
+        self.completion_scope_uncertain = uncertain;
     }
 
     pub fn verification_baseline(&self) -> Option<&str> {
@@ -334,6 +372,7 @@ impl<'a> CheckpointRecorder<'a> {
                     .map(|tools| tools.verification_evidence())
                     .unwrap_or_default(),
                 verification_baseline: self.verification_baseline.clone(),
+                completion_scope_uncertain: self.completion_scope_uncertain,
                 completion_patch: self.completion_patch.clone(),
                 status: CheckpointStatus::Running,
                 turns,
@@ -569,6 +608,11 @@ impl CheckpointSink for NewInputCheckpointSink<'_> {
     }
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
         let mut checkpoint = checkpoint.clone();
+        // A query does not replace or complete an earlier task's plan. New
+        // update_plan calls can still install an explicitly current plan.
+        if checkpoint.plan.is_none() {
+            checkpoint.plan = self.inner.current_plan()?;
+        }
         if let Some(previous) = &self.previous {
             let current = &mut checkpoint.metadata;
             // Finishing the new input does not certify the outstanding task.
@@ -658,6 +702,10 @@ impl CheckpointSink for ClaimedSessionCheckpointSink {
         self.inner.verification_baseline()
     }
 
+    fn completion_scope_uncertain(&self) -> Result<bool, String> {
+        self.inner.completion_scope_uncertain()
+    }
+
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
         self.inner.save(checkpoint)
     }
@@ -726,6 +774,17 @@ impl CheckpointSink for SessionCheckpointSink {
             .execution_checkpoint
             .filter(|checkpoint| checkpoint.status != CheckpointStatus::Completed)
             .and_then(|checkpoint| checkpoint.verification_baseline))
+    }
+
+    fn completion_scope_uncertain(&self) -> Result<bool, String> {
+        let session = self
+            .store
+            .load(self.session_id)
+            .map_err(|error| error.to_string())?;
+        Ok(session
+            .execution_checkpoint
+            .filter(|checkpoint| checkpoint.status != CheckpointStatus::Completed)
+            .is_some_and(|checkpoint| checkpoint.completion_scope_uncertain))
     }
 
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {

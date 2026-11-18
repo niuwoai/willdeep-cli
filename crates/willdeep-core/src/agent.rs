@@ -14,6 +14,7 @@ use crate::subagent::{SpawnAgentArgs, SubagentCatalog};
 use crate::tools::{ToolError, ToolRegistry};
 use crate::types::{Message, ToolCall, Usage, sanitize_tool_history};
 
+mod completion_scope;
 mod context;
 mod dispatch;
 mod guidance;
@@ -1252,12 +1253,21 @@ impl Agent {
         self.tools.set_task_context(&user_message.content);
         messages.push(user_message);
         let definitions = self.request_definitions();
-        let mut plan = checkpoint.restore_plan()?.or_else(|| {
+        let previous_plan = checkpoint.restore_plan()?.or_else(|| {
             crate::conversation::project(&messages, None)
                 .into_iter()
                 .rev()
                 .find_map(|item| item.plan)
         });
+        let historical_plan = checkpoint
+            .is_new_input()
+            .then(|| previous_plan.clone())
+            .flatten();
+        let mut plan = if checkpoint.is_new_input() {
+            None
+        } else {
+            previous_plan
+        };
         checkpoint.plan = plan.clone();
         let mut used_tokens = 0_u64;
         // 分别累计输入/输出，供 AgentOutcome 上报——`used_tokens` 是预算判定用的
@@ -1271,6 +1281,12 @@ impl Agent {
         let mut exploration = guidance::ExplorationGuidance::default();
         let mut incomplete_responses = 0_usize;
         let verification_baseline = checkpoint.verification_baseline().map(str::to_owned);
+        let mut completion_scope = completion_scope::CompletionScope::new(
+            checkpoint.verification_resumed() || uncertain::has_unknown_effect(&messages),
+        );
+        if checkpoint.completion_scope_uncertain() {
+            completion_scope.restore_uncertainty();
+        }
         let mut unverified_stops = 0_usize;
         // 流式文本在增量到达时计时；无文本增量的响应在完整返回时计时。
         let mut first_response_millis: Option<u64> = None;
@@ -1288,7 +1304,13 @@ impl Agent {
             // enters durable history or the system message, so the provider's
             // automatic prefix cache keeps the whole history between turns instead
             // of breaking at messages[0] every round.
-            let mut runtime_context = String::new();
+            let mut runtime_context = String::from(completion_scope::TASK_BOUNDARY);
+            if let Some(historical_plan) = &historical_plan {
+                runtime_context.push_str(&format!(
+                    "\n<historical-session-plan>{}</historical-session-plan> This plan belongs to earlier work and is not the current task plan. Do not resume it without explicit agreement.",
+                    serde_json::to_string(historical_plan).expect("plan serializes")
+                ));
+            }
             if self.tools.allows_agent_tool("update_plan")
                 && let Some(plan) = &plan
             {
@@ -1329,7 +1351,7 @@ impl Agent {
                     .time_budget
                     .is_some_and(|budget| remaining <= budget / 5)
                 {
-                    runtime_context.push_str(" Begin bounded wrap-up now: inspect retained worker reports and actual parent diff, integrate explicitly, preserve partial work, and run short target/regression checks. Do not launch broad suites or new delegation; do not weaken tests or claim unverified completion.");
+                    runtime_context.push_str(" Begin bounded wrap-up of the current request. For implementation work, inspect its worker reports and diff and run the necessary short regression checks; for a query, finish the answer and relevant limitations. Preserve partial work. Do not expand scope, resume unrelated work, launch broad suites or new delegation, weaken checks or claim unverified completion.");
                 }
             }
             let stable_system = messages[0].clone();
@@ -1684,17 +1706,36 @@ impl Agent {
                     .goal_continuation
                     .as_ref()
                     .is_some_and(|goal| goal.wrap_up_pending());
+                let explicit_scope = patch_baseline.is_some()
+                    || self.tools.has_verification_obligations()
+                    || self
+                        .goal_continuation
+                        .as_ref()
+                        .is_some_and(|goal| goal.is_active());
+                let patch_feedback = self
+                    .tools
+                    .completion_patch_feedback(patch_baseline.as_ref());
+                let pause_for_scope = patch_feedback.is_none()
+                    && !explicit_scope
+                    && (completion_scope.must_pause() || checkpoint.completion_scope_uncertain());
                 if !wrapping_up
-                    && let Some(feedback) = self
-                        .tools
-                        .completion_patch_feedback(patch_baseline.as_ref())
-                        .or_else(|| {
-                            self.tools
-                                .completion_verification_feedback(verification_baseline.as_deref())
-                        })
+                    && let Some(feedback) = patch_feedback.or_else(|| {
+                        (explicit_scope || completion_scope.needs_verification())
+                            .then(|| {
+                                self.tools.completion_verification_feedback(
+                                    verification_baseline.as_deref(),
+                                )
+                            })
+                            .flatten()
+                    })
                 {
                     unverified_stops += 1;
-                    if unverified_stops >= MAX_INCOMPLETE_RESPONSES {
+                    if pause_for_scope || unverified_stops >= MAX_INCOMPLETE_RESPONSES {
+                        if pause_for_scope {
+                            messages.push(Message::host_instruction(
+                                completion_scope::UNCERTAIN_CHANGE,
+                            ));
+                        }
                         return Ok(AgentOutcome {
                             final_text: content,
                             turns: turn,
@@ -1706,7 +1747,7 @@ impl Agent {
                             context_summary: None,
                         });
                     }
-                    messages.push(Message::host_instruction(format!("[completion-verification-required] {feedback} Continue the outstanding task. Do not weaken checks or claim completion. If verification is unavailable, explain the limitation; the runtime will retain a partial result.")));
+                    messages.push(Message::host_instruction(format!("[completion-verification-required] {feedback} Continue only verification necessary for the current explicit request or its explicit completion contract. This gate does not authorize resuming historical work or testing unrelated changes. If an action would expand scope, ask the user and wait for explicit agreement before executing it. Do not weaken checks or claim completion. If verification is unavailable, explain the limitation; the runtime will retain a partial result.")));
                     continue;
                 }
                 // 长程续推：目标未达且预算未尽时，这里不是终点。预算已经耗尽的工具轮
@@ -1836,6 +1877,7 @@ impl Agent {
                         .emit(AgentEvent::ToolRequested(call.clone()))
                         .await;
                 }
+                let effect_before = self.tools.completion_snapshot_before(&call);
                 let execution = async {
                     if blocked_rung
                         .is_some_and(|rung| crate::goal::rung_blocks_tool(rung, &call.name))
@@ -1883,6 +1925,16 @@ impl Agent {
                 .with_plan_tools(&self.tools)
                 .wait(execution)
                 .await?;
+                if let Some(before) = effect_before {
+                    completion_scope.observe(
+                        &call,
+                        before,
+                        self.tools.try_verification_baseline(),
+                        result.is_ok(),
+                        self.tools.completion_may_outlive_call(&call),
+                    );
+                    checkpoint.set_completion_scope_uncertain(completion_scope.must_pause());
+                }
                 self.tools.reconcile_plan_jobs(&mut tool_plan);
                 plan = tool_plan;
                 let (output, is_error) = match result {

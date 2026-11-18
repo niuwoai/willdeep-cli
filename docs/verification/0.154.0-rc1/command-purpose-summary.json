@@ -1,0 +1,98 @@
+{
+  "date": "2026-11-18",
+  "version": "0.154.0-rc1",
+  "result": "passed_with_scope_limits",
+  "source": {
+    "branch": "feat/command-purpose-summary-20261118",
+    "worktree": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/command-purpose-summary-20261118",
+    "base_commit": "8372c94203ea5514d289a857e3f953d8ab360c83",
+    "uncommitted": true,
+    "code_diff_sha256": "d5ee2709d37fa6173a87698fee3899b187b95c4d164ee0bf1884d5a4bc5e653d",
+    "code_diff_pathspec": ["crates", "Cargo.toml", "Cargo.lock", "web/package.json", "npm/willdeep", "scripts/verify_tui_tool_visuals.rb"]
+  },
+  "binary": {
+    "path": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/multica-claude-adapter/target/command-purpose-0.154.0-rc1/final/willdeep",
+    "version": "willdeep 0.154.0-rc1",
+    "profile": "debug",
+    "sha256": "8515a9c558e72e7e80cc706b948cea34c3b5be66611e29ca965535954b84b50c",
+    "unchanged_during_pty": true
+  },
+  "checks": [
+    {"scope": "Rust core conversation and run_command contract", "passed": true, "tests_passed": 35},
+    {"scope": "CLI visuals, narration, viewport, history folding and summary compatibility", "passed": true, "tests_passed": 88},
+    {"scope": "Web RunCard and replayTools", "passed": true, "tests_passed": 11},
+    {"scope": "Real Runtime full/compact PTY", "passed": true, "checks_passed": 29},
+    {"scope": "Real Web HTTP session projection", "passed": true, "checks_passed": 4},
+    {"scope": "Web tsc and Vite build", "passed": true},
+    {"scope": "Rust debug build", "passed": true},
+    {"scope": "cargo fmt --all -- --check", "passed": true},
+    {"scope": "cargo clippy -p willdeep-core -p willdeep --all-targets -- -D warnings", "passed": true},
+    {"scope": "release version metadata consistency", "passed": true},
+    {"scope": "git diff --check", "passed": true}
+  ],
+  "browser": {
+    "fixture": "private synthetic history through real Runtime and Web",
+    "session_id": "55035751-b6c4-4c6c-9051-82447e0a5395",
+    "api_status": 200,
+    "version_header": "0.154.0-rc1",
+    "observed_details": ["补齐文章缺失的标题和摘要翻译", "检查目录：…"],
+    "raw_script_in_messages": false,
+    "raw_arguments_in_messages": false,
+    "final_console_errors": 0,
+    "final_failed_network_requests": 0,
+    "expansion_observation": "DOM click event exercised the existing button handler; aria-expanded=true and both details observed; source and DOM structure were not modified",
+    "viewport_restored": true,
+    "preview_stopped": true,
+    "private_runtime_status": "stopped",
+    "private_runtime_status_exit": 0
+  },
+  "isolation": {
+    "private_home_runtime_workspace": true,
+    "synthetic_loopback_provider": true,
+    "real_shell_commands_in_pty": true,
+    "file_lock_synchronization": true,
+    "real_model_requests": false,
+    "web_sample_commands_executed": false,
+    "real_clipboard_writes": false,
+    "pty_cleanup_passed": true,
+    "successful_pty_fixture_removed": true
+  },
+  "failure_history": [
+    {
+      "scope": "initial real PTY acceptance",
+      "result": "failed",
+      "reason": "second active collapsed command was hidden by history aggregation in both layouts",
+      "resolution": "preserve active command purpose independently from expansion; add regression and rerun with final binary",
+      "evidence_preserved": true
+    },
+    {
+      "scope": "initial Rust filter attempts",
+      "result": "zero tests selected",
+      "resolution": "use actual module paths; final 88 tests include 17 viewport tests",
+      "counted_as_pass": false
+    }
+  ],
+  "boundaries": [
+    "No complete workspace test suite or cross-platform CI rerun in this iteration",
+    "Real model adherence to the label contract is not verified",
+    "Web uses synthetic persisted history; live shell execution is covered separately by PTY",
+    "Bare relative paths, unquoted paths containing spaces and complex quote escapes are not fully covered by the label path scanner",
+    "Ordinary scheme URLs are preserved; file URLs are hidden",
+    "Earlier fixture observed an existing unrelated configuration pattern error; that source was not changed",
+    "Summary text is display-only and does not prove approval, execution or success"
+  ],
+  "delivery": {
+    "installed": false,
+    "committed": false,
+    "pushed": false,
+    "tagged": false,
+    "published": false
+  },
+  "evidence": {
+    "pty_json": "../../../target/command-purpose-0.154.0-rc1/final/pty-acceptance/tool-visuals.json",
+    "pty_markdown": "../../../target/command-purpose-0.154.0-rc1/final/pty-acceptance/tool-visuals.md",
+    "web_json": "../../../target/command-purpose-0.154.0-rc1/final/web-acceptance/web-projection.json",
+    "initial_failed_pty_json": "../../../target/command-purpose-0.154.0-rc1/pty-acceptance/tool-visuals.json",
+    "web_screenshot": "command-purpose-web.jpg"
+  }
+}
