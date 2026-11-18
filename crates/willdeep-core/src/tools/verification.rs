@@ -505,12 +505,16 @@ pub(super) fn verification_status(status: &BackgroundTaskStatus) -> Verification
     }
 }
 
-/// 验证失效用来收窄范围的材料：命令跑之前和之后与 HEAD 不一致的路径，
-/// 以及 cargo 目标名到目录的映射。任何一项缺了，判定退回整库快照比较。
+/// 验证失效用来收窄范围的材料：命令前后的脏文件指纹及 Cargo 目标覆盖目录。
+/// 任一项缺失时退回整库快照比较。
 pub(super) struct VerificationCoverage {
-    pub dirty_before: Option<Vec<String>>,
-    pub dirty_after: Option<Vec<String>>,
-    pub package_dirs: Option<std::collections::BTreeMap<String, String>>,
+    pub dirty_before: Option<std::collections::BTreeMap<String, u64>>,
+    pub dirty_after: Option<std::collections::BTreeMap<String, u64>>,
+    pub view_id_before: Option<String>,
+    pub view_id_after: Option<String>,
+    pub head_before: Option<Option<String>>,
+    pub head_after: Option<Option<String>>,
+    pub package_dirs: Option<std::collections::BTreeMap<String, Vec<String>>>,
 }
 
 pub(super) struct FinishedVerification {
@@ -540,17 +544,24 @@ pub(super) fn finish_verification(
     match capture() {
         Ok(observed) if observed == *before => unchanged,
         Ok(observed) => {
-            // 整库快照变了，但变的都是这条命令覆盖不到的文件：另一个会话改了
-            // 无关文件，不该把一次退出码 0 的检查判成失效。两边的脏文件列表
-            // 缺任何一边，就退回整库比较，不猜。
+            // 整库快照变了，但覆盖路径的内容指纹没有变化，检查对结束快照也有效。
+            // 缺少结束快照或任一侧的指纹时，退回整库比较。
             if let Some(coverage) = coverage
-                && let (Some(earlier), Some(later)) = (
-                    coverage.dirty_before.as_deref(),
-                    coverage.dirty_after.as_deref(),
+                && coverage.view_id_before.as_ref() == before.as_ref()
+                && coverage.view_id_after.as_ref() == observed.as_ref()
+                && coverage.head_before.is_some()
+                && coverage.head_before == coverage.head_after
+                && let (Some(earlier), Some(later), Some(current)) = (
+                    coverage.dirty_before.as_ref(),
+                    coverage.dirty_after.as_ref(),
+                    observed.as_ref(),
                 )
                 && !covered_paths_changed(command, earlier, later, coverage.package_dirs.as_ref())
             {
-                return unchanged;
+                return FinishedVerification {
+                    status,
+                    observed_snapshot_id: Some(current.clone()),
+                };
             }
             output.push_str("\n[verification-invalidated] The workspace changed while this check ran, so exit code 0 is not evidence for the original files. This is not a test failure: another process or session may be writing to this workspace, or the check itself changed version-controlled files. Rerun once the workspace is stable.");
             FinishedVerification {
@@ -568,16 +579,13 @@ pub(super) fn finish_verification(
     }
 }
 
-/// 这条命令覆盖的路径里，有没有在两次快照之间发生变化的。
-///
-/// 覆盖范围从命令本身读：`cargo test -p 某包` 只覆盖宿主给出的该包目录，带路径的
-/// 脚本只覆盖那个文件。读不出来（裸 `cargo test`、`pytest`、`npm test`，或宿主没给
-/// 目标名到目录的映射）就覆盖整个工作区，维持原来的整库比较。宁可多判失效，不多放行。
+/// 对照命令覆盖路径的逐文件指纹，同一路径的内容再次变化也算失效。
+/// 范围读不出来时退回整库比较，宁可多判失效，不多放行。
 pub(crate) fn covered_paths_changed(
     command: &str,
-    before: &[String],
-    after: &[String],
-    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+    before: &std::collections::BTreeMap<String, u64>,
+    after: &std::collections::BTreeMap<String, u64>,
+    package_dirs: Option<&std::collections::BTreeMap<String, Vec<String>>>,
 ) -> bool {
     let Some(roots) = coverage_roots(command, package_dirs) else {
         return true;
@@ -590,24 +598,28 @@ pub(crate) fn covered_paths_changed(
                     .is_some_and(|rest| root.ends_with('/') || rest.starts_with('/'))
         })
     };
-    let earlier = before
+    before
         .iter()
-        .filter(|path| covers(path))
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut later = after
-        .iter()
-        .filter(|path| covers(path))
-        .collect::<std::collections::BTreeSet<_>>();
-    earlier.len() != later.len() || earlier.iter().any(|path| !later.remove(path))
+        .any(|(path, fingerprint)| covers(path) && after.get(path) != Some(fingerprint))
+        || after
+            .keys()
+            .any(|path| covers(path) && !before.contains_key(path))
 }
 
 /// 命令显式点名的覆盖根。`None` 表示命令没有把范围收窄到具体路径，或点了
 /// cargo 目标但宿主没给出它的目录，两种都按整库算。
 fn coverage_roots(
     command: &str,
-    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+    package_dirs: Option<&std::collections::BTreeMap<String, Vec<String>>>,
 ) -> Option<Vec<String>> {
     let words = verification_words(command)?;
+    // 工作区命令会执行多个目标，不能被后续的 --lib/--bin 缩成单包。
+    if words
+        .iter()
+        .any(|word| matches!(word.as_str(), "--workspace" | "--all"))
+    {
+        return None;
+    }
     let mut roots = Vec::new();
     let mut narrowed = false;
     let mut words = words.iter().map(String::as_str).peekable();
@@ -622,7 +634,7 @@ fn coverage_roots(
         if let Some(name) = target {
             narrowed = true;
             match package_dirs.and_then(|dirs| dirs.get(name)) {
-                Some(dir) => roots.push(dir.clone()),
+                Some(dirs) => roots.extend(dirs.iter().cloned()),
                 // 点了目标却不知道它在哪：不能假设它没被改到。
                 None => return None,
             }
@@ -743,23 +755,35 @@ pub(super) fn capture_accepted_snapshot(
     }
 }
 
-/// 当前快照里与 HEAD 不一致的路径。不是验证命令、或宿主没接这个能力时不拍。
-pub(super) fn dirty_paths_for(
+/// 一次抓取完整工作区视图，避免指纹、HEAD 和快照 ID 来自不同瞬间。
+pub(super) fn workspace_view_for(
     list: Option<&VerificationDirtyPaths>,
     accepted: bool,
-) -> Option<Vec<String>> {
+) -> Option<VerificationWorkspaceView> {
     if accepted {
-        list.and_then(|list| list().dirty_paths)
+        list.map(|list| list())
     } else {
         None
     }
 }
 
-/// cargo 目标名到工作区相对目录的映射。宿主没接时按整库比较。
-pub(super) fn package_dirs_for(
-    list: Option<&VerificationDirtyPaths>,
-) -> Option<std::collections::BTreeMap<String, String>> {
-    list.and_then(|list| list().package_dirs)
+pub(super) fn verification_coverage(
+    before: Option<VerificationWorkspaceView>,
+    after: Option<VerificationWorkspaceView>,
+) -> VerificationCoverage {
+    VerificationCoverage {
+        dirty_before: before
+            .as_ref()
+            .and_then(|view| view.dirty_fingerprints.clone()),
+        dirty_after: after
+            .as_ref()
+            .and_then(|view| view.dirty_fingerprints.clone()),
+        view_id_before: before.as_ref().and_then(|view| view.snapshot_id.clone()),
+        view_id_after: after.as_ref().and_then(|view| view.snapshot_id.clone()),
+        head_before: before.as_ref().and_then(|view| view.head.clone()),
+        head_after: after.as_ref().and_then(|view| view.head.clone()),
+        package_dirs: before.and_then(|view| view.package_dirs),
+    }
 }
 
 /// Known collection/listing/dry-run switches do not execute checks, even when
@@ -1033,6 +1057,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subdirectory_script_change_cannot_pass_as_an_unrelated_edit() {
+        let root = std::env::temp_dir().join(format!("cwd-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        std::fs::write(
+            root.join("child/checks.rb"),
+            "File.write('checks.rb', \"puts 'changed'\\n\")\n",
+        )
+        .unwrap();
+        let captured = root.join("child/checks.rb");
+        let tools = ToolRegistry::new(&root, ApprovalMode::FullAccess)
+            .unwrap()
+            .with_verification_snapshot(move || std::fs::read_to_string(&captured).ok())
+            .with_verification_reporter(|_| {});
+        tools
+            .require_verifications(&["ruby checks.rb".into()])
+            .unwrap();
+        let call = ToolCall {
+            id: "cwd-scope".into(),
+            name: "run_command".into(),
+            arguments: serde_json::json!({"command": "ruby checks.rb", "cwd": "child"}).to_string(),
+        };
+        let output = tools.execute(&call).await.unwrap();
+        assert!(output.contains("verification-invalidated"), "{output}");
+        assert!(!tools.completion_has_current_evidence(Some("puts 'changed'\n")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn configured_project_test_is_exact_and_bound_to_final_snapshot() {
         let root = std::env::temp_dir().join(format!("project-check-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1120,11 +1172,15 @@ mod tests {
     #[test]
     fn a_change_outside_the_command_coverage_does_not_invalidate_a_passing_check() {
         let dirs = std::collections::BTreeMap::from([
-            ("willdeep".to_owned(), "crates/willdeep-cli/".to_owned()),
+            (
+                "willdeep".to_owned(),
+                vec!["crates/willdeep-cli/".to_owned()],
+            ),
             (
                 "willdeep-core".to_owned(),
-                "crates/willdeep-core/".to_owned(),
+                vec!["crates/willdeep-core/".to_owned()],
             ),
+            ("lib".to_owned(), vec!["crates/willdeep-core/".to_owned()]),
         ]);
         let judge = |command: &str, before: &[&str], after: &[&str]| {
             let capture: VerificationSnapshot = Arc::new(|| Ok(Some("changed".into())));
@@ -1132,12 +1188,16 @@ mod tests {
             let owned = |paths: &[&str]| {
                 paths
                     .iter()
-                    .map(|path| (*path).to_owned())
-                    .collect::<Vec<_>>()
+                    .map(|path| ((*path).to_owned(), 0_u64))
+                    .collect::<std::collections::BTreeMap<_, _>>()
             };
             let coverage = VerificationCoverage {
                 dirty_before: Some(owned(before)),
                 dirty_after: Some(owned(after)),
+                view_id_before: Some("original".into()),
+                view_id_after: Some("changed".into()),
+                head_before: Some(Some("head".into())),
+                head_after: Some(Some("head".into())),
                 package_dirs: Some(dirs.clone()),
             };
             finish_verification(
@@ -1180,9 +1240,17 @@ mod tests {
             ),
             VerificationStatus::Invalidated
         );
-        // 裸命令覆盖整个工作区：任何一个文件变了都失效。
+        // 裸命令和 --workspace 命令覆盖整个工作区，不能按单个库缩小。
         assert_eq!(
             judge("cargo test", &["README.md"], &["README.md", "notes.md"]),
+            VerificationStatus::Invalidated
+        );
+        assert_eq!(
+            judge(
+                "cargo test --workspace --lib",
+                &["crates/willdeep-core/src/lib.rs"],
+                &["crates/willdeep-core/src/lib.rs", "crates/other/src/lib.rs"],
+            ),
             VerificationStatus::Invalidated
         );
         // 目录参数和过滤参数不是覆盖根：不能据此把范围收窄到一处。
@@ -1214,8 +1282,12 @@ mod tests {
         let capture: VerificationSnapshot = Arc::new(|| Ok(Some("changed".into())));
         let mut output = "exit_code: 0".to_owned();
         let coverage = VerificationCoverage {
-            dirty_before: Some(Vec::new()),
+            dirty_before: Some(std::collections::BTreeMap::new()),
             dirty_after: None,
+            view_id_before: Some("original".into()),
+            view_id_after: Some("changed".into()),
+            head_before: Some(Some("head".into())),
+            head_after: Some(Some("head".into())),
             package_dirs: Some(dirs),
         };
         assert_eq!(
@@ -1230,6 +1302,92 @@ mod tests {
             .status,
             VerificationStatus::Invalidated
         );
+    }
+
+    #[test]
+    fn rewriting_an_already_dirty_file_invalidates_a_scoped_check() {
+        let capture: VerificationSnapshot = Arc::new(|| Ok(Some("second-content".into())));
+        let coverage = VerificationCoverage {
+            dirty_before: Some(std::collections::BTreeMap::from([(
+                "crates/cli/src/lib.rs".into(),
+                1,
+            )])),
+            dirty_after: Some(std::collections::BTreeMap::from([(
+                "crates/cli/src/lib.rs".into(),
+                2,
+            )])),
+            view_id_before: Some("first-content".into()),
+            view_id_after: Some("second-content".into()),
+            head_before: Some(Some("head".into())),
+            head_after: Some(Some("head".into())),
+            package_dirs: Some(std::collections::BTreeMap::from([(
+                "cli".into(),
+                vec!["crates/cli/".into()],
+            )])),
+        };
+        let result = finish_verification(
+            Some(&capture),
+            "cargo test -p cli",
+            &Some("first-content".into()),
+            VerificationStatus::Passed,
+            &mut String::new(),
+            Some(&coverage),
+        );
+        assert_eq!(result.status, VerificationStatus::Invalidated);
+    }
+
+    #[test]
+    fn unrelated_edits_do_not_force_the_completion_gate_to_rerun_a_passing_check() {
+        let capture: VerificationSnapshot = Arc::new(|| Ok(Some("new-snapshot".into())));
+        let coverage = VerificationCoverage {
+            dirty_before: Some(std::collections::BTreeMap::new()),
+            dirty_after: Some(std::collections::BTreeMap::from([(
+                "crates/other/src/lib.rs".into(),
+                1,
+            )])),
+            view_id_before: Some("old-snapshot".into()),
+            view_id_after: Some("new-snapshot".into()),
+            head_before: Some(Some("head".into())),
+            head_after: Some(Some("head".into())),
+            package_dirs: Some(std::collections::BTreeMap::from([(
+                "cli".into(),
+                vec!["crates/cli/".into()],
+            )])),
+        };
+        let result = finish_verification(
+            Some(&capture),
+            "cargo test -p cli",
+            &Some("old-snapshot".into()),
+            VerificationStatus::Passed,
+            &mut String::new(),
+            Some(&coverage),
+        );
+        let mut changed_head = coverage;
+        changed_head.head_after = Some(Some("new-head".into()));
+        assert_eq!(
+            finish_verification(
+                Some(&capture),
+                "cargo test -p cli",
+                &Some("old-snapshot".into()),
+                VerificationStatus::Passed,
+                &mut String::new(),
+                Some(&changed_head),
+            )
+            .status,
+            VerificationStatus::Invalidated,
+            "a new HEAD can change clean files in the covered package"
+        );
+        let mut records = EvidenceRecords::default();
+        records.required.insert("cargo test -p cli".into());
+        records.record(CommandVerification {
+            snapshot_id: Some("old-snapshot".into()),
+            observed_snapshot_id: result.observed_snapshot_id,
+            command: "cargo test -p cli".into(),
+            exit_code: Some(0),
+            status: result.status,
+            summary: String::new(),
+        });
+        assert!(records.has_current_evidence(&Some("new-snapshot".into()), None));
     }
 
     #[tokio::test]

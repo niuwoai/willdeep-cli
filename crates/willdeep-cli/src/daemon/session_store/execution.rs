@@ -89,9 +89,17 @@ impl RuntimeSessionStore {
             } else {
                 core.messages.len()
             };
-            Ok((core.compression_generation, message_start))
+            let user_message_ordinal = core.messages[..message_start]
+                .iter()
+                .filter(|message| message.role == willdeep_core::Role::User)
+                .count();
+            Ok((
+                core.compression_generation,
+                message_start,
+                user_message_ordinal,
+            ))
         })();
-        let (message_generation, message_start) = match preparation {
+        let (message_generation, message_start, user_message_ordinal) = match preparation {
             Ok(boundary) => boundary,
             Err(error) => {
                 // A failed queue head must not retain global child priority or
@@ -113,6 +121,7 @@ impl RuntimeSessionStore {
         };
         turn.metadata.message_generation = message_generation;
         turn.metadata.message_start = Some(message_start);
+        turn.metadata.user_message_ordinal = Some(user_message_ordinal);
         turn.metadata.message_end = None;
         session.status = RuntimeSessionStatus::Queued;
         session.active_turn_id = Some(turn.metadata.id);
@@ -224,6 +233,12 @@ impl RuntimeSessionStore {
         } else {
             turn.metadata.message_start = Some(core.messages.len());
             turn.metadata.message_generation = core.compression_generation;
+            turn.metadata.user_message_ordinal = Some(
+                core.messages
+                    .iter()
+                    .filter(|message| message.role == willdeep_core::Role::User)
+                    .count(),
+            );
         }
         turn.metadata.message_end = None;
         persist_turns(&self.turns_path, &turns)
@@ -288,6 +303,63 @@ fn oldest_claimable_child(
         })
         .min()
         .map(|(_, _, turn)| turn)
+}
+
+/// 只认当前轮次持久化的用户消息。压缩后按用户消息序号重定位边界，
+/// 图片降级产生的描述仍视为同一条已经落盘的请求。
+pub(super) fn unrecorded_request(
+    core_store: &willdeep_core::SessionStore,
+    turn: &StoredRuntimeTurn,
+) -> Option<String> {
+    let core = core_store.load(turn.metadata.session_id).ok()?;
+    let recorded_message = if turn.metadata.message_generation == core.compression_generation {
+        turn.metadata
+            .message_start
+            .and_then(|start| core.messages.get(start))
+    } else {
+        // 压缩保留全部用户消息，但会移走中间的工具历史。使用认领时的用户
+        // 消息序号重定位，不能改用最后一条同文消息，否则上一轮会冒充本轮。
+        turn.metadata.user_message_ordinal.and_then(|ordinal| {
+            core.messages
+                .iter()
+                .filter(|message| message.role == willdeep_core::Role::User)
+                .nth(ordinal)
+        })
+    };
+    let recorded = recorded_message.is_some_and(|message| {
+        if message.role != willdeep_core::Role::User {
+            return false;
+        }
+        if message.content == turn.prompt && message.attachments == turn.attachments {
+            return true;
+        }
+        // 图片降级已把这条落盘消息改成描述文本并移除了图片；它仍是本轮
+        // 请求，不能再带原图要求降级模型处理一次。
+        turn.attachments.iter().any(|attachment| {
+            matches!(
+                attachment,
+                willdeep_core::types::MessageAttachment::Image { .. }
+            )
+        }) && message
+            .content
+            .strip_prefix(&turn.prompt)
+            .is_some_and(|suffix| {
+                suffix.starts_with(willdeep_core::types::IMAGE_DESCRIPTION_MARKER)
+            })
+            && message.attachments
+                == turn
+                    .attachments
+                    .iter()
+                    .filter(|attachment| {
+                        !matches!(
+                            attachment,
+                            willdeep_core::types::MessageAttachment::Image { .. }
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+    });
+    (!recorded).then(|| turn.prompt.clone())
 }
 
 #[cfg(test)]
