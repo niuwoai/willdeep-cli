@@ -1,6 +1,6 @@
 # 当前请求与验证门禁边界验收
 
-日期：2026-11-18。版本：0.153.0-rc5（develop 已使用 0.153.0-rc2 至 rc4，本次修复由 0.152.0-rc6 顺延）。当前状态：已与 develop rc4 合并，定向回归通过。此前 1343 项通过的全量回归只覆盖合入当时 rc1 的树，不作为本次合并的结果。未安装或发布。
+日期：2026-11-18。版本：0.153.0-rc5（develop 已使用 0.153.0-rc2 至 rc4，本次修复由 0.152.0-rc6 顺延）。当前状态：已合入 develop 并发布。此前 1343 项通过的全量回归只覆盖合入当时 rc1 的树，不作为与 rc4 合并后的结果。
 
 ## 行为
 
@@ -39,4 +39,13 @@
 
 命令通过 `start_new_session` 等方式脱离原进程组后，执行层的进程组清理追不到，快照层也无法把它和其他会话的写入分开。这种情况保留为已知限制，不在本轮用命令名白名单或自建 shell 解析器去猜。
 
-本轮不替代真实模型行为、三端完整运行时、跨平台 CI 或本机安装验收；没有为不可由浏览器证明的 Core 修复启动无关预览服务器。没有声称已从真实会话取证确认截图的具体触发条件。
+本轮不替代真实模型行为或三端完整运行时；没有为不可由浏览器证明的 Core 修复启动无关预览服务器。没有声称已从真实会话取证确认截图的具体触发条件。
+
+## 发布与安装
+
+2026-11-18，PR #159 的 10 项检查全部通过后，合并提交 `7331a6fc` 进入 `develop` 与 `main`，annotated tag `v0.153.0-rc5` 指向它。Release 工作流 `44296286520` 全部成功，产物为 `willdeep-macos-universal.tar.gz`、`willdeep-linux-amd64.tar.gz`、`willdeep-linux-arm64.tar.gz`。
+
+- 本机 `~/.cargo/bin/willdeep` 与 `/opt/homebrew/bin/willdeep` 均为 `0.153.0-rc5`；Homebrew formula 提交为 `willdeep-cli 0.153.0-rc5`。daemon 从 `0.153.0-rc3` 交接到 `0.153.0-rc5`（pid 11906）。
+- q4 经 `q4-pub` 替换用户 `willdeep` 与 root 两份二进制，旧版 `0.149.0-rc2` 分别留在对应目录的 `willdeep.bak-0.149.0-rc2`。升级前没有等待事件；daemon 交接到 `0.153.0-rc5`（pid 3207080）。
+- iMac 内网直连被断开，经 `imac-pub` 替换 `/Users/yuanli/.cargo/bin/willdeep`，旧版 `0.153.0-rc3` 留在 `willdeep.bak-0.153.0-rc3`。升级前没有等待事件；daemon 交接到 `0.153.0-rc5`（pid 75344）。
+- `~/Sites/willdeep-react-static` 的 `src` 与 `content` 没有写死 CLI 版本或 macOS 下载包名，未改站点。
