@@ -215,8 +215,13 @@ pub(super) fn show_when_idle(app: &mut App, home: &Path) {
         "https://github.com/niuwoai/willdeep-cli/releases/tag/{}",
         release.tag_name
     );
-    app.append_transcript(format!("System: {} {} · {url}\n{}",
-        app.language.text("WillDeep CLI 有新版可用", "A new WillDeep CLI version is available", "WillDeep CLI の新バージョンがあります"),
+    app.append_transcript(format!(
+        "System: {} {} · {url}\n{}",
+        app.language.text(
+            "WillDeep CLI 有新版可用",
+            "A new WillDeep CLI version is available",
+            "WillDeep CLI の新バージョンがあります"
+        ),
         release.tag_name,
         client_update_hint(app.language),
     ));
@@ -249,7 +254,10 @@ mod tests {
     #[test]
     fn client_update_hint_mentions_npm_and_brew() {
         let hint = client_update_hint(crate::i18n::Language::ZhCn);
-        assert!(hint.contains("npm install -g @niuwoai/willdeep@rc"), "{hint}");
+        assert!(
+            hint.contains("npm install -g @niuwoai/willdeep@rc"),
+            "{hint}"
+        );
         assert!(hint.contains("brew"), "{hint}");
         assert!(hint.contains("/daemon upgrade"), "{hint}");
         assert!(hint.contains("check_updates = false"), "{hint}");

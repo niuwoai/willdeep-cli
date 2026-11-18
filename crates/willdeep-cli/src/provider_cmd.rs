@@ -52,7 +52,13 @@ pub(crate) fn run(action: ProviderAction, config_path: Option<&Path>) -> Result<
             name,
             api_key_env,
             model,
-        } => add(config_path, &url, name.as_deref(), api_key_env.as_deref(), model.as_deref()),
+        } => add(
+            config_path,
+            &url,
+            name.as_deref(),
+            api_key_env.as_deref(),
+            model.as_deref(),
+        ),
         ProviderAction::Remove { name } => remove(config_path, &name),
     }
 }
@@ -113,8 +119,8 @@ fn list(config_path: Option<&Path>, json: bool) -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20} {:<18} {:<20} {:<8} {}",
-        "NAME", "PROVIDER", "API", "DEFAULT", "CREDENTIALS"
+        "{:<20} {:<18} {:<20} {:<8} CREDENTIALS",
+        "NAME", "PROVIDER", "API", "DEFAULT"
     );
     for row in rows {
         println!(
@@ -149,7 +155,11 @@ fn credential_label(profile: &config::ProviderProfile) -> String {
             if present { "set" } else { "unset" }
         );
     }
-    if profile.api_key.as_deref().is_some_and(|value| !value.is_empty()) {
+    if profile
+        .api_key
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
         return "api_key=configured".to_owned();
     }
     "missing".to_owned()
@@ -203,12 +213,7 @@ fn add(
         ("api", api_label),
         ("api_base", normalized.as_str()),
     ] {
-        patched = patch_key(
-            &patched,
-            Some(&section),
-            key,
-            Some(toml_string(value)),
-        );
+        patched = patch_key(&patched, Some(&section), key, Some(toml_string(value)));
     }
     if let Some(variable) = &api_key_env {
         patched = patch_key(
@@ -223,12 +228,7 @@ fn add(
     }
     let set_default = old.default_provider.is_none() && old.providers.is_empty();
     if set_default {
-        patched = patch_key(
-            &patched,
-            None,
-            "default_provider",
-            Some(toml_string(&id)),
-        );
+        patched = patch_key(&patched, None, "default_provider", Some(toml_string(&id)));
     }
 
     save_validated(&path, &patched)?;
@@ -284,19 +284,15 @@ fn remove(config_path: Option<&Path>, name: &str) -> Result<()> {
             .collect::<Vec<_>>();
         if remaining.len() == 1 {
             let next = &remaining[0];
-            patched = patch_key(
-                &patched,
-                None,
-                "default_provider",
-                Some(toml_string(next)),
-            );
+            patched = patch_key(&patched, None, "default_provider", Some(toml_string(next)));
             default_note = Some(format!("default_provider retargeted to `{next}`"));
         } else {
             patched = patch_key(&patched, None, "default_provider", None);
             default_note = Some(if remaining.is_empty() {
                 "default_provider cleared (no providers left)".to_owned()
             } else {
-                "default_provider cleared; set one with `default_provider` in config.toml".to_owned()
+                "default_provider cleared; set one with `default_provider` in config.toml"
+                    .to_owned()
             });
         }
     }
@@ -328,8 +324,8 @@ fn provider_references(file: &ConfigFile, name: &str) -> Vec<String> {
 }
 
 fn save_validated(path: &Path, patched: &str) -> Result<()> {
-    let parsed: ConfigFile =
-        toml::from_str(patched).with_context(|| format!("validate updated configuration: {}", path.display()))?;
+    let parsed: ConfigFile = toml::from_str(patched)
+        .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     config::validate(&parsed, path)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create configuration directory")?;
@@ -362,9 +358,7 @@ fn normalize_api_base(url: &str) -> Result<String> {
             }
         }
         ProviderKind::OpenAiCompatible | ProviderKind::SomeIm => {
-            if path.is_empty() || path == "/" {
-                normalized.set_path("/v1");
-            } else if path == "/v1" {
+            if path.is_empty() || path == "/" || path == "/v1" {
                 normalized.set_path("/v1");
             } else if path.ends_with("/v1") {
                 normalized.set_path(&path);
@@ -385,9 +379,7 @@ fn normalize_api_base(url: &str) -> Result<String> {
 fn resolve_provider_id(explicit: Option<&str>, api_base: &str) -> Result<String> {
     if let Some(name) = explicit.map(str::trim).filter(|value| !value.is_empty()) {
         if !safe_provider_id(name) {
-            bail!(
-                "provider id must use ASCII letters, numbers, '_' or '-' (1 to 64 characters)"
-            );
+            bail!("provider id must use ASCII letters, numbers, '_' or '-' (1 to 64 characters)");
         }
         return Ok(name.to_owned());
     }
@@ -461,7 +453,8 @@ mod tests {
 
     fn temp_home() -> (TempDirGuard, PathBuf) {
         // 用系统临时目录直接拼 UUID，测完 Drop 时删；不另引 tempfile。
-        let root = std::env::temp_dir().join(format!("willdeep-provider-cmd-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("willdeep-provider-cmd-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("temp home");
         let path = root.join("config.toml");
         (TempDirGuard(root), path)
@@ -497,14 +490,7 @@ mod tests {
     #[test]
     fn add_list_remove_round_trip_without_plaintext_key() {
         let (_guard, path) = temp_home();
-        add(
-            Some(&path),
-            "https://some.im/",
-            Some("someim"),
-            None,
-            None,
-        )
-        .expect("add");
+        add(Some(&path), "https://some.im/", Some("someim"), None, None).expect("add");
         let written = std::fs::read_to_string(&path).expect("read");
         assert!(written.contains("[providers.someim]"));
         assert!(written.contains("api_base = \"https://some.im/v1\""));
@@ -512,14 +498,13 @@ mod tests {
         assert!(written.contains("default_provider = \"someim\""));
         assert!(!written.contains("api_key"));
 
-        let duplicate = add(
-            Some(&path),
-            "https://some.im/",
-            Some("someim"),
-            None,
-            None,
+        let duplicate = add(Some(&path), "https://some.im/", Some("someim"), None, None);
+        assert!(
+            duplicate
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
         );
-        assert!(duplicate.unwrap_err().to_string().contains("already exists"));
 
         list(Some(&path), true).expect("list");
         remove(Some(&path), "someim").expect("remove");
