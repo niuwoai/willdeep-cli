@@ -1,0 +1,263 @@
+{
+  "source_commit": "8372c94203ea5514d289a857e3f953d8ab360c83",
+  "version": "0.153.0-rc1",
+  "verified_at": "2026-11-17T16:44:39Z",
+  "artifact_sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9",
+  "backup": "/Users/rocky/.local/share/willdeep/backups/20261118-rc4-before-0.153.0-rc1",
+  "entries": [
+    {
+      "path": "/Users/rocky/.cargo/bin/willdeep",
+      "real_path": "/Users/rocky/.cargo/bin/willdeep",
+      "version": "willdeep 0.153.0-rc1",
+      "sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9",
+      "runtime": "running\tpid=30640\taddress=127.0.0.1:54018\tversion=0.153.0-rc1\tuptime=48s",
+      "doctor_overall": "warning",
+      "doctor_checks": [
+        {
+          "name": "config",
+          "status": "pass"
+        },
+        {
+          "name": "notifications",
+          "status": "pass"
+        },
+        {
+          "name": "provider",
+          "status": "pass"
+        },
+        {
+          "name": "workspace",
+          "status": "pass"
+        },
+        {
+          "name": "git",
+          "status": "pass"
+        },
+        {
+          "name": "sandbox",
+          "status": "pass"
+        },
+        {
+          "name": "web_assets",
+          "status": "pass"
+        },
+        {
+          "name": "plugins",
+          "status": "pass"
+        },
+        {
+          "name": "lsp",
+          "status": "warning"
+        },
+        {
+          "name": "ast_grep",
+          "status": "warning"
+        },
+        {
+          "name": "browser",
+          "status": "pass"
+        },
+        {
+          "name": "web_search",
+          "status": "pass"
+        },
+        {
+          "name": "mcp",
+          "status": "pass"
+        },
+        {
+          "name": "runtime",
+          "status": "pass"
+        }
+      ],
+      "runtime_doctor": {
+        "name": "runtime",
+        "status": "pass",
+        "summary": "running; version=0.153.0-rc1; version_match=true; transport=unix_socket; uptime=48s"
+      }
+    },
+    {
+      "path": "/opt/homebrew/bin/willdeep",
+      "real_path": "/opt/homebrew/Cellar/willdeep-cli/0.149.0-rc12/bin/willdeep",
+      "version": "willdeep 0.153.0-rc1",
+      "sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9",
+      "runtime": "running\tpid=30640\taddress=127.0.0.1:54018\tversion=0.153.0-rc1\tuptime=49s",
+      "doctor_overall": "warning",
+      "doctor_checks": [
+        {
+          "name": "config",
+          "status": "pass"
+        },
+        {
+          "name": "notifications",
+          "status": "pass"
+        },
+        {
+          "name": "provider",
+          "status": "pass"
+        },
+        {
+          "name": "workspace",
+          "status": "pass"
+        },
+        {
+          "name": "git",
+          "status": "pass"
+        },
+        {
+          "name": "sandbox",
+          "status": "pass"
+        },
+        {
+          "name": "web_assets",
+          "status": "pass"
+        },
+        {
+          "name": "plugins",
+          "status": "pass"
+        },
+        {
+          "name": "lsp",
+          "status": "warning"
+        },
+        {
+          "name": "ast_grep",
+          "status": "warning"
+        },
+        {
+          "name": "browser",
+          "status": "pass"
+        },
+        {
+          "name": "web_search",
+          "status": "pass"
+        },
+        {
+          "name": "mcp",
+          "status": "pass"
+        },
+        {
+          "name": "runtime",
+          "status": "pass"
+        }
+      ],
+      "runtime_doctor": {
+        "name": "runtime",
+        "status": "pass",
+        "summary": "running; version=0.153.0-rc1; version_match=true; transport=unix_socket; uptime=49s"
+      }
+    }
+  ],
+  "passed": true,
+  "web_assets": {
+    "version": "0.153.0-rc1",
+    "source_commit": "8372c94203ea5514d289a857e3f953d8ab360c83",
+    "artifact_sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9",
+    "embedded_index_matches": true,
+    "assets": [
+      {
+        "path": "/assets/index-D51g4cd4.js",
+        "bytes": 970985,
+        "sha256": "95e7311d84c40df621b7a2ecdc5e5324c79a763e32c2f0e6d296efdc6108ccaf"
+      },
+      {
+        "path": "/assets/shareMessages-DIMqt2I4.js",
+        "bytes": 358750,
+        "sha256": "3ac5d9e3b68655d98b9eae8ef743f21c2ab64d6edc35da77ec2aeda9f12e4e49"
+      },
+      {
+        "path": "/assets/index-C82JofDj.css",
+        "bytes": 111809,
+        "sha256": "6bbf559a8c749f7e36584bf9575a9498337bf460963eaf40297ef9d119228d6e"
+      }
+    ],
+    "passed": true
+  },
+  "release_acceptance": {
+    "version": "willdeep 0.153.0-rc1",
+    "source_commit": "8372c94203ea5514d289a857e3f953d8ab360c83",
+    "artifact_sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9",
+    "checks": [
+      {
+        "name": "empty query: six members first, bare mention values",
+        "passed": true
+      },
+      {
+        "name": "query filters before limiting: seventh member found case-insensitively",
+        "passed": true
+      },
+      {
+        "name": "no matching reference gives empty candidates",
+        "passed": true
+      },
+      {
+        "name": "explicit file type excludes members and finds README",
+        "passed": true
+      },
+      {
+        "name": "session-scoped members: switching groups exposes omega only",
+        "passed": true
+      },
+      {
+        "name": "real PTY /groups lists both groups",
+        "passed": true
+      },
+      {
+        "name": "real PTY paste filters group picker without submitting a prompt",
+        "passed": true
+      },
+      {
+        "name": "real PTY Escape dismisses group picker",
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  "ci": {
+    "checked_at": "2026-11-17T16:15:51Z",
+    "pr155": {
+      "conclusion": "success",
+      "url": "https://github.com/niuwoai/willdeep-cli/actions/runs/44093578622"
+    },
+    "pr156": {
+      "conclusion": "success",
+      "url": "https://github.com/niuwoai/willdeep-cli/actions/runs/44089881982"
+    },
+    "develop": {
+      "url": "https://github.com/niuwoai/willdeep-cli/actions/runs/44097334755",
+      "passed_jobs": 4,
+      "failed_jobs": 0,
+      "queued_jobs": 1,
+      "queued_job": "test (ubuntu-latest)",
+      "runner": "willdeep-q4-pub",
+      "runner_status": "offline",
+      "runner_busy": false,
+      "assigned_runner_id": 0,
+      "executed_steps": 0
+    }
+  },
+  "runtime_process": {
+    "pid": 30640,
+    "executable": "/Users/rocky/.cargo/bin/willdeep",
+    "artifact_sha256": "c3ebd07977960911cfb291a268e01900929e3b6d09556a827b2fb75892a540f9"
+  },
+  "doctor_warnings": [
+    {
+      "name": "lsp",
+      "status": "warning",
+      "reason": "2/2 依赖可用，1/2 配置有效；另一个配置被校验拒绝，未启动语言服务。"
+    },
+    {
+      "name": "ast_grep",
+      "status": "warning",
+      "reason": "未找到位于工作区外可信绝对 PATH 中的 ast-grep 依赖。"
+    }
+  ],
+  "published": false,
+  "code_changed": false,
+  "migration": "未新增或执行数据库迁移；未执行 migrate down",
+  "verification_notes": [
+    "首次安装前检查因停止状态输出匹配过严而退出，安装未执行；校正为实际 CLI 输出后确认私有 Runtime 已停止并完成安装。",
+    "浏览器验收误触重命名时遇到预览容器不支持 window.prompt；该交互未计入通过项。"
+  ]
+}
