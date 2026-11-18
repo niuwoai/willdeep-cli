@@ -982,6 +982,7 @@ fn swift_session(path: &Path) -> Result<Session, SessionError> {
             };
             Some(Message {
                 role,
+                runtime_turn_id: None,
                 source: message
                     .get("source")
                     .and_then(|source| serde_json::from_value(source.clone()).ok()),

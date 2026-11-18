@@ -2910,6 +2910,9 @@ fn prepare_core_for_turn_replay(
     let same_attachments =
         serde_json::to_vec(&message.attachments)? == serde_json::to_vec(&turn.attachments)?;
     if message.role != willdeep_core::Role::User
+        || message
+            .runtime_turn_id
+            .is_some_and(|id| id != turn.metadata.id)
         || message.content != turn.prompt
         || !same_attachments
     {

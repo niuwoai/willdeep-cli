@@ -592,7 +592,8 @@ pub(crate) fn covered_paths_changed(
     };
     let covers = |path: &str| {
         roots.iter().any(|root| {
-            path == root.as_str()
+            root.is_empty()
+                || path == root.as_str()
                 || path
                     .strip_prefix(root.as_str())
                     .is_some_and(|rest| root.ends_with('/') || rest.starts_with('/'))
@@ -606,71 +607,76 @@ pub(crate) fn covered_paths_changed(
             .any(|path| covers(path) && !before.contains_key(path))
 }
 
-/// 命令显式点名的覆盖根。`None` 表示命令没有把范围收窄到具体路径，或点了
-/// cargo 目标但宿主没给出它的目录，两种都按整库算。
+/// 只有可明确解析的 cargo test 能使用 Cargo 依赖闭包。脚本路径只是入口，
+/// 不能证明其依赖范围；未知选项、其他 cwd/manifest/config 或复杂 shell 均退回整库。
 fn coverage_roots(
     command: &str,
     package_dirs: Option<&std::collections::BTreeMap<String, Vec<String>>>,
 ) -> Option<Vec<String>> {
     let words = verification_words(command)?;
-    // 工作区命令会执行多个目标，不能被后续的 --lib/--bin 缩成单包。
-    if words
-        .iter()
-        .any(|word| matches!(word.as_str(), "--workspace" | "--all"))
+    if !matches!(words.as_slice(), [cargo, test, ..] if cargo == "cargo" && test == "test")
+        || !executes_checks(&words)
     {
         return None;
     }
     let mut roots = Vec::new();
-    let mut narrowed = false;
-    let mut words = words.iter().map(String::as_str).peekable();
+    let mut words = words[2..].iter().map(String::as_str);
     while let Some(word) = words.next() {
-        let target = match word {
+        // libtest 的参数不能被重新解释成 Cargo 包/目标选择器。
+        if word == "--" {
+            break;
+        }
+        let (option, inline) = word
+            .split_once('=')
+            .map_or((word, None), |(option, value)| (option, Some(value)));
+        let target = match option {
             "-p" | "--package" | "--bin" | "--test" | "--example" | "--bench" => {
-                words.next().filter(|name| valid_target_name(name))
+                let name = inline.or_else(|| words.next())?;
+                if !valid_target_name(name) {
+                    return None;
+                }
+                Some(name)
             }
-            "--lib" => Some("lib"),
-            _ => None,
+            "--lib" if inline.is_none() => Some("lib"),
+            "--features" | "-F" | "--profile" | "-j" | "--jobs" => {
+                let value = inline.or_else(|| words.next())?;
+                if value.is_empty() || value.starts_with('-') {
+                    return None;
+                }
+                None
+            }
+            "--release"
+            | "--all-features"
+            | "--no-default-features"
+            | "--offline"
+            | "--locked"
+            | "--frozen"
+            | "--quiet"
+            | "-q"
+            | "--verbose"
+            | "-v"
+            | "--all-targets"
+            | "--bins"
+            | "--tests"
+            | "--examples"
+            | "--benches"
+            | "--doc"
+                if inline.is_none() =>
+            {
+                None
+            }
+            _ if !word.starts_with('-') => None, // 测试名过滤器不改变包的输入范围。
+            _ => return None,
         };
         if let Some(name) = target {
-            narrowed = true;
-            match package_dirs.and_then(|dirs| dirs.get(name)) {
-                Some(dirs) => roots.extend(dirs.iter().cloned()),
-                // 点了目标却不知道它在哪：不能假设它没被改到。
-                None => return None,
+            let dirs = package_dirs?.get(name)?;
+            if dirs.is_empty() {
+                return None;
             }
-            continue;
-        }
-        if let Some(root) = workspace_relative_path(word) {
-            narrowed = true;
-            roots.push(root);
+            roots.extend(dirs.iter().cloned());
         }
     }
-    narrowed.then_some(roots)
-}
-
-/// 命令里显式点名的脚本文件才算覆盖根：`ruby checks.rb`、`python tests/run.py`。
-/// 目录（`pytest tests/`）和过滤参数（`cargo test -p x tools::`）不算——它们只是
-/// 命令的参数，不能据此把覆盖范围收窄到一处。绝对路径和 `..` 也不算。
-fn workspace_relative_path(word: &str) -> Option<String> {
-    if word.starts_with('-') || word.ends_with('/') || word.contains(':') {
-        return None;
-    }
-    let path = std::path::Path::new(word);
-    if path.is_absolute()
-        || path.components().any(|component| {
-            !matches!(
-                component,
-                std::path::Component::Normal(_) | std::path::Component::CurDir
-            )
-        })
-    {
-        return None;
-    }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    name.contains('.').then(|| word.to_owned())
+    (!roots.is_empty()).then_some(roots)
 }
 
 fn valid_target_name(name: &str) -> bool {
@@ -782,7 +788,10 @@ pub(super) fn verification_coverage(
         view_id_after: after.as_ref().and_then(|view| view.snapshot_id.clone()),
         head_before: before.as_ref().and_then(|view| view.head.clone()),
         head_after: after.as_ref().and_then(|view| view.head.clone()),
-        package_dirs: before.and_then(|view| view.package_dirs),
+        package_dirs: before.and_then(|view| {
+            let dirs = view.package_dirs?;
+            (after.as_ref()?.package_dirs.as_ref()? == &dirs).then_some(dirs)
+        }),
     }
 }
 
@@ -995,6 +1004,9 @@ fn verification_words(command: &str) -> Option<Vec<String>> {
     }
     Some(words)
 }
+
+#[cfg(test)]
+mod coverage_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1223,10 +1235,10 @@ mod tests {
             ),
             VerificationStatus::Passed
         );
-        // 带路径的脚本只覆盖那个文件，别处的改动不算。
+        // 脚本没有可信依赖图，入口文件以外的变化也必须失效。
         assert_eq!(
             judge("ruby checks.rb", &["notes.md"], &["notes.md", "README.md"],),
-            VerificationStatus::Passed
+            VerificationStatus::Invalidated
         );
         // 覆盖范围内的文件变了，照旧失效。
         assert_eq!(

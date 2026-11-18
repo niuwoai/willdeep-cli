@@ -26,7 +26,13 @@ pub(super) fn snapshot(workspace: &Path) -> Result<Option<String>, String> {
             discovery.status
         ));
     }
-    crate::daemon::diff_review::snapshot(workspace)
+    // porcelain -z 的路径以 Git 根目录为基准，子目录工作区也必须在同一坐标抓取。
+    let root = std::path::PathBuf::from(
+        String::from_utf8(discovery.stdout)
+            .map_err(|_| "Git workspace root is not UTF-8".to_owned())?
+            .trim_end_matches('\n'),
+    );
+    crate::daemon::diff_review::snapshot(&root)
         .map(|snapshot| Some(snapshot.id))
         .map_err(|error| {
             let diagnostic = discovery_diagnostic(&format!("{}: {error:#}", workspace.display()));
@@ -66,13 +72,31 @@ fn package_dirs(workspace: &Path) -> Option<std::collections::BTreeMap<String, V
         return None;
     }
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let root = std::path::Path::new(metadata.get("workspace_root")?.as_str()?);
+    let discovery = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !discovery.status.success() {
+        return None;
+    }
+    let git_root = std::path::PathBuf::from(
+        std::str::from_utf8(&discovery.stdout)
+            .ok()?
+            .trim_end_matches('\n'),
+    )
+    .canonicalize()
+    .ok()?;
+    let root = Path::new(metadata.get("workspace_root")?.as_str()?)
+        .canonicalize()
+        .ok()?;
     let packages = metadata.get("packages")?.as_array()?;
     let prefix = |path: &Path| -> Option<String> {
-        let relative = path
-            .strip_prefix(root)
+        let canonical = path.canonicalize().ok()?;
+        let relative = canonical
+            .strip_prefix(&git_root)
             .ok()?
-            .to_string_lossy()
+            .to_str()?
             .replace('\\', "/");
         Some(if relative.is_empty() {
             String::new()
@@ -93,15 +117,28 @@ fn package_dirs(workspace: &Path) -> Option<std::collections::BTreeMap<String, V
             .collect::<Option<Vec<_>>>()?;
         dependencies.insert(own, local);
     }
-    let shared_inputs = [
-        "Cargo.toml",
-        "Cargo.lock",
-        ".cargo/config",
-        ".cargo/config.toml",
-        "rust-toolchain",
-        "rust-toolchain.toml",
-    ];
-    let mut dirs = BTreeMap::new();
+    let mut shared_inputs = BTreeSet::new();
+    // Cargo/Rustup 也读取调用目录的祖先配置；全部使用 Git 根目录相对路径。
+    for ancestor in workspace
+        .canonicalize()
+        .ok()?
+        .ancestors()
+        .chain(root.ancestors())
+        .filter(|path| path.starts_with(&git_root))
+    {
+        let base = prefix(ancestor)?;
+        for input in [
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/config",
+            ".cargo/config.toml",
+            "rust-toolchain",
+            "rust-toolchain.toml",
+        ] {
+            shared_inputs.insert(format!("{base}{input}"));
+        }
+    }
+    let mut dirs = BTreeMap::<String, Vec<String>>::new();
     let mut lib_roots = BTreeSet::new();
     for package in packages {
         let name = package.get("name")?.as_str()?;
@@ -113,9 +150,22 @@ fn package_dirs(workspace: &Path) -> Option<std::collections::BTreeMap<String, V
                 pending.extend(dependencies.get(&dir)?.iter().cloned());
             }
         }
-        covered.extend(shared_inputs.iter().map(|path| (*path).to_owned()));
+        // 显式 target.src_path 可以放在包目录之外，本地依赖的自定义目标也要计入。
+        let package_roots = covered.clone();
+        for dependency in packages {
+            let manifest = Path::new(dependency.get("manifest_path")?.as_str()?);
+            if package_roots.contains(&prefix(manifest.parent()?)?) {
+                for target in dependency.get("targets")?.as_array()? {
+                    let source = Path::new(target.get("src_path")?.as_str()?);
+                    covered.insert(prefix(source.parent()?)?);
+                }
+            }
+        }
+        covered.extend(shared_inputs.iter().cloned());
         let roots = covered.into_iter().collect::<Vec<_>>();
-        dirs.insert(name.to_owned(), roots.clone());
+        dirs.entry(name.to_owned())
+            .or_default()
+            .extend(roots.iter().cloned());
         if package
             .get("targets")?
             .as_array()?
@@ -127,12 +177,19 @@ fn package_dirs(workspace: &Path) -> Option<std::collections::BTreeMap<String, V
         for target in package.get("targets")?.as_array()? {
             let target_name = target.get("name")?.as_str()?;
             if target_name != name {
-                dirs.insert(target_name.to_owned(), roots.clone());
+                // 包名和不同包的目标名可能相同，别名必须保守合并，不能覆盖。
+                dirs.entry(target_name.to_owned())
+                    .or_default()
+                    .extend(roots.iter().cloned());
             }
         }
     }
     if !lib_roots.is_empty() {
-        dirs.insert("lib".to_owned(), lib_roots.into_iter().collect());
+        dirs.entry("lib".to_owned()).or_default().extend(lib_roots);
+    }
+    for roots in dirs.values_mut() {
+        roots.sort();
+        roots.dedup();
     }
     Some(dirs)
 }
@@ -142,9 +199,12 @@ fn target_is_lib(target: &serde_json::Value) -> bool {
         .get("kind")
         .and_then(|kind| kind.as_array())
         .is_some_and(|kinds| {
-            kinds
-                .iter()
-                .any(|kind| matches!(kind.as_str(), Some("lib") | Some("proc-macro")))
+            kinds.iter().any(|kind| {
+                matches!(
+                    kind.as_str(),
+                    Some("lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro")
+                )
+            })
         })
 }
 
@@ -173,6 +233,9 @@ fn discovery_diagnostic(stderr: &str) -> String {
         .take(MAX_DISCOVERY_ERROR_CHARS)
         .collect()
 }
+
+#[cfg(test)]
+mod coverage_tests;
 
 #[cfg(test)]
 mod tests {

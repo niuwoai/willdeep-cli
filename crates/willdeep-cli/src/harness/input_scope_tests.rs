@@ -89,7 +89,7 @@ impl InputFixture {
         }
     }
 
-    async fn harness(&self) -> BuiltHarness {
+    pub(super) async fn harness(&self) -> BuiltHarness {
         // Construct only the local host services. All model execution is replaced
         // by the synthetic provider; Anthropic construction does no discovery IO.
         let config = self.root.join("config.toml");

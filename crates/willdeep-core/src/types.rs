@@ -18,6 +18,10 @@ pub struct Message {
     /// Display provenance, independent of the provider-facing role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<MessageSource>,
+    /// Durable host provenance for a Runtime Turn. Input rewriting and
+    /// compaction preserve it; provider adapters omit it from model requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_turn_id: Option<uuid::Uuid>,
     pub content: String,
     /// 思考型模型（DeepSeek、GLM 等）在 thinking 模式下要求把上一轮的
     /// `reasoning_content` 原样回传，否则整条历史会被上游判为非法。
@@ -95,6 +99,7 @@ impl Message {
         Self {
             role: Role::Assistant,
             source: None,
+            runtime_turn_id: None,
             content: content.into(),
             reasoning: None,
             tool_call_id: None,
@@ -138,6 +143,7 @@ impl Message {
         Self {
             role: Role::Tool,
             source: None,
+            runtime_turn_id: None,
             content: content.into(),
             reasoning: None,
             tool_call_id: Some(call.id.clone()),
@@ -151,6 +157,7 @@ impl Message {
         Self {
             role,
             source: None,
+            runtime_turn_id: None,
             content: content.into(),
             reasoning: None,
             tool_call_id: None,
@@ -348,6 +355,7 @@ mod tests {
             Message {
                 role: Role::Tool,
                 source: None,
+                runtime_turn_id: None,
                 content: "legacy orphan".to_owned(),
                 reasoning: None,
                 tool_call_id: None,
