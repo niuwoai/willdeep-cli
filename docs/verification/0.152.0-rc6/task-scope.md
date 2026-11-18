@@ -1,6 +1,6 @@
 # 当前请求与验证门禁边界验收
 
-日期：2026-11-18。版本：0.152.0-rc6。当前状态：最终代码的 Core 全量回归已通过；未提交、推送、安装或发布。
+日期：2026-11-18。版本：0.153.0-rc2（合入 develop 后由 0.152.0-rc6 顺延）。当前状态：合入 develop 后的 Core 全量回归已通过。未安装或发布。
 
 ## 行为
 
@@ -17,7 +17,7 @@
 
 首次复现 4 项失败：3 项查询在外部变化后实际返回 `Unverified`，预期 `Finished`；另 1 项 shell 写入夹具因未配置审批回调而未执行，不能计为产品缺陷。补齐夹具的一次性审批后，真实写入得到执行并保留验证要求。修复后的首轮输入边界回归 12 项全部通过；扩充后的边界回归 17 项全部通过，包含失败写入、后台命令、历史计划保留和完成契约已满足后的验证要求。
 
-首轮 Core 全量回归（1346 项）发现 `restarting_an_unverified_run_preserves_its_original_baseline` 失败：原始同任务/host 检查点入口的首次执行还没有保存基线，被误归为独立输入。修复为由显式 new-input 包装开启独立作用域，原始 sink 即使尚未保存基线也保留严格门禁；保持该恢复测试原有断言不变。该轮全量结果为 1338 通过、1 失败、7 忽略，运行的是这项修复之前的二进制，不能计为最终结果。最终代码重跑后为 1343 通过、0 失败、7 忽略，退出码 0，耗时 420.70 秒。
+首轮 Core 全量回归（1346 项）发现 `restarting_an_unverified_run_preserves_its_original_baseline` 失败：原始同任务/host 检查点入口的首次执行还没有保存基线，被误归为独立输入。修复为由显式 new-input 包装开启独立作用域，原始 sink 即使尚未保存基线也保留严格门禁；保持该恢复测试原有断言不变。该轮全量结果为 1338 通过、1 失败、7 忽略，运行的是这项修复之前的二进制，不能计为最终结果。合入 develop 前的最终代码重跑为 1343 通过、0 失败、7 忽略，退出码 0，耗时 420.70 秒。
 
 独立复核另外确认两项：`monitor` 返回后仍在运行，后续工作区变化会被漏过；后台结果唤醒的宿主续轮使用原始 sink，把上一轮的无归属暂停重建为严格门禁并重新催测。两者都已补回归并修复：`monitor` 与显式后台命令同等对待，暂停写入检查点后由宿主续轮恢复。复核提出的另两项未采纳：命令通过 `start_new_session` 脱离原进程组后，现有执行层只清理自己的进程组，快照层无法区分这种脱离与其他会话的写入，保留为已知限制；历史消息中的未知工具回执仍使独立查询走严格门禁，这是既有未知副作用保护，本轮不放宽。
 
@@ -27,9 +27,9 @@
 
 构建使用独立 `CARGO_TARGET_DIR=build/verification/task-scope-20261118/cargo-target`，dev/test debug 信息均设为 0；执行使用 `--locked --offline`。
 
-- Core 全量回归（`cargo test --locked --offline -p willdeep-core --lib --no-fail-fast`，最终代码）：1343 通过、0 失败、7 忽略，退出码 0，耗时 420.70 秒。超过 60 秒的两项（`actual_goal_loop_escalates_repeated_errors_and_unchanged_successes`、`recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports`）也通过。
+- 合入 develop 后的 Core 全量回归（`cargo test --locked --offline -p willdeep-core --lib --no-fail-fast`，0.153.0-rc2）：1343 通过、0 失败、7 忽略，退出码 0，耗时 420.62 秒。超过 60 秒的两项（`actual_goal_loop_escalates_repeated_errors_and_unchanged_successes`、`recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports`）也通过。合入前同一套测试为 1343 通过、0 失败、7 忽略，耗时 420.70 秒。
 - `checkpoint::` 定向回归：61 通过、0 失败、1 忽略（`execution_lock_probe` 为跨进程锁测试的子进程入口，按原设计忽略）。其中包含新增的 `monitor` 后续变化与宿主续轮无归属变化两项，以及修复后的原始基线保留测试。
-- 严格 Clippy（`-p willdeep-core --lib --tests -D warnings`）、`cargo fmt --all -- --check`、`ruby scripts/check_release_version.rb 0.152.0-rc6` 与 `git diff --check` 均通过。
+- 严格 Clippy（`-p willdeep-core --lib --tests -D warnings`）、`cargo fmt --all -- --check` 与 `git diff --check` 在合入前通过。合入后 `ruby scripts/check_release_version.rb 0.153.0-rc2`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。
 - 源码行数检查通过：1732 个文件、无超过 3000 行的违例。
 
 ## 覆盖限制
