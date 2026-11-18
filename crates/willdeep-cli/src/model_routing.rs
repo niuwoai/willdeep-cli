@@ -598,10 +598,7 @@ fn first_section(lines: &[String]) -> usize {
 pub(crate) fn remove_section_tree(contents: &str, section: &str) -> String {
     let trailing_newline = contents.ends_with('\n');
     let mut lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
-    let prefixes = [
-        format!("[{section}]"),
-        format!("[{section}."),
-    ];
+    let prefixes = [format!("[{section}]"), format!("[{section}.")];
     let mut index = 0;
     while index < lines.len() {
         let trimmed = lines[index].trim();
