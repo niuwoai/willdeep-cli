@@ -244,21 +244,25 @@ impl WebAppService {
                     server.task.abort();
                     let _ = server.task.await;
                 }
-                let mut status = self.status.lock().expect("Web App status");
-                if status.error.is_none() {
-                    status.error = Some(
+                // 端口占用等文案已经写进 status.error；把同一句抛出去，
+                // 控制面才能原样交给 /webapp 和 `willdeep web`，而不是换成内部日志提示。
+                let message = {
+                    let mut status = self.status.lock().expect("Web App status");
+                    let message = status.error.clone().unwrap_or_else(|| {
                         language
                             .text(
                                 "Web 未能完成启动",
                                 "Web App did not become ready",
                                 "Web App を起動できませんでした",
                             )
-                            .into(),
-                    );
-                }
-                bail!(
-                    "Web App did not become ready; check Runtime logs for port or initialization errors"
-                )
+                            .into()
+                    });
+                    if status.error.is_none() {
+                        status.error = Some(message.clone());
+                    }
+                    message
+                };
+                bail!("{message}")
             }
         }
     }

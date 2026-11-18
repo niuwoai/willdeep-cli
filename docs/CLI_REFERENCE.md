@@ -28,6 +28,7 @@ willdeep [OPTIONS] [PROMPT]... [COMMAND]
 | `audit` | 导出一个会话（或一个工作区一段时间）的审计报告：审批放行、人工裁决、hook 拦截、验证证据、改动归属与回滚 |
 | `usage` | 维护本机用量账本：`usage backfill [--dry-run]` 从 daemon 事件日志回填账本上线前的用量，见 [USAGE_LEDGER.md](USAGE_LEDGER.md) |
 | `mcp` | 查看配置里的 MCP 服务、给远程服务做 OAuth 登录 / 登出、连上去列工具 |
+| `provider` | 增删查本地 Provider 档案：`add` / `list` / `remove` |
 | `handoff` | 接住 WillDeep for macOS 用 `/handoff` 推来的会话：列出、接手续跑、轮询等待 |
 | `integrations` | 查看和管理可选外部集成 |
 | `plugin` | 安装、批准、启停与卸载插件（包与 macOS 版共享） |
@@ -254,6 +255,24 @@ willdeep mcp tools <name> [--json]      # 连上去列工具；--json 带完整�
 `login` 只对配了 `url` 与 `[mcp_servers.<name>.oauth]` 的服务有效：授权码 + PKCE，本机 `127.0.0.1`
 随机端口收一次回调，token 存 `$WILLDEEP_HOME/mcp-oauth/<name>.json`；`--no-browser` 只打印授权
 URL。登完立刻连一次并报告工具数。详见 [Skills 与 MCP](SKILLS_AND_MCP.md) 与 [认证与凭据](AUTHENTICATION.md)。
+
+## `willdeep provider` — Provider 档案
+
+```bash
+willdeep provider add <URL> [--name <id>] [--api-key-env <ENV>] [--model <id>]
+willdeep provider list [--json]
+willdeep provider remove <name>
+```
+
+`add` 从 API Base URL 写入 `[providers.<id>]`：按 host 推断 `some-im` / `anthropic` / `openai-compatible`，
+openai-compatible 与 some-im 会补齐 `/v1`，anthropic 保持根路径。只持久化 `api_base` 与
+`provider`/`api`；不写明文 `api_key`。省略 `--api-key-env` 时打印厂商环境变量提示。`--name`
+已存在则直接报错（须先 `remove`）。省略 `--name` 时从 host 派生安全 id。首个档案且尚无
+`default_provider` 时自动写入默认。
+
+`remove` 在 `agent.compressor_profile`、`subagents.*.provider_profile` 或
+`worker_tiers.*.provider_profile` 仍引用该档案时拒绝删除并点名引用处；若它是当前默认且恰好
+还剩一个档案，则把默认改指剩余者，否则清空 `default_provider`。详见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## `willdeep job` — 脱离父进程的后台作业
 

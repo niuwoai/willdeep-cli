@@ -27,6 +27,7 @@ mod child_sessions;
 mod client_events;
 mod composer;
 mod configuration;
+pub(crate) use configuration::safe_provider_id;
 mod failures;
 mod federation;
 mod identity;

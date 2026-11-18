@@ -65,6 +65,29 @@ async fn runtime_service_rejects_non_loopback_before_any_service_is_started() {
 }
 
 #[tokio::test]
+async fn occupied_listen_address_surfaces_the_localized_status_error() {
+    let root = std::env::temp_dir().join(format!("web-app-busy-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let holder = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = holder.local_addr().unwrap();
+    let service = WebAppService::new(&root);
+    let mut params = request(&root);
+    params.listen = address;
+    let error = service.start(params).await.unwrap_err();
+    let message = error.to_string();
+    assert_eq!(service.status().error.as_deref(), Some(message.as_str()));
+    assert!(
+        message.contains("端口")
+            || message.contains("already in use")
+            || message.contains("使用中"),
+        "{message}"
+    );
+    assert!(!service.status().running);
+    drop(holder);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn managed_listener_survives_client_drop_and_restores_on_runtime_restart() {
     use std::future::Future;
     use std::task::Poll;

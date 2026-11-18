@@ -288,6 +288,31 @@ fn daemon_upgrade_accepts_bounded_wait_and_force_handoff() {
 }
 
 #[test]
+fn provider_leaf_commands_parse() {
+    let add = Cli::try_parse_from([
+        "willdeep",
+        "provider",
+        "add",
+        "https://some.im/",
+        "--name",
+        "someim",
+        "--api-key-env",
+        "SOMEIM_API_KEY",
+        "--model",
+        "glm-5",
+    ])
+    .expect("provider add");
+    assert!(matches!(
+        add.command,
+        Some(CliCommand::Provider {
+            action: provider_cmd::ProviderAction::Add { .. }
+        })
+    ));
+    assert!(Cli::try_parse_from(["willdeep", "provider", "list", "--json"]).is_ok());
+    assert!(Cli::try_parse_from(["willdeep", "provider", "remove", "someim"]).is_ok());
+}
+
+#[test]
 fn top_level_session_commands_parse_stable_targets() {
     let id = uuid::Uuid::new_v4();
     for action in ["get", "turns", "stop"] {
