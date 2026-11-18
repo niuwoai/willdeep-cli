@@ -11,6 +11,9 @@ permissions:
 jobs:
   verify:
     name: Verify release
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ci.yml
 
   linux:

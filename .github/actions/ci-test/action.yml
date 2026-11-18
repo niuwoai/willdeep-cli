@@ -1,0 +1,80 @@
+name: Complete CI test suite
+description: The same complete platform suite on self-hosted and GitHub-hosted runners.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - name: Activate pinned Yarn 1
+      shell: bash
+      run: corepack enable && corepack prepare yarn@1.22.22 --activate
+    - name: Build embedded Web frontend
+      shell: bash
+      working-directory: web
+      run: yarn install --frozen-lockfile && yarn build
+    - name: Lint Web frontend
+      if: runner.os == 'Linux'
+      shell: bash
+      working-directory: web
+      run: yarn lint
+    - name: Configuration Web bridge regression
+      shell: bash
+      run: node --test scripts/test/config_web_bridge_test.mjs
+    - name: Magpie Agent plugin contract
+      if: runner.os == 'Linux'
+      shell: bash
+      run: yarn --cwd integrations/magpie test
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.94.1
+        components: rustfmt, clippy
+    - name: Format
+      if: runner.os == 'Linux'
+      shell: bash
+      run: cargo fmt --all -- --check
+    - name: Hand-maintained file size boundary
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/check_source_size.rb
+    - name: CI runner fallback offline contract
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/test/ci_self_hosted_attempt_test.rb --report-dir target/ci-runner-contracts
+    - name: Test
+      shell: bash
+      run: cargo test --workspace
+    - name: Clippy
+      shell: bash
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    - name: Model eval task set self-check
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/test/model_eval_test.rb && ruby scripts/test/p0_eval_tasks_test.rb --report-dir target/p0-eval-contracts && ruby scripts/test/agent_reliability_regression_test.rb && ruby scripts/test/support/browser_runtime_support_test.rb && ruby scripts/agent_reliability_regression.rb --check-manifest && ruby scripts/model_eval.rb --check-tasks
+    - name: Agent metrics publish self-check
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/test/agent_metrics_test.rb
+    - name: Prompt RSI gate self-check
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/test/prompt_rsi_test.rb
+    - name: Eval concurrency, resume and feedback health
+      if: runner.os == 'Linux'
+      shell: bash
+      run: ruby scripts/test/eval_execution_test.rb && ruby scripts/test/feedback_health_test.rb
+    - name: CI samples parse
+      if: runner.os == 'Linux'
+      shell: bash
+      # Keep the block scalar: the Ruby aliases: keyword must not become a YAML mapping.
+      run: |
+        bash -n examples/ci/run-task.sh && ruby -ryaml -e 'ARGV.each { |path| YAML.safe_load_file(path, aliases: true); puts "ok #{path}" }' examples/ci/github-actions.yml examples/ci/gitlab-ci.yml
+    - name: SDK crates package
+      if: runner.os == 'Linux'
+      shell: bash
+      run: cargo publish --dry-run --locked -p willdeep-runtime-protocol -p willdeep-runtime-client
+    - name: npm package contract
+      if: runner.os == 'Linux'
+      shell: bash
+      working-directory: npm/willdeep
+      run: ruby ../../scripts/test/npm_willdeep_test.rb && npm pack --dry-run --json --pack-destination "${RUNNER_TEMP}"

@@ -1,0 +1,52 @@
+name: CI self-hosted attempt
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_os:
+        description: Platform for the isolated self-hosted attempt
+        type: choice
+        options: [macos-latest, ubuntu-latest]
+        required: true
+      expected_sha:
+        description: Exact revision tested by the parent CI run
+        type: string
+        required: true
+      request_id:
+        description: Parent run, attempt, platform and unique nonce
+        type: string
+        required: true
+
+run-name: ci-worker-${{ inputs.request_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  self-hosted-worker:
+    name: CI self-hosted worker (${{ inputs.worker_os }})
+    if: github.event_name == 'workflow_dispatch' && github.workflow == 'CI self-hosted attempt' && github.event.repository.fork == false && (inputs.worker_os == 'macos-latest' || inputs.worker_os == 'ubuntu-latest')
+    runs-on: ${{ inputs.worker_os == 'macos-latest' && fromJSON('["self-hosted","macOS","X64","imac"]') || fromJSON('["self-hosted","Linux","X64","q4-pub"]') }}
+    timeout-minutes: 60
+    # 最终门禁由父 test 决定；协调者必须核验完整步骤证据。
+    continue-on-error: true
+    steps:
+      - name: Validate worker identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          WORKER_OS: ${{ inputs.worker_os }}
+        shell: bash
+        run: |
+          ruby -e 'abort "invalid worker identity" unless ENV.fetch("EXPECTED_SHA").match?(/\A[0-9a-f]{40}\z/) && ENV.fetch("EXPECTED_SHA") == ENV.fetch("GITHUB_SHA") && ENV.fetch("GITHUB_REF").start_with?("refs/heads/") && ENV.fetch("REQUEST_ID").match?(/\A[1-9][0-9]*-[1-9][0-9]*-#{Regexp.escape(ENV.fetch("WORKER_OS"))}-[0-9a-f]{32}\z/)'
+      - name: Checkout expected revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+          clean: true
+      - name: Run complete CI suite
+        uses: ./.github/actions/ci-test
+      - name: Self-hosted suite passed
+        shell: bash
+        run: 'true'

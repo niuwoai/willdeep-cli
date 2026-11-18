@@ -103,7 +103,7 @@ pub(super) fn recover(
                     candidate.interrupted_turn_id.as_u128() ^ REQUEST_SALT,
                 ),
                 prompt: resume_prompt(&goal, &candidate),
-                attachments: Vec::new(),
+                attachments: candidate.unrecorded_attachments.clone(),
                 origin_client: Some(format!("{ORIGIN_PREFIX}{}", candidate.interrupted_turn_id)),
                 defer_until_released: false,
             },

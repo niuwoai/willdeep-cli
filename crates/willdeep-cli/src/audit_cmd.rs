@@ -864,7 +864,7 @@ fn audit_session(session: &Session, sources: &Sources) -> SessionAudit {
         .collect::<BTreeSet<_>>();
     // 一次只读的 git status 管整个会话：记录里的工作区各不相同（子 Agent 的
     // worktree），按工作区各问一次。
-    let mut workspace_status = HashMap::<PathBuf, Option<BTreeSet<String>>>::new();
+    let mut workspace_status = HashMap::<PathBuf, Option<DirtyWorkspacePaths>>::new();
     let changes = attributions
         .iter()
         .map(|record| {
@@ -1048,9 +1048,15 @@ fn audit_session(session: &Session, sources: &Sources) -> SessionAudit {
     }
 }
 
+struct DirtyWorkspacePaths {
+    paths: BTreeSet<String>,
+    /// Git 重命名里的旧路径已不在原位置，但删除仍是这次改名的一部分。
+    renamed_sources: BTreeSet<String>,
+}
+
 /// 工作区里当前与 HEAD 不一致的路径。`None` 表示读不了：不是 Git 仓库、
 /// git 不在、或命令失败。只读，不改索引也不改工作区。
-fn dirty_paths(workspace: &Path) -> Option<BTreeSet<String>> {
+fn dirty_paths(workspace: &Path) -> Option<DirtyWorkspacePaths> {
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .env("LC_ALL", "C")
@@ -1061,23 +1067,31 @@ fn dirty_paths(workspace: &Path) -> Option<BTreeSet<String>> {
         return None;
     }
     let mut paths = BTreeSet::new();
+    let mut renamed_sources = BTreeSet::new();
     let mut records = output
         .stdout
         .split(|byte| *byte == 0)
         .filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
-        // porcelain v1 -z：`XY <路径>`，改名和复制后面再跟一条旧路径。
+        // porcelain v1 -z：`XY <新路径>`，改名和复制后面再跟一条旧路径。
         if record.len() < 4 {
             continue;
         }
         let code = record[0] as char;
         let renamed = matches!(code, 'R' | 'C') || matches!(record[1] as char, 'R' | 'C');
+        let is_rename = code == 'R' || record[1] as char == 'R';
         paths.insert(String::from_utf8_lossy(&record[3..]).into_owned());
-        if renamed {
-            records.next();
+        if renamed
+            && let Some(source) = records.next()
+            && is_rename
+        {
+            renamed_sources.insert(String::from_utf8_lossy(source).into_owned());
         }
     }
-    Some(paths)
+    Some(DirtyWorkspacePaths {
+        paths,
+        renamed_sources,
+    })
 }
 
 /// 这条归属记录里的改动现在还在不在。
@@ -1087,7 +1101,7 @@ fn dirty_paths(workspace: &Path) -> Option<BTreeSet<String>> {
 /// 冒充「当初那份改动还在」。
 fn change_presence(
     record: &DiffAttributionRecord,
-    dirty: Option<&BTreeSet<String>>,
+    dirty: Option<&DirtyWorkspacePaths>,
 ) -> ChangePresence {
     if record.path_states.is_empty() || record.path_states.len() != record.paths.len() {
         return ChangePresence::Unknown;
@@ -1108,9 +1122,10 @@ fn change_presence(
             // 未跟踪文件的还原是直接挪走，不进回收区以外的任何记录。
             AttributedPathState::TrackedDirty
             | AttributedPathState::Deleted
-            | AttributedPathState::Untracked => dirty.contains(path),
-            // 调用结束时就已经和 HEAD 一致，工作区里没有可还原的内容。
-            AttributedPathState::Clean => true,
+            | AttributedPathState::Untracked => dirty.paths.contains(path),
+            // 普通 Clean 路径没有待还原内容；重命名的旧路径则是仍存在的
+            // 删除效果，只有 Git 当前仍记录该来源时才算归属仍在。
+            AttributedPathState::Clean => dirty.renamed_sources.contains(path),
         };
         if still_there {
             present += 1;
@@ -2275,6 +2290,14 @@ mod tests {
                     ],
                 ),
                 record(vec!["draft.txt"], vec![AttributedPathState::Untracked]),
+                record(vec!["restored.txt"], vec![AttributedPathState::Clean]),
+                record(
+                    vec!["kept.txt", "restored.txt"],
+                    vec![
+                        AttributedPathState::TrackedDirty,
+                        AttributedPathState::Clean,
+                    ],
+                ),
                 record(
                     vec!["../outside.txt"],
                     vec![AttributedPathState::TrackedDirty],
@@ -2297,7 +2320,7 @@ mod tests {
         assert_eq!(presence(0), ChangePresence::Present, "两个文件都还脏着");
         assert_eq!(presence(1), ChangePresence::Present, "未跟踪文件还在");
         assert_eq!(
-            presence(2),
+            presence(4),
             ChangePresence::Unreadable,
             "逃出工作区的路径不能拿来判断"
         );
@@ -2307,6 +2330,12 @@ mod tests {
         std::fs::remove_file(workspace.join("draft.txt")).unwrap();
         assert_eq!(presence(0), ChangePresence::Partial);
         assert_eq!(presence(1), ChangePresence::Gone);
+        assert_eq!(
+            presence(2),
+            ChangePresence::Gone,
+            "工具还原到 HEAD 的改动已不在"
+        );
+        assert_eq!(presence(3), ChangePresence::Partial, "干净的路径不能算仍在");
 
         // 剩下的也还原：整条记录已不在。
         run_git(&workspace, &["restore", "--worktree", "--", "kept.txt"]);
@@ -2324,6 +2353,73 @@ mod tests {
             Language::ZhCn,
         );
         assert!(markdown.contains("已不在"), "{markdown}");
+    }
+
+    #[test]
+    fn renamed_source_remains_present_until_the_rename_is_reverted() {
+        let (home, session, workspace) = seeded_home();
+        run_git(&workspace, &["init"]);
+        run_git(
+            &workspace,
+            &["config", "user.email", "test@willdeep.invalid"],
+        );
+        run_git(&workspace, &["config", "user.name", "WillDeep Test"]);
+        std::fs::write(workspace.join("old.txt"), "original\n").unwrap();
+        run_git(&workspace, &["add", "."]);
+        run_git(&workspace, &["commit", "-m", "seed"]);
+        run_git(&workspace, &["mv", "old.txt", "new.txt"]);
+        let record = DiffAttributionRecord {
+            id: Uuid::new_v4(),
+            before_snapshot_id: "before".to_owned(),
+            after_snapshot_id: "after".to_owned(),
+            workspace: workspace.clone(),
+            session_id: Some(session.id),
+            turn_id: None,
+            task_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            tool: "run_command".to_owned(),
+            paths: vec!["old.txt".to_owned(), "new.txt".to_owned()],
+            path_states: vec![
+                AttributedPathState::Clean,
+                AttributedPathState::TrackedDirty,
+            ],
+            confidence: AttributionConfidence::ToolWindow,
+            created_at: 15,
+        };
+        home.write(
+            "runtime/diff-attributions.json",
+            &serde_json::to_string(&vec![record]).unwrap(),
+        );
+        let presence = || {
+            build_report(
+                &home.0,
+                &Scope {
+                    session: Some(session.id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .sessions[0]
+                .changes[0]
+                .presence
+                .clone()
+        };
+        assert_eq!(presence(), ChangePresence::Present);
+        run_git(
+            &workspace,
+            &[
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                ".",
+            ],
+        );
+        if workspace.join("new.txt").exists() {
+            std::fs::remove_file(workspace.join("new.txt")).unwrap();
+        }
+        assert_eq!(presence(), ChangePresence::Gone);
     }
 
     fn run_git(workspace: &std::path::Path, args: &[&str]) {

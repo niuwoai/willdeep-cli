@@ -476,6 +476,13 @@ fn path_state_after(snapshot: &DiffSnapshot, path: &str) -> AttributedPathState 
         Some(file) if file.kind == DiffFileKind::Untracked => AttributedPathState::Untracked,
         Some(file) if file.kind == DiffFileKind::Deleted => AttributedPathState::Deleted,
         Some(_) => AttributedPathState::TrackedDirty,
+        // capture 也保留重命名源路径；它从快照主路径列表消失不代表已还原。
+        None if snapshot.files.iter().any(|file| {
+            file.old_path.as_deref() == Some(path) && file.kind == DiffFileKind::Renamed
+        }) =>
+        {
+            AttributedPathState::Deleted
+        }
         // 指纹变了但快照里没有：调用结束时这条路径与 HEAD 一致。
         None => AttributedPathState::Clean,
     }
@@ -1773,22 +1780,34 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
             .or_default()
             .push(entry[..split].to_vec());
     }
-    let mut fingerprints = BTreeMap::new();
+    let mut path_hashers = BTreeMap::<String, DefaultHasher>::new();
     for file in &snapshot.files {
-        let mut hasher = DefaultHasher::new();
-        // Display statistics can be omitted above the untracked-file threshold;
-        // that presentation decision is not a change to an existing file.
-        (
-            &file.path,
-            &file.old_path,
-            &file.kind,
-            file.staged,
-            file.unstaged,
-        )
-            .hash(&mut hasher);
-        let entry = indexed.get(&file.path);
+        // 重命名也改变源路径；同一路径参与多个条目时累积，不能互相覆盖。
+        for path in std::iter::once(&file.path).chain(file.old_path.iter()) {
+            let hasher = path_hashers.entry(path.clone()).or_default();
+            // Display statistics can be omitted above the untracked-file threshold;
+            // that presentation decision is not a change to an existing file.
+            (
+                &file.path,
+                &file.old_path,
+                &file.kind,
+                file.staged,
+                file.unstaged,
+            )
+                .hash(hasher);
+        }
+    }
+    let untracked = snapshot
+        .files
+        .iter()
+        .filter(|file| file.kind == DiffFileKind::Untracked)
+        .map(|file| file.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut fingerprints = BTreeMap::new();
+    for (relative, mut hasher) in path_hashers {
+        let entry = indexed.get(&relative);
         entry.hash(&mut hasher);
-        let path = workspace.join(file.path.trim_end_matches('/'));
+        let path = workspace.join(relative.trim_end_matches('/'));
         match std::fs::symlink_metadata(&path) {
             Ok(metadata)
                 if metadata.is_dir()
@@ -1798,7 +1817,7 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
             {
                 submodule_fingerprint(&path, &mut hasher, 0)?;
             }
-            Ok(metadata) if metadata.is_dir() && file.kind == DiffFileKind::Untracked => {
+            Ok(metadata) if metadata.is_dir() && untracked.contains(relative.as_str()) => {
                 untracked_fingerprint(&path, &mut hasher, 0)?;
             }
             Ok(_) => content_fingerprint(&path, &mut hasher)?,
@@ -1807,12 +1826,34 @@ pub(crate) fn capture(workspace: &Path) -> Result<DiffCapture> {
             }
             Err(error) => return Err(error.into()),
         }
-        fingerprints.insert(file.path.clone(), hasher.finish());
+        fingerprints.insert(relative, hasher.finish());
     }
     Ok(DiffCapture {
         snapshot,
         fingerprints,
     })
+}
+
+/// 验证命令两侧使用同一套逐文件内容指纹和 HEAD；读不全则交给整库快照。
+pub(crate) fn verification_inputs(
+    workspace: &Path,
+) -> Result<(String, Option<String>, BTreeMap<String, u64>)> {
+    // porcelain -z 使用 Git 根路径；从 Cargo 子目录启动时不能再拼一次子目录。
+    let root = git(workspace, &["rev-parse", "--show-toplevel"])?;
+    let root = PathBuf::from(std::str::from_utf8(&root)?.trim_end_matches('\n'));
+    let workspace = root.as_path();
+    let captured = capture(workspace)?;
+    // 读取每个文件指纹需要逐个 IO；期间若有并发写入，最初的快照 ID
+    // 可能与这些指纹不属于同一版本。失败时让调用方退回整库比较。
+    let after = snapshot(workspace)?;
+    if after.id != captured.snapshot.id || after.head != captured.snapshot.head {
+        bail!("workspace changed during verification fingerprint capture");
+    }
+    Ok((
+        captured.snapshot.id,
+        captured.snapshot.head,
+        captured.fingerprints,
+    ))
 }
 
 /// 在阻塞线程池上跑 [`capture`]。

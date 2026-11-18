@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   test:
+    permissions:
+      contents: read
+      actions: write
     strategy:
       # 各平台独立出结果：一个平台失败不连带取消其余平台，否则看不到它们各自的问题。
       fail-fast: false
@@ -17,67 +20,28 @@ jobs:
         # Windows 不再发版，也不再跑 CI。windows-latest 的测试反复因 runner 上的进程枚举超时失败，
         # 而发布步骤依赖整份验证，一次失败就把已经编好的 macOS 和 Linux 包也卡住。
         os: [macos-latest, ubuntu-latest]
-    # PR 与发布验证使用 GitHub 托管环境；仓库 CI 的分支 push 分别使用 iMac 和 q4-pub。
-    runs-on: ${{ matrix.os == 'macos-latest' && github.event_name == 'push' && github.workflow == 'CI' && !startsWith(github.ref, 'refs/tags/') && fromJSON('["self-hosted","macOS","X64","imac"]') || matrix.os == 'ubuntu-latest' && github.event_name == 'push' && github.workflow == 'CI' && !startsWith(github.ref, 'refs/tags/') && fromJSON('["self-hosted","Linux","X64","q4-pub"]') || matrix.os }}
-    # 卡住的测试 1 小时内失败，不空等 GitHub 缺省的 6 小时。
-    timeout-minutes: 60
+    # 托管协调者不依赖自建 runner 接单；保留 test (matrix.os) 检查名称。
+    runs-on: ${{ matrix.os }}
+    # 5 分钟排队 + 60 分钟自建 + 60 分钟托管，以及 API/checkout 余量。
+    timeout-minutes: 135
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Activate pinned Yarn 1
-        run: corepack enable && corepack prepare yarn@1.22.22 --activate
-      - name: Build embedded Web frontend
-        working-directory: web
-        run: yarn install --frozen-lockfile && yarn build
-      - name: Lint Web frontend
-        if: runner.os == 'Linux'
-        working-directory: web
-        run: yarn lint
-      - name: Configuration Web bridge regression
-        run: node --test scripts/test/config_web_bridge_test.mjs
-      - name: Magpie Agent plugin contract
-        if: runner.os == 'Linux'
-        run: yarn --cwd integrations/magpie test
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.94.1
-          components: rustfmt, clippy
-      - name: Format
-        if: runner.os == 'Linux'
-        run: cargo fmt --all -- --check
-      - name: Hand-maintained file size boundary
-        if: runner.os == 'Linux'
-        run: ruby scripts/check_source_size.rb
-      - name: Test
-        run: cargo test --workspace
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Model eval task set self-check
-        if: runner.os == 'Linux'
-        run: ruby scripts/test/model_eval_test.rb && ruby scripts/test/p0_eval_tasks_test.rb --report-dir target/p0-eval-contracts && ruby scripts/test/agent_reliability_regression_test.rb && ruby scripts/test/support/browser_runtime_support_test.rb && ruby scripts/agent_reliability_regression.rb --check-manifest && ruby scripts/model_eval.rb --check-tasks
-      - name: Agent metrics publish self-check
-        if: runner.os == 'Linux'
-        run: ruby scripts/test/agent_metrics_test.rb
-      - name: Prompt RSI gate self-check
-        if: runner.os == 'Linux'
-        run: ruby scripts/test/prompt_rsi_test.rb
-      - name: Eval concurrency, resume and feedback health
-        if: runner.os == 'Linux'
-        run: ruby scripts/test/eval_execution_test.rb && ruby scripts/test/feedback_health_test.rb
-      - name: CI samples parse
-        if: runner.os == 'Linux'
-        # 块标量：命令里的 `aliases: true` 放进普通标量会被 YAML 当成映射，整份工作流解析失败、一个 job 都不起。
-        run: |
-          bash -n examples/ci/run-task.sh && ruby -ryaml -e 'ARGV.each { |path| YAML.safe_load_file(path, aliases: true); puts "ok #{path}" }' examples/ci/github-actions.yml examples/ci/gitlab-ci.yml
-      - name: SDK crates package
-        if: runner.os == 'Linux'
-        run: cargo publish --dry-run --locked -p willdeep-runtime-protocol -p willdeep-runtime-client
-      - name: npm package contract
-        if: runner.os == 'Linux'
-        working-directory: npm/willdeep
-        run: ruby ../../scripts/test/npm_willdeep_test.rb && npm pack --dry-run --json --pack-destination "${RUNNER_TEMP}"
+          persist-credentials: false
+      - name: Attempt bounded self-hosted suite
+        id: self_hosted
+        if: github.event_name == 'push' && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false
+        continue-on-error: true
+        timeout-minutes: 70
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_WORKER_OS: ${{ matrix.os }}
+        run: ruby scripts/ci_self_hosted_attempt.rb
+      - name: Run complete hosted CI suite
+        # 缺失输出、脚本异常和首次 dispatch 尚未注册都必须进入托管；失败不能被吞掉。
+        if: ${{ !cancelled() && steps.self_hosted.outputs.self_hosted_passed != 'true' }}
+        timeout-minutes: 60
+        uses: ./.github/actions/ci-test
 
   linux-architectures:
     name: Linux ${{ matrix.target }}

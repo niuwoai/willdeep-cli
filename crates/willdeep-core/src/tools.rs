@@ -89,12 +89,14 @@ pub enum VerificationStatus {
 
 type VerificationReporter = Arc<dyn Fn(CommandVerification) + Send + Sync>;
 type VerificationSnapshot = Arc<dyn Fn() -> Result<Option<String>, String> + Send + Sync>;
-/// 拍下当前快照里与 HEAD 不一致的路径，以及 `cargo -p/--bin/--test` 这类
-/// 目标名到工作区相对目录的映射。两个都是 `None` 表示列不出来（不是 Git 仓库、
-/// 读失败，或宿主没接），验证失效退回整库快照比较，不猜。
+/// 拍下与 HEAD 不一致的路径及其内容指纹，并解析 Cargo 目标覆盖的工作区目录。
+/// 任一材料缺失时，验证失效退回整库快照比较，不猜。
 pub struct VerificationWorkspaceView {
-    pub dirty_paths: Option<Vec<String>>,
-    pub package_dirs: Option<std::collections::BTreeMap<String, String>>,
+    pub snapshot_id: Option<String>,
+    pub dirty_fingerprints: Option<std::collections::BTreeMap<String, u64>>,
+    /// Outer None means capture failed; inner None is an unborn repository HEAD.
+    pub head: Option<Option<String>>,
+    pub package_dirs: Option<std::collections::BTreeMap<String, Vec<String>>>,
 }
 type VerificationDirtyPaths = Arc<dyn Fn() -> VerificationWorkspaceView + Send + Sync>;
 
@@ -1766,6 +1768,9 @@ impl ToolRegistry {
             )
         };
         let accepted_verification = self.accepts_verification(&args.command);
+        // 子目录命令的脚本路径相对 cwd，指纹则相对工作区；无法可靠映射时
+        // 退回整库快照，避免将通过证据误写到未验证的脚本版本。
+        let coverage_at_workspace_root = command_workspace == self.workspace;
         let description = args
             .label
             .as_deref()
@@ -1877,30 +1882,27 @@ impl ToolRegistry {
                             verification_snapshot.as_ref(),
                             accepted_verification,
                         );
-                        let dirty_before = verification::dirty_paths_for(
+                        let before_view = verification::workspace_view_for(
                             verification_dirty_paths.as_ref(),
                             accepted_verification,
                         );
                         let mut result =
                             run_background_shell(command.clone(), workspace, timeout, sandbox)
                                 .await;
-                        let coverage = verification::VerificationCoverage {
-                            dirty_before,
-                            dirty_after: verification::dirty_paths_for(
+                        let coverage = verification::verification_coverage(
+                            before_view,
+                            verification::workspace_view_for(
                                 verification_dirty_paths.as_ref(),
                                 accepted_verification,
                             ),
-                            package_dirs: verification::package_dirs_for(
-                                verification_dirty_paths.as_ref(),
-                            ),
-                        };
+                        );
                         let finished = verification::finish_verification(
                             verification_snapshot.as_ref(),
                             &command,
                             &snapshot_id,
                             verification_status(&result.status),
                             &mut result.output,
-                            Some(&coverage),
+                            coverage_at_workspace_root.then_some(&coverage),
                         );
                         verification::report_accepted_verification(
                             verification_reporter
@@ -1937,7 +1939,7 @@ impl ToolRegistry {
             self.verification_snapshot.as_ref(),
             accepted_verification,
         );
-        let dirty_before = verification::dirty_paths_for(
+        let before_view = verification::workspace_view_for(
             self.verification_dirty_paths.as_ref(),
             accepted_verification,
         );
@@ -2007,14 +2009,13 @@ impl ToolRegistry {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let coverage = verification::VerificationCoverage {
-            dirty_before,
-            dirty_after: verification::dirty_paths_for(
+        let coverage = verification::verification_coverage(
+            before_view,
+            verification::workspace_view_for(
                 self.verification_dirty_paths.as_ref(),
                 accepted_verification,
             ),
-            package_dirs: verification::package_dirs_for(self.verification_dirty_paths.as_ref()),
-        };
+        );
         let finished = verification::finish_verification(
             self.verification_snapshot.as_ref(),
             &args.command,
@@ -2025,7 +2026,7 @@ impl ToolRegistry {
                 VerificationStatus::Failed
             },
             &mut text,
-            Some(&coverage),
+            coverage_at_workspace_root.then_some(&coverage),
         );
         verification::report_accepted_verification(
             self.verification_reporter
@@ -2374,12 +2375,12 @@ pub(crate) use delegation::PARENT_ONLY_TOOLS;
 pub use verification::RunVerification;
 pub use web::validate_public_url;
 use web::*;
-/// 命令覆盖范围内的脏路径有没有变化。验证失效据此收窄，宿主测试也用它核对。
+/// 命令覆盖范围内的脏文件指纹有没有变化。验证失效据此收窄。
 pub fn covered_paths_changed(
     command: &str,
-    before: &[String],
-    after: &[String],
-    package_dirs: Option<&std::collections::BTreeMap<String, String>>,
+    before: &std::collections::BTreeMap<String, u64>,
+    after: &std::collections::BTreeMap<String, u64>,
+    package_dirs: Option<&std::collections::BTreeMap<String, Vec<String>>>,
 ) -> bool {
     verification::covered_paths_changed(command, before, after, package_dirs)
 }

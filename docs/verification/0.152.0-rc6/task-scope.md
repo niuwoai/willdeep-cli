@@ -1,6 +1,6 @@
 # 当前请求与验证门禁边界验收
 
-日期：2026-11-18。版本：0.153.0-rc2（合入 develop 后由 0.152.0-rc6 顺延）。当前状态：合入 develop 后的 Core 全量回归已通过。未安装或发布。
+日期：2026-11-18。版本：0.153.0-rc5（develop 已使用 0.153.0-rc2 至 rc4，本次修复由 0.152.0-rc6 顺延）。当前状态：已与 develop rc4 合并，定向回归通过。此前 1343 项通过的全量回归只覆盖合入当时 rc1 的树，不作为本次合并的结果。未安装或发布。
 
 ## 行为
 
@@ -27,7 +27,8 @@
 
 构建使用独立 `CARGO_TARGET_DIR=build/verification/task-scope-20261118/cargo-target`，dev/test debug 信息均设为 0；执行使用 `--locked --offline`。
 
-- 合入 develop 后的 Core 全量回归（`cargo test --locked --offline -p willdeep-core --lib --no-fail-fast`，0.153.0-rc2）：1343 通过、0 失败、7 忽略，退出码 0，耗时 420.62 秒。超过 60 秒的两项（`actual_goal_loop_escalates_repeated_errors_and_unchanged_successes`、`recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports`）也通过。合入前同一套测试为 1343 通过、0 失败、7 忽略，耗时 420.70 秒。
+- 与 develop 的 0.153.0-rc4 合并后，冲突只在版本元数据；验证代码两边均保留。`checkpoint::` 62 项为 61 通过、0 失败、1 忽略，`verification::` 59 项全部通过，严格 Clippy 通过。该结果不替代 Core 全量回归或 CI。
+- 合入当时 develop rc1 后的 Core 全量回归（`cargo test --locked --offline -p willdeep-core --lib --no-fail-fast`，0.153.0-rc2）：1343 通过、0 失败、7 忽略，退出码 0，耗时 420.62 秒。超过 60 秒的两项（`actual_goal_loop_escalates_repeated_errors_and_unchanged_successes`、`recovery_inventory_beyond_4096_paginates_within_parent_and_marks_reports`）也通过。合入前同一套测试为 1343 通过、0 失败、7 忽略，耗时 420.70 秒。
 - `checkpoint::` 定向回归：61 通过、0 失败、1 忽略（`execution_lock_probe` 为跨进程锁测试的子进程入口，按原设计忽略）。其中包含新增的 `monitor` 后续变化与宿主续轮无归属变化两项，以及修复后的原始基线保留测试。
 - 严格 Clippy（`-p willdeep-core --lib --tests -D warnings`）、`cargo fmt --all -- --check` 与 `git diff --check` 在合入前通过。合入后 `ruby scripts/check_release_version.rb 0.153.0-rc2`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。
 - 源码行数检查通过：1732 个文件、无超过 3000 行的违例。
