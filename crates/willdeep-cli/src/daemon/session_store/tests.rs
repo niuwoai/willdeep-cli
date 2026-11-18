@@ -1367,14 +1367,14 @@ fn an_active_goal_turn_is_interrupted_instead_of_replayed_verbatim() {
             },
         )
         .unwrap();
-    store.claim_next(session.id).unwrap().unwrap();
-    assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
     let core_store = willdeep_core::SessionStore::new(&root);
     let mut core = core_store.load_baselined(session.id).unwrap();
-    core.messages
-        .push(willdeep_core::Message::user("an earlier question"));
+    // 上一轮恰好也是同一句：本轮认领时的消息边界要指向它的后面。
+    core.messages.push(willdeep_core::Message::user(prompt));
     core.goal_state = Some(willdeep_core::GoalState::new("migrate the parser"));
     core_store.save(&mut core).unwrap();
+    store.claim_next(session.id).unwrap().unwrap();
+    assert!(store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap());
     drop(store);
 
     let restored = RuntimeSessionStore::open(path, &root).unwrap();
@@ -1401,7 +1401,113 @@ fn an_active_goal_turn_is_interrupted_instead_of_replayed_verbatim() {
     core_store.save(&mut core).unwrap();
     let candidates = restored.goal_resume_candidates("goal-resume:").unwrap();
     assert_eq!(candidates[0].unrecorded_request, None);
-    assert_eq!(core_store.load(session.id).unwrap().messages.len(), 2);
+    let call = willdeep_core::ToolCall {
+        id: "tool-1".to_owned(),
+        name: "read_file".to_owned(),
+        arguments: "{}".to_owned(),
+    };
+    core.messages
+        .push(willdeep_core::Message::assistant("", vec![call.clone()]));
+    core.messages
+        .push(willdeep_core::Message::tool(&call, "partial result"));
+    core_store.save(&mut core).unwrap();
+    let candidates = restored.goal_resume_candidates("goal-resume:").unwrap();
+    assert_eq!(
+        candidates[0].unrecorded_request, None,
+        "partial tool history follows the recorded request"
+    );
+    assert_eq!(core_store.load(session.id).unwrap().messages.len(), 4);
+
+    // 收窗会保留两条同文用户消息，却移走中间工具历史并移动原索引。
+    core.messages
+        .retain(|message| message.role == willdeep_core::Role::User);
+    core.compression_generation += 1;
+    core_store.save(&mut core).unwrap();
+    assert_eq!(
+        restored.goal_resume_candidates("goal-resume:").unwrap()[0].unrecorded_request,
+        None
+    );
+    core.messages.pop();
+    core_store.save(&mut core).unwrap();
+    assert_eq!(
+        restored.goal_resume_candidates("goal-resume:").unwrap()[0]
+            .unrecorded_request
+            .as_deref(),
+        Some(prompt),
+        "压缩后的上一轮同文消息不能冒充未落盘的本轮"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn image_description_already_recorded_is_not_sent_again_on_resume() {
+    let root = std::env::temp_dir().join(format!(
+        "willdeep-runtime-image-fallback-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let path = root.join("runtime-sessions.json");
+    let store = RuntimeSessionStore::open(path.clone(), &root).unwrap();
+    let session = store
+        .create(CreateRuntimeSession {
+            id: None,
+            workspace,
+            profile: None,
+            model: None,
+            config: None,
+            title: Some("Image fallback".into()),
+        })
+        .unwrap();
+    let image = willdeep_core::MessageAttachment::Image {
+        name: "figure.png".into(),
+        media_type: "image/png".into(),
+        data: "AQID".into(),
+        width: 1,
+        height: 1,
+    };
+    let prompt = "inspect this image";
+    let (turn, _) = store
+        .enqueue_turn(
+            session.id,
+            CreateRuntimeTurn {
+                team_control: None,
+                origin_client: None,
+                request_id: uuid::Uuid::new_v4(),
+                prompt: prompt.into(),
+                attachments: vec![image.clone()],
+                defer_until_released: false,
+            },
+        )
+        .unwrap();
+    store.claim_next(session.id).unwrap().unwrap();
+    store.bind_task(turn.id, uuid::Uuid::new_v4()).unwrap();
+    let core_store = willdeep_core::SessionStore::new(&root);
+    let mut core = core_store.load_baselined(session.id).unwrap();
+    core.messages
+        .push(willdeep_core::Message::user_with_attachments(
+            prompt,
+            vec![image],
+        ));
+    core.messages[0].content.push_str(&format!(
+        "{}vision for 1 attached image(s)]\na square",
+        willdeep_core::types::IMAGE_DESCRIPTION_MARKER
+    ));
+    core.messages[0].attachments.clear();
+    core.goal_state = Some(willdeep_core::GoalState::new("inspect image"));
+    core_store.save(&mut core).unwrap();
+    drop(store);
+    let restored = RuntimeSessionStore::open(path, &root).unwrap();
+    let candidate = &restored.goal_resume_candidates("goal-resume:").unwrap()[0];
+    assert!(candidate.unrecorded_request.is_none());
+    assert!(candidate.unrecorded_attachments.is_empty());
+    core.compression_generation += 1;
+    core_store.save(&mut core).unwrap();
+    assert!(
+        restored.goal_resume_candidates("goal-resume:").unwrap()[0]
+            .unrecorded_request
+            .is_none()
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

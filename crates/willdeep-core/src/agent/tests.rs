@@ -1785,6 +1785,7 @@ async fn persisted_orphan_tool_results_are_removed_before_provider_replay() {
         Message {
             role: crate::types::Role::Tool,
             source: None,
+            runtime_turn_id: None,
             content: "legacy output".to_owned(),
             reasoning: None,
             tool_call_id: None,

@@ -35,6 +35,8 @@ pub(crate) mod manual_compression_tests;
 mod model_policy_tests;
 #[cfg(test)]
 mod ownership_tests;
+#[cfg(test)]
+mod request_identity_tests;
 
 /// 把三个 Worker 档位各自解析成一个模型绑定。
 ///
@@ -348,6 +350,7 @@ pub(crate) struct BuiltHarness {
     _workflow_driver: Option<workflows::WorkflowDriverGuard>,
     pub goal: Arc<willdeep_core::GoalContinuation>,
     pub session_id: uuid::Uuid,
+    runtime_turn_id: Option<uuid::Uuid>,
     pub agent: Arc<Agent>,
     pub workspace: PathBuf,
     pub skills: Arc<willdeep_core::SkillCatalog>,
@@ -613,11 +616,20 @@ pub(crate) async fn execute_noninteractive(
         && !built.host_input
         && !built.goal.is_active();
     let (history, user_message) = if options.replay_existing_user_message {
-        let user_message = session
+        let mut user_message = session
             .messages
             .last()
             .cloned()
             .context("recovered Turn is missing its persisted user message")?;
+        if let Some(turn_id) = built.runtime_turn_id {
+            anyhow::ensure!(
+                user_message.runtime_turn_id.is_none_or(|id| id == turn_id),
+                "recovered user message belongs to another Runtime Turn"
+            );
+            user_message.runtime_turn_id = Some(turn_id);
+            *session.messages.last_mut().unwrap() = user_message.clone();
+            store.save(session)?;
+        }
         (
             session.messages[..session.messages.len() - 1].to_vec(),
             user_message,
@@ -637,11 +649,14 @@ pub(crate) async fn execute_noninteractive(
         {
             history.push(notice);
         }
-        let user_message = if built.host_input {
+        let mut user_message = if built.host_input {
             willdeep_core::Message::host_instruction(&prompt)
         } else {
             willdeep_core::Message::user_with_attachments(&prompt, attachments)
         };
+        // Bind before the first durable save. The same identity then survives
+        // Agent preprocessing and every checkpoint, including recovery notices.
+        user_message.runtime_turn_id = built.runtime_turn_id;
         session.messages.push(user_message.clone());
         store.save(session)?;
         (history, user_message)
@@ -1764,6 +1779,7 @@ pub(crate) async fn build(
         subagents,
         goal: goal_continuation,
         session_id,
+        runtime_turn_id: turn_id,
         agent,
         workspace,
         skills,

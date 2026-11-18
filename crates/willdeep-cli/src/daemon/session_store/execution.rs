@@ -89,9 +89,17 @@ impl RuntimeSessionStore {
             } else {
                 core.messages.len()
             };
-            Ok((core.compression_generation, message_start))
+            let user_message_ordinal = core.messages[..message_start]
+                .iter()
+                .filter(|message| message.role == willdeep_core::Role::User)
+                .count();
+            Ok((
+                core.compression_generation,
+                message_start,
+                user_message_ordinal,
+            ))
         })();
-        let (message_generation, message_start) = match preparation {
+        let (message_generation, message_start, user_message_ordinal) = match preparation {
             Ok(boundary) => boundary,
             Err(error) => {
                 // A failed queue head must not retain global child priority or
@@ -113,6 +121,7 @@ impl RuntimeSessionStore {
         };
         turn.metadata.message_generation = message_generation;
         turn.metadata.message_start = Some(message_start);
+        turn.metadata.user_message_ordinal = Some(user_message_ordinal);
         turn.metadata.message_end = None;
         session.status = RuntimeSessionStatus::Queued;
         session.active_turn_id = Some(turn.metadata.id);
@@ -216,6 +225,9 @@ impl RuntimeSessionStore {
                 .context("recovered user message is missing")?;
             anyhow::ensure!(
                 message.role == willdeep_core::Role::User
+                    && message
+                        .runtime_turn_id
+                        .is_none_or(|id| id == turn.metadata.id)
                     && message.content == turn.prompt
                     && serde_json::to_vec(&message.attachments)?
                         == serde_json::to_vec(&turn.attachments)?,
@@ -224,6 +236,12 @@ impl RuntimeSessionStore {
         } else {
             turn.metadata.message_start = Some(core.messages.len());
             turn.metadata.message_generation = core.compression_generation;
+            turn.metadata.user_message_ordinal = Some(
+                core.messages
+                    .iter()
+                    .filter(|message| message.role == willdeep_core::Role::User)
+                    .count(),
+            );
         }
         turn.metadata.message_end = None;
         persist_turns(&self.turns_path, &turns)
@@ -289,6 +307,163 @@ fn oldest_claimable_child(
         .min()
         .map(|(_, _, turn)| turn)
 }
+
+/// Prefer the durable Turn identity; old records use their user ordinal and
+/// bounded compatibility checks for the preprocessing formats they persisted.
+pub(super) fn unrecorded_request(
+    core_store: &willdeep_core::SessionStore,
+    turn: &StoredRuntimeTurn,
+) -> Option<String> {
+    let core = core_store.load(turn.metadata.session_id).ok()?;
+    // The durable identity survives system pin insertion, routing, image fallback,
+    // compression, and recovery notices inserted as additional host user rows.
+    // Search by identity, never by text: equal prompts in different turns differ.
+    if core.messages.iter().any(|message| {
+        message.role == willdeep_core::Role::User
+            && message.runtime_turn_id == Some(turn.metadata.id)
+    }) {
+        return None;
+    }
+    let recorded_message = if let Some(ordinal) = turn.metadata.user_message_ordinal {
+        // User order is stable even within the same compression generation:
+        // Agent replaces display-only system rows before its first checkpoint.
+        core.messages
+            .iter()
+            .filter(|message| message.role == willdeep_core::Role::User)
+            .nth(ordinal)
+    } else if turn.metadata.message_generation == core.compression_generation {
+        // Old turns did not store an ordinal. Their absolute boundary is usable
+        // only within its original generation; do not guess after compression.
+        turn.metadata.message_start.and_then(|start| {
+            if start == 0 {
+                // A known empty history can only gain leading display/system
+                // rows before its first request. Do not generalize this to a
+                // nonzero boundary, where older user rows could be mistaken.
+                core.messages
+                    .iter()
+                    .find(|message| message.role != willdeep_core::Role::System)
+            } else {
+                core.messages.get(start)
+            }
+        })
+    } else {
+        None
+    };
+    let recorded = recorded_message.is_some_and(|message| {
+        if message.role != willdeep_core::Role::User || message.runtime_turn_id.is_some() {
+            return false;
+        }
+        let Some(suffix) = message.content.strip_prefix(&turn.prompt) else {
+            return false;
+        };
+        if message.attachments == turn.attachments {
+            return suffix.is_empty() || legacy_route_suffix(suffix);
+        }
+        // Legacy image fallback removed only image attachments. The description
+        // may itself contain arbitrary text (including the appended route).
+        let image_count = turn
+            .attachments
+            .iter()
+            .filter(|attachment| {
+                matches!(attachment, willdeep_core::MessageAttachment::Image { .. })
+            })
+            .count();
+        image_count > 0
+            && suffix
+                .strip_prefix(willdeep_core::types::IMAGE_DESCRIPTION_MARKER)
+                .and_then(|description| description.split_once("]\n"))
+                .is_some_and(|(header, _)| {
+                    header.ends_with(&format!(" for {image_count} attached image(s)"))
+                        && !header.contains('\n')
+                })
+            && message.attachments
+                == turn
+                    .attachments
+                    .iter()
+                    .filter(|attachment| {
+                        !matches!(attachment, willdeep_core::MessageAttachment::Image { .. })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+    });
+    (!recorded).then(|| turn.prompt.clone())
+}
+
+// Compatibility for the historical routing envelope, before inputs carried a
+// Turn ID. Accept the complete generated form only, at the stored user ordinal;
+// an arbitrary prompt suffix or a different Turn's identity is never enough.
+fn legacy_route_suffix(suffix: &str) -> bool {
+    use willdeep_core::routing::{RouteDecision, RoutingTier};
+
+    let Some(rest) = suffix.strip_prefix("\n\n<runtime-route tier=\"") else {
+        return false;
+    };
+    let Some((tier, rest)) = rest.split_once("\" profile=\"") else {
+        return false;
+    };
+    let Some((profile, rest)) = rest.split_once("\" confidence=\"") else {
+        return false;
+    };
+    let Some((confidence, body)) = rest.split_once("\">\n") else {
+        return false;
+    };
+    let Ok(confidence) = confidence.parse::<u8>() else {
+        return false;
+    };
+    if confidence > 100 {
+        return false;
+    }
+    let tier = match tier {
+        "worker" => RoutingTier::Worker,
+        "standard" => RoutingTier::Standard,
+        "deep" => RoutingTier::Deep,
+        _ => return false,
+    };
+    let Some(profile) = [
+        "scout",
+        "reader",
+        "log_inspector",
+        "git_detective",
+        "editor",
+        "test_fixer",
+        "build_fixer",
+        "implementer",
+    ]
+    .into_iter()
+    .find(|known| *known == profile) else {
+        return false;
+    };
+    let decision = RouteDecision {
+        tier,
+        profile: Some(profile),
+        confidence,
+        auto_dispatch_read_only: false,
+        reason: "legacy recovery",
+        classifier_model: None,
+        classifier_failures: Vec::new(),
+    };
+    if decision
+        .steering()
+        .is_some_and(|steering| suffix == format!("\n\n{steering}"))
+    {
+        return true;
+    }
+    // Auto-dispatched reports had the same header but a separate fixed wrapper.
+    const WORKER_REPORT_PREFIX: &str = "The runtime dispatched this bounded read-only preflight before the standard model. Use the report as evidence, verify citations when needed, and answer without re-reading the same material unless it is incomplete.\n<worker-report>\n";
+    const WORKER_REPORT_SUFFIX: &str = "\n</worker-report>\n</runtime-route>";
+    tier == RoutingTier::Worker
+        && matches!(
+            profile,
+            "scout" | "reader" | "log_inspector" | "git_detective"
+        )
+        && body
+            .strip_prefix(WORKER_REPORT_PREFIX)
+            .and_then(|report| report.strip_suffix(WORKER_REPORT_SUFFIX))
+            .is_some()
+}
+
+#[cfg(test)]
+mod request_recovery_tests;
 
 #[cfg(test)]
 mod tests {

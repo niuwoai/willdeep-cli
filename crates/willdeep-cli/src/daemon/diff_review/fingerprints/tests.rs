@@ -253,3 +253,50 @@ fn nested_symlink_fingerprints_the_link_without_reading_its_target() {
     symlink(fixture.root.join("missing.txt"), child.join("link")).unwrap();
     assert_ne!(before.id, snapshot(&fixture.workspace).unwrap().id);
 }
+
+#[test]
+fn rename_source_and_recreated_source_have_independent_content_fingerprints() {
+    use super::super::{AttributedPathState, path_state_after};
+
+    let fixture = Fixture::new();
+    let root = &fixture.workspace;
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::create_dir_all(root.join("b")).unwrap();
+    std::fs::write(root.join("a/source.rs"), "pub fn value() {}\n").unwrap();
+    git(root, &["add", "."]).unwrap();
+    git(root, &["commit", "--quiet", "-m", "source"]).unwrap();
+    git(root, &["mv", "a/source.rs", "b/target.rs"]).unwrap();
+    let renamed = capture(root).unwrap();
+    assert!(renamed.fingerprints.contains_key("a/source.rs"));
+    assert!(renamed.fingerprints.contains_key("b/target.rs"));
+    assert_eq!(
+        path_state_after(&renamed.snapshot, "a/source.rs"),
+        AttributedPathState::Deleted
+    );
+
+    // 一个路径既是重命名源、又是未跟踪的新文件，两个状态都要参与指纹。
+    std::fs::write(root.join("a/source.rs"), "// recreated\n").unwrap();
+    let recreated = capture(root).unwrap();
+    assert_ne!(
+        renamed.fingerprints["a/source.rs"],
+        recreated.fingerprints["a/source.rs"]
+    );
+    assert_eq!(
+        path_state_after(&recreated.snapshot, "a/source.rs"),
+        AttributedPathState::Untracked
+    );
+    std::fs::write(root.join("b/target.rs"), "// target changed\n").unwrap();
+    let target_changed = capture(root).unwrap();
+    std::fs::write(root.join("b/target.rs"), "// target rewritten\n").unwrap();
+    let target_rewritten = capture(root).unwrap();
+    assert_eq!(
+        target_changed.fingerprints["a/source.rs"],
+        target_rewritten.fingerprints["a/source.rs"]
+    );
+    std::fs::write(root.join("a/source.rs"), "// source changed again\n").unwrap();
+    let source_changed = capture(root).unwrap();
+    assert_ne!(
+        target_rewritten.fingerprints["a/source.rs"],
+        source_changed.fingerprints["a/source.rs"]
+    );
+}
