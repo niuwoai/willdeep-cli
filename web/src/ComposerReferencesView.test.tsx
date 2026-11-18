@@ -8,9 +8,11 @@ it("renders MCP then agents then files in each supported language", () => {
     const t = messages[language];
     const html = renderToStaticMarkup(<ComposerReferences entries={[
       { kind: "file", name: "中文 file.rs", value: '@file:"中文 file.rs"' },
+      { kind: "peer", name: "mira", value: "@mira" },
       { kind: "agent", name: "generalist", value: "@agent:generalist" },
       { kind: "mcp", name: "search", value: "@mcp:search" },
     ]} selected={0} loading={false} messages={t} choose={() => undefined} />);
+    expect(html.indexOf(t.referenceMembers)).toBeLessThan(html.indexOf(t.referenceMcp));
     expect(html.indexOf(t.referenceMcp)).toBeLessThan(html.indexOf(t.agents));
     expect(html.indexOf(t.agents)).toBeLessThan(html.indexOf(t.referenceFiles));
     expect(html).toContain('aria-selected="true"');

@@ -28,6 +28,9 @@ pub(super) fn route(app: &mut App, value: String) -> PasteAction {
     } else if let Some(picker) = app.workspace_picker.as_mut() {
         picker.editor.insert(&value);
         app.refresh_workspace_picker_matches();
+    } else if let Some(picker) = app.group_picker.as_mut() {
+        picker.editor.insert(&value);
+        app.refresh_group_picker_matches();
     } else if let Some(picker) = app.session_picker.as_mut() {
         picker.editor.insert(&value);
         return PasteAction::RefreshSessionPicker;
@@ -62,6 +65,29 @@ mod tests {
         app.input.begin_selection_visual(0, 0, 80);
         app.input.extend_selection_visual(0, 5, 80);
         app.input.finish_selection();
+        assert_eq!(app.input.selected_text(), Some("draft"));
+    }
+
+    #[test]
+    fn group_picker_consumes_paste_without_replacing_the_prompt() {
+        let mut app = App::new(Vec::new(), Language::En);
+        select_draft(&mut app);
+        app.open_group_picker(
+            vec![group_picker_ui::GroupPickerRow {
+                id: uuid::Uuid::new_v4(),
+                name: "omega".to_owned(),
+                session_id: Some(uuid::Uuid::new_v4()),
+                member_names: Vec::new(),
+                paused: false,
+                auto_turns: 0,
+            }],
+            uuid::Uuid::nil(),
+        );
+        assert_eq!(route(&mut app, "omega".to_owned()), PasteAction::Done);
+        let picker = app.group_picker.as_ref().unwrap();
+        assert_eq!(picker.editor.text(), "omega");
+        assert_eq!(picker.filtered.len(), 1);
+        assert_eq!(app.input.text(), "draft stays here");
         assert_eq!(app.input.selected_text(), Some("draft"));
     }
 

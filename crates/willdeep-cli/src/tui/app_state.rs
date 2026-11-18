@@ -214,6 +214,9 @@ impl App {
             workspace_picker: None,
             workspace_picker_rect: Rect::default(),
             workspace_picker_hits: Vec::new(),
+            group_picker: None,
+            group_picker_rect: Rect::default(),
+            group_picker_hits: Vec::new(),
             permission_picker: None,
             approval_handle: None,
             approval_mode: willdeep_core::ApprovalMode::Smart,
@@ -221,6 +224,7 @@ impl App {
             routing_settings: None,
             routing_settings_rect: Rect::default(),
             pending_session_switch: None,
+            pending_group_switch: None,
             pending_workspace_switch: None,
             pending_external_editor: false,
             transcript_rect: Rect::default(),
@@ -346,7 +350,9 @@ impl App {
         self.rewind_picker = None;
         self.model_picker = None;
         self.workspace_picker = None;
+        self.group_picker = None;
         self.pending_session_switch = None;
+        self.pending_group_switch = None;
         self.attention_read = session.attention_read.clone();
         self.workspace = Some(session.workspace.clone());
         self.session_lineage = None;
@@ -2584,9 +2590,9 @@ impl App {
                     lines.push(format!(
                         "  {}",
                         self.language.text(
-                            "发言：/fed say <名字> <内容>；群：/fed group <群名> <成员...>；停自动回复：/fed stop <群名>",
-                            "Say: /fed say <name> <text>; group: /fed group <name> <member...>; pause: /fed stop <group>",
-                            "送信: /fed say <名前> <本文>。グループ: /fed group <名前> <メンバー...>。停止: /fed stop <名前>",
+                            "发言：/fed say <名字> <内容>；群：/fed group <群名> <成员...>；群列表：/groups；停自动回复：/fed stop <群名>",
+                            "Say: /fed say <name> <text>; group: /fed group <name> <member...>; group list: /groups; pause: /fed stop <group>",
+                            "送信: /fed say <名前> <本文>。グループ: /fed group <名前> <メンバー...>。一覧: /groups。停止: /fed stop <名前>",
                         )
                     ));
                     self.append_transcript(lines.join("\n"));

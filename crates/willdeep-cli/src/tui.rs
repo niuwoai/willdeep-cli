@@ -61,6 +61,7 @@ mod daemon_commands;
 mod delivery_echo;
 mod diff_review_ui;
 mod dispatch;
+mod group_picker_ui;
 mod human_gate_ui;
 mod media_ui;
 mod message_model;
@@ -114,6 +115,7 @@ use dispatch::{
     dispatch_compress, dispatch_input_suggestion, dispatch_prompt, dispatch_retitle,
     wake_for_kernel_events,
 };
+use group_picker_ui::{GroupPickerAction, GroupPickerState, render_group_picker};
 use media_ui::{MediaAction, MediaState, render_media_overlay};
 use model_commands::{
     ModelCommand, ModelPickerAction, ModelPickerState, render_model_picker, request_model_list,
@@ -620,6 +622,9 @@ struct App {
     workspace_picker: Option<WorkspacePickerState>,
     workspace_picker_rect: Rect,
     workspace_picker_hits: Vec<(u16, usize)>,
+    group_picker: Option<GroupPickerState>,
+    group_picker_rect: Rect,
+    group_picker_hits: Vec<(u16, usize)>,
     permission_picker: Option<PermissionPickerState>,
     /// 当前审批档位，显示在输入框标题上。真正生效的是 Agent 与 Runtime 会话
     /// 手里的句柄，这里只是界面上的镜像。
@@ -630,6 +635,8 @@ struct App {
     routing_settings: Option<RoutingSettingsState>,
     routing_settings_rect: Rect,
     pending_session_switch: Option<PendingSessionSwitch>,
+    /// 群列表面板里选中的群会话。与历史会话不同，它允许跨工作区切换。
+    pending_group_switch: Option<uuid::Uuid>,
     /// 面板里选中的工作区，等主循环空出手来真正切过去。
     pending_workspace_switch: Option<uuid::Uuid>,
     /// Ctrl+G 按下，等主循环交出终端给外部编辑器（按键分支里拿不到终端）。
@@ -1947,6 +1954,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         render_rewind_picker(f, app);
         render_model_picker(f, app);
         render_workspace_picker(f, app);
+        render_group_picker(f, app);
         render_permission_picker(f, app);
         render_routing_settings(f, app);
         app.search_rect = Rect::default();

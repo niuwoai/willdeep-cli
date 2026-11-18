@@ -2534,6 +2534,7 @@ fn pop_sse_json(buffer: &mut String) -> Option<serde_json::Value> {
     serde_json::from_str(&data).ok()
 }
 
+#[track_caller]
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
