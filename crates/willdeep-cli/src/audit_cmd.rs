@@ -2015,6 +2015,7 @@ mod tests {
                 status: VerificationStatus::Passed,
             }],
             verification_baseline: None,
+            completion_scope_uncertain: false,
             status: CheckpointStatus::Completed,
             turns: 3,
             input_tokens: 100,
