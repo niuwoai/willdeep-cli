@@ -435,7 +435,8 @@ impl App {
                     self.queued_prompts
                         .iter()
                         .find(|queued| {
-                            queued.remote.is_none() && queued.transcript_row == Some(index)
+                            queued.remote.is_none()
+                                && self.local_queue_record(queued) == Some(index)
                         })
                         .map_or_else(
                             || source::record_body(&self.transcript[index]).to_owned(),

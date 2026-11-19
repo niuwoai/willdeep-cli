@@ -366,6 +366,73 @@ fn local_queue_hint_preserves_fold_and_attachment_hits_without_polluting_copy() 
 }
 
 #[test]
+fn session_switch_does_not_rebind_local_queue_rows() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.input.insert("LOCAL_QUEUED_TEXT");
+    app.queue_submitted_prompt();
+    assert_eq!(app.queued_prompts[0].transcript_row, Some(0));
+
+    let mut target = willdeep_core::Session::new(std::env::temp_dir(), None, "target");
+    target.messages = vec![willdeep_core::types::Message::user(
+        "OTHER_SESSION_QUESTION",
+    )];
+    app.load_session(&target);
+
+    assert_eq!(app.queued_prompts.len(), 1);
+    assert_eq!(app.queued_prompts[0].transcript_row, None);
+    app.prepare_transcript_frame();
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("OTHER_SESSION_QUESTION"), "{shown}");
+    assert!(!shown.contains("LOCAL_QUEUED_TEXT"), "{shown}");
+    assert!(!shown.contains("Ctrl+Q"), "{shown}");
+    assert!(app.queued_user_records().is_empty());
+    assert_eq!(app.viewport_record_body(0), "OTHER_SESSION_QUESTION");
+}
+
+#[test]
+fn failed_local_submission_keeps_the_unconfirmed_prefix_and_full_body_copy() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.viewport_height = 60;
+    app.input.insert("abcdef");
+    app.queue_submitted_prompt();
+    app.note_runtime_submission_unconfirmed("abcdef", uuid::Uuid::new_v4(), false, Some(0));
+    app.prepare_transcript_frame();
+
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("? abcdef"), "{shown}");
+    assert!(
+        !app.queued_user_records().contains(&0),
+        "an unconfirmed row must not claim queue ownership"
+    );
+    app.chat_selection = Some(ChatSelection {
+        anchor: ChatSelectionPoint { row: 0, column: 0 },
+        head: ChatSelectionPoint { row: 0, column: 99 },
+    });
+    assert_eq!(app.selected_chat_text(), "abcdef");
+}
+
+#[test]
+fn editing_a_queued_prompt_refreshes_the_cached_frame() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.viewport_height = 60;
+    app.input.insert("first text");
+    app.queue_submitted_prompt();
+    app.prepare_transcript_frame();
+    assert!(app.transcript_rows.join("\n").contains("first text"));
+    // The queue panel save path rewrites the placeholder record in place.
+    app.queued_prompts[0].text = "second text".into();
+    app.transcript[0] = app.queued_prompt_row("second text");
+    app.refresh_transcript_height();
+    app.prepare_transcript_frame();
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("second text"), "{shown}");
+    assert!(!shown.contains("first text"), "{shown}");
+}
+
+#[test]
 fn wrapped_attachments_and_fold_controls_stay_inside_the_user_block() {
     let mut app = App::new(vec!["You: inspect".into()], Language::En);
     app.transcript_width = 40;

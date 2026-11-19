@@ -30,6 +30,8 @@ pub(super) struct TranscriptRenderCache {
     expanded_tools: BTreeMap<usize, String>,
     /// 哪些行处于展开状态。和内容分开记：收起不删内容，只改这一项。
     open_tools: BTreeSet<usize>,
+    /// 工具行的自动展开只属于进行中的轮次；收尾后同一份记录要重新折叠。
+    running: bool,
     tool_visuals: tool_visuals::ToolVisuals,
     language: Language,
     search: Option<String>,
@@ -82,6 +84,7 @@ impl App {
                 && cache.queued_users == queued_users
                 && cache.models == self.transcript_models
                 && cache.expanded == self.tool_rows_expanded
+                && cache.running == self.running
                 && cache.expanded_tools == self.tool_expansions
                 && cache.open_tools == self.expanded_tool_rows
                 && cache.tool_visuals == self.tool_visuals
@@ -121,6 +124,7 @@ impl App {
                 models: self.transcript_models.clone(),
                 width: self.transcript_width,
                 expanded: self.tool_rows_expanded,
+                running: self.running,
                 expanded_tools: self.tool_expansions.clone(),
                 open_tools: self.expanded_tool_rows.clone(),
                 tool_visuals: self.tool_visuals.clone(),

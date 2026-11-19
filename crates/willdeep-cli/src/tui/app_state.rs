@@ -270,6 +270,10 @@ impl App {
         self.remote_gate_waiters.clear();
         self.parked_remote_dialogs.clear();
         self.queued_prompts.retain(|item| item.remote.is_none());
+        // 本地队列跨会话保留，但记录换了一份：旧行号在新记录里指向别人的消息。
+        for queued in &mut self.queued_prompts {
+            queued.transcript_row = None;
+        }
         self.runtime_queue_submission = None;
         self.pending_runtime_echoes.clear();
         self.prompt_history_pending.clear();

@@ -142,6 +142,15 @@ impl App {
         prompt
     }
 
+    /// A local queue item owns its record only while that record is still its
+    /// untouched queued placeholder. A failed submission rewrites the record
+    /// into an unconfirmed receipt, and switching sessions replaces every
+    /// record; neither may borrow another row's text, color or selection.
+    pub(super) fn local_queue_record(&self, queued: &QueuedPrompt) -> Option<usize> {
+        let index = queued.transcript_row?;
+        (self.transcript.get(index) == Some(&self.queued_prompt_row(&queued.text))).then_some(index)
+    }
+
     /// Only identity-bound Runtime receipts or explicit local queue entries
     /// can add queue affordances; an unconfirmed submission proves no queue.
     pub(super) fn queued_user_records(&self) -> BTreeSet<usize> {
@@ -153,7 +162,7 @@ impl App {
                 self.queued_prompts
                     .iter()
                     .filter(|queued| queued.remote.is_none())
-                    .filter_map(|queued| queued.transcript_row),
+                    .filter_map(|queued| self.local_queue_record(queued)),
             )
             .collect()
     }
@@ -218,7 +227,7 @@ impl App {
             .iter()
             .filter(|item| item.remote.is_none())
         {
-            if let Some(source) = queued.transcript_row
+            if let Some(source) = self.local_queue_record(queued)
                 && let Some((&target, _)) = users.iter().find(|(_, (record, _))| *record == source)
                 && target < end
             {

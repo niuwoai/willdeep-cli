@@ -41,8 +41,11 @@ impl ToolVisuals {
 }
 
 impl App {
+    /// Automatic projections belong to the active turn: once the turn has its
+    /// final result, only a row the user opened stays expanded.
     pub(super) fn tool_row_open(&self, source: usize) -> bool {
-        self.expanded_tool_rows.contains(&source) || self.tool_visuals.automatically_open(source)
+        self.expanded_tool_rows.contains(&source)
+            || (self.running && self.tool_visuals.automatically_open(source))
     }
 
     pub(super) fn toggle_tool_projection(&mut self, source: usize) {
