@@ -140,7 +140,21 @@ impl ProjectRules {
             .filter_entry(|entry| entry.file_name() != ".git")
             .build()
         {
-            let entry = entry.map_err(std::io::Error::other)?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if self.can_skip_discovery_error(&error) => {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({
+                            "level": "warn",
+                            "event": "project_rule_discovery_skipped_directory",
+                            "error": error.to_string(),
+                        })
+                    );
+                    continue;
+                }
+                Err(error) => return Err(std::io::Error::other(error)),
+            };
             if RULE_NAMES.iter().any(|name| entry.file_name() == *name)
                 && let Some(parent) = entry.path().parent()
             {
@@ -154,6 +168,39 @@ impl ProjectRules {
             }
         }
         Ok(())
+    }
+
+    fn can_skip_discovery_error(&self, error: &ignore::Error) -> bool {
+        let ignore::Error::WithPath { path, .. } = error else {
+            return false;
+        };
+        // A directory can deny listing while still allowing access by known paths.
+        // In that case undiscovered instructions may apply, so keep blocking the call.
+        self.is_subdirectory_permission_error(error)
+            && std::fs::metadata(path.join("."))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+    }
+
+    fn is_subdirectory_permission_error(&self, error: &ignore::Error) -> bool {
+        // Only confirmed ordinary subdirectories are candidates for the traversal check.
+        // Root errors and all actual instruction-file reads must still fail closed.
+        let ignore::Error::WithPath { path, .. } = error else {
+            return false;
+        };
+        error
+            .io_error()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+            && error.depth().is_some_and(|depth| depth > 0)
+            && path.strip_prefix(&self.workspace).is_ok_and(|relative| {
+                !relative.as_os_str().is_empty()
+                    && relative
+                        .components()
+                        .all(|part| matches!(part, Component::Normal(_)))
+            })
+            && !RULE_NAMES
+                .iter()
+                .any(|name| path.file_name().is_some_and(|file| file == *name))
+            && std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
     }
 
     fn read_rule(&self, path: &Path) -> std::io::Result<Option<String>> {

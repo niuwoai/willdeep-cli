@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc1
+> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc2
+
+0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。本次改动尚未安装或发布。
 
 0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。尚未安装或发布。
 
