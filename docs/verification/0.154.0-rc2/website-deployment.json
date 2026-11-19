@@ -1,0 +1,36 @@
+{
+  "origin": "https://willdeep.com",
+  "website_version": "1.12.0-rc14",
+  "cli_version": "0.154.0-rc2",
+  "repository": "niuwoai/site.willdeep",
+  "pull_request": "https://github.com/niuwoai/site.willdeep/pull/36",
+  "content_commit": "0b70a755f943b84fa9a5909f1d9e6d11b24967ad",
+  "merge_commit": "d7f6e488ea4a03e6a902b726cdbecb7f51e82157",
+  "merged_at": "2026-11-19T04:23:48Z",
+  "tag": "v1.12.0-rc14",
+  "tag_commit": "d7f6e488ea4a03e6a902b726cdbecb7f51e82157",
+  "deployment": {"github_id": 7904044991, "environment": "willdeep-site / production", "state": "success", "completed_at": "2026-11-19T04:24:42Z"},
+  "checked_at": "2026-11-19T04:26:01Z",
+  "toolchain": {"yarn": "4.12.0", "vite": "6.4.3"},
+  "local_checks": {"tests": 31, "passed": 31, "failed": 0, "skipped": 0, "typecheck": true, "build": true, "browser_chinese_and_english": true, "browser_npm_homebrew_switch": true, "browser_console_errors": 0},
+  "routes": [
+    {"path":"/","status":200,"version_header":"1.12.0-rc14"},
+    {"path":"/products/cli/","status":200,"version_header":"1.12.0-rc14"},
+    {"path":"/products/cli/changelog","status":200,"version_header":"1.12.0-rc14"}
+  ],
+  "documents": [
+    {"path":"/products/cli/production-overview.md","status":200,"version_header":"1.12.0-rc14","sha256":"5cadd68a7058aa5534541d96499990163b2ec696f8a8d07c09f80df55942904b","source_and_build_match":true},
+    {"path":"/products/cli/production-overview.en.md","status":200,"version_header":"1.12.0-rc14","sha256":"b7633d5f947a7e0d8648677f9a35cabb4a37c9860372678e6a63ea3611183242","source_and_build_match":true},
+    {"path":"/products/cli/changelog.md","status":200,"version_header":"1.12.0-rc14","sha256":"9fdf9d87e99d99de018783c67828dcff7f67fb1b49bde4970907772a2078a9dc","source_and_build_match":true},
+    {"path":"/products/cli/changelog.en.md","status":200,"version_header":"1.12.0-rc14","sha256":"9fa1631120db41e7045e4dc71aff717bbdf06562fb8d1d2025d029def0edd7fc","source_and_build_match":true},
+    {"path":"/llms.txt","status":200,"version_header":"1.12.0-rc14","sha256":"be9b662e0e8bec6f2a3212e8f76499d41e270c7bc8d721c803af436ab2b94228","source_and_build_match":true}
+  ],
+  "entry_assets": [
+    {"path":"/assets/index-DllPMZwn.js","status":200,"bytes":1517605,"version_header":"1.12.0-rc14","sha256":"a9cd8da06fcc677f94a864e7a5730bdc10b72e5b994d2fc1da27572497c3f062"},
+    {"path":"/assets/index-JGidNDst.css","status":200,"bytes":50495,"version_header":"1.12.0-rc14","sha256":"f9dd8651e40a5f9d1ad5b717b66ce3ea9221a984054b20c6c059f244ca38febc"}
+  ],
+  "request_authentication": "none; no cookies or credentials",
+  "verification_boundary": "Browser interaction checks exercised the local final source. Production was verified through read-only HTTPS health/content requests, deployed bundle checks, and exact source/build/document digest comparisons; no production browser interaction is claimed.",
+  "notes": ["Existing React act warnings and a Vite chunk-size warning remain; tests and build exited successfully.", "An earlier run from the CLI directory used Yarn 1; the final complete test and build run was executed inside the website worktree with Yarn 4.12.0.", "Direct browser navigation to the public site was denied by automatic approval review as Browser Navigate Exfil; unauthenticated read-only HTTPS verification succeeded instead."],
+  "passed": true
+}

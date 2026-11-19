@@ -1,0 +1,22 @@
+{
+  "version": "0.154.0-rc2",
+  "verified_on": "2026-11-19",
+  "repository": "niuwoai/homebrew-tap",
+  "pull_request": "https://github.com/niuwoai/homebrew-tap/pull/18",
+  "pull_request_passing_checks": 2,
+  "formula_commit": "63b1c3a726fb0da8aa90940637f467262600bda5",
+  "merge_commit": "8667929c525d6f4d0e97a4fcb06c6260838dcc92",
+  "merged_at": "2026-11-19T04:17:56Z",
+  "archive_sha256": "904f8fa781c01d9a9d8e776d0177e219f899cefd9496bb06a609e7936ab68ea0",
+  "binary_path": "/opt/homebrew/Cellar/willdeep-cli/0.154.0-rc2/bin/willdeep",
+  "binary_sha256": "64f473f5bd1298f394e2117290d355e39d5e92515ce6fa45e20f9f5d29a5dd54",
+  "binary_architectures": ["x86_64", "arm64"],
+  "checks": {"upgrade": true, "version": true, "brew_test": true, "brew_style_formula": true, "brew_audit_strict_online": true},
+  "cargo_version": "0.154.0-rc2",
+  "homebrew_version": "0.154.0-rc2",
+  "runtime": {"version": "0.154.0-rc2", "pid": 61794, "address": "127.0.0.1:55954", "restarted_during_homebrew_upgrade": false},
+  "previous_cellar_retained": "/opt/homebrew/Cellar/willdeep-cli/0.154.0-rc1",
+  "backup_directory": "/Users/rocky/.local/share/willdeep/backups/20261119-rc1-before-0.154.0-rc2",
+  "notes": ["Only the target tap was fast-forwarded; existing PENDING.md and .claude changes were preserved without stash.", "Homebrew auto-update and installation cleanup were disabled for this targeted upgrade.", "Earlier external-path style attempts were unsuitable and were not counted as passing; the installed formula name passed.", "Homebrew reported existing trust warnings for unrelated taps; their trust settings were not changed."],
+  "passed": true
+}
