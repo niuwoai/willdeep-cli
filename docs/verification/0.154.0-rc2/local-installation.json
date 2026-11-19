@@ -1,0 +1,31 @@
+{
+  "date": "2026-11-19",
+  "version": "0.154.0-rc2",
+  "source_commit": "ac91a4208d2fb699e4879f5a8c63951bd542635b",
+  "merged_commit": "df5723085151b02095ee7c871f8bd374fc6201c6",
+  "binary_sha256": "72a55e6d15b9c227d81428c4f185a4ff3be7fa746057d40177bd7ae5e44cd05c",
+  "runtime": {
+    "previous_version": "0.154.0-rc1",
+    "previous_pid": 22249,
+    "version": "0.154.0-rc2",
+    "pid": 61794,
+    "address": "127.0.0.1:55954",
+    "handoff": "graceful"
+  },
+  "checks": [
+    { "name": "cli_version", "passed": true },
+    { "name": "runtime_health", "passed": true },
+    { "name": "runtime_capabilities", "passed": true, "response_bytes": 5487 },
+    { "name": "web_health_and_version_header", "passed": true, "status": 200, "version": "0.154.0-rc2", "header_version": "0.154.0-rc2" },
+    { "name": "embedded_web_assets", "passed": true, "assets": [
+      { "path": "/assets/index-D51g4cd4.js", "status": 200, "bytes": 970985, "sha256": "95e7311d84c40df621b7a2ecdc5e5324c79a763e32c2f0e6d296efdc6108ccaf", "matches_local_dist": true },
+      { "path": "/assets/shareMessages-DIMqt2I4.js", "status": 200, "bytes": 358750, "sha256": "3ac5d9e3b68655d98b9eae8ef743f21c2ab64d6edc35da77ec2aeda9f12e4e49", "matches_local_dist": true },
+      { "path": "/assets/index-C82JofDj.css", "status": 200, "bytes": 111809, "sha256": "6bbf559a8c749f7e36584bf9575a9498337bf460963eaf40297ef9d119228d6e", "matches_local_dist": true }
+    ] }
+  ],
+  "passed": true,
+  "scope": "local_installation_before_public_release",
+  "homebrew_version_at_check": "0.154.0-rc1",
+  "remote_deployment_performed": false,
+  "database_migration_performed": false
+}

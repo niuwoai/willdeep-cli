@@ -1,7 +1,7 @@
 name: npm dist-tag
 
-# npmjs 页面只读 latest 标签指向的版本。发布流水线固定打 rc 标签，不会移动 latest。
-# 这里手动把已发布的某个版本挂到指定标签，不重新发布。
+# 发布流水线会把已发布版本同时挂到 rc 和 latest 标签。
+# 这里保留手动修复入口，把已发布的某个版本挂到指定标签，不重新发布。
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +19,9 @@ jobs:
   retag:
     name: Move dist-tag
     runs-on: ubuntu-latest
+    concurrency:
+      group: willdeep-cli-npm-dist-tags
+      cancel-in-progress: false
     steps:
       - uses: actions/setup-node@v4
         with:
