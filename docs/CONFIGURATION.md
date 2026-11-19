@@ -179,6 +179,16 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 
 `api_key` 与 `api_key_env` 不能同时定义，也不允许为空字符串。
 
+也可用 CLI 脚本化增删查，不必手改 TOML：
+
+```bash
+willdeep provider add "https://some.im/" --name someim
+willdeep provider list --json
+willdeep provider remove someim
+```
+
+`add` 只写入 `api_base` 与按 host 推断的 `provider`/`api`（openai-compatible / some-im 会补齐 `/v1`），可选 `--api-key-env` 与 `--model`，**不写明文 `api_key`**。同名直接报错；删除时若仍被 `agent.compressor_profile`、`subagents.*.provider_profile` 或 `worker_tiers.*.provider_profile` 引用则拒绝。完整参数见 [CLI 参考](CLI_REFERENCE.md#willdeep-provider--provider-档案)。
+
 ### 思考等级映射
 
 每个 Provider 可独立定义逻辑等级名、默认等级、请求参数路径和实际上游值：

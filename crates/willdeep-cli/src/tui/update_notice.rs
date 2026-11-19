@@ -215,16 +215,63 @@ pub(super) fn show_when_idle(app: &mut App, home: &Path) {
         "https://github.com/niuwoai/willdeep-cli/releases/tag/{}",
         release.tag_name
     );
-    app.append_transcript(format!("System: {} {} · {url}\n{}",
-        app.language.text("WillDeep CLI 有新版可用", "A new WillDeep CLI version is available", "WillDeep CLI の新バージョンがあります"),
+    app.append_transcript(format!(
+        "System: {} {} · {url}\n{}",
+        app.language.text(
+            "WillDeep CLI 有新版可用",
+            "A new WillDeep CLI version is available",
+            "WillDeep CLI の新バージョンがあります"
+        ),
         release.tag_name,
-        app.language.text("手动更新客户端：brew update && brew upgrade niuwoai/tap/willdeep-cli；/daemon upgrade 仅升级 Runtime。可用 [ui] check_updates = false 关闭检查。", "Update the client manually: brew update && brew upgrade niuwoai/tap/willdeep-cli; /daemon upgrade only updates Runtime. Disable checks with [ui] check_updates = false.", "クライアントは brew update && brew upgrade niuwoai/tap/willdeep-cli で更新できます。/daemon upgrade は Runtime のみ更新します。[ui] check_updates = false で確認を無効化できます。")
+        client_update_hint(app.language),
     ));
+}
+
+/// macOS 先 brew；Linux / Windows / 其他先 npm（INSTALL.md 里 npm 覆盖三端）。
+fn client_update_hint(language: crate::i18n::Language) -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        language.text(
+            "手动更新客户端：brew update && brew upgrade niuwoai/tap/willdeep-cli；或 npm install -g @niuwoai/willdeep@rc。/daemon upgrade 仅升级 Runtime。可用 [ui] check_updates = false 关闭检查。",
+            "Update the client manually: brew update && brew upgrade niuwoai/tap/willdeep-cli; or npm install -g @niuwoai/willdeep@rc. /daemon upgrade only updates Runtime. Disable checks with [ui] check_updates = false.",
+            "クライアントは brew update && brew upgrade niuwoai/tap/willdeep-cli、または npm install -g @niuwoai/willdeep@rc で更新できます。/daemon upgrade は Runtime のみ更新します。[ui] check_updates = false で確認を無効化できます。",
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        language.text(
+            "手动更新客户端：npm install -g @niuwoai/willdeep@rc；macOS 也可用 brew update && brew upgrade niuwoai/tap/willdeep-cli。/daemon upgrade 仅升级 Runtime。可用 [ui] check_updates = false 关闭检查。",
+            "Update the client manually: npm install -g @niuwoai/willdeep@rc; on macOS you can also brew update && brew upgrade niuwoai/tap/willdeep-cli. /daemon upgrade only updates Runtime. Disable checks with [ui] check_updates = false.",
+            "クライアントは npm install -g @niuwoai/willdeep@rc で更新できます。macOS では brew update && brew upgrade niuwoai/tap/willdeep-cli も使えます。/daemon upgrade は Runtime のみ更新します。[ui] check_updates = false で確認を無効化できます。",
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_update_hint_mentions_npm_and_brew() {
+        let hint = client_update_hint(crate::i18n::Language::ZhCn);
+        assert!(
+            hint.contains("npm install -g @niuwoai/willdeep@rc"),
+            "{hint}"
+        );
+        assert!(hint.contains("brew"), "{hint}");
+        assert!(hint.contains("/daemon upgrade"), "{hint}");
+        assert!(hint.contains("check_updates = false"), "{hint}");
+        #[cfg(target_os = "macos")]
+        assert!(
+            hint.find("brew").unwrap() < hint.find("npm").unwrap(),
+            "macOS should prefer brew: {hint}"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            hint.find("npm").unwrap() < hint.find("brew").unwrap(),
+            "non-macOS should prefer npm: {hint}"
+        );
+    }
 
     #[tokio::test]
     async fn public_release_fixture_is_cached_without_a_second_request() {

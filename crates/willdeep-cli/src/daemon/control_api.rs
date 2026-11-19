@@ -620,12 +620,19 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
         },
         "webapp.start" => {
             match params::<willdeep_runtime_protocol::web_app::WebAppStartParams>(&request) {
-                Ok(params) => state
-                    .web_app
-                    .start(params)
-                    .await
-                    .map_err(ApiFailure::internal)
-                    .and_then(json),
+                Ok(params) => match state.web_app.start(params).await {
+                    Ok(status) => json(status),
+                    // 只有本次 start 写进 status.error 并原样 bail 的闭集合文案才透传；
+                    // 早期校验失败（可能带路径）与陈旧 status.error 仍走脱敏 internal。
+                    Err(error) => {
+                        let message = error.to_string();
+                        if state.web_app.status().error.as_deref() == Some(message.as_str()) {
+                            Err(ApiFailure::webapp(message))
+                        } else {
+                            Err(ApiFailure::internal(error))
+                        }
+                    }
+                },
                 Err(error) => Err(error),
             }
         }
@@ -2297,6 +2304,19 @@ impl ApiFailure {
         }
     }
 
+    /// Web App 启动失败且 status.error 已有闭集合文案（端口占用等）。
+    /// 与 [`Self::mobile`] 同理：抹成 `internal Runtime error` 就没法照着换端口或停旧进程。
+    fn webapp(message: impl Into<String>) -> Self {
+        let message = message.into();
+        eprintln!("Runtime control API Web App error: {message}");
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: ErrorCode::Internal,
+            message,
+            retryable: false,
+        }
+    }
+
     pub(super) fn internal(error: impl std::fmt::Display) -> Self {
         eprintln!("Runtime control API internal error: {error}");
         Self {
@@ -2504,6 +2524,13 @@ mod tests {
     fn internal_errors_are_redacted_from_clients() {
         let error = ApiFailure::internal("/private/path contains provider-secret");
         assert_eq!(error.message, "internal Runtime error");
+    }
+
+    #[test]
+    fn webapp_startup_errors_keep_the_closed_set_message() {
+        let error = ApiFailure::webapp("Web 监听端口已被占用");
+        assert_eq!(error.message, "Web 监听端口已被占用");
+        assert_eq!(error.code, ErrorCode::Internal);
     }
 
     #[test]

@@ -593,6 +593,66 @@ fn first_section(lines: &[String]) -> usize {
         .unwrap_or(lines.len())
 }
 
+/// 删除 `[section]` 及其嵌套表（如 `[providers.foo.reasoning]`）。
+/// 段头前紧挨着的注释行一并删掉，避免留下无主注释。
+pub(crate) fn remove_section_tree(contents: &str, section: &str) -> String {
+    let trailing_newline = contents.ends_with('\n');
+    let mut lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
+    let prefixes = [format!("[{section}]"), format!("[{section}.")];
+    let mut index = 0;
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        let matches = prefixes.iter().any(|prefix| {
+            trimmed == prefix.as_str()
+                || (prefix.ends_with('.')
+                    && trimmed.starts_with(prefix.as_str())
+                    && trimmed.ends_with(']'))
+        });
+        if !matches {
+            index += 1;
+            continue;
+        }
+        let mut start = index;
+        while start > 0 {
+            let previous = lines[start - 1].trim();
+            if previous.is_empty() || previous.starts_with('#') {
+                start -= 1;
+                continue;
+            }
+            break;
+        }
+        let end = lines[index + 1..]
+            .iter()
+            .position(|line| is_section_header(line))
+            .map(|offset| index + 1 + offset)
+            .unwrap_or(lines.len());
+        lines.drain(start..end);
+        index = start;
+    }
+    // 连续空行压成至多一行，避免删段后留下大片空白。
+    let mut compacted = Vec::with_capacity(lines.len());
+    let mut previous_blank = false;
+    for line in lines {
+        let blank = line.trim().is_empty();
+        if blank && previous_blank {
+            continue;
+        }
+        previous_blank = blank;
+        compacted.push(line);
+    }
+    while compacted.first().is_some_and(|line| line.trim().is_empty()) {
+        compacted.remove(0);
+    }
+    while compacted.last().is_some_and(|line| line.trim().is_empty()) {
+        compacted.pop();
+    }
+    let mut result = compacted.join("\n");
+    if trailing_newline || !result.is_empty() {
+        result.push('\n');
+    }
+    result
+}
+
 fn section_range(lines: &[String], section: &str) -> Option<(usize, usize)> {
     let header = format!("[{section}]");
     let header_index = lines.iter().position(|line| line.trim() == header)?;
@@ -741,6 +801,22 @@ context_window = 49152
 future_desktop_field = "preserved"
 "#
         .to_owned()
+    }
+
+    #[test]
+    fn remove_section_tree_drops_nested_tables_and_orphan_comments() {
+        let value = remove_section_tree(&sample(), "providers.some-im");
+        assert!(!value.contains("[providers.some-im]"));
+        assert!(value.contains("[providers.local]"));
+        assert!(value.contains("default_provider = \"some-im\""));
+        assert!(value.contains("# keep this comment"));
+        toml::from_str::<ConfigFile>(&value).expect("config after remove");
+
+        let with_nested = sample()
+            + "\n[providers.some-im.reasoning]\ndefault_level = \"balanced\"\n\n[providers.some-im.reasoning.levels]\nbalanced = \"medium\"\n";
+        let value = remove_section_tree(&with_nested, "providers.some-im");
+        assert!(!value.contains("providers.some-im"));
+        assert!(value.contains("[providers.local]"));
     }
 
     #[test]

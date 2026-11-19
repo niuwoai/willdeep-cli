@@ -2,7 +2,9 @@
 
 日期：2026-11-19
 
-目标版本：0.153.0-rc6
+目标版本：0.154.0-rc2
+
+初始候选为 0.153.0-rc6；PR 合入 develop 的 0.154.0-rc1 基线后，仅顺延版本，权限边界不变。初始[验收记录](../verification/0.153.0-rc6/project-rule-scan.md)保留为历史证据，合并后的验证单独记入 [rc2 验收记录](../verification/0.154.0-rc2/project-rule-scan.md)。
 
 ## 问题
 

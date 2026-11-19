@@ -1,9 +1,19 @@
 # Changelog
 
-## [0.153.0-rc6] - 2026-11-19
+## [0.154.0-rc2] - 2026-11-19
 
 ### Fixed
 - 修复命令和其他不透明工具执行前，项目规则递归扫描因无关子目录不可读而失败的问题：只跳过可确认无法列举且无法进入的普通子目录权限错误并记录结构化 warning，继续发现其他可读规则。根目录错误、规则文件不可读、已发现规则后来不可访问、越界符号链接及其他 I/O 错误仍阻止执行；隐藏与被忽略目录内的可读规则，以及新规则先于工具副作用的保护保持有效。
+- 合入 develop 的 `0.154.0-rc1` 后，将本修复候选从 `0.153.0-rc6` 顺延至 `0.154.0-rc2`；保留 Provider CLI、WebApp 启动错误和升级提示改动，同步 Rust、Web、npm 与文档版本。
+
+## [0.154.0-rc1] - 2026-11-19
+
+### Added
+- 新增 `willdeep provider add|list|remove`：用 API Base URL 写入 `[providers.<id>]`（只持久化 `api_base` 与推断出的 `provider`/`api`，可选 `--api-key-env` / `--model`，不写明文 `api_key`）；同名直接报错，删除前拒绝仍被 `agent.compressor_profile` / `subagents.*.provider_profile` / `worker_tiers.*.provider_profile` 引用的档案。
+
+### Fixed
+- Runtime `webapp.start` 在端口占用等启动失败时，把已写入 `status.error` 的闭集合文案原样返回给 `/webapp` 与 `willdeep web`，不再一律抹成 `internal Runtime error`；带路径的早期校验失败仍脱敏。
+- TUI 新版提醒按平台给出客户端升级命令：macOS 先 Homebrew 再 npm；Linux / Windows / 其他先 `npm install -g @niuwoai/willdeep@rc`，并保留 `/daemon upgrade` 与关闭检查说明。
 
 ## [0.153.0-rc5] - 2026-11-18
 
