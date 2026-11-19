@@ -1,0 +1,51 @@
+{
+  "version": "0.154.0-rc5",
+  "date": "2026-11-19",
+  "host": "q4-pub",
+  "connection": "q4-pub",
+  "architecture": "x86_64",
+  "previous_version": "0.153.0-rc5",
+  "previous_sha256": "83bdf973d45855408909cf45af13d22ffe63b334755207b4fcd6168e3dd12622",
+  "candidate": {
+    "source": "official release",
+    "asset": "willdeep-linux-amd64.tar.gz",
+    "tar_sha256": "4d5ff60dc4b1e4fadb87eb437bf98f457520655340d065aec96a1ef6a3c6e5fd",
+    "binary_sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"
+  },
+  "paths": [
+    {"path": "/home/willdeep/.local/bin/willdeep", "version": "0.154.0-rc5", "sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"},
+    {"path": "/usr/local/bin/willdeep", "version": "0.154.0-rc5", "sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"}
+  ],
+  "activity_before": {
+    "tasks_terminal_only": true,
+    "sessions": {"interrupted": 1, "active_turn": false},
+    "pending_empty": true
+  },
+  "services": {
+    "daemon_unit": "willdeep-daemon.service",
+    "user": "willdeep",
+    "active": "active",
+    "sub": "exited",
+    "enabled": true,
+    "unit_configuration_changed": false,
+    "web_listener_unit": null
+  },
+  "runtime": {"before_version": "0.153.0-rc5", "before_pid": 3207080, "version": "0.154.0-rc5", "pid": 4147312, "address": "127.0.0.1:41657"},
+  "version_header": "x-willdeep-version: 0.154.0-rc5",
+  "health_note": "Runtime API requires authentication; no unauthenticated 200 health check is claimed",
+  "backup": {
+    "paths": [
+      "/home/willdeep/.local/bin/willdeep.bak-0.153.0-rc5",
+      "/usr/local/bin/willdeep.bak-0.153.0-rc5"
+    ],
+    "sha256": "83bdf973d45855408909cf45af13d22ffe63b334755207b4fcd6168e3dd12622",
+    "rollback_executed": false
+  },
+  "boundaries": [
+    "no provider configuration or credentials read",
+    "no firewall, Tailscale or unit changes",
+    "no web listener created",
+    "no real model requests"
+  ],
+  "passed": true
+}

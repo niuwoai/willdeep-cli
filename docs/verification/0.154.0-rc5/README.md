@@ -4,6 +4,8 @@
 
 本记录生成时 rc5 **未提交、未推送、未安装到本机或 q3、未公开发布**。发布 tag 只能指向已合入默认分支的提交，本轮不创建 tag。
 
+> 2026-11-19 更新：rc5 后续已提交、合入 `develop` 并正式发行，安装到本机与 q3、q4-pub、h2.niuwoai.com。见[正式发行](official-release.md)、[本机](local-installation.md)、[q3](q3-installation.md)、[q4](q4-installation.md)、[h2](h2-installation.md)。以下验收记录保留生成时点。
+
 ## 版本与候选
 
 | 项目 | 值 |
