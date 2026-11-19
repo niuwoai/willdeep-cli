@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.154.0-rc1] - 2026-11-19
+
+### Added
+- 新增 `willdeep provider add|list|remove`：用 API Base URL 写入 `[providers.<id>]`（只持久化 `api_base` 与推断出的 `provider`/`api`，可选 `--api-key-env` / `--model`，不写明文 `api_key`）；同名直接报错，删除前拒绝仍被 `agent.compressor_profile` / `subagents.*.provider_profile` / `worker_tiers.*.provider_profile` 引用的档案。
+
+### Fixed
+- Runtime `webapp.start` 在端口占用等启动失败时，把已写入 `status.error` 的闭集合文案原样返回给 `/webapp` 与 `willdeep web`，不再一律抹成 `internal Runtime error`；带路径的早期校验失败仍脱敏。
+- TUI 新版提醒按平台给出客户端升级命令：macOS 先 Homebrew 再 npm；Linux / Windows / 其他先 `npm install -g @niuwoai/willdeep@rc`，并保留 `/daemon upgrade` 与关闭检查说明。
+
 ## [0.153.0-rc5] - 2026-11-18
 
 ### Fixed

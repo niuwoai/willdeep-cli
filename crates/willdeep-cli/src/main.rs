@@ -60,6 +60,7 @@ mod plugin_screenplay;
 mod plugin_web;
 mod projects;
 mod prompt_cmd;
+mod provider_cmd;
 mod provider_settings;
 mod qterm;
 mod schedule_cmd;
@@ -305,6 +306,11 @@ enum CliCommand {
     Mcp {
         #[command(subcommand)]
         action: mcp_cmd::McpAction,
+    },
+    /// Add, list, or remove Provider profiles in the local TOML configuration.
+    Provider {
+        #[command(subcommand)]
+        action: provider_cmd::ProviderAction,
     },
     /// Export an auditable report: approvals, human decisions, hook denials, verification evidence and change attribution.
     Audit {
@@ -764,6 +770,7 @@ async fn run() -> Result<()> {
                 let language = administrative_language(&cli)?;
                 mcp_cmd::run(action, &willdeep_home()?, cli.config.as_deref(), language).await
             }
+            CliCommand::Provider { action } => provider_cmd::run(action, cli.config.as_deref()),
             CliCommand::Doctor { json, bundle } => {
                 doctor::run(doctor::DoctorOptions {
                     config_path: cli.config.clone(),

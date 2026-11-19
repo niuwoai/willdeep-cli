@@ -609,7 +609,7 @@ fn save_validated_configuration(path: &std::path::Path, patched: &str) -> anyhow
         .context("save provider configuration")
 }
 
-fn safe_provider_id(value: &str) -> bool {
+pub(crate) fn safe_provider_id(value: &str) -> bool {
     (1..=64).contains(&value.len())
         && value
             .chars()
