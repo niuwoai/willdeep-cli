@@ -1,0 +1,28 @@
+{
+  "created_on": "2026-11-19",
+  "backup_directory": "/Users/rocky/.local/share/willdeep/backups/20261119-site-before-1.12.0-rc14-20261119-22544-62u3xy",
+  "origin": "https://willdeep.com",
+  "live_version_before_deployment": "1.12.0-rc13",
+  "live_asset_count": 12,
+  "live_assets": {
+    "/": "568e8a042b7ebd8ca3798aa5141b40d27b7f79ce85e527bb18893cdfcff2ade6",
+    "/products/cli/production-overview.md": "1fe1504cc0f526024ff883f50eb2084bc59a6e465ee8a0d1bf94bd1adcd48ca1",
+    "/products/cli/production-overview.en.md": "785faf668cb911ea0557af54efe0c34b7e9d2f8c56f19f6c456a64492b1cf6ea",
+    "/products/cli/changelog.md": "8a8aab560f489400729c3dd3cca1333fef968f24e44e06008e73fe7624dd9ff1",
+    "/products/cli/changelog.en.md": "53f30c78e2d056962f694d9c7503a244603f069c6cd98263597fbdfb4e25266a",
+    "/llms.txt": "1e29d8681e1e73a73783ac88d4ef0f8e48b29bd284b014716db693018d4bc12f",
+    "/assets/index-hBGES0Tw.js": "55fb843b66ec0c0d1be05112b2ccfae83ca2c6b742b982b6b53d1cb9dab37553",
+    "/assets/index-JGidNDst.css": "f9dd8651e40a5f9d1ad5b717b66ce3ea9221a984054b20c6c059f244ca38febc",
+    "/assets/ProductPage-Lt6BnJAY.js": "a4163812d8d4963b7673398ef0282c81b323d2affe317350af60996637c90bbd",
+    "/assets/ProductPage-DqdP_Gmr.css": "1ec7bc66edab68a6704fa31ca2e10c744c5bfb730df1f572b4bbd8ff383a4b78",
+    "/assets/BenchmarksPage-DO3WBY6a.js": "eff521935c01799ae23518a151931ebf7f5bdf65ddf0e380197c8fa202398a0c",
+    "/assets/ProductDocsPage-C2ACbLxC.js": "54f6908cb3de0c0baa08c611c81be0b13e98aaf15235e4264322de875acef318"
+  },
+  "source_archives": [
+    {"version":"1.12.0-rc13","commit":"4ae9d1927e370628992c8cf5f1478dae78c1ddca","file":"source-1.12.0-rc13-4ae9d192.tar.gz","sha256":"87ac0a635bd671cbfe752ffcf9426498d5b0ff5af98a12a1e274d3f42ba607ba"},
+    {"version":"1.12.0-rc11","commit":"9f02e5800a741a053f6405f82bde3e3513d81b34","file":"source-1.12.0-rc11-9f02e580.tar.gz","sha256":"b458ec8223779648d8ed708d88580241906e0b07ffdfc48a4436148d2fa44ddb"},
+    {"version":"1.12.0-rc10","commit":"1d143756ad9cb07567400713b80ae37159a3a36d","file":"source-1.12.0-rc10-1d143756.tar.gz","sha256":"19895469951487d360e5bb3624c5329078dbc326d8c8759277709d3c504cc2c6"}
+  ],
+  "scope": "Current public HTML, linked JavaScript/CSS chunks, and five CLI documents; source snapshots of three previous production revisions. Benchmark/media payloads are not mirrored.",
+  "passed": true
+}

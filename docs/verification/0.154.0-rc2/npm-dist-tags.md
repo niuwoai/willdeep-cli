@@ -1,6 +1,6 @@
 # npm 默认安装通道同步
 
-日期：2026-11-19。目标版本：0.154.0-rc2，尚未推送发布 tag 时纳入本候选。
+日期：2026-11-19。目标版本：0.154.0-rc2。此记录最初在推送发布 tag 前编写；本版本已正式发行，实际发布结果见末尾及[完整发行记录](official-release.md)。
 
 用户要求发布 npm 包后，将最新发行包设为 `latest`。调整前公开 registry 的实际标签为 `latest=0.147.0-rc22`、`rc=0.154.0-rc1`；因此无标签安装与显式 rc 安装获取的版本不同。
 
@@ -22,7 +22,11 @@ npm 不提供两个 dist-tag 的原子更新：`latest` 失败时 `rc` 可能已
 - 既有安装契约：7 项、38 个断言通过。
 - 覆盖新发成功、版本已存在、发布失败、rc 更新失败、latest 更新失败及重试补齐、dry-run 无写入和无 npm 调用。
 - 版本一致性、变更的 3 份 YAML、安装证据 JSON 和差异空白检查通过。
-- 测试使用 mock，不调用真实 npm 发布或改标签。实际 registry 结果须在发行后另行查询，不以离线测试代替公开发布成功。
+- 测试使用 mock，不调用真实 npm 发布或改标签。离线测试不作为公开发布成功的证据。
+
+## 正式发布结果
+
+[Release 工作流](https://github.com/niuwoai/willdeep-cli/actions/runs/44448133912)的 npm 任务已实际执行：`2026-11-19T03:55:07.5406957Z` 发包成功，`03:55:08.2136452Z` 同步 rc，`03:55:08.8353030Z` 同步 latest。强制在线 registry 查询确认 `rc=latest=0.154.0-rc2`；真实发布包内安装清单的版本、tag、仓库及三归档摘要一致，不带标签的独立前缀安装执行报告 `willdeep 0.154.0-rc2`。普通查询曾返回旧缓存，在线查询与实际安装消除了该歧义。完整结果及检查边界见[正式发行记录](official-release.md)与[机器可读证据](official-release.json)。
 
 ```bash
 ruby scripts/test/publish_npm_willdeep_test.rb

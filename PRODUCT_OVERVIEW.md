@@ -2,7 +2,7 @@
 
 > 最后更新：2026-11-19 | 当前版本：v0.154.0-rc2
 
-0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。修复已合入 develop，本机 Cargo CLI、Runtime 与 Web 已升级至 rc2，真实版本与内嵌资源检查通过；npm 发行流程在包发布成功后同步 `rc` 与 `latest`，无标签安装可获取最新发行版本；公开发布及 Homebrew 对齐另行核对，见[本机安装记录](docs/verification/0.154.0-rc2/local-installation.md)。
+0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。修复已合入 develop，本机 Cargo CLI、Runtime 与 Web 已升级至 rc2，真实版本与内嵌资源检查通过；npm 发行流程在包发布成功后同步 `rc` 与 `latest`，无标签安装可获取最新发行版本；GitHub Release 的 10 项任务成功，三份正式归档与 npm 包清单、默认无标签安装通过实际核对，`rc=latest=0.154.0-rc2`。Homebrew 配方已合并，本机升级、配方测试、风格和在线严格审计均通过，Cargo、Homebrew 与运行中的 Runtime 三处版本一致；发布前交接见[本机安装记录](docs/verification/0.154.0-rc2/local-installation.md)，官网 1.12.0-rc14 已上线，实际版本头与五份双语资料、索引摘要均核对通过。公开发行与渠道证据见[正式发行记录](docs/verification/0.154.0-rc2/official-release.md)。
 
 0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。0.154.0-rc1 已公开发布；本轮以 rc2 接续交付。
 
