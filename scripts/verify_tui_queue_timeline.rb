@@ -171,6 +171,8 @@ ensure
   report[:checks_passed] = report[:checks].count { |check| check[:passed] }
   File.write(File.join(output, 'queue-timeline.json'), JSON.pretty_generate(report))
   rows = report[:checks].map { |check| "| #{check[:mode]} | #{check[:name]} | #{check[:passed] ? 'PASS' : 'FAIL'} |" }
-  File.write(File.join(output, 'queue-timeline.md'), "# TUI 队列时间线验收\n\n#{report[:version]}\n\n通过：#{report[:passed]}；检查：#{report[:checks_passed]}。\n\n| 布局 | 检查 | 结果 |\n|---|---|---|\n#{rows.join("\n")}\n\n隔离：#{report[:isolation]}\n\n仅覆盖本机合成 Provider 和 Runtime TUI，不代表真实模型、跨平台或 /local 的端到端验证。\n\n#{report[:error]}\n")
+  # Only append failure detail when present; do not leave a blank line at EOF.
+  error_note = report[:error].nil? ? '' : "\n#{report[:error]}\n"
+  File.write(File.join(output, 'queue-timeline.md'), "# TUI 队列时间线验收\n\n#{report[:version]}\n\n通过：#{report[:passed]}；检查：#{report[:checks_passed]}。\n\n| 布局 | 检查 | 结果 |\n|---|---|---|\n#{rows.join("\n")}\n\n隔离：#{report[:isolation]}\n\n仅覆盖本机合成 Provider 和 Runtime TUI，不代表真实模型、跨平台或 /local 的端到端验证。\n#{error_note}")
   FileUtils.remove_entry(root) if File.directory?(root)
 end

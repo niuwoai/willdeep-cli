@@ -3,13 +3,23 @@ use super::*;
 
 pub(super) const PREVIEW_LINES: usize = 8;
 
-// 用户块沿用青色正文，背景只做低对比区分；显式空白同时进入显示坐标和选区坐标。
+// 已发正文为青色，待发为黄色；低对比背景与复制坐标不随状态改变。
 pub(super) const BLOCK_BG: Color = Color::Rgb(36, 48, 62);
+pub(super) const SENT_FG: Color = Color::Cyan;
+pub(super) const QUEUED_FG: Color = Color::Yellow;
 const MAX_BLOCK_WIDTH: usize = 100;
 const NARROW_VIEWPORT_WIDTH: usize = 20;
 const BLOCK_WIDTH_NUMERATOR: usize = 4;
 const BLOCK_WIDTH_DENOMINATOR: usize = 5;
 const HORIZONTAL_PADDING: usize = 1;
+
+pub(super) fn queue_hint(language: Language) -> &'static str {
+    language.text(
+        "Ctrl+Q 管理待发队列",
+        "Ctrl+Q Manage queued messages",
+        "Ctrl+Q 送信待ちキューを管理",
+    )
+}
 
 fn block_width(width: usize) -> usize {
     let width = width.max(1);
@@ -36,11 +46,13 @@ pub(super) fn render_body(
     search: Option<&str>,
     width: usize,
     id: rendering::source::SourceId,
+    queued: bool,
 ) -> (Text<'static>, Vec<rendering::source::SourceRow>) {
     let body = row.strip_prefix("You: ").unwrap_or(row);
+    let color = if queued { QUEUED_FG } else { SENT_FG };
     let mut text = Text::from(
         body.split('\n')
-            .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::Cyan)))
+            .map(|line| Line::styled(line.to_owned(), Style::default().fg(color)))
             .collect::<Vec<_>>(),
     );
     if let Some(query) = search {
@@ -130,6 +142,22 @@ impl App {
         prompt
     }
 
+    /// Only identity-bound Runtime receipts or explicit local queue entries
+    /// can add queue affordances; an unconfirmed submission proves no queue.
+    pub(super) fn queued_user_records(&self) -> BTreeSet<usize> {
+        self.pending_runtime_echoes
+            .iter()
+            .filter(|echo| echo.status.is_queued())
+            .filter_map(|echo| echo.record)
+            .chain(
+                self.queued_prompts
+                    .iter()
+                    .filter(|queued| queued.remote.is_none())
+                    .filter_map(|queued| queued.transcript_row),
+            )
+            .collect()
+    }
+
     pub(super) fn render_user_transcript(
         &self,
         folded: &FoldedTranscript,
@@ -139,7 +167,7 @@ impl App {
     ) -> message_time::FoldedFrame {
         let floor = self.archive_floor.min(self.transcript.len());
         let shift = usize::from(floor > 0);
-        let users = self
+        let users: BTreeMap<_, _> = self
             .transcript
             .iter()
             .enumerate()
@@ -176,8 +204,29 @@ impl App {
                 ))
             })
             .collect();
+        let queued_records = self.queued_user_records();
+        let queued_users = users
+            .iter()
+            .filter(|(_, (source, _))| queued_records.contains(source))
+            .map(|(&target, _)| target)
+            .collect();
+        // Local queue prefixes remain internal bookkeeping. Display and copy
+        // the identity-bound body instead of treating generated labels as text.
+        let mut displayed = std::borrow::Cow::Borrowed(&folded.rows[..end]);
+        for queued in self
+            .queued_prompts
+            .iter()
+            .filter(|item| item.remote.is_none())
+        {
+            if let Some(source) = queued.transcript_row
+                && let Some((&target, _)) = users.iter().find(|(_, (record, _))| *record == source)
+                && target < end
+            {
+                displayed.to_mut()[target] = format!("You: {}", terminal_safe_text(&queued.text));
+            }
+        }
         let mut frame = message_time::render_transcript(
-            &folded.rows[..end],
+            &displayed,
             &labels[..end],
             search,
             self.transcript_width,
@@ -187,6 +236,7 @@ impl App {
             &self.transcript_attachments,
             &self.assistant_name(),
             self.ui.line_spacing,
+            &queued_users,
         );
         use rendering::source::{SourceId, SourcePart};
         // Folded indices are layout positions. Translate them through index_of,
@@ -242,9 +292,11 @@ impl App {
                 if row.fallback.id != id {
                     continue;
                 }
-                if let Some(cell) = row.cells.iter().find(|cell| {
-                    cell.source.point.part == SourcePart::Body && cell.source.point.byte == 0
-                }) {
+                if !echo.status.symbol().is_empty()
+                    && let Some(cell) = row.cells.iter().find(|cell| {
+                        cell.source.point.part == SourcePart::Body && cell.source.point.byte == 0
+                    })
+                {
                     style_delivery_symbol(line, cell.columns.start, echo.status.color());
                 }
                 row.cells.retain_mut(|cell| {

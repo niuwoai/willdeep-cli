@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc3
+> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc4
+
+0.154.0-rc4 调整 TUI 送达投影：由真实记录身份派生待发集合，驱动正文颜色、合成提示与渲染缓存；开始状态不再生成三角图标，完成绿勾及异常回执保留。提示使用不可复制的 Decoration 来源，状态变化同步高度与缓存。Runtime 协议、调度和持久数据格式不变；候选尚未安装或公开发布。详见[送达颜色决策](decisions/2026-11-19-tui-delivery-colors.md)。
 
 Web 请求编号统一经 `createRequestId()` 生成：优先原生 `crypto.randomUUID()`，普通 HTTP 缺少该接口时使用 `crypto.getRandomValues()` 构造 UUID v4，不降级到弱随机数。调用方继续按负载指纹复用失败重试的请求身份；协议与 Runtime 幂等边界不变。0.154.0-rc3 为未公开发布的修复候选，已在 q3 试装；既有 willdeep 用户 Runtime 与 TCP listener 布局保持不变，root Runtime 仍停止，实机与覆盖边界见[发送修复验收](verification/0.154.0-rc3/web-http-send.md)。
 

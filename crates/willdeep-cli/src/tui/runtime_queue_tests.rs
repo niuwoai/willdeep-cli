@@ -171,7 +171,8 @@ fn held_submission_keeps_its_attachment_and_does_not_claim_automatic_delivery() 
         true,
         &Ok(turn(TurnStatus::Queued)),
     );
-    assert_eq!(app.transcript[row], "You: ‖ later");
+    assert_eq!(app.transcript[row], "You: later");
+    assert!(app.queued_user_records().contains(&row));
     assert_eq!(app.transcript_attachments[row].len(), 1);
     assert!(
         app.notice

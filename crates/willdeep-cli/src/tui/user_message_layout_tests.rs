@@ -289,6 +289,83 @@ fn streaming_replies_keep_the_same_role_gap_as_completed_replies() {
 }
 
 #[test]
+fn local_queue_hint_preserves_fold_and_attachment_hits_without_polluting_copy() {
+    let body = "first\n    second\n\nlast  ";
+    for language in [Language::ZhCn, Language::En, Language::Ja] {
+        for width in [8, 40, 100] {
+            let mut app = App::new(Vec::new(), language);
+            app.transcript_width = width;
+            app.input.insert(body);
+            app.queue_submitted_prompt();
+            app.prepare_transcript_frame();
+            assert!(
+                app.transcript_rows
+                    .iter()
+                    .all(|row| UnicodeWidthStr::width(row.as_str()) <= width)
+            );
+            assert!(
+                !app.transcript_rows
+                    .iter()
+                    .any(|row| row.contains("[queued]") || row.contains("［待发］"))
+            );
+            assert_eq!(app.viewport_record_body(0), body);
+            app.chat_selection = Some(ChatSelection {
+                anchor: ChatSelectionPoint { row: 0, column: 0 },
+                head: ChatSelectionPoint {
+                    row: app.transcript_rows.len() - 1,
+                    column: width - 1,
+                },
+            });
+            assert_eq!(app.selected_chat_text(), body);
+            app.transcript_attachments[0] = vec![MessageAttachment::Text {
+                name: "details.txt".into(),
+                content: "attachment line\n".repeat(18),
+            }];
+            // The hint is outside the preview budget and is not a fold control
+            // or an attachment target, both before and after expansion.
+            app.transcript_render_cache = None;
+            app.prepare_transcript_frame();
+            let (control, source) = app.user_message_controls[0];
+            assert_eq!(source, 0);
+            let control_text = app
+                .user_message_controls
+                .iter()
+                .filter(|(_, record)| *record == source)
+                .map(|(row, _)| app.transcript_rows[*row].trim())
+                .collect::<String>();
+            let control_text = control_text
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            assert!(control_text.contains(language.text("显示更多", "Showmore", "もっと見る")));
+            let (attachment, source, index) = app.attachment_controls[0];
+            assert_eq!((source, index), (0, 0));
+            assert!(attachment < control);
+            let hint_row = app
+                .transcript_rows
+                .iter()
+                .position(|row| row.contains("Ctrl+Q"))
+                .unwrap();
+            assert!(hint_row > control);
+            app.update_user_message_hits(0, 0);
+            assert!(!app.toggle_user_message_at(hint_row as u16));
+            assert!(app.toggle_user_message_at(control as u16));
+            app.prepare_transcript_frame();
+            assert!(app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+            assert!(
+                app.transcript_rows
+                    .iter()
+                    .all(|row| UnicodeWidthStr::width(row.as_str()) <= width)
+            );
+            app.queued_prompts.pop_front();
+            app.mark_queued_prompt_sent_at(body, Some(0));
+            app.prepare_transcript_frame();
+            assert!(!app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+        }
+    }
+}
+
+#[test]
 fn wrapped_attachments_and_fold_controls_stay_inside_the_user_block() {
     let mut app = App::new(vec!["You: inspect".into()], Language::En);
     app.transcript_width = 40;
