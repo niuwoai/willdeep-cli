@@ -1,0 +1,64 @@
+{
+  "version": "0.154.0-rc4",
+  "date": "2026-11-19",
+  "passed": true,
+  "scope": "TUI delivery colors, queued hint and completion receipts; native regressions and isolated real CLI/Runtime PTY",
+  "branch": "fix/tui-user-message-states-20261119",
+  "git_committed": false,
+  "binary": {
+    "path": ".claude/target/debug/willdeep",
+    "sha256": "9facff6f78efd10b75ad084cc2015122836d0abe0b068a2627d24425c28714b9",
+    "version_output": "willdeep 0.154.0-rc4",
+    "build_command": "cargo build --offline -p willdeep"
+  },
+  "native": {
+    "command": "cargo test --offline -p willdeep tui:: -- --test-threads=4",
+    "passed": 679,
+    "failed": 0,
+    "ignored": 2,
+    "ignored_scope": "existing manual deterministic and paced streaming performance measurements",
+    "languages": ["zh-CN", "en", "ja"]
+  },
+  "checks": {
+    "strict_clippy": true,
+    "cargo_fmt": true,
+    "release_version_consistency": true,
+    "git_diff_check": true,
+    "ruby_syntax": true,
+    "all_pty_reports_match_final_binary": true
+  },
+  "pty": {
+    "passed": 46,
+    "failed": 0,
+    "reports": [
+      {"path": "status-symbols/status-symbols.json", "passed": 36, "cases": 4},
+      {"path": "queue-timeline/queue-timeline.json", "passed": 10, "cases": 2}
+    ],
+    "layouts": ["full", "compact"],
+    "status_symbol_languages": ["en", "zh-CN"],
+    "delivery_colors": {
+      "sent_fg_ansi": 6,
+      "queued_fg_ansi": 3,
+      "hint_fg_ansi": 7,
+      "hint_dim": true,
+      "completed_fg_ansi": 2,
+      "completed_bold": true
+    },
+    "isolation": "Private HOME/WILLDEEP_HOME/workspace, loopback synthetic SSE, unsetenv_others, captured OSC 52 only",
+    "real_model_requests": false,
+    "host_clipboard_writes": false,
+    "harness_fix": "First attempt failed only in full/zh-CN because the acceptance chat region did not stop at localized panel borders; product code unchanged, all four cases rerun"
+  },
+  "not_run": [
+    "real or paid models",
+    "Japanese PTY (native regressions cover Japanese)",
+    "narrow real terminal below 90 columns (native 8-column tests cover wrapping)",
+    "Windows and Linux native terminal rendering",
+    "local installation",
+    "q3 upgrade",
+    "public release"
+  ],
+  "local_installation_report": null,
+  "public_release": false,
+  "release_tag_created": false
+}

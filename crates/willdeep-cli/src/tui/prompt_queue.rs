@@ -315,11 +315,8 @@ impl App {
 
     fn queued_transcript_index(&self, selected: usize) -> Option<usize> {
         let item = self.queued_prompts.get(selected)?;
-        let row = self.queued_prompt_row(&item.text);
         if item.remote.is_none() {
-            return item
-                .transcript_row
-                .filter(|&index| self.transcript.get(index) == Some(&row));
+            return self.local_queue_record(item);
         }
         let id = item.remote.as_ref()?.id;
         self.pending_runtime_echoes

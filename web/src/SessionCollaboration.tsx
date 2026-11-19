@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Check, MessageSquare, RefreshCw, Send, X } from "lucide-react";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { collaborationText } from "./collaborationMessages";
 import { useInspectorDismiss } from "./useInspectorDismiss";
 import "./sessionCollaboration.css";
@@ -45,7 +46,7 @@ export function SessionCollaboration({ sessionId, language, onOpenSession }: {
     const captured = draft;
     const key = `${sessionId}:${target}`;
     const fingerprint = JSON.stringify([sessionId, target, draft.trim(), replyTo]);
-    if (requestIdentity.current?.fingerprint !== fingerprint) requestIdentity.current = { fingerprint, id: crypto.randomUUID() };
+    if (requestIdentity.current?.fingerprint !== fingerprint) requestIdentity.current = { fingerprint, id: createRequestId() };
     setPending(true); setError(null);
     try {
       await request(`${base}/peer-messages`, { method: "POST", headers: { "content-type": "application/json" },

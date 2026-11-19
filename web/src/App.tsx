@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ComposerReferences } from "./ComposerReferences";
+import { createRequestId } from "./requestId";
 import { insertReference, useComposerReferences, type Reference } from "./useComposerReferences";
 import { Box, Button, Container, Dialog, Flex, Heading, Input, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { detectLanguage, messages, type Language, type Messages } from "./i18n";
@@ -385,7 +386,7 @@ export function App() {
     const reason = attachmentError(payload);
     if (reason) { setError(attachmentText(reason, language)); return; }
     if (attachmentsRef.current.length >= MAX_ATTACHMENTS) { setError(attachmentText("limit", language)); return; }
-    setAttachments([...attachmentsRef.current, { ...payload, id: crypto.randomUUID() }]);
+    setAttachments([...attachmentsRef.current, { ...payload, id: createRequestId() }]);
   };
   const [goal, setGoal] = useState("");
   const [goalEnabled, setGoalEnabled] = useState(false);
@@ -447,7 +448,7 @@ export function App() {
     // 忙时不暂缓：这一轮本来就占着会话，消息按原顺序等它结束。
     const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), defer_until_released: !busy };
     const fingerprint = JSON.stringify(payload);
-    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
+    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: createRequestId() };
     const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
     if (new TextEncoder().encode(body).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
     queueSubmitting.current = true;
@@ -1525,7 +1526,7 @@ export function App() {
     };
     const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), ...draftChoices };
     const fingerprint = JSON.stringify(payload);
-    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: crypto.randomUUID() };
+    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: createRequestId() };
     const requestBody = JSON.stringify({ ...payload, request_id: draftSendRequest.current?.id });
     if (new TextEncoder().encode(requestBody).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
     const runId = nextId("run"); const controller = new AbortController(); abortRef.current = controller;

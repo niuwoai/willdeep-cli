@@ -1,6 +1,12 @@
 # Product Overview
 
-> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc2
+> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc5
+
+0.154.0-rc5 在轮次产生最终结果后自动收起中间工具调用的已提交编辑 diff：工具行保留，用户手动展开的差异继续保留，点击仍可重新展开。同步修复本地待发队列在切换会话、发送失败与编辑保存时的记录绑定：只认未被改写的待发占位行，失败回执保留 `?` 且原文复制不丢字符，渲染缓存随轮次状态刷新。该版本为未公开发布候选，未安装到本机或 q3。详见[轮次收尾投影决策](docs/decisions/2026-11-19-tui-turn-end-projection.md)。
+
+0.154.0-rc4 调整 TUI 用户消息送达展示：移除开始三角图标，已发正文为青色、待发为黄色；待发消息下方显示淡色“Ctrl+Q 管理待发队列”，出队后撤除。正常完成保留绿色小对勾，未确认与异常回执、真实消息身份、附件、时间、复制和调度语义保持有效。中英日与 full/compact 共用渲染，真实终端验收 46 项通过，详见[送达颜色决策](docs/decisions/2026-11-19-tui-delivery-colors.md)与[验收记录](docs/verification/0.154.0-rc4/README.md)。本版本为未公开发布候选，未安装到本机或 q3。
+
+0.154.0-rc3 修复远程普通 HTTP 下 Web 回车与点击发送无响应：缺少 `crypto.randomUUID()` 时，改用浏览器密码学随机字节生成 UUID v4，原有请求幂等与草稿重试语义保留。附件、队列及其他使用相同编号接口的 Web 操作同步接入共享函数。本版本为修复候选，尚未公开发布。Web 全部 442 项测试及缺失接口的隔离浏览器发送验收通过；q3 已试装候选，Tailscale 入口版本与内嵌资源核对通过，真实模型发送受自动审批限制未执行，见[HTTP 发送修复验收](docs/verification/0.154.0-rc3/web-http-send.md)。
 
 0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。修复已合入 develop，本机 Cargo CLI、Runtime 与 Web 已升级至 rc2，真实版本与内嵌资源检查通过；npm 发行流程在包发布成功后同步 `rc` 与 `latest`，无标签安装可获取最新发行版本；GitHub Release 的 10 项任务成功，三份正式归档与 npm 包清单、默认无标签安装通过实际核对，`rc=latest=0.154.0-rc2`。Homebrew 配方已合并，本机升级、配方测试、风格和在线严格审计均通过，Cargo、Homebrew 与运行中的 Runtime 三处版本一致；发布前交接见[本机安装记录](docs/verification/0.154.0-rc2/local-installation.md)，官网 1.12.0-rc14 已上线，实际版本头与五份双语资料、索引摘要均核对通过。公开发行与渠道证据见[正式发行记录](docs/verification/0.154.0-rc2/official-release.md)。
 

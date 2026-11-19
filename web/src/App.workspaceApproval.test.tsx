@@ -199,7 +199,28 @@ async function mountRunning(activity = runningActivity, queueFailures = 0) {
   return { ...view, composer: view.container.querySelector("textarea")! };
 }
 
-it("ordinary Enter durably queues a running session and reports observed progress without claiming model delivery", async () => {
+function withoutRandomUUID() {
+  const platformCrypto = globalThis.crypto;
+  vi.stubGlobal("crypto", { getRandomValues: platformCrypto.getRandomValues.bind(platformCrypto) });
+  expect("randomUUID" in globalThis.crypto).toBe(false);
+}
+
+it.each(["Enter", "button"])("%s submits chat with attachments when randomUUID is unavailable", async (trigger) => {
+  withoutRandomUUID();
+  const { posts, container } = mount({ workspaces: [first] });
+  await ready();
+  const composer = container.querySelector("textarea")!;
+  fireEvent.change(composer, { target: { value: "HTTP send regression" } });
+  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => "attachment line one\nattachment line two" } });
+  if (trigger === "Enter") fireEvent.keyDown(composer, { key: "Enter" });
+  else fireEvent.click(screen.getByRole("button", { name: t.send }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toMatchObject({ url: "/api/chat/stream", body: { prompt: "HTTP send regression", workspace: "/first", attachments: [{ kind: "text", content: "attachment line one\nattachment line two" }] } });
+  expect(posts[0].body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+it.each([false, true])("ordinary Enter durably queues a running session (randomUUID missing: %s)", async (missingUUID) => {
+  if (missingUUID) withoutRandomUUID();
   const { posts, composer } = await mountRunning();
   fireEvent.change(composer, { target: { value: "现在进度如何" } });
   fireEvent.keyDown(composer, { key: "Enter" });
@@ -239,7 +260,8 @@ it.each(["metaKey", "ctrlKey"])("%s+Enter explicitly queues while approval is pe
   expect(screen.getByRole("button", { name: t.allowOnce })).toBeTruthy();
 });
 
-it("a failed busy submission preserves text and attachments and retries with the same request identity", async () => {
+it.each([false, true])("failed queue submission preserves draft, attachments and request identity (randomUUID missing: %s)", async (missingUUID) => {
+  if (missingUUID) withoutRandomUUID();
   const { posts, composer } = await mountRunning(runningActivity, 1);
   fireEvent.change(composer, { target: { value: "带附件检查进度" } });
   fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => "attachment line one\nattachment line two" } });

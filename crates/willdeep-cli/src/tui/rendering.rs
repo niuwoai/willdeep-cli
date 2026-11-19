@@ -21,6 +21,8 @@ pub(super) struct TranscriptRenderCache {
     archive_floor: usize,
     show_thinking: bool,
     expanded_users: BTreeMap<usize, String>,
+    /// 颜色与待发提示可独立于记录正文变化，必须参与缓存判定。
+    queued_users: BTreeSet<usize>,
     models: Vec<Option<String>>,
     width: usize,
     expanded: bool,
@@ -28,6 +30,8 @@ pub(super) struct TranscriptRenderCache {
     expanded_tools: BTreeMap<usize, String>,
     /// 哪些行处于展开状态。和内容分开记：收起不删内容，只改这一项。
     open_tools: BTreeSet<usize>,
+    /// 工具行的自动展开只属于进行中的轮次；收尾后同一份记录要重新折叠。
+    running: bool,
     tool_visuals: tool_visuals::ToolVisuals,
     language: Language,
     search: Option<String>,
@@ -71,13 +75,16 @@ impl App {
             self.message_times
                 .labels(self.transcript.len(), self.language, message_time::now());
         let search = self.active_search_query();
+        let queued_users = self.queued_user_records();
         let valid = self.transcript_render_cache.as_ref().is_some_and(|cache| {
             cache.width == self.transcript_width
                 && cache.archive_floor == self.archive_floor
                 && cache.show_thinking == self.ui.show_thinking
                 && cache.expanded_users == self.expanded_user_messages
+                && cache.queued_users == queued_users
                 && cache.models == self.transcript_models
                 && cache.expanded == self.tool_rows_expanded
+                && cache.running == self.running
                 && cache.expanded_tools == self.tool_expansions
                 && cache.open_tools == self.expanded_tool_rows
                 && cache.tool_visuals == self.tool_visuals
@@ -113,9 +120,11 @@ impl App {
                 archive_floor: self.archive_floor,
                 show_thinking: self.ui.show_thinking,
                 expanded_users: self.expanded_user_messages.clone(),
+                queued_users,
                 models: self.transcript_models.clone(),
                 width: self.transcript_width,
                 expanded: self.tool_rows_expanded,
+                running: self.running,
                 expanded_tools: self.tool_expansions.clone(),
                 open_tools: self.expanded_tool_rows.clone(),
                 tool_visuals: self.tool_visuals.clone(),
@@ -683,6 +692,7 @@ mod tool_row_style_tests {
             &[],
             "滚小滚",
             0,
+            &BTreeSet::new(),
         );
         let rows = text_rows(&frame.text);
         assert_eq!(rows[0], "滚小滚: 你好", "all rows: {rows:?}");
@@ -739,6 +749,7 @@ mod tool_row_style_tests {
             &[],
             "滚小滚",
             0,
+            &BTreeSet::new(),
         );
         assert_eq!(text_rows(&named.text), ["滚小滚: Status: done"]);
         assert!(
@@ -767,6 +778,7 @@ mod tool_row_style_tests {
             &[],
             "滚小滚",
             0,
+            &BTreeSet::new(),
         );
         let rows = text_rows(&frame.text);
         assert!(
@@ -889,6 +901,7 @@ mod tool_row_style_tests {
             &[],
             "",
             2,
+            &BTreeSet::new(),
         );
         let rows = text_rows(&frame.text);
         // 用户与助手之间基础间距一行，再加配置的两行。
@@ -908,6 +921,7 @@ mod tool_row_style_tests {
             &[],
             "",
             0,
+            &BTreeSet::new(),
         );
         assert_eq!(
             text_rows(&tight.text)
@@ -928,6 +942,7 @@ mod tool_row_style_tests {
             &[],
             "",
             2,
+            &BTreeSet::new(),
         );
         assert_eq!(text_rows(&single.text), vec!["WillDeep: 只有一句"]);
     }
@@ -996,6 +1011,7 @@ mod tool_row_style_tests {
                             &[],
                             "fixture",
                             spacing,
+                            &BTreeSet::new(),
                         );
                         let rows = text_rows(&frame.text);
                         let dividers = rows

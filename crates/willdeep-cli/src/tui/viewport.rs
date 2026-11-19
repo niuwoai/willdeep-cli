@@ -431,7 +431,18 @@ impl App {
             .iter()
             .find(|echo| echo.record == Some(index))
             .map_or_else(
-                || source::record_body(&self.transcript[index]).to_owned(),
+                || {
+                    self.queued_prompts
+                        .iter()
+                        .find(|queued| {
+                            queued.remote.is_none()
+                                && self.local_queue_record(queued) == Some(index)
+                        })
+                        .map_or_else(
+                            || source::record_body(&self.transcript[index]).to_owned(),
+                            |queued| terminal_safe_text(&queued.text),
+                        )
+                },
                 |echo| terminal_safe_text(&echo.text),
             )
     }

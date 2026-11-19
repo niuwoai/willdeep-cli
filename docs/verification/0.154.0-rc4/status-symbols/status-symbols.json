@@ -1,0 +1,301 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "sent message is cyan without a triangle or queue hint",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "queued body is yellow with a dim queue hint underneath",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "the advertised shortcut opens the actual queue",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "queue hint disappears and body becomes cyan when the turn starts",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "en",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "sent message is cyan without a triangle or queue hint",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "queued body is yellow with a dim queue hint underneath",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "the advertised shortcut opens the actual queue",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "queue hint disappears and body becomes cyan when the turn starts",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "sent message is cyan without a triangle or queue hint",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "queued body is yellow with a dim queue hint underneath",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "the advertised shortcut opens the actual queue",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "queue hint disappears and body becomes cyan when the turn starts",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "sent message is cyan without a triangle or queue hint",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "queued body is yellow with a dim queue hint underneath",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "the advertised shortcut opens the actual queue",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "queue hint disappears and body becomes cyan when the turn starts",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "normal terminal status comes from the completed turn",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "mouse-down keeps the complete footer and puts reading feedback on another row",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "drag-selection preserves footer text and draft",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "resize preserves footer text and isolated selection copying",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "name": "return-to-latest preserves the footer and unsent draft",
+      "passed": true
+    }
+  ],
+  "real_model_requests": false,
+  "binary_sha256": "9facff6f78efd10b75ad084cc2015122836d0abe0b068a2627d24425c28714b9",
+  "scope": "full/compact Runtime TUI; sent/queued colors, queue hint, green completion receipts, footer click/drag, resize, isolated OSC 52 copy and unsent draft",
+  "isolation": "Private HOME/WILLDEEP_HOME/workspace; loopback synthetic SSE; no real credentials or clipboard.",
+  "cleanup": [
+    {
+      "mode": "compact",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "compact",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "full",
+      "private_daemon_stop_succeeded": true
+    },
+    {
+      "mode": "full",
+      "private_daemon_stop_succeeded": true
+    }
+  ],
+  "version": "willdeep 0.154.0-rc4",
+  "delivery_colors": [
+    {
+      "mode": "compact",
+      "language": "en",
+      "sent_ansi": 6,
+      "queued_ansi": 3,
+      "hint_ansi": 7,
+      "hint_dim": true
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "sent_ansi": 6,
+      "queued_ansi": 3,
+      "hint_ansi": 7,
+      "hint_dim": true
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "sent_ansi": 6,
+      "queued_ansi": 3,
+      "hint_ansi": 7,
+      "hint_dim": true
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "sent_ansi": 6,
+      "queued_ansi": 3,
+      "hint_ansi": 7,
+      "hint_dim": true
+    }
+  ],
+  "body_copies": [
+    {
+      "mode": "compact",
+      "language": "en",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "compact",
+      "language": "zh-CN",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "full",
+      "language": "en",
+      "text": "STATUS_SYMBOL_QUEUED"
+    },
+    {
+      "mode": "full",
+      "language": "zh-CN",
+      "text": "STATUS_SYMBOL_QUEUED"
+    }
+  ],
+  "checks_passed": 36
+}

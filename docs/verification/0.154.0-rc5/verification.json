@@ -1,0 +1,68 @@
+{
+  "version": "0.154.0-rc5",
+  "date": "2026-11-19",
+  "passed": true,
+  "scope": "TUI turn-end edit-diff projection and local queue record binding; native regressions and isolated real CLI/Runtime PTY",
+  "branch": "fix/tui-user-message-states-20261119",
+  "git_committed": false,
+  "binary": {
+    "path": ".claude/target/debug/willdeep",
+    "sha256": "b1cd13cb9b9189cc60819e197044c4531232b3bb447c6326ae56860e800d5e0d",
+    "version_output": "willdeep 0.154.0-rc5",
+    "build_command": "cargo build --offline -p willdeep"
+  },
+  "native": {
+    "command": "cargo test --offline -p willdeep --bin willdeep tui:: -- --test-threads=4",
+    "passed": 684,
+    "failed": 0,
+    "ignored": 2,
+    "ignored_scope": "existing manual deterministic and paced streaming performance measurements",
+    "languages": ["zh-CN", "en", "ja"]
+  },
+  "checks": {
+    "strict_clippy": true,
+    "cargo_fmt": true,
+    "release_version_consistency": true,
+    "git_diff_check": true,
+    "ruby_syntax": true,
+    "all_pty_reports_match_final_binary": true
+  },
+  "pty": {
+    "passed": 78,
+    "failed": 0,
+    "reports": [
+      {"path": "turn-end-projection/turn-end-projection.json", "passed": 7, "cases": 2},
+      {"path": "tool-visuals/tool-visuals.json", "passed": 25, "cases": 2},
+      {"path": "status-symbols/status-symbols.json", "passed": 36, "cases": 4},
+      {"path": "queue-timeline/queue-timeline.json", "passed": 10, "cases": 2}
+    ],
+    "layouts": ["full", "compact"],
+    "turn_end_languages": ["en"],
+    "behavior": {
+      "running_diff_visible": true,
+      "diff_folded_after_final_result": true,
+      "tool_receipt_retained": true,
+      "click_reopens_committed_diff": true
+    },
+    "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace, allowlisted child environment, loopback synthetic SSE, captured OSC 52 only",
+    "real_model_requests": false,
+    "host_clipboard_writes": false,
+    "harness_fix": "First turn-end PTY attempt used a 1-based Provider request index; product code unchanged, fixture corrected and all checks reran"
+  },
+  "review_findings_fixed": [
+    "session switch no longer rebinds local queue transcript rows",
+    "failed local submission keeps the unconfirmed prefix and full body copy",
+    "render cache includes the turn running state"
+  ],
+  "not_run": [
+    "real or paid models",
+    "Japanese PTY (native regressions cover Japanese)",
+    "narrow real terminal below 90 columns (native tests cover wrapping)",
+    "Windows and Linux native terminal rendering",
+    "local installation",
+    "q3 upgrade",
+    "public release"
+  ],
+  "public_release": false,
+  "release_tag_created": false
+}

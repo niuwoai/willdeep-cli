@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Play, Save, Info, MoreHorizontal, Users } from "lucide-react";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { agentLibraryCall, nextAgentVersion } from "./agentLibraryModel";
 import { agentText } from "./agentLibraryMessages";
 import { readRsiNote, writeRsiNote } from "./rsiPresentation";
@@ -28,7 +29,7 @@ function AgentRsiWorkbench({ language, baseline, onClose, accountScope = "local"
   const act = (operation: string, params: unknown) => mutation.mutate({operation, params});
   const candidate = baseline ? {...baseline.definition, version: nextAgentVersion(baseline.definition.version), instructions, forked_from: baseline.sha256} : null;
   const official = Boolean(baseline?.definition.definition_id.startsWith("official/") || baseline?.signature);
-  const create = (operation: string) => {if (baseline && candidate && !official) act(operation, {id: `exp-${crypto.randomUUID()}`, baseline_package: baseline, candidate_definition: candidate});};
+  const create = (operation: string) => {if (baseline && candidate && !official) act(operation, {id: `exp-${createRequestId()}`, baseline_package: baseline, candidate_definition: candidate});};
   const name = baseline?.definition.name?.[language === "zh-CN" ? "zh-Hans" : language] ?? baseline?.definition.name?.en ?? baseline?.definition.definition_id;
   const resultSummary = () => {
     if (!record(result)) return t("done");

@@ -13,6 +13,8 @@ pub(super) struct PendingRuntimeEcho {
     // Snapshots can advance status before the ordered start event arrives.
     // Only that event establishes the record's position in the conversation.
     positioned: bool,
+    /// Last applied queue presentation; repeated snapshots must not reflow history.
+    rendered_queued: bool,
     pub(super) priority_requested: bool,
     pub(super) independence_confirmed: bool,
     held: bool,
@@ -51,6 +53,10 @@ impl DeliveryStatus {
         matches!(self, Self::Unconfirmed | Self::Queued | Self::Held)
     }
 
+    pub(super) fn is_queued(self) -> bool {
+        matches!(self, Self::Queued | Self::Held)
+    }
+
     fn is_terminal(self) -> bool {
         !self.is_pending() && self != Self::Started
     }
@@ -67,14 +73,12 @@ impl DeliveryStatus {
         }
     }
 
-    /// Static, single-cell receipts: Started also covers human gates, so it
-    /// must not animate indefinitely or imply that a completed turn succeeded.
+    /// Queued/started are distinguished by body color and a queue hint.
+    /// Keep receipts for unconfirmed submission and actual terminal outcomes.
     pub(super) fn symbol(self) -> &'static str {
         match self {
             Self::Unconfirmed => "?",
-            Self::Queued => "◇",
-            Self::Held => "‖",
-            Self::Started => "▶",
+            Self::Queued | Self::Held | Self::Started => "",
             Self::Completed => "✓",
             Self::Partial => "◒",
             Self::Failed => "✗",
@@ -85,8 +89,7 @@ impl DeliveryStatus {
 
     pub(super) fn color(self) -> Color {
         match self {
-            Self::Unconfirmed | Self::Held | Self::Partial => Color::Yellow,
-            Self::Queued => Color::Gray,
+            Self::Unconfirmed | Self::Queued | Self::Held | Self::Partial => Color::Yellow,
             Self::Started => Color::Cyan,
             Self::Completed => Color::Green,
             Self::Failed => Color::Red,
@@ -111,7 +114,8 @@ impl DeliveryStatus {
                 "Runtime accepted and held the message; it will not auto-send · release with S in Ctrl+Q",
                 "Runtime が受信して保留しました。自動送信しません · Ctrl+Q の S で解除",
             ),
-            Self::Started | Self::Completed => self.symbol(),
+            Self::Started => language.text("消息已发出", "Message sent", "送信済み"),
+            Self::Completed => self.symbol(),
             Self::Partial => language.text(
                 "Runtime 已结束此轮，但任务仅部分完成",
                 "Runtime ended this turn with partial completion",
@@ -157,14 +161,23 @@ impl PendingRuntimeEcho {
     }
 
     fn row(&self, language: Language) -> String {
-        let mut status = self.status.symbol().to_owned();
+        let mut labels = Vec::new();
+        let symbol = self.status.symbol();
+        if !symbol.is_empty() {
+            labels.push(symbol);
+        }
         if self.is_pending() && self.priority_requested {
-            status.push_str(language.text("·优先", " · priority", "・優先"));
+            labels.push(language.text("优先", "priority", "優先"));
         }
         if self.is_pending() && self.independence_confirmed {
-            status.push_str(language.text("·独立处理", " · independent", "・独立処理"));
+            labels.push(language.text("独立处理", "independent", "独立処理"));
         }
-        format!("You: {status} {}", terminal_safe_text(&self.text))
+        let body = terminal_safe_text(&self.text);
+        if labels.is_empty() {
+            format!("You: {body}")
+        } else {
+            format!("You: {} {body}", labels.join(" · "))
+        }
     }
 }
 
@@ -192,6 +205,7 @@ impl App {
             text: willdeep_core::conversation::visible_user_text(text).to_owned(),
             record,
             positioned: false,
+            rendered_queued: false,
             priority_requested: false,
             independence_confirmed: false,
             held,
@@ -235,6 +249,7 @@ impl App {
             text: visible.to_owned(),
             record: Some(record),
             positioned: false,
+            rendered_queued: false,
             priority_requested: false,
             independence_confirmed: false,
             held,
@@ -312,6 +327,7 @@ impl App {
             text: text.clone(),
             record: Some(record),
             positioned: true,
+            rendered_queued: false,
             priority_requested: false,
             independence_confirmed: false,
             held: false,
@@ -418,12 +434,15 @@ impl App {
     }
 
     fn render_runtime_echo(&mut self, index: usize) {
-        let echo = &self.pending_runtime_echoes[index];
+        let echo = &mut self.pending_runtime_echoes[index];
         let Some(record) = echo.record.filter(|&record| record < self.transcript.len()) else {
             return;
         };
         let row = echo.row(self.language);
-        if self.transcript[record] != row {
+        let queued = echo.status.is_queued();
+        let presentation_changed = echo.rendered_queued != queued;
+        echo.rendered_queued = queued;
+        if self.transcript[record] != row || presentation_changed {
             self.transcript[record] = row;
             self.transcript_render_cache = None;
             self.refresh_transcript_height();

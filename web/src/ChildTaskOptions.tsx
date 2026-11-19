@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { childSessionsText } from "./childSessionsMessages";
 import { childTaskControlled, childTaskSubscription, ChildSessionFailure, setChildSubscription, type ChildSubscription, type ChildTask } from "./childSessionsApi";
 import { CHILD_DEPENDENCY_LIMIT, childTasksKey, updateChildTask, type ChildFeatures } from "./childSessionsQueries";
@@ -44,7 +45,7 @@ export function ChildTaskSubscription({ task, language, disabled }: { task: Chil
     mutationFn: ({ value, snapshot }: { value: ChildSubscription; snapshot: ChildTask }) => {
       const key = `${snapshot.subscription_revision ?? 1}:${value}`;
       let id = identities.current.get(key);
-      if (!id) { id = crypto.randomUUID(); identities.current.set(key, id); }
+      if (!id) { id = createRequestId(); identities.current.set(key, id); }
       return setChildSubscription(task.parent_session_id, snapshot, value, id);
     },
     onSuccess: async (updated, action) => {

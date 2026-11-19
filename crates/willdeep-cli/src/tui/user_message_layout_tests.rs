@@ -289,6 +289,150 @@ fn streaming_replies_keep_the_same_role_gap_as_completed_replies() {
 }
 
 #[test]
+fn local_queue_hint_preserves_fold_and_attachment_hits_without_polluting_copy() {
+    let body = "first\n    second\n\nlast  ";
+    for language in [Language::ZhCn, Language::En, Language::Ja] {
+        for width in [8, 40, 100] {
+            let mut app = App::new(Vec::new(), language);
+            app.transcript_width = width;
+            app.input.insert(body);
+            app.queue_submitted_prompt();
+            app.prepare_transcript_frame();
+            assert!(
+                app.transcript_rows
+                    .iter()
+                    .all(|row| UnicodeWidthStr::width(row.as_str()) <= width)
+            );
+            assert!(
+                !app.transcript_rows
+                    .iter()
+                    .any(|row| row.contains("[queued]") || row.contains("［待发］"))
+            );
+            assert_eq!(app.viewport_record_body(0), body);
+            app.chat_selection = Some(ChatSelection {
+                anchor: ChatSelectionPoint { row: 0, column: 0 },
+                head: ChatSelectionPoint {
+                    row: app.transcript_rows.len() - 1,
+                    column: width - 1,
+                },
+            });
+            assert_eq!(app.selected_chat_text(), body);
+            app.transcript_attachments[0] = vec![MessageAttachment::Text {
+                name: "details.txt".into(),
+                content: "attachment line\n".repeat(18),
+            }];
+            // The hint is outside the preview budget and is not a fold control
+            // or an attachment target, both before and after expansion.
+            app.transcript_render_cache = None;
+            app.prepare_transcript_frame();
+            let (control, source) = app.user_message_controls[0];
+            assert_eq!(source, 0);
+            let control_text = app
+                .user_message_controls
+                .iter()
+                .filter(|(_, record)| *record == source)
+                .map(|(row, _)| app.transcript_rows[*row].trim())
+                .collect::<String>();
+            let control_text = control_text
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            assert!(control_text.contains(language.text("显示更多", "Showmore", "もっと見る")));
+            let (attachment, source, index) = app.attachment_controls[0];
+            assert_eq!((source, index), (0, 0));
+            assert!(attachment < control);
+            let hint_row = app
+                .transcript_rows
+                .iter()
+                .position(|row| row.contains("Ctrl+Q"))
+                .unwrap();
+            assert!(hint_row > control);
+            app.update_user_message_hits(0, 0);
+            assert!(!app.toggle_user_message_at(hint_row as u16));
+            assert!(app.toggle_user_message_at(control as u16));
+            app.prepare_transcript_frame();
+            assert!(app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+            assert!(
+                app.transcript_rows
+                    .iter()
+                    .all(|row| UnicodeWidthStr::width(row.as_str()) <= width)
+            );
+            app.queued_prompts.pop_front();
+            app.mark_queued_prompt_sent_at(body, Some(0));
+            app.prepare_transcript_frame();
+            assert!(!app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+        }
+    }
+}
+
+#[test]
+fn session_switch_does_not_rebind_local_queue_rows() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.input.insert("LOCAL_QUEUED_TEXT");
+    app.queue_submitted_prompt();
+    assert_eq!(app.queued_prompts[0].transcript_row, Some(0));
+
+    let mut target = willdeep_core::Session::new(std::env::temp_dir(), None, "target");
+    target.messages = vec![willdeep_core::types::Message::user(
+        "OTHER_SESSION_QUESTION",
+    )];
+    app.load_session(&target);
+
+    assert_eq!(app.queued_prompts.len(), 1);
+    assert_eq!(app.queued_prompts[0].transcript_row, None);
+    app.prepare_transcript_frame();
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("OTHER_SESSION_QUESTION"), "{shown}");
+    assert!(!shown.contains("LOCAL_QUEUED_TEXT"), "{shown}");
+    assert!(!shown.contains("Ctrl+Q"), "{shown}");
+    assert!(app.queued_user_records().is_empty());
+    assert_eq!(app.viewport_record_body(0), "OTHER_SESSION_QUESTION");
+}
+
+#[test]
+fn failed_local_submission_keeps_the_unconfirmed_prefix_and_full_body_copy() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.viewport_height = 60;
+    app.input.insert("abcdef");
+    app.queue_submitted_prompt();
+    app.note_runtime_submission_unconfirmed("abcdef", uuid::Uuid::new_v4(), false, Some(0));
+    app.prepare_transcript_frame();
+
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("? abcdef"), "{shown}");
+    assert!(
+        !app.queued_user_records().contains(&0),
+        "an unconfirmed row must not claim queue ownership"
+    );
+    app.chat_selection = Some(ChatSelection {
+        anchor: ChatSelectionPoint { row: 0, column: 0 },
+        head: ChatSelectionPoint { row: 0, column: 99 },
+    });
+    assert_eq!(app.selected_chat_text(), "abcdef");
+}
+
+#[test]
+fn editing_a_queued_prompt_refreshes_the_cached_frame() {
+    let mut app = App::new(Vec::new(), Language::En);
+    app.transcript_width = 100;
+    app.viewport_height = 60;
+    app.input.insert("first text");
+    app.queue_submitted_prompt();
+    app.prepare_transcript_frame();
+    assert!(app.transcript_rows.join("\n").contains("first text"));
+    // The queue panel save path rewrites the placeholder record in place.
+    app.queued_prompts[0].text = "second text".into();
+    app.transcript[0] = app.queued_prompt_row("second text");
+    app.refresh_transcript_height();
+    app.prepare_transcript_frame();
+    let shown = app.transcript_rows.join("\n");
+    assert!(shown.contains("second text"), "{shown}");
+    assert!(!shown.contains("first text"), "{shown}");
+}
+
+#[test]
 fn wrapped_attachments_and_fold_controls_stay_inside_the_user_block() {
     let mut app = App::new(vec!["You: inspect".into()], Language::En);
     app.transcript_width = 40;

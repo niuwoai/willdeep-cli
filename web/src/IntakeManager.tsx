@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog, Flex, Portal, Text } from "@chakra-ui/react";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { intakeText } from "./intakeMessages";
 import {
   browseDirectory,
@@ -51,7 +52,7 @@ type Update = (change: (draft: Draft) => Draft) => void;
 
 /// 输入框里空着表示这一端不限，所以下拉里没有「无」这个选项，只有文本输入。
 const emptyField = (): FieldRow => ({
-  key: crypto.randomUUID(), name: "", label: "", type: "text", required: false,
+  key: createRequestId(), name: "", label: "", type: "text", required: false,
   options: [], allow_decimal: false, min: "", max: "", nameAuto: true, typeAuto: true,
 });
 
@@ -71,14 +72,14 @@ function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "
     enabled: view.enabled,
     listen: view.listen,
     publicUrl: view.public_url ?? "",
-    sites: view.sites.map((site) => ({ ...site, key: crypto.randomUUID() })),
+    sites: view.sites.map((site) => ({ ...site, key: createRequestId() })),
     forms: view.forms.map((form) => ({
       ...form,
-      key: crypto.randomUUID(),
+      key: createRequestId(),
       slugAuto: false,
       fields: form.fields.map((field) => ({
         ...field,
-        key: crypto.randomUUID(),
+        key: createRequestId(),
         allow_decimal: field.allow_decimal ?? false,
         min: field.min == null ? "" : String(field.min),
         max: field.max == null ? "" : String(field.max),
@@ -86,7 +87,7 @@ function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "
         typeAuto: false,
       })),
     })),
-    webhooks: view.webhooks.map((hook) => ({ ...hook, key: crypto.randomUUID() })),
+    webhooks: view.webhooks.map((hook) => ({ ...hook, key: createRequestId() })),
   };
 }
 
@@ -309,7 +310,7 @@ function SitesTab({ draft, writable, update, t, view, onBrowse }: {
       </div>;
     })}
     {!draft.sites.length && <p>{t.emptySites}</p>}
-    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, sites: [...current.sites, { key: crypto.randomUUID(), slug: "", root: "" }] }))}>{t.addSite}</button>
+    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, sites: [...current.sites, { key: createRequestId(), slug: "", root: "" }] }))}>{t.addSite}</button>
   </section>;
 }
 
@@ -471,7 +472,7 @@ function FormsTab({ draft, writable, update, t, view, onBrowse }: {
       </div>;
     })}
     {!draft.forms.length && <p>{t.emptyForms}</p>}
-    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: [...current.forms, { key: crypto.randomUUID(), slug: "", slugAuto: true, title: "", workspace: "", session: "continue", prompt: "", fields: [] }] }))}>{t.addForm}</button>
+    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, forms: [...current.forms, { key: createRequestId(), slug: "", slugAuto: true, title: "", workspace: "", session: "continue", prompt: "", fields: [] }] }))}>{t.addForm}</button>
   </section>;
 }
 
@@ -512,7 +513,7 @@ function WebhooksTab({ draft, writable, update, t, view, onBrowse }: {
       </div>
     </div>)}
     {!draft.webhooks.length && <p>{t.emptyWebhooks}</p>}
-    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, webhooks: [...current.webhooks, { key: crypto.randomUUID(), slug: "", workspace: "", session: "continue", prompt: "", secret_env: "" }] }))}>{t.addWebhook}</button>
+    <button type="button" className="intake-add" disabled={!writable} onClick={() => update((current) => ({ ...current, webhooks: [...current.webhooks, { key: createRequestId(), slug: "", workspace: "", session: "continue", prompt: "", secret_env: "" }] }))}>{t.addWebhook}</button>
   </section>;
 }
 
