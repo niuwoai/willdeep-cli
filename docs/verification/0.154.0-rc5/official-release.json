@@ -1,0 +1,43 @@
+{
+  "version": "0.154.0-rc5",
+  "date": "2026-11-19",
+  "tag": "v0.154.0-rc5",
+  "tag_object": "a2b82acb4a5f8096b529e86f6862090cf11bd25e",
+  "commit": "959a761150823bac96e17cab2c2d744010e7e3d0",
+  "pull_request": 165,
+  "develop": "959a761150823bac96e17cab2c2d744010e7e3d0",
+  "main": "959a761150823bac96e17cab2c2d744010e7e3d0",
+  "workflow": {
+    "id": 44507260052,
+    "conclusion": "success",
+    "jobs": 10,
+    "published_at": "2026-11-19T11:08:50Z"
+  },
+  "assets": [
+    {"name": "willdeep-macos-universal.tar.gz", "size": 46199759, "sha256": "3ec8da25f6015e4f95e15775fe287ea49fc46a24eb101a8232d9eef6a9e5c0c5"},
+    {"name": "willdeep-linux-amd64.tar.gz", "size": 23332076, "sha256": "4d5ff60dc4b1e4fadb87eb437bf98f457520655340d065aec96a1ef6a3c6e5fd"},
+    {"name": "willdeep-linux-arm64.tar.gz", "size": 23150596, "sha256": "ce9d70610e2b9e35857b9fecdca8b128c72cbad3bcf47bafe037d05df4e1d8de"}
+  ],
+  "binary_sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb",
+  "npm": {
+    "package": "@niuwoai/willdeep",
+    "official_registry": "https://registry.npmjs.org",
+    "dist_tags": {"rc": "0.154.0-rc5", "latest": "0.154.0-rc5"},
+    "local_mirror": "registry.npmmirror.com",
+    "local_mirror_synced_at_verification": false
+  },
+  "homebrew": {
+    "formula": "niuwoai/homebrew-tap/willdeep-cli",
+    "tap_commit": "b1ffde1",
+    "tap_commit_subject": "willdeep-cli 0.154.0-rc5",
+    "installed_version": "0.154.0-rc5",
+    "installed_sha256": "1b6787b2a2bbac83f35b0e386a199f64a7b0f4447cb75ee5a5364bd0e845f11c"
+  },
+  "website": {
+    "repository": "willdeep-react-static",
+    "hardcoded_cli_version_or_download_url": false,
+    "changed": false
+  },
+  "public_release": true,
+  "release_tag_created": true
+}
