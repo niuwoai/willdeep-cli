@@ -77,4 +77,4 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       working-directory: npm/willdeep
-      run: ruby ../../scripts/test/npm_willdeep_test.rb && npm pack --dry-run --json --pack-destination "${RUNNER_TEMP}"
+      run: ruby ../../scripts/test/npm_willdeep_test.rb && ruby ../../scripts/test/publish_npm_willdeep_test.rb && npm pack --dry-run --json --pack-destination "${RUNNER_TEMP}"

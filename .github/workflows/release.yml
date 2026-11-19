@@ -100,13 +100,16 @@ jobs:
     name: Publish npm package
     needs: publish
     runs-on: ubuntu-latest
+    concurrency:
+      group: willdeep-cli-npm-dist-tags
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Verify release assets and publish the rc tag
+      - name: Verify release assets, publish and sync rc/latest tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ruby scripts/publish_npm_willdeep.rb --version "${GITHUB_REF_NAME#v}"

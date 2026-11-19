@@ -6,7 +6,7 @@
 #   ruby scripts/publish_npm_willdeep.rb --version 0.123.0-rc2
 #
 # 它只接受与 package.json、install-manifest.json 完全一致的版本，先下载三个
-# GitHub Release 产物并核对 SHA256，再执行 npm publish --tag rc。
+# GitHub Release 产物并核对 SHA256，再发布并同步 rc、latest 标签；已发布版本仅同步标签。
 
 require 'digest'
 require 'json'
@@ -18,6 +18,9 @@ require 'uri'
 
 ROOT = File.expand_path('..', __dir__)
 PACKAGE = File.join(ROOT, 'npm', 'willdeep')
+NPM_PACKAGE = '@niuwoai/willdeep'
+PUBLISH_TAG = 'rc'
+DIST_TAGS = [PUBLISH_TAG, 'latest'].freeze
 ASSETS = {
   'willdeep-macos-universal.tar.gz' => 'willdeep',
   'willdeep-linux-amd64.tar.gz' => 'willdeep',
@@ -86,6 +89,24 @@ def verify_assets(manifest)
   assets
 end
 
+# 本项目的 rc 序号按数字递增；不能采用 SemVer 对 rc10/rc2 的字典顺序。
+def npm_release_key(version)
+  match = /\A(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?\z/.match(version.to_s)
+  abort "无法比较 npm 发行版本：#{version.inspect}" unless match
+  [match[1].to_i, match[2].to_i, match[3].to_i, match[4] ? 0 : 1, match[4].to_i]
+end
+
+def current_npm_tags
+  output, error, status = Open3.capture3('npm', 'view', NPM_PACKAGE, 'dist-tags', '--json')
+  return {} if !status.success? && error.include?('E404')
+  abort "无法确认 npm 标签：#{error}" unless status.success?
+  tags = JSON.parse(output)
+  abort 'npm 标签响应不是对象' unless tags.is_a?(Hash)
+  tags
+rescue JSON::ParserError => error
+  abort "无法解析 npm 标签：#{error.message}"
+end
+
 def publish(version, dry_run: false)
   package = read_json(File.join(PACKAGE, 'package.json'))
   manifest = read_json(File.join(PACKAGE, 'install-manifest.json'))
@@ -110,16 +131,34 @@ def publish(version, dry_run: false)
     return
   end
 
-  view_out, view_err, view_status = Open3.capture3('npm', 'view', "@niuwoai/willdeep@#{version}", 'version')
-  if view_status.success? && view_out.strip == version
-    warn "@niuwoai/willdeep@#{version} 已存在，跳过发布。"
+  package_spec = "#{NPM_PACKAGE}@#{version}"
+  view_out, view_err, view_status = Open3.capture3('npm', 'view', package_spec, 'version')
+  version_exists = view_status.success? && view_out.strip == version
+  abort "无法确认 npm 版本：#{view_err}" unless version_exists || view_err.include?('E404')
+
+  target_key = npm_release_key(version)
+  tags = current_npm_tags
+  newer_tags = DIST_TAGS.select do |tag|
+    tags.key?(tag) && (npm_release_key(tags[tag]) <=> target_key).positive?
+  end
+  unless newer_tags.empty?
+    warn "#{package_spec} 已过期，保留较新标签 #{newer_tags.join(', ')}；不发布或移动标签。"
     return
   end
-  abort "无法确认 npm 版本：#{view_err}" unless view_err.include?('E404')
 
-  _out, err, status = Open3.capture3('npm', 'publish', '--access', 'public', '--tag', 'rc', chdir: PACKAGE)
-  abort "npm publish 失败：#{err}" unless status.success?
-  warn "已发布 @niuwoai/willdeep@#{version}（tag rc）"
+  if version_exists
+    warn "#{package_spec} 已存在，跳过发布并同步标签。"
+  else
+    _out, err, status = Open3.capture3('npm', 'publish', '--access', 'public', '--tag', PUBLISH_TAG, chdir: PACKAGE)
+    abort "npm publish 失败：#{err}" unless status.success?
+    warn "已发布 #{package_spec}（tag #{PUBLISH_TAG}）"
+  end
+
+  DIST_TAGS.each do |tag|
+    _out, err, status = Open3.capture3('npm', 'dist-tag', 'add', package_spec, tag)
+    abort "npm dist-tag #{tag} 同步失败（#{package_spec}）：#{err}" unless status.success?
+    warn "#{package_spec} 已同步 tag #{tag}"
+  end
 end
 
 if $PROGRAM_NAME == __FILE__

@@ -2,9 +2,9 @@
 
 > 最后更新：2026-11-19 | 当前版本：v0.154.0-rc2
 
-0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。本次改动尚未安装或发布。
+0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。修复已合入 develop，本机 Cargo CLI、Runtime 与 Web 已升级至 rc2，真实版本与内嵌资源检查通过；npm 发行流程在包发布成功后同步 `rc` 与 `latest`，无标签安装可获取最新发行版本；公开发布及 Homebrew 对齐另行核对，见[本机安装记录](docs/verification/0.154.0-rc2/local-installation.md)。
 
-0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。尚未安装或发布。
+0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。0.154.0-rc1 已公开发布；本轮以 rc2 接续交付。
 
 0.153.0-rc5 收紧任务授权边界：当前请求及其必要验证可以继续执行；历史待办与无归属工作区变化不构成新授权，独立查询无需为其他工作补跑测试。`monitor` 等返回后仍可能写文件的操作保留未验证暂停，后台结果唤醒的续轮沿用同一暂停，不重新催跑测试。需要扩大范围时先询问，未取得明确同意不执行。显式检查、完成契约和同任务恢复继续保留，见[任务边界决策](docs/decisions/2026-11-18-task-verification-scope.md)。develop 已使用 0.153.0-rc2 至 rc4，本次修复顺延为 rc5。2026-11-18 已合入 develop 与 main，tag 为 `v0.153.0-rc5`；本机、q4 和 iMac 已安装，详见[验收记录](docs/verification/0.152.0-rc6/task-scope.md)。
 
