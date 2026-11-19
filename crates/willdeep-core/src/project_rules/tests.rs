@@ -1,5 +1,16 @@
 use super::*;
 
+#[cfg(unix)]
+mod permissions;
+
+const OPAQUE_TOOLS: [&str; 5] = [
+    "run_command",
+    "monitor",
+    "spawn_agent",
+    "call_mcp_tool",
+    "mcp__test",
+];
+
 fn workspace() -> PathBuf {
     let root = std::env::temp_dir().join(format!("rule-scope-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("src/nested")).unwrap();
@@ -117,7 +128,7 @@ fn opaque_tools_observe_rules_even_in_ignored_and_hidden_directories() {
         std::fs::write(root.join(directory).join("AGENTS.md"), directory).unwrap();
     }
     std::fs::write(root.join(".git/AGENTS.md"), "Git internals are not rules").unwrap();
-    for name in ["run_command", "spawn_agent", "call_mcp_tool", "mcp__test"] {
+    for name in OPAQUE_TOOLS {
         let mut rules = ProjectRules::new(&root).unwrap();
         assert!(
             rules
@@ -145,6 +156,131 @@ fn opaque_tools_observe_rules_even_in_ignored_and_hidden_directories() {
         );
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+fn discovery_error(path: &Path, depth: usize, kind: std::io::ErrorKind) -> ignore::Error {
+    ignore::Error::WithPath {
+        path: path.to_owned(),
+        err: Box::new(ignore::Error::WithDepth {
+            depth,
+            err: Box::new(ignore::Error::Io(std::io::Error::from(kind))),
+        }),
+    }
+}
+
+#[test]
+fn only_confirmed_subdirectory_permission_errors_are_skip_candidates() {
+    use std::io::ErrorKind::{NotFound, PermissionDenied};
+    let root = workspace();
+    let rules = ProjectRules::new(&root).unwrap();
+    let root = rules.workspace.clone();
+    let directory = root.join("other");
+    let file = root.join("ordinary.txt");
+    std::fs::write(&file, "data").unwrap();
+    for name in RULE_NAMES {
+        std::fs::create_dir(directory.join(name)).unwrap();
+    }
+    let denied = || discovery_error(&directory, 1, PermissionDenied);
+    let cases = [
+        ("ordinary child directory", denied(), true),
+        ("root", discovery_error(&root, 0, PermissionDenied), false),
+        (
+            "root with nonzero depth",
+            discovery_error(&root, 1, PermissionDenied),
+            false,
+        ),
+        (
+            "child with root depth",
+            discovery_error(&directory, 0, PermissionDenied),
+            false,
+        ),
+        (
+            "outside workspace",
+            discovery_error(root.parent().unwrap(), 1, PermissionDenied),
+            false,
+        ),
+        (
+            "parent traversal",
+            discovery_error(&root.join("other/../src"), 1, PermissionDenied),
+            false,
+        ),
+        (
+            "missing path",
+            ignore::Error::WithDepth {
+                depth: 1,
+                err: Box::new(ignore::Error::Io(PermissionDenied.into())),
+            },
+            false,
+        ),
+        (
+            "missing depth",
+            ignore::Error::WithPath {
+                path: directory.clone(),
+                err: Box::new(ignore::Error::Io(PermissionDenied.into())),
+            },
+            false,
+        ),
+        (
+            "AGENTS.md directory",
+            discovery_error(&directory.join("AGENTS.md"), 2, PermissionDenied),
+            false,
+        ),
+        (
+            "CLAUDE.md directory",
+            discovery_error(&directory.join("CLAUDE.md"), 2, PermissionDenied),
+            false,
+        ),
+        (
+            "ordinary file",
+            discovery_error(&file, 1, PermissionDenied),
+            false,
+        ),
+        (
+            "unconfirmed metadata",
+            discovery_error(&root.join("missing"), 1, PermissionDenied),
+            false,
+        ),
+        (
+            "other IO error",
+            discovery_error(&directory, 1, NotFound),
+            false,
+        ),
+        (
+            "partial error",
+            ignore::Error::Partial(vec![denied()]),
+            false,
+        ),
+    ];
+    for (name, error, expected) in cases {
+        assert_eq!(
+            rules.is_subdirectory_permission_error(&error),
+            expected,
+            "{name}"
+        );
+        assert!(
+            !rules.can_skip_discovery_error(&error),
+            "listing errors cannot hide accessible paths: {name}"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_missing_workspace_root_still_blocks_discovery() {
+    let root = workspace();
+    let mut rules = ProjectRules::new(&root).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    for name in OPAQUE_TOOLS {
+        assert!(
+            rules
+                .before_call(&ToolCall {
+                    name: name.into(),
+                    ..call(".")
+                })
+                .is_err(),
+            "{name}"
+        );
+    }
 }
 
 struct ScopedWriter {
