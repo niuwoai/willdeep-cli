@@ -1,0 +1,157 @@
+{
+  "passed": true,
+  "host": "q3",
+  "connection": "q3-pub",
+  "date": "2026-11-19",
+  "version": "0.154.0-rc2",
+  "record_scope": "Network-configuration history; subsequent application version and PIDs are recorded separately",
+  "follow_up_application": "../0.154.0-rc3/web-http-send.json",
+  "installation_history": "q3-installation.json",
+  "configured_at": "2026-11-19T06:15:57Z",
+  "restart_recovery_verified_at": "2026-11-19T06:16:25Z",
+  "root_runtime": {
+    "state": "stopped",
+    "method": "/usr/local/bin/willdeep daemon stop",
+    "force_used": false,
+    "stopped_after_willdeep_service_restart": true,
+    "stopped_in_subsequent_ssh_connection": true,
+    "runtime_state_deleted": false,
+    "account_level_autostart_disabled": false
+  },
+  "runtime": {
+    "service": "willdeep-daemon.service",
+    "user": "willdeep",
+    "version": "0.154.0-rc2",
+    "state": "active/running",
+    "enabled": true,
+    "pid_before_restart_check": 2980063,
+    "pid_after_restart_check": 3026741,
+    "restart_count": 0,
+    "control_port_forwarded": false,
+    "control_address_after_restart_not_recorded": true
+  },
+  "web": {
+    "previous_listen": "127.0.0.1:9847",
+    "internal_listen": "127.0.0.1:19847",
+    "external_listen": "0.0.0.0:9847",
+    "enabled": true,
+    "running": true,
+    "error": null,
+    "other_saved_request_fields_preserved": true,
+    "reason_for_forwarding": "Runtime-hosted Web in 0.154.0-rc2 rejects non-loopback listen addresses",
+    "listener": {
+      "service": "willdeep-web-listener.service",
+      "unit_path": "/etc/systemd/system/willdeep-web-listener.service",
+      "unit_sha256": "2f7f7c8221063189ee08d313f65d9151ecd3b890052eca0652b0a5f8a7f1e6a9",
+      "unit_owner": "root:root",
+      "unit_mode": "0644",
+      "user": "willdeep",
+      "group": "willdeep",
+      "transport": "socat TCP4 forwarding",
+      "socat_version": "1.8.0.3",
+      "socat_already_installed": true,
+      "state": "active/running",
+      "enabled": true,
+      "pid_before_restart_check": 3026306,
+      "pid_after_restart_check": 3026752,
+      "restart_count": 0,
+      "requires": "willdeep-daemon.service",
+      "after": "willdeep-daemon.service",
+      "part_of": "willdeep-daemon.service",
+      "readiness_check": "ExecStartPost curl /health with bounded retries including connection-refused",
+      "normal_sigterm_exit_status": 143,
+      "systemd_analyze_verify_passed": true,
+      "installed_digest_rechecked": true
+    },
+    "legacy_service": {
+      "name": "willdeep-w3-web.service",
+      "state": "inactive/dead",
+      "enabled": false,
+      "files_deleted": false
+    }
+  },
+  "checks": {
+    "before_change": {
+      "task_states": {"Completed": 5, "Cancelled": 1},
+      "session_states": {"Idle": 3, "Failed": 1},
+      "pending_empty": true
+    },
+    "before_restart_check": {
+      "task_states": {"Completed": 5, "Cancelled": 1},
+      "session_states": {"Idle": 3, "Failed": 1},
+      "pending_empty": true
+    },
+    "internal_health": {
+      "status": 200,
+      "version_header": "0.154.0-rc2",
+      "body": {"status": "ok", "version": "0.154.0-rc2"}
+    },
+    "external_health_after_restart": {
+      "status": 200,
+      "version_header": "0.154.0-rc2",
+      "body": {"status": "ok", "version": "0.154.0-rc2"}
+    },
+    "systemd_restart_recovery": true,
+    "host_reboot_tested": false,
+    "subsequent_ssh_service_and_listener_recheck_passed": true
+  },
+  "tailscale_direct": {
+    "passed": true,
+    "url": "http://100.85.114.57:9847/",
+    "address_source": "q3 tailscale0",
+    "client_route_interface": "utun0",
+    "client": "Ruby Net::HTTP.new(host, port, nil) on the local Mac",
+    "proxy_used": false,
+    "ssh_forwarding_used": false,
+    "health_status": 200,
+    "health_version_header": "0.154.0-rc2",
+    "health_body": {"status": "ok", "version": "0.154.0-rc2"},
+    "resources_checked_after_restart": [
+      {"path": "/", "status": 200, "version_header": "0.154.0-rc2", "bytes": 471, "sha256": "5caa092732e441f943ef0880f3f37e1f6544916fcfde822280d58a16f9c59021"},
+      {"path": "/assets/index-D51g4cd4.js", "status": 200, "version_header": "0.154.0-rc2", "bytes": 970985, "sha256": "95e7311d84c40df621b7a2ecdc5e5324c79a763e32c2f0e6d296efdc6108ccaf"},
+      {"path": "/assets/shareMessages-DIMqt2I4.js", "status": 200, "version_header": "0.154.0-rc2", "bytes": 358750, "sha256": "3ac5d9e3b68655d98b9eae8ef743f21c2ab64d6edc35da77ec2aeda9f12e4e49"},
+      {"path": "/assets/index-C82JofDj.css", "status": 200, "version_header": "0.154.0-rc2", "bytes": 111809, "sha256": "6bbf559a8c749f7e36584bf9575a9498337bf460963eaf40297ef9d119228d6e"}
+    ],
+    "all_resources_match_verified_release_build": true,
+    "direct_browser_interaction_verified": false,
+    "browser_limitation": "This installation of the preview tool does not support URL-only attachment to the Tailscale address",
+    "chat_or_llm_request_sent": false
+  },
+  "first_attempt": {
+    "started_at": "2026-11-19T06:14:32Z",
+    "passed": false,
+    "failure": "Connection refused on 127.0.0.1:9847 before the Type=simple listener was ready",
+    "automatic_restore_of_original_web_passed": true,
+    "rollback_errors": [],
+    "restored_health_status": 200,
+    "fixes_before_retry": ["Bounded ExecStartPost readiness check", "SuccessExitStatus=143"],
+    "retry_passed": true,
+    "remote_record": "/var/backups/willdeep/20261119-web-listener-9847/network-configuration-attempt-1.json"
+  },
+  "backup": {
+    "directory": "/var/backups/willdeep/20261119-web-listener-9847",
+    "metadata_file": "webapp-service.json",
+    "metadata_sha256": "bc898684928fdca0984fbc8db6c6796e25a3db148bc344c81324895bc5b8d516",
+    "remote_success_record": "/var/backups/willdeep/20261119-web-listener-9847/network-configuration.json",
+    "remote_helper": "/root/willdeep-network-0.154.0-rc2-20261119/q3-configure-web-listener.rb",
+    "helper_supported_modes": ["configure", "restart-check"],
+    "rollback_instructions": "q3-network.md#网络回滚",
+    "final_configuration_rolled_back": false,
+    "older_backups_removed": false
+  },
+  "scope": {
+    "all_ipv4_interfaces_listen": true,
+    "bind_restricted_to_tailscale_interface": false,
+    "application_authentication_added": false,
+    "provider_credentials_read": false,
+    "provider_configuration_changed": false,
+    "firewall_changed": false,
+    "cloudflare_or_public_proxy_changed": false,
+    "database_migration_executed": false,
+    "database_down_executed": false,
+    "application_code_changed": false,
+    "release_version_changed": false,
+    "git_commit_created": false,
+    "public_internet_reachability_verified": false
+  }
+}

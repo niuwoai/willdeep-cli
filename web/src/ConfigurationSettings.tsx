@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Box, Button, Flex, Heading, Input, NativeSelect, Text } from "@chakra-ui/react";
 import { ModelRoutingSettings } from "./ModelRoutingSettings";
 import type { Language, Messages } from "./i18n";
+import { createRequestId } from "./requestId";
 import { reasoningText } from "./reasoningMessages";
 
 type ReasoningValue = string | number | boolean;
@@ -17,7 +18,7 @@ const emptyDraft = (): Draft => ({ id: "default", provider: "openai-compatible",
 
 function reasoningDraft(profile?: ReasoningProfile | null): ReasoningDraft {
   const levels = Object.entries(profile?.levels ?? {}).map(([level, value]): ReasoningEntry => ({
-    id: crypto.randomUUID(),
+    id: createRequestId(),
     level,
     kind: typeof value === "string" ? "string" : typeof value === "number" ? "number" : "boolean",
     value: typeof value === "boolean" ? String(value) : String(value),
@@ -157,7 +158,7 @@ export function ConfigurationSettings({ messages: t, language, compact = false, 
             {entry.kind === "boolean" ? <label><span>{reasoning.value}</span><NativeSelect.Root><NativeSelect.Field value={entry.value} onChange={event => { const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, value: event.target.value }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control}><option value="false">{reasoning.falseValue}</option><option value="true">{reasoning.trueValue}</option></NativeSelect.Field><NativeSelect.Indicator /></NativeSelect.Root></label> : <label><span>{reasoning.value}</span><Input type={entry.kind === "number" ? "number" : "text"} step={entry.kind === "number" ? "any" : undefined} value={entry.value} onChange={event => { const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, value: event.target.value }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control} /> </label>}
             <Button type="button" variant="ghost" onClick={() => { const levels = draft.reasoning.levels.filter((_, row) => row !== index); setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }}>{reasoning.remove}</Button>
           </Flex>)}
-          <Button type="button" variant="outline" alignSelf="start" onClick={() => { setDraft({ ...draft, reasoning: { ...draft.reasoning, levels: [...draft.reasoning.levels, { id: crypto.randomUUID(), level: "", kind: "string", value: "" }] } }); setSaved(false); }}>{reasoning.addLevel}</Button>
+          <Button type="button" variant="outline" alignSelf="start" onClick={() => { setDraft({ ...draft, reasoning: { ...draft.reasoning, levels: [...draft.reasoning.levels, { id: createRequestId(), level: "", kind: "string", value: "" }] } }); setSaved(false); }}>{reasoning.addLevel}</Button>
         </Flex>
       </section>}
       {!reasoningOnly && <label className="configuration-default"><input type="checkbox" checked={draft.set_default} onChange={event => { setDraft({ ...draft, set_default: event.target.checked }); setSaved(false); }} />{t.configSetDefault}</label>}

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, CopyPlus, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { IconAction } from "./IconAction";
 import type { Language, Messages } from "./i18n";
+import { createRequestId } from "./requestId";
 import { ScheduleForm } from "./ScheduleForm";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { scheduleText } from "./scheduleMessages";
@@ -50,7 +51,7 @@ export function ScheduleManager({ workspaces, workspace, language, messages, onO
     if (pending) return false;
     setPending(true); setError("");
     const fingerprint = JSON.stringify({ path, body });
-    if (pendingOperation.current?.fingerprint !== fingerprint) pendingOperation.current = { fingerprint, id: crypto.randomUUID() };
+    if (pendingOperation.current?.fingerprint !== fingerprint) pendingOperation.current = { fingerprint, id: createRequestId() };
     try { await scheduleWrite(path, { ...body, request_id: pendingOperation.current.id }); pendingOperation.current = null; await refresh(); return true; }
     catch (value) {
       if (value instanceof ScheduleRequestError && value.status < 500) pendingOperation.current = null;
@@ -69,7 +70,7 @@ export function ScheduleManager({ workspaces, workspace, language, messages, onO
     if (!current || pending) return;
     if (!preview && !window.confirm(s("cleanupConfirm"))) return;
     setPending(true); setError("");
-    try { const result = await scheduleWrite<{ run_ids: string[] }>(`/api/schedules/${current.task.id}/cleanup`, { preview, expected_revision: current.task.revision, request_id: crypto.randomUUID() }); setCleanupCount(preview ? result.run_ids.length : null); await refresh(); }
+    try { const result = await scheduleWrite<{ run_ids: string[] }>(`/api/schedules/${current.task.id}/cleanup`, { preview, expected_revision: current.task.revision, request_id: createRequestId() }); setCleanupCount(preview ? result.run_ids.length : null); await refresh(); }
     catch (value) { setError(`${s("error")}: ${value instanceof Error ? value.message : s("unknown")}`); }
     finally { setPending(false); }
   };

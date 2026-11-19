@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, GitBranch, RefreshCw } from "lucide-react";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { childSessionsText } from "./childSessionsMessages";
 import { childProposalText } from "./childProposalMessages";
 import { useChildProposals } from "./childProposalQueries";
@@ -37,7 +38,7 @@ export function ChildSessions({ sessionId, language, onOpenSession, onRelationsh
     mutationFn: (action: Action) => {
       const fingerprint = JSON.stringify([sessionId, action]);
       let id = identities.current.get(fingerprint);
-      if (!id) { id = crypto.randomUUID(); identities.current.set(fingerprint, id); }
+      if (!id) { id = createRequestId(); identities.current.set(fingerprint, id); }
       switch (action.kind) {
         case "continue": return continueChildTask(sessionId, action.child, action.prompt, id, action.options);
         case "retry": return retryChildTask(sessionId, action.task, id);
