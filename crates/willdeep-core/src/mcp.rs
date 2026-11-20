@@ -660,7 +660,11 @@ impl McpServer {
             ),
             McpTransportKind::StreamableHttp => (
                 Transport::Http(Box::new(Mutex::new(
-                    http::HttpConnection::open(home, name, config).await?,
+                    http::HttpConnection::open(home, name, config)
+                        .await
+                        .map_err(|error| {
+                            error.during_startup(name, kind, "HTTP connection setup")
+                        })?,
                 ))),
                 initialize_params(),
             ),
@@ -671,13 +675,17 @@ impl McpServer {
             timeout: Duration::from_secs(config.startup_timeout_seconds.clamp(1, 300)),
             observation,
         };
-        let result = server.request("initialize", initialize).await?;
+        let result = server
+            .request("initialize", initialize)
+            .await
+            .map_err(|error| error.during_startup(name, kind, "initialize handshake"))?;
         if let Transport::Http(http) = &server.transport {
             http.lock().await.note_initialized(&result);
         }
         server
             .notify("notifications/initialized", json!({}))
-            .await?;
+            .await
+            .map_err(|error| error.during_startup(name, kind, "notifications/initialized"))?;
         Ok(server)
     }
     async fn request(&self, method: &str, params: Value) -> Result<Value, McpError> {
@@ -727,6 +735,14 @@ pub(crate) fn sanitize(value: &str) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
+    #[error("MCP server {server:?} ({transport}) failed during {stage}: {source}")]
+    Startup {
+        server: String,
+        transport: &'static str,
+        stage: &'static str,
+        #[source]
+        source: Box<McpError>,
+    },
     #[error("invalid MCP configuration: {0}")]
     InvalidConfig(String),
     #[error("MCP process is missing a stdio pipe")]
@@ -764,12 +780,37 @@ pub enum McpError {
     Json(#[from] serde_json::Error),
 }
 
+impl McpError {
+    fn during_startup(self, server: &str, kind: McpTransportKind, stage: &'static str) -> Self {
+        Self::Startup {
+            server: server.to_owned(),
+            transport: match kind {
+                McpTransportKind::Stdio => "stdio",
+                McpTransportKind::StreamableHttp => "streamable_http",
+            },
+            stage,
+            source: Box::new(self),
+        }
+    }
+
+    fn requires_authorization(&self) -> bool {
+        match self {
+            Self::Unauthorized { .. } => true,
+            Self::Startup { source, .. } => source.requires_authorization(),
+            _ => false,
+        }
+    }
+}
+
 impl From<reqwest::Error> for McpError {
     fn from(error: reqwest::Error) -> Self {
         // reqwest 的错误里会带完整 URL；URL 可能含 token 之类的查询串，只留说明。
         Self::Transport(error.without_url().to_string())
     }
 }
+
+#[cfg(test)]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

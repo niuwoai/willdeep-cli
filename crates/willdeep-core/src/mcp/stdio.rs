@@ -93,9 +93,22 @@ impl StdioConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
-        let mut child = command.spawn()?;
-        let stdin = child.stdin.take().ok_or(McpError::MissingPipe)?;
-        let stdout = BufReader::new(child.stdout.take().ok_or(McpError::MissingPipe)?);
+        let mut child = command.spawn().map_err(|error| {
+            McpError::from(error).during_startup(
+                server,
+                super::McpTransportKind::Stdio,
+                "process spawn",
+            )
+        })?;
+        let pipe_error = || {
+            McpError::MissingPipe.during_startup(
+                server,
+                super::McpTransportKind::Stdio,
+                "stdio pipe setup",
+            )
+        };
+        let stdin = child.stdin.take().ok_or_else(pipe_error)?;
+        let stdout = BufReader::new(child.stdout.take().ok_or_else(pipe_error)?);
         let (activity, _) = watch::channel(0);
         let shared = Arc::new(Shared {
             stdin: Mutex::new(stdin),

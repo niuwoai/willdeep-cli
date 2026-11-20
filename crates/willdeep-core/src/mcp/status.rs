@@ -16,7 +16,7 @@ impl RequestObservation {
     pub(super) fn record<T>(&self, result: &Result<T, McpError>) {
         let state = match result {
             Ok(_) => SUCCEEDED,
-            Err(McpError::Unauthorized { .. }) => AUTHORIZATION_REQUIRED,
+            Err(error) if error.requires_authorization() => AUTHORIZATION_REQUIRED,
             Err(_) => FAILED,
         };
         self.0.store(state, Ordering::Relaxed);
