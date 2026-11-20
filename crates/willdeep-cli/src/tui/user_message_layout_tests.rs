@@ -187,7 +187,7 @@ fn multiline_copy_and_quote_exclude_layout_spaces_and_keep_user_indentation() {
 }
 
 #[test]
-fn user_copy_bounds_follow_cached_waiting_and_compression_rows() {
+fn user_copy_bounds_follow_cached_waiting_and_transient_system_output() {
     let mut app = App::new(vec!["You: first\n    second".into()], Language::En);
     app.transcript_width = 80;
     app.note_awaiting_reply();
