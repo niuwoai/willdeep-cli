@@ -2073,8 +2073,10 @@ fn build_hooks(settings: &[crate::config::HookSettings]) -> Result<HookRegistry>
             "pre_tool" => HookEvent::PreTool,
             "post_tool" => HookEvent::PostTool,
             "approval_resolved" => HookEvent::ApprovalResolved,
+            "before_agent" => HookEvent::BeforeAgent,
+            "agent_end" => HookEvent::AgentEnd,
             other => bail!(
-                "hooks.event 只能是 `pre_tool`、`post_tool` 或 `approval_resolved`，收到 `{other}`"
+                "hooks.event 只能是 `before_agent`、`agent_end`、`pre_tool`、`post_tool` 或 `approval_resolved`，收到 `{other}`"
             ),
         };
         let on_error = match entry.on_error.as_deref() {
@@ -2088,7 +2090,7 @@ fn build_hooks(settings: &[crate::config::HookSettings]) -> Result<HookRegistry>
         if entry.blocking && !event.can_block() {
             bail!(
                 "`{}` 事件发生在动作之后，blocking = true 拦不住任何东西；\
-                 想拦请改用 `pre_tool`",
+                 想拦请改用 `pre_tool` 或 `before_agent`",
                 entry.event
             );
         }

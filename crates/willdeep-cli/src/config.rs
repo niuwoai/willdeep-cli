@@ -430,10 +430,10 @@ pub struct HookSettings {
     /// 出现在拒绝理由里的名字。不给就用事件名——但配了两条同事件的 hook 时，
     /// 拒绝理由会分不清是谁拦的，所以强烈建议起个名。
     pub name: Option<String>,
-    /// `pre_tool` / `post_tool` / `approval_resolved`。
+    /// `before_agent` / `agent_end` / `pre_tool` / `post_tool` / `approval_resolved`。
     pub event: String,
     pub command: String,
-    /// 非零退出是否拦截。只有 `pre_tool` 上有意义——`post_tool` 发生在事后，
+    /// 非零退出是否拦截。仅 `pre_tool` / `before_agent` 有效；其余事件发生在事后，
     /// 让它"拦截"只会制造一种拦得住的错觉。
     #[serde(default)]
     pub blocking: bool,

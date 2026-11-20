@@ -81,12 +81,12 @@ prefer_for_worker_routing = true
 #
 # [[hooks]]
 # name = "audit"
-# event = "pre_tool"              # pre_tool | post_tool | approval_resolved
+# event = "pre_tool"              # before_agent | agent_end | pre_tool | post_tool | approval_resolved
 # command = "jq -c . >> /var/log/willdeep-audit.jsonl"
 #
 # [[hooks]]
 # name = "change-ticket"
-# event = "pre_tool"              # 只有 pre_tool 拦得住；post_tool 发生在事后
+# event = "pre_tool"              # pre_tool / before_agent 可阻断；其余事件只观察
 # command = "/usr/local/bin/check-change-ticket"
 # blocking = true
 # timeout_seconds = 10

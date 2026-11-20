@@ -1034,11 +1034,45 @@ impl Agent {
         sink: Option<&dyn crate::checkpoint::CheckpointSink>,
         summary: Option<crate::context_summary::ContextSummary>,
     ) -> Result<AgentOutcome, AgentError> {
-        let mut preparation = crate::preparation::PreparationTrace::new("agent_preflight");
+        use crate::hooks::HookEvent;
+
         let _execution_guard = sink
             .map(|sink| sink.acquire_run())
             .transpose()
             .map_err(AgentError::Checkpoint)?;
+        let before = self
+            .tools
+            .fire_agent_hook(HookEvent::BeforeAgent, None)
+            .await;
+        let result = if let Some(message) = before.message() {
+            Err(AgentError::Tool(ToolError::HookDenied(message)))
+        } else {
+            self.run_checkpointed_unhooked(messages, user_message, sink, summary)
+                .await
+        };
+        let outcome = if before.is_denied() {
+            "blocked"
+        } else {
+            match &result {
+                Ok(outcome) => outcome.stop_reason.as_str(),
+                Err(_) => "error",
+            }
+        };
+        let _ = self
+            .tools
+            .fire_agent_hook(HookEvent::AgentEnd, Some(outcome))
+            .await;
+        result
+    }
+
+    async fn run_checkpointed_unhooked(
+        &self,
+        messages: Vec<Message>,
+        user_message: Message,
+        sink: Option<&dyn crate::checkpoint::CheckpointSink>,
+        summary: Option<crate::context_summary::ContextSummary>,
+    ) -> Result<AgentOutcome, AgentError> {
+        let mut preparation = crate::preparation::PreparationTrace::new("agent_preflight");
         if sink.is_some() {
             self.restore_team_for_execution().await?;
         }
@@ -2310,6 +2344,8 @@ fn routing_request_from_message(content: &str) -> &str {
 
 #[cfg(test)]
 mod delegation_tests;
+#[cfg(test)]
+mod lifecycle_hook_tests;
 #[cfg(test)]
 mod peer_session_tests;
 #[cfg(test)]

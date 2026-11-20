@@ -52,6 +52,8 @@ pub enum HookEvent {
     PostTool,
     /// 一次审批有了结果（approver 或 judge 返回）。审计用。
     ApprovalResolved,
+    BeforeAgent,
+    AgentEnd,
 }
 
 impl HookEvent {
@@ -60,13 +62,15 @@ impl HookEvent {
             HookEvent::PreTool => "pre_tool",
             HookEvent::PostTool => "post_tool",
             HookEvent::ApprovalResolved => "approval_resolved",
+            HookEvent::BeforeAgent => "before_agent",
+            HookEvent::AgentEnd => "agent_end",
         }
     }
 
     /// 这个事件上的 hook 有没有可能拦住什么。`PostTool` 发生在事后，
     /// 让它"拦截"只会制造一种拦得住的错觉。
     pub fn can_block(self) -> bool {
-        matches!(self, HookEvent::PreTool)
+        matches!(self, HookEvent::PreTool | HookEvent::BeforeAgent)
     }
 }
 

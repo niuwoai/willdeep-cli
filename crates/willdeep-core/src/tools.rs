@@ -452,6 +452,24 @@ impl ToolRegistry {
         self
     }
 
+    pub(crate) async fn fire_agent_hook(
+        &self,
+        event: HookEvent,
+        outcome: Option<&str>,
+    ) -> crate::hooks::HookOutcome {
+        if self.delegation_read_only || !self.hooks.has_event(event) {
+            return crate::hooks::HookOutcome::Allow;
+        }
+        let mut payload = HookPayload::new(event).with_session(
+            self.session_id.clone(),
+            Some(self.workspace.display().to_string()),
+        );
+        if let Some(outcome) = outcome {
+            payload = payload.with_outcome(outcome);
+        }
+        self.hooks.fire(event, &payload).await
+    }
+
     pub(crate) fn allows_parallel_read(&self, call: &ToolCall) -> bool {
         self.hooks.is_empty()
             && matches!(

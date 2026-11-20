@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn lifecycle_hook_configuration_accepts_gates_and_rejects_blocking_observers() {
+    fn settings(event: &str, blocking: bool) -> crate::config::HookSettings {
+        crate::config::HookSettings {
+            name: None,
+            event: event.into(),
+            command: "exit 0".into(),
+            blocking,
+            timeout_seconds: Some(1),
+            on_error: None,
+        }
+    }
+    assert_eq!(
+        build_hooks(&[settings("before_agent", true)])
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        build_hooks(&[settings("agent_end", false)]).unwrap().len(),
+        1
+    );
+    assert!(build_hooks(&[settings("agent_end", true)]).is_err());
+    assert!(build_hooks(&[settings("before_agnet", false)]).is_err());
+    for event in ["pre_tool", "post_tool", "approval_resolved"] {
+        assert!(build_hooks(&[settings(event, false)]).is_ok());
+    }
+}
+
+#[test]
 fn unverified_outcome_preserves_the_assistants_explanation_without_inserting_a_warning() {
     let mut outcome = willdeep_core::AgentOutcome {
         final_text: "具体检查结果".to_owned(),

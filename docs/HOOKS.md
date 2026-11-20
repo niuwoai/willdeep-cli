@@ -1,6 +1,6 @@
 # 生命周期挂钩（Hooks）
 
-> 状态：**可用**。当前覆盖 `pre_tool` / `post_tool` / `approval_resolved`；审批结果接线修复属于 `0.150.0-rc3`，契约见[审批结果决策](decisions/2026-11-17-approval-resolved-hooks.md)。
+> 状态：**可用**。当前覆盖 `before_agent` / `agent_end` / `pre_tool` / `post_tool` / `approval_resolved`。新增 Agent 运行边界的设计依据见 [Pi 扩展演进](PI_EXTENSION_EVOLUTION.md)；审批结果契约见[审批结果决策](decisions/2026-11-17-approval-resolved-hooks.md)。
 
 审计要的是"谁在什么时候做了什么"，合规要的是"没批准就不许干"。这两件事都不能
 交给一条可以丢的通知。
@@ -47,10 +47,12 @@ webhook 那条设计成"永远不会让一个轮次失败"是对的——没人�
 `detail` **已经按审批日志同一套规则脱敏**（`redact_credentials`）。凭据一旦交出
 进程就收不回来了，这件事不指望每个 hook 作者自己记得。
 
-## 三个触发点
+## 触发点
 
 | 事件 | 时机 | 能拦吗 |
 |---|---|---|
+| `before_agent` | 一次 Agent 运行的模型处理之前 | **能** |
+| `agent_end` | 一次 Agent 运行返回时 | 不能 |
 | `pre_tool` | 工具即将执行 | **能** |
 | `post_tool` | 工具执行完毕 | 不能——事情已经发生了 |
 | `approval_resolved` | 审批器返回决定，或 AI 判官最终放行 | 不能 |
@@ -61,8 +63,27 @@ webhook 那条设计成"永远不会让一个轮次失败"是对的——没人�
 
 静态放行、白名单命中、FullAccess 免审、审批前硬拒绝及 `ask_user` 问答不产生这类事件。事件在当前调用链内有界等待；失败不能改变审批决定，取消或进程退出仍可能中断投递，不提供持久队列或崩溃补发。
 
-在 `post_tool` 或 `approval_resolved` 上写 `blocking = true` 会被配置检查直接拒绝启动。
+在 `agent_end`、`post_tool` 或 `approval_resolved` 上写 `blocking = true` 会被配置检查直接拒绝启动。
 一个拦不住任何东西却看起来像门禁的配置，比没有配置更危险。
+
+### Agent 运行边界
+
+`before_agent` / `agent_end` 沿用 `session_id` 与 `workspace`，`tool`、`detail` 为空，不发送用户提示词、模型输出或原始错误。结束事件的 `outcome` 为实际停止原因：`finished`、`goal_complete`、`budget_limited`、`max_turns`、`incomplete` 或 `unverified`；返回错误时为 `error`，前置 Hook 拒绝时为 `blocked`。前置拒绝不会调用模型。
+
+```toml
+[[hooks]]
+name = "environment-check"
+event = "before_agent"
+command = "/usr/local/bin/check-agent-environment"
+blocking = true
+
+[[hooks]]
+name = "run-audit"
+event = "agent_end"
+command = "jq -c . >> /var/log/willdeep-runs.jsonl"
+```
+
+这些事件覆盖一次 Agent 运行，而不是每次模型请求或会话创建/销毁。结束 Hook 自己失败不会改变运行结果；结束事件也不代表后台任务全部完成。只读委派不执行这类 Hook。Hook 使用自身 `timeout_seconds`，在模型运行计时边界之外等待；多个 Hook 的等待时间会累加。调用方取消整个 future、进程退出或崩溃时，不保证投递结束事件，也不提供补发。执行租约获取失败时运行未开始，不产生这两个事件。
 
 ## 失败时默认拦，不默认放
 
@@ -115,7 +136,7 @@ on_error = "deny"
 
 ## 现在还没有的
 
-- **只有三个触发点。** 没有 `session_start` / `turn_end` / `pre_write`。
+- **尚无会话与逐轮事件。** `before_agent` / `agent_end` 对应一次运行，不是会话创建/销毁，也不是每次模型请求；没有 `session_start` / `turn_end` / `pre_write`。
 - **审批结果不保证持久送达。** 取消或崩溃可中断 Hook；它不替代 Runtime 人工处置反馈账本和工具执行证据。
 - **hook 改不了参数。** 它只能放行或拦截，不能重写模型请求的命令——能改的话
   就得回答"改完之后审批过的还算不算数"，那是另一个设计。
