@@ -2410,7 +2410,10 @@ fn runtime_compression_events_reach_the_status_bar_and_the_progress_line() {
     app.append_transcript("You: what now?".to_owned());
     app.note_compression_started();
     let row = app.compression_notice_row().unwrap();
-    assert!(row.starts_with("System: ") && row.contains("Compressing context"), "{row}");
+    assert!(
+        row.starts_with("System: ") && row.contains("Compressing context"),
+        "{row}"
+    );
     app.note_compression_completed();
     assert!(app.compression_notice_row().is_none());
     std::fs::remove_dir_all(root).unwrap();

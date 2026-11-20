@@ -206,30 +206,42 @@ impl App {
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                let mappings = if self.compression.is_none()
-                    && self.transient_kind == StreamKind::Reply
-                {
-                    if let Some(body) = self.transient_thought.as_deref() {
-                        sources
-                            .parts
-                            .insert((stream_id, source::SourcePart::Body), body.to_owned());
-                        let prefix =
-                            format!("{} · {}: ", self.assistant_name(), self.transient_label());
-                        let mut mappings =
-                            source::literal_lines(stream_id, source::SourcePart::Body, body);
-                        if let Some(first) = mappings.first_mut() {
-                            let mut chars = source::SourceLine::literal(
-                                stream_id,
-                                source::SourcePart::Prefix,
-                                &prefix,
-                                0,
-                            )
-                            .chars;
-                            chars.append(&mut first.chars);
-                            first.chars = chars;
+                let mappings =
+                    if self.compression.is_none() && self.transient_kind == StreamKind::Reply {
+                        if let Some(body) = self.transient_thought.as_deref() {
+                            sources
+                                .parts
+                                .insert((stream_id, source::SourcePart::Body), body.to_owned());
+                            let prefix =
+                                format!("{} · {}: ", self.assistant_name(), self.transient_label());
+                            let mut mappings =
+                                source::literal_lines(stream_id, source::SourcePart::Body, body);
+                            if let Some(first) = mappings.first_mut() {
+                                let mut chars = source::SourceLine::literal(
+                                    stream_id,
+                                    source::SourcePart::Prefix,
+                                    &prefix,
+                                    0,
+                                )
+                                .chars;
+                                chars.append(&mut first.chars);
+                                first.chars = chars;
+                            }
+                            mappings.truncate(colored.lines.len());
+                            mappings
+                        } else {
+                            colored
+                                .lines
+                                .iter()
+                                .map(|line| {
+                                    source::SourceLine::synthetic(
+                                        stream_id,
+                                        source::SourcePart::Decoration,
+                                        &line.to_string(),
+                                    )
+                                })
+                                .collect()
                         }
-                        mappings.truncate(colored.lines.len());
-                        mappings
                     } else {
                         colored
                             .lines
@@ -242,20 +254,7 @@ impl App {
                                 )
                             })
                             .collect()
-                    }
-                } else {
-                    colored
-                        .lines
-                        .iter()
-                        .map(|line| {
-                            source::SourceLine::synthetic(
-                                stream_id,
-                                source::SourcePart::Decoration,
-                                &line.to_string(),
-                            )
-                        })
-                        .collect()
-                };
+                    };
                 let (mut transient, mut mapped) =
                     wrap_styled_text_sourced(colored, self.transcript_width, &mappings);
                 if self
@@ -290,7 +289,6 @@ impl App {
                 last_user_line + 1
             })
     }
-
 
     /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
     fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {

@@ -2371,13 +2371,26 @@ mod tests {
             let text = line.to_string();
             text.contains("System:") && text.contains("正在压缩上下文")
         }));
-        assert!(app.transcript_rows.last().unwrap().contains("正在压缩上下文"));
-        assert!(!app.transcript.iter().any(|row| row.contains("正在压缩上下文")));
+        assert!(
+            app.transcript_rows
+                .last()
+                .unwrap()
+                .contains("正在压缩上下文")
+        );
+        assert!(
+            !app.transcript
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
+        );
 
         app.note_compression_completed();
         let (transient, _notice, _waiting) = app.prepare_transcript_frame();
         assert!(transient.lines.is_empty());
-        assert!(!app.transcript_rows.iter().any(|row| row.contains("正在压缩上下文")));
+        assert!(
+            !app.transcript_rows
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
+        );
     }
 
     #[test]
