@@ -1,0 +1,138 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "mode": "full",
+      "name": "committed edit diff is visible while the turn is still running",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/01-running-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/01-running-diff.ansi",
+        "application_frame": 22
+      }
+    },
+    {
+      "mode": "full",
+      "name": "the final result folds the intermediate diff and keeps the tool receipt",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/02-after-final-result.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/02-after-final-result.ansi",
+        "application_frame": 25
+      }
+    },
+    {
+      "mode": "full",
+      "name": "clicking the retained tool row reopens the committed diff",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/03-reopened-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/full/03-reopened-diff.ansi",
+        "application_frame": 30
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "committed edit diff is visible while the turn is still running",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/01-running-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/01-running-diff.ansi",
+        "application_frame": 24
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "the final result folds the intermediate diff and keeps the tool receipt",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/02-after-final-result.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/02-after-final-result.ansi",
+        "application_frame": 27
+      }
+    },
+    {
+      "mode": "compact",
+      "name": "clicking the retained tool row reopens the committed diff",
+      "passed": true,
+      "evidence": {
+        "screen": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/03-reopened-diff.json",
+        "ansi": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/scratch/tui-turn-end-rc5-20261119-b/compact/03-reopened-diff.ansi",
+        "application_frame": 31
+      }
+    },
+    {
+      "mode": "binary",
+      "name": "binary SHA256 unchanged",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "cleanup": [
+    {
+      "mode": "full",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "full",
+      "action": "close owned loopback Provider",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "capture last frame",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "save private Provider request evidence",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned PTY/VT decoder",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "stop only private Runtime",
+      "passed": true
+    },
+    {
+      "mode": "compact",
+      "action": "close owned loopback Provider",
+      "passed": true
+    }
+  ],
+  "binary": "/Users/rocky/Sites/willdeep-rs/.claude/worktrees/rule-scan-unreadable-20261119/.claude/target/debug/willdeep",
+  "binary_sha256_before": "b1cd13cb9b9189cc60819e197044c4531232b3bb447c6326ae56860e800d5e0d",
+  "fixture_root": "/var/folders/np/rjc0y5w52x324x21pv6g33440000gp/T/wd-tui-turn-end-20261119-6489-ya1hjt",
+  "real_model_requests": false,
+  "layouts": [
+    "full",
+    "compact"
+  ],
+  "version": "willdeep 0.154.0-rc5",
+  "scope": "real Runtime/full+compact PTY; committed create_file diff while running, automatic fold after the final result, click-to-reopen",
+  "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; OSC52 captured in owned PTY.",
+  "boundary": "Synthetic loopback Provider only; no real model or user Runtime. Session-switch, failed-send and manual-expansion persistence are covered by Rust native regressions, not this PTY.",
+  "binary_sha256_after": "b1cd13cb9b9189cc60819e197044c4531232b3bb447c6326ae56860e800d5e0d",
+  "checks_passed": 7,
+  "fixture_retained": false
+}

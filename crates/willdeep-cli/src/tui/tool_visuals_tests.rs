@@ -5,6 +5,8 @@ fn app() -> App {
     let mut app = App::new(Vec::new(), Language::En);
     app.transcript_width = 100;
     app.viewport_height = 60;
+    // Tool calls only happen inside a turn; automatic projections follow it.
+    app.running = true;
     app
 }
 
@@ -108,6 +110,7 @@ fn committed_diff_is_visible_with_line_numbers_colors_and_literal_source() {
     for width in [32, 100] {
         for language in [Language::ZhCn, Language::En, Language::Ja] {
             let mut app = app();
+            app.running = true;
             app.transcript_width = width;
             app.language = language;
             app.note_tool_call_requested(Some("edit"), "edit_file", None, None);
@@ -174,6 +177,7 @@ fn committed_diff_preserves_context_indentation_spacing_and_redaction() {
         "    4 │     4 │  context  after",
     );
     let mut app = app();
+    app.running = true;
     app.note_tool_call_completed(Some("edit"), "edit_file", None, None, false, Some(&display));
     let detail = &app.tool_expansions[&0];
     assert_eq!(detail, expected);
@@ -251,8 +255,50 @@ fn display_bounds_controls_and_localized_truncation_are_explicit() {
 }
 
 #[test]
+fn edit_diff_collapses_when_the_turn_has_its_final_result_and_reopens_on_click() {
+    let mut app = app();
+    app.running = true;
+    app.note_tool_call_requested(Some("edit"), "edit_file", None, None);
+    app.note_tool_call_completed(Some("edit"), "edit_file", None, None, false, Some(&edit()));
+    assert!(screen(&mut app).contains("+new value"));
+    assert!(app.tool_row_open(0));
+
+    app.finish_turn();
+    let collapsed = screen(&mut app);
+    assert!(!collapsed.contains("+new value"), "{collapsed}");
+    assert!(!collapsed.contains("example.rs"), "{collapsed}");
+    assert!(collapsed.contains("✓ edit_file"), "{collapsed}");
+    assert!(!app.tool_row_open(0));
+    // The projection is retained: the user can still open the real receipt.
+    app.toggle_tool_projection(0);
+    let reopened = screen(&mut app);
+    assert!(reopened.contains("+new value"), "{reopened}");
+    assert!(app.tool_visuals.is_diff(0));
+}
+
+#[test]
+fn a_user_opened_edit_diff_stays_open_after_the_turn_finishes() {
+    let mut app = app();
+    app.running = true;
+    app.note_tool_call_requested(Some("edit"), "edit_file", None, None);
+    app.note_tool_call_completed(Some("edit"), "edit_file", None, None, false, Some(&edit()));
+    assert!(screen(&mut app).contains("+new value"));
+    app.toggle_tool_projection(0);
+    assert!(!screen(&mut app).contains("+new value"));
+    app.toggle_tool_projection(0);
+    assert!(screen(&mut app).contains("+new value"));
+
+    app.finish_turn();
+    assert!(
+        screen(&mut app).contains("+new value"),
+        "explicit expansion must survive the automatic collapse"
+    );
+}
+
+#[test]
 fn record_reordering_and_removal_keep_call_and_diff_identity() {
     let mut app = app();
+    app.running = true;
     app.append_transcript("You: queued".to_owned());
     request(&mut app, "command", "COMMAND_DETAIL");
     app.note_tool_call_requested(Some("edit"), "edit_file", None, None);
@@ -270,6 +316,7 @@ fn record_reordering_and_removal_keep_call_and_diff_identity() {
 #[test]
 fn runtime_event_entrypoint_uses_call_identity_and_committed_receipt() {
     let mut app = app();
+    app.running = true;
     for (id, command) in [("one", "RUNTIME_ONE"), ("two", "RUNTIME_TWO")] {
         runtime_ui::apply_runtime_output(
             &mut app,

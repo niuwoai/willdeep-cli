@@ -14,27 +14,51 @@ FileUtils.mkdir_p(output)
 root = Dir.mktmpdir('wd-tui-status-symbols-')
 report = {passed: false, checks: [], real_model_requests: false,
   binary_sha256: Digest::SHA256.file(binary).hexdigest,
-  scope: 'full/compact Runtime TUI; status symbols, footer click/drag, resize, isolated OSC 52 copy and unsent draft',
+  scope: 'full/compact Runtime TUI; sent/queued colors, queue hint, green completion receipts, footer click/drag, resize, isolated OSC 52 copy and unsent draft',
   isolation: 'Private HOME/WILLDEEP_HOME/workspace; loopback synthetic SSE; no real credentials or clipboard.', cleanup: []}
+# xterm exposes ANSI palette indices separately from RGB values.
+ansi_palette = %w[000000 cd0000 00cd00 cdcd00 0000ee cd00cd 00cdcd e5e5e5 7f7f7f ff0000 00ff00 ffff00 5c5cff ff00ff 00ffff ffffff]
+color = lambda do |value, rgb, fallback|
+  next fallback unless value.is_a?(Integer) && value >= 0
+  next format('#%06x', value) if rgb
+  next "##{ansi_palette.fetch(value)}" if value < ansi_palette.length
+  next format('#%02x%02x%02x', *[value - 16].flat_map { |index| [index / 36, index / 6 % 6, index % 6] }.map { |component| component.zero? ? 0 : 55 + component * 40 }) if value < 232
+  component = 8 + (value - 232) * 10
+  format('#%02x%02x%02x', component, component, component)
+end
+message_cells = lambda do |screen, body|
+  screen.fetch('lines').each_index do |y|
+    cells = screen.fetch('cells').select { |cell| cell['y'] == y && cell['width'].positive? }
+    found = cells.each_cons(body.length).find { |part| part.map { |cell| cell['text'] }.join == body }
+    return found if found
+  end
+  nil
+end
 text = ->(screen) { screen.fetch('lines').join("\n") }
-chat = ->(screen) { screen.fetch('lines').take_while { |line| !line.start_with?('┌Activity', '┌Prompt') } }
+# The full layout frames the transcript itself; skip its own border and stop
+# before the next panel, whatever language its title is in. Compact has no
+# frame, so it simply runs to the first panel border.
+chat = lambda do |screen|
+  lines = screen.fetch('lines')
+  lines = lines.drop(1) if lines.first.to_s.start_with?('┌')
+  lines.take_while { |line| !line.start_with?('┌', '└') }
+end
 save_frame = lambda do |tui, directory, name|
   screen = tui.screen
   # Keep terminal evidence once per case; render the same captured cells as SVG.
   File.write(File.join(directory, "#{name}.json"), JSON.pretty_generate(screen))
   cells = screen.fetch('cells')
   width, height = tui.columns * 10 + 32, tui.rows * 20 + 32
-  color = ->(value, fallback) { value.is_a?(Integer) && value.positive? ? format('#%06x', value) : fallback }
   svg = [%(<svg xmlns="http://www.w3.org/2000/svg" width="#{width}" height="#{height}">),
     '<rect width="100%" height="100%" fill="#1b2232"/>']
   cells.each do |cell|
     next unless cell.fetch('bg').positive?
-    svg << %(<rect x="#{16 + cell.fetch('x') * 10}" y="#{16 + cell.fetch('y') * 20}" width="#{10 * [cell.fetch('width'), 1].max}" height="20" fill="#{color.call(cell.fetch('bg'), '#1b2232')}"/>)
+    svg << %(<rect x="#{16 + cell.fetch('x') * 10}" y="#{16 + cell.fetch('y') * 20}" width="#{10 * [cell.fetch('width'), 1].max}" height="20" fill="#{color.call(cell.fetch('bg'), cell.fetch('bg_rgb'), '#1b2232')}"/>)
   end
   svg << '<g font-family="Menlo,monospace" font-size="16">'
   cells.each do |cell|
     next if cell.fetch('width').zero? || cell.fetch('text').strip.empty?
-    svg << %(<text x="#{16 + cell.fetch('x') * 10}" y="#{32 + cell.fetch('y') * 20}" fill="#{color.call(cell.fetch('fg'), '#c0c7d2')}">#{CGI.escapeHTML(cell.fetch('text'))}</text>)
+    svg << %(<text x="#{16 + cell.fetch('x') * 10}" y="#{32 + cell.fetch('y') * 20}" fill="#{color.call(cell.fetch('fg'), cell.fetch('fg_rgb'), '#c0c7d2')}" opacity="#{cell.fetch('dim') ? 0.6 : 1}">#{CGI.escapeHTML(cell.fetch('text'))}</text>)
   end
   svg << '</g></svg>'
   File.write(File.join(directory, "#{name}.svg"), svg.join("\n"))
@@ -90,28 +114,55 @@ begin
       tui.wait('first request') { |_screen| provider.requests.length == 1 }
       provider.delta(0, "STATUS_SYMBOL_FIRST_REPLY\n")
       tui.wait('first reply') { |screen| text.call(screen).include?('STATUS_SYMBOL_FIRST_REPLY') }
-      check.call('started message uses a symbol without the old status phrase') do
-        tui.wait('started symbol') { |screen| chat.call(screen).any? { |line| line.include?('▶ STATUS_SYMBOL_FIRST') } }
+      check.call('sent message is cyan without a triangle or queue hint') do
+        tui.wait('sent body') { |screen| message_cells.call(screen, 'STATUS_SYMBOL_FIRST')&.all? { |cell| cell['fg'] == 6 && !cell['fg_rgb'] } }
+        raise 'started triangle remains' if chat.call(tui.screen).any? { |line| line.include?('▶ STATUS_SYMBOL_FIRST') }
+        raise 'sent message has a queue hint' if chat.call(tui.screen).any? { |line| line.include?('Ctrl+Q') }
         raise 'old textual status remains' if chat.call(tui.screen).join.match?(/\[(?:started|completed|accepted)/)
       end
       tui.paste('STATUS_SYMBOL_QUEUED')
       tui.pump(0.1)
       tui.write("\r")
-      check.call('queued symbol does not claim early start or completion') do
-        tui.wait('queued symbol') { |screen| chat.call(screen).any? { |line| line.include?('◇ STATUS_SYMBOL_QUEUED') } }
+      hint = language == 'en' ? 'Ctrl+Q Manage queued messages' : 'Ctrl+Q 管理待发队列'
+      check.call('queued body is yellow with a dim queue hint underneath') do
+        tui.wait('queued color and hint') do |screen|
+          message_cells.call(screen, 'STATUS_SYMBOL_QUEUED')&.all? { |cell| cell['fg'] == 3 && !cell['fg_rgb'] } && text.call(screen).include?(hint)
+        end
+        body_cells = message_cells.call(tui.screen, 'STATUS_SYMBOL_QUEUED')
+        hint_cells = message_cells.call(tui.screen, hint)
+        raise 'hint is not underneath its message' unless hint_cells.first['y'] > body_cells.first['y']
+        raise 'hint is not secondary' unless hint_cells.all? { |cell| cell['fg'] == 7 && cell['dim'] }
+        raise 'nonterminal decoration remains' if chat.call(tui.screen).any? { |line| line.match?(/[▶◇‖] STATUS_SYMBOL_QUEUED/) }
         raise 'queued message started early' unless provider.requests.length == 1
+        (report[:delivery_colors] ||= []) << {mode: mode, language: language, sent_ansi: 6, queued_ansi: 3, hint_ansi: 7, hint_dim: true}
         save_frame.call(tui, directory, '01-queued')
       end
+      tui.write("\x11")
+      check.call('the advertised shortcut opens the actual queue') do
+        title = language == 'en' ? 'Queued messages' : '待发消息'
+        tui.wait('queue panel') { |screen| text.call(screen).include?(title) && text.call(screen).include?('STATUS_SYMBOL_QUEUED') }
+        raise 'opening queue sent the pending message' unless provider.requests.length == 1
+      end
+      tui.write("\e")
+      tui.wait('queue panel closed') { |screen| text.call(screen).include?(hint) }
+
       tui.paste('UNSENT_STATUS_DRAFT')
       tui.pump(0.1)
       provider.finish(0)
       tui.wait('second request') { |_screen| provider.requests.length == 2 }
       provider.delta(1, "STATUS_SYMBOL_FINAL_REPLY\n")
+      check.call('queue hint disappears and body becomes cyan when the turn starts') do
+        tui.wait('queued to sent') do |screen|
+          !text.call(screen).include?(hint) && message_cells.call(screen, 'STATUS_SYMBOL_QUEUED')&.all? { |cell| cell['fg'] == 6 && !cell['fg_rgb'] }
+        end
+      end
       provider.finish(1)
       tui.wait('final reply and divider') { |screen| text.call(screen).include?('STATUS_SYMBOL_FINAL_REPLY') && chat.call(screen).any? { |line| line.include?('── ') && line.include?(turn_label) } }
       check.call('normal terminal status comes from the completed turn') do
         tui.wait('completed symbols') { |screen| chat.call(screen).count { |line| line.match?(/✓ STATUS_SYMBOL_(?:FIRST|QUEUED)/) } == 2 }
         raise 'routine completion still uses repeated status words' if text.call(tui.screen).match?(/本轮已完成|Turn completed|ターン完了/)
+        receipts = tui.screen.fetch('cells').select { |cell| cell['text'] == '✓' && cell['fg'] == 2 && cell['bold'] }
+        raise 'green completion checkmarks missing' unless receipts.length >= 2
       end
       summary = chat.call(tui.screen).find { |line| line.include?('── ') && line.include?(turn_label) }.strip
       save_frame.call(tui, directory, '02-before-click')
@@ -185,6 +236,6 @@ ensure
   report[:checks_passed] = report[:checks].count { |check| check[:passed] }
   File.write(File.join(output, 'status-symbols.json'), JSON.pretty_generate(report))
   checks = report[:checks].map { |check| "- #{check[:mode]} / #{check[:language]} / #{check[:name]}：#{check[:passed] ? 'PASS' : 'FAIL'}" }
-  File.write(File.join(output, 'status-symbols.md'), "# TUI 状态符号与点击验收\n\n#{report[:version]}\n\n#{checks.join("\n")}\n\n结果：#{report[:passed] ? 'PASS' : 'FAIL'}。#{report[:error]}\n\n#{report[:scope]}\n\n#{report[:isolation]}\n")
+  File.write(File.join(output, 'status-symbols.md'), "# TUI 送达颜色、待发提示与点击验收\n\n#{report[:version]}\n\n#{checks.join("\n")}\n\n结果：#{report[:passed] ? 'PASS' : 'FAIL'}。#{report[:error]}\n\n#{report[:scope]}\n\n#{report[:isolation]}\n")
   FileUtils.remove_entry(root) if File.directory?(root)
 end

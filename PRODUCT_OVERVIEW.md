@@ -1,8 +1,18 @@
 # Product Overview
 
-> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc1
+> 最后更新：2026-11-20 | 当前版本：v0.154.0-rc6
 
-0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。尚未安装或发布。
+0.154.0-rc6 调整 TUI 上下文压缩提示：压缩期间在 AI 输出区底部显示临时 `System:` 状态，压缩结束后立即隐藏，且不写入会话记录。本版本为修复候选，尚未验证或公开发布。
+
+0.154.0-rc5 在轮次产生最终结果后自动收起中间工具调用的已提交编辑 diff：工具行保留，用户手动展开的差异继续保留，点击仍可重新展开。同步修复本地待发队列在切换会话、发送失败与编辑保存时的记录绑定：只认未被改写的待发占位行，失败回执保留 `?` 且原文复制不丢字符，渲染缓存随轮次状态刷新。v0.154.0-rc5 已公开发布，本机、q3、q4-pub 与 h2.niuwoai.com 均已安装；结果见[正式发行](docs/verification/0.154.0-rc5/official-release.md)与[本机](docs/verification/0.154.0-rc5/local-installation.md)、[q3](docs/verification/0.154.0-rc5/q3-installation.md)、[q4](docs/verification/0.154.0-rc5/q4-installation.md)、[h2](docs/verification/0.154.0-rc5/h2-installation.md)记录。详见[轮次收尾投影决策](docs/decisions/2026-11-19-tui-turn-end-projection.md)。
+
+0.154.0-rc4 调整 TUI 用户消息送达展示：移除开始三角图标，已发正文为青色、待发为黄色；待发消息下方显示淡色“Ctrl+Q 管理待发队列”，出队后撤除。正常完成保留绿色小对勾，未确认与异常回执、真实消息身份、附件、时间、复制和调度语义保持有效。中英日与 full/compact 共用渲染，真实终端验收 46 项通过，详见[送达颜色决策](docs/decisions/2026-11-19-tui-delivery-colors.md)与[验收记录](docs/verification/0.154.0-rc4/README.md)。本版本为未公开发布候选，未安装到本机或 q3。
+
+0.154.0-rc3 修复远程普通 HTTP 下 Web 回车与点击发送无响应：缺少 `crypto.randomUUID()` 时，改用浏览器密码学随机字节生成 UUID v4，原有请求幂等与草稿重试语义保留。附件、队列及其他使用相同编号接口的 Web 操作同步接入共享函数。本版本为修复候选，尚未公开发布。Web 全部 442 项测试及缺失接口的隔离浏览器发送验收通过；q3 已试装候选，Tailscale 入口版本与内嵌资源核对通过，真实模型发送受自动审批限制未执行，见[HTTP 发送修复验收](docs/verification/0.154.0-rc3/web-http-send.md)。
+
+0.154.0-rc2 修复项目规则发现因无关私有子目录不可读而阻断命令的问题。只对可确认无法列举且无法进入的子目录权限错误容错；规则正文读取、工作区根目录与越界检查继续失败即阻止执行，可读的隐藏及被忽略目录规则仍会加载。合入 develop 的 0.154.0-rc1 后，本修复从初始候选 0.153.0-rc6 顺延至 rc2。边界见[规则扫描权限决策](docs/decisions/2026-11-19-project-rule-scan-permissions.md)，初始结果见[rc6 验收记录](docs/verification/0.153.0-rc6/project-rule-scan.md)，合并后结果见[rc2 验收记录](docs/verification/0.154.0-rc2/project-rule-scan.md)。修复已合入 develop，本机 Cargo CLI、Runtime 与 Web 已升级至 rc2，真实版本与内嵌资源检查通过；npm 发行流程在包发布成功后同步 `rc` 与 `latest`，无标签安装可获取最新发行版本；GitHub Release 的 10 项任务成功，三份正式归档与 npm 包清单、默认无标签安装通过实际核对，`rc=latest=0.154.0-rc2`。Homebrew 配方已合并，本机升级、配方测试、风格和在线严格审计均通过，Cargo、Homebrew 与运行中的 Runtime 三处版本一致；发布前交接见[本机安装记录](docs/verification/0.154.0-rc2/local-installation.md)，官网 1.12.0-rc14 已上线，实际版本头与五份双语资料、索引摘要均核对通过。公开发行与渠道证据见[正式发行记录](docs/verification/0.154.0-rc2/official-release.md)。
+
+0.154.0-rc1 新增 `willdeep provider add|list|remove`，可用 API Base URL 脚本化写入本地 Provider 档案（只持久化 `api_base` 与推断的 `provider`/`api`，密钥走环境变量）。同版本修复 Runtime 托管 WebApp 启动失败的报错透传：端口占用等已写入 `status.error` 的闭集合文案会原样回到 `/webapp` 与 `willdeep web`；TUI 新版提醒按平台给出客户端升级命令。0.154.0-rc1 已公开发布；本轮以 rc2 接续交付。
 
 0.153.0-rc5 收紧任务授权边界：当前请求及其必要验证可以继续执行；历史待办与无归属工作区变化不构成新授权，独立查询无需为其他工作补跑测试。`monitor` 等返回后仍可能写文件的操作保留未验证暂停，后台结果唤醒的续轮沿用同一暂停，不重新催跑测试。需要扩大范围时先询问，未取得明确同意不执行。显式检查、完成契约和同任务恢复继续保留，见[任务边界决策](docs/decisions/2026-11-18-task-verification-scope.md)。develop 已使用 0.153.0-rc2 至 rc4，本次修复顺延为 rc5。2026-11-18 已合入 develop 与 main，tag 为 `v0.153.0-rc5`；本机、q4 和 iMac 已安装，详见[验收记录](docs/verification/0.152.0-rc6/task-scope.md)。
 

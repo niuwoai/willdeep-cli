@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3 } from "lucide-react";
 import type { Language, Messages } from "./i18n";
+import { createRequestId } from "./requestId";
 import { ScheduleForm } from "./ScheduleForm";
 import { ScheduleHistory } from "./ScheduleHistory";
 import { scheduleText } from "./scheduleMessages";
@@ -34,7 +35,7 @@ export function ConversationSchedules({ sessionId, workspace, workspaces, langua
     if (pending) return;
     setPending(true); setError("");
     const fingerprint = JSON.stringify({ path, body });
-    if (request.current?.fingerprint !== fingerprint) request.current = { fingerprint, id: crypto.randomUUID() };
+    if (request.current?.fingerprint !== fingerprint) request.current = { fingerprint, id: createRequestId() };
     try {
       await scheduleWrite(path, { ...body, request_id: request.current.id });
       request.current = null;

@@ -1,0 +1,123 @@
+{
+  "version": "0.154.0-rc3",
+  "date": "2026-11-19",
+  "record_scope": "Verification snapshot before the subsequently requested Git commit and push; Git and release fields below describe the verification time only",
+  "issue": "Remote HTTP Web composer fails before fetch when crypto.randomUUID is unavailable",
+  "status": "source verified; private repair candidate installed on q3",
+  "public_release": false,
+  "git_committed": false,
+  "root_cause": {
+    "native_api_requires_secure_context": true,
+    "chat_and_queue_generated_id_before_try": true,
+    "original_user_browser_console_captured": false
+  },
+  "implementation": {
+    "helper": "web/src/requestId.ts",
+    "native_random_uuid_preferred": true,
+    "fallback": "crypto.getRandomValues; RFC UUID v4 version and variant bits",
+    "weak_random_fallback": false,
+    "app_call_sites": 3,
+    "other_call_sites": 23,
+    "payload_fingerprint_retry_identity_preserved": true
+  },
+  "verification": {
+    "focused_tests": {"command": "yarn --cwd web test src/requestId.test.ts src/App.workspaceApproval.test.tsx", "files": 2, "tests": 27, "passed": true},
+    "all_web_tests": {"command": "yarn --cwd web test", "files": 53, "tests": 442, "passed": true},
+    "lint": {"command": "yarn --cwd web lint", "exit_code": 0, "errors": 0, "warnings": [{"file": "web/src/ModelPicker.tsx", "line": 42, "rule": "react-hooks/exhaustive-deps", "changed_by_this_fix": false}]},
+    "web_build": {"command": "yarn --cwd web build", "passed": true, "warning": "existing main bundle exceeds 500 kB"},
+    "linux_build": {
+      "target": "x86_64-unknown-linux-musl",
+      "command": "CARGO_TARGET_DIR=.claude/target CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --offline --release -p willdeep --target x86_64-unknown-linux-musl",
+      "passed": true,
+      "binary_sha256": "412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6",
+      "format": "ELF 64-bit LSB pie executable, x86-64, static-pie linked, not stripped",
+      "cargo_lock_updated_by_cargo": true,
+      "dependency_version_changes": false,
+      "q3_native_version": "willdeep 0.154.0-rc3"
+    },
+    "version_consistency": {"command": "ruby scripts/check_release_version.rb 0.154.0-rc3", "passed": true},
+    "diff_check": {"command": "git diff --check", "passed": true},
+    "call_site_diff_audit": {"files": 14, "substitutions": 26, "only_helper_imports_and_api_substitutions": true, "initial_ruby_default_encoding_failure": "invalid byte sequence in US-ASCII", "utf8_rerun_passed": true},
+    "rust_unit_tests_run": false,
+    "browser": {
+      "app": "built web/dist production frontend",
+      "backend": "isolated in-memory fixture; no real model or user workspace",
+      "url": "http://localhost:19129/",
+      "secure_context": true,
+      "missing_api_simulation": "Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true })",
+      "random_uuid_type": "undefined",
+      "get_random_values_type": "function",
+      "enter": {"prompt": "回车发送兼容验证", "response": "已收到：回车发送兼容验证", "request_id": "8decef75-3d43-416c-940e-fa54367c30b6", "passed": true},
+      "button": {"prompt": "按钮发送兼容验证", "response": "已收到：按钮发送兼容验证", "request_id": "2be9f0b7-4955-4caf-b8a3-566a37d2faa6", "passed": true},
+      "console_errors_after_fixture_correction": 0,
+      "failed_network_requests_after_fixture_correction": 0,
+      "page_snapshot_confirmed_both_replies": true,
+      "true_non_secure_context_browser_covered": false,
+      "limitation": "Preview external URL skipped with outcome skipped-gate-off; browser stayed on localhost. Direct Tailscale HTTP transport is verified separately.",
+      "initial_fixture_error": "Fixture incorrectly returned sessions instead of tasks for /children; fixed fixture only and reran both interactions. No production code change was needed.",
+      "screenshot": {"captured": false, "auto_review_denied_reason": "Remote Shell Writes"}
+    },
+    "real_q3_browser": {
+      "transport": "SSH loopback forward on localhost:19128",
+      "version": "0.154.0-rc3",
+      "new_session_opened": true,
+      "random_uuid_removed_for_compatibility_check": true,
+      "get_random_values_available": true,
+      "model_submission_executed": false,
+      "model_submission_auto_review_denied_reason": "Unrequested Commit in a Connected App",
+      "test_draft_cleared": true,
+      "console_errors_before_submission": 0
+    }
+  },
+  "q3_installation": {
+    "connection": "q3-pub",
+    "prepared_at": "2026-11-19T07:18:55Z",
+    "installed_at": "2026-11-19T07:19:00Z",
+    "remote_record": "/var/backups/willdeep/20261119-web-http-send-rc3/installation.json",
+    "backup_directory": "/var/backups/willdeep/20261119-web-http-send-rc3",
+    "previous_version": "0.154.0-rc2",
+    "previous_binary_sha256": "d9ebfb925b5f5dd01dcc92197324a4c3d507e9510ac47c43536b58cc59fff450",
+    "candidate_sha256": "412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6",
+    "binaries": [
+      {"path": "/usr/local/bin/willdeep", "backup": "/var/backups/willdeep/20261119-web-http-send-rc3/0-willdeep-0.154.0-rc2", "owner": "willdeep:willdeep", "mode": "0755", "installed_version": "0.154.0-rc3"},
+      {"path": "/home/willdeep/.local/bin/willdeep", "backup": "/var/backups/willdeep/20261119-web-http-send-rc3/1-willdeep-0.154.0-rc2", "owner": "willdeep:willdeep", "mode": "0755", "installed_version": "0.154.0-rc3"}
+    ],
+    "activity_before_backup_and_immediately_before_install": {"tasks": {"Completed": 5, "Cancelled": 1}, "sessions": {"Idle": 2, "Failed": 1}, "pending_empty": true},
+    "daemon": {"service": "willdeep-daemon.service", "user": "willdeep", "pid": 3076867, "state": "active/running", "enabled": true, "control_address": "127.0.0.1:33297", "version": "0.154.0-rc3"},
+    "listener": {"service": "willdeep-web-listener.service", "user": "willdeep", "pid": 3076877, "state": "active/running", "enabled": true},
+    "root_runtime": "stopped before and after installation",
+    "internal_web": "127.0.0.1:19847",
+    "external_web": "0.0.0.0:9847",
+    "health_on_both_ports": {"http_status": 200, "version_header": "0.154.0-rc3", "body": {"status": "ok", "version": "0.154.0-rc3"}},
+    "systemd_unit_configuration_unchanged": true,
+    "listener_unit_sha256": "2f7f7c8221063189ee08d313f65d9151ecd3b890052eca0652b0a5f8a7f1e6a9",
+    "older_backups_removed": false,
+    "explicit_database_migration": false,
+    "credentials_or_provider_config_read": false,
+    "firewall_or_cloudflare_changed": false,
+    "passed": true
+  },
+  "tailscale_http": {
+    "checked_at": "2026-11-19T07:20:39Z",
+    "url": "http://100.85.114.57:9847",
+    "proxy": false,
+    "ssh_forward": false,
+    "health": {"status": "ok", "version": "0.154.0-rc3"},
+    "resources": [
+      {"path": "/", "status": 200, "version_header": "0.154.0-rc3", "bytes": 471, "sha256": "06fbf0c629a85e9ebb0c07fad8bd1635aa9f1e0260bfa179fa48d59d9fa4f0a7", "matches_local_dist": true},
+      {"path": "/assets/index-CoEdA6Zr.js", "status": 200, "version_header": "0.154.0-rc3", "bytes": 970993, "sha256": "74ab2137a468e3905ad44dfdbea4de5c812a6adb4e9bad9d7a1f1c34005d1231", "matches_local_dist": true},
+      {"path": "/assets/shareMessages-DIMqt2I4.js", "status": 200, "version_header": "0.154.0-rc3", "bytes": 358750, "sha256": "3ac5d9e3b68655d98b9eae8ef743f21c2ab64d6edc35da77ec2aeda9f12e4e49", "matches_local_dist": true},
+      {"path": "/assets/index-C82JofDj.css", "status": 200, "version_header": "0.154.0-rc3", "bytes": 111809, "sha256": "6bbf559a8c749f7e36584bf9575a9498337bf460963eaf40297ef9d119228d6e", "matches_local_dist": true}
+    ],
+    "passed": true
+  },
+  "rollback": {
+    "helper": "/root/willdeep-http-send-rc3-20261119/q3-install-http-send.rb",
+    "command": "ssh q3-pub 'ruby /root/willdeep-http-send-rc3-20261119/q3-install-http-send.rb rollback /root/willdeep-http-send-rc3-20261119/willdeep 412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6 /var/backups/willdeep/20261119-web-http-send-rc3'",
+    "checks_idle_and_backup_sha256": true,
+    "keeps_root_stopped_and_network_topology": true,
+    "executed": false,
+    "helper_ruby_syntax_checked": true
+  },
+  "not_performed": ["public release", "git commit/push/PR/tag", "npm/Homebrew/site update", "local Mac CLI or Runtime upgrade", "real q3 model submission", "real non-secure-context browser interaction", "machine reboot", "database rollback"]
+}

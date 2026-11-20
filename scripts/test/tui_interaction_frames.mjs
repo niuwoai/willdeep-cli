@@ -29,6 +29,8 @@ for await (const line of createInterface({ input: process.stdin })) {
         if (cell) cells.push({
           x, y, text: cell.getChars(), width: cell.getWidth(),
           bg: cell.getBgColor(), fg: cell.getFgColor(), inverse: cell.isInverse(),
+          bg_rgb: cell.isBgRGB(), fg_rgb: cell.isFgRGB(),
+          bold: cell.isBold(), dim: cell.isDim(),
         });
       }
     }

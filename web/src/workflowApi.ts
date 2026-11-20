@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import type { AgentUsageSummary } from "./RuntimeSidebar";
+import { createRequestId } from "./requestId";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type WorkflowCondition =
@@ -156,7 +157,7 @@ export function useWorkflowHistory(parent: string, definition: string, enabled: 
 export function useWorkflowControl(parent: string) {
   const client = useQueryClient();
   return useMutation({ mutationFn: async ({ action, runId }: { action: WorkflowAction; runId: string }) => {
-    const result = await workflowCall<{ workflow: WorkflowRun }>(action, parent, { run_id: runId, request_id: crypto.randomUUID() });
+    const result = await workflowCall<{ workflow: WorkflowRun }>(action, parent, { run_id: runId, request_id: createRequestId() });
     return { workflow: cacheWorkflow(client, result.workflow) };
   },
   onSuccess: ({ workflow }) => {
@@ -164,7 +165,7 @@ export function useWorkflowControl(parent: string) {
     void client.invalidateQueries({ queryKey: workflowKeys.history(parent, workflow.definition_id) });
   }, retry: false });
 }
-export function runWorkflow(parent: string, definitionId: string, input: JsonValue, requestId = crypto.randomUUID()) {
+export function runWorkflow(parent: string, definitionId: string, input: JsonValue, requestId = createRequestId()) {
   return workflowCall<{ workflow: WorkflowRun }>("run", parent, { definition_id: definitionId, input, request_id: requestId });
 }
 export function loadWorkflowSchema(parent: string, signal?: AbortSignal) {

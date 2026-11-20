@@ -395,42 +395,37 @@ pub(super) fn tail_within_rows(prefix: &str, text: &str, width: usize, rows: usi
 }
 
 impl App {
-    /// 聊天区底部多出来的那一行。正在流的内容优先：思维链只显示耗时摘要，
-    /// 正文显示完整的当前回复。没在流时，简洁模式把还没落进记录的最近一段中途文字
-    /// 摆在这里；后续定稿、工具、模型步骤或收尾时把它写进记录。
+    /// 聊天区底部的临时行。压缩时先显示短暂的 System 状态；否则正在流的内容优先，
+    /// 思维链只显示耗时摘要，正文显示当前回复。临时内容不会写入会话记录。
     pub(super) fn live_transcript_row(&self) -> Option<String> {
-        self.transient_row().or_else(|| self.concise_status_row())
+        self.compression_notice_row()
+            .or_else(|| self.transient_row())
+            .or_else(|| self.concise_status_row())
     }
 
-    /// 压缩开始：状态行挂到用户刚发的那句下面，读秒从这一刻起。
-    ///
-    /// 压缩发生在「轮次开始」之后、正文之前，期间聊天区一行都不长，用户会以为
-    /// 卡住了。活动区那行照旧记（`record_progress`），这里只管聊天区这一行。
-    /// 这一行说的比等待动画具体，所以动画让位，不两行叠在一起。
+    /// 压缩开始：在聊天区底部显示临时的 System 状态，读秒从这一刻起。
+    /// 状态只存在于当前界面，不写进会话记录；它也会让位给真正的模型输出。
     pub(super) fn note_compression_started(&mut self) {
         self.flush_held_narration();
         self.note_turn_phase(turn_status::TurnPhase::Compressing);
         self.dismiss_awaiting_reply();
         self.compression = Some(CompressionNotice {
             started: Instant::now(),
-            done: false,
         });
     }
 
-    /// 压缩完成：同一行整行换成「上下文已压缩」，不再读秒。正文或工具一来就撤掉。
+    /// 压缩结束后立即撤下临时 System 状态。
     pub(super) fn note_compression_completed(&mut self) {
         self.note_turn_phase(turn_status::TurnPhase::Preparing);
-        if let Some(notice) = self.compression.as_mut() {
-            notice.done = true;
-        }
+        self.compression = None;
     }
 
-    /// 压缩请求正在飞。压完但提示还挂在屏幕上不算：那时输入照常处理。
+    /// 压缩请求仍在执行时返回 true；完成后提示与输入拦截状态一起撤下。
     ///
     /// 这段时间模型在重写上下文，插话进不了正在飞的那次请求，本地命令也改不动
     /// 正在压缩的会话。输入先排队，等压缩结束再按普通队列发出去。
     pub(super) fn compression_in_progress(&self) -> bool {
-        self.compression.as_ref().is_some_and(|notice| !notice.done)
+        self.compression.is_some()
     }
 
     /// 把一条提示按住一段时间。状态行每帧都会把普通提示取走，不按住的话
@@ -478,37 +473,18 @@ impl App {
         Some(".".repeat(dots as usize))
     }
 
-    /// 挂在最后一条用户消息正下方的压缩行。压缩中带已耗时，压完只留一句。
-    /// 聊天区最后一条不是用户消息时不画：这行只回答「我刚发的那句怎么没反应」。
+    /// 压缩期间的临时 System 行，挂在 AI 输出区底部并随结束立即消失。
     pub(super) fn compression_notice_row(&self) -> Option<String> {
         let notice = self.compression.as_ref()?;
-        if !self
-            .transcript
-            .last()
-            .is_some_and(|row| row.starts_with("You: "))
-        {
-            return None;
-        }
-        Some(if notice.done {
-            format!(
-                "· {}",
-                self.language.text(
-                    "上下文已压缩",
-                    "Context compressed",
-                    "コンテキストを圧縮しました"
-                )
-            )
-        } else {
-            format!(
-                "· {} · {}",
-                self.language.text(
-                    "正在压缩上下文",
-                    "Compressing context",
-                    "コンテキストを圧縮中"
-                ),
-                format_elapsed_span(notice.started.elapsed().as_secs_f32(), 0)
-            )
-        })
+        Some(format!(
+            "System: {} · {}",
+            self.language.text(
+                "正在压缩上下文",
+                "Compressing context",
+                "コンテキストを圧縮中"
+            ),
+            format_elapsed_span(notice.started.elapsed().as_secs_f32(), 0)
+        ))
     }
 
     /// 聊天区底部的临时行：思维链只显示耗时摘要；正文显示最近一段回复。
@@ -2330,49 +2306,34 @@ mod tests {
         assert!(row.contains("还在查") && !row.contains("postgres"), "{row}");
     }
 
-    /// 压缩期间聊天区一行都不长，用户盯着自己刚发的那句会以为卡住了。状态行就挂在
-    /// 那句正下方：压缩中读秒，压完整行换成一句，正文或工具一来就整行撤掉。
+    /// 压缩期间在 AI 输出区显示临时 System 行；结束后立即消失且不写入会话记录。
     #[test]
-    fn compression_notice_sits_under_the_message_that_triggered_it() {
+    fn compression_system_message_is_transient_and_hidden_on_completion() {
         let mut app = App::new(vec!["You: 现在结果怎么样了？".to_owned()], Language::ZhCn);
         app.begin_turn(true, "working".to_owned());
 
         app.note_compression_started();
-        let row = app.compression_notice_row().unwrap();
+        let row = app.live_transcript_row().unwrap();
+        assert!(row.starts_with("System: "), "{row}");
         assert!(row.contains("正在压缩上下文"), "{row}");
         assert!(row.contains('s'), "the row counts up: {row}");
-        // 不进记录：重开会话不该留下一行「正在压缩」。
         assert_eq!(app.transcript, vec!["You: 现在结果怎么样了？".to_owned()]);
 
-        // 压完是同一行换词，不是再追加一行。
         app.note_compression_completed();
-        let row = app.compression_notice_row().unwrap();
-        assert!(row.contains("上下文已压缩"), "{row}");
-        assert!(!row.contains("正在压缩"), "{row}");
-        assert!(
-            !row.contains('s'),
-            "a finished row does not keep counting: {row}"
-        );
-
-        // 真正的输出一开始，这行就不用再解释了。
-        app.stream_transient(StreamKind::Reply, "结果是");
+        assert!(app.live_transcript_row().is_none());
         assert!(app.compression_notice_row().is_none());
 
-        // 工具调用同样是第一份可见输出。
+        // 真正的输出或轮次结束同样不会留下临时行。
         app.note_compression_started();
-        app.note_compression_completed();
+        app.stream_transient(StreamKind::Reply, "结果是");
+        assert!(!app.live_transcript_row().unwrap().starts_with("System: "));
+
+        app.note_compression_started();
         app.note_tool_requested("read_file", None, None);
         assert!(app.compression_notice_row().is_none());
 
-        // 中断或换会话时这行不能残留。
         app.note_compression_started();
         app.finish_turn();
-        assert!(app.compression_notice_row().is_none());
-
-        // 最后一条不是用户消息时不画：这行只回答「我刚发的那句怎么没反应」。
-        app.begin_turn(true, "working".to_owned());
-        app.note_narration("先说一句");
-        app.note_compression_started();
         assert!(app.compression_notice_row().is_none());
     }
 
@@ -2387,17 +2348,13 @@ mod tests {
 
         app.note_compression_completed();
         assert!(!app.compression_in_progress());
-        assert!(
-            app.compression_notice_row()
-                .unwrap()
-                .contains("上下文已压缩")
-        );
+        assert!(app.compression_notice_row().is_none());
         assert!(app.composer_state().0.contains("本轮进行中"));
     }
 
-    /// 压缩行画在用户消息正下方，读秒换词都落在同一行，输出一开始整行消失。
+    /// 压缩状态显示在 AI 输出区底部，完成后不留在 transcript 中。
     #[test]
-    fn compression_notice_renders_on_the_line_below_the_user_message() {
+    fn compression_system_message_renders_at_the_transcript_bottom_and_disappears() {
         let mut app = App::new(
             vec![
                 "WillDeep: 上一轮的结论".to_owned(),
@@ -2409,54 +2366,30 @@ mod tests {
         app.viewport_height = 12;
         app.note_compression_started();
 
-        let (_transient, _notice, _waiting) = app.prepare_transcript_frame();
-        let rows = app.transcript_rows.clone();
-        let user = rows
-            .iter()
-            .position(|row| row.contains("现在结果怎么样了？"))
-            .unwrap();
-        let notice_row = &rows[user + 1];
+        let (transient, _notice, _waiting) = app.prepare_transcript_frame();
+        assert!(transient.lines.iter().any(|line| {
+            let text = line.to_string();
+            text.contains("System:") && text.contains("正在压缩上下文")
+        }));
         assert!(
-            notice_row.contains("正在压缩上下文"),
-            "the notice sits on the line right under the message: {rows:?}"
-        );
-        assert!(notice_row.contains('s'), "{notice_row}");
-
-        // 压完还是这一行，只是整行换了词。
-        app.note_compression_completed();
-        let (transient, notice, waiting) = app.prepare_transcript_frame();
-        let rows = &app.transcript_rows;
-        let shown = rows.iter().filter(|row| row.contains("压缩")).count();
-        assert_eq!(shown, 1, "completion replaces the row: {rows:?}");
-        assert!(rows.iter().any(|row| row.contains("上下文已压缩")));
-
-        // 贴底时这行在视口里，不会被算在屏幕外面。视口用的是压完之后那一帧。
-        let offset = app.max_scroll();
-        let viewport =
-            app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), offset);
-        assert!(
-            viewport
-                .lines
-                .iter()
-                .any(|line| line.to_string().contains("上下文已压缩")),
-            "following the bottom still shows the notice"
-        );
-
-        // 往上翻时，压缩行后面的历史不能错位或丢行。
-        let earlier = app.transcript_viewport(&transient, notice.as_ref(), waiting.as_ref(), 0);
-        assert_eq!(
-            earlier.lines[0].to_string(),
-            "WillDeep: 上一轮的结论",
-            "history before the notice keeps its place"
-        );
-
-        // 正文一到，这一行就没了，记录里也不留。
-        app.note_narration("查到了");
-        app.prepare_transcript_frame();
-        assert!(
-            app.transcript_rows.iter().all(|row| !row.contains("压缩")),
-            "{:?}",
             app.transcript_rows
+                .last()
+                .unwrap()
+                .contains("正在压缩上下文")
+        );
+        assert!(
+            !app.transcript
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
+        );
+
+        app.note_compression_completed();
+        let (transient, _notice, _waiting) = app.prepare_transcript_frame();
+        assert!(transient.lines.is_empty());
+        assert!(
+            !app.transcript_rows
+                .iter()
+                .any(|row| row.contains("正在压缩上下文"))
         );
     }
 

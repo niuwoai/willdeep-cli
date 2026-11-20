@@ -1,0 +1,21 @@
+{
+  "version": "0.154.0-rc2",
+  "commit": "0fb3a57bf1811c0bea767767bad0bb0befd31e5b",
+  "workflow_id": 44448133912,
+  "workflow_url": "https://github.com/niuwoai/willdeep-cli/actions/runs/44448133912",
+  "workflow_conclusion": "success",
+  "workflow_successful_jobs": 10,
+  "release_id": 450858598,
+  "release_url": "https://github.com/niuwoai/willdeep-cli/releases/tag/v0.154.0-rc2",
+  "published_at": "2026-11-19T03:54:50Z",
+  "github_prerelease": false,
+  "assets": [
+    { "name": "willdeep-linux-amd64.tar.gz", "sha256": "23ae891475dbfb810ba33c8dc9873fd0ab4033bee4d05c8a2dfd5edb06f9f361", "public_download": true, "gzip_valid": true, "executable": true, "architecture": "x86_64" },
+    { "name": "willdeep-linux-arm64.tar.gz", "sha256": "d81509864d279b1daea996d6dfae3fa893b81852c52cdd3d710075e144865713", "public_download": true, "gzip_valid": true, "executable": true, "architecture": "aarch64" },
+    { "name": "willdeep-macos-universal.tar.gz", "sha256": "904f8fa781c01d9a9d8e776d0177e219f899cefd9496bb06a609e7936ab68ea0", "public_download": true, "gzip_valid": true, "executable": true, "architectures": ["arm64", "x86_64"], "version_output": "willdeep 0.154.0-rc2" }
+  ],
+  "npm": { "version": "0.154.0-rc2", "rc": "0.154.0-rc2", "latest": "0.154.0-rc2", "default_version": "0.154.0-rc2", "install_manifest_matches": true, "isolated_untagged_install_version_output": "willdeep 0.154.0-rc2" },
+  "execution_limits": ["Linux archives were inspected statically on macOS; matching Linux build and CI jobs passed.", "The macOS universal binary was executed using the host-selected slice."],
+  "verification_notes": ["The first watcher disconnected because the GitHub API connection failed; the release workflow subsequently succeeded.", "Post-release verification initially stopped on local Ruby output encoding, then on a direct-download timeout. UTF-8 decoding and the existing local network proxy allowed the complete verification to pass.", "A normal npm lookup initially returned stale cache; prefer-online queries and the isolated default installation confirmed both tags and the installed version."],
+  "passed": true
+}

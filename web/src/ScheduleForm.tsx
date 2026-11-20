@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Language, Messages } from "./i18n";
+import { createRequestId } from "./requestId";
 import { ScheduleTiming } from "./ScheduleTiming";
 import { ScheduleOptions } from "./ScheduleOptions";
 import { scheduleText } from "./scheduleMessages";
@@ -36,7 +37,7 @@ export function ScheduleForm({ initial, id, revision, workspaces, writable, lang
     try {
       const task = uncertain && pendingRequest.current ? pendingRequest.current.task : await prepared();
       const fingerprint = JSON.stringify({ task, expected });
-      if (!pendingRequest.current || pendingRequest.current.fingerprint !== fingerprint) pendingRequest.current = { fingerprint, id: crypto.randomUUID(), task };
+      if (!pendingRequest.current || pendingRequest.current.fingerprint !== fingerprint) pendingRequest.current = { fingerprint, id: createRequestId(), task };
       const view = await scheduleWrite<ScheduleView>(id ? `/api/schedules/${encodeURIComponent(id)}` : "/api/schedules", { task, expected_revision: expected, request_id: pendingRequest.current.id }, id ? "PUT" : "POST");
       pendingRequest.current = null;
       setUncertain(false); onDirty(false); setExpected(view.task.revision); onSaved(view);

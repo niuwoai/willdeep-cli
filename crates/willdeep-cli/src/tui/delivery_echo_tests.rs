@@ -171,7 +171,8 @@ fn cancelling_one_of_two_identical_inputs_changes_only_its_exact_record() {
     );
     second.status = TurnStatus::Cancelled;
     app.reconcile_runtime_deliveries(&[second]);
-    assert!(app.transcript[0].starts_with("You: ◇ "));
+    assert_eq!(app.transcript[0], "You: same");
+    assert_eq!(app.queued_user_records(), BTreeSet::from([0]));
     assert!(app.transcript[1].starts_with("You: × "));
     assert_eq!(app.pending_runtime_echoes.len(), 2);
 }
@@ -263,7 +264,8 @@ fn held_priority_and_independence_are_visible_in_all_three_languages() {
         let mut app = App::new(Vec::new(), language);
         let receipt = turn(TurnStatus::Queued);
         app.echo_runtime_submission("later", &receipt, true, None);
-        assert!(app.transcript[0].contains(DeliveryStatus::Held.symbol()));
+        assert_eq!(app.pending_runtime_echoes[0].status, DeliveryStatus::Held);
+        assert_eq!(app.queued_user_records(), BTreeSet::from([0]));
         assert!(DeliveryStatus::Held.feedback(language).contains("Ctrl+Q"));
         let mut item = queued(&receipt, "later");
         item.held = true;
@@ -296,7 +298,14 @@ fn receipt_status_follows_the_actual_turn_including_human_waits() {
             expected
         };
         assert_eq!(app.pending_runtime_echoes[0].status, expected);
-        assert!(app.transcript[0].contains(expected.symbol()));
+        let symbol = expected.symbol();
+        let prefix = if symbol.is_empty() {
+            String::new()
+        } else {
+            format!("{symbol} ")
+        };
+        assert_eq!(app.transcript[0], format!("You: {prefix}receipt"));
+        assert_eq!(app.queued_user_records().contains(&0), expected.is_queued());
     }
 }
 
@@ -375,16 +384,16 @@ fn runtime_input_boundary_commits_the_previous_live_or_held_output_first() {
 }
 
 #[test]
-fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
+fn receipt_colors_and_terminal_symbols_preserve_body_copy_and_width() {
     let body = "✓ 中文😀\n  keep  spaces";
     for language in [Language::ZhCn, Language::En, Language::Ja] {
         for width in [8, 40, 100] {
             for (status, held, symbol, color) in [
-                (TurnStatus::Queued, false, "◇", Color::Gray),
-                (TurnStatus::Queued, true, "‖", Color::Yellow),
-                (TurnStatus::Running, false, "▶", Color::Cyan),
-                (TurnStatus::WaitingApproval, false, "▶", Color::Cyan),
-                (TurnStatus::WaitingAnswer, false, "▶", Color::Cyan),
+                (TurnStatus::Queued, false, "", Color::Yellow),
+                (TurnStatus::Queued, true, "", Color::Yellow),
+                (TurnStatus::Running, false, "", Color::Cyan),
+                (TurnStatus::WaitingApproval, false, "", Color::Cyan),
+                (TurnStatus::WaitingAnswer, false, "", Color::Cyan),
                 (TurnStatus::Completed, false, "✓", Color::Green),
                 (TurnStatus::Partial, false, "◒", Color::Yellow),
                 (TurnStatus::Failed, false, "✗", Color::Red),
@@ -394,7 +403,12 @@ fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
                 let mut app = App::new(Vec::new(), language);
                 app.transcript_width = width;
                 app.echo_runtime_submission(body, &turn(status), held, None);
-                assert_eq!(app.transcript[0], format!("You: {symbol} {body}"));
+                let prefix = if symbol.is_empty() {
+                    String::new()
+                } else {
+                    format!("{symbol} ")
+                };
+                assert_eq!(app.transcript[0], format!("You: {prefix}{body}"));
                 let folded = app.display_transcript();
                 let frame = app.render_user_transcript(
                     &folded,
@@ -403,6 +417,29 @@ fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
                     folded.rows.len(),
                 );
                 assert!(frame.text.lines.iter().all(|line| line.width() <= width));
+                if !symbol.is_empty() {
+                    assert!(
+                        frame
+                            .text
+                            .lines
+                            .iter()
+                            .flat_map(|line| &line.spans)
+                            .any(|span| {
+                                span.content == symbol
+                                    && span.style.fg == Some(color)
+                                    && span.style.add_modifier.contains(Modifier::BOLD)
+                                    && span.style.bg == Some(user_message::BLOCK_BG)
+                            })
+                    );
+                }
+                let queued = status == TurnStatus::Queued;
+                let body_color = if queued {
+                    user_message::QUEUED_FG
+                } else {
+                    user_message::SENT_FG
+                };
+                // The user's own checkmark keeps body styling; only generated
+                // terminal receipts may be green/bold.
                 assert!(
                     frame
                         .text
@@ -410,11 +447,36 @@ fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
                         .iter()
                         .flat_map(|line| &line.spans)
                         .any(|span| {
-                            span.content == symbol
-                                && span.style.fg == Some(color)
-                                && span.style.add_modifier.contains(Modifier::BOLD)
-                                && span.style.bg == Some(user_message::BLOCK_BG)
+                            span.content.contains('✓')
+                                && span.style.fg == Some(body_color)
+                                && !span.style.add_modifier.contains(Modifier::BOLD)
                         })
+                );
+                let hints = frame
+                    .text
+                    .lines
+                    .iter()
+                    .flat_map(|line| &line.spans)
+                    .filter(|span| {
+                        span.style.add_modifier.contains(Modifier::DIM)
+                            && span.style.fg == Some(Color::Gray)
+                    })
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                let expected_hint = if queued {
+                    user_message::queue_hint(language)
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    hints
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .collect::<String>(),
+                    expected_hint
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .collect::<String>(),
                 );
                 app.prepare_transcript_frame();
                 app.chat_selection = Some(ChatSelection {
@@ -431,6 +493,65 @@ fn receipt_symbols_follow_real_turns_without_changing_body_copy_or_width() {
 }
 
 #[test]
+fn queued_to_started_repaints_even_when_the_record_text_is_identical() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    app.transcript_width = 100;
+    let mut receipt = turn(TurnStatus::Queued);
+    app.echo_runtime_submission("same", &receipt, false, None);
+    app.prepare_transcript_frame();
+    assert!(
+        app.transcript_rows
+            .iter()
+            .any(|row| row.contains(user_message::queue_hint(Language::ZhCn)))
+    );
+    let queued_height = app.transcript_height;
+    let record = app.transcript.clone();
+    receipt.status = TurnStatus::Running;
+    app.reconcile_runtime_deliveries(std::slice::from_ref(&receipt));
+    assert_eq!(app.transcript, record);
+    assert_eq!(app.transcript_height, queued_height - 1);
+    app.prepare_transcript_frame();
+    assert!(!app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+    // A cached frame and a late queue snapshot cannot restore the hint.
+    app.sync_runtime_delivery_queue(&[queued(&receipt, "stale edit")]);
+    app.prepare_transcript_frame();
+    assert!(!app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+    assert!(app.queued_user_records().is_empty());
+    receipt.status = TurnStatus::Completed;
+    app.reconcile_runtime_deliveries(&[receipt]);
+    app.prepare_transcript_frame();
+    assert!(app.transcript_rows.iter().any(|row| row.contains("✓ same")));
+}
+
+#[test]
+fn identical_messages_keep_only_the_still_queued_hint() {
+    let mut app = App::new(Vec::new(), Language::En);
+    let first = turn(TurnStatus::Queued);
+    let second = turn(TurnStatus::Queued);
+    app.echo_runtime_submission("same", &first, false, None);
+    app.echo_runtime_submission("same", &second, false, None);
+    app.prepare_transcript_frame();
+    assert_eq!(
+        app.transcript_rows
+            .iter()
+            .filter(|row| row.contains("Ctrl+Q"))
+            .count(),
+        2
+    );
+    app.note_runtime_input_started(first.id, "same");
+    app.prepare_transcript_frame();
+    assert_eq!(
+        app.transcript_rows
+            .iter()
+            .filter(|row| row.contains("Ctrl+Q"))
+            .count(),
+        1
+    );
+    assert_eq!(app.queued_user_records(), BTreeSet::from([0]));
+    assert_eq!(app.pending_runtime_echoes[1].record, Some(0));
+}
+
+#[test]
 fn unconfirmed_submission_has_no_acceptance_or_success_symbol() {
     let mut app = App::new(Vec::new(), Language::ZhCn);
     app.note_runtime_submission_unconfirmed("still a draft", uuid::Uuid::new_v4(), false, None);
@@ -443,6 +564,9 @@ fn unconfirmed_submission_has_no_acceptance_or_success_symbol() {
         app.pending_runtime_echoes[1].status,
         DeliveryStatus::Unconfirmed
     );
+    app.prepare_transcript_frame();
+    assert!(!app.transcript_rows.iter().any(|row| row.contains("Ctrl+Q")));
+    assert!(app.queued_user_records().is_empty());
 }
 
 #[test]

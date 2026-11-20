@@ -1,0 +1,53 @@
+{
+  "version": "0.154.0-rc5",
+  "date": "2026-11-19",
+  "host": "q3",
+  "connection": "q3-pub",
+  "architecture": "x86_64",
+  "previous_version": "0.154.0-rc3",
+  "previous_sha256": "412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6",
+  "candidate": {
+    "source": "official release",
+    "asset": "willdeep-linux-amd64.tar.gz",
+    "tar_sha256": "4d5ff60dc4b1e4fadb87eb437bf98f457520655340d065aec96a1ef6a3c6e5fd",
+    "binary_sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"
+  },
+  "installed_at": "2026-11-19T11:25:16Z",
+  "paths": [
+    {"path": "/usr/local/bin/willdeep", "version": "0.154.0-rc5", "sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"},
+    {"path": "/home/willdeep/.local/bin/willdeep", "version": "0.154.0-rc5", "sha256": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb"}
+  ],
+  "activity_before": {
+    "tasks": {"Completed": 6, "Cancelled": 1},
+    "sessions": {"Idle": 2, "Failed": 1},
+    "pending_empty": true
+  },
+  "services": {
+    "daemon": {"user": "willdeep", "active": "active", "sub": "running", "enabled": true, "pid": 3366213},
+    "listener": {"user": "willdeep", "active": "active", "sub": "running", "enabled": true, "pid": 3366228},
+    "unit_configuration_unchanged": true
+  },
+  "runtime": {"version": "0.154.0-rc5", "address": "127.0.0.1:36095"},
+  "health": {
+    "127.0.0.1:19847": {"status": 200, "version_header": "0.154.0-rc5"},
+    "127.0.0.1:9847": {"status": 200, "version_header": "0.154.0-rc5"},
+    "tailscale_100.85.114.57:9847": {"status": 200, "version_header": "0.154.0-rc5"}
+  },
+  "root_runtime": "stopped",
+  "backup": {
+    "directory": "/var/backups/willdeep/20261119-rc5",
+    "binaries": [
+      {"path": "/usr/local/bin/willdeep", "backup": "/var/backups/willdeep/20261119-rc5/0-willdeep-0.154.0-rc3", "sha256": "412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6"},
+      {"path": "/home/willdeep/.local/bin/willdeep", "backup": "/var/backups/willdeep/20261119-rc5/1-willdeep-0.154.0-rc3", "sha256": "412e309e9ae2ab456486aee924f4a1850a6c5414ecdde3a136fd8d47bfb2def6"}
+    ],
+    "helper": "/root/willdeep-rc5-20261119/q3-install-rc5.rb",
+    "rollback_executed": false
+  },
+  "boundaries": [
+    "no provider configuration or credentials read",
+    "no firewall, Cloudflare, Tailscale, socat or listen address changes",
+    "root Runtime kept stopped",
+    "no real model requests"
+  ],
+  "passed": true
+}

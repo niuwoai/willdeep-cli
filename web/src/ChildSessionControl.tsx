@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { childSessionsText } from "./childSessionsMessages";
 import { changeChildControl, ChildSessionFailure, getChildLink, type ChildControlState, type ChildLink } from "./childSessionsApi";
 import { childLinkKey, childTasksKey, updateChildControl } from "./childSessionsQueries";
@@ -29,7 +30,7 @@ export function ChildSessionControl({ parentId, childId, state = "delegated", la
     mutationFn: ({ kind, revision }: { kind: "takeover" | "detach"; revision: number }) => {
       const key = `${kind}:${revision}`;
       let id = identities.current.get(key);
-      if (!id) { id = crypto.randomUUID(); identities.current.set(key, id); }
+      if (!id) { id = createRequestId(); identities.current.set(key, id); }
       return changeChildControl(parentId, childId, kind, revision, id);
     },
     onSuccess: async (updated, action) => {

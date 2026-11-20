@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { Language } from "./i18n";
+import { createRequestId } from "./requestId";
 import { childProposalText } from "./childProposalMessages";
 import { childProposalsKey } from "./childProposalQueries";
 import { childSessionsText } from "./childSessionsMessages";
@@ -25,7 +26,7 @@ export function ChildSessionProposals({ sessionId, proposals, tasks, language }:
     mutationFn: async (action: Action) => {
       const key = `${action.kind}:${action.proposal}`;
       let requestId = identities.current.get(key);
-      if (!requestId) { requestId = crypto.randomUUID(); identities.current.set(key, requestId); }
+      if (!requestId) { requestId = createRequestId(); identities.current.set(key, requestId); }
       if (action.kind === "dismiss") {
         await dismissChildProposal(sessionId, action.proposal, requestId);
         return null;

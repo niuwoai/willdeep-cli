@@ -1,0 +1,40 @@
+{
+  "version": "0.154.0-rc5",
+  "date": "2026-11-19",
+  "source_commit": "959a761150823bac96e17cab2c2d744010e7e3d0",
+  "binary_sha256_release": "4f20f7c9991f24d0ffd61c4f6689c73de33776f156608e420baad204ab84c2eb",
+  "cargo": {
+    "path": "~/.cargo/bin/willdeep",
+    "previous_version": "0.154.0-rc2",
+    "installed_version": "0.154.0-rc5",
+    "installed_sha256": "488872874cd812ed8011028491396dbca69dd8de109597fa8e685882ba1fe377",
+    "build_command": "cargo install --path crates/willdeep-cli --locked",
+    "tree_matches_release_commit": true,
+    "web_source_changed_since_rc3": false,
+    "locked_yanked_warnings": ["clipboard-win v5.4.1", "chacha20 v0.10.1"]
+  },
+  "homebrew": {
+    "formula": "niuwoai/homebrew-tap/willdeep-cli",
+    "previous_version": "0.154.0-rc2",
+    "installed_version": "0.154.0-rc5",
+    "installed_sha256": "1b6787b2a2bbac83f35b0e386a199f64a7b0f4447cb75ee5a5364bd0e845f11c",
+    "tap_commit": "b1ffde1",
+    "upgrade_command": "HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade niuwoai/tap/willdeep-cli"
+  },
+  "runtime": {
+    "before": {"version": "0.154.0-rc2", "pid": 61794, "address": "127.0.0.1:55954"},
+    "after": {"version": "0.154.0-rc5", "pid": 34654, "address": "127.0.0.1:51471"},
+    "handoff": "willdeep daemon upgrade"
+  },
+  "backup": {
+    "directory": "~/.willdeep/backups/willdeep-0.154.0-rc2-20261119-183829",
+    "cargo_sha256": "72a55e6d15b9c227d81428c4f185a4ff3be7fa746057d40177bd7ae5e44cd05c",
+    "homebrew_sha256": "64f473f5bd1298f394e2117290d355e39d5e92515ce6fa45e20f9f5d29a5dd54",
+    "metadata": "metadata.json",
+    "rollback_executed": false
+  },
+  "real_model_requests": false,
+  "proxy_used_for_downloads": "127.0.0.1:7890",
+  "public_release": true,
+  "release_tag_created": true
+}

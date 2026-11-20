@@ -364,6 +364,7 @@ pub(super) fn render_with_user_folds(
         attachments,
         "",
         0,
+        &BTreeSet::new(),
     )
 }
 
@@ -381,6 +382,7 @@ pub(super) fn render_transcript(
     attachments: &[Vec<MessageAttachment>],
     assistant_name: &str,
     spacing: u8,
+    queued_users: &BTreeSet<usize>,
 ) -> FoldedFrame {
     let last = rows.len().saturating_sub(1);
     let mut text = Text::default();
@@ -409,7 +411,13 @@ pub(super) fn render_transcript(
         // 用户只画正文；角色判断先于移除前缀，正文里的角色文本不再被解释。
         // 助手走带代码块标注的 Markdown 路径；名字只影响画面，不修改记录。
         let (mut entry, mut row_code_blocks, mut entry_sources) = if is_user {
-            let (text, mapped) = user_message::render_body(&displayed, search, entry_width, id);
+            let (text, mapped) = user_message::render_body(
+                &displayed,
+                search,
+                entry_width,
+                id,
+                queued_users.contains(&index),
+            );
             (text, Vec::new(), mapped)
         } else if let Some(body) = displayed.strip_prefix(ASSISTANT_ROW_PREFIX) {
             source::assistant_entry(body, search, width, assistant_name, id)
@@ -561,6 +569,19 @@ pub(super) fn render_transcript(
             if let Some(line) = entry.lines.iter_mut().rev().find(|line| line.width() > 0) {
                 line.push_span(Span::raw(label));
             }
+        }
+        if is_user && queued_users.contains(&index) {
+            let hint = wrap_styled_text(
+                Text::from(Line::styled(
+                    user_message::queue_hint(language),
+                    Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+                )),
+                entry_width,
+            );
+            entry_sources.extend(
+                (0..hint.lines.len()).map(|_| SourceRow::empty(id, SourcePart::Decoration, 0)),
+            );
+            entry.lines.extend(hint.lines);
         }
         selection_bounds.resize(text.lines.len(), None);
         if is_user {
