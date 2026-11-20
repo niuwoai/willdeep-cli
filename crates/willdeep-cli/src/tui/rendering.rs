@@ -40,7 +40,7 @@ pub(super) struct TranscriptRenderCache {
     assistant_name: String,
     /// 聊天区每条记录之间额外空出的行数。改了它整屏高度都变，缓存必须重算。
     line_spacing: u8,
-    /// 代码块范围按缓存里这份文字的样式行号记；插入压缩行/等待行时再平移。
+    /// 代码块范围按缓存里这份文字的样式行号记；插入等待行时再平移。
     code_blocks: Vec<CodeBlockLines>,
     selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     text: Text<'static>,
@@ -148,21 +148,13 @@ impl App {
             .clone_from(&cached.selection_bounds);
         // Every frame starts from history, not yesterday's inserted waiting row.
         self.transcript_rows = text_rows(&cached.text);
-        // 压缩行插在用户消息正下方，而不是聊天区底部：底部那一行是在流的正文，
-        // 两者回答的是不同的问题。读秒每秒都变，所以这行不进渲染缓存，每帧现插。
-        // 插入点按缓存里的样式行算，点名和点击命中都走 `transcript_rows`，插完才对得上。
-        let notice = self.compression_notice_row().map(|row| {
-            let notice = self.compression_notice_lines(&row, search.as_deref());
-            let at = self.compression_notice_insert_at();
-            self.transcript_rows.splice(at..at, text_rows(&notice));
-            (at, notice)
-        });
-        // 等待动画同样每秒变一帧，也不进缓存。它和压缩行回答的是同一个问题
-        // （刚发出去的那句怎么没反应），两者不会同时存在：压缩开始时模型已经
-        // 在干活，等待动画先撤了。插在压缩行之后，点名行号才对得上。
+        // 压缩状态与其他临时 AI 输出一样在历史记录之后渲染，不进入会话记录。
+        let notice = None;
+        // 等待动画每秒变一帧，也不进缓存。它只在最后一条是用户消息且模型尚未
+        // 开口时出现，因此插在对应用户消息之后，点名行号才对得上。
         let waiting = self.awaiting_reply_row().map(|row| {
             let waiting = self.awaiting_reply_lines(&row, search.as_deref());
-            let at = self.compression_notice_insert_at();
+            let at = self.waiting_insert_at();
             self.transcript_rows.splice(at..at, text_rows(&waiting));
             (at, waiting)
         });
@@ -198,7 +190,8 @@ impl App {
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
                 let mut colored = colored_transcript_at_width(&[row], None, self.transcript_width);
-                if self.transient_kind == StreamKind::Reply
+                if self.compression.is_none()
+                    && self.transient_kind == StreamKind::Reply
                     && self.transient_thought.is_some()
                     && let Some(line) = colored.lines.first_mut()
                 {
@@ -213,7 +206,9 @@ impl App {
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                let mappings = if self.transient_kind == StreamKind::Reply {
+                let mappings = if self.compression.is_none()
+                    && self.transient_kind == StreamKind::Reply
+                {
                     if let Some(body) = self.transient_thought.as_deref() {
                         sources
                             .parts
@@ -286,9 +281,8 @@ impl App {
         (transient, notice, waiting)
     }
 
-    /// 压缩行画在最后一条用户消息的正下方：跳过它自己那几行，紧贴着插。
-    /// 最后一条不是用户消息时调用方根本不画这行，这里返回末尾只是兜底。
-    fn compression_notice_insert_at(&self) -> usize {
+    /// 等待动画画在最后一条用户消息的正下方：跳过其他可见行后紧贴着插。
+    fn waiting_insert_at(&self) -> usize {
         self.transcript_selection_bounds
             .iter()
             .rposition(Option::is_some)
@@ -297,20 +291,6 @@ impl App {
             })
     }
 
-    /// 压缩行用账目行的灰色，搜索命中时同样高亮。
-    fn compression_notice_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {
-        let mut text = wrap_styled_text(
-            Text::from(Line::styled(
-                row.to_owned(),
-                Style::default().fg(Color::DarkGray),
-            )),
-            self.transcript_width,
-        );
-        if let Some(query) = search {
-            highlight_matches(&mut text, query);
-        }
-        text
-    }
 
     /// 用户消息正下方的 `.` / `..` / `...`：与 `System:` 行同色，避免灰字难辨认。
     fn awaiting_reply_lines(&self, row: &str, search: Option<&str>) -> Text<'static> {

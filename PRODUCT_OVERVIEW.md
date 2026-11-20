@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-19 | 当前版本：v0.154.0-rc5
+> 最后更新：2026-11-20 | 当前版本：v0.154.0-rc6
+
+0.154.0-rc6 调整 TUI 上下文压缩提示：压缩期间在 AI 输出区底部显示临时 `System:` 状态，压缩结束后立即隐藏，且不写入会话记录。本版本为修复候选，尚未验证或公开发布。
 
 0.154.0-rc5 在轮次产生最终结果后自动收起中间工具调用的已提交编辑 diff：工具行保留，用户手动展开的差异继续保留，点击仍可重新展开。同步修复本地待发队列在切换会话、发送失败与编辑保存时的记录绑定：只认未被改写的待发占位行，失败回执保留 `?` 且原文复制不丢字符，渲染缓存随轮次状态刷新。v0.154.0-rc5 已公开发布，本机、q3、q4-pub 与 h2.niuwoai.com 均已安装；结果见[正式发行](docs/verification/0.154.0-rc5/official-release.md)与[本机](docs/verification/0.154.0-rc5/local-installation.md)、[q3](docs/verification/0.154.0-rc5/q3-installation.md)、[q4](docs/verification/0.154.0-rc5/q4-installation.md)、[h2](docs/verification/0.154.0-rc5/h2-installation.md)记录。详见[轮次收尾投影决策](docs/decisions/2026-11-19-tui-turn-end-projection.md)。
 

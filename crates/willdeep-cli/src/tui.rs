@@ -289,11 +289,9 @@ impl ChatSelection {
     }
 }
 
-/// 挂在用户消息下面的压缩状态。`done` 为真时整行已经换成「上下文已压缩」，
-/// 不再读秒；正文或工具一出现就整行撤掉。
+/// 只在压缩期间显示的临时状态，结束后立即清除。
 struct CompressionNotice {
     started: Instant,
-    done: bool,
 }
 
 /// 一条下一句建议在反馈账本里的身份。
