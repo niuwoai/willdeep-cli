@@ -17,6 +17,7 @@
 //! - [`gateway`]：插件 MCP 网关的发现文件、插件 HTTP 入口与客户端调用。
 
 pub mod chat_tools;
+pub mod commands;
 pub mod declarative;
 pub mod gateway;
 pub mod host;

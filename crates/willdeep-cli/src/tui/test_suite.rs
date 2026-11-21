@@ -202,7 +202,7 @@ mod command_tests {
             .into_iter()
             .map(|(command, _)| command)
             .collect();
-        assert_eq!(commands.len(), 40);
+        assert_eq!(commands.len(), 41);
         // 面板一屏只画得下 8 条，后面这些此前完全看不到。
         for command in [
             "/reasoning",
@@ -222,6 +222,7 @@ mod command_tests {
             "/queue",
             "/peers",
             "/workflow",
+            "/plugin",
             "/short",
             "/verbose",
         ] {
