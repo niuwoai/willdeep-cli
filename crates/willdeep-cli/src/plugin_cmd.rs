@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
+use serde_json::Value;
 use willdeep_core::plugin::{
-    ApprovalGap, PluginHost, PluginSource, installed_versions, load_package,
+    ApprovalGap, CommandOutcome, PluginHost, PluginSource, commands, installed_versions,
+    load_package,
 };
 
 #[derive(Clone, Debug, Subcommand)]
@@ -57,6 +59,22 @@ pub enum PluginAction {
         #[arg(long)]
         yes: bool,
     },
+    /// List registered plugin commands (MCP-tool handlers) that are executable from the CLI.
+    Commands {
+        /// Emit one stable JSON report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run a registered plugin command with JSON object arguments.
+    Run {
+        /// Plugin id (e.g. `video-studio`).
+        plugin: String,
+        /// Command id declared in the plugin manifest (e.g. `generate`).
+        command: String,
+        /// JSON object of arguments. Defaults to `{}`.
+        #[arg(long, default_value = "{}")]
+        arguments: String,
+    },
     /// Plugins that ship inside willdeep (favorites, scheduled tasks, expert roundtable).
     Builtin {
         #[command(subcommand)]
@@ -91,6 +109,12 @@ pub async fn run(action: PluginAction, home: &Path) -> Result<()> {
         PluginAction::Enable { id } => set_enabled(home, &id, true).await,
         PluginAction::Disable { id } => set_enabled(home, &id, false).await,
         PluginAction::Remove { id, yes } => remove(home, &id, yes).await,
+        PluginAction::Commands { json } => list_commands(home, json).await,
+        PluginAction::Run {
+            plugin,
+            command,
+            arguments,
+        } => run_command(home, &plugin, &command, &arguments).await,
         PluginAction::Builtin { action } => match action {
             BuiltinAction::List => {
                 crate::builtin_plugins::list();
@@ -236,6 +260,83 @@ async fn info(home: &Path, id: &str) -> Result<()> {
             command.id,
             package.localized(&command.title_key, "en")
         );
+    }
+    Ok(())
+}
+
+/// 列出可执行插件命令（MCP-tool handler）。
+async fn list_commands(home: &Path, json: bool) -> Result<()> {
+    let host = PluginHost::discover(home)?;
+    let registered = host.registered_commands("en").await?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "commands": registered.iter().map(|cmd| serde_json::json!({
+                    "plugin_id": cmd.plugin_id,
+                    "command_id": cmd.command_id,
+                    "slash_command": cmd.slash_command,
+                    "description": cmd.description,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
+    } else if registered.is_empty() {
+        println!("No executable plugin commands registered.");
+        println!("Enable a plugin with an MCP-tool command, then list them here.");
+    } else {
+        for cmd in &registered {
+            println!(
+                "{}  {}",
+                cmd.slash_command,
+                if cmd.description.is_empty() {
+                    String::new()
+                } else {
+                    format!("— {}", cmd.description)
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 执行一条已注册的插件命令，输出 MCP 工具的真实结果。
+async fn run_command(
+    home: &Path,
+    plugin_id: &str,
+    command_id: &str,
+    arguments: &str,
+) -> Result<()> {
+    let args =
+        commands::parse_arguments(arguments).context("parse --arguments as a JSON object")?;
+    let host = PluginHost::discover(home)?;
+    let outcome = host
+        .execute_registered_command(plugin_id, command_id, args)
+        .await
+        .with_context(|| {
+            format!(
+                "run command {command_id} of plugin {plugin_id} (check `willdeep plugin list` for approval state)"
+            )
+        })?;
+    match outcome {
+        CommandOutcome::Tool(result) => {
+            // MCP 工具结果携带 `isError`；不能把失败当成功上报。
+            if result.get("isError").and_then(Value::as_bool) == Some(true) {
+                eprintln!("{}", serde_json::to_string_pretty(&result)?);
+                bail!("plugin command {command_id} (plugin {plugin_id}) reported an error");
+            }
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        other => {
+            bail!(
+                "plugin command {command_id} (plugin {plugin_id}) is a {kind} command, not executable from the CLI; \
+                 open it in the plugin page instead",
+                kind = match other {
+                    CommandOutcome::Host(_) => "host",
+                    CommandOutcome::Navigate { .. } => "navigate",
+                    CommandOutcome::Tool(_) => unreachable!(),
+                }
+            );
+        }
     }
     Ok(())
 }
@@ -548,6 +649,65 @@ async fn remove(home: &Path, id: &str, yes: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct CommandLine {
+        #[command(subcommand)]
+        action: PluginAction,
+    }
+
+    #[test]
+    fn extension_commands_cli_parses_discovery_and_literal_arguments() {
+        use clap::Parser;
+        assert!(matches!(
+            CommandLine::try_parse_from(["plugin", "commands", "--json"])
+                .unwrap()
+                .action,
+            PluginAction::Commands { json: true }
+        ));
+        let PluginAction::Run {
+            plugin,
+            command,
+            arguments,
+        } = CommandLine::try_parse_from([
+            "plugin",
+            "run",
+            "demo",
+            "echo",
+            "--arguments",
+            r#"{"text":"hello world"}"#,
+        ])
+        .unwrap()
+        .action
+        else {
+            panic!("expected run")
+        };
+        assert_eq!((plugin.as_str(), command.as_str()), ("demo", "echo"));
+        assert_eq!(
+            commands::parse_arguments(&arguments).unwrap()["text"],
+            "hello world"
+        );
+        let PluginAction::Run { arguments, .. } =
+            CommandLine::try_parse_from(["plugin", "run", "demo", "echo"])
+                .unwrap()
+                .action
+        else {
+            panic!("expected run")
+        };
+        assert_eq!(arguments, "{}");
+    }
+
+    #[tokio::test]
+    async fn extension_commands_cli_rejects_bad_arguments_before_discovery() {
+        let home = scratch("extension-commands-invalid");
+        let missing = home.join("must-not-be-created");
+        let error = run_command(&missing, "demo", "echo", "[1]")
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("JSON object"));
+        assert!(!missing.exists());
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(

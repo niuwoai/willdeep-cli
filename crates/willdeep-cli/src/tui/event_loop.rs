@@ -1967,6 +1967,21 @@ pub(super) async fn event_loop(
                             if !narration::is_display_only_command(&prompt){
                                 redraw::redraw(term, &mut app, &runtime.skills, session)?;
                             }
+                            if extension_commands::matches(&prompt) {
+                                let home = runtime.home.clone();
+                                let tx = runtime.tx.clone();
+                                let session_id = session.id;
+                                let locale = language.text("zh-CN", "en", "ja");
+                                app.append_transcript(format!("System: {}", language.text("插件命令已提交", "Plugin command submitted", "プラグインコマンドを送信しました")));
+                                tokio::spawn(async move {
+                                    let message = match extension_commands::execute(&home, &prompt, locale).await {
+                                        Ok(message) => message,
+                                        Err(error) => format!("Error: {error:#}"),
+                                    };
+                                    let _ = tx.send(UiMessage::ExtensionCommandResult { session_id, message });
+                                });
+                                continue;
+                            }
                             if let Some(reasoning_command) = reasoning_commands::parse(&prompt) {
                                 match reasoning_command {
                                     reasoning_commands::ReasoningCommand::Show => {
@@ -2252,6 +2267,9 @@ pub(super) async fn event_loop(
                 UiMessage::SentAttachments { session_id, items }=>{if session.id==session_id { app.sent_attachments=items;app.open_attachments(attachment_panel::Target::Sent); }},
                 UiMessage::MobileRelay(update)=>app.apply_mobile_relay(update),
                 UiMessage::Federation(message)=>app.append_transcript(message),
+                UiMessage::ExtensionCommandResult { session_id, message } => {
+                    if session_id == session.id { app.append_transcript(message); }
+                },
                 UiMessage::RuntimeResult(message)=>{task_diagnostics::record_runtime_result(&mut app,message.clone());app.notice=Some(message);},
                 UiMessage::AttentionDiagnosticsLoaded { item_id, text } => {
                     if app.attention_diagnostics_loading.as_deref() == Some(item_id.as_str()) {

@@ -59,6 +59,30 @@ willdeep plugin builtin install scheduler     # 同样要 approve + enable，或
 权限差异排在 digest 之前报，因为改权限必然改 digest，先说"内容变了"只会淹掉
 "它现在还想要网络访问"这句真正要紧的话。
 
+## CLI / TUI 扩展命令注册
+
+宿主自动把已批准、已启用插件的 `contributes.commands` 中 `handler.type="mcpTool"` 的命令注册到 CLI / TUI，无需另外声明一套清单。命令名为 `/plugin:<plugin-id>:<command-id>`，描述取 `titleKey` 的本地化文案。插件之间以及插件与内置命令之间不会抢同一个名字。
+
+```bash
+willdeep plugin commands
+willdeep plugin commands --json
+willdeep plugin run demo echo --arguments '{"text":"hello"}'
+```
+
+TUI 输入 `/plugin` 查看当前命令及描述，然后直接调用，例如：
+
+```text
+/plugin:demo:echo {"text":"hello"}
+```
+
+参数必须是 JSON 对象，省略时为 `{}`；非法 JSON、数组及标量在调用 MCP 前拒绝。参数作为数据传递，不拼接为 shell。具体字段的业务校验由插件工具负责；当前不增加宿主 JSON Schema 表单或位置参数解析。CLI 列举结果的 `commands` 数组提供 `plugin_id`、`command_id`、`slash_command`、`description` 四个字段。
+
+发现不启动插件进程，执行时重新检查内容摘要审批，调用沿用 `PluginHost` 的插件隔离 MCP 连接。命令不会自动批准或启用插件，也不增加系统工具权限。插件代码仍按已批准的插件权限运行；这里没有新增 OS 沙箱。命令的 MCP 结果原样显示，`isError=true` 显示为失败，CLI 返回非零退出状态。
+
+`host`、`navigate` 及不支持的 handler 不进入终端命令目录，直接调用也会在执行前拒绝，原有 Web 页面入口照常使用。每次列举或执行重新发现插件；包内容变化后仍需重新审批。
+
+TUI 的 `/help` 和命令补全提供 `/plugin` 发现入口；具体插件命令目前通过该列表查看，尚未加入动态补全。Agent 正在运行或压缩上下文时拒绝终端扩展命令，保留输入，避免误送给模型。空闲时命令异步执行，结果只显示到发起会话；切换会话或按 Agent 的 Esc 中断键不会取消插件任务。这一版不提供插件任务持久恢复。
+
 ## 三种页面在 Web 下怎么跑
 
 | runtime | 文档来自 | iframe 地址 |

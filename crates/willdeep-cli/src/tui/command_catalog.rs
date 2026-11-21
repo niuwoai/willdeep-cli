@@ -168,6 +168,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         "/peers [list|send <session> <text>|reply <message> <text>|read <message>|open <session>]",
     );
     usages.push("/workflow [list|history|get <id>|stop <id>|retry <id>|resume <id>]");
+    usages.push("/plugin");
     debug_assert!(
         usages
             .iter()
@@ -524,6 +525,14 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
                 "查看工作流列表、阶段和节点；停止、重试或恢复运行",
                 "List workflows, inspect phases and nodes; stop, retry or resume runs",
                 "ワークフロー・段階・ノードを表示。停止・再試行・再開",
+            ),
+        ),
+        (
+            "/plugin",
+            language.text(
+                "列出已注册的插件命令及用法",
+                "List registered plugin commands and usage",
+                "登録済みプラグインコマンドと使用法を表示",
             ),
         ),
     ]
