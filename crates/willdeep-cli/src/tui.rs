@@ -61,6 +61,7 @@ mod daemon_commands;
 mod delivery_echo;
 mod diff_review_ui;
 mod dispatch;
+mod extension_commands;
 mod group_picker_ui;
 mod human_gate_ui;
 mod media_ui;
@@ -167,6 +168,10 @@ pub enum UiMessage {
         Result<Vec<Message>, willdeep_core::AgentError>,
         willdeep_core::checkpoint::ClaimedSessionCheckpointSink,
     ),
+    ExtensionCommandResult {
+        session_id: uuid::Uuid,
+        message: String,
+    },
     RuntimeNotice(String),
     /// Runtime 操作的最终结果：同时进聊天记录与状态行。只进状态行的话，下一条
     /// 提示一来就被覆盖，用户看到的只剩「操作已提交」。
