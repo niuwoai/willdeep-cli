@@ -31,6 +31,20 @@
     "local_raw_evidence": ".build/input-ownership-run5/",
     "failed_fixture_runs_retained": [1, 2, 3, 4]
   },
+  "local_installation": {
+    "source_commit": "d06b4fb7754edafc7d6756410fde99bd4cb4e80a",
+    "optimized_install": "passed",
+    "cli_version": "0.154.0-rc8",
+    "runtime_version": "0.154.0-rc8",
+    "runtime_health": "ok",
+    "installed_pty_checks_passed": 15,
+    "installed_pty_cleanup_checks_passed": 10,
+    "installed_binary_sha256": "3b415329d49bd08efb37b5b73fe653bb489c19d86c27b8440061cf124d2786a9",
+    "installed_binary_unchanged_after_pty": true,
+    "local_raw_evidence": ".build/input-ownership-installed-run1/",
+    "database_migration": "not required",
+    "public_release": false
+  },
   "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; owned PTY/decoder; OSC52 captured without writing the system clipboard.",
   "boundary": "macOS application input/output only; does not verify host terminal scrollback policy, other operating systems, real models or public release."
 }

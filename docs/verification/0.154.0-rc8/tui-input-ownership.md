@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-修复验收通过，尚未公开发行。结果摘要同时保存为 [JSON](tui-input-ownership.json)。
+修复验收通过，本机优化版已安装，Runtime 已平滑交接到 rc8，安装产物的双布局 15 项检查也全部通过；尚未公开发行。安装、备份与回滚见[本机安装记录](local-installation.md)，结果摘要同时保存为 [JSON](tui-input-ownership.json)。
 
 | 检查 | 结果 |
 |---|---|
