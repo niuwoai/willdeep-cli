@@ -1,0 +1,36 @@
+{
+  "version": "0.154.0-rc8",
+  "date": "2026-11-23",
+  "passed": true,
+  "native_tui": {"passed": 707, "failed": 0, "ignored": 2},
+  "workspace_versions": {"passed": 1, "failed": 0},
+  "strict_clippy": "passed",
+  "rustfmt": "passed",
+  "release_metadata": "passed",
+  "embedded_web_build": "passed",
+  "pty": {
+    "passed": true,
+    "layouts": ["full", "compact"],
+    "interaction_checks_per_layout": 7,
+    "total_checks_including_binary_hash": 15,
+    "checks": [
+      "chat wheel browses history; input wheel leaves history unchanged",
+      "native selection freezes application frames while background output continues",
+      "asynchronous ask restores capture before direct mouse interaction",
+      "multi-select uses visible controls; outside clicks do not resolve question",
+      "overflowing question body scrolls; resized buttons retain correct hit locations",
+      "resize ends native selection and resumes drawing",
+      "native paste restores capture and previews the unsent draft"
+    ],
+    "single_selection_receipt": "<user_answer>CHOICE_BETA</user_answer>",
+    "multi_selection_receipt": "<user_answer>MULTI_ALPHA, MULTI_BETA</user_answer>",
+    "skip_receipt": "tool error: approval denied: user skipped ask_user",
+    "binary_sha256_before": "5133dafebd3df03c1ea973f636b9c7f7cc318a53c112a6cdc1f928c838cfc87a",
+    "binary_sha256_after": "5133dafebd3df03c1ea973f636b9c7f7cc318a53c112a6cdc1f928c838cfc87a",
+    "cleanup_checks_passed": 10,
+    "local_raw_evidence": ".build/input-ownership-run5/",
+    "failed_fixture_runs_retained": [1, 2, 3, 4]
+  },
+  "isolation": "Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; owned PTY/decoder; OSC52 captured without writing the system clipboard.",
+  "boundary": "macOS application input/output only; does not verify host terminal scrollback policy, other operating systems, real models or public release."
+}
