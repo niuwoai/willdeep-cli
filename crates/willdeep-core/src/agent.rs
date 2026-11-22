@@ -24,6 +24,9 @@ mod parallel;
 mod planning;
 mod progress;
 mod recovery;
+mod stream_recovery;
+#[cfg(test)]
+mod stream_recovery_tests;
 mod streaming;
 mod uncertain;
 
@@ -1328,6 +1331,8 @@ impl Agent {
         preparation.mark("rules_and_definitions");
         let mut preparation = Some(preparation);
         let mut overflow_retries = 0_usize;
+        let mut stream_recoveries = 0_usize;
+        let mut recovering_stream = false;
         for turn in 1..=self.config.max_turns {
             let plan_changed = self.tools.reconcile_plan_jobs(&mut plan);
             checkpoint.plan = plan.clone();
@@ -1339,6 +1344,10 @@ impl Agent {
             // automatic prefix cache keeps the whole history between turns instead
             // of breaking at messages[0] every round.
             let mut runtime_context = String::from(completion_scope::TASK_BOUNDARY);
+            if recovering_stream {
+                runtime_context.push('\n');
+                runtime_context.push_str(stream_recovery::INSTRUCTION);
+            }
             if let Some(historical_plan) = &historical_plan {
                 runtime_context.push_str(&format!(
                     "\n<historical-session-plan>{}</historical-session-plan> This plan belongs to earlier work and is not the current task plan. Do not resume it without explicit agreement.",
@@ -1545,13 +1554,11 @@ impl Agent {
                 if let Some(usage) = &partial.usage {
                     input_tokens = input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
                     output_tokens = output_tokens.saturating_add(usage.output_tokens.unwrap_or(0));
-                    used_tokens =
-                        used_tokens.saturating_add(usage.total_tokens.unwrap_or_else(|| {
-                            usage
-                                .input_tokens
-                                .unwrap_or(0)
-                                .saturating_add(usage.output_tokens.unwrap_or(0))
-                        }));
+                    let call_tokens = usage.billable_tokens();
+                    used_tokens = used_tokens.saturating_add(call_tokens);
+                    if let Some(goal) = &self.goal_continuation {
+                        goal.record_tokens(call_tokens);
+                    }
                 }
                 let outcome = if matches!(&response, Ok(None)) {
                     crate::usage_ledger::Outcome::Cancelled
@@ -1565,8 +1572,13 @@ impl Agent {
                     .await;
                 checkpoint.record(&messages, turn, input_tokens, output_tokens)?;
             }
+            let partial_usage_known = partial.usage.as_ref().is_some_and(|usage| {
+                usage.total_tokens.is_some()
+                    || (usage.input_tokens.is_some() && usage.output_tokens.is_some())
+            });
             let completion = match response {
                 Ok(Some(completion)) => {
+                    recovering_stream = false;
                     self.tools
                         .peer_context_consumed(&peer_message_ids, &request_messages)?;
                     self.settle_leases(&leases, LeaseOutcome::Delivered);
@@ -1592,6 +1604,43 @@ impl Agent {
                     continue;
                 }
                 Err(error) => {
+                    if stream_recovery::can_recover(&error)
+                        && stream_recoveries < stream_recovery::MAX_RECOVERIES
+                        && turn < self.config.max_turns
+                    {
+                        self.settle_leases(&leases, LeaseOutcome::Delivered);
+                        if let Some(budget) = self.config.token_budget
+                            && used_tokens >= budget
+                        {
+                            return Err(AgentError::TokenBudgetExceeded {
+                                budget,
+                                used: used_tokens,
+                            });
+                        }
+                        if self.has_bounded_usage() && !partial_usage_known {
+                            return Err(AgentError::TokenBudgetUsageUnknown);
+                        }
+                        stream_recoveries += 1;
+                        recovering_stream = true;
+                        let delay = stream_recovery::delay(stream_recoveries);
+                        self.sink
+                            .emit(AgentEvent::ProviderProgress(
+                                crate::provider::ProviderEvent::RetryWait {
+                                    attempt: (stream_recoveries + 1) as u32,
+                                    delay,
+                                },
+                            ))
+                            .await;
+                        self.wait_backoff(delay).await;
+                        self.sink
+                            .emit(AgentEvent::ProviderProgress(
+                                crate::provider::ProviderEvent::RetryStarted {
+                                    attempt: (stream_recoveries + 1) as u32,
+                                },
+                            ))
+                            .await;
+                        continue;
+                    }
                     // 服务端说窗口不够：它的数字比我们的配置权威。收窗后重来
                     // 一轮，下一轮的容量核算会压到真正的窗口以内。事件已经随
                     // durable 历史记下，下一轮照样发得出去，按投递成功处理。
