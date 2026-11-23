@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc11
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc12
+
+0.154.0-rc12 调整 CI 触发：带 PR 的分支只由 pull_request 触发，push 只保留 develop、main 与发版 tag，同一提交不再占两套名额；同一 PR 或分支的新提交取消还在排队或执行中的旧跑。自建 runner 的派发、排队上限与托管兜底不变，必需检查的名称不变。见[CI 排队决策](docs/decisions/2026-11-23-ci-queue-concurrency.md)。
 
 0.154.0-rc11 修复会话恢复后的压缩复用：从工具历史重建已发现的规则作用域，及时持久化成功摘要，后续模型失败或取消后仍能复用。压缩总期限为 120 秒、候选等待上限为 45 秒，失败保留历史及已有摘要；重试报错区分退避、耗时与剩余时间。TUI 未识别的斜杠输入按普通消息处理，保留回显、附件和排队，已知命令仍校验参数。设计与边界见[压缩恢复决策](docs/decisions/2026-11-23-compaction-resume.md)。原始候选 rc8 的受影响原生回归、严格 Clippy、版本检查与真实 TUI 4 项验收通过，见[原始验收记录](docs/verification/0.154.0-rc8/README.md)；合入最新 develop 后顺延至 rc11，TUI 712 项、严格 Clippy、版本检查及真实 PTY 的斜杠输入 4 项和双布局输入归属 15 项验证通过，见[集成验收](docs/verification/0.154.0-rc11/integration.md)。2026-11-23 已发布：合入 develop 并快进 main，tag v0.154.0-rc11，Release 全部成功；npm 与 Homebrew formula 已更新，本机 CLI 与 Runtime 已安装为 rc11。
 

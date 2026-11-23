@@ -637,6 +637,11 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     worker_events = @worker.fetch('on') { @worker.fetch(true) }
     assert_equal %w[pull_request push workflow_call], main_events.keys.sort
     assert_equal ['workflow_dispatch'], worker_events.keys
+    # 有 PR 的分支只走 pull_request。push 仅保留默认分支与发版 tag，避免同一提交占两套名额。
+    assert_equal %w[develop main], Array(main_events.dig('push', 'branches')).sort
+    assert_equal ['v*'], Array(main_events.dig('push', 'tags'))
+    assert_equal 'ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}', @ci.dig('concurrency', 'group')
+    assert_equal true, @ci.dig('concurrency', 'cancel-in-progress')
     assert_equal %w[linux-architectures test wsl-smoke], @ci.fetch('jobs').keys.sort
     assert_equal ['self-hosted-worker'], @worker.fetch('jobs').keys
     %w[test linux-architectures wsl-smoke].each do |name|

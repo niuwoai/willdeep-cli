@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc11
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc12
+
+0.154.0-rc12 调整 CI 调度：`.github/workflows/ci.yml` 的 push 只覆盖 develop、main 与 `v*` tag，有 PR 的分支只由 pull_request 触发。concurrency 以 PR 编号或 ref 分组并取消进行中的旧跑，取消范围限于本 workflow 的同组 run。job 名称、自建 runner 派发条件与 `release.yml` 的 `workflow_call` 复用保持不变。见[CI 排队决策](decisions/2026-11-23-ci-queue-concurrency.md)。
 
 0.154.0-rc11 在 Agent 初始化时从持久工具历史重建 ProjectRules 作用域，读取当前规则后生成稳定系统指纹。成功的摘要与对应消息通过执行所有权下的检查点事务保存，并映射展示用 System 消息的边界。自动、手动压缩共用阶段期限和候选等待限制；TUI 统一使用命令目录判断命令、普通输入及队列行为，并保留 develop 的输入归属修复。Runtime 通信协议不变；会话摘要沿用既有格式。见[压缩恢复决策](decisions/2026-11-23-compaction-resume.md)。原始候选为 rc8，合入 develop 的 rc10 后顺延为 rc11。2026-11-23 已发布为 tag v0.154.0-rc11，本机 CLI 与 Runtime 已安装为 rc11。
 
