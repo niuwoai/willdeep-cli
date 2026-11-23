@@ -80,8 +80,10 @@ module CiSelfHostedAttempt
 
   class Coordinator
     def initialize(api:, repo:, ref:, sha:, os:, parent_id:, parent_attempt:, nonce: SecureRandom.hex(16),
+                   dispatch_ref: ref, dispatch_sha: sha,
                    clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, sleeper: ->(seconds) { sleep seconds })
       @api, @repo, @ref, @sha, @os = api, repo, ref, sha, os
+      @dispatch_ref, @dispatch_sha = dispatch_ref, dispatch_sha
       @parent_id, @parent_attempt = parent_id.to_s, parent_attempt.to_s
       @request_id = "#{@parent_id}-#{@parent_attempt}-#{@os}-#{nonce}"
       @clock, @sleeper = clock, sleeper
@@ -97,7 +99,8 @@ module CiSelfHostedAttempt
         # Set before POST: a lost response may still have created our child.
         @dispatched = true
         response = @api.request(:post, "#{workflow_base}/dispatches", {
-          'ref' => branch, 'inputs' => { 'worker_os' => @os, 'expected_sha' => @sha, 'request_id' => @request_id }
+          'ref' => branch, 'inputs' => { 'worker_os' => @os, 'expected_sha' => @sha,
+                                       'workflow_sha' => @dispatch_sha, 'request_id' => @request_id }
         })
         unless [200, 204].include?(response.status)
           raise Error, 'unexpected workflow dispatch response'
@@ -141,12 +144,22 @@ module CiSelfHostedAttempt
       unless @repo.match?(%r{\A[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+\z}) && !%w[. ..].include?(@repo.split('/').last)
         raise Error, 'invalid repository'
       end
-      # Pass a full ref as a separate argv item: valid Git names can contain
-      # Unicode, '+', '$()' and other characters that must never reach a shell.
-      unless @ref.start_with?('refs/heads/') && Open3.capture3('git', 'check-ref-format', @ref).last.success?
-        raise Error, 'unsupported branch ref; using hosted fallback'
+      # PR CI tests a synthetic merge commit, but workflow_dispatch needs its real
+      # source branch. Keep the tested revision separate from the workflow identity.
+      pull_request = @ref.match?(%r{\Arefs/pull/[1-9][0-9]*/merge\z})
+      unless pull_request || (@ref == @dispatch_ref && @sha == @dispatch_sha)
+        raise Error, 'push revision and dispatch identity differ; using hosted fallback'
+      end
+      unless @dispatch_ref.start_with?('refs/heads/')
+        raise Error, 'dispatch requires a source branch ref; using hosted fallback'
+      end
+      # Separate argv items preserve every legal Git branch name without a shell.
+      _stdout, _stderr, status = Open3.capture3('git', 'check-ref-format', @dispatch_ref)
+      unless status.success?
+        raise Error, "source branch ref validation failed (git exit #{status.exitstatus}); using hosted fallback"
       end
       raise Error, 'invalid expected SHA' unless @sha.match?(/\A[0-9a-f]{40}\z/)
+      raise Error, 'invalid workflow SHA' unless @dispatch_sha.match?(/\A[0-9a-f]{40}\z/)
       raise Error, 'invalid worker platform' unless PLATFORMS.key?(@os)
       unless positive_id?(@parent_id) && positive_id?(@parent_attempt) &&
              @request_id.match?(/\A[1-9][0-9]*-[1-9][0-9]*-#{Regexp.escape(@os)}-[0-9a-f]{32}\z/)
@@ -167,7 +180,7 @@ module CiSelfHostedAttempt
     end
 
     def branch
-      @ref.delete_prefix('refs/heads/')
+      @dispatch_ref.delete_prefix('refs/heads/')
     end
 
     def now
@@ -208,7 +221,7 @@ module CiSelfHostedAttempt
     def verify_run!(run)
       valid = positive_id?(run['id']) && run['id'].to_i != @parent_id.to_i &&
               (!@child_id || run['id'].to_i == @child_id) &&
-              run['event'] == 'workflow_dispatch' && run['head_branch'] == branch && run['head_sha'] == @sha &&
+              run['event'] == 'workflow_dispatch' && run['head_branch'] == branch && run['head_sha'] == @dispatch_sha &&
               run['display_title'] == "ci-worker-#{@request_id}" && run['path'] == WORKFLOW &&
               run['run_attempt'] == 1 && run.dig('repository', 'full_name') == @repo
       raise Error, 'child identity or HEAD mismatch; refusing to trust or cancel it; using hosted fallback' unless valid
@@ -224,7 +237,7 @@ module CiSelfHostedAttempt
       return if matches.empty?
 
       job = matches.first
-      valid = job['run_id'] == @child_id && job['head_sha'] == @sha && job['run_attempt'] == 1 &&
+      valid = job['run_id'] == @child_id && job['head_sha'] == @dispatch_sha && job['run_attempt'] == 1 &&
               (PLATFORMS.fetch(@os) - job.fetch('labels')).empty?
       raise Error, 'worker job identity mismatch' unless valid
 
@@ -384,6 +397,8 @@ module CiSelfHostedAttempt
     api = Api.new(token: env.fetch('GITHUB_TOKEN'), origin: env.fetch('GITHUB_API_URL', 'https://api.github.com'))
     coordinator = Coordinator.new(api: api, repo: env.fetch('GITHUB_REPOSITORY'), ref: env.fetch('GITHUB_REF'),
                                   sha: env.fetch('GITHUB_SHA'), os: env.fetch('CI_WORKER_OS'),
+                                  dispatch_ref: env.fetch('CI_DISPATCH_REF', env.fetch('GITHUB_REF')),
+                                  dispatch_sha: env.fetch('CI_DISPATCH_SHA', env.fetch('GITHUB_SHA')),
                                   parent_id: env.fetch('GITHUB_RUN_ID'), parent_attempt: env.fetch('GITHUB_RUN_ATTEMPT'))
     result = with_signal_handlers(coordinator) { coordinator.attempt }
     File.open(env.fetch('GITHUB_OUTPUT'), 'a') { |file| file.puts "self_hosted_passed=#{result.passed}" }

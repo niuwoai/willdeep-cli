@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc2
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc3
+
+0.155.0-rc3 将 PR 自建派发身份与测试目标分离：`CI_DISPATCH_REF/SHA` 来自真实源分支及源提交，`expected_sha` 保持父 CI 的合并提交。worker 核验 `workflow_sha == GITHUB_SHA` 后 checkout `expected_sha`；协调者使用源提交核验 child run/job，保留请求唯一标识、完整 suite 证据及取消范围。普通 push 的两种 SHA 必须相同。详见 [CI runner 兜底决策](decisions/2026-11-18-ci-runner-fallback.md)。
 
 0.155.0-rc2 修了四处显示与退出问题，并把本仓库自己的 pull request 也接到自建 runner。0.155.0-rc1 同时带上三项改动。一是 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)：包只描述宿主已经投递的五条 shell Hook，解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合；它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。二是把用户 MCP 定义从 `ConfigFile.mcp_servers` 的持久化位置挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`，迁移代码在 `config/mcp_migration.rs`。内存里的 `mcp_servers` 仍是运行时来源，Harness、`willdeep mcp` 和 doctor 的读取路径不变；加载时先按行摘掉主配置里的 `[mcp_servers.*]` 再做严格解析，所以一段写坏不会再让模型配置读不出来。迁移只在每一段都读懂时改写主配置，写不回去就回滚刚写出的独立文件。插件包的 `mcp.json` 与 `mcp-oauth/<name>.json` 不在这次拆分里。三是压缩预算改为按设置计算：单段候选等待默认 60 秒，整次总预算在开始摘要、块数已知时按块数加归并和二次压缩各一次来算，也可以在 `[agent]` 里显式指定。自动投影与手动 `/compress` 共用同一份快照；正在进行的压缩不读新值。Runtime 通信协议不变。见[压缩等待可配置](decisions/2026-11-23-configurable-compression-timeout.md)。`config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。CI 的 `push` 只保留 `develop`、`main` 和 `v*` tag，同一分支只保留最新一次运行，文档改动跳过编译的判断不变，见[CI 排队与并发](decisions/2026-11-23-ci-queue-concurrency.md)。issue 批量处理由 `.github/workflows/claude.yml` 调本仓库自己的 willdeep CLI 完成，一次会话只开一个 PR。本版本尚未安装或公开发布。
 

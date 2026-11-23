@@ -12,6 +12,10 @@ on:
         description: Exact revision tested by the parent CI run
         type: string
         required: true
+      workflow_sha:
+        description: Exact source branch revision owning the dispatched workflow
+        type: string
+        required: true
       request_id:
         description: Parent run, attempt, platform and unique nonce
         type: string
@@ -34,11 +38,12 @@ jobs:
       - name: Validate worker identity
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           REQUEST_ID: ${{ inputs.request_id }}
           WORKER_OS: ${{ inputs.worker_os }}
         shell: bash
         run: |
-          ruby -e 'abort "invalid worker identity" unless ENV.fetch("EXPECTED_SHA").match?(/\A[0-9a-f]{40}\z/) && ENV.fetch("EXPECTED_SHA") == ENV.fetch("GITHUB_SHA") && ENV.fetch("GITHUB_REF").start_with?("refs/heads/") && ENV.fetch("REQUEST_ID").match?(/\A[1-9][0-9]*-[1-9][0-9]*-#{Regexp.escape(ENV.fetch("WORKER_OS"))}-[0-9a-f]{32}\z/)'
+          ruby -e 'abort "invalid worker identity" unless ENV.fetch("EXPECTED_SHA").match?(/\A[0-9a-f]{40}\z/) && ENV.fetch("WORKFLOW_SHA").match?(/\A[0-9a-f]{40}\z/) && ENV.fetch("WORKFLOW_SHA") == ENV.fetch("GITHUB_SHA") && ENV.fetch("GITHUB_REF").start_with?("refs/heads/") && ENV.fetch("REQUEST_ID").match?(/\A[1-9][0-9]*-[1-9][0-9]*-#{Regexp.escape(ENV.fetch("WORKER_OS"))}-[0-9a-f]{32}\z/)'
       - name: Checkout expected revision
         uses: actions/checkout@v4
         with:

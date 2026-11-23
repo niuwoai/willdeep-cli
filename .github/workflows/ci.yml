@@ -52,6 +52,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CI_WORKER_OS: ${{ matrix.os }}
+          # PR 的 GITHUB_REF/SHA 是合并提交；派发入口必须用真实源分支。
+          CI_DISPATCH_REF: ${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+          CI_DISPATCH_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: ruby scripts/ci_self_hosted_attempt.rb
       - name: Run complete hosted CI suite
         # 缺失输出、脚本异常和首次 dispatch 尚未注册都必须进入托管；失败不能被吞掉。
