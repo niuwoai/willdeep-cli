@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc9
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc10
+
+0.154.0-rc10 仅修复进程清理测试的同步：在 stdin 断管注入前通过 `waitid(WNOWAIT)` 观察退出，保留子进程供被测 guard 在展开时回收。生产模块、协议、数据流不变，本机仍运行 rc8。验证见[CI 修复记录](verification/0.154.0-rc10/stdin-cleanup-ci.md)。
 
 0.154.0-rc9 仅隔离 MCP 缺失进程诊断测试的可执行路径，避免 runner 的 PATH 影响错误类型；生产模块、协议与数据流不变。本机仍运行已验收的 rc8，rc9 的 CI 修复验证见[验收记录](verification/0.154.0-rc9/mcp-startup-ci.md)。
 

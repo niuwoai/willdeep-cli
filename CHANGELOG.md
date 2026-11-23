@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.154.0-rc10] - 2026-11-23
+
+### Fixed
+- 修复断管 panic 清理测试的同步竞态：stdout EOF 后先用 `waitid(WNOWAIT)` 观察真实子进程退出，再触发 stdin BrokenPipe；保留待回收状态和负对照，继续验证 ChildGuard 在展开中完成回收，不修改生产清理逻辑。
+
 ## [0.154.0-rc9] - 2026-11-23
 
 ### Fixed

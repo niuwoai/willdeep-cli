@@ -565,6 +565,41 @@ fn cleanup_reaps_client_after_stdin_write_panics() {
         }
     }
 
+    fn observe_owned_child_exit(pid: libc::pid_t) -> std::io::Result<()> {
+        let deadline = std::time::Instant::now() + CLEANUP_TIMEOUT;
+        loop {
+            // SAFETY: zeroed siginfo is valid output storage. P_PID restricts the
+            // observation to this test's directly spawned child; WNOWAIT leaves
+            // it waitable so only the guard under test can reap during unwind.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                )
+            };
+            if result == 0 {
+                if info.si_signo != 0 {
+                    return Ok(());
+                }
+            } else {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("observe exit of stdin regression child {pid} without reaping"),
+                ));
+            }
+            thread::sleep(CLEANUP_POLL);
+        }
+    }
+
     let _serial = process_test_guard();
     for guarded in [false, true] {
         let (root, home, _, _) = test_paths();
@@ -590,9 +625,11 @@ fn cleanup_reaps_client_after_stdin_write_panics() {
             let mut unguarded = if guarded { None } else { guard.0.take() };
             let cli = guard.0.as_mut().or(unguarded.as_mut()).unwrap();
             let mut stdout = Vec::new();
-            // EOF proves the real version client closed stdout; this does not reap it.
             cli.stdout.take().unwrap().read_to_end(&mut stdout).unwrap();
             assert!(stdout.starts_with(b"willdeep "));
+            // Stdout EOF alone does not prove stdin is closed. Observe complete
+            // exit without reaping before deliberately triggering BrokenPipe.
+            observe_owned_child_exit(pid.unwrap()).expect("observe version client exit");
             let write = cli
                 .stdin
                 .take()

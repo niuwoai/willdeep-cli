@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc9
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc10
+
+0.154.0-rc10 修复进程清理回归测试中的退出同步竞态，使用非回收的退出观察保证 stdin 已断管，同时保留对 ChildGuard 回收行为的严格验证；生产运行逻辑不变。本机仍为已验收的 rc8，候选验证见[CI 修复记录](docs/verification/0.154.0-rc10/stdin-cleanup-ci.md)。
 
 0.154.0-rc9 将 MCP 缺失进程诊断测试隔离到私有临时目录，避免真实 PATH 权限影响预期错误类型；运行时行为不变。本机安装仍为已验收的 rc8，rc9 为 CI 修复候选，验证结果见[CI 修复记录](docs/verification/0.154.0-rc9/mcp-startup-ci.md)。
 
