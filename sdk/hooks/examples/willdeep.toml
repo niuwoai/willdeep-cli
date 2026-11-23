@@ -1,0 +1,15 @@
+# 片段，不是完整配置。命令由操作者信任，运行在模型沙箱之外。
+# SDK 只帮助 TypeScript 程序解析 stdin；宿主不会自动加载 examples/。
+
+[[hooks]]
+name = "environment-check"
+event = "before_agent"
+command = "node --experimental-strip-types /path/to/audit-hook.ts"
+blocking = true
+timeout_seconds = 10
+on_error = "deny"
+
+[[hooks]]
+name = "run-audit"
+event = "agent_end"
+command = "jq -c . >> /var/log/willdeep-runs.jsonl"

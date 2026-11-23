@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-20 | 当前版本：v0.154.0-rc7
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc1
+
+0.155.0-rc1 增加 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)。包只描述宿主已经投递的五条 shell Hook：解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合。它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。本版本尚未安装或公开发布。
 
 0.154.0-rc7 在 MCP 连接边界补充服务名、传输方式及启动阶段的错误上下文，底层原因继续沿错误链传播至 Runtime。诊断不输出启动参数、环境变量或含凭据的 URL；初始化与失败策略不变。本版本尚未安装或公开发布。
 
@@ -104,7 +106,7 @@ Runtime 取消、失败或中断的收尾将该任务遗留的前台工具记录
 
 ### 审批结果 Hook
 
-共享工具审批入口在审批器返回 `allow_once` / `always_allow` / `deny` 后投递 `approval_resolved`，判官最终放行投递 `allow`；判官拒绝或不可用后的人工升级只投递最终审批器结果。来源区分 `approver` / `judge`，不能将审批器返回拒绝一律解释为人类拒绝。Harness 将实际会话 ID 注入 Registry，Hook 复用会话/工作区上下文、凭据脱敏和有界合法 JSON。事件不能改变裁决，也不证明授权已持久化或工具执行成功；静态放行、缓存命中和问答不补造事件，取消或崩溃不保证送达。契约见[审批结果 Hook 决策](decisions/2026-11-17-approval-resolved-hooks.md)。
+共享工具审批入口在审批器返回 `allow_once` / `always_allow` / `deny` 后投递 `approval_resolved`，判官最终放行投递 `allow`；判官拒绝或不可用后的人工升级只投递最终审批器结果。来源区分 `approver` / `judge`，不能将审批器返回拒绝一律解释为人类拒绝。Harness 将实际会话 ID 注入 Registry，Hook 复用会话/工作区上下文、凭据脱敏和有界合法 JSON。事件不能改变裁决，也不证明授权已持久化或工具执行成功；静态放行、缓存命中和问答不补造事件，取消或崩溃不保证送达。契约见[审批结果 Hook 决策](decisions/2026-11-17-approval-resolved-hooks.md)。五条事件的完整位置见 [Hooks 体系](CLI_HOOKS.md)；`sdk/hooks` 是这份契约的 TypeScript 解析器，不是第二个执行宿主。
 
 ### TUI 消息展示与元数据
 

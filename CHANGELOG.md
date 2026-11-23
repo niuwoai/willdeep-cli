@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.155.0-rc1] - 2026-11-23
+
+### Added
+- 新增 `@willdeep/hooks` 契约包，描述 `before_agent`、`agent_end`、`pre_tool`、`post_tool`、`approval_resolved` 的输入字段、可拦截范围与配置校验；包不注册或执行 Hook。
+- 新增 [Hooks 体系](docs/CLI_HOOKS.md)，说明五条事件在一次 Agent 运行中的位置、终态、失败语义，以及与插件 MCP 命令和页面桥的边界。
+
 ## [0.154.0-rc7] - 2026-11-20
 
 ### Fixed
