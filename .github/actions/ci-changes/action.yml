@@ -1,0 +1,66 @@
+name: Detect whether the diff touches code
+description: |
+  Sets the code output to true when the diff changes a build or test result,
+  and false for documentation-only changes. The heavy CI jobs stay
+  unconditional so their check names always exist for branch protection;
+  they skip their work when this reports false.
+
+  The classification is by path, not by content: a comment edit inside a
+  code file still counts as code. A test that starts reading a document
+  must have that document's path added to the code list below.
+runs:
+  using: composite
+  steps:
+    - name: Resolve the diff range
+      id: range
+      shell: bash
+      run: |
+        # 一个被复用的 workflow 拿不到 base ref，无法证明 diff 不含代码，保守地跑全量。
+        if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+          echo "base=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        git fetch --no-tags --depth=1 origin "${{ github.event.repository.default_branch }}"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+        elif git merge-base --is-ancestor origin/"${{ github.event.repository.default_branch }}" HEAD; then
+          echo "base=origin/${{ github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
+        else
+          # 分支与默认分支分叉，范围不可靠，跑全量。
+          echo "base=" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Classify the changed paths
+      id: filter
+      if: steps.range.outputs.base != ''
+      uses: dorny/paths-filter@v3
+      with:
+        base: ${{ steps.range.outputs.base }}
+        filters: |
+          code:
+            - 'crates/**'
+            - 'web/**'
+            - 'npm/**'
+            - 'integrations/**'
+            - 'examples/**'
+            - 'scripts/**'
+            - '.github/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
+            - 'rust-toolchain*'
+            - 'deny.toml'
+            - 'clippy.toml'
+            - 'rustfmt.toml'
+            - '.rustfmt.toml'
+    - name: Publish the classification
+      id: publish
+      shell: bash
+      run: |
+        if [[ -z "${{ steps.range.outputs.base }}" || "${{ steps.filter.outputs.code }}" == "true" ]]; then
+          echo "code=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "code=false" >> "$GITHUB_OUTPUT"
+        fi
+outputs:
+  code:
+    description: true when the diff touches code or the range cannot be proven docs-only
+    value: ${{ steps.publish.outputs.code }}
