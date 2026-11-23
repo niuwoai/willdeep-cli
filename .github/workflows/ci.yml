@@ -1,9 +1,19 @@
 name: CI
 
 on:
+  # 有 PR 的分支只由 pull_request 触发。push 与 pull_request 各跑一套会把同一提交占两次名额，
+  # Free 计划的 macOS 并发只有 5 个，且整个组织共用。
   push:
+    branches: [develop, main]
+    tags: ['v*']
   pull_request:
   workflow_call:
+
+# 同一分支（含合并队列的 merge_group）只保留最新一次。新提交取消还在排队或执行中的旧跑，
+# 腾出 runner 名额。取消只作用于本 workflow 内同组的 run，不会波及 PR 上其他 workflow 的检查。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

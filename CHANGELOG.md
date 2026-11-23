@@ -15,6 +15,8 @@
 - 插件包自带的 `mcp.json` 与 `$WILLDEEP_HOME/mcp-oauth/<name>.json` 的位置不变。
 - 把 MCP 迁移从 `crates/willdeep-cli/src/config.rs` 拆到 `config/mcp_migration.rs`，文件回到 3000 行上限以内。迁移行为不变。
 - 把 `crates/willdeep-cli/src/config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。
+- CI 同一提交只占一套名额：`push` 只保留 `develop`、`main` 和 `v*` tag，有 PR 的分支只由 `pull_request` 触发；同一分支只保留最新一次，新提交取消还在排队或执行中的旧跑。文档改动跳过编译的逻辑不变。见[CI 排队与并发](docs/decisions/2026-11-23-ci-queue-concurrency.md)。
+- 新增「willdeep 批次处理」工作流：issue 评论里的 `@claude` 只负责放行并打上 `claude` 标签，手动触发后用本仓库自己的 willdeep CLI 把带标签的开放 issue 放到同一次会话里处理，只开一个 PR。
 
 ### Fixed
 - 修正压缩等待配置的格式，使 `cargo fmt --check` 通过。
