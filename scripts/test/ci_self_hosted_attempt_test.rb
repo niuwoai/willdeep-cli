@@ -620,9 +620,9 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     assert_equal './.github/actions/ci-test', fallback.fetch('uses')
   end
 
-  def test_pr_fork_tag_and_release_cannot_dispatch
+  def test_fork_tag_and_release_cannot_dispatch_but_same_repo_pull_requests_can
     step = @ci.fetch('jobs').fetch('test').fetch('steps').find { |item| item['id'] == 'self_hosted' }
-    assert_equal "steps.changes.outputs.code == 'true' && github.event_name == 'push' && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false", step.fetch('if')
+    assert_equal "steps.changes.outputs.code == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false", step.fetch('if')
     assert_equal 'ruby scripts/ci_self_hosted_attempt.rb', step.fetch('run')
     assert step.fetch('continue-on-error')
     assert_equal false, @ci.dig('jobs', 'test', 'steps', 0, 'with', 'persist-credentials')

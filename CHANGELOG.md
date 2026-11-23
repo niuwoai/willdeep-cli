@@ -16,6 +16,7 @@
 - 把 MCP 迁移从 `crates/willdeep-cli/src/config.rs` 拆到 `config/mcp_migration.rs`，文件回到 3000 行上限以内。迁移行为不变。
 - 把 `crates/willdeep-cli/src/config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。
 - CI 同一提交只占一套名额：`push` 只保留 `develop`、`main` 和 `v*` tag，有 PR 的分支只由 `pull_request` 触发；同一分支只保留最新一次，新提交取消还在排队或执行中的旧跑。文档改动跳过编译的逻辑不变。见[CI 排队与并发](docs/decisions/2026-11-23-ci-queue-concurrency.md)。
+- 本仓库自己的 pull request 也先派自建 runner：macOS 到 iMac，Linux 到 q4，接不到或失败仍回托管。从 fork 开来的 PR 不派发，判断依据是 head 仓库而不是基线仓库的 `fork` 字段。见[CI runner 兜底决策](docs/decisions/2026-11-18-ci-runner-fallback.md)。
 - 新增「willdeep 批次处理」工作流：issue 评论里的 `@claude` 只负责放行并打上 `claude` 标签，手动触发后用本仓库自己的 willdeep CLI 把带标签的开放 issue 放到同一次会话里处理，只开一个 PR。
 
 ### Fixed
