@@ -573,6 +573,9 @@ pub(super) async fn event_loop(
     if let Some(spacing) = crate::config::load_line_spacing(&runtime.home)? {
         app.ui.line_spacing = spacing;
     }
+    if let Some(breathing) = crate::config::load_input_breathing(&runtime.home)? {
+        app.ui.input_breathing = breathing;
+    }
     // 顺序有讲究：装载聊天记录是整体替换，必须排在 startup_notices 之前，
     // 否则「首次使用 / 旧配置写法」那几条 System 提示会被覆盖掉。
     // daemon 的 display session 带上了各代历史的正文，比磁盘上的会话更全，
@@ -688,7 +691,7 @@ pub(super) async fn event_loop(
             );
         }
         update_notice::show_when_idle(&mut app, &runtime.home);
-        // Ctrl+G：终端和事件流都在这一层，按键分支里交不出去。
+        // Ctrl+E / Ctrl+G：终端和事件流都在这一层，按键分支里交不出去。
         if std::mem::take(&mut app.pending_external_editor) {
             open_external_editor(term, &mut events, &mut app, language).await?;
             terminal_input.external_editor_resumed(&mut app);
@@ -1284,6 +1287,12 @@ pub(super) async fn event_loop(
                         if app.handle_prompt_selection_mouse(mouse) {
                             continue;
                         }
+                        if let Some(link_open::LinkOpenAction::Open(url)) =
+                            app.handle_link_open_mouse(mouse)
+                        {
+                            dispatch_media_action(MediaAction::OpenUrl(url), &mut app, runtime);
+                            continue;
+                        }
                         // 代码块徽标比聊天选区先接鼠标：点右上角是复制，不是起手拖选。
                         if let Some(action) = app.handle_code_copy_mouse(mouse, Instant::now()) {
                             match action {
@@ -1870,7 +1879,7 @@ pub(super) async fn event_loop(
                             }
                         },
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.input.insert("\n"),
-                        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
+                        KeyCode::Char('g') | KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL)=>app.pending_external_editor=true,
                         KeyCode::Enter if !app.input.is_empty()||!app.attachments.is_empty()=>{
                             if app.input.text().trim()=="/peers" || app.input.text().trim().starts_with("/peers ") {
                                 let command=app.input.take();

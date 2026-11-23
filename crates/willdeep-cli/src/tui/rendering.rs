@@ -185,6 +185,7 @@ impl App {
                 })
                 .collect(),
         );
+        self.link_open.refresh(&self.transcript_rows);
         let stream_id = self.viewport_stream_id();
         let transient = self
             .live_transcript_row()
