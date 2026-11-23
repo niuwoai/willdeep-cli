@@ -1562,9 +1562,7 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
         .compressor_timeout_seconds
         .unwrap_or(candidate_timeout);
     if timeout > COMPRESSION_TIMEOUT_MAX_SECONDS {
-        bail!(
-            "agent.compressor_timeout_seconds must be at most {COMPRESSION_TIMEOUT_MAX_SECONDS}"
-        );
+        bail!("agent.compressor_timeout_seconds must be at most {COMPRESSION_TIMEOUT_MAX_SECONDS}");
     }
     if timeout < candidate_timeout {
         bail!(
@@ -2130,12 +2128,15 @@ model = "qwen3.5-9b"
             "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 90\ncompressor_timeout_seconds = 60\n",
         )
         .expect_err("the shared budget must cover at least one candidate wait");
-        assert!(too_short.to_string().contains("at least the candidate timeout"));
+        assert!(
+            too_short
+                .to_string()
+                .contains("at least the candidate timeout")
+        );
 
-        let below_range = accept(
-            "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 14\n",
-        )
-        .expect_err("14 seconds is below the candidate range");
+        let below_range =
+            accept("version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 14\n")
+                .expect_err("14 seconds is below the candidate range");
         assert!(below_range.to_string().contains("between 15 and 180"));
 
         let above_cap = accept("version = 1\n[agent]\ncompressor_timeout_seconds = 601\n")

@@ -35,10 +35,7 @@ impl CompressionBudget {
     /// 没写 `[agent] compressor_timeout_seconds` 时的总预算：按这段历史实际要切的
     /// 块数，加上归并和二次压缩各一次，每段都给足候选等待。显式配置的总预算优先，
     /// 但再短也不能短过一次候选等待，否则第一段就没机会跑完。
-    pub(super) fn for_operation(
-        settings: &CompressionSettings,
-        chunk_count: usize,
-    ) -> Self {
+    pub(super) fn for_operation(settings: &CompressionSettings, chunk_count: usize) -> Self {
         let candidate = settings
             .candidate_timeout
             .unwrap_or(DEFAULT_COMPRESSION_CANDIDATE_TIMEOUT);
@@ -63,7 +60,6 @@ impl CompressionBudget {
         Ok(())
     }
 }
-
 
 /// 压缩水位。以前是 75%：容量按 `窗口 − 工具 − 窗口/8` 算，再乘 75%，
 /// 128K 窗口实际 80K 就开始压缩，服务端的 128K 永远用不满。上下文的估算
@@ -469,12 +465,7 @@ impl Agent {
         // window. A single thinking response can be larger than that whole tail.
         if estimate_tokens(&result) > capacity && replaceable(&result) {
             let summary = self
-                .summarize_history_with_settings(
-                    &result,
-                    &settings,
-                    &mut time_budget,
-                    record_usage,
-                )
+                .summarize_history_with_settings(&result, &settings, &mut time_budget, record_usage)
                 .await?;
             let full = page()?;
             result = compact_prefix(&full.messages, full.messages.len(), &summary);

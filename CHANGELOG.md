@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.155.0-rc2] - 2026-11-23
+
+### Fixed
+- 修正压缩等待配置的格式，使 `cargo fmt --check` 通过。
+- 聊天配置的 schema 与快照不再把键名 `compressor_candidate_timeout_seconds` 误判为泄露候选配置全文；候选文档字段仍不进这两份返回。
+
 ## [0.155.0-rc1] - 2026-11-23
 
 ### Added

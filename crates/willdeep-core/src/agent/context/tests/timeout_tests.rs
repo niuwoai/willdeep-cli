@@ -421,10 +421,7 @@ async fn the_operation_budget_covers_every_chunk_unless_configured() {
     };
     let configured_budget = CompressionBudget::for_operation(&configured, chunks);
     assert_eq!(configured_budget.total, Duration::from_secs(90));
-    assert_eq!(
-        configured_budget.candidate_timeout,
-        Duration::from_secs(30)
-    );
+    assert_eq!(configured_budget.candidate_timeout, Duration::from_secs(30));
 
     // 真正跑一遍：不注入预算时，报错里的两个数字必须来自配置而不是旧的固定值。
     let stalling = CompressionSettings {
