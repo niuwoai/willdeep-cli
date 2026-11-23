@@ -1,0 +1,32 @@
+{
+  "version": "0.154.0-rc8",
+  "date": "2026-11-23",
+  "branch": "fix/session-compaction-resume",
+  "status": "affected_checks_passed",
+  "verification_stage": "before_commit",
+  "checks": [
+    { "name": "core_agent_context", "passed": 68, "failed": 0, "ignored": 0 },
+    { "name": "core_checkpoint", "passed": 68, "failed": 0, "ignored": 1 },
+    { "name": "core_project_rules", "passed": 20, "failed": 0, "ignored": 0 },
+    { "name": "core_provider_retry", "passed": 7, "failed": 0, "ignored": 0 },
+    { "name": "core_subagent_checkpoint", "passed": 6, "failed": 0, "ignored": 0 },
+    { "name": "cli_harness", "passed": 87, "failed": 0, "ignored": 1 },
+    { "name": "cli_tui", "passed": 691, "failed": 0, "ignored": 2 },
+    { "name": "workspace_versions", "passed": 1, "failed": 0, "ignored": 0 },
+    { "name": "strict_workspace_clippy", "status": "passed" },
+    { "name": "format_and_diff", "status": "passed" },
+    { "name": "release_version_metadata", "status": "passed" },
+    { "name": "web_embed_build", "status": "passed" },
+    { "name": "cli_build", "status": "passed" },
+    { "name": "real_tui_loopback_fixture", "passed": 4, "failed": 0, "model_requests": 3, "real_model_requests": 0, "report": "slash-tui/report.json" }
+  ],
+  "test_filters_overlap": true,
+  "initial_core_full_suite": { "passed": 1398, "failed": 2, "ignored": 7, "failures_fixed_and_affected_groups_rerun": true },
+  "final_core_full_suite_rerun": false,
+  "compression_budget_seconds": 120,
+  "compression_candidate_seconds": 45,
+  "installed": false,
+  "published": false,
+  "committed": false,
+  "production_provider_latency_verified": false
+}

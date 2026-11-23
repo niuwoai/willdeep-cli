@@ -430,20 +430,27 @@ async fn manual_reuse_survives_a_changed_tool_output_paging_limit() {
 }
 
 #[tokio::test]
-async fn manual_reuse_does_not_activate_nested_rules_from_historical_tool_calls() {
+async fn manual_reuse_restores_scoped_rules_and_invalidates_after_they_change() {
     let (agent, provider) = agent(WINDOW);
     let nested = agent.tools.workspace().join("src");
     std::fs::create_dir_all(&nested).unwrap();
-    std::fs::write(nested.join("AGENTS.md"), "DORMANT_NESTED_RULE").unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "RESTORED_NESTED_RULE").unwrap();
     let outcome = agent.run_with_history(history(), "continue").await.unwrap();
-    assert!(!outcome.messages[0].content.contains("DORMANT_NESTED_RULE"));
+    assert!(outcome.messages[0].content.contains("RESTORED_NESTED_RULE"));
     let summary = outcome.context_summary.unwrap();
     let calls = provider.requests.lock().unwrap().len();
-    std::fs::write(nested.join("AGENTS.md"), "CHANGED_DORMANT_RULE").unwrap();
-    compress(&agent, outcome.messages, summary).await.unwrap();
+    compress(&agent, outcome.messages.clone(), summary.clone())
+        .await
+        .unwrap();
     assert_eq!(
         provider.requests.lock().unwrap().len(),
         calls,
-        "the new manual turn starts with root rules, just like run_inner"
+        "unchanged historical scope must reuse the automatic summary"
+    );
+    std::fs::write(nested.join("AGENTS.md"), "CHANGED_RESTORED_RULE").unwrap();
+    compress(&agent, outcome.messages, summary).await.unwrap();
+    assert!(
+        provider.requests.lock().unwrap().len() > calls,
+        "manual reuse must reject summaries made under different scoped rules"
     );
 }

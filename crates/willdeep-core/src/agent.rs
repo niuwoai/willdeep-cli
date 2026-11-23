@@ -1090,7 +1090,20 @@ impl Agent {
                 "An active Goal must retain its task verification scope; use the recovery checkpoint sink.".into(),
             ));
         }
+        // run_inner removes display-only system rows and installs one stable pin.
+        // Keep the original fingerprint: history/rule validation still belongs to
+        // SummaryCache, including any changes made by tool-history recovery.
+        let summary = summary.and_then(|mut summary| {
+            summary.through = messages
+                .get(..summary.through)?
+                .iter()
+                .filter(|message| message.role != crate::types::Role::System)
+                .count()
+                + 1;
+            Some(summary)
+        });
         let mut recorder = crate::checkpoint::CheckpointRecorder::new(sink);
+        recorder.context_summary = summary.clone();
         let deadline = self
             .time_budget
             .map(|budget| {
@@ -1157,9 +1170,8 @@ impl Agent {
                 .and_then(|feedback| feedback.runtime_parameters())
                 .cloned(),
         );
-        // 摘要缓存跨 run 复用：轮内命中省一次调用，从会话文件读回来才省掉整轮
-        // 重摘。它只在 run_inner 里被替换成更新的一份。
-        let previous_summary = summary.clone();
+        // Cache reuse is checked against the original prefix and stable rules.
+        // The recorder retains each completed summary through errors/cancellation.
         let mut summary_cache = summary.map(context::SummaryCache::restore);
         preparation.mark("feedback_and_summary");
         drop(preparation);
@@ -1189,18 +1201,14 @@ impl Agent {
             )
             .await
         };
-        // 失败也照常上报：压缩钱已经花过，下次运行不该再买一遍。调用方只在
-        // `Ok` 时落盘，所以这里只管把结果挂到 outcome 上。
-        //
-        // 超时/取消会把正在重摘的槽位掏空（`request_messages_accounted` 先
-        // `take()` 再 await）；这时手上那份旧摘要仍然有效，不能拿 None 把会话
-        // 里已经付过钱的摘要抹掉——预算型会话会因此每一轮都从头重摘，永远走不出
-        // BudgetLimited。
+        // A later extension can take the cache slot before awaiting its model.
+        // Fall back to the latest completed checkpoint summary, not the run's
+        // original one, so a deadline cannot rewind paid-for compression.
         if let Ok(outcome) = &mut result {
             outcome.context_summary = summary_cache
                 .as_ref()
                 .map(context::SummaryCache::persist)
-                .or(previous_summary);
+                .or_else(|| recorder.context_summary.clone());
         }
         if let Some(goal) = &self.goal_continuation {
             goal.pause();
@@ -1282,8 +1290,9 @@ impl Agent {
         preparation.mark("routing");
         messages.retain(|message| message.role != crate::types::Role::System);
         messages.insert(0, Message::system(&self.config.system_prompt));
-        let mut rules = crate::project_rules::ProjectRules::new(self.tools.workspace())
-            .map_err(ToolError::Io)?;
+        let mut rules =
+            crate::project_rules::ProjectRules::restore(self.tools.workspace(), &messages)
+                .map_err(ToolError::Io)?;
         // The approval judge reads this as inert context: it decides whether
         // a bounded action is relevant to the current goal, never whether a
         // destructive one is permitted.
@@ -1470,6 +1479,20 @@ impl Agent {
                     },
                 )
                 .await;
+            // Commit the last successful summary with its full source history
+            // before any foreground model wait. Failed preparation can retain
+            // an older valid cache; keep that durable too.
+            // A failed checkpoint has uncertain disk state: never rewrite it here.
+            if let Err(error) = checkpoint.record_prepared(
+                &messages,
+                compressed.as_ref().map(context::SummaryCache::persist),
+                turn,
+                input_tokens,
+                output_tokens,
+            ) {
+                self.settle_leases(&leases, LeaseOutcome::Failed);
+                return Err(error);
+            }
             let mut request_messages = match prepared {
                 Ok(messages) => messages,
                 Err(error) => {

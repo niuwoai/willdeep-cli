@@ -173,6 +173,7 @@ pub async fn send_open_retrying(
     events: &dyn super::ProviderEventSink,
     deadline: tokio::time::Instant,
 ) -> Result<reqwest::Response, ProviderError> {
+    let request_started = tokio::time::Instant::now();
     let max_attempts = if config.allow_request_replay {
         MAX_ATTEMPTS
     } else {
@@ -196,6 +197,9 @@ pub async fn send_open_retrying(
                 if delay >= remaining {
                     return Err(ProviderError::RetryDeferred {
                         retry_after_secs: delay.as_secs(),
+                        attempts: attempt,
+                        elapsed_secs: request_started.elapsed().as_secs_f64(),
+                        remaining_secs: remaining.as_secs_f64(),
                         source: Box::new(error),
                     });
                 }

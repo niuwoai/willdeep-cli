@@ -65,10 +65,11 @@ pub(super) async fn run(
     // session 覆盖刚落盘的用量、计划、执行检查点或并发写入的外部元数据。
     store
         .update(id, |session| {
-            let mut messages = outcome.messages.clone();
-            crate::checkpoint::preserve_federation_notices(&mut messages, &session.messages);
-            session.messages = messages;
-            session.context_summary = outcome.context_summary.clone();
+            crate::checkpoint::apply_execution_history(
+                session,
+                &outcome.messages,
+                outcome.context_summary.as_ref(),
+            );
         })
         .map_err(persistence_error)?;
     Ok(outcome)

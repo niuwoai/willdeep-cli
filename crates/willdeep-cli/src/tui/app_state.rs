@@ -236,7 +236,7 @@ impl App {
             approval_action_hits: Vec::new(),
             question_rect: Rect::default(),
             question_hits: Vec::new(),
-            question_footer_row: None,
+            question_view: human_gate_ui::QuestionViewport::default(),
             search_rect: Rect::default(),
             mobile_qr_rect: Rect::default(),
             help_rect: Rect::default(),
@@ -1591,6 +1591,8 @@ impl App {
             return false;
         }
         self.approval = Some(request);
+        self.approval_action_hits.clear();
+        self.approval_rect = Rect::default();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
         true
@@ -1667,6 +1669,8 @@ impl App {
         };
         let _ = sender.send(decide(always));
         self.approval = self.approval_queue.pop_front();
+        self.approval_action_hits.clear();
+        self.approval_rect = Rect::default();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
     }
@@ -1691,13 +1695,21 @@ impl App {
             return false;
         }
         self.question = Some(dialog);
+        self.reset_question_view();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         true
+    }
+
+    fn reset_question_view(&mut self) {
+        self.question_view = human_gate_ui::QuestionViewport::default();
+        self.question_rect = Rect::default();
+        self.question_hits.clear();
     }
 
     /// Promote the next queued question after the visible one is answered.
     pub(super) fn promote_next_question(&mut self) {
         self.question = self.question_queue.pop_front();
+        self.reset_question_view();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
     }
 
@@ -1717,6 +1729,8 @@ impl App {
             .is_some_and(|(_, _, sender)| sender.is_closed())
         {
             self.approval = self.approval_queue.pop_front();
+            self.approval_action_hits.clear();
+            self.approval_rect = Rect::default();
             self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
             self.approval_selected = 0;
         }
@@ -1784,6 +1798,7 @@ impl App {
             pending.push(dialog);
         }
         pending.extend(self.question_queue.drain(..));
+        self.reset_question_view();
         if pending.is_empty() {
             return;
         }
@@ -1813,6 +1828,8 @@ impl App {
             pending.push(request);
         }
         pending.extend(self.approval_queue.drain(..));
+        self.approval_action_hits.clear();
+        self.approval_rect = Rect::default();
         if pending.is_empty() {
             return;
         }
@@ -1848,71 +1865,6 @@ impl App {
         self.turn_phase_summary()
     }
 
-    pub(super) fn handle_question_key(&mut self, key: KeyEvent) {
-        let Some(dialog) = self.question.as_mut() else {
-            return;
-        };
-        match key.code {
-            KeyCode::Esc => {
-                if let Some(dialog) = self.question.take() {
-                    let _ = dialog.sender.send(None);
-                    self.promote_next_question();
-                }
-            }
-            KeyCode::Up | KeyCode::BackTab => dialog.selected = dialog.selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Tab => {
-                if !dialog.request.options.is_empty() {
-                    dialog.selected = (dialog.selected + 1) % dialog.request.options.len();
-                }
-            }
-            KeyCode::Char(' ')
-                if dialog.request.multi_select
-                    && dialog.answer.is_empty()
-                    && !dialog.checked.is_empty() =>
-            {
-                dialog.checked[dialog.selected] = !dialog.checked[dialog.selected];
-            }
-            KeyCode::Enter => {
-                let dialog = self.question.take().expect("question dialog");
-                let typed = dialog.answer.text().trim();
-                let answer = if !typed.is_empty() {
-                    typed.to_owned()
-                } else if dialog.request.multi_select {
-                    dialog
-                        .request
-                        .options
-                        .into_iter()
-                        .zip(dialog.checked)
-                        .filter_map(|(option, checked)| checked.then_some(option))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    dialog
-                        .request
-                        .options
-                        .get(dialog.selected)
-                        .cloned()
-                        .unwrap_or_default()
-                };
-                let _ = dialog.sender.send(Some(answer));
-                self.promote_next_question();
-            }
-            KeyCode::Left => dialog.answer.left(),
-            KeyCode::Right => dialog.answer.right(),
-            KeyCode::Home => dialog.answer.home(),
-            KeyCode::End => dialog.answer.end(),
-            KeyCode::Backspace => dialog.answer.backspace(),
-            KeyCode::Delete => dialog.answer.delete(),
-            KeyCode::Char(value)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) =>
-            {
-                dialog.answer.insert(&value.to_string())
-            }
-            _ => {}
-        }
-    }
     pub(super) fn max_scroll(&self) -> usize {
         self.transcript_height.saturating_sub(self.viewport_height)
     }
@@ -2115,7 +2067,15 @@ impl App {
     ) {
         // 这一下按下还没松手：先清掉上一次的待点开，等真的没拖动再点开。
         self.pending_chat_click = None;
-        if human_gate_ui::handle_question_mouse(self, x, y) {
+        if human_gate_ui::handle_mouse(
+            self,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            },
+        ) {
             return;
         }
         if self.search.is_some() && self.search_rect.contains((x, y).into()) {
@@ -2125,16 +2085,6 @@ impl App {
                     x.saturating_sub(self.search_rect.x + 1) as usize,
                     self.search_rect.width.saturating_sub(2).max(1) as usize,
                 );
-            }
-        } else if self.approval.is_some() && self.approval_rect.contains((x, y).into()) {
-            let point = (x, y).into();
-            if let Some((_, decision)) = self
-                .approval_action_hits
-                .iter()
-                .find(|(rect, _)| rect.contains(point))
-                .copied()
-            {
-                self.resolve_approval(|_| decision);
             }
         } else if self.palette.is_some() && self.palette_rect.contains((x, y).into()) {
             if let Some((_, position)) =
@@ -2198,7 +2148,7 @@ impl App {
     }
     pub(super) fn handle_slash_command(&mut self, prompt: &str, skills: &SkillCatalog) -> bool {
         let value = prompt.trim();
-        if !value.starts_with('/') {
+        if !command_catalog::is_command(value) {
             return false;
         }
         let (command, args) = value.split_once(char::is_whitespace).unwrap_or((value, ""));
@@ -2547,7 +2497,10 @@ impl App {
                 self.ensure_welcome(&self.workspace.clone().unwrap_or_default(), self.language);
                 self.scroll_to_bottom();
             }
-            _ => self.append_transcript(format!("Error: unknown command {command}; use /help")),
+            _ => self.append_transcript(command_catalog::invalid_command_arguments(
+                self.language,
+                value,
+            )),
         }
         true
     }

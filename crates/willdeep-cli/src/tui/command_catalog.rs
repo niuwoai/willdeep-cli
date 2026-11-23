@@ -186,6 +186,36 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// 只按首个词识别命令，参数是否合法由对应处理器校验。
+/// 绝对路径、未知命令和命令名的前缀都仍是普通提示词。
+pub(super) fn is_command(prompt: &str) -> bool {
+    let head = prompt.split_whitespace().next().unwrap_or_default();
+    head.starts_with('/')
+        && (head == "/permission-mode"
+            || super::extension_commands::matches(prompt)
+            || command_candidates(Language::En)
+                .iter()
+                .any(|(command, _)| *command == head))
+}
+
+/// 已识别的命令没有被处理器消费时，只在本地报告用法，不能落入模型提示词。
+pub(super) fn invalid_command_arguments(language: Language, prompt: &str) -> String {
+    let head = prompt.split_whitespace().next().unwrap_or_default();
+    let usage = command_usages(language)
+        .into_iter()
+        .find(|(usage, _)| usage.split_whitespace().next() == Some(head))
+        .map(|(usage, _)| usage)
+        .unwrap_or(head);
+    format!(
+        "Error: {} {usage}",
+        language.text(
+            "命令参数无效。用法：",
+            "Invalid command arguments. Usage:",
+            "コマンドの引数が無効です。使用法:",
+        )
+    )
+}
+
 /// 这条指令在菜单里回车就能当场生效，不需要再补参数。
 ///
 /// 范围收在两处的交集里：不带参数就有明确动作，而且 [`crate::tui::busy_input`]
@@ -536,4 +566,58 @@ pub(super) fn command_candidates(language: Language) -> Vec<(&'static str, &'sta
             ),
         ),
     ]
+}
+
+#[cfg(test)]
+mod command_recognition_tests {
+    use super::*;
+
+    #[test]
+    fn known_command_heads_remain_commands_even_with_invalid_arguments() {
+        for (command, _) in command_candidates(Language::En) {
+            assert!(is_command(command), "{command}");
+            assert!(is_command(&format!("  {command}\tinvalid argument  ")));
+        }
+        for command in [
+            "/permission-mode full-access",
+            "/permission-mode invalid",
+            "/plugin:demo:echo {}",
+            "/plugin:invalid",
+            "/plugin:",
+        ] {
+            assert!(is_command(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn paths_and_unknown_slash_heads_are_prompts() {
+        for prompt in [
+            "",
+            "/",
+            "explain /help",
+            "/wat",
+            "/wat with text",
+            "/Users/example/project 请检查",
+            "/help/file inspect this",
+            "/permissions-extra",
+            "/permission-mode/file",
+            "/plugins",
+        ] {
+            assert!(!is_command(prompt), "{prompt}");
+        }
+    }
+
+    #[test]
+    fn invalid_arguments_show_localized_usage() {
+        for language in [Language::ZhCn, Language::En, Language::Ja] {
+            let error = invalid_command_arguments(language, "/verbose on");
+            assert!(error.starts_with("Error:"));
+            assert!(error.ends_with("/verbose"));
+            assert!(!error.contains("unknown command"));
+        }
+        assert!(
+            invalid_command_arguments(Language::En, "/compress invalid")
+                .contains("Usage: /compress")
+        );
+    }
 }

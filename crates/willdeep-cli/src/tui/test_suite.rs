@@ -391,7 +391,7 @@ mod command_tests {
     /// 默认是简洁；`/short` 与 `/verbose` 各管一个方向，提示里互相点名。
     /// 它们不进提示词——风格写在系统提示词里，下一轮构建 harness 时才读。
     #[test]
-    fn short_and_verbose_select_a_style_and_ignore_arguments() {
+    fn short_and_verbose_select_a_style_and_reject_arguments_locally() {
         let mut app = App::new(Vec::new(), Language::ZhCn);
         let skills = SkillCatalog::default();
         assert_eq!(app.response_style, None);
@@ -412,22 +412,53 @@ mod command_tests {
         assert!(app.transcript.last().unwrap().contains("简洁回复"));
         assert!(app.transcript.last().unwrap().contains("/verbose"));
 
-        // 带参数的不是这条命令：不能静默地把风格拨过去。
-        assert!(app.handle_slash_command("/verbose on", &skills));
-        assert_eq!(
-            app.response_style,
-            Some(willdeep_core::ResponseStyle::Short)
-        );
-        assert!(app.transcript.last().unwrap().contains("unknown command"));
+        // 命令名已知但参数无效：必须在本地报错，不能改变风格或发给模型。
+        for command in ["/verbose on", "/short off"] {
+            assert!(app.handle_slash_command(command, &skills));
+            assert_eq!(
+                app.response_style,
+                Some(willdeep_core::ResponseStyle::Short)
+            );
+            assert!(app.transcript.last().unwrap().contains("命令参数无效"));
+            assert!(app.transcript.last().unwrap().starts_with("Error:"));
+        }
     }
 
     #[test]
-    fn unknown_slash_command_is_handled_locally() {
-        let mut app = App::new(Vec::new(), Language::En);
-        let skills = SkillCatalog::default();
+    fn unknown_slash_input_is_sent_unchanged_with_its_attachments() {
+        for prompt in [
+            "/wat",
+            "/wat please explain this",
+            "/Users/example/project",
+            "/Users/example/project 请分析这个项目\n保留这段文字",
+            "  /Users/example/project inspect it  ",
+            "/model/path inspect this directory",
+        ] {
+            let mut app = App::new(Vec::new(), Language::En);
+            let skills = SkillCatalog::default();
+            app.input.insert(prompt);
+            app.attachments.push(DraftAttachment {
+                id: uuid::Uuid::new_v4(),
+                message: MessageAttachment::Text {
+                    name: "context.txt".to_owned(),
+                    content: "context".to_owned(),
+                },
+            });
 
-        assert!(app.handle_slash_command("/wat", &skills));
-        assert!(app.transcript.last().unwrap().contains("unknown command"));
+            assert!(!app.handle_command_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE,)));
+            assert!(!app.handle_slash_command(prompt, &skills), "{prompt}");
+            assert!(app.transcript.is_empty());
+            assert_eq!(app.take_prompt_for_submission(), prompt);
+            assert_eq!(app.transcript, vec![format!("You: {prompt}")]);
+            assert!(matches!(
+                app.transcript_attachments[0].as_slice(),
+                [MessageAttachment::Text { name, .. }] if name == "context.txt"
+            ));
+            assert_eq!(
+                prompt_execution(prompt),
+                PromptExecution::Runtime(prompt.to_owned())
+            );
+        }
     }
 
     #[test]

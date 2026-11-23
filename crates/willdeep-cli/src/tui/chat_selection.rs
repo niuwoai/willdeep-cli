@@ -141,14 +141,6 @@ impl App {
                 }
                 true
             }
-            MouseEventKind::ScrollUp if self.selection_mode => {
-                self.scroll_up(3);
-                true
-            }
-            MouseEventKind::ScrollDown if self.selection_mode => {
-                self.scroll_down(3);
-                true
-            }
             _ => false,
         }
     }

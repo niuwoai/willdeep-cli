@@ -521,10 +521,13 @@ pub enum ProviderError {
     #[error("provider request deadline exceeded")]
     DeadlineExceeded,
     #[error(
-        "provider retry requires waiting {retry_after_secs} seconds, exceeding the remaining request deadline: {source}"
+        "provider request stopped after {attempts} attempt(s), {elapsed_secs:.1}s elapsed; next retry needs a {retry_after_secs}s backoff but only {remaining_secs:.1}s remain in the shared request deadline: {source}"
     )]
     RetryDeferred {
         retry_after_secs: u64,
+        attempts: u32,
+        elapsed_secs: f64,
+        remaining_secs: f64,
         source: Box<ProviderError>,
     },
     #[error("invalid reasoning profile: {0}")]

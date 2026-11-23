@@ -74,7 +74,7 @@ impl App {
             && self.queued_prompts.front().is_some_and(|item| {
                 item.remote.is_none()
                     && item.attachments.is_empty()
-                    && !item.text.trim_start().starts_with('/')
+                    && !command_catalog::is_command(&item.text)
             })
     }
 
@@ -296,7 +296,7 @@ impl App {
             );
         }
         if self.queued_prompts.front().is_some_and(|item| {
-            !item.attachments.is_empty() || item.text.trim_start().starts_with('/')
+            !item.attachments.is_empty() || command_catalog::is_command(&item.text)
         }) {
             parts.push(
                 self.language
@@ -1154,6 +1154,57 @@ mod tests {
             app.running,
             "sending a message must not complete or cancel background work"
         );
+    }
+
+    #[test]
+    fn unknown_slash_prompts_queue_and_steer_like_plain_text() {
+        for prompt in [
+            "/wat",
+            "/wat 请解释这段文字",
+            "/Users/example/project 分析项目\n保留正文",
+            "/help/file inspect this",
+        ] {
+            for compressing in [false, true] {
+                let mut app = App::new(Vec::new(), Language::En);
+                app.begin_turn(true, "working".to_owned());
+                if compressing {
+                    app.note_compression_started();
+                }
+                app.input.insert(prompt);
+                assert_eq!(busy_input(app.input.text()), BusyInput::Queue);
+                app.queue_submitted_prompt();
+                assert!(app.input.is_empty());
+                assert_eq!(app.queued_prompts[0].text, prompt);
+                assert!(
+                    !app.queue_activity()
+                        .unwrap()
+                        .contains("Commands/attachments")
+                );
+                assert_eq!(app.queued_steering_ready(), !compressing);
+                if compressing {
+                    app.note_compression_completed();
+                    assert!(app.queued_steering_ready());
+                }
+                app.finish_turn();
+                assert!(app.queued_prompt_ready());
+            }
+        }
+    }
+
+    #[test]
+    fn known_commands_with_invalid_arguments_do_not_auto_steer() {
+        for command in ["/verbose on", "/compress invalid", "/plugin:demo:echo []"] {
+            let mut app = App::new(Vec::new(), Language::En);
+            app.begin_turn(true, "working".to_owned());
+            app.input.insert(command);
+            app.queue_submitted_prompt();
+            assert!(!app.queued_steering_ready());
+            assert!(
+                app.queue_activity()
+                    .unwrap()
+                    .contains("Commands/attachments")
+            );
+        }
     }
 
     #[test]

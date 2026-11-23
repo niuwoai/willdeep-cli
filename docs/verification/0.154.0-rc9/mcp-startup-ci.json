@@ -1,0 +1,22 @@
+{
+  "version": "0.154.0-rc9",
+  "date": "2026-11-23",
+  "failed_head": "b6e8c1a0783edcf24df99673e11243006cd39901",
+  "failed_job_url": "https://github.com/niuwoai/willdeep-cli/actions/runs/45048568038/job/137288447659",
+  "failed_test": "mcp::startup_tests::missing_process_reports_server_and_stage_without_configuration_secrets",
+  "original_core_results": {"passed": 1384, "failed": 1, "ignored": 7},
+  "change": "Use an absolute nonexistent executable in an owned temporary directory instead of searching the runner PATH; preserve strict error-kind and secret-canary assertions.",
+  "production_logic_changed": false,
+  "local_installation_version": "0.154.0-rc8",
+  "checks": {
+    "mcp_tests": {"passed": 28, "failed": 0, "ignored": 0},
+    "workspace_versions": {"passed": 1, "failed": 0},
+    "strict_core_clippy": "passed",
+    "inaccessible_path_regression": {"passed": 1, "failed": 0, "host": "macOS", "baseline_error_kind": "NotFound", "remote_error_kind_reproduced": false, "first_helper_attempt": "failed because it incorrectly required PermissionDenied on macOS; helper corrected, product assertions unchanged"},
+    "rustfmt": "passed",
+    "release_metadata": "passed",
+    "git_diff_check": "passed"
+  },
+  "remote_ci_after_fix": "awaiting push and app monitor event",
+  "public_release": false
+}

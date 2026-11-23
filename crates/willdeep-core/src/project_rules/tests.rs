@@ -3,6 +3,8 @@ use super::*;
 #[cfg(unix)]
 mod permissions;
 
+mod restore;
+
 const OPAQUE_TOOLS: [&str; 5] = [
     "run_command",
     "monitor",

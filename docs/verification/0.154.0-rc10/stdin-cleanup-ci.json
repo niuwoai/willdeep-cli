@@ -1,0 +1,28 @@
+{
+  "version": "0.154.0-rc10",
+  "date": "2026-11-23",
+  "failed_head": "3ed52507692f7b608600665a859bf8940cd7e821",
+  "failed_job_url": "https://github.com/niuwoai/willdeep-cli/actions/runs/45100220685/job/137449107944",
+  "failed_test": "process_cleanup::tests::cleanup_reaps_client_after_stdin_write_panics",
+  "original_headless_results": {"passed": 62, "failed": 1},
+  "baseline_local_single_test": "passed",
+  "baseline_hosted_linux_single_test": "passed",
+  "stdout_eof_stdin_write_counterexample": "passed: owned process closes stdout while stdin remains readable; subsequent parent write succeeds",
+  "cause": "stdout EOF does not prove stdin has closed; a short write can succeed before complete process exit in the second control iteration",
+  "fix": "Observe the direct child exit with waitid WNOWAIT before triggering the stdin write, preserving the pending child for the guard under test to reap",
+  "production_logic_changed": false,
+  "local_installation_version": "0.154.0-rc8",
+  "local_platform": "macOS",
+  "local_rust": "1.94.1",
+  "checks": {
+    "process_cleanup_module": {"passed": 17, "failed": 0, "ignored": 0},
+    "single_test_repetitions": {"passed": 10, "failed": 0, "controls_per_repetition": 2},
+    "workspace_versions": {"passed": 1, "failed": 0},
+    "strict_headless_clippy": "passed",
+    "rustfmt": "passed",
+    "release_metadata": "passed",
+    "git_diff_check": "passed"
+  },
+  "remote_ci_after_fix": "awaiting push and app monitor event",
+  "public_release": false
+}

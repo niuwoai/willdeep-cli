@@ -403,6 +403,7 @@ async fn new_input_preserves_unknown_tool_effects_and_does_not_auto_resume() {
                 Message::assistant("", vec![pending.clone()]),
             ],
             goal: None,
+            context_summary: None,
         })
         .unwrap();
     let provider = Arc::new(SyntheticProvider::default());
@@ -486,6 +487,7 @@ fn new_input_merges_evidence_without_certifying_or_weakening_the_failed_task() {
             },
             messages: vec![Message::user("independent input")],
             goal: None,
+            context_summary: None,
         })
         .unwrap();
         let retained = fixture.saved().execution_checkpoint.unwrap();

@@ -80,6 +80,7 @@ mod plan_ui;
 mod prompt_history;
 mod prompt_queue;
 mod prompt_selection;
+mod question_input;
 mod quiet_mode;
 mod reasoning_commands;
 mod redraw;
@@ -94,6 +95,7 @@ mod session_picker_ui;
 mod sidebar;
 mod splash;
 mod status_line;
+mod terminal_input;
 mod tool_visuals;
 mod transcript_order;
 pub(crate) use tool_visuals::receipt as tool_visuals_receipt;
@@ -653,7 +655,7 @@ struct App {
     approval_action_hits: Vec<(Rect, ApprovalDecision)>,
     question_rect: Rect,
     question_hits: Vec<(u16, usize)>,
-    question_footer_row: Option<u16>,
+    question_view: human_gate_ui::QuestionViewport,
     search_rect: Rect,
     // 弹层自身的外框。只有记下来，才知道一次点击是「落在弹层里」
     // 还是「落在弹层外」——后者按 Esc 处理。
@@ -761,7 +763,7 @@ enum BusyInput {
 /// `/history` 打开面板是只读查询，真正的切换在消费那一步另有运行中保护。
 fn busy_input(prompt: &str) -> BusyInput {
     let value = prompt.trim();
-    if !value.starts_with('/') {
+    if !command_catalog::is_command(value) {
         return BusyInput::Queue;
     }
     let command = value.split_whitespace().next().unwrap_or_default();
