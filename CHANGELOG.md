@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.154.0-rc13] - 2026-11-23
+
+### Changed
+- willdeep 批次处理改由本仓库自己的 willdeep CLI 跑，不再依赖 Claude Code：有写权限的人在 issue 评论里写 @claude 或打上 claude 标签，只把该 issue 排入队列；手动跑一次 workflow 时，同一次无人值守会话把队列里的 issue 一起规划并解决，只对 develop 开一个 PR。
+
 ## [0.154.0-rc12] - 2026-11-23
 
 ### Changed
