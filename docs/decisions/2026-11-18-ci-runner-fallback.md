@@ -28,7 +28,9 @@ macOS 自建标签仍为 `self-hosted, macOS, X64, imac`，Linux 仍为 `self-ho
 
 ## 成功证据与最终门禁
 
-每次请求包含父 run ID、父 attempt、平台和随机 nonce，写入精确 `run-name`。worker 在 checkout 前检查输入格式、branch ref 和 `github.sha == expected_sha`，再以 `persist-credentials: false` checkout 精确 SHA。
+每次请求包含父 run ID、父 attempt、平台和随机 nonce，写入精确 `run-name`。2026-11-23 的 PR 调度修复区分两种提交：父 CI 的 `GITHUB_REF/SHA` 是 `refs/pull/<number>/merge` 及其合并提交，不能直接作为 `workflow_dispatch` 的 branch；`CI_DISPATCH_REF/SHA` 从 `github.head_ref` 和 `github.event.pull_request.head.sha` 取得真实源分支及源提交。普通 push 两组身份必须相同。所有合法 Git 分支名均可派发，传入 Git 的 ref 是独立 argv，不经过 shell；Git 校验失败记录退出码。
+
+worker 在 checkout 前检查输入格式、branch ref 和 `github.sha == workflow_sha`，再以 `persist-credentials: false` checkout `expected_sha`。PR 的 `expected_sha` 始终是父 CI 的精确合并提交，不替换为源分支 HEAD。协调者以源提交核验 child run/job 的 `head_sha`；若源分支在派发前移动，身份不符则回退托管且不取消无法核验的 child。新 `workflow_sha` 输入要求源分支上的 worker 工作流包含本修复，旧版派发入口不兼容时仍回退托管。
 
 协调者同时核验 run 的 repository、event、workflow path、head branch、head SHA、run attempt、唯一 display title，以及精确 worker job 的名称、run ID、SHA、attempt、自建 labels、runner 身份与 conclusion。只有必要步骤（初始化、身份验证、checkout、完整 suite、唯一末尾成功 marker）全部成功，且返回的所有步骤均为成功或合法跳过，才输出 `self_hosted_passed=true`。marker 没有 `always()` 或 `continue-on-error`，无法越过失败的 suite。
 
