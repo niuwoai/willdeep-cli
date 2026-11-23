@@ -10,12 +10,12 @@
 
 ## 决策
 
-`ci.yml` 增加 `changes` job，用 `dorny/paths-filter@v3` 判断 diff 是否触及代码路径。代码路径为：`crates/**`、`web/**`、`npm/**`、`integrations/**`、`examples/**`、`scripts/**`、`.github/**`、`Cargo.toml`、`Cargo.lock`、`rust-toolchain*`、`deny.toml`、`clippy.toml`、`rustfmt.toml`、`.rustfmt.toml`。其余路径（`docs/**`、markdown、`bench/**`）视为文档。
+路径判断放在可复用 action `.github/actions/ci-changes`，内部用 `dorny/paths-filter@v3`。代码路径为：`crates/**`、`web/**`、`npm/**`、`integrations/**`、`examples/**`、`scripts/**`、`.github/**`、`Cargo.toml`、`Cargo.lock`、`rust-toolchain*`、`deny.toml`、`clippy.toml`、`rustfmt.toml`、`.rustfmt.toml`。其余路径（`docs/**`、markdown、`bench/**`）视为文档。
 
-五个重 job 增加 `needs: changes` 与 `if: needs.changes.outputs.code == 'true'`。纯文档时新增 `ci-skip` job，以与被跳过 job 逐字相同的五个名字各报一次成功。GitHub 对同名检查取最新结果，分支保护规则不用改，也不需要管理员权限。
+三个重 job 保持原名、保持无条件运行，各自第一步调用该 action，后续步骤在 `code != true` 时跳过。job 不能整体带 `if`：分支保护按名字要求这五个检查，而 GitHub 不把 skipped 算作通过，整体跳过会让纯文档 PR 合不进去。这样也不新增 job，CI 调度契约测试锁死的 job 名单保持不变。
 
-同时包含代码与文档的改动走原路径，行为不变。`release.yml` 由 tag 触发，发版仍全量编译，不受影响。判断依据是 diff 的路径而不是内容：代码文件里只改注释也算代码。
+无法证明 diff 只含文档时保守地跑全量：`workflow_call` 复用拿不到 base ref，分支与默认分支分叉时范围不可靠。同时包含代码与文档的改动走原路径。`release.yml` 由 tag 触发，发版仍全量编译，不受影响。判断依据是 diff 的路径而不是内容：代码文件里只改注释也算代码。
 
 ## 验证边界
 
-本决策的验证就是合入它的 PR 本身：该 PR 改了 `.github/**`，属于代码路径，应跑完整 CI；合入后的下一次纯文档 PR 应只看到 `changes` 与五个同名的跳过检查，且能通过分支保护合入。本地用 `actionlint` 校验了工作流语法，这不替代 GitHub 上的实际派发。
+本决策的验证就是合入它的 PR 本身：该 PR 改了 `.github/**`，属于代码路径，应跑完整 CI；合入后的下一次纯文档 PR 应看到五个检查都成功，但各自在检测步骤之后不再编译。本地 `actionlint` 通过，`scripts/test/ci_self_hosted_attempt_test.rb` 41 项通过，这不替代 GitHub 上的实际派发。
