@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.155.0-rc2] - 2026-11-23
+
+### Fixed
+- 把 MCP 迁移从 `crates/willdeep-cli/src/config.rs` 拆到 `config/mcp_migration.rs`，文件回到 3000 行上限以内。迁移行为不变。
+
 ## [0.155.0-rc1] - 2026-11-23
 
 ### Changed
