@@ -10,7 +10,7 @@ GitHub Actions 的 job `timeout-minutes` 从 runner 接单执行后开始计时�
 
 保留原来的 `test (macos-latest)`、`test (ubuntu-latest)` 检查名，让它们始终运行在同平台的 GitHub 托管 runner 上，承担协调与最终测试门禁。
 
-只有本仓库非 fork 的普通分支 push、且工作流名为 `CI`、调用者 `github.workflow_ref` 精确为当前分支的 `.github/workflows/ci.yml` 时，协调者才用当前 job 的 `GITHUB_TOKEN` 派发独立的 `.github/workflows/ci-self-hosted.yml`。PR、tag push、Release 调用的验证和其他复用调用直接执行托管测试。worker 工作流仅接受 `workflow_dispatch`，只有一个选定平台的自建 job，不递归派发。主 `ci.yml` 保留原有三个事件与全部主检查，不为 worker 创建同名的跳过检查；worker 检查名也与最终平台检查不同。fork 仓库的 push / dispatch 不进入自建路径。
+只有工作流名为 `CI`、调用者 `github.workflow_ref` 精确为当前 ref 的 `.github/workflows/ci.yml`，且事件是本仓库非 fork 的普通分支 push，或 head 仓库就是本仓库的 `pull_request` 时，协调者才用当前 job 的 `GITHUB_TOKEN` 派发独立的 `.github/workflows/ci-self-hosted.yml`。2026-11-23 起本仓库自己的 pull request 也走这条路径：macOS 派到 iMac，Linux 派到 q4；接不到或失败仍回托管。tag push、Release 调用的验证和其他复用调用直接执行托管测试。从 fork 开来的 PR 不派发。`pull_request` 上 `github.event.repository` 是基线仓库，看它的 `fork` 字段挡不住外部 PR，所以条件比对的是 `github.event.pull_request.head.repo.full_name`。worker 工作流仅接受 `workflow_dispatch`，只有一个选定平台的自建 job，不递归派发。主 `ci.yml` 保留原有三个事件与全部主检查，不为 worker 创建同名的跳过检查；worker 检查名也与最终平台检查不同。fork 仓库的 push / dispatch 不进入自建路径。
 
 macOS 自建标签仍为 `self-hosted, macOS, X64, imac`，Linux 仍为 `self-hosted, Linux, X64, q4-pub`。本改动不修改 runner 服务、注册、发布平台或发布依赖门禁。
 
@@ -40,7 +40,7 @@ worker job 设置 `continue-on-error: true`，使一次会由父检查重试的�
 
 支持 dispatch 新接口的 HTTP 200 `workflow_run_id`，也支持 HTTP 204 的旧行为；204 通过 `workflow_dispatch + head_branch + 唯一 display_title` 有界发现 child。只查询当前分支最近 100 个 dispatch，找不到时仍受接单预算约束，不等待 GitHub 的长队列期限。异常一律转托管，不要求额外 PAT，也不读取或创建 secret。
 
-根权限只有 `contents: read`；只有父 `test` 协调 job 请求 `actions: write`。Release 的 `verify` 需显式给其复用调用允许该权限，否则 GitHub 会拒绝调用；实际 Release 路径不派发 worker。fork PR 即使声明该权限，条件仍不允许派发。
+根权限只有 `contents: read`；只有父 `test` 协调 job 请求 `actions: write`。Release 的 `verify` 需显式给其复用调用允许该权限，否则 GitHub 会拒绝调用；实际 Release 路径不派发 worker。从 fork 开来的 PR 即使声明该权限，条件仍不允许派发：判断依据是 head 仓库是否为本仓库，不是基线仓库的 `fork` 字段。
 
 队列超时、执行超时、API 异常或父取消时，协调器尽力清理自己的 child。每次 cancel / force-cancel 前重新核验完整 run 身份；不会取消本父 run、其他 run、其他平台、其他 nonce、rerun 或 HEAD 已变化的 run。普通取消无效时升级 force-cancel，普通取消返回 409 时也重新核验后才升级；清理本身有界。父取消采用单独的 5 秒总预算，覆盖身份复核、force-cancel 请求与完成确认；立即重新核验后请求 force-cancel，不进入普通清理的轮询等待；重复 TERM / INT 不打断已经开始的同一次有限清理。脚本也在轮询中检查父运行是否结束。
 

@@ -43,7 +43,10 @@ jobs:
         uses: ./.github/actions/ci-changes
       - name: Attempt bounded self-hosted suite
         id: self_hosted
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false
+        # push 与本仓库自己的 pull_request 才派自建。pull_request 的 github.event.repository
+        # 是基线仓库，看它的 fork 字段挡不住从 fork 开来的 PR，所以要比对 head 仓库。
+        # tag、workflow_call（发版复用）和 fork 来的 PR 直接走托管。
+        if: steps.changes.outputs.code == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false
         continue-on-error: true
         timeout-minutes: 70
         env:

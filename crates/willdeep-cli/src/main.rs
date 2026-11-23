@@ -430,6 +430,21 @@ enum ApiArg {
 
 #[tokio::main]
 async fn main() {
+    // 崩溃也要把终端还回去。图库过滤层把真实终端设成了 raw，panic 会跳过正常的
+    // 退出路径，鼠标追踪和 raw 模式就留在用户的终端上，退出后满屏乱码。
+    let previous_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        gallery::restore_terminal();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableBracketedPaste,
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::cursor::Show,
+        );
+        let _ = crossterm::terminal::disable_raw_mode();
+        previous_panic(info);
+    }));
     let result = run().await;
     // 遥测在唯一的出口 flush：run() 有几十个 return 点，逐个挂 flush 只会
     // 漏掉其中几个。没装过句柄（或被关掉）时这里是空操作。

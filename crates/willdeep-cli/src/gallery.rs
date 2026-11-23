@@ -330,6 +330,7 @@ impl GalleryInput {
         set_terminal_attributes(slave.as_raw_fd(), &filtered_mode)?;
 
         let input = duplicate(libc::STDIN_FILENO)?;
+        let master_fd = master.as_raw_fd();
         let restore = duplicate(libc::STDIN_FILENO)?;
         let original = terminal_attributes(restore)?;
         let mut raw = original;
@@ -367,6 +368,11 @@ impl GalleryInput {
         } else {
             unsafe { libc::close(restore) };
         }
+        // 退出时靠它把 pty 里还没被读走的按键排空。不排的话，进程退出拆掉 pty 时，
+        // 这些字节会连同 Ctrl+C 一起退回真实终端，那时鼠标追踪已经关了，全变成乱码。
+        if let Ok(mut drain) = INPUT_DRAIN.lock() {
+            *drain = Some(master_fd);
+        }
         if let Ok(mut window) = WINDOW_SIZES.lock() {
             *window = Some((restore, libc::STDIN_FILENO));
         }
@@ -397,11 +403,13 @@ fn forward(
         events: libc::POLLIN,
         revents: 0,
     };
+    // 退出时要读完 pty 里剩下的字节，不能卡在一个永远等不到数据的 poll 上。
+    let master_fd = output.as_raw_fd();
     loop {
         poll_fd.revents = 0;
         // A held marker prefix (a bare Esc, say) must not wait forever for bytes that are never
         // coming. With nothing held there is no deadline, so an idle terminal costs no wakeups.
-        let timeout = if filter.holding() {
+        let timeout = if filter.holding() || input_drain_requested(master_fd) {
             GALLERY_POLL_MILLIS
         } else {
             -1
@@ -435,6 +443,84 @@ fn forward(
         if !plain.is_empty() && output.write_all(&plain).is_err() {
             break;
         }
+        // 退出已开始：把 pty 里还没读走的字节读完，让它们被正常处理，而不是在进程
+        // 退出拆掉 pty 时退回真实终端。读完就清掉请求，退出路径才知道可以继续。
+        if input_drain_requested(master_fd) && drain_pty_input(&mut input, &mut output, &mut filter)
+        {
+            clear_input_drain(master_fd);
+            break;
+        }
+    }
+}
+
+/// 退出时读完 pty 里剩下的输入。读到空或读不到为止，返回 true 表示可以收工。
+#[cfg(unix)]
+fn drain_pty_input(
+    input: &mut std::fs::File,
+    output: &mut std::fs::File,
+    filter: &mut GalleryFilter,
+) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let mut buffer = [0; 4096];
+    let mut poll_fd = libc::pollfd {
+        fd: input.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        poll_fd.revents = 0;
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+        if ready <= 0 {
+            return true;
+        }
+        match input.read(&mut buffer) {
+            Ok(0) => return true,
+            Ok(count) => {
+                let (plain, _) = filter.push(&buffer[..count]);
+                if !plain.is_empty() && output.write_all(&plain).is_err() {
+                    return true;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return true,
+        }
+    }
+}
+
+/// 退出路径请求转发线程把这个 pty 里剩下的输入读完。
+#[cfg(unix)]
+fn input_drain_requested(master_fd: std::os::fd::RawFd) -> bool {
+    INPUT_DRAIN
+        .lock()
+        .is_ok_and(|drain| drain.is_some_and(|fd| fd == master_fd))
+}
+
+/// 转发线程读完后清掉请求。只清自己的 fd，避免误清别人的。
+#[cfg(unix)]
+fn clear_input_drain(master_fd: std::os::fd::RawFd) {
+    if let Ok(mut drain) = INPUT_DRAIN.lock()
+        && drain.is_some_and(|fd| fd == master_fd)
+    {
+        *drain = None;
+    }
+}
+
+/// 让转发线程开始排空，并等它读完。读不完也不再等下去：后面还有 tcflush 兜底。
+#[cfg(unix)]
+fn request_input_drain() {
+    let Some(master_fd) = INPUT_DRAIN.lock().ok().and_then(|drain| *drain) else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    while std::time::Instant::now() < deadline {
+        let drained = INPUT_DRAIN
+            .lock()
+            .is_ok_and(|drain| drain.is_none_or(|fd| fd != master_fd));
+        if drained {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -520,6 +606,10 @@ static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 static SAVED_TERMINAL: std::sync::Mutex<Option<(std::os::fd::RawFd, libc::termios)>> =
     std::sync::Mutex::new(None);
 
+/// 退出时置上，让转发线程把 pty 里没读走的输入读完再退。
+#[cfg(unix)]
+static INPUT_DRAIN: std::sync::Mutex<Option<std::os::fd::RawFd>> = std::sync::Mutex::new(None);
+
 /// The real and filtered descriptors whose window sizes are kept in step.
 #[cfg(unix)]
 static WINDOW_SIZES: std::sync::Mutex<Option<(std::os::fd::RawFd, std::os::fd::RawFd)>> =
@@ -585,10 +675,16 @@ pub(crate) fn restore_terminal() {
     ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
     #[cfg(unix)]
     {
+        // 先让转发线程把 pty 里积压的按键读完。读不完就退的话，进程退出拆掉 pty
+        // 时这些字节会退回真实终端，鼠标追踪和 raw 模式那时都已经关了，用户看到的
+        // 就是一串 `^[[<…M` 和 `^C`。
+        request_input_drain();
         if let Ok(mut saved) = SAVED_TERMINAL.lock()
             && let Some((fd, mode)) = saved.take()
         {
             unsafe {
+                // 回显恢复之前丢掉真实终端输入队列里的残留，否则同样会原样显示出来。
+                libc::tcflush(fd, libc::TCIFLUSH);
                 libc::tcsetattr(fd, libc::TCSANOW, &mode);
                 libc::close(fd);
             }
@@ -668,6 +764,7 @@ pub(crate) fn attachment_from_png(png: &[u8]) -> Option<crate::editor::DraftAtta
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::fd::AsRawFd;
 
     #[test]
     fn plain_text_passes_through_untouched() {
@@ -675,6 +772,45 @@ mod tests {
         let (plain, requests) = filter.push(b"hello \x1b[A there");
         assert_eq!(plain, b"hello \x1b[A there");
         assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn queued_input_is_drained_before_the_pty_is_torn_down() {
+        // 复现 #167：事件循环忙着别的事时按键堆在 pty 里，进程一退就原样退回真实终端。
+        // 退出前必须把它们读完。
+        let (master, slave) = open_pty().unwrap();
+        let master_fd = master.as_raw_fd();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        // 转发线程读真实终端（这里用 slave 充当）、写进 pty 主端。
+        let worker = std::thread::Builder::new()
+            .name("gallery-drain-test".into())
+            .spawn(move || {
+                forward(slave, master, tx);
+                let _ = done_tx.send(());
+            })
+            .unwrap();
+        if let Ok(mut drain) = INPUT_DRAIN.lock() {
+            *drain = Some(master_fd);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            let drained = INPUT_DRAIN
+                .lock()
+                .is_ok_and(|drain| drain.is_none_or(|fd| fd != master_fd));
+            if drained {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            INPUT_DRAIN
+                .lock()
+                .is_ok_and(|drain| drain.is_none_or(|fd| fd != master_fd)),
+            "forwarder did not finish draining (thread exited: {})",
+            done_rx.try_recv().is_ok()
+        );
+        let _ = worker.join();
     }
 
     #[test]

@@ -384,6 +384,8 @@ pub fn visible_user_text(content: &str) -> &str {
     // `/goal` 的持久目标包装是给模型看的，聊天区只留用户自己写的那句。
     // 只认 TUI 拼出来的完整块，半截或代码围栏里引用的一律原样保留。
     let text = strip_goal_envelope(text);
+    // `$技能` 会把 SKILL.md 全文拼进发给模型的提示词；聊天区只留用户写的那句。
+    let text = strip_explicit_skills(text);
     let Some((authored, envelope)) = text.rsplit_once("\n\n<runtime-route ") else {
         return text;
     };
@@ -429,6 +431,33 @@ pub fn visible_assistant_text(content: &str) -> &str {
 ///
 /// 块必须从头开始、单独成段，正文也不能落在未闭合的代码围栏里，
 /// 否则用户自己贴的一段 `<goal>` 示例会被误删。
+/// 去掉 `$技能` 展开出来的 `<explicit_skill>` 块，只留用户写的部分。
+///
+/// 块由 TUI 拼在提示词前面，每块独占一段、以空行分隔。半截块、或正文落在
+/// 未闭合代码围栏里的，一律原样保留，避免误删用户自己贴的示例。
+fn strip_explicit_skills(text: &str) -> &str {
+    let mut rest = text;
+    loop {
+        let Some(after_open) = rest.strip_prefix("<explicit_skill name=\"") else {
+            return rest;
+        };
+        let Some((_, after_block)) = after_open.split_once("</explicit_skill>") else {
+            return rest;
+        };
+        let Some(authored) = after_block.strip_prefix("\n\n").or_else(|| {
+            after_block
+                .strip_prefix('\n')
+                .filter(|authored| authored.is_empty())
+        }) else {
+            return rest;
+        };
+        if authored.matches("```").count() % 2 != 0 {
+            return rest;
+        }
+        rest = authored;
+    }
+}
+
 fn strip_goal_envelope(text: &str) -> &str {
     let rest = text
         .strip_prefix("<goal>\n")

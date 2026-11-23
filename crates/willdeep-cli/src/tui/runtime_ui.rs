@@ -269,6 +269,13 @@ pub(super) async fn reconcile_stale_runtime_turn(
         Ok(None) => {
             // 快照可能已经在途；复位后它们仍会逐个抵达。锁住本次恢复，
             // 避免同一故障反复输出提示。新轮次或重新发现活动任务会解锁。
+            // 标志要在输出之前看：连续几份快照都会走到这里，不拦就会把同一句
+            // 「已无活动轮次」往聊天区里追加好几遍。
+            if app.stale_runtime_turn_recovery_reported {
+                app.dismiss_awaiting_reply();
+                app.finish_turn();
+                return;
+            }
             app.stale_runtime_turn_recovery_reported = true;
             app.dismiss_awaiting_reply();
             app.finish_turn();
