@@ -352,35 +352,29 @@ tool_output_limit = 4096
 [subagents.git_detective]
 context_window = 32768
 
-# MCP servers are initialized once and exposed as mcp__<server>__<tool>.
+# MCP servers live beside this file, one per file: .mcp/<name>.toml.
 # A server is either stdio (`command`) or Streamable HTTP (`url`); never both.
-# Put credentials in environment variables; do not write tokens into this file.
-[mcp_servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
-startup_timeout_seconds = 30
-enabled = false
-
-[mcp_servers.filesystem.env]
-NODE_NO_WARNINGS = "1"
-
-# Remote server over Streamable HTTP. Authentication is one of:
-#   bearer_token_env = "REMOTE_MCP_TOKEN"   # static token from the environment
-#   [mcp_servers.remote.oauth]              # OAuth 2.1: `willdeep mcp login remote`
-# Static headers may reference the environment as ${env:NAME}; headers whose
-# name looks like a credential must be written that way.
-[mcp_servers.remote]
-url = "https://mcp.example.com/mcp"
-startup_timeout_seconds = 30
-enabled = false
-
-[mcp_servers.remote.headers]
-X-Trace = "willdeep"
-
-[mcp_servers.remote.oauth]
-# client_id = "preregistered-client"      # omit to register dynamically (RFC 7591)
-# client_secret_env = "REMOTE_MCP_CLIENT_SECRET"
-scopes = []
+# Put credentials in environment variables; do not write tokens into the file.
+# A field this file does not understand cannot take the model configuration
+# down with it. See docs/SKILLS_AND_MCP.md.
+#
+# .mcp/filesystem.toml
+#   command = "npx"
+#   args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
+#   startup_timeout_seconds = 30
+#   enabled = false
+#   [env]
+#   NODE_NO_WARNINGS = "1"
+#
+# .mcp/remote.toml
+#   url = "https://mcp.example.com/mcp"
+#   bearer_token_env = "REMOTE_MCP_TOKEN"   # or [oauth], then `willdeep mcp login remote`
+#   startup_timeout_seconds = 30
+#   enabled = false
+#   [headers]
+#   X-Trace = "willdeep"                     # a credential-like name must be ${env:NAME}
+#   [oauth]
+#   scopes = []                              # omit client_id to register dynamically
 
 # Additional roots whose immediate child directories contain SKILL.md.
 [skills]

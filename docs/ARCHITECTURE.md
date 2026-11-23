@@ -2,7 +2,7 @@
 
 > 最后更新：2026-11-23 | 当前版本：v0.155.0-rc1
 
-0.155.0-rc1 增加 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)。包只描述宿主已经投递的五条 shell Hook：解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合。它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。本版本尚未安装或公开发布。
+0.155.0-rc1 同时带上两项改动。一是 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)：包只描述宿主已经投递的五条 shell Hook，解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合；它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。二是把用户 MCP 定义从 `ConfigFile.mcp_servers` 的持久化位置挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`，迁移代码在 `config/mcp_migration.rs`。内存里的 `mcp_servers` 仍是运行时来源，Harness、`willdeep mcp` 和 doctor 的读取路径不变；加载时先按行摘掉主配置里的 `[mcp_servers.*]` 再做严格解析，所以一段写坏不会再让模型配置读不出来。迁移只在每一段都读懂时改写主配置，写不回去就回滚刚写出的独立文件。插件包的 `mcp.json` 与 `mcp-oauth/<name>.json` 不在这次拆分里。本版本尚未安装或公开发布。
 
 0.154.0-rc12 的 CI 在编译前先按路径判断改动：`crates`、`web`、`npm`、`integrations`、`examples`、`scripts`、`.github` 及构建清单算代码，其余算文档。三个重 job 保持原名并无条件运行，纯文档时跳过各自的编译与测试步骤，从而仍满足分支保护要求的检查名；混合改动走原路径。Runtime、协议与产物都不变。见[文档改动跳过编译的决策](decisions/2026-11-23-ci-docs-only-skip.md)。本候选尚未安装或公开发布。
 

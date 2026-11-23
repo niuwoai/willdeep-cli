@@ -12,6 +12,8 @@ pub const CONFIG_VERSION: u32 = 1;
 pub(crate) mod browser;
 #[cfg(test)]
 mod init_tests;
+mod mcp_files;
+mod mcp_migration;
 mod redaction;
 pub(crate) mod search;
 #[cfg(test)]
@@ -896,6 +898,8 @@ fn resolve_config_path(explicit_path: Option<&Path>) -> Result<(PathBuf, bool)> 
 #[derive(Clone)]
 pub struct LoadedConfig {
     pub file: ConfigFile,
+    /// 读到了但没采用的 MCP 文件。主配置解析不受影响；启动时另行列出。
+    pub mcp_skipped: Vec<String>,
 }
 
 impl LoadedConfig {
@@ -909,16 +913,28 @@ impl LoadedConfig {
             // [rules] 时它不会自动生效，由配置页提示用户启用。目录已存在说明
             // 用户有自己的规则，什么都不做。失败不挡住启动。
             let _ = willdeep_core::rules::seed_bundled_rules();
+            let mut file = ConfigFile::default();
+            let none = mcp_migration::LegacyMcp::Absent;
+            let skipped = mcp_migration::attach(&mut file, &path, "", none)?;
             return Ok(Self {
-                file: ConfigFile::default(),
+                file,
+                mcp_skipped: skipped,
             });
         }
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("read configuration file: {}", path.display()))?;
-        let file: ConfigFile = toml::from_str(&contents)
+        // MCP 段先按宽松文档拆出来。它的字段不合法不能再让整份模型配置
+        // 解析失败：拆不出来的段只告警，主配置照常读。
+        let legacy = mcp_migration::take_legacy(&contents);
+        let file = parse_config_text(mcp_migration::parseable(&contents, &legacy))
             .with_context(|| format!("parse TOML configuration: {}", path.display()))?;
         validate(&file, &path)?;
-        Ok(Self { file })
+        let mut file = file;
+        let skipped = mcp_migration::attach(&mut file, &path, &contents, legacy)?;
+        Ok(Self {
+            file,
+            mcp_skipped: skipped,
+        })
     }
 
     /// 长驻 Runtime（daemon / 进行中的会话）用：重载失败时沿用该路径上一次成功解析的快照。
@@ -975,6 +991,26 @@ pub fn default_config_path() -> Result<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .context("cannot find home directory; set WILLDEEP_HOME or pass --config")?;
     Ok(PathBuf::from(home).join(".willdeep").join("config.toml"))
+}
+
+/// 解析用户的主配置。
+///
+/// MCP 定义已经挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`。主配置里残留的
+/// `[mcp_servers.*]` 先按行摘掉再解析：一段写坏（多一个不认识的字段、
+/// `transport = "sse"` 这种）不能再让模型配置读不出来。摘掉只影响这次
+/// 解析，不改磁盘；真正迁走发生在 [`LoadedConfig::load`]。
+///
+/// 主配置自己的语法错误原样抛出，不拿 MCP 当挡箭牌。
+pub(crate) fn parse_config_text(contents: &str) -> Result<ConfigFile, toml::de::Error> {
+    let value: toml::Value = toml::from_str(contents)?;
+    let has_mcp = value
+        .as_table()
+        .and_then(|table| table.get("mcp_servers"))
+        .is_some_and(|servers| !servers.as_table().is_some_and(toml::map::Map::is_empty));
+    if !has_mcp {
+        return value.try_into();
+    }
+    toml::from_str(&crate::model_routing::strip_mcp_sections(contents))
 }
 
 pub fn willdeep_home() -> Result<PathBuf> {
@@ -1991,7 +2027,10 @@ model = "claude-sonnet-4-5"
         assert_eq!(parsed.providers.len(), 2);
         assert_eq!(parsed.default_provider.as_deref(), Some("some-im"));
         assert_eq!(parsed.agent.max_turns, Some(30));
-        let loaded = LoadedConfig { file: parsed };
+        let loaded = LoadedConfig {
+            file: parsed,
+            mcp_skipped: Vec::new(),
+        };
         let selected = loaded
             .select_provider(None)
             .expect("select default")
@@ -2255,7 +2294,7 @@ context_window = 400000
     fn example_config_stays_valid() {
         let parsed: ConfigFile = toml::from_str(include_str!("../../../config.example.toml"))
             .expect("parse config.example.toml");
-        assert_eq!(parsed.mcp_servers.len(), 2);
+        assert!(parsed.mcp_servers.is_empty());
         assert_eq!(parsed.providers.len(), 3);
         assert_eq!(
             parsed.notifications.sound.as_deref(),

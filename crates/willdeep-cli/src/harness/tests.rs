@@ -621,7 +621,10 @@ fn a_tier_bound_to_a_legacy_alias_still_defers_to_the_relay_prompt() {
 fn compressor_candidates(source: &str, kind: ProviderKind) -> Vec<(String, String, bool)> {
     let file: crate::config::ConfigFile =
         toml::from_str(source).expect("parse compressor config fixture");
-    let loaded = crate::config::LoadedConfig { file };
+    let loaded = crate::config::LoadedConfig {
+        file,
+        mcp_skipped: Vec::new(),
+    };
     compressor_candidate_configs(&loaded, &parent_config(kind, "glm-5"), kind)
         .expect("resolve compressor candidates")
         .into_iter()
@@ -773,7 +776,10 @@ fn an_unknown_compressor_profile_fails_loudly() {
     let file: crate::config::ConfigFile =
         toml::from_str("version = 1\n[agent]\ncompressor_profile = \"missing\"\n")
             .expect("parse compressor fixture");
-    let loaded = crate::config::LoadedConfig { file };
+    let loaded = crate::config::LoadedConfig {
+        file,
+        mcp_skipped: Vec::new(),
+    };
     let error = compressor_candidate_configs(
         &loaded,
         &parent_config(ProviderKind::SomeIm, "glm-5"),
@@ -797,6 +803,7 @@ compressor_context_window = 32768
 "#,
         )
         .unwrap(),
+        mcp_skipped: Vec::new(),
     };
     let explicit = build_compression_settings(&loaded, &parent, main.follower()).unwrap();
     assert_eq!(explicit.context_window, Some(32_768));
@@ -819,6 +826,7 @@ compressor_context_window = 32768
     let reset = build_compression_settings(
         &LoadedConfig {
             file: crate::config::ConfigFile::default(),
+            mcp_skipped: Vec::new(),
         },
         &parent,
         main.follower(),
@@ -853,6 +861,7 @@ fn compression_settings_reject_an_unusable_selected_profile() {
                 "version = 1\n[agent]\ncompressor_profile = 'summary'\n[providers.summary]\nprovider = 'openai-compatible'\n{profile}\n",
             ))
             .unwrap(),
+            mcp_skipped: Vec::new(),
         };
         assert!(build_compression_settings(&loaded, &parent, main.follower()).is_err());
     }

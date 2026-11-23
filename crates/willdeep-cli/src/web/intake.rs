@@ -578,7 +578,7 @@ fn save_settings(
     };
     let next = splice_intake(&original, &settings_block(settings)?);
     // 整个文件重新解析一遍：段外的内容一个字都没动，出错只可能是我们拼错了。
-    toml::from_str::<crate::config::ConfigFile>(&next)
+    crate::config::parse_config_text(&next)
         .map_err(|error| anyhow::anyhow!("the edited configuration would not parse: {error}"))?;
     backup_config(config_path, home)?;
     write_atomic(config_path, &next)

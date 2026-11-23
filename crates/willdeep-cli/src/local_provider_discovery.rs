@@ -303,7 +303,7 @@ fn persist_locked(path: &Path, providers: &[LocalProvider]) -> Result<usize> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error).context("read local Provider configuration"),
     };
-    let parsed: crate::config::ConfigFile = toml::from_str(&original)?;
+    let parsed = crate::config::parse_config_text(&original)?;
     crate::config::validate(&parsed, path)?;
     let mut patched = original.clone();
     let mut added = 0;
@@ -341,8 +341,8 @@ fn persist_locked(path: &Path, providers: &[LocalProvider]) -> Result<usize> {
     if added == 0 {
         return Ok(0);
     }
-    let validated: crate::config::ConfigFile =
-        toml::from_str(&patched).context("parse discovered Provider configuration")?;
+    let validated = crate::config::parse_config_text(&patched)
+        .context("parse discovered Provider configuration")?;
     // Existing credentials were validated above. New values are public local
     // placeholders; the atomic writer creates the final file with mode 0600.
     let mut semantic = validated.clone();

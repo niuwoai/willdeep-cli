@@ -816,6 +816,7 @@ async fn run() -> Result<()> {
     let loaded = if cli.web && onboarding::needs_web_setup(&cli) {
         LoadedConfig {
             file: config::ConfigFile::default(),
+            mcp_skipped: Vec::new(),
         }
     } else {
         LoadedConfig::load(cli.config.as_deref())?
