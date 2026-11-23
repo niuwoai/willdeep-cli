@@ -614,7 +614,7 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     assert_equal 135, job.fetch('timeout-minutes')
     refute job.key?('continue-on-error')
     fallback = job.fetch('steps').find { |step| step['name'] == 'Run complete hosted CI suite' }
-    assert_equal "${{ !cancelled() && steps.self_hosted.outputs.self_hosted_passed != 'true' }}", fallback.fetch('if')
+    assert_equal "${{ !cancelled() && steps.changes.outputs.code == 'true' && steps.self_hosted.outputs.self_hosted_passed != 'true' }}", fallback.fetch('if')
     assert_equal 60, fallback.fetch('timeout-minutes')
     refute fallback.key?('continue-on-error')
     assert_equal './.github/actions/ci-test', fallback.fetch('uses')
@@ -622,7 +622,7 @@ class CiRunnerWorkflowContractTest < Minitest::Test
 
   def test_pr_fork_tag_and_release_cannot_dispatch
     step = @ci.fetch('jobs').fetch('test').fetch('steps').find { |item| item['id'] == 'self_hosted' }
-    assert_equal "github.event_name == 'push' && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false", step.fetch('if')
+    assert_equal "steps.changes.outputs.code == 'true' && github.event_name == 'push' && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false", step.fetch('if')
     assert_equal 'ruby scripts/ci_self_hosted_attempt.rb', step.fetch('run')
     assert step.fetch('continue-on-error')
     assert_equal false, @ci.dig('jobs', 'test', 'steps', 0, 'with', 'persist-credentials')
@@ -639,8 +639,14 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     assert_equal ['workflow_dispatch'], worker_events.keys
     assert_equal %w[linux-architectures test wsl-smoke], @ci.fetch('jobs').keys.sort
     assert_equal ['self-hosted-worker'], @worker.fetch('jobs').keys
+    # 文档改动不编译，但三个检查必须始终运行：分支保护按名字要求它们，skipped 不算通过。
+    # 跳过发生在步骤里，job 本身不能带 if，否则纯文档 PR 会因缺少必需检查而合不进去。
     %w[test linux-architectures wsl-smoke].each do |name|
-      refute @ci.fetch('jobs').fetch(name).key?('if'), "original #{name} check must remain unconditional"
+      job = @ci.fetch('jobs').fetch(name)
+      refute job.key?('if'), "original #{name} check must remain unconditional"
+      detect = job.fetch('steps').find { |step| step['id'] == 'changes' }
+      assert_equal './.github/actions/ci-changes', detect.fetch('uses'), "#{name} must classify the diff"
+      refute detect.key?('if'), "#{name} must always classify the diff"
     end
     assert_equal 'CI self-hosted attempt', @worker.fetch('name')
     refute_equal @ci.fetch('name'), @worker.fetch('name')
