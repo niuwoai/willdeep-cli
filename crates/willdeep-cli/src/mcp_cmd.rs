@@ -25,7 +25,7 @@ pub(crate) enum McpAction {
     },
     /// Log in to a remote MCP server with OAuth 2.1 (authorization code + PKCE, loopback redirect).
     Login {
-        /// Server name, as in [mcp_servers.<name>].
+        /// Server name, as in $WILLDEEP_HOME/.mcp/<name>.toml.
         name: String,
         /// Seconds to wait for the browser to come back.
         #[arg(long, default_value_t = 300)]
@@ -36,12 +36,12 @@ pub(crate) enum McpAction {
     },
     /// Forget the stored OAuth tokens of a server.
     Logout {
-        /// Server name, as in [mcp_servers.<name>].
+        /// Server name, as in $WILLDEEP_HOME/.mcp/<name>.toml.
         name: String,
     },
     /// Connect to one server and list the tools it exposes.
     Tools {
-        /// Server name, as in [mcp_servers.<name>].
+        /// Server name, as in $WILLDEEP_HOME/.mcp/<name>.toml.
         name: String,
         /// Emit one JSON array with full input schemas.
         #[arg(long)]
@@ -75,7 +75,7 @@ fn server<'a>(
 ) -> Result<&'a McpServerConfig> {
     servers.get(name).with_context(|| {
         format!(
-            "no [mcp_servers.{name}] in the configuration (known: {})",
+            "no MCP server {name} in $WILLDEEP_HOME/.mcp (known: {})",
             servers.keys().cloned().collect::<Vec<_>>().join(", ")
         )
     })
@@ -149,9 +149,9 @@ fn list(
         println!(
             "{}",
             language.text(
-                "配置里没有 MCP 服务（[mcp_servers.<name>]）。",
-                "No MCP servers configured ([mcp_servers.<name>]).",
-                "MCP サーバーは設定されていません（[mcp_servers.<name>]）。"
+                "没有 MCP 服务（$WILLDEEP_HOME/.mcp/<name>.toml）。",
+                "No MCP servers configured ($WILLDEEP_HOME/.mcp/<name>.toml).",
+                "MCP サーバーは設定されていません（$WILLDEEP_HOME/.mcp/<name>.toml）。"
             )
         );
         return Ok(());

@@ -1,5 +1,6 @@
 use super::*;
 use crate::types::Completion;
+use std::time::Duration;
 
 struct TimedProvider {
     requests: Mutex<Vec<Vec<Message>>>,
@@ -99,6 +100,8 @@ async fn timed_out_candidate_is_skipped_across_chunks_and_reduction() {
         .with_compression_settings(CompressionSettings {
             candidates: vec![(stalled.clone(), false), (fallback.clone(), false)],
             context_window: Some(WINDOW / 4),
+            candidate_timeout: None,
+            timeout: None,
         })
         .with_event_sink(events.clone());
     let source = history();
@@ -110,7 +113,7 @@ async fn timed_out_candidate_is_skipped_across_chunks_and_reduction() {
         .summarize_history_with_settings(
             &source,
             &settings,
-            &mut short_budget(2_000, 20),
+            &mut Some(&mut short_budget(2_000, 20)),
             &mut |usage| {
                 bills.push(usage.clone());
                 Ok(())
@@ -162,6 +165,8 @@ async fn fallback_candidates_share_the_total_deadline() {
             (third.clone(), false),
         ],
         context_window: None,
+        candidate_timeout: None,
+        timeout: None,
     };
     let error = tokio::time::timeout(
         Duration::from_secs(1),
@@ -194,6 +199,8 @@ async fn chunk_bills_survive_when_the_shared_deadline_expires_during_reduction()
     let settings = CompressionSettings {
         candidates: vec![(provider.clone(), false)],
         context_window: None,
+        candidate_timeout: None,
+        timeout: None,
     };
     let input_budget = agent.summary_input_budget_for(&settings);
     let source = vec![Message::assistant("x".repeat(input_budget as usize * 3), vec![]); 2];
@@ -204,7 +211,7 @@ async fn chunk_bills_survive_when_the_shared_deadline_expires_during_reduction()
         agent.summarize_history_with_settings(
             &source,
             &settings,
-            &mut short_budget(160, 1_000),
+            &mut Some(&mut short_budget(160, 1_000)),
             &mut |usage| {
                 bills.push(usage.clone());
                 Ok(())
@@ -259,7 +266,7 @@ async fn failed_incremental_refresh_keeps_the_previous_cache_and_reports_no_succ
                     bills.push(usage.clone());
                     Ok(())
                 },
-                &mut short_budget(100, 20),
+                Some(&mut short_budget(100, 20)),
             )
             .await;
         let reason = result.unwrap_err().to_string();
@@ -311,7 +318,12 @@ async fn automatic_and_manual_second_pass_share_the_deadline_and_preserve_histor
             };
             if manual {
                 agent
-                    .compress_history_with_budget(messages.clone(), None, &mut record, &mut budget)
+                    .compress_history_with_budget(
+                        messages.clone(),
+                        None,
+                        &mut record,
+                        Some(&mut budget),
+                    )
                     .await
             } else {
                 agent
@@ -320,7 +332,7 @@ async fn automatic_and_manual_second_pass_share_the_deadline_and_preserve_histor
                         &mut cache,
                         (None, ""),
                         &mut record,
-                        &mut budget,
+                        Some(&mut budget),
                     )
                     .await
             }
@@ -356,12 +368,14 @@ async fn reduction_limit_rejects_leftover_parts_instead_of_returning_the_last_on
     let settings = CompressionSettings {
         candidates: vec![(provider.clone(), false)],
         context_window: Some(WINDOW / 4),
+        candidate_timeout: None,
+        timeout: None,
     };
     let error = agent
         .merge_summary_parts(
             vec![part; (1 << MAX_SUMMARY_REDUCE_ROUNDS) + 1],
             &settings,
-            &mut CompressionBudget::default(),
+            &mut CompressionBudget::new(Duration::from_secs(120), Duration::from_secs(45)),
             &mut |_| Ok(()),
         )
         .await
@@ -373,4 +387,52 @@ async fn reduction_limit_rejects_leftover_parts_instead_of_returning_the_last_on
     );
     assert!(reason.contains("history was not replaced"), "{reason}");
     assert_eq!(provider.calls(), (1 << MAX_SUMMARY_REDUCE_ROUNDS) - 1);
+}
+
+/// 不写超时配置时，总预算要盖住实际切出来的每一块，再加归并和二次压缩各一次；
+/// 写了就用配置值。候选等待默认一分钟，不随块数变化。
+#[tokio::test]
+async fn the_operation_budget_covers_every_chunk_unless_configured() {
+    let (agent, _) = agent(WINDOW);
+    let provider = TimedProvider::new(0, usize::MAX, "summary");
+    let settings = CompressionSettings {
+        candidates: vec![(provider.clone(), false)],
+        context_window: Some(WINDOW / 4),
+        candidate_timeout: None,
+        timeout: None,
+    };
+    let agent = agent.with_compression_settings(settings.clone());
+    let source = history();
+    let chunks = chunk_for_summary(&source, agent.summary_input_budget_for(&settings)).len();
+    assert!(chunks > 1, "the fixture must actually be chunked");
+
+    let derived = CompressionBudget::for_operation(&settings, chunks);
+    let expected = Duration::from_secs(60) * (u32::try_from(chunks).unwrap() + 2);
+    assert_eq!(
+        derived.total, expected,
+        "{chunks} chunks plus a merge and a second pass"
+    );
+    assert_eq!(derived.candidate_timeout, Duration::from_secs(60));
+
+    let configured = CompressionSettings {
+        timeout: Some(Duration::from_secs(90)),
+        candidate_timeout: Some(Duration::from_secs(30)),
+        ..settings.clone()
+    };
+    let configured_budget = CompressionBudget::for_operation(&configured, chunks);
+    assert_eq!(configured_budget.total, Duration::from_secs(90));
+    assert_eq!(configured_budget.candidate_timeout, Duration::from_secs(30));
+
+    // 真正跑一遍：不注入预算时，报错里的两个数字必须来自配置而不是旧的固定值。
+    let stalling = CompressionSettings {
+        candidates: vec![(TimedProvider::new(0, 0, "unreachable"), false)],
+        ..configured
+    };
+    let reason = agent
+        .summarize_history_with_settings(&source, &stalling, &mut None, &mut |_| Ok(()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(reason.contains("candidate limit 30s"), "{reason}");
+    assert!(reason.contains("shared 90s deadline"), "{reason}");
 }

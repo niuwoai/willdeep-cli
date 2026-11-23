@@ -46,6 +46,11 @@ safety_judge = true
 # 压缩摘要器一次能吃下的原料上限所用的窗口。不写取压缩档案的 context_window，
 # 再没有就沿用会话窗口。
 # compressor_context_window = 131072
+# 单段候选等待（秒），15–180，不写是 60。慢推理模型做兜底时调大。
+# compressor_candidate_timeout_seconds = 60
+# 整次压缩的总预算（秒），全部分块、归并和二次压缩共用，上限 600。
+# 不写时按实际分块数计算；写了不能短于单段等待。
+# compressor_timeout_seconds = 300
 auto_title = true       # 会话第一轮自动整理标题；关掉后停在第一条提示词的派生标题
 # title_model = "glm-5" # 标题摘要模型；默认取会话模型（请求只发一问一答各 800 字）
 input_suggestions = true # 轮次结束后在空输入框里灰字预测你的下一句，Tab 采用；用 title_model 那一档模型，与 auto_title 互不影响
@@ -352,35 +357,29 @@ tool_output_limit = 4096
 [subagents.git_detective]
 context_window = 32768
 
-# MCP servers are initialized once and exposed as mcp__<server>__<tool>.
+# MCP servers live beside this file, one per file: .mcp/<name>.toml.
 # A server is either stdio (`command`) or Streamable HTTP (`url`); never both.
-# Put credentials in environment variables; do not write tokens into this file.
-[mcp_servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
-startup_timeout_seconds = 30
-enabled = false
-
-[mcp_servers.filesystem.env]
-NODE_NO_WARNINGS = "1"
-
-# Remote server over Streamable HTTP. Authentication is one of:
-#   bearer_token_env = "REMOTE_MCP_TOKEN"   # static token from the environment
-#   [mcp_servers.remote.oauth]              # OAuth 2.1: `willdeep mcp login remote`
-# Static headers may reference the environment as ${env:NAME}; headers whose
-# name looks like a credential must be written that way.
-[mcp_servers.remote]
-url = "https://mcp.example.com/mcp"
-startup_timeout_seconds = 30
-enabled = false
-
-[mcp_servers.remote.headers]
-X-Trace = "willdeep"
-
-[mcp_servers.remote.oauth]
-# client_id = "preregistered-client"      # omit to register dynamically (RFC 7591)
-# client_secret_env = "REMOTE_MCP_CLIENT_SECRET"
-scopes = []
+# Put credentials in environment variables; do not write tokens into the file.
+# A field this file does not understand cannot take the model configuration
+# down with it. See docs/SKILLS_AND_MCP.md.
+#
+# .mcp/filesystem.toml
+#   command = "npx"
+#   args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
+#   startup_timeout_seconds = 30
+#   enabled = false
+#   [env]
+#   NODE_NO_WARNINGS = "1"
+#
+# .mcp/remote.toml
+#   url = "https://mcp.example.com/mcp"
+#   bearer_token_env = "REMOTE_MCP_TOKEN"   # or [oauth], then `willdeep mcp login remote`
+#   startup_timeout_seconds = 30
+#   enabled = false
+#   [headers]
+#   X-Trace = "willdeep"                     # a credential-like name must be ${env:NAME}
+#   [oauth]
+#   scopes = []                              # omit client_id to register dynamically
 
 # Additional roots whose immediate child directories contain SKILL.md.
 [skills]

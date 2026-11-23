@@ -121,6 +121,7 @@ mod tests {
         let cli = crate::Cli::try_parse_from(["willdeep"]).unwrap();
         let loaded = crate::config::LoadedConfig {
             file: crate::config::ConfigFile::default(),
+            mcp_skipped: Vec::new(),
         };
         let home = std::env::temp_dir().join(format!("unused-approval-{}", uuid::Uuid::new_v4()));
         let mode = prepare(&cli, &loaded, &home, None, false, Language::En)

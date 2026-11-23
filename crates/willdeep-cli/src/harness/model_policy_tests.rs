@@ -33,10 +33,14 @@ impl Fixture {
         }
     }
     fn loaded(&self, settings: &str) -> LoadedConfig {
-        LoadedConfig { file: toml::from_str(&format!(
-            "version = 1\n{settings}\n[providers.alternate]\nprovider = 'openai-compatible'\napi_base = '{}'\napi_key = 'fixture'\nmodel = 'alternate'\n",
-            self.parent.base_url,
-        )).unwrap() }
+        LoadedConfig {
+            file: toml::from_str(&format!(
+                "version = 1\n{settings}\n[providers.alternate]\nprovider = 'openai-compatible'\napi_base = '{}'\napi_key = 'fixture'\nmodel = 'alternate'\n",
+                self.parent.base_url,
+            ))
+            .unwrap(),
+            mcp_skipped: Vec::new(),
+        }
     }
     async fn denied(&self, provider: &Arc<dyn Provider>) {
         assert!(provider.policy_context().is_some());

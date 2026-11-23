@@ -1,6 +1,6 @@
 # 生命周期挂钩（Hooks）
 
-> 状态：**可用**。当前覆盖 `before_agent` / `agent_end` / `pre_tool` / `post_tool` / `approval_resolved`。新增 Agent 运行边界的设计依据见 [Pi 扩展演进](PI_EXTENSION_EVOLUTION.md)；审批结果契约见[审批结果决策](decisions/2026-11-17-approval-resolved-hooks.md)。
+> 状态：**可用**。当前覆盖 `before_agent` / `agent_end` / `pre_tool` / `post_tool` / `approval_resolved`。事件在一次运行中的位置、投递边界和 TypeScript 用法见 [Hooks 体系](CLI_HOOKS.md)；审批结果契约见[审批结果决策](decisions/2026-11-17-approval-resolved-hooks.md)。
 
 审计要的是"谁在什么时候做了什么"，合规要的是"没批准就不许干"。这两件事都不能
 交给一条可以丢的通知。
@@ -143,6 +143,8 @@ on_error = "deny"
 
 ## 相关文档
 
+- [Hooks 体系](CLI_HOOKS.md) — 五条事件的宿主位置、终态和扩展边界
+- [`@willdeep/hooks`](../sdk/hooks/README.md) — 解析宿主 stdin 的 TypeScript 契约
 - [审批与自动化](APPROVALS.md) — 进程内的三道闸门
 - [OS 级写入围栏](SANDBOX.md) — 内核裁决的第四道
 - [配置指南](CONFIGURATION.md) — 完整 TOML 结构

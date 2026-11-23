@@ -252,7 +252,8 @@ willdeep mcp logout <name>
 willdeep mcp tools <name> [--json]      # 连上去列工具；--json 带完整输入 schema
 ```
 
-`login` 只对配了 `url` 与 `[mcp_servers.<name>.oauth]` 的服务有效：授权码 + PKCE，本机 `127.0.0.1`
+服务定义在 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件，不在 `config.toml` 里。
+`login` 只对配了 `url` 与 `[oauth]` 的服务有效：授权码 + PKCE，本机 `127.0.0.1`
 随机端口收一次回调，token 存 `$WILLDEEP_HOME/mcp-oauth/<name>.json`；`--no-browser` 只打印授权
 URL。登完立刻连一次并报告工具数。详见 [Skills 与 MCP](SKILLS_AND_MCP.md) 与 [认证与凭据](AUTHENTICATION.md)。
 

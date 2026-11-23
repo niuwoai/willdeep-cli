@@ -54,39 +54,42 @@ Web 端返回技能描述时，含 `password`、`api_key`、`secret`、`token=` 
 ### 传输与配置
 
 一个服务要么是 stdio（`command`，宿主拉起子进程），要么是 Streamable HTTP（`url`，远程服务），
-不能两者都写。TOML 与 Codex 风格接近：
+不能两者都写。每个服务一个文件，放在 `$WILLDEEP_HOME/.mcp/<name>.toml`（目录 `0700`，文件 `0600`），
+不再写进 `config.toml`。一个文件写坏只跳过这一个服务，模型配置照常读取。
 
 ```toml
-# stdio：本地子进程
-[mcp_servers.filesystem]
+# $WILLDEEP_HOME/.mcp/filesystem.toml — stdio：本地子进程
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/safe/root"]
 startup_timeout_seconds = 30
 enabled = true
 
-[mcp_servers.filesystem.env]
+[env]
 NODE_NO_WARNINGS = "1"
 
-# Streamable HTTP：远程服务，静态 token 从环境变量来
-[mcp_servers.issues]
+# $WILLDEEP_HOME/.mcp/issues.toml — Streamable HTTP：静态 token 从环境变量来
 url = "https://mcp.example.com/mcp"
 bearer_token_env = "ISSUES_MCP_TOKEN"
 
-[mcp_servers.issues.headers]
+[headers]
 X-Trace = "willdeep"                 # 静态头；值可写 ${env:NAME}
 
-# Streamable HTTP：OAuth 登录（`willdeep mcp login docs`）
-[mcp_servers.docs]
+# $WILLDEEP_HOME/.mcp/docs.toml — Streamable HTTP：OAuth 登录（`willdeep mcp login docs`）
 url = "https://docs.example.com/mcp"
 
-[mcp_servers.docs.oauth]
+[oauth]
 # client_id = "preregistered"        # 不写就动态注册（RFC 7591）
 # client_secret_env = "DOCS_MCP_CLIENT_SECRET"
 scopes = []                          # 空则用资源元数据里 scopes_supported 的全部
 ```
 
+服务名是文件名（不含 `.toml`）：1 到 64 个 ASCII 字母、数字、`_` 或 `-`。
 `url` 必须是 `https`，只有回环地址允许 `http`。名字看着像凭据的头（`X-Api-Key`、`*-Token` …）
 必须写成 `${env:NAME}`，`Authorization` 头一律不收——凭据只走 `bearer_token_env` 或 `oauth`。
+
+旧的 `config.toml` 里如果还留着 `[mcp_servers.*]`，启动时会迁进 `.mcp/<name>.toml`，
+迁完从主配置里删掉。读不懂的段留在原处并告警，不参与解析，也不挡住其余配置。
+同名独立文件已存在时以它为准，不拿主配置里的旧副本覆盖。
 
 Streamable HTTP 按规范走：每条 JSON-RPC 一个 POST，响应是 JSON 或 SSE 流都认；`initialize`
 回的 `Mcp-Session-Id` 之后每个请求都带，服务端 404 表示会话没了就重新握手一次再重发；
@@ -110,10 +113,10 @@ mcp__filesystem__write_file
 ### 凭据与 OAuth
 
 **不要把 Token 写进配置文件。** stdio 服务的敏感值由子进程继承环境变量，或在
-`[mcp_servers.*.env]` 里引用已有变量；HTTP 服务用 `bearer_token_env` 或头里的 `${env:NAME}`。
+`[env]` 里引用已有变量；HTTP 服务用 `bearer_token_env` 或头里的 `${env:NAME}`。
 Runtime 控制 Token 不会传给任何 MCP 服务。
 
-需要用户授权的远程服务配 `[mcp_servers.<name>.oauth]`，然后：
+需要用户授权的远程服务在自己的文件里配 `[oauth]`，然后：
 
 ```bash
 willdeep mcp login docs        # 授权码 + PKCE；本机 127.0.0.1 随机端口收一次回调

@@ -470,6 +470,12 @@ pub struct CompressionSettings {
     pub candidates: Vec<(Arc<dyn Provider>, bool)>,
     /// `None` clears an earlier limit and uses the session window.
     pub context_window: Option<u64>,
+    /// One candidate's wait for a single summary request. `None` uses the built-in
+    /// default (one minute).
+    pub candidate_timeout: Option<std::time::Duration>,
+    /// Shared budget for the whole operation. `None` derives it from the chunk count
+    /// so every chunk, the merge and a second pass each get one candidate wait.
+    pub timeout: Option<std::time::Duration>,
 }
 
 pub struct Agent {

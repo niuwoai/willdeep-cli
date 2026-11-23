@@ -28,6 +28,7 @@ fn loaded(
     } else {
         crate::config::LoadedConfig {
             file: crate::config::ConfigFile::default(),
+            mcp_skipped: Vec::new(),
         }
     };
     Ok((session, config))
@@ -463,9 +464,13 @@ mod model_policy_tests {
         let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
         let server =
             crate::daemon::tests::test_server_state_with_scheduler(&root, sessions, sender);
-        let config = crate::config::LoadedConfig { file: toml::from_str(&format!(
-            "version=1\n[providers.fixture]\nprovider='openai-compatible'\napi_base='{base}'\napi_key='fixture'\nmodel='fixture'\n",
-        )).unwrap() };
+        let config = crate::config::LoadedConfig {
+            file: toml::from_str(&format!(
+                "version=1\n[providers.fixture]\nprovider='openai-compatible'\napi_base='{base}'\napi_key='fixture'\nmodel='fixture'\n",
+            ))
+            .unwrap(),
+            mcp_skipped: Vec::new(),
+        };
         for _ in 0..2 {
             assert_eq!(
                 provider_models(&server, &config, Some("fixture"), &allowed).await,

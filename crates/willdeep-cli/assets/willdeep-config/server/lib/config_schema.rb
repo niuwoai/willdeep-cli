@@ -116,7 +116,11 @@ module ConfigSchema
         { key: "compressor_profile", label: "压缩提供商档案", type: "string", default: nil, ref: "providers",
           description: "把上下文压缩整套换到这个档案的端点、密钥与模型，主模型不变" },
         { key: "compressor_context_window", label: "压缩上下文窗口", type: "int", default: nil, min: 4000, max: 1_048_576, presets: TOKEN_PRESETS,
-          description: "摘要器一次能吃下的原料上限；不写取压缩档案的 context_window，再没有就沿用会话窗口" }
+          description: "摘要器一次能吃下的原料上限；不写取压缩档案的 context_window，再没有就沿用会话窗口" },
+        { key: "compressor_candidate_timeout_seconds", label: "单段压缩等待（秒）", type: "int", default: nil, min: 15, max: 180,
+          description: "每个候选模型一次摘要请求最多等这么久；不写是 60 秒。慢推理模型做兜底时调大" },
+        { key: "compressor_timeout_seconds", label: "整次压缩预算（秒）", type: "int", default: nil, min: 15, max: 600,
+          description: "一次压缩全部分块、合并和二次压缩共用的时间；不写时按实际分块数计算，写了不能短于单段等待" }
       ]
     },
     {
@@ -198,17 +202,6 @@ module ConfigSchema
           presets: TOKEN_PRESETS,
           description: "一次回复最多生成多少 token。上下文压缩也用这个上限，思考 token 占同一额度；写小了，长会话压缩会因为摘要被截断而失败" },
         { key: "vision_model", label: "视觉回退模型", type: "string", default: nil }
-      ]
-    },
-    {
-      id: "mcp_servers", prefix: "mcp_servers", title: "MCP 服务",
-      description: "每个 [mcp_servers.<name>] 是一个外部 MCP 服务", instanceHint: "name 用字母数字与连字符",
-      fields: [
-        { key: "command", label: "启动命令", type: "string", default: nil },
-        { key: "args", label: "启动参数", type: "stringArray", default: [] },
-        { key: "startup_timeout_seconds", label: "启动超时（秒）", type: "int", default: 10, min: 1, max: 300,
-          description: "1 到 300" },
-        { key: "enabled", label: "启用", type: "bool", default: true }
       ]
     },
     {
@@ -359,7 +352,7 @@ module ConfigSchema
 
     def section_name_for(group_id, instance)
       case group_id
-      when "providers", "mcp_servers", "subagents"
+      when "providers", "subagents"
         "#{group_id}.#{valid_instance_name!(instance)}"
       else
         g = group(group_id)
