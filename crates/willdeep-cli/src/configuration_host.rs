@@ -14,6 +14,8 @@ const COMPRESSOR_KEYS: &[&str] = &[
     "compressor_model",
     "compressor_profile",
     "compressor_context_window",
+    "compressor_candidate_timeout_seconds",
+    "compressor_timeout_seconds",
 ];
 const SERVER: &str = "willdeep-config";
 

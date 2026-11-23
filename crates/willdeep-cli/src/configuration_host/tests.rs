@@ -205,12 +205,19 @@ async fn snapshot_and_preview_never_expose_credentials_raw_comments_or_multiline
             .await
             .unwrap()
             .to_string();
-        for forbidden in ["CANARY", "api_key", "raw", "candidate", "preview"] {
+        for forbidden in ["CANARY", "api_key", "raw", "preview"] {
             assert!(
                 !result.contains(forbidden),
                 "{operation} exposed {forbidden}"
             );
         }
+        // `candidate` is the plan response's full candidate document, which can
+        // quote secret source lines. Match the field, not the substring: the
+        // compressor timeout key legitimately contains the word.
+        assert!(
+            !result.contains("\"candidate\""),
+            "{operation} exposed the candidate document"
+        );
     }
     // The existing limited TOML editor rejects multiline strings. Refusal must
     // still redact the parser's source excerpt, without minting a plan.

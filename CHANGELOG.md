@@ -5,6 +5,8 @@
 ### Added
 - 新增 `@willdeep/hooks` 契约包，描述 `before_agent`、`agent_end`、`pre_tool`、`post_tool`、`approval_resolved` 的输入字段、可拦截范围与配置校验；包不注册或执行 Hook。
 - 新增 [Hooks 体系](docs/CLI_HOOKS.md)，说明五条事件在一次 Agent 运行中的位置、终态、失败语义，以及与插件 MCP 命令和页面桥的边界。
+- `[agent]` 新增 `compressor_candidate_timeout_seconds`（单段候选等待，15–180 秒，不写为 60 秒）和 `compressor_timeout_seconds`（整次压缩总预算，上限 600 秒）。两处都可在配置文件、配置工作台和聊天里改；总预算短于单段等待会被拒绝。
+- 不写总预算时按实际切出的分块数计算：每块一次候选等待，再加归并和二次压缩各一次。此前固定的 120 秒盖不住 3 段以上的历史。
 
 ### Changed
 - MCP 服务定义从 `config.toml` 的 `[mcp_servers.*]` 拆到 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件（目录 `0700`，文件 `0600`，目录锁，原子替换）。一个文件字段不合法只跳过这一个服务并告警，不再让整份模型配置解析失败。
@@ -12,6 +14,11 @@
 - 模型配置、Provider、本地发现、入口设置和默认审批的保存都先把残留的 `[mcp_servers.*]` 排除在解析之外。配置工作台不再提供 MCP 分组，避免把服务定义写回主配置。
 - 插件包自带的 `mcp.json` 与 `$WILLDEEP_HOME/mcp-oauth/<name>.json` 的位置不变。
 - 把 MCP 迁移从 `crates/willdeep-cli/src/config.rs` 拆到 `config/mcp_migration.rs`，文件回到 3000 行上限以内。迁移行为不变。
+- 把 `crates/willdeep-cli/src/config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。
+
+### Fixed
+- 修正压缩等待配置的格式，使 `cargo fmt --check` 通过。
+- 聊天配置的 schema 与快照不再把键名 `compressor_candidate_timeout_seconds` 误判为泄露候选配置全文；候选文档字段仍不进这两份返回。
 
 ## [0.154.0-rc12] - 2026-11-23
 

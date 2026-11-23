@@ -2,7 +2,7 @@
 
 > 最后更新：2026-11-23 | 当前版本：v0.155.0-rc1
 
-0.155.0-rc1 把两项功能合到同一个候选：提供 `@willdeep/hooks` 契约包，用于查看 willdeep-cli 当前五条生命周期 Hook、解析宿主传入的事件，并在写入配置前检查无效组合，同时新增 [Hooks 体系](docs/CLI_HOOKS.md)；把 MCP 服务定义从 `config.toml` 拆到 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件，迁移代码放在 `config/mcp_migration.rs`。一个文件写坏只跳过这一个服务，模型配置照常读取；主配置里残留的 `[mcp_servers.*]` 在启动时迁出，读不懂的段留在原处但不参与解析。插件自带的 MCP 与 OAuth token 的位置不变。这是契约包，不会把 TypeScript 扩展加载进宿主。本版本尚未安装或公开发布。
+0.155.0-rc1 把三项功能合到同一个候选。一是 `@willdeep/hooks` 契约包，用于查看 willdeep-cli 当前五条生命周期 Hook、解析宿主传入的事件，并在写入配置前检查无效组合，同时新增 [Hooks 体系](docs/CLI_HOOKS.md)；这是契约包，不会把 TypeScript 扩展加载进宿主。二是把 MCP 服务定义从 `config.toml` 拆到 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件，迁移代码放在 `config/mcp_migration.rs`；一个文件写坏只跳过这一个服务，模型配置照常读取，主配置里残留的 `[mcp_servers.*]` 在启动时迁出，读不懂的段留在原处但不参与解析，插件自带的 MCP 与 OAuth token 的位置不变。三是把压缩等待改为可配置：单段候选等待默认 60 秒，整次总预算不写时按实际分块数计算，不再用固定的 120 秒；两个值都能在配置文件、配置工作台和聊天里改，总预算短于单段等待会被拒绝，见[压缩等待可配置](docs/decisions/2026-11-23-configurable-compression-timeout.md)。`config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。本版本尚未安装或公开发布。
 
 0.154.0-rc12 让 CI 对纯文档改动不再编译和测试：diff 不含代码路径时，分支保护要求的五个重检查由同名的成功检查代替，保护规则不用改；同时包含代码的改动仍跑完整验证。见[文档改动跳过编译的决策](docs/decisions/2026-11-23-ci-docs-only-skip.md)。本候选尚未安装或公开发布。
 

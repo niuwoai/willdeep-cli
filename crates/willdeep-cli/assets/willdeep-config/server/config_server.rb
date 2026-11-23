@@ -709,6 +709,20 @@ module WilldeepConfig
       "schema 未收录节 #{section}，拒绝写入（未知内容不会被本插件改动）"
     end
 
+    # 两个超时各自的区间由 schema 的 min/max 管；这里只补 schema 表达不了的
+    # 跨字段规则：总预算不能短于单段等待。没写的一侧按运行时缺省算。
+    def compression_timeout_error(root)
+      agent = root["agent"]
+      return nil unless agent.is_a?(Hash)
+      candidate = agent["compressor_candidate_timeout_seconds"]
+      total = agent["compressor_timeout_seconds"]
+      return nil if candidate.nil? && total.nil?
+      candidate = 60 unless candidate.is_a?(Integer)
+      total = candidate unless total.is_a?(Integer)
+      return nil if total >= candidate
+      "agent.compressor_timeout_seconds（#{total}）不能短于单段等待（#{candidate}）"
+    end
+
     # 检查最终文档，因此同一批可新增档案并引用，也可清除引用并删除档案。
     def dependency_error(edits, rendered)
       root = TomlLite.parse_document(rendered)[:root]
@@ -722,6 +736,9 @@ module WilldeepConfig
         unless providers.is_a?(Hash) && providers[profile.strip].is_a?(Hash)
           return "agent.compressor_profile 引用的提供商档案不存在"
         end
+      end
+      if (reason = compression_timeout_error(root))
+        return reason
       end
       intake_dependency_error(edits, rendered)
     end

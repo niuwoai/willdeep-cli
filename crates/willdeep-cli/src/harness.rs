@@ -1892,9 +1892,12 @@ pub(crate) fn build_compression_settings(
     }
     // 主模型句柄保持原样；兜底继续跟随 `/model`。
     candidates.push((follow_main, false));
+    let seconds = |configured: Option<u64>| configured.map(std::time::Duration::from_secs);
     Ok(willdeep_core::agent::CompressionSettings {
         candidates,
         context_window: compressor_context_window(&loaded.file),
+        candidate_timeout: seconds(loaded.file.agent.compressor_candidate_timeout_seconds),
+        timeout: seconds(loaded.file.agent.compressor_timeout_seconds),
     })
 }
 
