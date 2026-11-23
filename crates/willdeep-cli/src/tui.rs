@@ -54,6 +54,7 @@ mod attachment_panel;
 mod banner;
 mod child_session_commands;
 mod code_copy;
+mod link_open;
 mod command_catalog;
 mod composer_attention;
 mod confirmation_example;
@@ -568,6 +569,7 @@ struct App {
     native_selection_mode: bool,
     chat_selection: Option<ChatSelection>,
     code_copy: code_copy::CodeCopyState,
+    link_open: link_open::LinkOpenState,
     transcript_rows: Vec<String>,
     /// 用户显示行的正文列范围；复制时排除靠右布局产生的空白。
     transcript_selection_bounds: Vec<Option<std::ops::Range<usize>>>,
@@ -1875,6 +1877,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         };
         // 代码块徽标画在聊天区之上、弹层之下：只覆盖正文右上角的一小块。
         code_copy::draw(f, app);
+        link_open::draw(f, app);
         app.sidebar_rect = Rect::default();
         if app.sidebar_visible && (wide_sidebar || app.focus == FocusPane::Sidebar) {
             let mut sidebar = if wide_sidebar {

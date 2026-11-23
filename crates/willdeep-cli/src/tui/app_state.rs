@@ -29,6 +29,7 @@ impl App {
             transcript_content: Rect::default(),
             pending_chat_click: None,
             code_copy: code_copy::CodeCopyState::new(crate::gallery::hosted()),
+            link_open: link_open::LinkOpenState::new(crate::gallery::hosted()),
             transcript_height: 0,
             viewport_height: 10,
             tools: ToolActivity::default(),
@@ -2023,6 +2024,44 @@ impl App {
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
 
+    /// Finder 等复制出来的路径（含 file://）优先收成图片附件，而不是把路径字符串塞进输入框（#197）。
+    fn try_attach_pasted_image_paths(&mut self, value: &str) -> Option<usize> {
+        const MAX_IMAGE_PATHS: usize = 8;
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let lines: Vec<&str> = trimmed.lines().map(str::trim).collect();
+        let candidates: Vec<PathBuf> = lines
+            .iter()
+            .filter_map(|line| pasted_path_candidate(line))
+            .collect();
+        if candidates.is_empty() || candidates.len() > MAX_IMAGE_PATHS {
+            return None;
+        }
+        if lines.iter().any(|line| !line.is_empty() && pasted_path_candidate(line).is_none()) {
+            return None;
+        }
+        let workspace = self.workspace.clone()?;
+        let mut attached = 0usize;
+        for path in candidates {
+            let Some(resolved) = resolve_paste_image_path(&path, workspace.as_path()) else {
+                return None;
+            };
+            let Some(draft) = draft_attachment_from_image_file(&resolved) else {
+                return None;
+            };
+            if self.append_draft_attachment(draft) {
+                attached += 1;
+            }
+        }
+        if attached > 0 {
+            Some(attached)
+        } else {
+            None
+        }
+    }
+
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
     /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
     pub(super) fn paste_goes_inline(value: &str) -> bool {
@@ -2034,6 +2073,18 @@ impl App {
     pub(super) fn handle_paste(&mut self, value: String) {
         self.input.clear_selection();
         self.prompt_history = None;
+        if let Some(attached) = self.try_attach_pasted_image_paths(&value) {
+            if attached > 0 {
+                self.notice = Some(
+                    self.language.pick(
+                        format!("已附加 {attached} 张图片"),
+                        format!("Attached {attached} image(s)"),
+                        format!("{attached} 枚の画像を添付しました"),
+                    ),
+                );
+                return;
+            }
+        }
         if Self::paste_goes_inline(&value) {
             self.input.insert(&value);
         } else {
@@ -2352,9 +2403,43 @@ impl App {
                             "簡潔 UI の下部ステータスバーを非表示にしました",
                         )
                     }
+                    "breath" | "breath-on" => {
+                        self.ui.input_breathing = true;
+                        if let Some(home) = self.display_home.as_deref()
+                            && let Err(error) =
+                                crate::config::save_input_breathing(home, true)
+                        {
+                            self.append_transcript(format!(
+                                "Error: could not save input breathing preference: {error}"
+                            ));
+                            return true;
+                        }
+                        self.language.text(
+                            "简洁 UI 输入框呼吸底色已开启",
+                            "Compact UI input breathing background enabled",
+                            "簡潔 UI の入力欄の呼吸背景をオンにしました",
+                        )
+                    }
+                    "breath-off" => {
+                        self.ui.input_breathing = false;
+                        if let Some(home) = self.display_home.as_deref()
+                            && let Err(error) =
+                                crate::config::save_input_breathing(home, false)
+                        {
+                            self.append_transcript(format!(
+                                "Error: could not save input breathing preference: {error}"
+                            ));
+                            return true;
+                        }
+                        self.language.text(
+                            "简洁 UI 输入框呼吸底色已关闭",
+                            "Compact UI input breathing background disabled",
+                            "簡潔 UI の入力欄の呼吸背景をオフにしました",
+                        )
+                    }
                     other => {
                         self.append_transcript(format!(
-                            "Error: usage: {command} [full|compact|status|no-status] (got `{other}`)"
+                            "Error: usage: {command} [full|compact|status|no-status|breath-on|breath-off] (got `{other}`)"
                         ));
                         return true;
                     }
@@ -2843,6 +2928,84 @@ impl App {
             format!("{}\n\n{prompt}", blocks.join("\n\n"))
         }
     }
+}
+
+use std::path::Path;
+
+const PASTED_IMAGE_SUFFIXES: &[&str] = &[".png", ".jpg", ".jpeg", ".webp", ".gif"];
+
+fn pasted_path_candidate(line: &str) -> Option<PathBuf> {
+    let mut raw = line.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(rest) = raw.strip_prefix("file://") {
+        raw = rest;
+        if raw.starts_with("localhost/") {
+            raw = &raw["localhost".len()..];
+        }
+        raw = raw.trim_start_matches('/');
+    }
+    let path = Path::new(raw);
+    let ext = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    let dotted = format!(".{ext}");
+    if !PASTED_IMAGE_SUFFIXES.contains(&dotted.as_str()) {
+        return None;
+    }
+    Some(path.to_path_buf())
+}
+
+fn resolve_paste_image_path(path: &Path, workspace: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        path.exists().then(|| path.to_path_buf())
+    } else if workspace.join(path).exists() {
+        Some(workspace.join(path))
+    } else {
+        path.exists().then(|| path.to_path_buf())
+    }
+}
+
+fn draft_attachment_from_image_file(path: &Path) -> Option<DraftAttachment> {
+    const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+    const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_ATTACHMENT_BYTES {
+        return None;
+    }
+    let format = image::guess_format(&bytes).ok()?;
+    let media_type = match format {
+        image::ImageFormat::Png => "image/png",
+        image::ImageFormat::Jpeg => "image/jpeg",
+        image::ImageFormat::WebP => "image/webp",
+        image::ImageFormat::Gif => "image/gif",
+        _ => return None,
+    };
+    let (width, height) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    if width == 0
+        || height == 0
+        || u64::from(width).saturating_mul(u64::from(height)) > MAX_IMAGE_PIXELS
+    {
+        return None;
+    }
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image.png")
+        .to_owned();
+    Some(DraftAttachment {
+        id: uuid::Uuid::new_v4(),
+        message: MessageAttachment::Image {
+            name,
+            media_type: media_type.to_owned(),
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            width,
+            height,
+        },
+    })
 }
 
 /// `a` 是否严格早于 `b`。认 `MAJOR.MINOR.PATCH` 与可选的 `-rcN`，正式版晚于同号 rc。

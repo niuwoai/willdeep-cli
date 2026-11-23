@@ -6,6 +6,9 @@ const INPUT_BREATH_PEAK_START: Duration = Duration::from_secs(5);
 const INPUT_BREATH_PEAK_END: Duration = Duration::from_millis(6_500);
 
 fn idle_input_background(app: &App, elapsed: Duration) -> Color {
+    if !app.ui.input_breathing {
+        return COMPOSER_BACKGROUND;
+    }
     let can_breathe = app.composer_ready()
         && app.input.is_empty()
         && app.visible_input_suggestion().is_none()
@@ -336,6 +339,7 @@ mod tests {
     #[test]
     fn idle_input_background_breathes_slowly_and_stops_for_interaction() {
         let mut app = compact_app();
+        app.ui.input_breathing = true;
         assert_eq!(
             idle_input_background(&app, Duration::from_secs(1)),
             COMPOSER_BACKGROUND
