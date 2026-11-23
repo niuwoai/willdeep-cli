@@ -2039,7 +2039,10 @@ impl App {
         if candidates.is_empty() || candidates.len() > MAX_IMAGE_PATHS {
             return None;
         }
-        if lines.iter().any(|line| !line.is_empty() && pasted_path_candidate(line).is_none()) {
+        if lines
+            .iter()
+            .any(|line| !line.is_empty() && pasted_path_candidate(line).is_none())
+        {
             return None;
         }
         let workspace = self.workspace.clone()?;
@@ -2055,11 +2058,7 @@ impl App {
                 attached += 1;
             }
         }
-        if attached > 0 {
-            Some(attached)
-        } else {
-            None
-        }
+        if attached > 0 { Some(attached) } else { None }
     }
 
     /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
@@ -2075,13 +2074,11 @@ impl App {
         self.prompt_history = None;
         if let Some(attached) = self.try_attach_pasted_image_paths(&value) {
             if attached > 0 {
-                self.notice = Some(
-                    self.language.pick(
-                        format!("已附加 {attached} 张图片"),
-                        format!("Attached {attached} image(s)"),
-                        format!("{attached} 枚の画像を添付しました"),
-                    ),
-                );
+                self.notice = Some(self.language.pick(
+                    format!("已附加 {attached} 张图片"),
+                    format!("Attached {attached} image(s)"),
+                    format!("{attached} 枚の画像を添付しました"),
+                ));
                 return;
             }
         }
@@ -2406,8 +2403,7 @@ impl App {
                     "breath" | "breath-on" => {
                         self.ui.input_breathing = true;
                         if let Some(home) = self.display_home.as_deref()
-                            && let Err(error) =
-                                crate::config::save_input_breathing(home, true)
+                            && let Err(error) = crate::config::save_input_breathing(home, true)
                         {
                             self.append_transcript(format!(
                                 "Error: could not save input breathing preference: {error}"
@@ -2423,8 +2419,7 @@ impl App {
                     "breath-off" => {
                         self.ui.input_breathing = false;
                         if let Some(home) = self.display_home.as_deref()
-                            && let Err(error) =
-                                crate::config::save_input_breathing(home, false)
+                            && let Err(error) = crate::config::save_input_breathing(home, false)
                         {
                             self.append_transcript(format!(
                                 "Error: could not save input breathing preference: {error}"
@@ -2947,7 +2942,10 @@ fn pasted_path_candidate(line: &str) -> Option<PathBuf> {
         raw = raw.trim_start_matches('/');
     }
     let path = Path::new(raw);
-    let ext = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
     let dotted = format!(".{ext}");
     if !PASTED_IMAGE_SUFFIXES.contains(&dotted.as_str()) {
         return None;

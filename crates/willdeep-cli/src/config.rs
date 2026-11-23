@@ -24,8 +24,8 @@ use redaction::redact_inline_secrets;
 pub use ui_settings::InputSuggestionColor;
 pub use ui_settings::MAX_LINE_SPACING;
 pub use ui_settings::{UiMode, UiSettings};
-pub use ui_settings::{load_line_spacing, save_line_spacing};
 pub use ui_settings::{load_input_breathing, save_input_breathing};
+pub use ui_settings::{load_line_spacing, save_line_spacing};
 pub use ui_settings::{load_thinking_visibility, save_thinking_visibility};
 
 #[derive(Clone, Debug, Subcommand)]

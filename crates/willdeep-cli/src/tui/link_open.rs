@@ -40,9 +40,7 @@ impl LinkOpenState {
     }
 
     fn label(language: Language) -> String {
-        language
-            .text("↗ 打开", "↗ Open", "↗ 開く")
-            .to_owned()
+        language.text("↗ 打开", "↗ Open", "↗ 開く").to_owned()
     }
 
     fn badge_rect(app: &App, row: usize, label_width: u16) -> Option<Rect> {
@@ -102,10 +100,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 }
 
 impl App {
-    pub(super) fn handle_link_open_mouse(
-        &mut self,
-        mouse: MouseEvent,
-    ) -> Option<LinkOpenAction> {
+    pub(super) fn handle_link_open_mouse(&mut self, mouse: MouseEvent) -> Option<LinkOpenAction> {
         if !self.link_open.hosted {
             return None;
         }
@@ -129,7 +124,10 @@ fn first_http_url(line: &str) -> Option<String> {
     }
     for word in line.split_whitespace() {
         let trimmed = word.trim_matches(|c: char| {
-            matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | ',' | ';' | '.' | '!' | '?' | '\'' | '"')
+            matches!(
+                c,
+                '<' | '>' | '(' | ')' | '[' | ']' | ',' | ';' | '.' | '!' | '?' | '\'' | '"'
+            )
         });
         if openable_http(trimmed) {
             return Some(trimmed.to_owned());
@@ -146,8 +144,7 @@ fn markdown_link_target(value: &str) -> Option<String> {
 }
 
 fn openable_http(value: &str) -> bool {
-    (value.starts_with("https://") || value.starts_with("http://"))
-        && !value.contains('@')
+    (value.starts_with("https://") || value.starts_with("http://")) && !value.contains('@')
 }
 
 #[cfg(test)]
