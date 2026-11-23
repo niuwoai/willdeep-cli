@@ -4,7 +4,7 @@
 
 0.154.0-rc12 的 CI 在编译前先按路径判断改动：`crates`、`web`、`npm`、`integrations`、`examples`、`scripts`、`.github` 及构建清单算代码，其余算文档。三个重 job 保持原名并无条件运行，纯文档时跳过各自的编译与测试步骤，从而仍满足分支保护要求的检查名；混合改动走原路径。Runtime、协议与产物都不变。见[文档改动跳过编译的决策](decisions/2026-11-23-ci-docs-only-skip.md)。本候选尚未安装或公开发布。
 
-0.154.0-rc11 在 Agent 初始化时从持久工具历史重建 ProjectRules 作用域，读取当前规则后生成稳定系统指纹。成功的摘要与对应消息通过执行所有权下的检查点事务保存，并映射展示用 System 消息的边界。自动、手动压缩共用阶段期限和候选等待限制；TUI 统一使用命令目录判断命令、普通输入及队列行为，并保留 develop 的输入归属修复。Runtime 通信协议不变；会话摘要沿用既有格式。见[压缩恢复决策](decisions/2026-11-23-compaction-resume.md)。原始候选为 rc8，合入 develop 的 rc10 后顺延为 rc11；本候选尚未安装或公开发布。
+0.154.0-rc11 在 Agent 初始化时从持久工具历史重建 ProjectRules 作用域，读取当前规则后生成稳定系统指纹。成功的摘要与对应消息通过执行所有权下的检查点事务保存，并映射展示用 System 消息的边界。自动、手动压缩共用阶段期限和候选等待限制；TUI 统一使用命令目录判断命令、普通输入及队列行为，并保留 develop 的输入归属修复。Runtime 通信协议不变；会话摘要沿用既有格式。见[压缩恢复决策](decisions/2026-11-23-compaction-resume.md)。原始候选为 rc8，合入 develop 的 rc10 后顺延为 rc11。2026-11-23 已发布为 tag v0.154.0-rc11，本机 CLI 与 Runtime 已安装为 rc11。
 
 0.154.0-rc10 仅修复进程清理测试的同步：在 stdin 断管注入前通过 `waitid(WNOWAIT)` 观察退出，保留子进程供被测 guard 在展开时回收。生产模块、协议、数据流不变，本机仍运行 rc8。验证见[CI 修复记录](verification/0.154.0-rc10/stdin-cleanup-ci.md)。
 
