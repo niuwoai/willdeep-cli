@@ -180,11 +180,6 @@ impl GalleryFilter {
         (plain, requests)
     }
 
-    /// True while bytes are held back waiting for the rest of a frame.
-    pub(crate) fn holding(&self) -> bool {
-        !self.pending.is_empty()
-    }
-
     /// Releases what has been held too long: a bare marker prefix becomes a key again, and an
     /// unterminated frame is abandoned. The forwarder calls this when its poll times out.
     pub(crate) fn flush_expired(&mut self, now: std::time::Instant) -> Vec<u8> {
@@ -372,6 +367,7 @@ impl GalleryInput {
         // 这些字节会连同 Ctrl+C 一起退回真实终端，那时鼠标追踪已经关了，全变成乱码。
         if let Ok(mut drain) = INPUT_DRAIN.lock() {
             *drain = Some(master_fd);
+            INPUT_DRAIN_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
         }
         if let Ok(mut window) = WINDOW_SIZES.lock() {
             *window = Some((restore, libc::STDIN_FILENO));
@@ -405,16 +401,11 @@ fn forward(
     };
     // 退出时要读完 pty 里剩下的字节，不能卡在一个永远等不到数据的 poll 上。
     let master_fd = output.as_raw_fd();
-    loop {
+    'forward: loop {
         poll_fd.revents = 0;
-        // A held marker prefix (a bare Esc, say) must not wait forever for bytes that are never
-        // coming. With nothing held there is no deadline, so an idle terminal costs no wakeups.
-        let timeout = if filter.holding() || input_drain_requested(master_fd) {
-            GALLERY_POLL_MILLIS
-        } else {
-            -1
-        };
-        let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout) };
+        // 固定节拍：扣着的半截标记要靠它过期；退出排空也只有靠它才能把阻塞在 poll 上的
+        // 线程叫醒。空闲时每 50ms 醒一次，换的是按键不压在过滤器里、退出不等满 200ms。
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, GALLERY_POLL_MILLIS) };
         if ready < 0 {
             if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
                 continue;
@@ -428,7 +419,7 @@ fn forward(
                     let (plain, requests) = filter.push(&buffer[..count]);
                     for request in requests {
                         if tx.send(crate::tui::UiMessage::Gallery(request)).is_err() {
-                            return;
+                            break 'forward;
                         }
                     }
                     if !plain.is_empty() && output.write_all(&plain).is_err() {
@@ -451,6 +442,8 @@ fn forward(
             break;
         }
     }
+    // 线程不在了，这个 fd 也不再有人排空。留给退出路径只会让它空等 200ms。
+    release_input_drain(master_fd);
 }
 
 /// 退出时读完 pty 里剩下的输入。读到空或读不到为止，返回 true 表示可以收工。
@@ -489,20 +482,34 @@ fn drain_pty_input(
 }
 
 /// 退出路径请求转发线程把这个 pty 里剩下的输入读完。
+/// 只有请求位真的置上才算数：安装时记下的 fd 只是「该等谁」。
 #[cfg(unix)]
 fn input_drain_requested(master_fd: std::os::fd::RawFd) -> bool {
-    INPUT_DRAIN
-        .lock()
-        .is_ok_and(|drain| drain.is_some_and(|fd| fd == master_fd))
+    INPUT_DRAIN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+        && INPUT_DRAIN
+            .lock()
+            .is_ok_and(|drain| *drain == Some(master_fd))
 }
 
 /// 转发线程读完后清掉请求。只清自己的 fd，避免误清别人的。
 #[cfg(unix)]
 fn clear_input_drain(master_fd: std::os::fd::RawFd) {
+    if INPUT_DRAIN
+        .lock()
+        .is_ok_and(|drain| *drain == Some(master_fd))
+    {
+        INPUT_DRAIN_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// 转发线程退出后把记下的 fd 一并收掉：没有线程了，再请求也只会空等。
+#[cfg(unix)]
+fn release_input_drain(master_fd: std::os::fd::RawFd) {
     if let Ok(mut drain) = INPUT_DRAIN.lock()
-        && drain.is_some_and(|fd| fd == master_fd)
+        && *drain == Some(master_fd)
     {
         *drain = None;
+        INPUT_DRAIN_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -512,11 +519,13 @@ fn request_input_drain() {
     let Some(master_fd) = INPUT_DRAIN.lock().ok().and_then(|drain| *drain) else {
         return;
     };
+    INPUT_DRAIN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
     while std::time::Instant::now() < deadline {
-        let drained = INPUT_DRAIN
-            .lock()
-            .is_ok_and(|drain| drain.is_none_or(|fd| fd != master_fd));
+        let drained = !INPUT_DRAIN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+            || INPUT_DRAIN
+                .lock()
+                .is_ok_and(|drain| *drain != Some(master_fd));
         if drained {
             return;
         }
@@ -606,9 +615,15 @@ static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 static SAVED_TERMINAL: std::sync::Mutex<Option<(std::os::fd::RawFd, libc::termios)>> =
     std::sync::Mutex::new(None);
 
-/// 退出时置上，让转发线程把 pty 里没读走的输入读完再退。
+/// 退出排空要找的 pty 主端。安装时记下，只为退出路径知道该等谁；它本身不是请求。
 #[cfg(unix)]
 static INPUT_DRAIN: std::sync::Mutex<Option<std::os::fd::RawFd>> = std::sync::Mutex::new(None);
+
+/// 退出路径真正发起的排空请求。与上一条分开：安装时记 fd、退出时发请求，
+/// 若共用一个字段，转发线程会把「安装」当成「马上退出」，启动几十毫秒后自己死掉。
+#[cfg(unix)]
+static INPUT_DRAIN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// The real and filtered descriptors whose window sizes are kept in step.
 #[cfg(unix)]
@@ -774,12 +789,53 @@ mod tests {
         assert!(requests.is_empty());
     }
 
+    /// 退出排空用的主端 fd 在安装时就要记下来，但「记下 fd」不等于「现在开始排空」。
+    /// rc2 把两件事挤在 `INPUT_DRAIN: Option<RawFd>` 里，转发线程第一圈看到 fd 就当成
+    /// 退出请求，启动约 50ms 后自己 break——之后所有按键都停在真实终端里，Ctrl+C
+    /// 再也到不了 TUI（#167）。这个测试盯着线程必须活着。
+    #[test]
+    fn an_armed_drain_descriptor_does_not_stop_the_forwarder() {
+        let _serial = DRAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let (master, slave) = open_pty().unwrap();
+        let master_fd = master.as_raw_fd();
+        // 安装时就是这个顺序：fd 已记下，但没有任何人请求排空。
+        *INPUT_DRAIN.lock().unwrap() = Some(master_fd);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("gallery-armed-test".into())
+            .spawn(move || {
+                forward(slave, master, tx);
+                let _ = done_tx.send(());
+            })
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let exited = done_rx.try_recv().is_ok();
+        *INPUT_DRAIN.lock().unwrap() = None;
+        assert!(
+            !exited,
+            "forwarder exited while the exit drain was only armed, not requested"
+        );
+        // 线程还阻塞在 poll 上，测试进程结束时会一起收掉；不 join，免得把它等死。
+        drop(worker);
+    }
+
+    /// 两个测试都改全局的排空状态，串行执行，互不看见对方的中途值。
+    static DRAIN_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn queued_input_is_drained_before_the_pty_is_torn_down() {
+        let _serial = DRAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         // 复现 #167：事件循环忙着别的事时按键堆在 pty 里，进程一退就原样退回真实终端。
         // 退出前必须把它们读完。
         let (master, slave) = open_pty().unwrap();
         let master_fd = master.as_raw_fd();
+        // 稍后从主端写一个字节把转发线程从 poll 上叫醒；主端本身被移进线程。
+        let wake = duplicate(master_fd).unwrap();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         // 转发线程读真实终端（这里用 slave 充当）、写进 pty 主端。
@@ -793,6 +849,11 @@ mod tests {
         if let Ok(mut drain) = INPUT_DRAIN.lock() {
             *drain = Some(master_fd);
         }
+        INPUT_DRAIN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+        // 不完整的帧标记：过滤器会把它扣住，不会回写，只用来叫醒阻塞在 poll 上的线程。
+        let written = unsafe { libc::write(wake, b"\x1b]7771;".as_ptr().cast(), 7) };
+        assert_eq!(written, 7);
+        unsafe { libc::close(wake) };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
             let drained = INPUT_DRAIN
