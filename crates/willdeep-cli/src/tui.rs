@@ -75,6 +75,7 @@ mod model_provider;
 mod narration;
 mod overlay_dismiss;
 mod paste;
+mod paste_image_path;
 mod peer_commands;
 mod permission_commands;
 mod plan_ui;

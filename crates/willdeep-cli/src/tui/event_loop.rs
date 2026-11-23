@@ -1014,11 +1014,11 @@ pub(super) async fn event_loop(
                 }
                 // Webhook delivery is detached; drain its failures here so a
                 // dead endpoint shows up as a notice instead of silence.
-                if let Some(error)=runtime.notifier.take_error(){
-                    if !app.notifier_delivery_warned {
-                        app.notifier_delivery_warned=true;
-                        app.append_transcript(format!("System: {}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));
-                    }
+                if let Some(error)=runtime.notifier.take_error()
+                    && !app.notifier_delivery_warned
+                {
+                    app.notifier_delivery_warned=true;
+                    app.append_transcript(format!("System: {}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));
                 }
                 app.background_tasks=runtime.background_tasks.snapshots();
                 workflow_ui::refresh(&mut app, &runtime.home, session.id);
