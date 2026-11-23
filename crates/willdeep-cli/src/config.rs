@@ -485,6 +485,12 @@ pub struct AgentSettings {
     /// `context_window`；两处都没有才回落到会话窗口。本地模型窗口远小于云端
     /// 会话时必须写，否则一份按会话窗口切出来的原料会被本地端点拒收。
     pub compressor_context_window: Option<u64>,
+    /// 单个候选一次摘要请求最多等这么多秒。不写是 60 秒，按托管小压缩器定的；
+    /// 慢推理模型（如 gpt-6.1-sol、grok-4.7）做兜底时要调大。
+    pub compressor_candidate_timeout_seconds: Option<u64>,
+    /// 一次压缩的总预算（全部分块、归并、二次压缩共用）。不写时按实际切出来的
+    /// 块数加归并和二次压缩各一次来算，每段都给足候选等待。写了也不能短于候选等待。
+    pub compressor_timeout_seconds: Option<u64>,
     /// 自动整理会话标题。默认开：一屏 `New session` 的历史列表等于没有列表，
     /// 而这条链路只在会话**第一轮**花一次便宜调用，不随对话长度增长。
     /// 关掉后标题停在第一条提示词的确定性派生，仍然可读。
@@ -817,6 +823,14 @@ pub(crate) const MAX_TURNS_CEILING: usize = 1000;
 /// `[agent] token_budget` 的合法区间，与子 Agent 的预算区间一致。
 pub(crate) const TOKEN_BUDGET_MIN: u64 = 1_000;
 pub(crate) const TOKEN_BUDGET_MAX: u64 = 10_000_000;
+/// `[agent] compressor_candidate_timeout_seconds` 的缺省与区间。60 秒按托管小
+/// 压缩器定；上限 180 秒，再慢的模型不该占着这一段不放。
+pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_DEFAULT_SECONDS: u64 = 60;
+pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_MIN_SECONDS: u64 = 15;
+pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_MAX_SECONDS: u64 = 180;
+/// `[agent] compressor_timeout_seconds` 的上限。一次卡住的压缩不能把整个回合
+/// 冻住十几分钟；600 秒是普通请求原来的上限。
+pub(crate) const COMPRESSION_TIMEOUT_MAX_SECONDS: u64 = 600;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1532,6 +1546,31 @@ pub(crate) fn validate(file: &ConfigFile, path: &Path) -> Result<()> {
             willdeep_core::CONTEXT_WINDOW_MAX
         );
     }
+    let candidate_timeout = file
+        .agent
+        .compressor_candidate_timeout_seconds
+        .unwrap_or(COMPRESSION_CANDIDATE_TIMEOUT_DEFAULT_SECONDS);
+    if !(COMPRESSION_CANDIDATE_TIMEOUT_MIN_SECONDS..=COMPRESSION_CANDIDATE_TIMEOUT_MAX_SECONDS)
+        .contains(&candidate_timeout)
+    {
+        bail!(
+            "agent.compressor_candidate_timeout_seconds must be between {COMPRESSION_CANDIDATE_TIMEOUT_MIN_SECONDS} and {COMPRESSION_CANDIDATE_TIMEOUT_MAX_SECONDS}"
+        );
+    }
+    let timeout = file
+        .agent
+        .compressor_timeout_seconds
+        .unwrap_or(candidate_timeout);
+    if timeout > COMPRESSION_TIMEOUT_MAX_SECONDS {
+        bail!(
+            "agent.compressor_timeout_seconds must be at most {COMPRESSION_TIMEOUT_MAX_SECONDS}"
+        );
+    }
+    if timeout < candidate_timeout {
+        bail!(
+            "agent.compressor_timeout_seconds ({timeout}) must be at least the candidate timeout ({candidate_timeout})"
+        );
+    }
     crate::i18n::Language::parse(file.agent.language.as_deref())?;
     if file.local_model.enabled {
         let base_url = reqwest::Url::parse(file.local_model.base_url.trim())
@@ -2073,6 +2112,35 @@ model = "qwen3.5-9b"
         let error = validate(&parsed, Path::new("config.toml"))
             .expect_err("a window smaller than any usable budget must be rejected");
         assert!(error.to_string().contains("compressor_context_window"));
+    }
+
+    #[test]
+    fn compression_timeouts_keep_the_total_at_least_as_long_as_one_candidate() {
+        let accept = |text: &str| {
+            let parsed: ConfigFile = toml::from_str(text).expect("parse compression timeouts");
+            validate(&parsed, Path::new("config.toml"))
+        };
+        accept("version = 1\n").expect("unset timeouts use the defaults");
+        accept(
+            "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 90\ncompressor_timeout_seconds = 90\n",
+        )
+        .expect("a total equal to the candidate wait is the shortest that can finish one chunk");
+
+        let too_short = accept(
+            "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 90\ncompressor_timeout_seconds = 60\n",
+        )
+        .expect_err("the shared budget must cover at least one candidate wait");
+        assert!(too_short.to_string().contains("at least the candidate timeout"));
+
+        let below_range = accept(
+            "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 14\n",
+        )
+        .expect_err("14 seconds is below the candidate range");
+        assert!(below_range.to_string().contains("between 15 and 180"));
+
+        let above_cap = accept("version = 1\n[agent]\ncompressor_timeout_seconds = 601\n")
+            .expect_err("a compression must not be allowed to run for many minutes");
+        assert!(above_cap.to_string().contains("at most 600"));
     }
 
     #[test]

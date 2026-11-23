@@ -794,12 +794,19 @@ fn complete_compression_settings_preserve_fallback_and_clear_removed_window() {
 [agent]
 compressor_model = "summary-a"
 compressor_context_window = 32768
+compressor_candidate_timeout_seconds = 90
+compressor_timeout_seconds = 240
 "#,
         )
         .unwrap(),
     };
     let explicit = build_compression_settings(&loaded, &parent, main.follower()).unwrap();
     assert_eq!(explicit.context_window, Some(32_768));
+    assert_eq!(
+        explicit.candidate_timeout,
+        Some(std::time::Duration::from_secs(90))
+    );
+    assert_eq!(explicit.timeout, Some(std::time::Duration::from_secs(240)));
     assert_eq!(explicit.candidates.len(), 2);
     assert!(!explicit.candidates[0].1);
     assert_eq!(
@@ -825,6 +832,8 @@ compressor_context_window = 32768
     )
     .unwrap();
     assert_eq!(reset.context_window, None);
+    assert_eq!(reset.candidate_timeout, None);
+    assert_eq!(reset.timeout, None);
     assert_eq!(reset.candidates.len(), 2);
     assert!(reset.candidates[0].1);
     assert_eq!(

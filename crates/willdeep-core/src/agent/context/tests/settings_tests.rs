@@ -18,6 +18,8 @@ async fn the_same_agent_switches_compressors_and_clears_the_old_window() {
         .set_compression_settings(CompressionSettings {
             candidates: vec![(first.clone(), true)],
             context_window: Some(WINDOW / 4),
+            candidate_timeout: None,
+            timeout: None,
         })
         .unwrap();
     let small_budget = agent.summary_input_budget();
@@ -37,6 +39,8 @@ async fn the_same_agent_switches_compressors_and_clears_the_old_window() {
         .set_compression_settings(CompressionSettings {
             candidates: vec![(second.clone(), false)],
             context_window: None,
+            candidate_timeout: None,
+            timeout: None,
         })
         .unwrap();
     assert_eq!(agent.summary_input_budget(), session_budget);
@@ -102,6 +106,8 @@ async fn refreshing_during_a_request_keeps_the_original_snapshot_for_all_chunks(
     let agent = Arc::new(agent.with_compression_settings(CompressionSettings {
         candidates: vec![(first.clone(), true)],
         context_window: Some(WINDOW / 4),
+        candidate_timeout: None,
+        timeout: None,
     }));
     let budget = agent.summary_input_budget();
     let running_agent = agent.clone();
@@ -113,6 +119,8 @@ async fn refreshing_during_a_request_keeps_the_original_snapshot_for_all_chunks(
         .set_compression_settings(CompressionSettings {
             candidates: vec![(second.clone(), false)],
             context_window: None,
+            candidate_timeout: None,
+            timeout: None,
         })
         .unwrap();
     first.resume.notify_one();

@@ -46,6 +46,11 @@ safety_judge = true
 # 压缩摘要器一次能吃下的原料上限所用的窗口。不写取压缩档案的 context_window，
 # 再没有就沿用会话窗口。
 # compressor_context_window = 131072
+# 单段候选等待（秒），15–180，不写是 60。慢推理模型做兜底时调大。
+# compressor_candidate_timeout_seconds = 60
+# 整次压缩的总预算（秒），全部分块、归并和二次压缩共用，上限 600。
+# 不写时按实际分块数计算；写了不能短于单段等待。
+# compressor_timeout_seconds = 300
 auto_title = true       # 会话第一轮自动整理标题；关掉后停在第一条提示词的派生标题
 # title_model = "glm-5" # 标题摘要模型；默认取会话模型（请求只发一问一答各 800 字）
 input_suggestions = true # 轮次结束后在空输入框里灰字预测你的下一句，Tab 采用；用 title_model 那一档模型，与 auto_title 互不影响
