@@ -4,6 +4,8 @@
 
 0.155.0-rc2 把 MCP 迁移代码从 `config.rs` 拆到 `config/mcp_migration.rs`，文件回到 3000 行上限以内；迁移行为与 rc1 相同。rc1 把 MCP 服务定义从 `config.toml` 拆到 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件。一个文件写坏只跳过这一个服务，模型配置照常读取；主配置里残留的 `[mcp_servers.*]` 在启动时迁出，读不懂的段留在原处但不参与解析。插件自带的 MCP 与 OAuth token 的位置不变。
 
+0.154.0-rc12 让 CI 对纯文档改动不再编译和测试：diff 不含代码路径时，分支保护要求的五个重检查由同名的成功检查代替，保护规则不用改；同时包含代码的改动仍跑完整验证。见[文档改动跳过编译的决策](docs/decisions/2026-11-23-ci-docs-only-skip.md)。本候选尚未安装或公开发布。
+
 0.154.0-rc11 修复会话恢复后的压缩复用：从工具历史重建已发现的规则作用域，及时持久化成功摘要，后续模型失败或取消后仍能复用。压缩总期限为 120 秒、候选等待上限为 45 秒，失败保留历史及已有摘要；重试报错区分退避、耗时与剩余时间。TUI 未识别的斜杠输入按普通消息处理，保留回显、附件和排队，已知命令仍校验参数。设计与边界见[压缩恢复决策](docs/decisions/2026-11-23-compaction-resume.md)。原始候选 rc8 的受影响原生回归、严格 Clippy、版本检查与真实 TUI 4 项验收通过，见[原始验收记录](docs/verification/0.154.0-rc8/README.md)；合入最新 develop 后顺延至 rc11，TUI 712 项、严格 Clippy、版本检查及真实 PTY 的斜杠输入 4 项和双布局输入归属 15 项验证通过，见[集成验收](docs/verification/0.154.0-rc11/integration.md)。2026-11-23 已发布：合入 develop 并快进 main，tag v0.154.0-rc11，Release 全部成功；npm 与 Homebrew formula 已更新，本机 CLI 与 Runtime 已安装为 rc11。
 
 0.154.0-rc10 修复进程清理回归测试中的退出同步竞态，使用非回收的退出观察保证 stdin 已断管，同时保留对 ChildGuard 回收行为的严格验证；生产运行逻辑不变。本机仍为已验收的 rc8，候选验证见[CI 修复记录](docs/verification/0.154.0-rc10/stdin-cleanup-ci.md)。
