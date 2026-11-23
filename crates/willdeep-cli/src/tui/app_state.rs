@@ -108,6 +108,8 @@ impl App {
             runtime_diagnostic: None,
             runtime_auto_start_tried: false,
             runtime_version_warned: false,
+            qterm_link_warned: false,
+            notifier_delivery_warned: false,
             runtime_auto_upgrade_pending: false,
             runtime_auto_upgrade_tried: false,
             surfaced_gates: BTreeSet::new(),

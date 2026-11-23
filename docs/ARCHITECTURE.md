@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc3
+> 最后更新：2026-11-24 | 当前版本：v0.155.0-rc4
+
+0.155.0-rc4 修了 rc2 引入的一处输入回归：图库转发线程把「安装时记下退出排空的主端」误当成「现在开始排空」，启动几十毫秒后自己退出，之后 Ctrl+C 等按键都到不了 TUI（#167）。
 
 0.155.0-rc3 将 PR 自建派发身份与测试目标分离：`CI_DISPATCH_REF/SHA` 来自真实源分支及源提交，`expected_sha` 保持父 CI 的合并提交。worker 核验 `workflow_sha == GITHUB_SHA` 后 checkout `expected_sha`；协调者使用源提交核验 child run/job，保留请求唯一标识、完整 suite 证据及取消范围。普通 push 的两种 SHA 必须相同。详见 [CI runner 兜底决策](decisions/2026-11-18-ci-runner-fallback.md)。
 
