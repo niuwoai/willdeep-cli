@@ -1,6 +1,12 @@
 # Product Overview
 
-> 最后更新：2026-11-20 | 当前版本：v0.154.0-rc7
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc10
+
+0.154.0-rc10 修复进程清理回归测试中的退出同步竞态，使用非回收的退出观察保证 stdin 已断管，同时保留对 ChildGuard 回收行为的严格验证；生产运行逻辑不变。本机仍为已验收的 rc8，候选验证见[CI 修复记录](docs/verification/0.154.0-rc10/stdin-cleanup-ci.md)。
+
+0.154.0-rc9 将 MCP 缺失进程诊断测试隔离到私有临时目录，避免真实 PATH 权限影响预期错误类型；运行时行为不变。本机安装仍为已验收的 rc8，rc9 为 CI 修复候选，验证结果见[CI 修复记录](docs/verification/0.154.0-rc9/mcp-startup-ci.md)。
+
+0.154.0-rc8 统一 TUI 滚动、原生选择与人工弹层的输入归属：原生选择冻结画面但后台继续，提问或审批到达时恢复鼠标捕获；提问支持明确按钮、正文滚动和答案点击定位，弹层事件不穿透；聊天与侧栏独立接收滚轮。沿用一屏工作台与中英日界面，宿主终端保存的整屏历史仍取决于终端实现。设计与验收边界见[输入归属决策](docs/decisions/2026-11-23-tui-input-ownership.md)。候选验收通过，本机 CLI 与 Runtime 已安装为 rc8，尚未公开发行；原生 TUI 707 项通过、2 项忽略，full/compact 真实 PTY 共 15 项检查通过，安装产物复验同样通过，见[验收记录](docs/verification/0.154.0-rc8/tui-input-ownership.md)与[本机安装记录](docs/verification/0.154.0-rc8/local-installation.md)。
 
 0.154.0-rc7 补充 MCP 初始化失败诊断：错误包含服务名、传输方式与失败阶段，并保留底层原因；不展示启动参数、环境变量或含凭据的 URL。本版本为修复候选，MCP 单元测试 28 项及严格 Clippy 通过，尚未安装或公开发布；范围与失败历史见[诊断验收记录](docs/verification/0.154.0-rc7/mcp-startup-diagnostics.md)。
 

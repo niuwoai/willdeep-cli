@@ -306,10 +306,17 @@ async fn mouse_can_resolve_approval_and_single_choice_question() {
         answer: PromptEditor::default(),
         sender: question_sender,
     });
-    app.question_rect = Rect::new(10, 10, 60, 10);
-    app.question_hits = vec![(13, 0), (14, 1)];
-    app.question_footer_row = Some(18);
-    app.handle_mouse(20, 14, &registry, &skills);
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| human_gate_ui::render(frame, &mut app))
+        .unwrap();
+    let row = app
+        .question_hits
+        .iter()
+        .find(|(_, index)| *index == 1)
+        .unwrap()
+        .0;
+    app.handle_mouse(app.question_view.body.x, row, &registry, &skills);
     assert_eq!(question_receiver.await.unwrap().as_deref(), Some("B"));
 }
 
@@ -1068,13 +1075,26 @@ async fn mouse_can_toggle_and_submit_multi_choice_question() {
         answer: PromptEditor::default(),
         sender,
     });
-    app.question_rect = Rect::new(10, 10, 60, 10);
-    app.question_hits = vec![(13, 0), (14, 1)];
-    app.question_footer_row = Some(18);
-
-    app.handle_mouse(20, 13, &registry, &skills);
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| human_gate_ui::render(frame, &mut app))
+        .unwrap();
+    let row = app
+        .question_hits
+        .iter()
+        .find(|(_, index)| *index == 0)
+        .unwrap()
+        .0;
+    app.handle_mouse(app.question_view.body.x, row, &registry, &skills);
     assert!(app.question.as_ref().unwrap().checked[0]);
-    app.handle_mouse(60, 18, &registry, &skills);
+    let button = app
+        .question_view
+        .hits
+        .iter()
+        .find(|(_, action)| *action == human_gate_ui::QuestionAction::Send)
+        .unwrap()
+        .0;
+    app.handle_mouse(button.x, button.y, &registry, &skills);
     assert_eq!(receiver.await.unwrap().as_deref(), Some("A"));
 }
 #[test]
