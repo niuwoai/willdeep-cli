@@ -7,6 +7,7 @@ require 'json'
 require 'minitest/autorun'
 require 'minitest/mock'
 require 'yaml'
+require 'tmpdir'
 require_relative '../ci_self_hosted_attempt'
 
 module CiRunnerContracts
@@ -585,8 +586,90 @@ class CiSelfHostedAttemptTest < Minitest::Test
     assert_equal branches.map { |name| ['git', 'check-ref-format', "refs/heads/#{name}"] }, arguments
   end
 
+  def test_pull_request_dispatches_source_branch_but_tests_exact_merge_on_both_platforms
+    CiSelfHostedAttempt::PLATFORMS.each_key do |os|
+      [200, 204].each do |status|
+        @api = FakeApi.new(os)
+        @api.dispatch_status = status
+        @api.scenario = ->(_time) { { run: { 'head_branch' => 'ci/pr-self-hosted' } } }
+        merge_sha = 'c' * 40
+        result = attempt(ref: 'refs/pull/204/merge', sha: merge_sha,
+                         dispatch_ref: 'refs/heads/ci/pr-self-hosted', dispatch_sha: SHA)
+        assert result.passed, result.reason
+        dispatch = @api.calls.first.fetch(:body)
+        assert_equal 'ci/pr-self-hosted', dispatch.fetch('ref')
+        assert_equal merge_sha, dispatch.dig('inputs', 'expected_sha')
+        assert_equal SHA, dispatch.dig('inputs', 'workflow_sha')
+        assert_empty cancellations
+        if status == 204
+          discovery = @api.calls.find { |call| call[:path].include?('/runs?') }
+          assert_includes discovery.fetch(:path), 'branch=ci%2Fpr-self-hosted'
+        end
+      end
+    end
+  end
+
+  def test_entrypoint_preserves_pr_merge_target_and_consumes_dispatch_environment
+    Dir.mktmpdir('ci-pr-ref-') do |directory|
+      env = { 'GITHUB_TOKEN' => 'offline-fixture', 'GITHUB_REPOSITORY' => 'example/project',
+              'GITHUB_REF' => 'refs/pull/204/merge', 'GITHUB_SHA' => 'c' * 40,
+              'CI_DISPATCH_REF' => 'refs/heads/feature/ci', 'CI_DISPATCH_SHA' => SHA,
+              'CI_WORKER_OS' => @api.os, 'GITHUB_RUN_ID' => PARENT.to_s, 'GITHUB_RUN_ATTEMPT' => '2',
+              'GITHUB_OUTPUT' => File.join(directory, 'output'),
+              'GITHUB_STEP_SUMMARY' => File.join(directory, 'summary') }
+      SecureRandom.stub(:hex, NONCE) do
+        CiSelfHostedAttempt::Api.stub(:new, @api) do
+          capture_io { CiSelfHostedAttempt.run(env) }
+        end
+      end
+      assert_equal "self_hosted_passed=true\n", File.read(env.fetch('GITHUB_OUTPUT'))
+      assert_includes File.read(env.fetch('GITHUB_STEP_SUMMARY')), 'verified success'
+      dispatch = @api.calls.first.fetch(:body)
+      assert_equal 'feature/ci', dispatch.fetch('ref')
+      assert_equal 'c' * 40, dispatch.dig('inputs', 'expected_sha')
+      assert_equal SHA, dispatch.dig('inputs', 'workflow_sha')
+    end
+  end
+
+  def test_pull_request_accepts_every_legal_source_branch_name
+    ['修复/CI兜底', 'feature/ci+fallback', '$(false)', 'foo@bar'].each do |name|
+      @api = FakeApi.new
+      @api.scenario = ->(_time) { { run: { 'head_branch' => name } } }
+      result = attempt(ref: 'refs/pull/204/merge', sha: 'c' * 40,
+                       dispatch_ref: "refs/heads/#{name}", dispatch_sha: SHA)
+      assert result.passed, "#{name}: #{result.reason}"
+      assert_equal name, @api.calls.first.dig(:body, 'ref')
+    end
+  end
+
+  def test_pull_request_workflow_drift_is_not_trusted
+    %i[run job].each do |identity|
+      @api = FakeApi.new
+      @api.scenario = ->(_time) { { identity => { 'head_sha' => 'c' * 40 } } }
+      result = attempt(ref: 'refs/pull/204/merge', sha: 'c' * 40,
+                       dispatch_ref: 'refs/heads/feature/ci', dispatch_sha: SHA)
+      refute result.passed
+      assert_match(/identity.*mismatch/, result.reason)
+      assert_empty cancellations if identity == :run
+    end
+  end
+
+  def test_git_validation_failure_reports_its_exit_status
+    failure = Open3.capture3('git', 'check-ref-format', 'refs/heads/invalid name')
+    Open3.stub(:capture3, failure) do
+      result = attempt
+      refute result.passed
+      assert_match(/source branch ref validation failed \(git exit 1\)/, result.reason)
+      assert_empty @api.calls
+    end
+  end
+
   def test_invalid_inputs_never_dispatch
-    [{ sha: 'bad' }, { ref: 'refs/tags/v1' }, { ref: 'refs/heads/a b' }, { ref: 'refs/heads/a..b' },
+    [{ sha: 'bad' }, { ref: 'refs/pull/204/merge' },
+     { ref: 'refs/pull/204/head', dispatch_ref: 'refs/heads/feature/ci' },
+     { dispatch_sha: 'c' * 40 },
+     { ref: 'refs/pull/204/merge', dispatch_ref: 'refs/heads/feature/ci', dispatch_sha: 'bad' },
+     { ref: 'refs/tags/v1' }, { ref: 'refs/heads/a b' }, { ref: 'refs/heads/a..b' },
      { ref: 'refs/heads/.hidden/topic' }, { ref: 'refs/heads/foo.lock/bar' }, { ref: 'refs/heads/a@{b' },
      { ref: 'refs/heads/a//b' }, { ref: 'refs/heads/a/' }, { ref: 'refs/heads/a.' }, { ref: 'refs/heads/' },
      { ref: "refs/heads/a\nb" }, { repo: '../other' }, { os: 'windows-latest' },
@@ -623,6 +706,8 @@ class CiRunnerWorkflowContractTest < Minitest::Test
   def test_fork_tag_and_release_cannot_dispatch_but_same_repo_pull_requests_can
     step = @ci.fetch('jobs').fetch('test').fetch('steps').find { |item| item['id'] == 'self_hosted' }
     assert_equal "steps.changes.outputs.code == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && github.workflow == 'CI' && github.workflow_ref == format('{0}/.github/workflows/ci.yml@{1}', github.repository, github.ref) && !startsWith(github.ref, 'refs/tags/') && github.event.repository.fork == false", step.fetch('if')
+    assert_equal "${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}", step.dig('env', 'CI_DISPATCH_REF')
+    assert_equal '${{ github.event.pull_request.head.sha || github.sha }}', step.dig('env', 'CI_DISPATCH_SHA')
     assert_equal 'ruby scripts/ci_self_hosted_attempt.rb', step.fetch('run')
     assert step.fetch('continue-on-error')
     assert_equal false, @ci.dig('jobs', 'test', 'steps', 0, 'with', 'persist-credentials')
@@ -691,6 +776,28 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     assert_equal '${{ inputs.expected_sha }}', checkout.dig('with', 'ref')
     assert_equal false, checkout.dig('with', 'persist-credentials')
     assert_equal './.github/actions/ci-test', steps.find { |step| step['name'] == 'Run complete CI suite' }.fetch('uses')
+  end
+
+  def test_worker_validates_workflow_sha_and_checks_out_the_distinct_test_sha
+    identity = @worker.dig('jobs', 'self-hosted-worker', 'steps').first
+    assert_equal '${{ inputs.workflow_sha }}', identity.dig('env', 'WORKFLOW_SHA')
+    events = @worker.fetch('on') { @worker.fetch(true) }
+    assert_equal true, events.dig('workflow_dispatch', 'inputs', 'workflow_sha', 'required')
+    # Execute the actual YAML validator without a shell, including PR merge/source
+    # divergence and the race where the source branch moves before dispatch.
+    require 'shellwords'
+    command = Shellwords.split(identity.fetch('run'))
+    env = { 'EXPECTED_SHA' => 'c' * 40, 'WORKFLOW_SHA' => SHA, 'GITHUB_SHA' => SHA,
+            'GITHUB_REF' => 'refs/heads/ci/pr-self-hosted', 'WORKER_OS' => 'ubuntu-latest',
+            'REQUEST_ID' => "#{PARENT}-2-ubuntu-latest-#{NONCE}" }
+    output, error, status = Open3.capture3(env, *command)
+    assert status.success?, "#{output}#{error}"
+    [{ 'GITHUB_SHA' => 'd' * 40 }, { 'WORKFLOW_SHA' => 'bad' }, { 'EXPECTED_SHA' => 'bad' },
+     { 'GITHUB_REF' => 'refs/tags/v1' }, { 'REQUEST_ID' => 'bad' }].each do |change|
+      _output, error, status = Open3.capture3(env.merge(change), *command)
+      refute status.success?, change.inspect
+      assert_includes error, 'invalid worker identity'
+    end
   end
 
   def test_all_original_main_tests_and_path_bases_are_preserved

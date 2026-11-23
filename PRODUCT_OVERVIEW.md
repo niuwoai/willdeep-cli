@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc2
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc3
+
+0.155.0-rc3 修复本仓库 PR 的自建 runner 调度：真实源分支负责派发，父 CI 的精确合并提交负责完整测试，合法分支名不影响自建优先。源分支移动、排队或执行失败时仍由托管环境兜底。本候选尚未进行远端自建验收或公开发布。
 
 0.155.0-rc2 修了四处显示与退出问题，并把本仓库自己的 pull request 也接到自建 runner。0.155.0-rc1 把三项功能合到同一个候选。一是 `@willdeep/hooks` 契约包，用于查看 willdeep-cli 当前五条生命周期 Hook、解析宿主传入的事件，并在写入配置前检查无效组合，同时新增 [Hooks 体系](docs/CLI_HOOKS.md)；这是契约包，不会把 TypeScript 扩展加载进宿主。二是把 MCP 服务定义从 `config.toml` 拆到 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件，迁移代码放在 `config/mcp_migration.rs`；一个文件写坏只跳过这一个服务，模型配置照常读取，主配置里残留的 `[mcp_servers.*]` 在启动时迁出，读不懂的段留在原处但不参与解析，插件自带的 MCP 与 OAuth token 的位置不变。三是把压缩等待改为可配置：单段候选等待默认 60 秒，整次总预算不写时按实际分块数计算，不再用固定的 120 秒；两个值都能在配置文件、配置工作台和聊天里改，总预算短于单段等待会被拒绝，见[压缩等待可配置](docs/decisions/2026-11-23-configurable-compression-timeout.md)。`config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。CI 上同一提交只占一套名额，同一分支只保留最新一次；issue 的批量处理改由本仓库自己的 willdeep CLI 跑。本版本尚未安装或公开发布。
 
