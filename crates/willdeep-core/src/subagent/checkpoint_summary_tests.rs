@@ -210,6 +210,66 @@ async fn recreated_worker_restores_the_saved_summary_without_resummarizing() {
 }
 
 #[tokio::test]
+async fn worker_outcome_preserves_summary_anchor_when_notices_are_merged_back() {
+    let fixture = Fixture::new();
+    let mut messages = history();
+    let mut notice = Message::system("external peer notice");
+    notice.source = Some(crate::types::MessageSource::FederationNotice);
+    messages.insert(2, notice.clone());
+    messages.insert(3, notice);
+    fixture.seed(messages);
+    let compressor = Arc::new(SummaryProvider::default());
+    let provider = Arc::new(ReportProvider::default());
+    let first = run(
+        &fixture.agent(provider.clone(), compressor.clone()),
+        &fixture.home,
+        &fixture.workspace,
+        fixture.id,
+        "reader",
+        "inspect".into(),
+    )
+    .await
+    .unwrap();
+    let saved = fixture.store().load(fixture.id).unwrap();
+    let summary = saved.context_summary.as_ref().unwrap();
+    assert_eq!(
+        summary.through,
+        first.context_summary.as_ref().unwrap().through + 2,
+        "final outcome save must retain the checkpoint's remapped boundary"
+    );
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .filter(|message| crate::checkpoint::is_federation_notice(message))
+            .count(),
+        2
+    );
+    let summary_calls = compressor.0.lock().unwrap().len();
+    assert!(summary_calls > 0);
+    run(
+        &fixture.agent(provider, compressor.clone()),
+        &fixture.home,
+        &fixture.workspace,
+        fixture.id,
+        "reader",
+        "continue after restart".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(compressor.0.lock().unwrap().len(), summary_calls);
+    assert_eq!(
+        fixture
+            .store()
+            .load(fixture.id)
+            .unwrap()
+            .context_summary
+            .as_ref(),
+        Some(summary)
+    );
+}
+
+#[tokio::test]
 async fn recreated_worker_updates_the_summary_using_only_the_uncovered_tail() {
     let fixture = Fixture::new();
     fixture.seed(history());

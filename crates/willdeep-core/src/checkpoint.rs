@@ -64,6 +64,8 @@ pub struct RunCheckpoint {
     pub plan: Option<crate::conversation::Plan>,
     pub metadata: CheckpointMetadata,
     pub messages: Vec<Message>,
+    /// A completed summary of this checkpoint's durable message prefix.
+    pub context_summary: Option<crate::context_summary::ContextSummary>,
     /// 当前目标的快照（没有目标时为 `None`）。与消息同一次写入：重启后预算与
     /// 验收清单接着算，不会和对话脱节。
     pub goal: Option<crate::goal::GoalState>,
@@ -106,6 +108,7 @@ pub trait CheckpointSink: Send + Sync {
 
 pub(crate) struct CheckpointRecorder<'a> {
     pub plan: Option<crate::conversation::Plan>,
+    pub context_summary: Option<crate::context_summary::ContextSummary>,
     completion_patch: Option<CompletionPatchEvidence>,
     background: Option<&'a crate::BackgroundTaskRegistry>,
     sink: Option<&'a dyn CheckpointSink>,
@@ -134,6 +137,7 @@ impl<'a> CheckpointRecorder<'a> {
     pub fn new(sink: Option<&'a dyn CheckpointSink>) -> Self {
         Self {
             plan: None,
+            context_summary: None,
             completion_patch: None,
             background: None,
             sink,
@@ -330,6 +334,26 @@ impl<'a> CheckpointRecorder<'a> {
         self.completion_patch.as_ref().map(|p| &p.baseline)
     }
 
+    /// Keep the last successful summary with its source history, including an
+    /// older cache retained after preparation fails. A failed durable save has
+    /// an uncertain disk boundary and must stay untouched.
+    pub fn record_prepared(
+        &mut self,
+        messages: &[Message],
+        summary: Option<crate::context_summary::ContextSummary>,
+        turns: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<(), AgentError> {
+        if self.save_uncertain {
+            return Ok(());
+        }
+        if summary.is_some() {
+            self.context_summary = summary;
+        }
+        self.record(messages, turns, input_tokens, output_tokens)
+    }
+
     pub fn record(
         &mut self,
         messages: &[Message],
@@ -381,6 +405,7 @@ impl<'a> CheckpointRecorder<'a> {
                 pending_call_ids,
             },
             messages: messages.to_vec(),
+            context_summary: self.context_summary.clone(),
             goal: self.goal_snapshot(),
         };
         if let Some(sink) = self.sink {
@@ -790,9 +815,11 @@ impl CheckpointSink for SessionCheckpointSink {
     fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), String> {
         self.store
             .update(self.session_id, |session| {
-                let mut messages = checkpoint.messages.clone();
-                preserve_federation_notices(&mut messages, &session.messages);
-                session.messages = messages;
+                apply_execution_history(
+                    session,
+                    &checkpoint.messages,
+                    checkpoint.context_summary.as_ref(),
+                );
                 if let Some(plan) = &checkpoint.plan {
                     session.current_plan = Some(plan.clone());
                 }
@@ -808,6 +835,52 @@ impl CheckpointSink for SessionCheckpointSink {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+/// Apply messages and their matching summary as one execution snapshot. Display
+/// notices may have arrived since loading; keep them without shifting the covered
+/// prefix. Both checkpoints and successful outcome saves must use this boundary.
+pub fn apply_execution_history(
+    session: &mut crate::Session,
+    messages: &[Message],
+    summary: Option<&crate::context_summary::ContextSummary>,
+) {
+    let mut merged = messages.to_vec();
+    preserve_federation_notices(&mut merged, &session.messages);
+    session.context_summary = summary
+        .and_then(|summary| remap_summary(summary, messages, &merged))
+        .or_else(|| {
+            session
+                .context_summary
+                .as_ref()
+                .and_then(|summary| remap_summary(summary, &session.messages, &merged))
+        });
+    session.messages = merged;
+}
+
+/// Preserve the number of covered non-system rows across display-row merges.
+/// The original hash is deliberately unchanged: SummaryCache must still reject
+/// edited prefixes, malformed summaries, and changes to stable project rules.
+fn remap_summary(
+    summary: &crate::context_summary::ContextSummary,
+    source: &[Message],
+    target: &[Message],
+) -> Option<crate::context_summary::ContextSummary> {
+    let covered = source
+        .get(..summary.through)?
+        .iter()
+        .filter(|message| message.role != Role::System)
+        .count();
+    let mut rows = target
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message.role != Role::System);
+    for _ in 0..covered {
+        rows.next()?;
+    }
+    let mut summary = summary.clone();
+    summary.through = rows.next().map_or(target.len(), |(index, _)| index);
+    Some(summary)
 }
 
 /// 只给人看的联邦群系统行；模型请求、工具批次扫描都不应看到它。
@@ -870,6 +943,8 @@ pub fn preserve_federation_notices(messages: &mut Vec<Message>, persisted: &[Mes
 mod input_scope_tests;
 #[cfg(test)]
 mod stream_tests;
+#[cfg(test)]
+mod summary_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

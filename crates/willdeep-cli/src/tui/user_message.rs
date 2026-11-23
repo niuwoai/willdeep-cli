@@ -126,7 +126,7 @@ impl App {
         if !narration::is_display_only_command(&prompt) {
             self.append_transcript(format!("You: {prompt}"));
             // 斜杠命令不是发给模型的消息，附件还留在草稿里，不挂到这一行上。
-            if !prompt.trim_start().starts_with('/') {
+            if !command_catalog::is_command(&prompt) {
                 let attachments = self
                     .attachments
                     .iter()

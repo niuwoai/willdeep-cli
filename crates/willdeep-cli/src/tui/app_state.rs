@@ -2198,7 +2198,7 @@ impl App {
     }
     pub(super) fn handle_slash_command(&mut self, prompt: &str, skills: &SkillCatalog) -> bool {
         let value = prompt.trim();
-        if !value.starts_with('/') {
+        if !command_catalog::is_command(value) {
             return false;
         }
         let (command, args) = value.split_once(char::is_whitespace).unwrap_or((value, ""));
@@ -2547,7 +2547,10 @@ impl App {
                 self.ensure_welcome(&self.workspace.clone().unwrap_or_default(), self.language);
                 self.scroll_to_bottom();
             }
-            _ => self.append_transcript(format!("Error: unknown command {command}; use /help")),
+            _ => self.append_transcript(command_catalog::invalid_command_arguments(
+                self.language,
+                value,
+            )),
         }
         true
     }

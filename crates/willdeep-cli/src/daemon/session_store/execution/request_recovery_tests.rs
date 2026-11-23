@@ -100,6 +100,7 @@ impl Fixture {
             metadata: CheckpointMetadata::default(),
             plan: None,
             goal: None,
+            context_summary: None,
         })
         .unwrap();
     }

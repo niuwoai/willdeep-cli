@@ -74,6 +74,7 @@ async fn host_continuation_keeps_unattributed_drift_from_requesting_tests() {
             },
             messages: vec![Message::user("earlier independent query")],
             goal: None,
+            context_summary: None,
         })
         .unwrap();
     let provider = Arc::new(SyntheticProvider::default());
