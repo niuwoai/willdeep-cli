@@ -92,7 +92,12 @@ fn selected_fields(error: &Value) -> String {
 pub(super) fn stream_error_detail(error: &Value, fallback: &str) -> String {
     let detail = safe_error_detail(&selected_fields(error));
     if detail.is_empty() {
-        fallback.to_owned()
+        return fallback.to_owned();
+    }
+    // 上游的 message 常常已经把同一句套了一遍（网关把我们的错误原文塞回 message），
+    // 再拼一次 fallback 就会整段重复显示。detail 已经以 fallback 开头就不再加。
+    if detail.starts_with(fallback) {
+        detail
     } else {
         format!("{fallback}: {detail}")
     }
@@ -119,6 +124,23 @@ mod tests {
         assert_eq!(
             stream_error_detail(&json!({"message": {"request": "private"}}), "fallback"),
             "fallback"
+        );
+    }
+
+    /// 网关把我们自己的错误原文塞回 message 时，不能再套一遍前缀。
+    #[test]
+    fn a_message_that_already_starts_with_the_fallback_is_not_repeated() {
+        let repeated = stream_error_detail(
+            &json!({"message": "provider emitted a stream error: invalid provider response: quota"}),
+            "provider emitted a stream error",
+        );
+        assert_eq!(
+            repeated,
+            "provider emitted a stream error: invalid provider response: quota"
+        );
+        assert_eq!(
+            repeated.matches("provider emitted a stream error").count(),
+            1
         );
     }
 

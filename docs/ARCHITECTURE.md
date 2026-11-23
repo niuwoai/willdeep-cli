@@ -1,8 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc1
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc2
 
-0.155.0-rc1 同时带上三项改动。一是 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)：包只描述宿主已经投递的五条 shell Hook，解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合；它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。二是把用户 MCP 定义从 `ConfigFile.mcp_servers` 的持久化位置挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`，迁移代码在 `config/mcp_migration.rs`。内存里的 `mcp_servers` 仍是运行时来源，Harness、`willdeep mcp` 和 doctor 的读取路径不变；加载时先按行摘掉主配置里的 `[mcp_servers.*]` 再做严格解析，所以一段写坏不会再让模型配置读不出来。迁移只在每一段都读懂时改写主配置，写不回去就回滚刚写出的独立文件。插件包的 `mcp.json` 与 `mcp-oauth/<name>.json` 不在这次拆分里。三是压缩预算改为按设置计算：单段候选等待默认 60 秒，整次总预算在开始摘要、块数已知时按块数加归并和二次压缩各一次来算，也可以在 `[agent]` 里显式指定。自动投影与手动 `/compress` 共用同一份快照；正在进行的压缩不读新值。Runtime 通信协议不变。见[压缩等待可配置](decisions/2026-11-23-configurable-compression-timeout.md)。`config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。CI 的 `push` 只保留 `develop`、`main` 和 `v*` tag，同一分支只保留最新一次运行，文档改动跳过编译的判断不变，见[CI 排队与并发](decisions/2026-11-23-ci-queue-concurrency.md)。issue 批量处理由 `.github/workflows/claude.yml` 调本仓库自己的 willdeep CLI 完成，一次会话只开一个 PR。本版本尚未安装或公开发布。
+0.155.0-rc2 修了四处显示与退出问题，并把本仓库自己的 pull request 也接到自建 runner。0.155.0-rc1 同时带上三项改动。一是 `@willdeep/hooks` 契约包和 [Hooks 体系](CLI_HOOKS.md)：包只描述宿主已经投递的五条 shell Hook，解析一次 stdin JSON、列出可拦截事件，并检查启动前会被拒绝的配置组合；它不注册扩展、不启动进程，也不改变 Hook 的执行与审批边界。二是把用户 MCP 定义从 `ConfigFile.mcp_servers` 的持久化位置挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`，迁移代码在 `config/mcp_migration.rs`。内存里的 `mcp_servers` 仍是运行时来源，Harness、`willdeep mcp` 和 doctor 的读取路径不变；加载时先按行摘掉主配置里的 `[mcp_servers.*]` 再做严格解析，所以一段写坏不会再让模型配置读不出来。迁移只在每一段都读懂时改写主配置，写不回去就回滚刚写出的独立文件。插件包的 `mcp.json` 与 `mcp-oauth/<name>.json` 不在这次拆分里。三是压缩预算改为按设置计算：单段候选等待默认 60 秒，整次总预算在开始摘要、块数已知时按块数加归并和二次压缩各一次来算，也可以在 `[agent]` 里显式指定。自动投影与手动 `/compress` 共用同一份快照；正在进行的压缩不读新值。Runtime 通信协议不变。见[压缩等待可配置](decisions/2026-11-23-configurable-compression-timeout.md)。`config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。CI 的 `push` 只保留 `develop`、`main` 和 `v*` tag，同一分支只保留最新一次运行，文档改动跳过编译的判断不变，见[CI 排队与并发](decisions/2026-11-23-ci-queue-concurrency.md)。issue 批量处理由 `.github/workflows/claude.yml` 调本仓库自己的 willdeep CLI 完成，一次会话只开一个 PR。本版本尚未安装或公开发布。
 
 0.154.0-rc12 的 CI 在编译前先按路径判断改动：`crates`、`web`、`npm`、`integrations`、`examples`、`scripts`、`.github` 及构建清单算代码，其余算文档。三个重 job 保持原名并无条件运行，纯文档时跳过各自的编译与测试步骤，从而仍满足分支保护要求的检查名；混合改动走原路径。Runtime、协议与产物都不变。见[文档改动跳过编译的决策](decisions/2026-11-23-ci-docs-only-skip.md)。本候选尚未安装或公开发布。
 
@@ -29,7 +29,7 @@ Core 在不透明工具执行前发现项目规则时，仅跳过可确认无法
 npm 发行先核验三个 GitHub Release 产物，再发布包；发布成功后同步 `rc` 与 `latest`，让显式候选通道与默认 npm 安装通道指向同一发行版本。目标版本已存在时只修复标签，不重复发布；发布前检查当前通道版本，旧任务不得把标签回退，rc 序号按项目规则作数字比较。自动发行与手动标签工作流使用同一并发组串行更新。发布失败不更新标签，标签更新失败使发行任务失败。手动 dist-tag 工作流保留为恢复入口。
 
 完成门禁只约束当前请求及其验收范围；整工作区变化本身不授予补测或恢复历史任务的权限。`monitor` 等返回后仍可能写文件的操作留下未验证暂停，该暂停随检查点保留，后台结果唤醒的宿主续轮沿用它，不重新催跑测试。历史计划只作背景，需要扩大范围时先取得明确同意；当前实际改动、显式检查、完成契约、活动 Goal 及同任务恢复的保护保留。边界见[任务验证作用域决策](decisions/2026-11-18-task-verification-scope.md)。
-CI 的可信分支 push 通过托管协调作业派发同提交、同平台的独立自建验证，分别限制接单等待和执行时间；自建未完成有效验证时回退到同平台托管完整验证。自建 worker 位于独立的 `.github/workflows/ci-self-hosted.yml`，检查名称与主 CI 区分，取消范围限于本次 worker run。两种执行复用同一测试步骤，保留原平台检查名称与失败门禁。PR、tag 与发布调用继续使用托管环境；协调仅持有本仓库 Actions 操作权限，不新增常驻服务或额外凭据。默认分支尚未登记手动派发触发器时安全回退托管，详见 [CI runner 兜底决策](decisions/2026-11-18-ci-runner-fallback.md)。
+CI 的可信分支 push 通过托管协调作业派发同提交、同平台的独立自建验证，分别限制接单等待和执行时间；自建未完成有效验证时回退到同平台托管完整验证。自建 worker 位于独立的 `.github/workflows/ci-self-hosted.yml`，检查名称与主 CI 区分，取消范围限于本次 worker run。两种执行复用同一测试步骤，保留原平台检查名称与失败门禁。本仓库自己的 pull request 与可信分支 push 一样先走自建，从 fork 开来的 PR、tag 与发布调用继续使用托管环境；协调仅持有本仓库 Actions 操作权限，不新增常驻服务或额外凭据。默认分支尚未登记手动派发触发器时安全回退托管，详见 [CI runner 兜底决策](decisions/2026-11-18-ci-runner-fallback.md)。
 
 长任务重启续推以 Runtime 轮次身份关联持久用户消息，用户消息序号用于跨系统消息整理与压缩定位；正文的路由增强和图片降级不改变请求归属。旧记录不根据最后一条相同文本推断本轮身份。验证按同一 Git 路径基准对照覆盖输入的内容指纹，重命名包含来源与目标；Cargo 目标涵盖本地依赖及共享输入，同名目标合并候选范围，根目录包覆盖全部根内路径。脚本与单文件测试没有可信依赖图时按整库快照判断，无法可靠解析的命令不收窄。只有覆盖输入可证明未变且 HEAD 稳定时，才能将通过证据绑定到结束快照。审计导出继续把已还原到 HEAD 的普通路径记为已不在。
 

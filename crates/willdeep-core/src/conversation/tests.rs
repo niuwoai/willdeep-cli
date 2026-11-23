@@ -598,3 +598,20 @@ fn goal_envelope_is_hidden_but_the_typed_text_stays() {
         assert_eq!(visible_user_text(quoted), quoted);
     }
 }
+
+#[test]
+fn explicit_skill_blocks_are_hidden_but_the_typed_text_stays() {
+    let content = "<explicit_skill name=\"deploy\">\n---\nname: deploy\n---\n先跑测试再发布。\n</explicit_skill>\n\n用 $deploy 发布";
+    assert_eq!(visible_user_text(content), "用 $deploy 发布");
+    // 多个技能都要剥掉，只留用户写的那句。
+    let two = "<explicit_skill name=\"a\">\n甲\n</explicit_skill>\n\n<explicit_skill name=\"b\">\n乙\n</explicit_skill>\n\n一起用";
+    assert_eq!(visible_user_text(two), "一起用");
+    // 半截块、或正文落在未闭合代码围栏里的，原样保留。
+    for quoted in [
+        "<explicit_skill name=\"deploy\">\n只有开头",
+        "<explicit_skill name=\"deploy\">\n正文\n</explicit_skill>\n\n```\n未闭合",
+        "解释这个格式：\n\n<explicit_skill name=\"x\">\n示例\n</explicit_skill>",
+    ] {
+        assert_eq!(visible_user_text(quoted), quoted);
+    }
+}
