@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.155.0-rc3] - 2026-11-23
+
+### Fixed
+- 把 `crates/willdeep-cli/src/config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。压缩等待的行为不变。
+
 ## [0.155.0-rc2] - 2026-11-23
 
 ### Fixed

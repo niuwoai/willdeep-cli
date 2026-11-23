@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc2
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc3
+
+0.155.0-rc3 修正 rc2 的 CI：`crates/willdeep-cli/src/config.rs` 的测试模块拆到 `config/tests.rs`，文件回到 3000 行上限以内。压缩等待的行为不变。本候选尚未安装或公开发布。
 
 0.155.0-rc2 修正 rc1 的 CI：压缩等待配置的格式已通过 `cargo fmt --check`，聊天配置的 schema 与快照也不再把键名里的 `candidate` 误判为泄露候选配置全文。压缩等待的行为不变。本候选尚未安装或公开发布。
 
