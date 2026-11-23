@@ -186,6 +186,29 @@ pub(crate) fn receipt(name: &str, output: &str, is_error: bool) -> Option<serde_
     serde_json::to_value(display).ok()
 }
 
+/// Middle lines of a large per-file diff collapse to one marker row (#203).
+fn elide_diff_body_lines(mut lines: Vec<String>, language: Language) -> Vec<String> {
+    const MAX_VISIBLE: usize = 96;
+    const HEAD: usize = 36;
+    const TAIL: usize = 36;
+    if lines.len() <= MAX_VISIBLE {
+        return lines;
+    }
+    let omitted = lines.len().saturating_sub(HEAD + TAIL);
+    let marker = language
+        .text(
+            "… 省略 {n} 行（点击行可展开完整差异）",
+            "… {n} lines omitted (expand the row for the full diff)",
+            "… {n} 行を省略（行を展開すると差分全体）",
+        )
+        .replace("{n}", &omitted.to_string());
+    let tail = lines.split_off(lines.len() - TAIL);
+    lines.truncate(HEAD);
+    lines.push(marker);
+    lines.extend(tail);
+    lines
+}
+
 /// Convert a committed receipt into bounded, literal text. No Markdown or terminal escapes.
 fn format_edit(value: &serde_json::Value, language: Language) -> Option<String> {
     const MAX_FILES: usize = 32;
@@ -207,12 +230,14 @@ fn format_edit(value: &serde_json::Value, language: Language) -> Option<String> 
         let removed = file.get("removed")?.as_u64()?;
         lines.push(format!("{}  +{added} −{removed}", safe_text(path)));
         let (mut old, mut new) = (0u64, 0u64);
+        let path_line = lines.len();
+        let mut file_body = Vec::new();
         for line in diff.lines() {
             if let Some(hunk) = line.strip_prefix("@@ -") {
                 let (left, right) = hunk.split_once(" +")?;
                 old = left.split(',').next()?.parse().ok()?;
                 new = right.split([',', ' ']).next()?.parse().ok()?;
-                lines.push(safe_text(line));
+                file_body.push(safe_text(line));
                 continue;
             }
             let (left, right) = match line.as_bytes().first() {
@@ -233,12 +258,13 @@ fn format_edit(value: &serde_json::Value, language: Language) -> Option<String> 
                     pair
                 }
                 _ => {
-                    lines.push(safe_text(line));
+                    file_body.push(safe_text(line));
                     continue;
                 }
             };
-            lines.push(format!("{left:>5} │ {right:>5} │ {}", safe_text(line)));
+            file_body.push(format!("{left:>5} │ {right:>5} │ {}", safe_text(line)));
         }
+        lines.splice(path_line..path_line, elide_diff_body_lines(file_body, language));
         if file.get("truncated")?.as_bool()? {
             lines.push(
                 language

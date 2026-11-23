@@ -667,16 +667,16 @@ pub(super) async fn event_loop(
             app.question.is_some(),
             app.qterm_gate_generation,
         );
-        if qterm.reporter.take_error() {
-            app.notice = Some(
-                language
-                    .text(
-                        "QTerm 状态连接暂不可用；任务继续运行",
-                        "QTerm status connection unavailable; task continues",
-                        "QTerm 状態接続を利用できません。タスクは継続します",
-                    )
-                    .to_owned(),
-            );
+        if qterm.reporter.take_error() && !app.qterm_link_warned {
+            app.qterm_link_warned = true;
+            app.append_transcript(format!(
+                "System: {}",
+                language.text(
+                    "QTerm 状态连接暂不可用；任务继续运行",
+                    "QTerm status connection unavailable; task continues",
+                    "QTerm 状態接続を利用できません。タスクは継続します",
+                )
+            ));
         }
         if let Some(after) = app.runtime_follow_after.take() {
             while runtime_event_rx.try_recv().is_ok() {}
@@ -1011,7 +1011,12 @@ pub(super) async fn event_loop(
                 }
                 // Webhook delivery is detached; drain its failures here so a
                 // dead endpoint shows up as a notice instead of silence.
-                if let Some(error)=runtime.notifier.take_error(){app.notice=Some(format!("{}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));}
+                if let Some(error)=runtime.notifier.take_error(){
+                    if !app.notifier_delivery_warned {
+                        app.notifier_delivery_warned=true;
+                        app.append_transcript(format!("System: {}: {error}",language.text("通知渠道","Notification channels","通知チャネル")));
+                    }
+                }
                 app.background_tasks=runtime.background_tasks.snapshots();
                 workflow_ui::refresh(&mut app, &runtime.home, session.id);
                 if !app.running && app.permission_picker.is_none() { dispatch::wake_for_workflows(&mut app, session, store, &agent, runtime)?; }

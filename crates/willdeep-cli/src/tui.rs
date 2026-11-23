@@ -497,6 +497,10 @@ struct App {
     /// A version mismatch is announced once in the transcript; the sidebar
     /// warning then stays up on its own.
     runtime_version_warned: bool,
+    /// QTerm 状态上报连不上时只往记录里写一次 System，别每秒占住 notice（#200/#206）。
+    qterm_link_warned: bool,
+    /// 通知渠道投递失败同样只提示一次，避免被当成「一进会话就报错」（#206）。
+    notifier_delivery_warned: bool,
     /// Runtime 比客户端旧、本会话还没试过自动升级：事件循环据此发起一次。
     runtime_auto_upgrade_pending: bool,
     runtime_auto_upgrade_tried: bool,

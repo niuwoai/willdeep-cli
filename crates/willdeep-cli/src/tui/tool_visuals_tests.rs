@@ -255,6 +255,29 @@ fn display_bounds_controls_and_localized_truncation_are_explicit() {
 }
 
 #[test]
+fn large_committed_diff_elides_middle_lines_with_localized_marker() {
+    let mut body = String::from("@@ -1,200 +1,200 @@\n context\n");
+    for i in 0..120 {
+        body.push_str(&format!("-{i}\n+{i}\n"));
+    }
+    let display = json!({
+        "files": [{
+            "path": "src/large.rs",
+            "added": 120,
+            "removed": 120,
+            "truncated": false,
+            "diff": body,
+        }]
+    });
+    for language in [Language::ZhCn, Language::En, Language::Ja] {
+        let formatted = format_edit(&display, language).expect("bounded diff");
+        let line_count = formatted.lines().count();
+        assert!(line_count < 200, "{line_count} lines for {language:?}");
+        assert!(formatted.contains(language.text("省略", "omitted", "省略")));
+    }
+}
+
+#[test]
 fn edit_diff_collapses_when_the_turn_has_its_final_result_and_reopens_on_click() {
     let mut app = app();
     app.running = true;
