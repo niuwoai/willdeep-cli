@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.154.0-rc12] - 2026-11-23
+
+### Changed
+- 新增 Claude 批次处理 workflow：有写权限的人在 issue 评论里写 @claude 或打上 claude 标签，只把该 issue 排入队列；手动跑一次 workflow 时，由同一次会话把队列里的 issue 一起规划并解决，只对 develop 开一个 PR，避免每个 issue 各开一个。
+
 ## [0.154.0-rc11] - 2026-11-23
 
 ### Fixed
