@@ -9,6 +9,39 @@ permissions:
   contents: read
 
 jobs:
+  # 文档改动不编译。分支保护把下面五个检查名列为必需，而 GitHub 不把 skipped 算作通过，
+  # 所以不能用 paths-ignore 直接跳过：纯文档时由 ci-skip 以相同名字报成功。
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # 列出的是会改变构建或测试结果的路径；其余（docs、markdown、bench）视为文档。
+          # 测试开始读取某个文档时，把该路径加进这里。
+          filters: |
+            code:
+              - 'crates/**'
+              - 'web/**'
+              - 'npm/**'
+              - 'integrations/**'
+              - 'examples/**'
+              - 'scripts/**'
+              - '.github/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - 'deny.toml'
+              - 'clippy.toml'
+              - 'rustfmt.toml'
+              - '.rustfmt.toml'
+
   test:
     permissions:
       contents: read
@@ -20,6 +53,8 @@ jobs:
         # Windows 不再发版，也不再跑 CI。windows-latest 的测试反复因 runner 上的进程枚举超时失败，
         # 而发布步骤依赖整份验证，一次失败就把已经编好的 macOS 和 Linux 包也卡住。
         os: [macos-latest, ubuntu-latest]
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # 托管协调者不依赖自建 runner 接单；保留 test (matrix.os) 检查名称。
     runs-on: ${{ matrix.os }}
     # 5 分钟排队 + 60 分钟自建 + 60 分钟托管，以及 API/checkout 余量。
@@ -45,6 +80,8 @@ jobs:
 
   linux-architectures:
     name: Linux ${{ matrix.target }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # 每个架构跑在同架构的原生 runner 上。aarch64 以前在 x86 上走 cross 容器（Ubuntu 16.04，
     # git 2.7），不认 `git init -b`、`git status --porcelain=v1`，测试环境比产品要求的 git 还老。
     runs-on: ${{ matrix.runner }}
@@ -75,6 +112,8 @@ jobs:
 
   wsl-smoke:
     name: WSL ABI smoke test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,3 +134,23 @@ jobs:
         run: |
           target/x86_64-unknown-linux-gnu/release/willdeep --version
           file target/x86_64-unknown-linux-gnu/release/willdeep | grep 'ELF 64-bit LSB'
+
+  # 纯文档改动时，上面的重 job 被跳过。分支保护要求的五个检查名由此处以成功状态补上，
+  # 名字必须与被跳过的 job 逐字一致，GitHub 取同名检查的最新结果。
+  ci-skip:
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - test (ubuntu-latest)
+          - test (macos-latest)
+          - Linux x86_64-unknown-linux-gnu
+          - Linux aarch64-unknown-linux-gnu
+          - WSL ABI smoke test
+    steps:
+      - name: Record the skipped suite
+        run: echo "Only documentation changed; ${{ matrix.check }} was not run."
