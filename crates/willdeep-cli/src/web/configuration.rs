@@ -305,7 +305,7 @@ fn read_settings(path: &std::path::Path) -> anyhow::Result<ProviderSettings> {
     let file: crate::config::ConfigFile = if contents.trim().is_empty() {
         crate::config::ConfigFile::default()
     } else {
-        toml::from_str(&contents).context("parse provider configuration")?
+        crate::config::parse_config_text(&contents).context("parse provider configuration")?
     };
     let providers = file
         .providers
@@ -363,8 +363,8 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
     // The reasoning panel hides connection fields. Their summary values may be
     // inferred defaults or empty (for api_base_env), never connection edits.
     if update.reasoning_only {
-        let old: crate::config::ConfigFile =
-            toml::from_str(&current).context("parse provider configuration")?;
+        let old =
+            crate::config::parse_config_text(&current).context("parse provider configuration")?;
         anyhow::ensure!(
             old.providers.contains_key(&update.id),
             "provider was not found"
@@ -408,7 +408,7 @@ fn save_provider(path: &std::path::Path, update: ProviderUpdate) -> anyhow::Resu
     let old: crate::config::ConfigFile = if current.trim().is_empty() {
         crate::config::ConfigFile::default()
     } else {
-        toml::from_str(&current).context("parse provider configuration")?
+        crate::config::parse_config_text(&current).context("parse provider configuration")?
     };
     let existing = old.providers.get(&update.id);
     if key.is_empty() && existing.is_none() {
@@ -599,7 +599,7 @@ fn patch_reasoning(
 }
 
 fn save_validated_configuration(path: &std::path::Path, patched: &str) -> anyhow::Result<()> {
-    let parsed: crate::config::ConfigFile = toml::from_str(patched)
+    let parsed = crate::config::parse_config_text(patched)
         .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     crate::config::validate(&parsed, path)?;
     if let Some(parent) = path.parent() {

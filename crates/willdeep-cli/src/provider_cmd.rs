@@ -82,7 +82,7 @@ fn parse_file(contents: &str) -> Result<ConfigFile> {
     if contents.trim().is_empty() {
         return Ok(ConfigFile::default());
     }
-    toml::from_str(contents).context("parse configuration")
+    crate::config::parse_config_text(contents).context("parse configuration")
 }
 
 fn list(config_path: Option<&Path>, json: bool) -> Result<()> {
@@ -324,7 +324,7 @@ fn provider_references(file: &ConfigFile, name: &str) -> Vec<String> {
 }
 
 fn save_validated(path: &Path, patched: &str) -> Result<()> {
-    let parsed: ConfigFile = toml::from_str(patched)
+    let parsed = crate::config::parse_config_text(patched)
         .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     config::validate(&parsed, path)?;
     if let Some(parent) = path.parent() {

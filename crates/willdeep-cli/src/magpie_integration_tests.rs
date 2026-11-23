@@ -126,6 +126,7 @@ fn configured() -> LoadedConfig {
     "#,
         )
         .unwrap(),
+        mcp_skipped: Vec::new(),
     }
 }
 fn foreground() -> crate::Cli {

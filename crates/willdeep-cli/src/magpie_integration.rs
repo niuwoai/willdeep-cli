@@ -556,6 +556,7 @@ pub async fn pin_new(
     } else {
         LoadedConfig {
             file: ConfigFile::default(),
+            mcp_skipped: Vec::new(),
         }
     };
     let mut cli = crate::Cli::bare();

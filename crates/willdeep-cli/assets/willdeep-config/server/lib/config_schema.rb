@@ -201,17 +201,6 @@ module ConfigSchema
       ]
     },
     {
-      id: "mcp_servers", prefix: "mcp_servers", title: "MCP 服务",
-      description: "每个 [mcp_servers.<name>] 是一个外部 MCP 服务", instanceHint: "name 用字母数字与连字符",
-      fields: [
-        { key: "command", label: "启动命令", type: "string", default: nil },
-        { key: "args", label: "启动参数", type: "stringArray", default: [] },
-        { key: "startup_timeout_seconds", label: "启动超时（秒）", type: "int", default: 10, min: 1, max: 300,
-          description: "1 到 300" },
-        { key: "enabled", label: "启用", type: "bool", default: true }
-      ]
-    },
-    {
       id: "subagents", prefix: "subagents", title: "子代理",
       description: "每个 [subagents.<profile>] 覆盖该角色的默认参数", instanceHint: "profile 用职责 id",
       suggestions: %w[generalist implementer tester reviewer ops_runner],
@@ -359,7 +348,7 @@ module ConfigSchema
 
     def section_name_for(group_id, instance)
       case group_id
-      when "providers", "mcp_servers", "subagents"
+      when "providers", "subagents"
         "#{group_id}.#{valid_instance_name!(instance)}"
       else
         g = group(group_id)

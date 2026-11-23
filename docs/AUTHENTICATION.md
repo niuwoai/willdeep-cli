@@ -164,14 +164,14 @@ Daemon 同时监听随机 `127.0.0.1` 端口和一个本地传输通道。客户
 | `WILLDEEP_CLIENT_LOGIN_SECRET` | some.im 浏览器登录的客户端密钥，构建时注入 |
 | `WILLDEEP_HOME` | 配置与运行时目录，默认 `~/.willdeep` |
 | `WILLDEEP_CONFIG` | 显式配置文件路径 |
-| `[mcp_servers.*].bearer_token_env` 指向的变量 | 远程 MCP 服务的静态 Bearer token，变量名由配置指定 |
-| `[mcp_servers.*.oauth].client_secret_env` 指向的变量 | 机密 OAuth 客户端的 client_secret，公共客户端不需要 |
+| `$WILLDEEP_HOME/.mcp/<name>.toml` 的 `bearer_token_env` 指向的变量 | 远程 MCP 服务的静态 Bearer token，变量名由配置指定 |
+| 同一文件 `[oauth].client_secret_env` 指向的变量 | 机密 OAuth 客户端的 client_secret，公共客户端不需要 |
 
 完整环境变量清单见 [配置指南](CONFIGURATION.md)。
 
 ## 七、远程 MCP 服务的 OAuth token
 
-配了 `[mcp_servers.<name>.oauth]` 的 Streamable HTTP 服务用 `willdeep mcp login <name>` 登录：
+在 `$WILLDEEP_HOME/.mcp/<name>.toml` 里配了 `[oauth]` 的 Streamable HTTP 服务用 `willdeep mcp login <name>` 登录：
 OAuth 2.1 授权码 + PKCE（S256），本机开一个只监听 `127.0.0.1` 的随机端口收**一次**回调，
 `state` 对不上一律拒绝；没有预注册 `client_id` 就按 RFC 7591 动态注册；token 请求带
 `resource`（RFC 8707）把 token 绑到这个服务。

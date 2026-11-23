@@ -930,6 +930,7 @@ pub(crate) async fn build(
     // silently run with legacy defaults.
     let mut effective = LoadedConfig {
         file: loaded.file.clone(),
+        mcp_skipped: loaded.mcp_skipped.clone(),
     };
     if let Some(parameters) = willdeep_core::runtime_parameters::RuntimeParameters::load(home)
         .map_err(anyhow::Error::msg)?

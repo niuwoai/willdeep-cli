@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc11
+> 最后更新：2026-11-23 | 当前版本：v0.155.0-rc1
+
+0.155.0-rc1 把用户 MCP 定义从 `ConfigFile.mcp_servers` 的持久化位置挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`。内存里的 `mcp_servers` 仍是运行时来源，Harness、`willdeep mcp` 和 doctor 的读取路径不变；加载时先按行摘掉主配置里的 `[mcp_servers.*]` 再做严格解析，所以一段写坏不会再让模型配置读不出来。迁移只在每一段都读懂时改写主配置，写不回去就回滚刚写出的独立文件。插件包的 `mcp.json` 与 `mcp-oauth/<name>.json` 不在这次拆分里。
 
 0.154.0-rc11 在 Agent 初始化时从持久工具历史重建 ProjectRules 作用域，读取当前规则后生成稳定系统指纹。成功的摘要与对应消息通过执行所有权下的检查点事务保存，并映射展示用 System 消息的边界。自动、手动压缩共用阶段期限和候选等待限制；TUI 统一使用命令目录判断命令、普通输入及队列行为，并保留 develop 的输入归属修复。Runtime 通信协议不变；会话摘要沿用既有格式。见[压缩恢复决策](decisions/2026-11-23-compaction-resume.md)。原始候选为 rc8，合入 develop 的 rc10 后顺延为 rc11。2026-11-23 已发布为 tag v0.154.0-rc11，本机 CLI 与 Runtime 已安装为 rc11。
 

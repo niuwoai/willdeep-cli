@@ -59,6 +59,7 @@ pub(super) async fn run_runtime_turn_inner(
                     } else {
                         Ok(crate::config::LoadedConfig {
                             file: Default::default(),
+                            mcp_skipped: Vec::new(),
                         })
                     }
                 })

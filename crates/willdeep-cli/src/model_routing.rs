@@ -248,7 +248,7 @@ pub fn save(
         );
     }
 
-    let parsed: ConfigFile = toml::from_str(&patched)
+    let parsed = crate::config::parse_config_text(&patched)
         .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     crate::config::validate(&parsed, path)?;
     write_private_atomic(path, patched.as_bytes())?;
@@ -712,7 +712,7 @@ pub fn save_default_approval(path: &Path, mode: willdeep_core::ApprovalMode) -> 
         "approval",
         Some(toml_string(mode.as_str())),
     );
-    let parsed: ConfigFile = toml::from_str(&patched)
+    let parsed = crate::config::parse_config_text(&patched)
         .with_context(|| format!("validate updated configuration: {}", path.display()))?;
     crate::config::validate(&parsed, path)?;
     write_private_atomic(path, patched.as_bytes())
@@ -730,12 +730,46 @@ pub fn save_session_startup(path: &Path, mode: crate::session_startup::StartupMo
         "session_startup",
         Some(toml_string(mode.as_str())),
     );
-    let parsed: ConfigFile = toml::from_str(&patched).context("validate startup configuration")?;
+    let parsed =
+        crate::config::parse_config_text(&patched).context("validate startup configuration")?;
     crate::config::validate(&parsed, path)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create startup configuration directory")?;
     }
     write_private_atomic(path, patched.as_bytes())
+}
+
+/// 删掉正文里所有 `[mcp_servers]` 与 `[mcp_servers.*]` 段，其余原样保留。
+///
+/// MCP 定义已经挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`。迁移时用它把残留
+/// 段从主配置里摘出去；注释和别的段不动。
+pub(crate) fn strip_mcp_sections(contents: &str) -> String {
+    let trailing_newline = contents.ends_with('\n');
+    let lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
+    let mut kept = Vec::with_capacity(lines.len());
+    let mut dropping = false;
+    for line in &lines {
+        let trimmed = line.trim();
+        if is_section_header(trimmed) {
+            dropping = trimmed == "[mcp_servers]"
+                || (trimmed.starts_with("[mcp_servers.") && trimmed.ends_with(']'));
+        }
+        if dropping {
+            continue;
+        }
+        kept.push(line.clone());
+    }
+    while kept.first().is_some_and(|line| line.trim().is_empty()) {
+        kept.remove(0);
+    }
+    while kept.last().is_some_and(|line| line.trim().is_empty()) {
+        kept.pop();
+    }
+    let mut result = kept.join("\n");
+    if trailing_newline || !result.is_empty() {
+        result.push('\n');
+    }
+    result
 }
 
 pub(crate) fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {

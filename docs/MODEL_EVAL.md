@@ -53,7 +53,7 @@ ruby scripts/model_eval_trend.rb --alarm --inject                            # �
 
 每个任务一次 `willdeep run --local --output json --input prompt.md --full-auto --max-turns 24`（墙钟 300 秒），
 工作区是 fixture 铺成的临时 git 仓库，`WILLDEEP_HOME` 指向私有临时目录，所以会话不混进 `~/.willdeep/sessions`。
-配置从 `~/.willdeep/config.toml` 派生：原文照抄，只砍 `[notifications]`（六十次 webhook）和 `[mcp_servers.*]`
+配置从 `~/.willdeep/config.toml` 派生：原文照抄，只砍 `[notifications]`（六十次 webhook）和残留的 `[mcp_servers.*]`
 （用不上，白等）；派生文件 0600、跑完即删，凭据不进报告不进日志。行为指标只认 `session_metrics.rb` 这一条算路。
 
 ### 报告与归档

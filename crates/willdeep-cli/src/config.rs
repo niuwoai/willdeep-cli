@@ -12,6 +12,7 @@ pub const CONFIG_VERSION: u32 = 1;
 pub(crate) mod browser;
 #[cfg(test)]
 mod init_tests;
+mod mcp_files;
 mod redaction;
 pub(crate) mod search;
 #[cfg(test)]
@@ -896,6 +897,8 @@ fn resolve_config_path(explicit_path: Option<&Path>) -> Result<(PathBuf, bool)> 
 #[derive(Clone)]
 pub struct LoadedConfig {
     pub file: ConfigFile,
+    /// 读到了但没采用的 MCP 文件。主配置解析不受影响；启动时另行列出。
+    pub mcp_skipped: Vec<String>,
 }
 
 impl LoadedConfig {
@@ -909,16 +912,32 @@ impl LoadedConfig {
             // [rules] 时它不会自动生效，由配置页提示用户启用。目录已存在说明
             // 用户有自己的规则，什么都不做。失败不挡住启动。
             let _ = willdeep_core::rules::seed_bundled_rules();
+            let mut file = ConfigFile::default();
+            let skipped = attach_mcp_servers(&mut file, &path, "", LegacyMcp::Absent)?;
             return Ok(Self {
-                file: ConfigFile::default(),
+                file,
+                mcp_skipped: skipped,
             });
         }
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("read configuration file: {}", path.display()))?;
-        let file: ConfigFile = toml::from_str(&contents)
+        // MCP 段先按宽松文档拆出来。它的字段不合法不能再让整份模型配置
+        // 解析失败：拆不出来的段只告警，主配置照常读。
+        let legacy = take_legacy_mcp(&contents);
+        let parseable = match &legacy {
+            LegacyMcp::Clean { stripped, .. } => stripped.as_str(),
+            LegacyMcp::Broken { stripped, .. } => stripped.as_str(),
+            LegacyMcp::Absent | LegacyMcp::Unreadable => contents.as_str(),
+        };
+        let file = parse_config_text(parseable)
             .with_context(|| format!("parse TOML configuration: {}", path.display()))?;
         validate(&file, &path)?;
-        Ok(Self { file })
+        let mut file = file;
+        let skipped = attach_mcp_servers(&mut file, &path, &contents, legacy)?;
+        Ok(Self {
+            file,
+            mcp_skipped: skipped,
+        })
     }
 
     /// 长驻 Runtime（daemon / 进行中的会话）用：重载失败时沿用该路径上一次成功解析的快照。
@@ -975,6 +994,182 @@ pub fn default_config_path() -> Result<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .context("cannot find home directory; set WILLDEEP_HOME or pass --config")?;
     Ok(PathBuf::from(home).join(".willdeep").join("config.toml"))
+}
+
+/// 主配置里残留的 `[mcp_servers.*]` 拆出来之后的结果。
+///
+/// 用文档值而不是 [`ConfigFile`] 来解析：MCP 段里多一个不认识的字段时，
+/// 只丢掉 MCP，providers 和其他段照常。
+enum LegacyMcp {
+    /// 主配置里没有 MCP 段。
+    Absent,
+    /// 主配置本身就不是合法 TOML。不能安全地判断哪些行属于 MCP，
+    /// 所以一行都不动，交给后面的严格解析报原因的错。
+    Unreadable,
+    /// 每一段都是合法服务，可以迁走并从主配置里删掉。
+    Clean {
+        stripped: String,
+        servers: std::collections::BTreeMap<String, McpServerConfig>,
+    },
+    /// 至少一段读不懂。这些段留在磁盘上，但解析主配置时忽略；
+    /// 读懂的段照常迁走。
+    Broken {
+        stripped: String,
+        servers: std::collections::BTreeMap<String, McpServerConfig>,
+        reasons: Vec<String>,
+    },
+}
+
+/// 把独立目录里的 MCP 服务填进已解析的配置，并顺手把主配置里残留的
+/// `[mcp_servers.*]` 迁出去。
+///
+/// 迁完才重写主配置；重写失败就把刚迁出的文件删掉，下次启动再迁。
+/// 读不懂的段一直留在磁盘上，但不参与解析。返回没能采用的文件说明。
+fn attach_mcp_servers(
+    file: &mut ConfigFile,
+    config_path: &Path,
+    original: &str,
+    legacy: LegacyMcp,
+) -> Result<Vec<String>> {
+    let directory = mcp_files::directory_for(Some(config_path))?;
+    let mut skipped = Vec::new();
+    let (rewrite, servers) = match legacy {
+        LegacyMcp::Absent | LegacyMcp::Unreadable => (None, std::collections::BTreeMap::new()),
+        LegacyMcp::Clean { stripped, servers } => (Some(stripped), servers),
+        LegacyMcp::Broken {
+            servers, reasons, ..
+        } => {
+            skipped.extend(reasons);
+            // 坏段不能从主配置里删：删了就没法再改回来。好段仍然迁走。
+            (None, servers)
+        }
+    };
+    let mut migrated = Vec::new();
+    if !servers.is_empty() {
+        match mcp_files::extract_legacy(&directory, original, &servers) {
+            Ok(written) => migrated = written,
+            Err(error) => skipped.push(format!(
+                "could not migrate [mcp_servers] out of {}: {error:#}",
+                config_path.display()
+            )),
+        }
+    }
+    let covered = servers.keys().all(|name| {
+        migrated.contains(name)
+            || mcp_files::file_for(&directory, name).is_ok_and(|path| path.is_file())
+    });
+    if let Some(stripped) = rewrite
+        && covered
+        && !servers.is_empty()
+    {
+        // 每个服务都有独立副本了：要么这次新写成，要么本来就有同名文件。
+        // 主配置里的旧段可以删。删不掉就回滚这次新写的文件，下次再迁。
+        if let Err(error) =
+            crate::model_routing::write_private_atomic(config_path, stripped.as_bytes())
+        {
+            for name in &migrated {
+                if let Err(remove_error) = mcp_files::remove_server(&directory, name) {
+                    skipped.push(format!(
+                        "could not roll back migrated MCP server {name}: {remove_error:#}"
+                    ));
+                }
+            }
+            skipped.push(format!(
+                "could not remove migrated [mcp_servers] from {}: {error:#}",
+                config_path.display()
+            ));
+        }
+    }
+    let loaded = mcp_files::load_directory(&directory);
+    // 独立文件是权威来源。主配置里同名的残留只在独立文件还没写成时兜底，
+    // 免得一次迁移写到一半把服务弄丢。
+    for (name, config) in servers {
+        file.mcp_servers.entry(name).or_insert(config);
+    }
+    for (name, config) in loaded.servers {
+        file.mcp_servers.insert(name, config);
+    }
+    skipped.extend(loaded.skipped);
+    for line in &skipped {
+        eprintln!("warning: {line}");
+    }
+    Ok(skipped)
+}
+
+/// 从正文里拆出 `[mcp_servers.*]`。
+///
+/// 主配置有别的语法错误时不猜哪些行是 MCP。每一段都能读懂，才允许之后
+/// 把这些段从主配置里删掉；有一段读不懂，读懂的段仍然返回，但主配置原文不动。
+fn take_legacy_mcp(contents: &str) -> LegacyMcp {
+    let value: toml::Value = match toml::from_str(contents) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!(
+                "warning: configuration has a TOML syntax error ({error}); MCP servers were not migrated"
+            );
+            return LegacyMcp::Unreadable;
+        }
+    };
+    let Some(table) = value.as_table() else {
+        return LegacyMcp::Absent;
+    };
+    let Some(servers) = table.get("mcp_servers").and_then(toml::Value::as_table) else {
+        return LegacyMcp::Absent;
+    };
+    if servers.is_empty() {
+        return LegacyMcp::Absent;
+    }
+    let mut parsed = std::collections::BTreeMap::new();
+    let mut reasons = Vec::new();
+    for (name, value) in servers {
+        match value.clone().try_into::<McpServerConfig>() {
+            Ok(config) => {
+                if let Err(error) = config.validate(name) {
+                    reasons.push(format!(
+                        "[mcp_servers.{name}] left in config.toml: {error}"
+                    ));
+                    continue;
+                }
+                parsed.insert(name.clone(), config);
+            }
+            Err(error) => reasons.push(format!(
+                "[mcp_servers.{name}] left in config.toml because it does not match an MCP server: {error}"
+            )),
+        }
+    }
+    let stripped = crate::model_routing::strip_mcp_sections(contents);
+    if reasons.is_empty() {
+        LegacyMcp::Clean {
+            stripped,
+            servers: parsed,
+        }
+    } else {
+        LegacyMcp::Broken {
+            stripped,
+            servers: parsed,
+            reasons,
+        }
+    }
+}
+
+/// 解析用户的主配置。
+///
+/// MCP 定义已经挪到 `$WILLDEEP_HOME/.mcp/<name>.toml`。主配置里残留的
+/// `[mcp_servers.*]` 先按行摘掉再解析：一段写坏（多一个不认识的字段、
+/// `transport = "sse"` 这种）不能再让模型配置读不出来。摘掉只影响这次
+/// 解析，不改磁盘；真正迁走发生在 [`LoadedConfig::load`]。
+///
+/// 主配置自己的语法错误原样抛出，不拿 MCP 当挡箭牌。
+pub(crate) fn parse_config_text(contents: &str) -> Result<ConfigFile, toml::de::Error> {
+    let value: toml::Value = toml::from_str(contents)?;
+    let has_mcp = value
+        .as_table()
+        .and_then(|table| table.get("mcp_servers"))
+        .is_some_and(|servers| !servers.as_table().is_some_and(toml::map::Map::is_empty));
+    if !has_mcp {
+        return value.try_into();
+    }
+    toml::from_str(&crate::model_routing::strip_mcp_sections(contents))
 }
 
 pub fn willdeep_home() -> Result<PathBuf> {
@@ -1991,7 +2186,10 @@ model = "claude-sonnet-4-5"
         assert_eq!(parsed.providers.len(), 2);
         assert_eq!(parsed.default_provider.as_deref(), Some("some-im"));
         assert_eq!(parsed.agent.max_turns, Some(30));
-        let loaded = LoadedConfig { file: parsed };
+        let loaded = LoadedConfig {
+            file: parsed,
+            mcp_skipped: Vec::new(),
+        };
         let selected = loaded
             .select_provider(None)
             .expect("select default")
@@ -2255,7 +2453,7 @@ context_window = 400000
     fn example_config_stays_valid() {
         let parsed: ConfigFile = toml::from_str(include_str!("../../../config.example.toml"))
             .expect("parse config.example.toml");
-        assert_eq!(parsed.mcp_servers.len(), 2);
+        assert!(parsed.mcp_servers.is_empty());
         assert_eq!(parsed.providers.len(), 3);
         assert_eq!(
             parsed.notifications.sound.as_deref(),
@@ -2956,5 +3154,137 @@ secret = "inline-secret"
         let error =
             resolve_web_listen(None, None, "localhost:3").expect_err("config must be IP:PORT");
         assert!(error.to_string().contains("web.listen"), "{error}");
+    }
+
+    fn scratch_config(body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("willdeep-mcp-load-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.toml");
+        std::fs::write(&path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        (root, path)
+    }
+
+    #[test]
+    fn legacy_mcp_sections_move_into_standalone_files() {
+        let (root, path) = scratch_config(
+            "version = 1\n\n# keep me\n[providers.main]\nprovider = \"openai-compatible\"\nmodel = \"kept\"\n\n[mcp_servers.filesystem]\ncommand = \"npx\"\nargs = [\"-y\", \"server\"]\nstartup_timeout_seconds = 12\nenabled = false\n\n[mcp_servers.filesystem.env]\nNODE_NO_WARNINGS = \"1\"\n",
+        );
+        let loaded = LoadedConfig::load(Some(&path)).expect("legacy MCP still loads");
+        let server = loaded
+            .file
+            .mcp_servers
+            .get("filesystem")
+            .expect("filesystem migrated");
+        assert_eq!(server.command.as_deref(), Some("npx"));
+        assert_eq!(
+            server.env.get("NODE_NO_WARNINGS").map(String::as_str),
+            Some("1")
+        );
+        assert!(!server.enabled);
+        assert_eq!(
+            loaded
+                .file
+                .providers
+                .get("main")
+                .and_then(|profile| profile.model.as_deref()),
+            Some("kept")
+        );
+
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        assert!(!rewritten.contains("mcp_servers"), "{rewritten}");
+        assert!(rewritten.contains("# keep me"), "{rewritten}");
+        assert!(rewritten.contains("model = \"kept\""), "{rewritten}");
+
+        let standalone = std::fs::read_to_string(root.join(".mcp/filesystem.toml")).unwrap();
+        assert!(standalone.contains("command = \"npx\""), "{standalone}");
+        assert!(standalone.contains("[env]"), "{standalone}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_broken_legacy_section_does_not_fail_the_rest_of_the_config() {
+        let (root, path) = scratch_config(
+            "version = 1\n[providers.main]\nprovider = \"openai-compatible\"\nmodel = \"kept\"\n\n[mcp_servers.dingtalk]\nurl = \"https://minutes.example.com/mcp\"\ntransport = \"sse\"\nenabled = true\n\n[mcp_servers.filesystem]\ncommand = \"npx\"\nstartup_timeout_seconds = 10\nenabled = true\n",
+        );
+        let loaded = LoadedConfig::load(Some(&path)).expect("broken MCP must not fail load");
+        assert_eq!(
+            loaded
+                .file
+                .providers
+                .get("main")
+                .and_then(|profile| profile.model.as_deref()),
+            Some("kept")
+        );
+        assert!(loaded.file.mcp_servers.contains_key("filesystem"));
+        assert!(!loaded.file.mcp_servers.contains_key("dingtalk"));
+        assert!(
+            loaded
+                .mcp_skipped
+                .iter()
+                .any(|line| line.contains("dingtalk")),
+            "{:?}",
+            loaded.mcp_skipped
+        );
+
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            rewritten.contains("transport"),
+            "the unread section stays: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("[mcp_servers.filesystem]"),
+            "{rewritten}"
+        );
+        assert!(root.join(".mcp/filesystem.toml").is_file());
+        assert!(!root.join(".mcp/dingtalk.toml").exists());
+        // 模型配置页读的是同一份正文：坏段还在磁盘上，解析必须照样成功。
+        let parsed = parse_config_text(&rewritten)
+            .expect("model settings still parse while the broken section remains");
+        assert_eq!(parsed.providers["main"].model.as_deref(), Some("kept"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_existing_standalone_file_wins_over_the_legacy_copy() {
+        let (root, path) = scratch_config(
+            "version = 1\n[mcp_servers.filesystem]\ncommand = \"old\"\nstartup_timeout_seconds = 10\nenabled = true\n",
+        );
+        let directory = root.join(".mcp");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("filesystem.toml"),
+            "command = \"new\"\nstartup_timeout_seconds = 10\nenabled = true\n",
+        )
+        .unwrap();
+        let loaded = LoadedConfig::load(Some(&path)).expect("load");
+        assert_eq!(
+            loaded.file.mcp_servers["filesystem"].command.as_deref(),
+            Some("new")
+        );
+        let standalone = std::fs::read_to_string(directory.join("filesystem.toml")).unwrap();
+        assert!(standalone.contains("command = \"new\""), "{standalone}");
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !rewritten.contains("mcp_servers"),
+            "the superseded legacy copy is removed: {rewritten}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn provider_settings_ignore_a_broken_mcp_section() {
+        let (root, path) = scratch_config(
+            "version = 1\ndefault_provider = \"main\"\n[providers.main]\nprovider = \"openai-compatible\"\napi_base = \"https://api.example.com/v1\"\napi_key = \"fixture\"\nmodel = \"kept\"\n\n[mcp_servers.dingtalk]\ntransport = \"sse\"\n",
+        );
+        let parsed = parse_config_text(&std::fs::read_to_string(&path).unwrap())
+            .expect("a bad MCP section does not fail the model configuration");
+        assert_eq!(parsed.providers["main"].model.as_deref(), Some("kept"));
+        assert!(parsed.mcp_servers.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

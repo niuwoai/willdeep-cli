@@ -169,7 +169,7 @@ impl ChatConfigurationHost {
             return Ok(rejected("invalid_configuration"));
         }
         let candidate = result["candidate"].as_str().ok_or_else(unavailable)?;
-        let parsed: crate::config::ConfigFile = match toml::from_str(candidate) {
+        let parsed = match crate::config::parse_config_text(candidate) {
             Ok(file) => file,
             Err(_) => return Ok(rejected("runtime_validation_failed")),
         };
@@ -177,7 +177,10 @@ impl ChatConfigurationHost {
             return Ok(rejected("runtime_validation_failed"));
         }
         if crate::harness::build_compression_settings(
-            &crate::config::LoadedConfig { file: parsed },
+            &crate::config::LoadedConfig {
+                file: parsed,
+                mcp_skipped: Vec::new(),
+            },
             &self.parent,
             self.follow_main.clone(),
         )
