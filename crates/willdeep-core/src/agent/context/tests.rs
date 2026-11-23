@@ -11,6 +11,7 @@ mod manual_reuse_tests;
 mod multi_turn_tests;
 mod recovery_tests;
 mod settings_tests;
+mod timeout_tests;
 mod usage_tests;
 
 #[tokio::test]

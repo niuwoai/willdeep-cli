@@ -1873,13 +1873,9 @@ fn runtime_and_webapp_commands_pass_through_to_the_main_loop() {
         "pass-through commands must not write an error line: {:?}",
         app.transcript
     );
-    // A genuinely unknown command still reports itself.
-    assert!(app.handle_slash_command("/nope", &skills));
-    assert!(
-        app.transcript
-            .iter()
-            .any(|line| line.contains("unknown command"))
-    );
+    // Unknown slash input is a prompt, so the fallback leaves it untouched.
+    assert!(!app.handle_slash_command("/nope", &skills));
+    assert!(app.transcript.is_empty());
 }
 
 /// 本轮在跑时按 Enter 曾经什么都不做：命令发不出去，也没有任何提示。
@@ -1899,6 +1895,9 @@ fn a_running_turn_no_longer_swallows_every_enter() {
         // 回复风格同样只作用于下一轮，没有理由让用户等到本轮结束再敲。
         "/short",
         "/verbose",
+        "/verbose on",
+        "/short off",
+        "/permission-mode invalid",
     ] {
         assert_eq!(busy_input(command), BusyInput::RunNow, "{command}");
     }
@@ -1907,6 +1906,10 @@ fn a_running_turn_no_longer_swallows_every_enter() {
     assert_eq!(busy_input("/session switch abc"), BusyInput::Refuse);
     for prompt in [
         "继续重构这个模块",
+        "/wat",
+        "/wat 请分析",
+        "/Users/example/project 请分析这个项目",
+        "/help/file inspect this",
         "/local 跑一下测试",
         "/runtime 修一下",
         "/goal 请读一下 DESIGN.md",

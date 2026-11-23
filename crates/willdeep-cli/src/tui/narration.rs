@@ -39,7 +39,10 @@ const TOOL_COLLAPSE_LABELS: [&str; 3] = ["− 收起", "− Show less", "− 折
 pub(super) fn is_display_only_command(prompt: &str) -> bool {
     let value = prompt.trim();
     let command = value.split_whitespace().next().unwrap_or(value);
-    command.starts_with('/') && command != "/goal" && command != "/local" && command != "/runtime"
+    command_catalog::is_command(value)
+        && command != "/goal"
+        && command != "/local"
+        && command != "/runtime"
 }
 
 /// 一行工具记录。`· ` 前缀让渲染层按账目行的灰色画，不与正文抢注意力。
@@ -1650,6 +1653,9 @@ mod tests {
             "  /help  ",
             "/tools",
             "/session rename x",
+            "/verbose on",
+            "/permission-mode invalid",
+            "/plugin:demo:echo {}",
         ] {
             assert!(
                 is_display_only_command(command),
@@ -1661,6 +1667,10 @@ mod tests {
             "/local cargo test",
             "/runtime status",
             "看一下日志",
+            "/wat",
+            "/wat with text",
+            "/Users/example/project 请检查",
+            "/help/file inspect this",
         ] {
             assert!(
                 !is_display_only_command(prompt),

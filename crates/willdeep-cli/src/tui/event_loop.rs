@@ -52,7 +52,7 @@ async fn handle_queue_action(
         if app.running
             && !app.compression_in_progress()
             && app.queued_prompts[index].attachments.is_empty()
-            && !text.trim_start().starts_with('/')
+            && !command_catalog::is_command(&text)
             && steer_running_turn(app, session, runtime, agent, &text).await
         {
             let submission_order = app.queued_prompts[index].submission_order;
@@ -1960,7 +1960,7 @@ pub(super) async fn event_loop(
                                     BusyInput::RunNow=>{},
                                     BusyInput::Queue=>{
                                         if app.runtime_turn {
-                                            if !app.input.text().trim_start().starts_with('/')
+                                            if !command_catalog::is_command(app.input.text())
                                                 && runtime_queue::retain_input_for_pending_gate(&mut app, &runtime.home, &runtime.tx) {
                                                 continue;
                                             }
@@ -2199,6 +2199,11 @@ pub(super) async fn event_loop(
                                     }
                                     continue;
                                 }
+                            }
+                            // 已知命令即使参数没匹配上专用处理器，也不能被当作提示词发送。
+                            if !runtime_alias && command_catalog::is_command(&prompt) {
+                                app.append_transcript(command_catalog::invalid_command_arguments(language, &prompt));
+                                continue;
                             }
                             let PromptExecution::Runtime(remote_prompt)=prompt_execution(&prompt) else {unreachable!("local prompts were handled above")};
                             match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt,submission_record).await {

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-use crate::types::ToolCall;
+use crate::types::{Message, Role, ToolCall};
 
 const RULE_NAMES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const MAX_RULE_BYTES: u64 = 1024 * 1024;
@@ -25,6 +25,29 @@ impl ProjectRules {
             loaded: BTreeMap::new(),
             project_overview: None,
         };
+        rules.refresh()?;
+        Ok(rules)
+    }
+
+    /// Restore discovered scopes, never historical instruction text or tool effects.
+    /// Read today's rule files so unchanged scopes retain the same summary key,
+    /// while edits, deletion and newly applicable rules still invalidate it.
+    pub fn restore(workspace: &Path, messages: &[Message]) -> std::io::Result<Self> {
+        let mut rules = Self::new(workspace)?;
+        let calls = || {
+            messages
+                .iter()
+                .filter(|message| message.role == Role::Assistant)
+                .flat_map(|message| &message.tool_calls)
+        };
+        // One opaque call already discovered the workspace. Repeat that scan
+        // once, rather than once for every shell/MCP call in a long transcript.
+        if calls().any(Self::has_opaque_paths) {
+            rules.discover_directories()?;
+        }
+        for call in calls().filter(|call| !Self::has_opaque_paths(call)) {
+            rules.include_call_paths(call)?;
+        }
         rules.refresh()?;
         Ok(rules)
     }
@@ -80,22 +103,32 @@ impl ProjectRules {
     }
 
     pub fn before_call(&mut self, call: &ToolCall) -> std::io::Result<bool> {
-        if matches!(
-            call.name.as_str(),
-            "run_command" | "monitor" | "spawn_agent" | "call_mcp_tool"
-        ) || call.name.starts_with("mcp__")
-        {
+        if Self::has_opaque_paths(call) {
             // Shell and external tools have opaque path semantics. Discover the workspace's
             // rule files instead of guessing which directories the command might mutate.
             self.discover_directories()?;
-        } else if let Ok(arguments) = call.parsed_arguments() {
+        } else {
+            self.include_call_paths(call)?;
+        }
+        self.refresh()
+    }
+
+    fn has_opaque_paths(call: &ToolCall) -> bool {
+        matches!(
+            call.name.as_str(),
+            "run_command" | "monitor" | "spawn_agent" | "call_mcp_tool"
+        ) || call.name.starts_with("mcp__")
+    }
+
+    fn include_call_paths(&mut self, call: &ToolCall) -> std::io::Result<()> {
+        if let Ok(arguments) = call.parsed_arguments() {
             for key in ["path", "target_file"] {
                 if let Some(path) = arguments.get(key).and_then(serde_json::Value::as_str) {
                     self.include_path(path)?;
                 }
             }
         }
-        self.refresh()
+        Ok(())
     }
 
     fn include_path(&mut self, value: &str) -> std::io::Result<()> {

@@ -1048,6 +1048,7 @@ fn runtime_checkpoint_preserves_external_group_notices_at_their_original_positio
         metadata: CheckpointMetadata::default(),
         messages: checkpoint_messages,
         goal: None,
+        context_summary: None,
     };
     sink.save(&checkpoint).unwrap();
     sink.save(&checkpoint).unwrap();
@@ -1090,6 +1091,7 @@ fn group_notice_keeps_its_place_when_the_checkpoint_gains_a_system_pin() {
             Message::user("gamma replies"),
         ],
         goal: None,
+        context_summary: None,
     };
     sink.save(&checkpoint).unwrap();
     let saved = sink.store.load(session.id).unwrap();
@@ -1120,6 +1122,7 @@ fn goal_state_is_persisted_with_the_checkpoint_and_never_rewound() {
             metadata: CheckpointMetadata::default(),
             messages: Vec::new(),
             goal: Some(goal),
+            context_summary: None,
         })
         .unwrap();
     };

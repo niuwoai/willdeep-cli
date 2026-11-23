@@ -763,7 +763,7 @@ enum BusyInput {
 /// `/history` 打开面板是只读查询，真正的切换在消费那一步另有运行中保护。
 fn busy_input(prompt: &str) -> BusyInput {
     let value = prompt.trim();
-    if !value.starts_with('/') {
+    if !command_catalog::is_command(value) {
         return BusyInput::Queue;
     }
     let command = value.split_whitespace().next().unwrap_or_default();

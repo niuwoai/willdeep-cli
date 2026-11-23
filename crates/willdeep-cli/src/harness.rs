@@ -699,11 +699,11 @@ pub(crate) async fn execute_noninteractive(
     }
     let mut outcome = run_result?;
     present_partial_outcome(&mut outcome, language);
-    let mut messages = outcome.messages.clone();
-    willdeep_core::checkpoint::preserve_federation_notices(&mut messages, &session.messages);
-    session.messages = messages;
-    // 摘要随消息一起落盘：下一轮直接复用它，不再把整段历史按块重摘。
-    session.context_summary = outcome.context_summary.clone();
+    willdeep_core::checkpoint::apply_execution_history(
+        session,
+        &outcome.messages,
+        outcome.context_summary.as_ref(),
+    );
     store.save(session)?;
     let mut waiting_background = false;
     loop {
@@ -795,10 +795,11 @@ pub(crate) async fn execute_noninteractive(
             )
             .await?;
         *session = store.load_baselined(session.id)?;
-        let mut messages = outcome.messages.clone();
-        willdeep_core::checkpoint::preserve_federation_notices(&mut messages, &session.messages);
-        session.messages = messages;
-        session.context_summary = outcome.context_summary.clone();
+        willdeep_core::checkpoint::apply_execution_history(
+            session,
+            &outcome.messages,
+            outcome.context_summary.as_ref(),
+        );
         store.save(session)?;
         willdeep_core::kernel_store::flush(&built.kernel, &built.kernel_store);
     }

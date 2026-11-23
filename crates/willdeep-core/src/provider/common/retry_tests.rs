@@ -71,13 +71,24 @@ async fn default_backoff_does_not_extend_the_shared_request_deadline() {
     )
     .await
     .unwrap_err();
-    assert!(matches!(
-        error,
-        ProviderError::RetryDeferred {
-            retry_after_secs: 2,
-            ..
-        }
-    ));
+    let ProviderError::RetryDeferred {
+        retry_after_secs,
+        attempts,
+        elapsed_secs,
+        remaining_secs,
+        ..
+    } = &error
+    else {
+        panic!("expected deferred retry, got {error}");
+    };
+    assert_eq!(*retry_after_secs, 2);
+    assert_eq!(*attempts, 1);
+    assert!(*elapsed_secs >= 0.0);
+    assert!((0.0..=0.5).contains(remaining_secs));
+    let diagnostic = error.to_string();
+    assert!(diagnostic.contains("after 1 attempt(s)"));
+    assert!(diagnostic.contains("2s backoff"));
+    assert!(diagnostic.contains("shared request deadline"));
     assert_eq!(hits.load(Ordering::SeqCst), 1);
     assert!(events.0.lock().unwrap().is_empty());
     server.abort();

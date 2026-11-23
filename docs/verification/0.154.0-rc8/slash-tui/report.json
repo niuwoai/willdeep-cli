@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "failure": null,
+  "fixture_errors": [],
+  "model_requests": 3,
+  "real_model_requests": 0,
+  "cases": [
+    {
+      "prompt": "/tmp/slash-fixture/project Please inspect this directory",
+      "passed": true
+    },
+    {
+      "prompt": "/wat Please treat this as ordinary input",
+      "passed": true
+    },
+    {
+      "prompt": "/help/file Please inspect this file",
+      "passed": true
+    },
+    {
+      "command": "/verbose on",
+      "local_error": true,
+      "passed": true
+    }
+  ]
+}

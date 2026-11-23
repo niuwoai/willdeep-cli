@@ -3,6 +3,47 @@ use crate::token_estimate::{estimate_tokens, text_tokens, tool_schema_tokens};
 use crate::types::{MessageAttachment, MessageSource, Role, ToolDefinition};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tokio::time::Instant;
+
+const COMPRESSION_TIMEOUT: Duration = Duration::from_secs(120);
+const COMPRESSION_CANDIDATE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// One operation owns this budget, including chunks, reduction and a second pass.
+/// A timed-out candidate stays disabled until the next compression operation.
+struct CompressionBudget {
+    deadline: Instant,
+    total: Duration,
+    candidate_timeout: Duration,
+    timed_out: std::collections::HashMap<usize, String>,
+}
+
+impl CompressionBudget {
+    fn new(total: Duration, candidate_timeout: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + total,
+            total,
+            candidate_timeout,
+            timed_out: std::collections::HashMap::new(),
+        }
+    }
+
+    fn check(&self, stage: &str) -> Result<(), AgentError> {
+        if Instant::now() >= self.deadline {
+            return Err(AgentError::Checkpoint(format!(
+                "context compression timed out during {stage}: shared {:?} deadline exhausted (chunks, reduction and second pass share this budget)",
+                self.total
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for CompressionBudget {
+    fn default() -> Self {
+        Self::new(COMPRESSION_TIMEOUT, COMPRESSION_CANDIDATE_TIMEOUT)
+    }
+}
 
 /// 压缩水位。以前是 75%：容量按 `窗口 − 工具 − 窗口/8` 算，再乘 75%，
 /// 128K 窗口实际 80K 就开始压缩，服务端的 128K 永远用不满。上下文的估算
@@ -52,10 +93,27 @@ impl Agent {
         summary: Option<crate::context_summary::ContextSummary>,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
+        self.compress_history_with_budget(
+            messages,
+            summary,
+            record_usage,
+            &mut CompressionBudget::default(),
+        )
+        .await
+    }
+
+    async fn compress_history_with_budget(
+        &self,
+        messages: Vec<Message>,
+        summary: Option<crate::context_summary::ContextSummary>,
+        record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
+        time_budget: &mut CompressionBudget,
+    ) -> Result<Vec<Message>, AgentError> {
         let settings = self.compression_settings()?;
         let cached = if let Some(summary) = summary {
-            let rules = crate::project_rules::ProjectRules::new(self.tools.workspace())
-                .map_err(ToolError::Io)?;
+            let rules =
+                crate::project_rules::ProjectRules::restore(self.tools.workspace(), &messages)
+                    .map_err(ToolError::Io)?;
             let stable_system = self.stable_system_message(&rules)?;
             let system =
                 fingerprint_of(messages.iter().enumerate().filter_map(|(index, message)| {
@@ -142,8 +200,13 @@ impl Agent {
                     |summary| extend_summary(&messages[..split], through, summary),
                 );
                 summary = Some(
-                    self.summarize_history_with_settings(&source, &settings, record_usage)
-                        .await?,
+                    self.summarize_history_with_settings(
+                        &source,
+                        &settings,
+                        time_budget,
+                        record_usage,
+                    )
+                    .await?,
                 );
             }
             through = split;
@@ -158,7 +221,7 @@ impl Agent {
                     |summary| extend_summary(&messages, through, summary),
                 );
                 let summary = self
-                    .summarize_history_with_settings(&source, &settings, record_usage)
+                    .summarize_history_with_settings(&source, &settings, time_budget, record_usage)
                     .await?;
                 result = compact_prefix(&messages, messages.len(), &summary);
             }
@@ -171,6 +234,7 @@ impl Agent {
                 capacity,
             });
         }
+        time_budget.check("manual compression finalization")?;
         self.sink
             .emit(AgentEvent::CompressionCompleted {
                 estimated_tokens: estimated,
@@ -221,6 +285,25 @@ impl Agent {
         runtime_context: &str,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<Message>, AgentError> {
+        self.request_messages_with_budget(
+            messages,
+            cache,
+            (stable_system, runtime_context),
+            record_usage,
+            &mut CompressionBudget::default(),
+        )
+        .await
+    }
+
+    async fn request_messages_with_budget(
+        &self,
+        messages: &[Message],
+        cache: &mut Option<SummaryCache>,
+        context: (Option<&Message>, &str),
+        record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
+        time_budget: &mut CompressionBudget,
+    ) -> Result<Vec<Message>, AgentError> {
+        let (stable_system, runtime_context) = context;
         let settings = self.compression_settings()?;
         let capacity = message_capacity(
             self.effective_context_window(),
@@ -265,9 +348,12 @@ impl Agent {
         //
         // `through` 和前缀指纹始终锚定 durable 历史；system 指纹来自稳定规则。
         // 分页去重、工具摘录及实时状态变化不会失效；真实前缀或规则改写才会。
+        // Keep the caller's last successful summary in place across every await.
+        // Only commit the replacement after all compression/capacity checks pass.
         let mut cached = cache
-            .take()
+            .as_ref()
             .filter(|entry| entry.matches(messages, &system))
+            .cloned()
             .map(|entry| {
                 let through = paged.projected_index(entry.through);
                 (through, entry)
@@ -310,15 +396,16 @@ impl Agent {
                 .any(|message| matches!(message.role, Role::Tool | Role::Assistant))
         };
         let mut result = paged.messages;
+        let mut next_cache = None;
         if let Some((through, entry)) = cached {
             if through >= split {
                 // Nothing new is old enough to fold in; keep the summary and let
                 // batch archiving handle the recent tail.
                 result = compact_prefix(&result, through, &entry.summary);
-                *cache = Some(entry);
+                next_cache = Some(entry);
             } else if !replaceable(&result[through..split]) {
                 result = compact_prefix(&result, split, &entry.summary);
-                *cache = Some(SummaryCache::new(
+                next_cache = Some(SummaryCache::new(
                     messages,
                     split_through,
                     entry.summary,
@@ -334,27 +421,32 @@ impl Agent {
                 let mut source = vec![summary_message(&entry.summary, requires_reasoning_replay)];
                 source.extend_from_slice(&result[through..split]);
                 let summary = self
-                    .summarize_history_with_settings(&source, &settings, record_usage)
+                    .summarize_history_with_settings(&source, &settings, time_budget, record_usage)
                     .await?;
                 result = compact_prefix(&result, split, &summary);
-                *cache = Some(SummaryCache::new(messages, split_through, summary, &system));
+                next_cache = Some(SummaryCache::new(messages, split_through, summary, &system));
             }
         } else if split > 0 && replaceable(&result[..split]) {
             let summary = self
-                .summarize_history_with_settings(&result[..split], &settings, record_usage)
+                .summarize_history_with_settings(
+                    &result[..split],
+                    &settings,
+                    time_budget,
+                    record_usage,
+                )
                 .await?;
             result = compact_prefix(&result, split, &summary);
-            *cache = Some(SummaryCache::new(messages, split_through, summary, &system));
+            next_cache = Some(SummaryCache::new(messages, split_through, summary, &system));
         }
         // The usual recent tail is a preference, not a licence to exceed the
         // window. A single thinking response can be larger than that whole tail.
         if estimate_tokens(&result) > capacity && replaceable(&result) {
             let summary = self
-                .summarize_history_with_settings(&result, &settings, record_usage)
+                .summarize_history_with_settings(&result, &settings, time_budget, record_usage)
                 .await?;
             let full = page()?;
             result = compact_prefix(&full.messages, full.messages.len(), &summary);
-            *cache = Some(SummaryCache::new(
+            next_cache = Some(SummaryCache::new(
                 messages,
                 messages.len(),
                 summary,
@@ -371,6 +463,8 @@ impl Agent {
                 capacity,
             });
         }
+        time_budget.check("automatic compression finalization")?;
+        *cache = next_cache;
         self.sink
             .emit(AgentEvent::CompressionCompleted {
                 estimated_tokens: estimated.saturating_add(reserved),
@@ -526,16 +620,23 @@ impl Agent {
         messages: &[Message],
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
-        self.summarize_history_with_settings(messages, &self.compression_settings()?, record_usage)
-            .await
+        self.summarize_history_with_settings(
+            messages,
+            &self.compression_settings()?,
+            &mut CompressionBudget::default(),
+            record_usage,
+        )
+        .await
     }
 
     async fn summarize_history_with_settings(
         &self,
         messages: &[Message],
         settings: &CompressionSettings,
+        time_budget: &mut CompressionBudget,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
+        time_budget.check("history summarization")?;
         let budget = self.summary_input_budget_for(settings);
         let visible: Vec<_> = messages
             .iter()
@@ -548,6 +649,8 @@ impl Agent {
                 .summarize_once(
                     summary_source(chunks.first().map(Vec::as_slice).unwrap_or(&[]))?,
                     settings,
+                    time_budget,
+                    "history summary (single chunk)",
                     record_usage,
                 )
                 .await;
@@ -555,23 +658,48 @@ impl Agent {
         // 分块摘要自己也要封顶，否则合并那一轮可能又超预算，白白多绕一圈。
         let part_budget = (budget / 2).max(MIN_SUMMARY_INPUT_BUDGET / 2);
         let mut parts = Vec::with_capacity(chunks.len());
-        for chunk in &chunks {
+        for (index, chunk) in chunks.iter().enumerate() {
+            let stage = format!("history summary chunk {}/{}", index + 1, chunks.len());
             let summary = self
-                .summarize_once(summary_source(chunk)?, settings, record_usage)
+                .summarize_once(
+                    summary_source(chunk)?,
+                    settings,
+                    time_budget,
+                    &stage,
+                    record_usage,
+                )
                 .await?;
             parts.push(clamp_text(&summary, part_budget));
         }
-        for _ in 0..MAX_SUMMARY_REDUCE_ROUNDS {
+        self.merge_summary_parts(parts, settings, time_budget, record_usage)
+            .await
+    }
+
+    async fn merge_summary_parts(
+        &self,
+        mut parts: Vec<String>,
+        settings: &CompressionSettings,
+        time_budget: &mut CompressionBudget,
+        record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
+    ) -> Result<String, AgentError> {
+        let budget = self.summary_input_budget_for(settings);
+        for round in 0..MAX_SUMMARY_REDUCE_ROUNDS {
             if parts.len() <= 1 {
                 break;
             }
+            let stage = format!("summary reduction round {}", round + 1);
             parts = self
-                .reduce_summaries(parts, budget, part_budget, settings, record_usage)
+                .reduce_summaries(parts, budget, settings, time_budget, &stage, record_usage)
                 .await?;
         }
-        parts
-            .pop()
-            .ok_or_else(|| AgentError::Checkpoint("summarize empty history".to_owned()))
+        time_budget.check("summary reduction finalization")?;
+        if parts.len() != 1 {
+            return Err(AgentError::Checkpoint(format!(
+                "context compression failed to merge all summaries: {} parts remain after {MAX_SUMMARY_REDUCE_ROUNDS} reduction rounds; history was not replaced",
+                parts.len()
+            )));
+        }
+        Ok(parts.remove(0))
     }
 
     /// 合并一轮分块摘要。每组至少两份，所以每轮都严格变短，不会原地打转。
@@ -579,10 +707,12 @@ impl Agent {
         &self,
         parts: Vec<String>,
         budget: u64,
-        part_budget: u64,
         settings: &CompressionSettings,
+        time_budget: &mut CompressionBudget,
+        stage: &str,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<Vec<String>, AgentError> {
+        let part_budget = (budget / 2).max(MIN_SUMMARY_INPUT_BUDGET / 2);
         let mut round: Vec<String> = Vec::new();
         let mut group: Vec<String> = Vec::new();
         let mut used: u64 = 0;
@@ -590,7 +720,13 @@ impl Agent {
             let cost = text_tokens(&part);
             if group.len() > 1 && used.saturating_add(cost) > budget {
                 let merged = self
-                    .summarize_once(group.join("\n\n"), settings, record_usage)
+                    .summarize_once(
+                        group.join("\n\n"),
+                        settings,
+                        time_budget,
+                        stage,
+                        record_usage,
+                    )
                     .await?;
                 round.push(clamp_text(&merged, part_budget));
                 group.clear();
@@ -605,7 +741,13 @@ impl Agent {
             1 => round.push(group.remove(0)),
             _ => {
                 let merged = self
-                    .summarize_once(group.join("\n\n"), settings, record_usage)
+                    .summarize_once(
+                        group.join("\n\n"),
+                        settings,
+                        time_budget,
+                        stage,
+                        record_usage,
+                    )
                     .await?;
                 round.push(clamp_text(&merged, part_budget));
             }
@@ -617,6 +759,8 @@ impl Agent {
         &self,
         source: String,
         settings: &CompressionSettings,
+        time_budget: &mut CompressionBudget,
+        stage: &str,
         record_usage: &mut (dyn FnMut(&Usage) -> Result<(), AgentError> + Send),
     ) -> Result<String, AgentError> {
         // JSON escaping and multiple fields can exceed a message-level estimate.
@@ -638,13 +782,19 @@ impl Agent {
             ""
         };
         for (index, (provider, hosted_prompt)) in settings.candidates.iter().enumerate() {
+            time_budget.check(stage)?;
+            let model = crate::provider::provider_model(provider.as_ref())
+                .unwrap_or_else(|| format!("candidate #{}", index + 1));
+            if let Some(reason) = time_budget.timed_out.get(&index) {
+                skipped.push((model, format!("skipped after earlier timeout: {reason}")));
+                last_error = Some(AgentError::Checkpoint(reason.clone()));
+                continue;
+            }
             if let Some(scope) = &self.usage_ledger {
                 scope
                     .check_budget()
                     .map_err(AgentError::TeamBudgetBlocked)?;
             }
-            let model = crate::provider::provider_model(provider.as_ref())
-                .unwrap_or_else(|| format!("candidate #{}", index + 1));
             let request_model = provider.ledger_identity().map(|id| id.model);
             let request = if *hosted_prompt {
                 Message::user(source.clone())
@@ -657,7 +807,28 @@ impl Agent {
                 crate::usage_ledger::UsageKind::Compression,
                 provider.as_ref(),
             );
-            let response = provider.complete(&[request], &[]).await;
+            let candidate_deadline =
+                (Instant::now() + time_budget.candidate_timeout).min(time_budget.deadline);
+            let response = match tokio::time::timeout_at(
+                candidate_deadline,
+                provider.complete(&[request], &[]),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(_) => Err(ProviderError::DeadlineExceeded),
+            };
+            let timed_out = matches!(&response, Err(ProviderError::DeadlineExceeded))
+                || matches!(&response, Err(ProviderError::Request(error)) if error.is_timeout());
+            let timeout_reason = timed_out.then(|| {
+                format!(
+                    "context compression timed out during {stage} with {model}: candidate limit {:?}, bounded by the shared {:?} deadline",
+                    time_budget.candidate_timeout, time_budget.total
+                )
+            });
+            if let Some(reason) = &timeout_reason {
+                time_budget.timed_out.insert(index, reason.clone());
+            }
             let usage = match &response {
                 Ok(completion) => completion.usage.as_ref(),
                 Err(ProviderError::StreamInterrupted { partial, .. }) => partial.usage.as_ref(),
@@ -685,23 +856,30 @@ impl Agent {
                 Ok(completion)
                     if !completion.content.trim().is_empty() && !completion.is_incomplete() =>
                 {
+                    time_budget.check(stage)?;
                     self.report_model_fallback("compressor", &skipped, Some(model))
                         .await;
                     return Ok(clamp_summary(completion.content));
                 }
                 Ok(_) => {
                     skipped.push((model, "empty or incomplete summary".to_owned()));
-                    last_error = Some(ProviderError::EmptyResponse);
+                    last_error = Some(ProviderError::EmptyResponse.into());
                 }
                 Err(error) => {
-                    skipped.push((model, error.to_string()));
-                    last_error = Some(error);
+                    let reason = timeout_reason.unwrap_or_else(|| error.to_string());
+                    skipped.push((model, reason.clone()));
+                    last_error = Some(if timed_out {
+                        AgentError::Checkpoint(reason)
+                    } else {
+                        error.into()
+                    });
                 }
             }
         }
         self.report_model_fallback("compressor", &skipped, None)
             .await;
-        Err(last_error.unwrap_or(ProviderError::EmptyResponse).into())
+        time_budget.check(stage)?;
+        Err(last_error.unwrap_or_else(|| ProviderError::EmptyResponse.into()))
     }
 }
 
@@ -815,6 +993,7 @@ impl PagedHistory {
 /// 这份缓存会随会话落盘（见 [`crate::context_summary`]）。run 内复用只是省一次
 /// 调用，跨 run 复用才是真正的账：durable 历史从不因压缩变短，没有它每一轮都
 /// 要把同一段前缀从头再摘一遍。
+#[derive(Clone)]
 pub(super) struct SummaryCache {
     /// 覆盖到 durable 历史第几条（不含）。
     through: usize,
