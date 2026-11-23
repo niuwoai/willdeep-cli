@@ -1,6 +1,8 @@
 # Product Overview
 
-> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc8
+> 最后更新：2026-11-23 | 当前版本：v0.154.0-rc9
+
+0.154.0-rc9 将 MCP 缺失进程诊断测试隔离到私有临时目录，避免真实 PATH 权限影响预期错误类型；运行时行为不变。本机安装仍为已验收的 rc8，rc9 为 CI 修复候选，验证结果见[CI 修复记录](docs/verification/0.154.0-rc9/mcp-startup-ci.md)。
 
 0.154.0-rc8 统一 TUI 滚动、原生选择与人工弹层的输入归属：原生选择冻结画面但后台继续，提问或审批到达时恢复鼠标捕获；提问支持明确按钮、正文滚动和答案点击定位，弹层事件不穿透；聊天与侧栏独立接收滚轮。沿用一屏工作台与中英日界面，宿主终端保存的整屏历史仍取决于终端实现。设计与验收边界见[输入归属决策](docs/decisions/2026-11-23-tui-input-ownership.md)。候选验收通过，本机 CLI 与 Runtime 已安装为 rc8，尚未公开发行；原生 TUI 707 项通过、2 项忽略，full/compact 真实 PTY 共 15 项检查通过，安装产物复验同样通过，见[验收记录](docs/verification/0.154.0-rc8/tui-input-ownership.md)与[本机安装记录](docs/verification/0.154.0-rc8/local-installation.md)。
 
