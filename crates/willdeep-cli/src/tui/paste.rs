@@ -9,6 +9,10 @@ pub(super) enum PasteAction {
 /// Match the visible human gate before routing to any editor underneath it.
 /// The event loop only handles the asynchronous session-picker refresh.
 pub(super) fn route(app: &mut App, value: String) -> PasteAction {
+    if app.native_selection_mode {
+        app.exit_selection_mode();
+        app.focus = FocusPane::Prompt;
+    }
     if let Some(dialog) = app.question.as_mut() {
         dialog.answer.insert(&value);
     } else if app.approval.is_some() {
@@ -66,6 +70,19 @@ mod tests {
         app.input.extend_selection_visual(0, 5, 80);
         app.input.finish_selection();
         assert_eq!(app.input.selected_text(), Some("draft"));
+    }
+
+    #[test]
+    fn paste_leaves_native_selection_and_reveals_the_draft_before_submission() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.input.insert("before ");
+        app.enter_native_selection_mode();
+        assert_eq!(route(&mut app, "中文 pasted".to_owned()), PasteAction::Done);
+        assert!(!app.native_selection_mode && !app.selection_mode);
+        assert_eq!(app.focus, FocusPane::Prompt);
+        assert_eq!(app.input.text(), "before 中文 pasted");
+        assert!(!app.running);
+        assert!(app.runtime_submitted_turn.is_none());
     }
 
     #[test]

@@ -89,6 +89,7 @@ const SCROLL_LINES_PER_TICK: usize = 3;
 /// 原样交还给调用方——那一格还得按它自己的语义处理。滚轮没有像素位移，
 /// 一格固定算 `SCROLL_LINES_PER_TICK` 行，所以这里数的是格数。
 fn coalesce_scroll(
+    region: Rect,
     first: MouseEvent,
     pending: impl IntoIterator<Item = io::Result<Event>>,
 ) -> (ScrollBurst, Vec<Event>) {
@@ -103,7 +104,7 @@ fn coalesce_scroll(
             held_back.push(event);
             break;
         };
-        if !scrolled.push(mouse) {
+        if !region.contains((mouse.column, mouse.row).into()) || !scrolled.push(mouse) {
             held_back.push(Event::Mouse(mouse));
             break;
         }
@@ -153,6 +154,30 @@ fn scroll_tick_direction(kind: MouseEventKind) -> Option<i32> {
     }
 }
 
+/// Resolve ownership before coalescing: crossing into another region must
+/// preserve that event for the next dispatch instead of moving the whole burst.
+fn scroll_region(app: &App, mouse: MouseEvent) -> Option<Rect> {
+    let modal = if app.agent_detail.is_some() {
+        Some(app.agent_detail_rect)
+    } else if app.task_detail.is_some() {
+        Some(app.task_detail_rect)
+    } else if app.attention_detail.is_some() {
+        Some(app.attention_detail_rect)
+    } else {
+        None
+    };
+    let point = (mouse.column, mouse.row).into();
+    if let Some(rect) = modal {
+        return rect.contains(point).then_some(rect);
+    }
+    if app.has_open_overlay() || app.permission_picker.is_some() {
+        return None;
+    }
+    [app.sidebar_rect, app.transcript_rect]
+        .into_iter()
+        .find(|rect| rect.contains(point))
+}
+
 /// 把合成好的一次滚动应用到界面上。落点决定滚动的是哪一块：
 /// 弹层和侧栏优先于聊天记录，跟原来逐格处理时的判断顺序一致。
 fn apply_scroll(app: &mut App, scrolled: ScrollBurst) {
@@ -186,13 +211,11 @@ fn apply_scroll(app: &mut App, scrolled: ScrollBurst) {
     {
         let lines = lines.min(isize::MAX as usize) as isize;
         app.sidebar_scroll_by(if up { -lines } else { lines });
-    } else {
-        if app
-            .transcript_rect
-            .contains((scrolled.column, scrolled.row).into())
-        {
-            app.focus = FocusPane::Chat;
-        }
+    } else if app
+        .transcript_rect
+        .contains((scrolled.column, scrolled.row).into())
+    {
+        app.focus = FocusPane::Chat;
         if up {
             app.scroll_up(lines);
         } else {
@@ -218,7 +241,14 @@ async fn next_terminal_event(
 ///
 /// 事件流的内部读取是非阻塞的：没有事件就立刻返回，不会把循环卡住。
 /// 上限只是防止一次手势把循环留在这里太久，剩下的下一圈再合。
-async fn drain_pending_events(events: &mut EventStream) -> Vec<io::Result<Event>> {
+async fn drain_pending_events(
+    events: &mut (impl futures_util::Stream<Item = io::Result<Event>> + Unpin),
+    deferred: &mut VecDeque<Event>,
+) -> Vec<io::Result<Event>> {
+    // Older deferred input is a boundary: never merge a newer wheel past it.
+    if !deferred.is_empty() {
+        return deferred.drain(..).map(Ok).collect();
+    }
     const PENDING_EVENT_LIMIT: usize = 256;
     let mut pending = Vec::new();
     while pending.len() < PENDING_EVENT_LIMIT {
@@ -608,6 +638,7 @@ pub(super) async fn event_loop(
         // 终端只在收到 `bye` 或新的 `list` 时才重画这一列，进程被杀掉时只剩这条路。
         app.publish_gallery();
     }
+    let mut terminal_input = terminal_input::TerminalInput::default();
     let mut refresh = tokio::time::interval(Duration::from_secs(1));
     let mut interrupt_esc_deadline: Option<Instant> = None;
     // 滚轮合并时被打断出来的非滚轮事件。下一圈先消化完，再画帧。
@@ -660,6 +691,7 @@ pub(super) async fn event_loop(
         // Ctrl+G：终端和事件流都在这一层，按键分支里交不出去。
         if std::mem::take(&mut app.pending_external_editor) {
             open_external_editor(term, &mut events, &mut app, language).await?;
+            terminal_input.external_editor_resumed(&mut app);
         }
         // 面板里选中的工作区在这里才真正切：切换要动会话、Runtime 与事件跟随器，
         // 按键分支里做不完，也不该在一次按键里做。
@@ -961,7 +993,7 @@ pub(super) async fn event_loop(
             app.references = Some(references);
         }
         load_attention_diagnostics(&mut app, runtime);
-        redraw::redraw(term, &mut app, &runtime.skills, session)?;
+        terminal_input.redraw(term, &mut app, &runtime.skills, session)?;
         let queue_feedback_deadline = app.queue_feedback_deadline();
         tokio::select! {
             _ = async {
@@ -1139,12 +1171,7 @@ pub(super) async fn event_loop(
                 Event::Mouse(mouse)=>{
                     app.prompt_history = None;
                     interrupt_esc_deadline = None;
-                    if app.question.is_some()||app.approval.is_some() {
-                        if mouse.kind==MouseEventKind::Down(MouseButton::Left) {
-                            app.handle_mouse(mouse.column,mouse.row,&runtime.background_tasks,&runtime.skills);
-                        }
-                        continue;
-                    }
+                    if human_gate_ui::handle_mouse(&mut app, mouse) { continue; }
                     if app.permission_picker.is_some() { continue; }
                     if app.attachment_panel.is_some() { continue; }
                     if app.prompt_queue.is_some() {
@@ -1283,10 +1310,12 @@ pub(super) async fn event_loop(
                     // 每格都让循环画一整帧，聊天区就会一格一格地整片重写进终端——那就是滚动时的屏闪。
                     // 先把已经到达的同一轮滚动排空，合成一次偏移，再画一帧。
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        let (scrolled, rest) =
-                            coalesce_scroll(mouse, drain_pending_events(&mut events).await);
-                        apply_scroll(&mut app, scrolled);
-                        deferred_events.extend(rest);
+                        if let Some(region) = scroll_region(&app, mouse) {
+                            let (scrolled, rest) =
+                                coalesce_scroll(region, mouse, drain_pending_events(&mut events, &mut deferred_events).await);
+                            apply_scroll(&mut app, scrolled);
+                            deferred_events.extend(rest);
+                        }
                     }
                     _=>{}
                 }},
@@ -1309,6 +1338,7 @@ pub(super) async fn event_loop(
                         }
                         continue;
                     }
+                    if human_gate_ui::handle_key(&mut app, key) { continue; }
                     if app.handle_prompt_selection_key(key) {
                         continue;
                     }
@@ -1317,7 +1347,6 @@ pub(super) async fn event_loop(
                         if is_selection_copy_key(key)||(key.code==KeyCode::Char('c')&&key.modifiers.contains(KeyModifiers::CONTROL)) {
                             continue;
                         }
-                        execute!(term.backend_mut(), EnableMouseCapture)?;
                         if selection_mode_exit_key(key) {
                             app.exit_selection_mode();
                             app.notice=Some(language.text("已恢复 WillDeep 鼠标操作","WillDeep mouse controls restored","WillDeep のマウス操作を復元しました").to_owned());
@@ -1340,13 +1369,11 @@ pub(super) async fn event_loop(
                         // 以前这里把其余按键一律吞掉，选过字就打不了字、也没有任何提示。
                         app.release_selection_for_key(key);
                     }
-                    if app.routing_settings.is_none()&&key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('s'){
-                        execute!(term.backend_mut(), DisableMouseCapture)?;
+                    if terminal_input::native_selection_allowed(&app)&&key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('s'){
                         app.enter_native_selection_mode();
                         continue;
                     }
                     if key.modifiers.contains(KeyModifiers::CONTROL)&&key.code==KeyCode::Char('c'){break;}
-                    if human_gate_ui::handle_key(&mut app, key) { continue; }
                     if app.permission_picker.is_some() {
                         workspace_approval::handle_key(key,&mut app,session,store,runtime,&agent).await;
                         continue;
@@ -1965,7 +1992,7 @@ pub(super) async fn event_loop(
                             let submission_record=(app.transcript.len()>previous_records).then_some(previous_records);
                             // You 行与清空的输入框必须在任何慢操作前真正显示到终端。
                             if !narration::is_display_only_command(&prompt){
-                                redraw::redraw(term, &mut app, &runtime.skills, session)?;
+                                terminal_input.redraw(term, &mut app, &runtime.skills, session)?;
                             }
                             if extension_commands::matches(&prompt) {
                                 let home = runtime.home.clone();
@@ -2206,6 +2233,7 @@ pub(super) async fn event_loop(
                         KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL|KeyModifiers::SUPER)=>app.edit_input(|input| input.insert(&c.to_string())),_=>{}
                     }
                 }
+                Event::Resize(_, _) if app.native_selection_mode => app.exit_selection_mode(),
                 _=>{}
             }},
             Some(message)=runtime.rx.recv()=>match message {
@@ -2356,10 +2384,27 @@ mod scroll_coalesce_tests {
         }
     }
 
+    #[tokio::test]
+    async fn deferred_key_stays_before_a_newer_wheel_tick() {
+        let region = Rect::new(0, 0, 100, 100);
+        let key = Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        let newer = wheel(MouseEventKind::ScrollUp, 5, 5);
+        let mut deferred = VecDeque::from([key.clone()]);
+        let mut events = futures_util::stream::iter([Ok(newer.clone())]);
+        let pending = drain_pending_events(&mut events, &mut deferred).await;
+        let (burst, held) =
+            coalesce_scroll(region, wheel_event(MouseEventKind::ScrollUp, 5, 5), pending);
+        assert_eq!(burst.ticks_up, 1);
+        assert_eq!(held, vec![key]);
+        assert!(deferred.is_empty());
+        assert_eq!(events.next().await.unwrap().unwrap(), newer);
+    }
+
     /// 一次手势里连续到达的滚轮格合成一份偏移，一格 3 行。
     #[test]
     fn a_burst_of_wheel_ticks_becomes_one_offset() {
         let (scrolled, rest) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollUp, 5, 5),
             [
                 Ok(wheel(MouseEventKind::ScrollUp, 5, 6)),
@@ -2378,6 +2423,7 @@ mod scroll_coalesce_tests {
     #[test]
     fn opposite_ticks_cancel_out() {
         let (scrolled, _) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollUp, 1, 1),
             [
                 Ok(wheel(MouseEventKind::ScrollDown, 1, 1)),
@@ -2394,6 +2440,7 @@ mod scroll_coalesce_tests {
     fn a_non_wheel_event_ends_the_burst_and_is_kept() {
         let key = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
         let (scrolled, rest) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollDown, 3, 3),
             [
                 Ok(wheel(MouseEventKind::ScrollDown, 3, 4)),
@@ -2426,6 +2473,7 @@ mod scroll_coalesce_tests {
     #[test]
     fn a_read_error_stops_the_burst() {
         let (scrolled, rest) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollUp, 2, 2),
             [
                 Err(io::Error::other("terminal gone")),
@@ -2450,6 +2498,7 @@ mod scroll_coalesce_tests {
             height: 10,
         };
         let (scrolled, _) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollUp, 4, 4),
             std::iter::repeat_with(|| Ok(wheel(MouseEventKind::ScrollUp, 4, 4))).take(5),
         );
@@ -2470,6 +2519,7 @@ mod scroll_coalesce_tests {
             height: 40,
         };
         let (scrolled, _) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollDown, 65, 10),
             [
                 Ok(wheel(MouseEventKind::ScrollDown, 66, 11)),
@@ -2482,12 +2532,77 @@ mod scroll_coalesce_tests {
         assert_eq!(app.scroll_from_bottom, 0);
     }
 
+    #[test]
+    fn crossing_into_the_sidebar_preserves_the_next_burst() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.transcript_rect = Rect::new(0, 0, 60, 30);
+        app.sidebar_rect = Rect::new(60, 0, 20, 30);
+        app.transcript_height = 100;
+        app.viewport_height = 30;
+        let first = wheel_event(MouseEventKind::ScrollUp, 10, 10);
+        let (scrolled, rest) = coalesce_scroll(
+            scroll_region(&app, first).unwrap(),
+            first,
+            [
+                Ok(wheel(MouseEventKind::ScrollUp, 11, 11)),
+                Ok(wheel(MouseEventKind::ScrollDown, 65, 10)),
+                Ok(wheel(MouseEventKind::ScrollDown, 66, 11)),
+            ],
+        );
+        assert_eq!(scrolled.ticks_up, 2);
+        assert_eq!(rest.len(), 2);
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.scroll_from_bottom, 6);
+        assert_eq!(app.sidebar_scroll, 0);
+        let Event::Mouse(first) = rest[0] else {
+            panic!("expected deferred wheel");
+        };
+        let (scrolled, rest) = coalesce_scroll(
+            scroll_region(&app, first).unwrap(),
+            first,
+            rest.into_iter().skip(1).map(Ok),
+        );
+        assert!(rest.is_empty());
+        apply_scroll(&mut app, scrolled);
+        assert_eq!(app.sidebar_scroll, 6);
+        assert_eq!(app.scroll_from_bottom, 6);
+    }
+
+    #[test]
+    fn a_chat_selection_does_not_take_the_sidebars_wheel() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.transcript_rect = Rect::new(0, 0, 60, 30);
+        app.sidebar_rect = Rect::new(60, 0, 20, 30);
+        app.selection_mode = true;
+        let wheel = wheel_event(MouseEventKind::ScrollDown, 65, 10);
+        assert!(!app.handle_chat_selection_mouse(wheel));
+        apply_scroll(&mut app, ScrollBurst::from_tick(wheel));
+        assert_eq!(app.sidebar_scroll, 3);
+        assert_eq!(app.scroll_from_bottom, 0);
+        assert!(app.selection_mode);
+    }
+
+    #[test]
+    fn wheel_outside_the_transcript_does_not_scroll_chat() {
+        let mut app = App::new(Vec::new(), Language::En);
+        app.transcript_rect = Rect::new(0, 0, 60, 20);
+        app.prompt_rect = Rect::new(0, 25, 60, 5);
+        app.transcript_height = 100;
+        app.viewport_height = 20;
+        let wheel = wheel_event(MouseEventKind::ScrollUp, 10, 27);
+        assert!(scroll_region(&app, wheel).is_none());
+        apply_scroll(&mut app, ScrollBurst::from_tick(wheel));
+        assert_eq!(app.scroll_from_bottom, 0);
+        assert!(app.follow_bottom);
+    }
+
     /// 完全抵消的一轮什么都不动，连焦点都不改。
     #[test]
     fn a_cancelled_burst_changes_nothing() {
         let mut app = App::new(Vec::new(), Language::En);
         let focus = app.focus;
         let (scrolled, _) = coalesce_scroll(
+            Rect::new(0, 0, 100, 100),
             wheel_event(MouseEventKind::ScrollUp, 4, 4),
             [Ok(wheel(MouseEventKind::ScrollDown, 4, 4))],
         );

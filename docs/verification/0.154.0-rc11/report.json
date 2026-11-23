@@ -1,0 +1,28 @@
+{
+  "version": "0.154.0-rc11",
+  "date": "2026-11-23",
+  "branch": "fix/session-compaction-resume",
+  "pr": "https://github.com/niuwoai/willdeep-cli/pull/176",
+  "initial_fix_commit": "34c875a0c8eb20218ee5956b5c3cdf21273b5fb9",
+  "merged_develop_commit": "9ca1d7abf2ed7ff6283977ddc1f1421022cd02dd",
+  "status": "integration_checks_passed",
+  "checks": [
+    { "name": "web_embed_build", "status": "passed" },
+    { "name": "release_version_metadata", "status": "passed" },
+    { "name": "ruby_syntax", "status": "passed" },
+    { "name": "format_and_diff", "status": "passed" },
+    { "name": "tui_merge_semantic_review", "status": "no_confirmed_integration_bug" },
+    { "name": "cli_tui", "passed": 712, "failed": 0, "ignored": 2 },
+    { "name": "workspace_versions", "passed": 1, "failed": 0, "ignored": 0 },
+    { "name": "strict_workspace_clippy", "status": "passed" },
+    { "name": "cli_build", "status": "passed", "reported_version": "willdeep 0.154.0-rc11" },
+    { "name": "real_tui_unknown_slash", "passed": 4, "failed": 0, "model_requests": 3, "real_model_requests": 0, "fixture_errors": [] },
+    { "name": "real_tui_input_ownership", "passed": 15, "failed": 0, "interactive_checks": 14, "binary_sha256_unchanged": true, "layouts": ["full", "compact"], "cleanup_checks_passed": 10, "errors": [] }
+  ],
+  "initial_command_failure": "cargo test -p willdeep --lib: no library targets found; corrected to --bin willdeep",
+  "prior_core_verification": "../0.154.0-rc8/report.json",
+  "core_full_suite_rerun": false,
+  "installed": false,
+  "published": false,
+  "production_provider_latency_verified": false
+}

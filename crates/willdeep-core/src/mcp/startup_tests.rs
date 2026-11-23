@@ -3,14 +3,24 @@ use std::error::Error;
 
 #[tokio::test]
 async fn missing_process_reports_server_and_stage_without_configuration_secrets() {
+    // A bare name searches the runner's PATH, whose inaccessible directories
+    // can produce PermissionDenied instead of NotFound on Unix.
+    let directory = std::env::temp_dir().join(format!(
+        "willdeep-missing-mcp-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir(&directory).expect("private missing-executable fixture");
+    let missing_program = directory.join("missing-mcp");
     let config = McpServerConfig {
-        command: Some(format!("willdeep-missing-mcp-{}", uuid::Uuid::new_v4())),
+        command: Some(missing_program.to_string_lossy().into_owned()),
         args: vec!["argument-canary".to_owned()],
         env: BTreeMap::from([("TEST_SECRET".to_owned(), "environment-canary".to_owned())]),
         ..McpServerConfig::default()
     };
     let configs = BTreeMap::from([("broken-server".to_owned(), config)]);
-    let error = match McpRegistry::connect(&configs).await {
+    let result = McpRegistry::connect(&configs).await;
+    std::fs::remove_dir(&directory).expect("remove private missing-executable fixture");
+    let error = match result {
         Ok(_) => panic!("missing executable unexpectedly started"),
         Err(error) => error,
     };

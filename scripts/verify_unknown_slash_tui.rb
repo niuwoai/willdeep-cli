@@ -10,7 +10,7 @@ require 'socket'
 require 'tmpdir'
 
 binary = File.expand_path(ARGV.fetch(0))
-report_dir = File.expand_path(ARGV.fetch(1, 'docs/verification/0.154.0-rc8/slash-tui'))
+report_dir = File.expand_path(ARGV.fetch(1, 'docs/verification/0.154.0-rc11/slash-tui'))
 raise 'willdeep binary is not executable' unless File.executable?(binary)
 FileUtils.mkdir_p(report_dir)
 root = Dir.mktmpdir('wd-unknown-slash-')
