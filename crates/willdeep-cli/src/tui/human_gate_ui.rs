@@ -55,20 +55,11 @@ const APPROVAL_SCROLL_ROWS: usize = 3;
 
 /// Scroll state for the approval description. Long commands must be read
 /// to the end before Allow is accepted.
+#[derive(Default)]
 pub(super) struct ApprovalViewport {
     pub(super) offset: usize,
     pub(super) body: Rect,
     pub(super) total_lines: usize,
-}
-
-impl Default for ApprovalViewport {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            body: Rect::default(),
-            total_lines: 0,
-        }
-    }
 }
 
 pub(super) fn approval_decision_blocked(

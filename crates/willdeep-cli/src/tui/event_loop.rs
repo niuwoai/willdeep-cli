@@ -665,11 +665,13 @@ pub(super) async fn event_loop(
         qterm.observe(
             session.id,
             session.title.as_str(),
-            app.running,
-            app.runtime_turn,
-            app.approval.is_some(),
-            app.question.is_some(),
-            app.qterm_gate_generation,
+            crate::qterm::ObserveInputs {
+                running: app.running,
+                runtime_turn: app.runtime_turn,
+                approval: app.approval.is_some(),
+                question: app.question.is_some(),
+                generation: app.qterm_gate_generation,
+            },
         );
         if qterm.reporter.take_error() && !app.qterm_link_warned {
             app.qterm_link_warned = true;

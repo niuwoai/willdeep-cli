@@ -1,5 +1,13 @@
 use super::*;
 
+pub(crate) struct ObserveInputs {
+    pub running: bool,
+    pub runtime_turn: bool,
+    pub approval: bool,
+    pub question: bool,
+    pub generation: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct ViewState {
     pub reporter: Reporter,
@@ -23,16 +31,7 @@ impl ViewState {
         }
     }
 
-    pub(crate) fn observe(
-        &mut self,
-        session: Uuid,
-        session_title: &str,
-        running: bool,
-        runtime_turn: bool,
-        approval: bool,
-        question: bool,
-        generation: u64,
-    ) {
+    pub(crate) fn observe(&mut self, session: Uuid, session_title: &str, input: ObserveInputs) {
         self.session_title = session_report_title(session_title);
         if self.session != Some(session) {
             self.session = Some(session);
@@ -48,13 +47,11 @@ impl ViewState {
                 self.session_title.clone(),
             );
         }
-        if running && (!self.running || runtime_turn == self.local_mode) {
-            self.local_mode = !runtime_turn;
-            if let Some(current) = self
-                .reporter
-                .current_state(session)
-                .filter(|state| runtime_turn && matches!(state.activity, "working" | "blocked"))
-            {
+        if input.running && (!self.running || input.runtime_turn == self.local_mode) {
+            self.local_mode = !input.runtime_turn;
+            if let Some(current) = self.reporter.current_state(session).filter(|state| {
+                input.runtime_turn && matches!(state.activity, "working" | "blocked")
+            }) {
                 self.task = current.context.task_id;
             } else {
                 self.task = Some(Uuid::new_v4().to_string());
@@ -67,15 +64,18 @@ impl ViewState {
                 );
             }
         }
-        let gate = if approval {
-            Some((generation, RuntimeStatus::WaitingApproval))
-        } else if question {
-            Some((generation, RuntimeStatus::WaitingAnswer))
+        let gate = if input.approval {
+            Some((input.generation, RuntimeStatus::WaitingApproval))
+        } else if input.question {
+            Some((input.generation, RuntimeStatus::WaitingAnswer))
         } else {
             None
         };
-        if self.local_mode && gate != self.gate && (running || !self.reporter.has_result(session)) {
-            let status = gate.map(|(_, status)| status).unwrap_or(if running {
+        if self.local_mode
+            && gate != self.gate
+            && (input.running || !self.reporter.has_result(session))
+        {
+            let status = gate.map(|(_, status)| status).unwrap_or(if input.running {
                 RuntimeStatus::Working
             } else {
                 RuntimeStatus::Idle
@@ -88,7 +88,7 @@ impl ViewState {
                 self.session_title.clone(),
             );
         }
-        if self.local_mode && self.running && !running && !self.reporter.has_result(session) {
+        if self.local_mode && self.running && !input.running && !self.reporter.has_result(session) {
             self.reporter.update(
                 session,
                 self.task.clone(),
@@ -97,7 +97,7 @@ impl ViewState {
                 self.session_title.clone(),
             );
         }
-        self.running = running;
+        self.running = input.running;
         self.gate = gate;
     }
 

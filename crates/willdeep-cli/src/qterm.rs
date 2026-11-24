@@ -1,7 +1,7 @@
 //! Optional terminal-scoped status reporting. No prompts, output or input capabilities cross this bridge.
 mod transport;
 mod view;
-pub(crate) use view::ViewState;
+pub(crate) use view::{ObserveInputs, ViewState};
 #[cfg(test)]
 mod tests;
 
