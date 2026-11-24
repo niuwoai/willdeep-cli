@@ -120,6 +120,16 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         with:
           toolchain: 1.94.1
+      - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
+        with:
+          # Separate explicit-target release artifacts from the complete debug suite.
+          # rust-cache additionally hashes rustc, compiler environment and dependencies.
+          shared-key: ci-wsl-${{ runner.os }}-${{ runner.arch }}-x86_64-unknown-linux-gnu-release
+          cache-bin: 'false'
+          cache-workspace-crates: 'false'
+          cache-on-failure: 'false'
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
       - name: Build the Linux x86_64 binary consumed by WSL 2
         if: steps.changes.outputs.code == 'true'
         run: cargo build --locked --release --target x86_64-unknown-linux-gnu -p willdeep
