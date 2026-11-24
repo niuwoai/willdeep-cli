@@ -51,6 +51,60 @@ impl Default for QuestionViewport {
 }
 
 const QUESTION_SCROLL_ROWS: usize = 3;
+const APPROVAL_SCROLL_ROWS: usize = 3;
+
+/// Scroll state for the approval description. Long commands must be read
+/// to the end before Allow is accepted.
+#[derive(Default)]
+pub(super) struct ApprovalViewport {
+    pub(super) offset: usize,
+    pub(super) body: Rect,
+    pub(super) total_lines: usize,
+}
+
+pub(super) fn approval_decision_blocked(
+    decision: ApprovalDecision,
+    view: &ApprovalViewport,
+) -> bool {
+    matches!(
+        decision,
+        ApprovalDecision::AllowOnce | ApprovalDecision::AlwaysAllow
+    ) && !view.at_bottom()
+}
+
+pub(super) fn approval_allow_if_read(
+    view: &ApprovalViewport,
+    decision: ApprovalDecision,
+) -> Option<ApprovalDecision> {
+    if approval_decision_blocked(decision, view) {
+        None
+    } else {
+        Some(decision)
+    }
+}
+
+impl ApprovalViewport {
+    pub(super) fn at_bottom(&self) -> bool {
+        self.total_lines <= usize::from(self.body.height)
+            || self.offset + usize::from(self.body.height) >= self.total_lines
+    }
+
+    pub(super) fn scroll_by(&mut self, delta: isize) {
+        if delta < 0 {
+            self.offset = self
+                .offset
+                .saturating_sub((-delta) as usize * APPROVAL_SCROLL_ROWS);
+        } else {
+            self.offset = self
+                .offset
+                .saturating_add(delta as usize * APPROVAL_SCROLL_ROWS)
+                .min(
+                    self.total_lines
+                        .saturating_sub(usize::from(self.body.height)),
+                );
+        }
+    }
+}
 
 /// Human gates are drawn above permission pickers and receive their keys first.
 pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
@@ -96,17 +150,33 @@ pub(super) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         return true;
     }
     if app.approval.is_some() {
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            let point = (mouse.column, mouse.row).into();
-            if let Some((_, decision)) = app
-                .approval_action_hits
-                .iter()
-                .find(|(rect, _)| rect.contains(point))
-                .copied()
-            {
-                app.resolve_approval(|_| decision);
-                app.approval_action_hits.clear();
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let point = (mouse.column, mouse.row).into();
+                if let Some((_, decision)) = app
+                    .approval_action_hits
+                    .iter()
+                    .find(|(rect, _)| rect.contains(point))
+                    .copied()
+                {
+                    if approval_decision_blocked(decision, &app.approval_view) {
+                        return true;
+                    }
+                    app.resolve_approval(|_| decision);
+                    app.approval_action_hits.clear();
+                }
             }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let view = &mut app.approval_view;
+                if view.body.contains((mouse.column, mouse.row).into()) {
+                    view.scroll_by(if mouse.kind == MouseEventKind::ScrollUp {
+                        -1
+                    } else {
+                        1
+                    });
+                }
+            }
+            _ => {}
         }
         return true;
     }
@@ -204,10 +274,38 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
             inner.width,
             inner.height.saturating_sub(actions_height + 1),
         );
-        f.render_widget(
-            Paragraph::new(description).wrap(Wrap { trim: false }),
-            description_rect,
+        let content_width = usize::from(description_rect.width.max(1));
+        let wrapped = rendering::wrap_styled_text(Text::from(description.clone()), content_width);
+        let lines = wrapped.lines;
+        let view = &mut app.approval_view;
+        view.body = description_rect;
+        view.total_lines = lines.len();
+        view.offset = view.offset.min(
+            lines
+                .len()
+                .saturating_sub(usize::from(description_rect.height)),
         );
+        let visible: Vec<_> = lines
+            .into_iter()
+            .skip(view.offset)
+            .take(usize::from(description_rect.height))
+            .collect();
+        f.render_widget(Paragraph::new(visible), description_rect);
+        let scrollable = view.total_lines > usize::from(description_rect.height);
+        if scrollable && !view.at_bottom() {
+            let hint = app.language.text(
+                "滚到底才可允许",
+                "Scroll to the end before allowing",
+                "最後までスクロールしてから許可",
+            );
+            let hint_row = description_rect.bottom().saturating_sub(1);
+            if hint_row > description_rect.y {
+                f.render_widget(
+                    Paragraph::new(hint).style(Style::default().fg(Color::DarkGray)),
+                    Rect::new(description_rect.x, hint_row, description_rect.width, 1),
+                );
+            }
+        }
         for (index, decision) in approval_decisions(always).iter().copied().enumerate() {
             let row = Rect::new(
                 actions.x,
@@ -227,9 +325,13 @@ pub(super) fn render(f: &mut ratatui::Frame<'_>, app: &mut App) {
                 continue;
             }
             let selected = app.approval_selected == index;
+            let blocked = approval_decision_blocked(decision, view);
+            let mut style = approval_action_style(decision, selected);
+            if blocked {
+                style = style.fg(Color::DarkGray).remove_modifier(Modifier::BOLD);
+            }
             f.render_widget(
-                Paragraph::new(approval_action_text(decision, app.language, selected))
-                    .style(approval_action_style(decision, selected)),
+                Paragraph::new(approval_action_text(decision, app.language, selected)).style(style),
                 row,
             );
             app.approval_action_hits.push((row, decision));

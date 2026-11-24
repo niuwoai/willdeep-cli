@@ -660,6 +660,7 @@ struct App {
     skill_hits: Vec<(u16, usize)>,
     approval_rect: Rect,
     approval_action_hits: Vec<(Rect, ApprovalDecision)>,
+    approval_view: human_gate_ui::ApprovalViewport,
     question_rect: Rect,
     question_hits: Vec<(u16, usize)>,
     question_view: human_gate_ui::QuestionViewport,
@@ -1436,6 +1437,7 @@ fn dispatch_media_action(action: MediaAction, app: &mut App, runtime: &TuiRuntim
 }
 
 mod app_state;
+mod approval_state;
 mod chat_selection;
 
 fn clipboard_image() -> Result<DraftAttachment> {

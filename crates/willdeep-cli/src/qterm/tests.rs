@@ -82,6 +82,17 @@ fn respond(root: &std::path::Path, path: PathBuf, request: &serde_json::Value, g
 }
 
 #[test]
+fn session_title_is_truncated_in_report_context() {
+    let session = Uuid::new_v4();
+    let long = "a".repeat(120);
+    let state = State::new(session, None, None, RuntimeStatus::Working, Some(long));
+    assert_eq!(
+        state.context.title.as_deref().map(|s| s.chars().count()),
+        Some(100)
+    );
+}
+
+#[test]
 fn semantic_mapping_never_equates_idle_partial_cancel_and_success() {
     let session = Uuid::new_v4();
     for (status, activity, block, result) in [
@@ -111,7 +122,7 @@ fn semantic_mapping_never_equates_idle_partial_cancel_and_success() {
         (RuntimeStatus::Partial, "idle", None, Some("unknown")),
         (RuntimeStatus::Unknown, "unknown", None, None),
     ] {
-        let state = State::new(session, None, None, status);
+        let state = State::new(session, None, None, status, None);
         assert_eq!(
             (state.activity, state.block_reason, state.result),
             (activity, block, result)
@@ -163,6 +174,7 @@ fn transport_binds_once_and_sends_metadata_with_increasing_sequence() {
             Some("task-1".into()),
             None,
             RuntimeStatus::Working,
+            None,
         ))
         .unwrap();
     endpoint
@@ -171,6 +183,7 @@ fn transport_binds_once_and_sends_metadata_with_increasing_sequence() {
             Some("task-1".into()),
             None,
             RuntimeStatus::Done,
+            None,
         ))
         .unwrap();
     server.join().unwrap();
@@ -193,15 +206,36 @@ fn memory_reporter() -> Reporter {
 fn runtime_frontend_finishing_does_not_invent_a_local_interruption() {
     let session = Uuid::new_v4();
     let mut view = ViewState::new(memory_reporter());
-    view.observe(session, true, true, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: true,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     view.reporter.update(
         session,
         Some("actual-runtime-task".into()),
         None,
         RuntimeStatus::Working,
+        None,
     );
     // runtime_turn is cleared by the UI before the final Runtime snapshot arrives.
-    view.observe(session, false, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     let reported = state(&view.reporter);
     assert_eq!(reported.activity, "working");
     assert_eq!(reported.result, None);
@@ -229,6 +263,7 @@ async fn headless_shutdown_drains_final_result_without_retiring_runtime_task() {
         Some("task-final".into()),
         None,
         RuntimeStatus::Done,
+        None,
     );
     reporter.finish(true).await;
     server.join().unwrap();
@@ -258,6 +293,7 @@ async fn frontend_shutdown_delivers_final_result_before_exited_and_keeps_result(
         Some("task-final".into()),
         None,
         RuntimeStatus::Failed,
+        None,
     );
     reporter.finish(false).await;
     server.join().unwrap();
@@ -280,16 +316,56 @@ fn state(reporter: &Reporter) -> State {
 fn local_consecutive_identical_gates_get_distinct_episodes() {
     let mut view = ViewState::new(memory_reporter());
     let session = Uuid::new_v4();
-    view.observe(session, true, false, true, false, 1);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: true,
+            question: false,
+            generation: 1,
+        },
+    );
     let first = state(&view.reporter);
-    view.observe(session, true, false, true, false, 2);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: true,
+            question: false,
+            generation: 2,
+        },
+    );
     let second = state(&view.reporter);
     assert_eq!(first.activity, "blocked");
     assert_ne!(first.context.gate_id, second.context.gate_id);
-    view.observe(session, true, false, false, false, 3);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 3,
+        },
+    );
     assert_eq!(state(&view.reporter).activity, "working");
     view.finished(session, RuntimeStatus::Done);
-    view.observe(session, false, false, false, false, 3);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 3,
+        },
+    );
     assert_eq!(state(&view.reporter).result, Some("completed"));
 }
 
@@ -297,7 +373,17 @@ fn local_consecutive_identical_gates_get_distinct_episodes() {
 fn repeated_views_are_deduplicated_and_session_switch_resets_context() {
     let mut view = ViewState::new(memory_reporter());
     let session = Uuid::new_v4();
-    view.observe(session, true, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     let first = state(&view.reporter);
     let revision = view
         .reporter
@@ -308,7 +394,17 @@ fn repeated_views_are_deduplicated_and_session_switch_resets_context() {
         .lock()
         .unwrap()
         .revision;
-    view.observe(session, true, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     assert_eq!(
         revision,
         view.reporter
@@ -321,7 +417,17 @@ fn repeated_views_are_deduplicated_and_session_switch_resets_context() {
             .revision
     );
     let next = Uuid::new_v4();
-    view.observe(next, false, false, false, false, 0);
+    view.observe(
+        next,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     let state = state(&view.reporter);
     assert_eq!(state.context.session_id, next);
     assert_ne!(state.context, first.context);
@@ -337,6 +443,7 @@ fn runtime_unavailable_becomes_unknown_and_preserves_pending_gate_identity() {
         Some("task-1".into()),
         Some("gate-1".into()),
         RuntimeStatus::WaitingApproval,
+        None,
     );
     let snapshot = crate::daemon::RuntimeSnapshot {
         queue: None,
@@ -351,7 +458,7 @@ fn runtime_unavailable_becomes_unknown_and_preserves_pending_gate_identity() {
         event_sequence: None,
         mobile: None,
     };
-    reporter.runtime_snapshot(&snapshot, session, 0, false);
+    reporter.runtime_snapshot(&snapshot, session, 0, false, None);
     let state = state(&reporter);
     assert_eq!(state.activity, "unknown");
     assert_eq!(state.context.gate_id.as_deref(), Some("gate-1"));
@@ -412,9 +519,29 @@ fn active_root_has_priority_over_finished_history() {
 fn final_result_is_not_lost_when_a_local_gate_closes_at_completion() {
     let mut view = ViewState::new(memory_reporter());
     let session = Uuid::new_v4();
-    view.observe(session, true, false, true, false, 1);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: true,
+            question: false,
+            generation: 1,
+        },
+    );
     view.finished(session, RuntimeStatus::Done);
-    view.observe(session, false, false, false, false, 2);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 2,
+        },
+    );
     assert_eq!(state(&view.reporter).result, Some("completed"));
 }
 
@@ -424,7 +551,7 @@ fn missing_endpoint_keeps_cli_behavior_optional() {
         transport::Endpoint::open(std::path::Path::new("/nonexistent/qterm-context.json")).is_err()
     );
     let reporter = Reporter::default();
-    reporter.update(Uuid::new_v4(), None, None, RuntimeStatus::Working);
+    reporter.update(Uuid::new_v4(), None, None, RuntimeStatus::Working, None);
     assert!(!reporter.take_error());
 }
 
@@ -438,6 +565,7 @@ fn old_completed_snapshot_cannot_finish_a_new_queued_turn() {
         Some("new-turn".into()),
         None,
         RuntimeStatus::Working,
+        None,
     );
     let mut old = task(session, Uuid::new_v4(), 1, TaskStatus::Completed);
     old.agent_id = None;
@@ -454,7 +582,7 @@ fn old_completed_snapshot_cannot_finish_a_new_queued_turn() {
         event_sequence: Some(5),
         mobile: None,
     };
-    reporter.runtime_snapshot(&snapshot, session, 5, true);
+    reporter.runtime_snapshot(&snapshot, session, 5, true, None);
     assert_eq!(state(&reporter).activity, "working");
     assert_eq!(
         state(&reporter).context.task_id.as_deref(),
@@ -466,14 +594,35 @@ fn old_completed_snapshot_cannot_finish_a_new_queued_turn() {
 fn adopting_running_runtime_does_not_reset_a_pending_approval() {
     let session = Uuid::new_v4();
     let mut view = ViewState::new(memory_reporter());
-    view.observe(session, false, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     view.reporter.update(
         session,
         Some("runtime-task".into()),
         Some("gate".into()),
         RuntimeStatus::WaitingApproval,
+        None,
     );
-    view.observe(session, true, true, true, false, 1);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: true,
+            approval: true,
+            question: false,
+            generation: 1,
+        },
+    );
     assert_eq!(state(&view.reporter).activity, "blocked");
     assert_eq!(
         state(&view.reporter).context.gate_id.as_deref(),
@@ -486,7 +635,17 @@ fn runtime_history_does_not_overwrite_a_local_turn() {
     use willdeep_runtime_protocol::TaskStatus;
     let session = Uuid::new_v4();
     let mut view = ViewState::new(memory_reporter());
-    view.observe(session, true, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: true,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     let mut old = task(session, Uuid::new_v4(), 1, TaskStatus::Completed);
     old.agent_id = None;
     let snapshot = crate::daemon::RuntimeSnapshot {
@@ -503,7 +662,17 @@ fn runtime_history_does_not_overwrite_a_local_turn() {
         mobile: None,
     };
     view.finished(session, RuntimeStatus::Failed);
-    view.observe(session, false, false, false, false, 0);
+    view.observe(
+        session,
+        "",
+        ObserveInputs {
+            running: false,
+            runtime_turn: false,
+            approval: false,
+            question: false,
+            generation: 0,
+        },
+    );
     view.runtime_snapshot(&snapshot, session, 5, false);
     assert_eq!(state(&view.reporter).result, Some("failed"));
 }
