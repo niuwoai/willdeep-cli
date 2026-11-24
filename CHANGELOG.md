@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.155.0-rc9] - 2026-11-24
+### Added
+- CLI：`willdeep provider models [<profile>] [--json]`，对指定 Provider 档案调用 `GET /v1/models` 列出模型 ID（与 TUI 模型选择器同源）。
+- `integrations/harbor-willdeep/`：Harbor 适配器 `WilldeepAgent`，可在 Terminal-Bench 沙箱内安装 `willdeep run --local --full-auto`。
+
 ## [0.155.0-rc8] - 2026-11-24
 ### Added
 - Web 聊天区：`language-input` / `language-textarea` 围栏渲染为一键复制的输入框样式卡片（#182）。

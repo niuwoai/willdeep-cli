@@ -1,0 +1,31 @@
+# Harbor JobConfig — willdeep + some.im glm-5 on Terminal-Bench (smoke / small batch)
+# Usage:
+#   export SOMEIM_API_KEY=...
+#   export WILLDEEP_API_BASE=https://some.im/v1
+#   harbor run -c integrations/harbor-willdeep/examples/job-willdeep-someim-glm5.yaml
+
+job_name: willdeep-someim-glm5-tb-smoke
+n_concurrent: 1
+n_attempts: 1
+
+agents:
+  - import_path: willdeep_harbor.agent:WilldeepAgent
+    model_name: glm-5
+    model_api_key_name: SOMEIM_API_KEY
+    model_api_format: openai_chat_completions
+    kwargs:
+      version: v0.155.0-rc9
+      provider: some-im
+      profile: harbor
+      max_turns: 60
+      language: en
+      local_harness: true
+      full_auto: true
+
+dataset:
+  name: terminal-bench
+  version: "2.0"
+
+model_auth:
+  base_url: "${WILLDEEP_API_BASE:-https://some.im/v1}"
+
