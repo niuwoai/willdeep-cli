@@ -1437,6 +1437,7 @@ fn dispatch_media_action(action: MediaAction, app: &mut App, runtime: &TuiRuntim
 }
 
 mod app_state;
+mod approval_state;
 mod chat_selection;
 
 fn clipboard_image() -> Result<DraftAttachment> {
