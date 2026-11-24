@@ -14,19 +14,26 @@ runs:
     - name: Resolve the diff range
       id: range
       shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE_SHA: ${{ github.event.before }}
       run: |
-        # 一个被复用的 workflow 拿不到 base ref，无法证明 diff 不含代码，保守地跑全量。
-        if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+        # 复用的 workflow、以及拿不到可比较父提交的事件，无法证明 diff 不含代码，跑全量。
+        if [[ "$EVENT_NAME" == "workflow_call" ]]; then
           echo "base=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        git fetch --no-tags --depth=1 origin "${{ github.event.repository.default_branch }}"
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
-        elif git merge-base --is-ancestor origin/"${{ github.event.repository.default_branch }}" HEAD; then
-          echo "base=origin/${{ github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
+        if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          echo "base=${PR_BASE_SHA}" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # push 必须传 40 位小写提交 SHA。paths-filter 只把这种值当成提交。
+        # 远程跟踪分支名会被当成远程 ref，浅克隆 fetch 会以 exit 128 失败。
+        # 全 0 或缺失表示没有推送前的提交，范围不可证，跑全量。
+        if [[ "$EVENT_NAME" == "push" && "$PUSH_BEFORE_SHA" =~ ^[0-9a-f]{40}$ && "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+          echo "base=${PUSH_BEFORE_SHA}" >> "$GITHUB_OUTPUT"
         else
-          # 分支与默认分支分叉，范围不可靠，跑全量。
           echo "base=" >> "$GITHUB_OUTPUT"
         fi
     - name: Classify the changed paths

@@ -752,6 +752,39 @@ class CiRunnerWorkflowContractTest < Minitest::Test
     end
   end
 
+  def test_push_diff_base_is_the_previous_commit_sha
+    action = YAML.load_file(File.join(ROOT, '.github/actions/ci-changes/action.yml'))
+    step = action.dig('runs', 'steps').find { |item| item['id'] == 'range' }
+    script = step.fetch('run')
+    refute_match(/\borigin\//, script.gsub(/^\s*#.*$/, ''))
+    refute_includes script, 'git fetch'
+    assert_equal '${{ github.event.before }}', step.dig('env', 'PUSH_BEFORE_SHA')
+    assert_equal '${{ github.event.pull_request.base.sha }}', step.dig('env', 'PR_BASE_SHA')
+    parent = 'a' * 40
+    {
+      %w[push] + ['', parent] => parent,
+      %w[push] + ['', '0' * 40] => '',
+      %w[push] + ['', ''] => '',
+      %w[push] + ['', 'HEAD'] => '',
+      %w[push] + ['', 'A' * 40] => '',
+      ['pull_request', parent, ''] => parent,
+      ['workflow_call', parent, parent] => '',
+      ['workflow_dispatch', parent, parent] => ''
+    }.each do |inputs, expected|
+      event, pr_base, before = inputs
+      Dir.mktmpdir do |dir|
+        output = File.join(dir, 'github_output')
+        _stdout, stderr, status = Open3.capture3(
+          { 'EVENT_NAME' => event, 'PR_BASE_SHA' => pr_base, 'PUSH_BEFORE_SHA' => before, 'GITHUB_OUTPUT' => output },
+          'bash', '-c', script
+        )
+        assert status.success?, "#{event}: #{stderr}"
+        base = File.read(output).lines.map(&:strip).grep(/\Abase=/).fetch(0).delete_prefix('base=')
+        assert_equal expected, base, event
+      end
+    end
+  end
+
   def test_worker_cannot_recurse_and_retains_identity_and_complete_suite_evidence
     worker = @worker.fetch('jobs').fetch('self-hosted-worker')
     assert_includes worker.fetch('if'), "github.event_name == 'workflow_dispatch'"
