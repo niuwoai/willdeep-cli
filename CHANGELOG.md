@@ -1,6 +1,8 @@
 # Changelog
 
 ## [0.155.0-rc11] - 2026-11-24
+### Changed
+- Web：`vitest` 升至 4.1.x（对齐 Dependabot #202）；`package.json` `resolutions` 钉 `vite@7.3.7`，修复 Yarn 1 在 `vitest@4` 下的 peer 链接失败。
 ### Fixed
 - CI aarch64 偶发：`timeout_reaps_leader_before_returning_and_stops_delayed_write` 改为从工作区 `leader.pid` 读 PID，并略放宽 deadline，不再依赖超时错误里的 stdout 片段。
 
