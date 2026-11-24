@@ -5,4 +5,36 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 export LANG="${LANG:-en_US.UTF-8}"
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
-exec ruby scripts/check_source_size.rb
+
+staged=()
+while IFS= read -r -d '' path; do
+  staged+=("$path")
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
+if ((${#staged[@]} == 0)); then
+  exit 0
+fi
+
+needs_source_check=false
+needs_rust_fmt=false
+for path in "${staged[@]}"; do
+  case "$path" in
+    *.rs) needs_source_check=true; needs_rust_fmt=true ;;
+    *.ts | *.tsx | *.js | *.mjs | *.cjs | *.rb | *.md)
+      needs_source_check=true
+      ;;
+  esac
+done
+
+if ! $needs_source_check; then
+  exit 0
+fi
+
+ruby scripts/check_source_size.rb --staged
+
+if $needs_rust_fmt; then
+  for path in "${staged[@]}"; do
+    [[ "$path" == *.rs ]] || continue
+    [[ -f "$path" ]] || continue
+    rustfmt --edition 2024 --check "$path"
+  done
+fi

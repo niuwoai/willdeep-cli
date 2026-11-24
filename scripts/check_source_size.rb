@@ -10,9 +10,17 @@ REVIEW_LINES = 2_000
 SOURCE_EXTENSIONS = %w[.rs .ts .tsx .js .mjs .cjs .rb .md].freeze
 
 output = File.join(Dir.tmpdir, 'willdeep-source-size')
-OptionParser.new { |parser| parser.on('--output PATH') { |path| output = path } }.parse!
+staged_only = false
+OptionParser.new do |parser|
+  parser.on('--output PATH') { |path| output = path }
+  parser.on('--staged', 'Only check git-staged paths (for pre-commit)') { staged_only = true }
+end.parse!
 root = File.expand_path('..', __dir__)
-paths = IO.popen(['git', '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], &:read).split("\0").uniq
+paths = if staged_only
+  IO.popen(['git', '-C', root, 'diff', '--cached', '--name-only', '-z', '--diff-filter=ACM'], &:read).split("\0").uniq
+else
+  IO.popen(['git', '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], &:read).split("\0").uniq
+end
 files = paths.filter_map do |relative|
   next unless SOURCE_EXTENSIONS.include?(File.extname(relative))
   next if relative.split('/').any? { |segment| %w[node_modules target dist].include?(segment) }
