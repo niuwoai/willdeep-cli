@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.155.0-rc12",
   "type": "module",
+  "resolutions": {
+    "vite": "7.3.7"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -37,6 +40,6 @@
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
     "vite": "^7.3.7",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }
