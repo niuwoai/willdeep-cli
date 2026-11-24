@@ -484,9 +484,9 @@ fn send_now_label(app: &App) -> &'static str {
     }
     if app.running && app.runtime_turn {
         return app.language.text(
-            "S 优先发送（不打断当前轮）",
-            "S Prioritize (keeps current turn)",
-            "S 優先送信（現在のターンを停止しない）",
+            "S 停止当前并优先发送",
+            "S Stop current & send first",
+            "S 現在の処理を停止して優先送信",
         );
     }
     app.language

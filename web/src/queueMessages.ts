@@ -36,7 +36,7 @@ const text = {
   enqueue: ["加入待发队列", "Add to queue", "送信待ちに追加"],
   enqueueNeedsSession: ["先发送一条消息开始会话，才能把内容放进队列", "Send a message to start a session before queueing", "キューに追加する前に、メッセージを送ってセッションを開始してください"],
   prioritize: ["优先处理", "Prioritize", "優先処理"],
-  prioritizeHint: ["不打断当前轮；纯文本执行中可插话", "Keeps the current turn; plain text may steer while running", "現在のターンを停止しない（実行中の短文は割り込み可）"],
+  prioritizeHint: ["仍需判断依赖", "Dependency checks still apply", "依存関係を確認"],
   runIndependent: ["独立处理", "Run independently", "独立して処理"],
   runIndependentHint: ["权限不变", "Permissions unchanged", "権限は変更しない"],
   dependencyPolicy: ["等待期间，仅明确独立的消息可以先处理；有依赖或尚不明确的消息继续排队。", "While waiting, only clearly independent messages can run first; dependent or uncertain messages remain queued.", "待機中は独立性が明確なメッセージのみ先に処理し、依存関係があるか不明なものは待機します。"],

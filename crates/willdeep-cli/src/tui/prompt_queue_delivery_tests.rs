@@ -29,9 +29,9 @@ fn send_now_labels_match_active_runtime_human_wait_idle_held_and_local_actions()
         assert_eq!(
             send_now_label(&app),
             language.text(
-                "S 优先发送（不打断当前轮）",
-                "S Prioritize (keeps current turn)",
-                "S 優先送信（現在のターンを停止しない）",
+                "S 停止当前并优先发送",
+                "S Stop current & send first",
+                "S 現在の処理を停止して優先送信",
             )
         );
         app.runtime_gates.push(crate::daemon::RemoteGate::Question {

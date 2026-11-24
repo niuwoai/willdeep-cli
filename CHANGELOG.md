@@ -1,10 +1,14 @@
 # Changelog
 
+## [0.155.0-rc13] - 2026-11-24
+### Fixed
+- Runtime 队列 `send_now`（#208 / PR #219）：活动轮非门控时恢复 `turn.stop`，取消当前轮再调度优先消息；撤回阶段 A「不打断 + steer」路径，修复 `queue_remove_clear_and_send_now` 等 CI 失败。
+
 ## [0.155.0-rc12] - 2026-11-24
 ### Changed
-- Runtime 队列 `send_now`（#208，对齐 Claude Code）：默认不再 `turn.stop`；活动轮执行中对纯文本队列项尝试 `turn.steer` 并在成功后出队，否则仅置顶等当前轮结束。TUI/Web 文案同步；硬中断仍用 `turn.stop` / `Ctrl+X`。
+- Runtime 队列 `send_now`（#208，对齐 Claude Code）：默认不再 `turn.stop`；活动轮执行中对纯文本队列项尝试 `turn.steer` 并在成功后出队，否则仅置顶等当前轮结束。TUI/Web 文案同步；硬中断仍用 `turn.stop` / `Ctrl+X`。（已在 rc13 撤回）
 ### Added
-- 控制 API 文档与 `2026-11-17-tui-btw-and-queue` 决策记录上述语义；事件 `turn.queue_steered`。
+- 控制 API 文档与 `2026-11-17-tui-btw-and-queue` 决策记录上述语义；事件 `turn.queue_steered`。（steer 路径已在 rc13 移除）
 ### Fixed
 - CI 推送到默认分支时，路径分类不再把比较基线写成 `origin/develop`。该名字会被当成远程 ref，浅克隆 `git fetch` 以 exit 128 失败，所有检查在分类步骤退出。push 改为使用事件里的前一个提交 SHA；SHA 缺失或为全 0 时仍跑全量。pull request 继续使用 base SHA。
 

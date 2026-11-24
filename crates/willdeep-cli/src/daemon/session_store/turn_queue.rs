@@ -4,33 +4,6 @@ use willdeep_runtime_protocol::{QueueAction, QueuedTurnMessage, UpdateTurnQueueP
 const MAX_QUEUE_PROMPT_BYTES: usize = 1024 * 1024;
 
 impl RuntimeSessionStore {
-    /// 纯文本、仍待认领的队列项才能插进当前活动轮；带附件则只改顺序，不 steer。
-    pub(crate) fn steer_text_for_pending_queue_message(
-        &self,
-        session_id: uuid::Uuid,
-        message_id: uuid::Uuid,
-    ) -> Result<Option<String>> {
-        let sessions = self.lock()?;
-        let session = sessions
-            .get(&session_id)
-            .context("Runtime Session not found")?;
-        let turns = self.turns_lock()?;
-        let Some(turn) = turns.get(&message_id) else {
-            return Ok(None);
-        };
-        if !is_pending(turn, session) || !turn.attachments.is_empty() {
-            return Ok(None);
-        }
-        let Some(text) = editable_text(&turn.prompt) else {
-            return Ok(None);
-        };
-        let text = text.trim();
-        if text.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(text.to_owned()))
-    }
-
     pub(crate) fn queued_messages(&self, session_id: uuid::Uuid) -> Result<Vec<QueuedTurnMessage>> {
         let sessions = self.lock()?;
         let session = sessions
