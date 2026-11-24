@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.155.0-rc12] - 2026-11-24
+### Fixed
+- CI 推送到默认分支时，路径分类不再把比较基线写成 `origin/develop`。该名字会被当成远程 ref，浅克隆 `git fetch` 以 exit 128 失败，所有检查在分类步骤退出。push 改为使用事件里的前一个提交 SHA；SHA 缺失或为全 0 时仍跑全量。pull request 继续使用 base SHA。
+
 ## [0.155.0-rc11] - 2026-11-24
 ### Fixed
 - CI aarch64 偶发：`timeout_reaps_leader_before_returning_and_stops_delayed_write` 改为从工作区 `leader.pid` 读 PID，并略放宽 deadline，不再依赖超时错误里的 stdout 片段。
