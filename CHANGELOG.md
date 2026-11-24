@@ -3,6 +3,8 @@
 ## [0.155.0-rc11] - 2026-11-24
 ### Fixed
 - CI aarch64 偶发：`timeout_reaps_leader_before_returning_and_stops_delayed_write` 改为从工作区 `leader.pid` 读 PID，并略放宽 deadline，不再依赖超时错误里的 stdout 片段。
+- 目标续跑退避回归测试改用 Tokio 虚拟时间，继续检查无进展阶梯与退避等待，避免在 CI 中等待真实分钟数；生产退避策略与等待逻辑不变。
+- 完整 CI 套件及 WSL release 构建补充 Rust 依赖编译缓存，隔离平台、架构和构建用途，限制缓存写入范围；保留原有平台测试、Clippy、打包和失败门禁。缓存命中与托管 CI 总耗时须在后续运行中核实。
 
 ## [0.155.0-rc10] - 2026-11-24
 ### Added

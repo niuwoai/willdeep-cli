@@ -1,0 +1,49 @@
+{
+  "version": "0.155.0-rc11",
+  "date": "2026-11-24",
+  "base": "e7d29f31",
+  "branch": "fix/ci-test-speed",
+  "production_backoff_changed": false,
+  "test_source_validation_package_version": "0.155.0-rc2",
+  "metadata_validated_after_bump": true,
+  "external_dependency_versions_changed": false,
+  "virtual_backoff_seconds": 420,
+  "checks": {
+    "target_test": { "passed": 1, "failed": 0, "ignored": 0, "execution_seconds": 0.54 },
+    "progress_group": { "passed": 6, "failed": 0, "ignored": 0, "execution_seconds": 0.49 },
+    "backoff_decision_test": { "passed": 1, "failed": 0, "ignored": 0, "execution_seconds": 0.02 },
+    "core_lib": { "passed": 1404, "failed": 0, "ignored": 7, "execution_seconds": 146.08, "build_seconds": 0.30, "command_seconds": 146.46 },
+    "core_tests_clippy": { "passed": true, "deny_warnings": true },
+    "workspace_format": { "passed": true },
+    "ci_runner_contracts": { "tests": 41, "assertions": 563, "failures": 0, "errors": 0, "skips": 0 },
+    "npm_install_contract": { "tests": 7, "assertions": 38, "failures": 0, "errors": 0, "skips": 0 },
+    "npm_publish_contract": { "tests": 14, "assertions": 94, "failures": 0, "errors": 0, "skips": 0 },
+    "source_size": { "passed": true, "reviewed_files_at_check": 1808, "initial_us_ascii_error": true, "utf8_retry_passed": true },
+    "ci_yaml": { "passed": true },
+    "actionlint": { "passed": true, "independent_review_shellcheck_enabled": false },
+    "original_ci_steps_preserved": { "passed": true },
+    "release_version_consistency": { "passed": true },
+    "locked_offline_workspace_metadata": { "passed": true, "packages": 4 },
+    "diff_whitespace": { "passed": true },
+    "independent_reviews": { "count": 2, "confirmed_issues": 0 }
+  },
+  "cold_build_context": {
+    "target_test_build_seconds": 646,
+    "target_test_command_seconds": 651.22,
+    "progress_command_seconds_including_lock_wait": 465.36,
+    "clippy_command_seconds_including_lock_wait": 518.20
+  },
+  "not_verified": [
+    "GitHub cache restore and save",
+    "GitHub cache capacity and hit rate",
+    "self-hosted runner cache compatibility",
+    "full hosted and self-hosted CI wall-clock improvement",
+    "full cross-platform CI",
+    "full Rust workspace test suite",
+    "recompiled rc3 test binary after metadata-only version change"
+  ],
+  "committed": false,
+  "pushed": false,
+  "installed": false,
+  "released": false
+}

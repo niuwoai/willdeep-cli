@@ -339,16 +339,19 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct ProgressEvents(Mutex<Vec<AgentEvent>>);
+    struct ProgressEvents(Mutex<Vec<(tokio::time::Instant, AgentEvent)>>);
 
     #[async_trait::async_trait]
     impl EventSink for ProgressEvents {
         async fn emit(&self, event: AgentEvent) {
-            self.0.lock().unwrap().push(event);
+            self.0
+                .lock()
+                .unwrap()
+                .push((tokio::time::Instant::now(), event));
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn actual_goal_loop_escalates_repeated_errors_and_unchanged_successes() {
         for (path, is_error, reconcile_index) in
             [("missing.txt", true, 2), ("stable.txt", false, 3)]
@@ -382,12 +385,16 @@ mod tests {
             )
             .with_goal_continuation(goal)
             .with_event_sink(events.clone());
+            // With no wall-clock budget or competing timers, Tokio only advances
+            // virtual time for backoff sleeps; real file I/O still runs to completion.
+            let started = tokio::time::Instant::now();
             let outcome = agent.run("Continue working").await.unwrap();
+            let elapsed = started.elapsed();
             assert!(!outcome.stop_reason.is_complete());
             let events = events.0.lock().unwrap();
             let calls: Vec<_> = events
                 .iter()
-                .filter_map(|event| {
+                .filter_map(|(_, event)| {
                     if let AgentEvent::ToolCompleted { is_error, .. } = event {
                         Some(*is_error)
                     } else {
@@ -402,7 +409,7 @@ mod tests {
             );
             let rungs: Vec<_> = events
                 .iter()
-                .filter_map(|event| {
+                .filter_map(|(_, event)| {
                     if let AgentEvent::GoalContinuationInjected { rung } = event {
                         Some(*rung)
                     } else {
@@ -414,6 +421,26 @@ mod tests {
             assert_eq!(rungs[0], ContinuationRung::Guidance);
             assert_eq!(rungs[reconcile_index], ContinuationRung::Reconcile);
             assert_eq!(rungs[5], ContinuationRung::Backoff);
+            let injection_times: Vec<_> = events
+                .iter()
+                .filter_map(|(at, event)| {
+                    matches!(event, AgentEvent::GoalContinuationInjected { .. })
+                        .then_some(at.duration_since(started))
+                })
+                .collect();
+            let mut expected_times = vec![Duration::ZERO; 6];
+            if is_error {
+                expected_times[5] = Duration::from_secs(60);
+            }
+            assert_eq!(
+                injection_times, expected_times,
+                "{path}: only the first backoff may delay the next continuation"
+            );
+            assert_eq!(
+                elapsed - injection_times[5],
+                Duration::from_secs(if is_error { 300 } else { 60 }),
+                "{path}: the final continuation must wait its full backoff before returning"
+            );
             std::fs::remove_dir_all(root).unwrap();
         }
     }

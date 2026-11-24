@@ -29,6 +29,17 @@ runs:
       with:
         toolchain: 1.94.1
         components: rustfmt, clippy
+    # Share hosted/self-hosted baselines; rust-cache also hashes OS, architecture,
+    # rustc host/version, compiler environment and Cargo manifests/lockfiles.
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ci-suite-${{ runner.os }}-${{ runner.arch }}-host-debug
+        # Keep dependency artifacts only; exclude installed tools and workspace crates.
+        cache-bin: 'false'
+        cache-workspace-crates: 'false'
+        cache-on-failure: 'false'
+        # PRs and feature-branch dispatches restore only; successful baselines save.
+        save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
     - name: Format
       if: runner.os == 'Linux'
       shell: bash
