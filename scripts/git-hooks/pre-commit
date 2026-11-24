@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Personal pre-commit (install: scripts/install-personal-git-hooks.sh)
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+exec ruby scripts/check_source_size.rb
