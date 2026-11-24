@@ -1950,6 +1950,42 @@ async fn agent_prompt(state: &ServerState, request: &ApiRequest) -> ApiResult {
 const MAX_STEER_MESSAGE_BYTES: usize = 16 * 1024;
 
 /// 用户在本轮进行中说的话，送进会话正在跑的任务；下一次调模型前以用户身份注入。
+pub(super) fn deliver_session_steer(
+    state: &ServerState,
+    session_id: uuid::Uuid,
+    message: &str,
+) -> Result<Option<uuid::Uuid>, ApiFailure> {
+    let message = message.trim();
+    if message.is_empty() || message.len() > MAX_STEER_MESSAGE_BYTES {
+        return Ok(None);
+    }
+    let task_id = state.tasks.steer(session_id, message.to_owned());
+    state
+        .sessions
+        .children
+        .transaction(|ledger| {
+            ledger.operator_input(session_id);
+            Ok(())
+        })
+        .map_err(ApiFailure::internal)?;
+    if let Some(recorder) = state.sessions.feedback() {
+        recorder
+            .clone()
+            .with_session(Some(session_id))
+            .record_steer(message, task_id.is_some());
+    }
+    if let Some(task_id) = task_id {
+        state
+            .events
+            .append(
+                "turn.steered",
+                format!("session_id={session_id} task_id={task_id}"),
+            )
+            .map_err(ApiFailure::internal)?;
+    }
+    Ok(task_id)
+}
+
 /// 没有在途任务不算错，`delivered` 为假，客户端自行排队等本轮结束。
 fn turn_steer(state: &ServerState, request: &ApiRequest) -> ApiResult {
     let params = params::<willdeep_runtime_protocol::SteerTurnParams>(request)?;
@@ -1959,31 +1995,7 @@ fn turn_steer(state: &ServerState, request: &ApiRequest) -> ApiResult {
             "message must contain 1 to {MAX_STEER_MESSAGE_BYTES} bytes"
         )));
     }
-    let task_id = state.tasks.steer(params.session_id, message.to_owned());
-    state
-        .sessions
-        .children
-        .transaction(|ledger| {
-            ledger.operator_input(params.session_id);
-            Ok(())
-        })
-        .map_err(ApiFailure::internal)?;
-    // 插话本身就是反馈：模型跑着跑着用户忍不住要纠正或补充。
-    if let Some(recorder) = state.sessions.feedback() {
-        recorder
-            .clone()
-            .with_session(Some(params.session_id))
-            .record_steer(message, task_id.is_some());
-    }
-    if let Some(task_id) = task_id {
-        state
-            .events
-            .append(
-                "turn.steered",
-                format!("session_id={} task_id={task_id}", params.session_id),
-            )
-            .map_err(ApiFailure::internal)?;
-    }
+    let task_id = deliver_session_steer(state, params.session_id, message)?;
     json(willdeep_runtime_protocol::SteerTurnOutcome {
         delivered: task_id.is_some(),
         task_id,
