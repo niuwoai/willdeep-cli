@@ -42,9 +42,17 @@ pub(crate) enum ProviderAction {
         /// Profile id, as in `[providers.<name>]`.
         name: String,
     },
+    /// List model IDs from the Provider HTTP API for one profile.
+    Models {
+        /// Profile id, as in `[providers.<name>]`. Uses `default_provider` when omitted.
+        name: Option<String>,
+        /// Emit one JSON object instead of a plain line per model.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
-pub(crate) fn run(action: ProviderAction, config_path: Option<&Path>) -> Result<()> {
+pub(crate) async fn run(action: ProviderAction, config_path: Option<&Path>) -> Result<()> {
     match action {
         ProviderAction::List { json } => list(config_path, json),
         ProviderAction::Add {
@@ -60,6 +68,7 @@ pub(crate) fn run(action: ProviderAction, config_path: Option<&Path>) -> Result<
             model.as_deref(),
         ),
         ProviderAction::Remove { name } => remove(config_path, &name),
+        ProviderAction::Models { name, json } => models(config_path, name.as_deref(), json).await,
     }
 }
 
@@ -143,6 +152,55 @@ fn list(config_path: Option<&Path>, json: bool) -> Result<()> {
                 println!("  model={model}");
             }
         }
+    }
+    Ok(())
+}
+
+async fn models(config_path: Option<&Path>, name: Option<&str>, json: bool) -> Result<()> {
+    let loaded = LoadedConfig::load(config_path)?;
+    let profile_name = match name.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(explicit) => explicit.to_owned(),
+        None => loaded
+            .file
+            .default_provider
+            .clone()
+            .context("no provider name given and default_provider is not set")?,
+    };
+    let api_base = loaded
+        .file
+        .providers
+        .get(&profile_name)
+        .and_then(|profile| profile.api_base.clone())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    let mut provider = crate::provider_config_from_profile(&loaded.file, &profile_name)
+        .with_context(|| format!("resolve provider profile `{profile_name}`"))?;
+    provider.request_timeout_secs = 30;
+    let models = willdeep_core::provider::list_models(&provider)
+        .await
+        .with_context(|| format!("list models for provider `{profile_name}`"))?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "provider": profile_name,
+                "api_base": api_base,
+                "count": models.len(),
+                "models": models,
+            }))?
+        );
+        return Ok(());
+    }
+    if models.is_empty() {
+        println!("provider `{profile_name}` returned no models (api_base={api_base})");
+        return Ok(());
+    }
+    eprintln!(
+        "provider={profile_name} api_base={api_base} count={}",
+        models.len()
+    );
+    for model in models {
+        println!("{model}");
     }
     Ok(())
 }

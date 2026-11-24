@@ -9,6 +9,7 @@ import "./routing.css";
 import "./attachments.css";
 import "./plugins.css";
 import "./runCard.css";
+import "./markdownExtras.css";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 1000 }, mutations: { retry: false } } });
 createRoot(document.getElementById("root")!).render(

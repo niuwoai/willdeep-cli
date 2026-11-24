@@ -262,8 +262,15 @@ URL。登完立刻连一次并报告工具数。详见 [Skills 与 MCP](SKILLS_A
 ```bash
 willdeep provider add <URL> [--name <id>] [--api-key-env <ENV>] [--model <id>]
 willdeep provider list [--json]
+willdeep provider models [<profile>] [--json]
 willdeep provider remove <name>
 ```
+
+`models` 对指定 profile 调用 Provider 的模型列表接口（OpenAI 兼容的 `GET /v1/models`，
+Anthropic 为 `GET /v1/models` 于 Messages 根路径），打印模型 ID；省略 profile 时用
+`default_provider`。需要对应 profile 的 API Key（`api_key_env` 或配置内引用）。
+虚拟模型链、目录内显式声明的模型可能不在远端列表中，见 [SHARED_MODEL_CATALOG.md](SHARED_MODEL_CATALOG.md)。
+
 
 `add` 从 API Base URL 写入 `[providers.<id>]`：按 host 推断 `some-im` / `anthropic` / `openai-compatible`，
 openai-compatible 与 some-im 会补齐 `/v1`，anthropic 保持根路径。只持久化 `api_base` 与

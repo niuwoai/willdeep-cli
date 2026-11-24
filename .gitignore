@@ -14,3 +14,4 @@ bench/swebench/analysis/**/trajectory-review.private.json
 .env
 *.log
 /.claude/
+integrations/harbor-willdeep/willdeep_harbor.egg-info/

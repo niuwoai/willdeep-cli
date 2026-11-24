@@ -310,6 +310,8 @@ fn provider_leaf_commands_parse() {
     ));
     assert!(Cli::try_parse_from(["willdeep", "provider", "list", "--json"]).is_ok());
     assert!(Cli::try_parse_from(["willdeep", "provider", "remove", "someim"]).is_ok());
+    assert!(Cli::try_parse_from(["willdeep", "provider", "models", "some-im", "--json"]).is_ok());
+    assert!(Cli::try_parse_from(["willdeep", "provider", "models"]).is_ok());
 }
 
 #[test]

@@ -785,7 +785,9 @@ async fn run() -> Result<()> {
                 let language = administrative_language(&cli)?;
                 mcp_cmd::run(action, &willdeep_home()?, cli.config.as_deref(), language).await
             }
-            CliCommand::Provider { action } => provider_cmd::run(action, cli.config.as_deref()),
+            CliCommand::Provider { action } => {
+                provider_cmd::run(action, cli.config.as_deref()).await
+            }
             CliCommand::Doctor { json, bundle } => {
                 doctor::run(doctor::DoctorOptions {
                     config_path: cli.config.clone(),
