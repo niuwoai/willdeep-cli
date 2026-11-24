@@ -20,7 +20,8 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.model_api_format import ModelApiFormat
 
-_DEFAULT_RELEASE = "v0.155.0-rc9"
+# Last tag with linux-amd64 on GitHub Releases (bump after Release workflow ships).
+_DEFAULT_RELEASE = "v0.154.0-rc11"
 _DEFAULT_LINUX_ASSET = (
     "https://github.com/niuwoai/willdeep-cli/releases/download/"
     f"{_DEFAULT_RELEASE}/willdeep-linux-amd64.tar.gz"

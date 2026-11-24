@@ -1,0 +1,62 @@
+{
+  "schema": "willdeep/terminal-bench-report/v1",
+  "ran_at": "2026-11-24T05:27:53Z",
+  "job_name": "willdeep-qwen38-27b-tb-2",
+  "harbor_job_id": "3a8e2c79-a9d2-4c88-a1a1-212696a1f957",
+  "eval_key": "willdeep__qwen3.8-27b__terminal-bench",
+  "agent": "willdeep_harbor.agent:WilldeepAgent",
+  "model": "qwen3.8-27b",
+  "provider": "some-im",
+  "api_base": "https://api.niuwoai.com/v1",
+  "dataset": "terminal-bench@2.0",
+  "n_tasks_limit": 2,
+  "willdeep": {
+    "requested_release_tag": "v0.155.0-rc9",
+    "latest_published_release": "v0.154.0-rc11",
+    "host_binary_version": "0.155.0-rc9",
+    "agent_kwargs": {
+      "max_turns": 60,
+      "provider": "some-im",
+      "local_harness": true,
+      "full_auto": true
+    }
+  },
+  "git": {
+    "commit": "1ee01af8",
+    "dirty": true
+  },
+  "summary": {
+    "n_total_trials": 2,
+    "n_completed_trials": 2,
+    "n_errored_trials": 2,
+    "n_passed": 0,
+    "model_invoked": false,
+    "total_runtime_sec": 179
+  },
+  "trials": [
+    {
+      "trial_id": "adaptive-rejection-sampler__eJvQ2Be",
+      "task": "adaptive-rejection-sampler",
+      "outcome": "infra_error",
+      "exception": "NetworkConnectionError",
+      "detail": "Container install: curl -fsSL willdeep-linux-amd64.tar.gz returned HTTP 404 (release tag v0.155.0-rc9 not published)."
+    },
+    {
+      "trial_id": "bn-fit-modify__aRt4sv4",
+      "task": "bn-fit-modify",
+      "outcome": "infra_error",
+      "exception": "NetworkConnectionError",
+      "detail": "Same as above; agent run never started."
+    }
+  ],
+  "host_fixes_applied": [
+    "DOCKER_HOST colima socket",
+    "docker compose CLI plugin via ~/.docker/cli-plugins/docker-compose"
+  ],
+  "prior_failed_job": {
+    "job_name": "willdeep-qwen38-27b-tb-3",
+    "n_trials": 3,
+    "exception": "RuntimeError",
+    "detail": "docker compose missing plugin; unknown flag --project-name"
+  }
+}
