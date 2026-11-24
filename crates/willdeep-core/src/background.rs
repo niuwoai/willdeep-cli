@@ -800,11 +800,7 @@ impl BackgroundTaskRegistry {
                 )
             }
         };
-        let owner_session_id = self
-            .broadcast_owner
-            .lock()
-            .expect("broadcast owner")
-            .clone();
+        let owner_session_id = *self.broadcast_owner.lock().expect("broadcast owner");
         let snapshot = BackgroundTaskSnapshot {
             id: id.clone(),
             run_id: run_request.as_ref().map(|request| request.request_id),
