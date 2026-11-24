@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.155.0-rc11] - 2026-11-24
+### Fixed
+- CI aarch64 偶发：`timeout_reaps_leader_before_returning_and_stops_delayed_write` 改为从工作区 `leader.pid` 读 PID，并略放宽 deadline，不再依赖超时错误里的 stdout 片段。
+
 ## [0.155.0-rc10] - 2026-11-24
 ### Added
 - `bench/terminal-bench/`：Harbor × Terminal-Bench 归档（`history.jsonl`、`reports/`）与 `scripts/archive_terminal_bench_job.rb`。

@@ -417,28 +417,35 @@ mod tests {
     async fn timeout_reaps_leader_before_returning_and_stops_delayed_write() {
         let root = std::env::temp_dir().join(format!("willdeep-timeout-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let command = "printf '%s' $$; (sleep 1; touch escaped) & wait";
+        let pid_file = root.join("leader.pid");
+        // 先把 leader PID 落盘：慢机上 100ms 超时时 stdout 可能还来不及嵌进错误正文。
+        let command = format!(
+            "printf '%s' $$ > '{}' && (sleep 1; touch escaped) & wait",
+            pid_file.display()
+        );
+        const DEADLINE: Duration = Duration::from_millis(400);
         let error = run_capture(
-            command,
+            &command,
             &root,
             &SandboxSpec::new(SandboxPolicy::Off, []),
-            Duration::from_millis(100),
+            DEADLINE,
             4096,
         )
         .await
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        let message = error.to_string();
-        let pid: i32 = message
-            .split("stdout:\n")
-            .nth(1)
-            .unwrap()
-            .split("\nstderr:")
-            .next()
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let pid_text = std::fs::read_to_string(&pid_file).unwrap_or_else(|read_error| {
+            panic!(
+                "leader pid file missing after timeout ({read_error}); error was: {}",
+                error
+            );
+        });
+        let pid: i32 = pid_text.trim().parse().unwrap_or_else(|parse_error| {
+            panic!(
+                "leader pid file {pid_text:?} not an integer ({parse_error}); error was: {}",
+                error
+            );
+        });
         // SAFETY: Signal zero only checks whether the recorded child is still live.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
