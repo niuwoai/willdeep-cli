@@ -29,6 +29,7 @@ impl App {
             transcript_content: Rect::default(),
             pending_chat_click: None,
             code_copy: code_copy::CodeCopyState::new(crate::gallery::hosted()),
+            link_open: link_open::LinkOpenState::new(crate::gallery::hosted()),
             transcript_height: 0,
             viewport_height: 10,
             tools: ToolActivity::default(),
@@ -2034,6 +2035,16 @@ impl App {
     pub(super) fn handle_paste(&mut self, value: String) {
         self.input.clear_selection();
         self.prompt_history = None;
+        if let Some(attached) = self.try_attach_pasted_image_paths(&value)
+            && attached > 0
+        {
+            self.notice = Some(self.language.pick(
+                format!("已附加 {attached} 张图片"),
+                format!("Attached {attached} image(s)"),
+                format!("{attached} 枚の画像を添付しました"),
+            ));
+            return;
+        }
         if Self::paste_goes_inline(&value) {
             self.input.insert(&value);
         } else {
@@ -2352,9 +2363,41 @@ impl App {
                             "簡潔 UI の下部ステータスバーを非表示にしました",
                         )
                     }
+                    "breath" | "breath-on" => {
+                        self.ui.input_breathing = true;
+                        if let Some(home) = self.display_home.as_deref()
+                            && let Err(error) = crate::config::save_input_breathing(home, true)
+                        {
+                            self.append_transcript(format!(
+                                "Error: could not save input breathing preference: {error}"
+                            ));
+                            return true;
+                        }
+                        self.language.text(
+                            "简洁 UI 输入框呼吸底色已开启",
+                            "Compact UI input breathing background enabled",
+                            "簡潔 UI の入力欄の呼吸背景をオンにしました",
+                        )
+                    }
+                    "breath-off" => {
+                        self.ui.input_breathing = false;
+                        if let Some(home) = self.display_home.as_deref()
+                            && let Err(error) = crate::config::save_input_breathing(home, false)
+                        {
+                            self.append_transcript(format!(
+                                "Error: could not save input breathing preference: {error}"
+                            ));
+                            return true;
+                        }
+                        self.language.text(
+                            "简洁 UI 输入框呼吸底色已关闭",
+                            "Compact UI input breathing background disabled",
+                            "簡潔 UI の入力欄の呼吸背景をオフにしました",
+                        )
+                    }
                     other => {
                         self.append_transcript(format!(
-                            "Error: usage: {command} [full|compact|status|no-status] (got `{other}`)"
+                            "Error: usage: {command} [full|compact|status|no-status|breath-on|breath-off] (got `{other}`)"
                         ));
                         return true;
                     }

@@ -74,6 +74,9 @@ pub struct UiSettings {
     /// [`MAX_LINE_SPACING`]。终端一行就是一行，这里调的是行与行之间的空白。
     #[serde(deserialize_with = "deserialize_line_spacing")]
     pub line_spacing: u8,
+    /// 简洁 UI 输入框空闲时的呼吸底色；默认关（#177）。
+    #[serde(default)]
+    pub input_breathing: bool,
 }
 
 /// 行距的上限。再大就把一屏挤到只剩两三行字，得不偿失。
@@ -101,6 +104,7 @@ impl Default for UiSettings {
             input_suggestion_underline: false,
             copy_on_select: true,
             line_spacing: 0,
+            input_breathing: false,
         }
     }
 }
@@ -174,6 +178,35 @@ fn write_ui_preferences(home: &Path, value: &serde_json::Value) -> anyhow::Resul
     file.sync_all()?;
     std::fs::rename(temporary, path)?;
     Ok(())
+}
+
+/// 输入框呼吸底色。没写过时返回 `None`。
+pub fn load_input_breathing(home: &Path) -> anyhow::Result<Option<bool>> {
+    let path = home.join("ui-preferences.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let preference: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    Ok(preference
+        .get("input_breathing")
+        .and_then(serde_json::Value::as_bool))
+}
+
+pub fn save_input_breathing(home: &Path, enabled: bool) -> anyhow::Result<()> {
+    let path = home.join("ui-preferences.json");
+    let mut preference = if path.exists() {
+        serde_json::from_slice(&std::fs::read(&path)?)?
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+    let object = preference
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("ui-preferences.json is not an object"))?;
+    object.insert(
+        "input_breathing".to_owned(),
+        serde_json::Value::from(enabled),
+    );
+    write_ui_preferences(home, &preference)
 }
 
 pub fn save_thinking_visibility(home: &Path, show: bool) -> anyhow::Result<()> {
@@ -275,6 +308,19 @@ mod tests {
         // 手改超出上限的值收回来，不让聊天区被撑成空白。
         save_line_spacing(&root, 9).unwrap();
         assert_eq!(load_line_spacing(&root).unwrap(), Some(MAX_LINE_SPACING));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn input_breathing_persists_beside_other_preferences() {
+        let root = std::env::temp_dir().join(format!("ui-breath-{}", uuid::Uuid::new_v4()));
+        assert_eq!(load_input_breathing(&root).unwrap(), None);
+        save_input_breathing(&root, true).unwrap();
+        assert_eq!(load_input_breathing(&root).unwrap(), Some(true));
+        save_line_spacing(&root, 1).unwrap();
+        assert_eq!(load_input_breathing(&root).unwrap(), Some(true));
+        save_input_breathing(&root, false).unwrap();
+        assert_eq!(load_input_breathing(&root).unwrap(), Some(false));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

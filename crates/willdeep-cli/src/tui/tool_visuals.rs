@@ -264,7 +264,10 @@ fn format_edit(value: &serde_json::Value, language: Language) -> Option<String> 
             };
             file_body.push(format!("{left:>5} │ {right:>5} │ {}", safe_text(line)));
         }
-        lines.splice(path_line..path_line, elide_diff_body_lines(file_body, language));
+        lines.splice(
+            path_line..path_line,
+            elide_diff_body_lines(file_body, language),
+        );
         if file.get("truncated")?.as_bool()? {
             lines.push(
                 language

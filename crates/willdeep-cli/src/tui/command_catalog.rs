@@ -29,9 +29,9 @@ pub(super) fn help_text(language: Language) -> String {
     lines.push(format!(
         "  {}",
         language.text(
-            "提示：在提示词里写 $技能名 直接调用技能；Ctrl+B 也能开关状态栏。",
-            "Tip: write $skill-name in a prompt to invoke a skill; Ctrl+B also toggles the sidebar.",
-            "ヒント：プロンプトに $skill-name と書くとスキルを呼び出せます。Ctrl+B でもサイドバーを切替できます。",
+            "提示：在提示词里写 $技能名 直接调用技能；Ctrl+B 开关状态栏；Ctrl+E / Ctrl+G 外部编辑输入框。",
+            "Tip: write $skill-name in a prompt to invoke a skill; Ctrl+B toggles the sidebar; Ctrl+E / Ctrl+G open an external editor for the prompt.",
+            "ヒント：プロンプトに $skill-name と書くとスキルを呼び出せます。Ctrl+B でサイドバー切替、Ctrl+E / Ctrl+G で外部エディタ。",
         )
     ));
     lines.join("\n")
@@ -59,7 +59,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/webapp [status|start|stop|127.0.0.1:端口]",
             "/sidebar [on|off]",
             "/spacing [0-3]",
-            "/uistyle [full|compact|status|no-status]",
+            "/uistyle [full|compact|status|no-status|breath-on|breath-off]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <任务>",
             "/local <任务>",
@@ -99,7 +99,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/webapp [status|start|stop|127.0.0.1:PORT]",
             "/sidebar [on|off]",
             "/spacing [0-3]",
-            "/uistyle [full|compact|status|no-status]",
+            "/uistyle [full|compact|status|no-status|breath-on|breath-off]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <task>",
             "/local <task>",
@@ -139,7 +139,7 @@ fn command_usages(language: Language) -> Vec<(&'static str, &'static str)> {
             "/webapp [status|start|stop|127.0.0.1:ポート]",
             "/sidebar [on|off]",
             "/spacing [0-3]",
-            "/uistyle [full|compact|status|no-status]",
+            "/uistyle [full|compact|status|no-status|breath-on|breath-off]",
             "/daemon [status|start|stop|upgrade]",
             "/runtime <タスク>",
             "/local <タスク>",
