@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.155.0-rc10] - 2026-11-24
+### Added
+- `bench/terminal-bench/`：Harbor × Terminal-Bench 归档（`history.jsonl`、`reports/`）与 `scripts/archive_terminal_bench_job.rb`。
+### Changed
+- harbor-willdeep：容器默认 Release 改为已发布的 `v0.154.0-rc11`；文档 `max_turns` 与 compose 前置说明。
+
 ## [0.155.0-rc9] - 2026-11-24
 ### Added
 - CLI：`willdeep provider models [<profile>] [--json]`，对指定 Provider 档案调用 `GET /v1/models` 列出模型 ID（与 TUI 模型选择器同源）。

@@ -55,9 +55,9 @@ harbor run \
   --base-url "${OPENAI_BASE_URL}" \
   --api-key-name SOMEIM_API_KEY \
   --api-format openai_chat_completions \
-  --agent-kwarg version=v0.155.0-rc6 \
+  --agent-kwarg version=v0.154.0-rc11 \
   --agent-kwarg provider=some-im \
-  --agent-kwarg max-turns=60 \
+  --agent-kwarg max_turns=60 \
   --dataset terminal-bench@2.0 \
   --n-concurrent 1 \
   -n 1 \
@@ -89,11 +89,11 @@ harbor run -c integrations/harbor-willdeep/examples/job-willdeep-someim-glm5.yam
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `version` | `v0.155.0-rc6` | Release 标签，用于下载 linux-amd64 包 |
+| `version` | `v0.154.0-rc11` | Release 标签，用于下载 linux-amd64 包 |
 | `install_url` | — | 完整 tarball URL，设置后忽略 `version` |
 | `provider` | `some-im` | 写入 `config.toml` 的 `provider` |
 | `profile` | `harbor` | `[providers.harbor]` 段名 |
-| `max_turns` | `80` | 传给 `willdeep run --max-turns` |
+| `max_turns` | `80` | 传给 `willdeep run --max_turns` |
 | `local_harness` | `true` | `willdeep run --local`（容器内建议开启） |
 | `full_auto` | `true` | `willdeep run --full-auto` |
 | `language` | `en` | Terminal-Bench 任务为英文，默认 `en` |

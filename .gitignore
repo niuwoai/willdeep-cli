@@ -15,3 +15,6 @@ bench/swebench/analysis/**/trajectory-review.private.json
 *.log
 /.claude/
 integrations/harbor-willdeep/willdeep_harbor.egg-info/
+
+# Harbor job output (archives live under bench/terminal-bench/)
+/jobs/
