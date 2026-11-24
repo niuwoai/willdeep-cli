@@ -1211,10 +1211,11 @@ pub(crate) async fn build(
     };
     let background_lifecycle_sink = sink.clone();
     let background_tasks = if delegation_read_only {
-        Arc::new(BackgroundTaskRegistry::default())
+        Arc::new(BackgroundTaskRegistry::default().with_broadcast_owner(session_id))
     } else {
         Arc::new(
             BackgroundTaskRegistry::default()
+                .with_broadcast_owner(session_id)
                 .with_agent_run_store(team_store)
                 .with_family_team(family_root, team_settings)
                 .map_err(anyhow::Error::msg)?
@@ -1693,6 +1694,7 @@ pub(crate) async fn build(
     .with_event_sink(sink.clone())
     .with_background_tasks(background_tasks.clone())
     .with_event_kernel(kernel.clone())
+    .with_execution_session_id(session_id)
     .with_usage_ledger(usage_ledger.clone())
     .with_feedback(feedback);
     let goal_continuation = if delegation_child {

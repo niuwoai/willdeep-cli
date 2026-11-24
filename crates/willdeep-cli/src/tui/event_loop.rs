@@ -2351,6 +2351,10 @@ pub(super) async fn event_loop(
             Ok(event)=background_rx.recv()=>{
                 let _=runtime.background_tasks.drain_pending();
                 app.background_tasks=runtime.background_tasks.snapshots();
+                // 进程内任务广播全局；无 owner 的旧任务也不向当前会话冒充。
+                if event.snapshot.owner_session_id != Some(session.id) {
+                    continue;
+                }
                 // 报告已经由 await_agents 交给了模型：不再发通知，也不为它唤醒一轮。
                 if runtime.background_tasks.is_delivered(&event.snapshot.id) {continue;}
                 // 后台结果交给内核，不再自己排一条通知：两条路同时向模型投递

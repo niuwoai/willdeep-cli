@@ -346,6 +346,37 @@ impl EventKernel {
         self.take_for_model_as(SOLE_CONSUMER, budget)
     }
 
+    /// 只取属于 `session_id` 的待投递事件（执行会话隔离）。
+    pub fn take_for_model_session(&self, session_id: Uuid, budget: usize) -> Vec<LeasedEvent> {
+        if budget == 0 {
+            return Vec::new();
+        }
+        let mut state = self.state.lock().expect("kernel state");
+        let mine = |record: &Record| {
+            is_deliverable_to_model(record) && record.event.session_id == session_id
+        };
+        let mut taken = Vec::new();
+        while taken.len() < budget {
+            let Some(index) = state.records.iter().position(mine) else {
+                break;
+            };
+            let lease_id = Uuid::new_v4();
+            let record = &mut state.records[index];
+            record.event.delivery.state = DeliveryState::Leased;
+            record.event.delivery.lease_id = Some(lease_id);
+            record.event.delivery.leased_at = Some(now_iso8601());
+            record.lease_owner = Some(SOLE_CONSUMER);
+            taken.push(LeasedEvent {
+                event: record.event.clone(),
+                lease_id,
+            });
+            state.dirty.insert(session_id);
+        }
+        drop(state);
+        self.refresh_preempt_pending();
+        taken
+    }
+
     /// 以某个消费者的身份取一批事件。
     ///
     /// 只会取到**自己有权驱动的会话**：无人认领的会话对谁都开放，已被认领的
@@ -1242,6 +1273,45 @@ mod tests {
         assert!(criticals >= 3, "got {first_four:?}");
     }
 
+    #[test]
+    fn take_for_model_session_ignores_other_sessions() {
+        let kernel = EventKernel::new();
+        let here = Uuid::new_v4();
+        let there = Uuid::new_v4();
+        kernel.publish(
+            host_event(
+                here,
+                EventSource::Worker,
+                "task.completed",
+                EventPriority::Normal,
+                InterruptPolicy::YieldAtBoundary,
+                "mine",
+                Some("our job".into()),
+                Some("task:1".into()),
+                false,
+            ),
+            DedupPolicy::Once,
+        );
+        kernel.publish(
+            host_event(
+                there,
+                EventSource::Worker,
+                "task.completed",
+                EventPriority::Normal,
+                InterruptPolicy::YieldAtBoundary,
+                "theirs",
+                Some("their job".into()),
+                Some("task:2".into()),
+                false,
+            ),
+            DedupPolicy::Once,
+        );
+        let batch = kernel.take_for_model_session(here, 8);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].event.session_id, here);
+        assert_eq!(batch[0].event.body.as_deref(), Some("our job"));
+    }
+
     /// lease 没 ack 就不算处理完；释放之后可以重投。
     #[test]
     fn an_unacked_lease_comes_back() {
@@ -1687,6 +1757,7 @@ mod tests {
             run_id: None,
             id: "t-1".to_owned(),
             agent_id: None,
+            owner_session_id: None,
             kind: BackgroundTaskKind::Subagent,
             label: "tester".to_owned(),
             status: BackgroundTaskStatus::Completed,
@@ -1729,6 +1800,7 @@ mod tests {
             run_id: None,
             id: "job_1".to_owned(),
             agent_id: None,
+            owner_session_id: None,
             kind: BackgroundTaskKind::Shell,
             label: "build".to_owned(),
             status: BackgroundTaskStatus::Completed,

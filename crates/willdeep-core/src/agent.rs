@@ -506,6 +506,8 @@ pub struct Agent {
     admission: Arc<RoutingGuard>,
     /// 宿主事件内核。不挂等于本改动前的行为：没有边界投递，也没有抢占。
     kernel: Option<crate::kernel::EventKernel>,
+    /// 只向模型投递该会话的内核事件；不挂则退回全局 `take_for_model`（仅单会话/测试）。
+    execution_session_id: Option<uuid::Uuid>,
     /// 本机用量账本。不挂就不记账，其余行为完全不变。
     usage_ledger: Option<crate::usage_ledger::UsageLedgerScope>,
     /// 本机反馈账本（RSI 强反馈）：工具失败、没收敛的运行。不挂就不记。
@@ -551,6 +553,7 @@ impl Agent {
             routing: None,
             admission: Arc::new(RoutingGuard::new(crate::RoutingPolicy::default())),
             kernel: None,
+            execution_session_id: None,
             usage_ledger: None,
             feedback: None,
             time_budget: None,
@@ -915,6 +918,11 @@ impl Agent {
     /// 行为——内核是加在主循环旁边的一层，不是替换。
     pub fn with_event_kernel(mut self, kernel: crate::kernel::EventKernel) -> Self {
         self.kernel = Some(kernel);
+        self
+    }
+
+    pub fn with_execution_session_id(mut self, session_id: uuid::Uuid) -> Self {
+        self.execution_session_id = Some(session_id);
         self
     }
 
@@ -2124,7 +2132,10 @@ impl Agent {
         let Some(kernel) = &self.kernel else {
             return Vec::new();
         };
-        let mut batch = kernel.take_for_model(BATCH);
+        let mut batch = match self.execution_session_id {
+            Some(session_id) => kernel.take_for_model_session(session_id, BATCH),
+            None => kernel.take_for_model(BATCH),
+        };
         // `await_agents` 已经把这些 Worker 的报告直接交给了模型：它们的完成
         // 通知按「已投递」结账，不再讲第二遍。
         if let Some(background) = &self.background_tasks {

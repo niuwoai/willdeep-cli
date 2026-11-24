@@ -39,14 +39,19 @@ impl LinkOpenState {
         }
     }
 
-    fn label(language: Language) -> String {
-        language.text("↗ 打开", "↗ Open", "↗ 開く").to_owned()
+    fn badge_label(language: Language) -> String {
+        let core = language.text("↗ 打开", "↗ Open", "↗ 開く");
+        format!("╭ {core} ╮")
+    }
+
+    fn badge_width(label: &str) -> u16 {
+        UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16
     }
 
     fn badge_rect(app: &App, row: usize, label_width: u16) -> Option<Rect> {
         let content = app.transcript_content;
         const MARGIN: u16 = 1;
-        let width = label_width.saturating_add(2);
+        let width = label_width;
         if content.width < width.saturating_add(MARGIN) || content.height == 0 {
             return None;
         }
@@ -78,23 +83,17 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     if !app.link_open.hosted || app.link_open.links.is_empty() {
         return;
     }
-    let label = LinkOpenState::label(app.language);
-    let label_width = UnicodeWidthStr::width(label.as_str()).min(u16::MAX as usize) as u16;
+    let label = LinkOpenState::badge_label(app.language);
+    let label_width = LinkOpenState::badge_width(&label);
     let style = Style::default()
-        .fg(Color::Black)
-        .bg(Color::LightBlue)
-        .add_modifier(Modifier::BOLD);
+        .fg(Color::Rgb(255, 255, 255))
+        .bg(Color::Rgb(29, 78, 216));
     let buffer = frame.buffer_mut();
     for (index, link) in app.link_open.links.iter().enumerate() {
         let Some(rect) = LinkOpenState::badge_rect(app, link.row, label_width) else {
             continue;
         };
-        for x in rect.x..rect.right() {
-            let cell = &mut buffer[(x, rect.y)];
-            cell.set_char(' ');
-            cell.set_style(style);
-        }
-        buffer.set_string(rect.x + 1, rect.y, label.as_str(), style);
+        buffer.set_string(rect.x, rect.y, label.as_str(), style);
         app.link_open.badges.push((rect, index));
     }
 }
@@ -162,5 +161,13 @@ mod tests {
     #[test]
     fn rejects_urls_with_credentials() {
         assert!(first_http_url("https://user:secret@x.com").is_none());
+    }
+
+    #[test]
+    fn badge_label_uses_pill_corners_and_open_text() {
+        let label = LinkOpenState::badge_label(Language::ZhCn);
+        assert!(label.starts_with('╭'));
+        assert!(label.ends_with('╮'));
+        assert!(label.contains("打开"));
     }
 }

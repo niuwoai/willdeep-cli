@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.155.0-rc15] - 2026-11-24
+### Fixed
+- Clippy `clone_on_copy`（#220 / PR #222 后台 `owner_session_id`）。
+### Changed
+- MuseTerm 聊天区链接行尾「打开」徽标：圆角括号、白字深蓝底，↗ 与文案同色对比（#190）。
+
+## [0.155.0-rc14] - 2026-11-24
+### Fixed
+- 跨会话内核/后台事件串台（#220）：`take_for_model_session` 按 execution session 过滤；TUI `DetachedJobStore`/`BackgroundTask` 广播带 `owner_session_id` 且消费侧忽略他主会话。
+
 ## [0.155.0-rc13] - 2026-11-24
 ### Fixed
 - Runtime 队列 `send_now`（#208 / PR #219）：活动轮非门控时恢复 `turn.stop`，取消当前轮再调度优先消息；撤回阶段 A「不打断 + steer」路径，修复 `queue_remove_clear_and_send_now` 等 CI 失败。
