@@ -23,6 +23,8 @@ pub(crate) struct Context {
     task_id: Option<String>,
     #[serde(rename = "gateID", skip_serializing_if = "Option::is_none")]
     gate_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -42,6 +44,7 @@ impl State {
         task: Option<String>,
         gate: Option<String>,
         status: RuntimeStatus,
+        title: Option<String>,
     ) -> Self {
         let (activity, block_reason, result) = match status {
             RuntimeStatus::Working | RuntimeStatus::Queued => ("working", None, None),
@@ -65,9 +68,25 @@ impl State {
                 session_id: session,
                 task_id: task,
                 gate_id: gate,
+                title: title.and_then(truncate_report_title),
             },
         }
     }
+}
+
+const MAX_REPORT_TITLE_CHARS: usize = 100;
+
+pub(super) fn session_report_title(value: &str) -> Option<String> {
+    truncate_report_title(value.to_owned())
+}
+
+fn truncate_report_title(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let short: String = trimmed.chars().take(MAX_REPORT_TITLE_CHARS).collect();
+    Some(short)
 }
 
 #[derive(Default)]
@@ -135,13 +154,14 @@ impl Reporter {
         task: Option<String>,
         gate: Option<String>,
         status: RuntimeStatus,
+        title: Option<String>,
     ) {
         let Some(shared) = &self.shared else { return };
         let mut slot = shared
             .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let next = State::new(session, task, gate, status);
+        let next = State::new(session, task, gate, status, title);
         if slot.state.as_ref() == Some(&next) {
             return;
         }
@@ -169,8 +189,9 @@ impl Reporter {
         self.update(
             session,
             current.as_ref().and_then(|s| s.context.task_id.clone()),
-            current.and_then(|s| s.context.gate_id),
+            current.as_ref().and_then(|s| s.context.gate_id.clone()),
             RuntimeStatus::Unknown,
+            current.as_ref().and_then(|s| s.context.title.clone()),
         );
     }
 
@@ -205,6 +226,7 @@ impl Reporter {
         session: Uuid,
         cursor: u64,
         running: bool,
+        title: Option<String>,
     ) {
         if snapshot.event_sequence.is_none() {
             if let Some(shared) = &self.shared {
@@ -220,6 +242,7 @@ impl Reporter {
                         state.context.task_id,
                         state.context.gate_id,
                         RuntimeStatus::Unknown,
+                        state.context.title,
                     );
                 }
             }
@@ -271,7 +294,7 @@ impl Reporter {
             .iter()
             .find(|gate| gate.task_id() == task.id)
             .map(|gate| gate.id().to_string());
-        self.update(session, Some(task.id.to_string()), gate, status);
+        self.update(session, Some(task.id.to_string()), gate, status, title);
     }
 }
 

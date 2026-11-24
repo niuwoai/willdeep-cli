@@ -39,7 +39,13 @@ pub(crate) async fn execute_headless_turn(
 ) -> Result<Result<HeadlessRuntimeOutcome, HeadlessRuntimeStatus>> {
     let reporter = crate::qterm::Reporter::from_env();
     let session = request.session_id;
-    reporter.update(session, None, None, willdeep_core::RuntimeStatus::Working);
+    reporter.update(
+        session,
+        None,
+        None,
+        willdeep_core::RuntimeStatus::Working,
+        None,
+    );
     let result = execute_reported_turn(home, request, on_event, &reporter).await;
     if result.is_err() {
         reporter.unavailable(session);
@@ -204,8 +210,13 @@ async fn execute_reported_turn(
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 let _ = client.stop_turn(submitted.id, uuid::Uuid::new_v4()).await;
-                reporter.update(request.session_id, task_id.map(|id| id.to_string()), None,
-                    willdeep_core::RuntimeStatus::Cancelled);
+                reporter.update(
+                    request.session_id,
+                    task_id.map(|id| id.to_string()),
+                    None,
+                    willdeep_core::RuntimeStatus::Cancelled,
+                    None,
+                );
                 return Ok(Err(HeadlessRuntimeStatus::Cancelled));
             }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -269,6 +280,7 @@ async fn report_headless_status(
         turn.active_task_id.map(|id| id.to_string()),
         gate.map(|id| id.to_string()),
         status,
+        None,
     );
 }
 

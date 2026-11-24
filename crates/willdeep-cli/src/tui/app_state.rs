@@ -237,6 +237,7 @@ impl App {
             skill_hits: Vec::new(),
             approval_rect: Rect::default(),
             approval_action_hits: Vec::new(),
+            approval_view: human_gate_ui::ApprovalViewport::default(),
             question_rect: Rect::default(),
             question_hits: Vec::new(),
             question_view: human_gate_ui::QuestionViewport::default(),
@@ -1596,6 +1597,7 @@ impl App {
         self.approval = Some(request);
         self.approval_action_hits.clear();
         self.approval_rect = Rect::default();
+        self.approval_view = human_gate_ui::ApprovalViewport::default();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
         true
@@ -1613,6 +1615,8 @@ impl App {
         let plain = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT);
+        let view = &mut self.approval_view;
+        let scrollable = view.total_lines > usize::from(view.body.height);
         let decision = match key.code {
             KeyCode::Up | KeyCode::Left if plain => {
                 self.approval_selected = self
@@ -1632,10 +1636,43 @@ impl App {
                     .unwrap_or(decisions.len() - 1);
                 None
             }
-            KeyCode::Enter if plain => decisions.get(self.approval_selected).copied(),
+            KeyCode::PageUp if plain && scrollable => {
+                view.scroll_by(-1);
+                None
+            }
+            KeyCode::PageDown if plain && scrollable => {
+                view.scroll_by(1);
+                None
+            }
+            KeyCode::Home if plain && scrollable => {
+                view.offset = 0;
+                None
+            }
+            KeyCode::End if plain && scrollable => {
+                view.offset = view
+                    .total_lines
+                    .saturating_sub(usize::from(view.body.height));
+                None
+            }
+            KeyCode::Enter if plain => {
+                decisions
+                    .get(self.approval_selected)
+                    .copied()
+                    .and_then(|selected| {
+                        if human_gate_ui::approval_decision_blocked(selected, view) {
+                            None
+                        } else {
+                            Some(selected)
+                        }
+                    })
+            }
             KeyCode::Esc => Some(ApprovalDecision::Deny),
-            KeyCode::Char('y' | 'Y' | '是') if plain => Some(ApprovalDecision::AllowOnce),
-            KeyCode::Char('a' | 'A') if plain && always => Some(ApprovalDecision::AlwaysAllow),
+            KeyCode::Char('y' | 'Y' | '是') if plain => {
+                human_gate_ui::approval_allow_if_read(view, ApprovalDecision::AllowOnce)
+            }
+            KeyCode::Char('a' | 'A') if plain && always => {
+                human_gate_ui::approval_allow_if_read(view, ApprovalDecision::AlwaysAllow)
+            }
             KeyCode::Char('n' | 'N' | '否') if plain => Some(ApprovalDecision::Deny),
             _ => None,
         };
@@ -1652,9 +1689,14 @@ impl App {
             return;
         };
         let normalized = value.trim().to_lowercase();
+        let view = &self.approval_view;
         let decision = match normalized.as_str() {
-            "y" | "yes" | "是" | "允许" | "同意" => Some(ApprovalDecision::AllowOnce),
-            "a" | "always" | "始终允许" if *always => Some(ApprovalDecision::AlwaysAllow),
+            "y" | "yes" | "是" | "允许" | "同意" => {
+                human_gate_ui::approval_allow_if_read(view, ApprovalDecision::AllowOnce)
+            }
+            "a" | "always" | "始终允许" if *always => {
+                human_gate_ui::approval_allow_if_read(view, ApprovalDecision::AlwaysAllow)
+            }
             "n" | "no" | "否" | "拒绝" => Some(ApprovalDecision::Deny),
             _ => None,
         };
@@ -1674,6 +1716,7 @@ impl App {
         self.approval = self.approval_queue.pop_front();
         self.approval_action_hits.clear();
         self.approval_rect = Rect::default();
+        self.approval_view = human_gate_ui::ApprovalViewport::default();
         self.qterm_gate_generation = self.qterm_gate_generation.wrapping_add(1);
         self.approval_selected = 0;
     }

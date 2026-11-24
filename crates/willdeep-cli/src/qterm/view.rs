@@ -4,6 +4,7 @@ use super::*;
 pub(crate) struct ViewState {
     pub reporter: Reporter,
     session: Option<Uuid>,
+    session_title: Option<String>,
     task: Option<String>,
     running: bool,
     gate: Option<(u64, RuntimeStatus)>,
@@ -25,20 +26,27 @@ impl ViewState {
     pub(crate) fn observe(
         &mut self,
         session: Uuid,
+        session_title: &str,
         running: bool,
         runtime_turn: bool,
         approval: bool,
         question: bool,
         generation: u64,
     ) {
+        self.session_title = session_report_title(session_title);
         if self.session != Some(session) {
             self.session = Some(session);
             self.task = None;
             self.running = false;
             self.gate = None;
             self.local_mode = false;
-            self.reporter
-                .update(session, None, None, RuntimeStatus::Idle);
+            self.reporter.update(
+                session,
+                None,
+                None,
+                RuntimeStatus::Idle,
+                self.session_title.clone(),
+            );
         }
         if running && (!self.running || runtime_turn == self.local_mode) {
             self.local_mode = !runtime_turn;
@@ -50,8 +58,13 @@ impl ViewState {
                 self.task = current.context.task_id;
             } else {
                 self.task = Some(Uuid::new_v4().to_string());
-                self.reporter
-                    .update(session, self.task.clone(), None, RuntimeStatus::Working);
+                self.reporter.update(
+                    session,
+                    self.task.clone(),
+                    None,
+                    RuntimeStatus::Working,
+                    self.session_title.clone(),
+                );
             }
         }
         let gate = if approval {
@@ -72,19 +85,30 @@ impl ViewState {
                 self.task.clone(),
                 gate.map(|(id, _)| format!("local:{id}")),
                 status,
+                self.session_title.clone(),
             );
         }
         if self.local_mode && self.running && !running && !self.reporter.has_result(session) {
-            self.reporter
-                .update(session, self.task.clone(), None, RuntimeStatus::Interrupted);
+            self.reporter.update(
+                session,
+                self.task.clone(),
+                None,
+                RuntimeStatus::Interrupted,
+                self.session_title.clone(),
+            );
         }
         self.running = running;
         self.gate = gate;
     }
 
     pub(crate) fn finished(&self, session: Uuid, status: RuntimeStatus) {
-        self.reporter
-            .update(session, self.task.clone(), None, status);
+        self.reporter.update(
+            session,
+            self.task.clone(),
+            None,
+            status,
+            self.session_title.clone(),
+        );
     }
 
     pub(crate) fn runtime_snapshot(
@@ -95,8 +119,13 @@ impl ViewState {
         running: bool,
     ) {
         if !self.local_mode {
-            self.reporter
-                .runtime_snapshot(snapshot, session, cursor, running);
+            self.reporter.runtime_snapshot(
+                snapshot,
+                session,
+                cursor,
+                running,
+                self.session_title.clone(),
+            );
         }
     }
 }

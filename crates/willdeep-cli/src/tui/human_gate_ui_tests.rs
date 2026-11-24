@@ -67,6 +67,33 @@ async fn approval_single_rows_resolve_the_displayed_action_and_gap_does_nothing(
 }
 
 #[test]
+fn long_approval_requires_scroll_before_allow() {
+    let mut app = App::new(Vec::new(), Language::ZhCn);
+    let (tx, mut rx) = oneshot::channel();
+    let body = (0..40)
+        .map(|i| format!("line-{i}: willdeep approval scroll gate {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.approval = Some((body, false, tx));
+    paint(&mut app, 60, 18);
+    assert!(
+        !app.approval_view.at_bottom(),
+        "fixture should overflow the body"
+    );
+    app.handle_approval_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(
+        rx.try_recv(),
+        Err(oneshot::error::TryRecvError::Empty)
+    ));
+    app.approval_view.offset = app
+        .approval_view
+        .total_lines
+        .saturating_sub(usize::from(app.approval_view.body.height));
+    app.handle_approval_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(rx.try_recv().unwrap(), ApprovalDecision::AllowOnce);
+}
+
+#[test]
 fn small_approval_windows_keep_all_actions_inside_the_border() {
     for height in [5, 6, 8, 12, 20] {
         let mut app = App::new(Vec::new(), Language::En);

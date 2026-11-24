@@ -664,6 +664,7 @@ pub(super) async fn event_loop(
     loop {
         qterm.observe(
             session.id,
+            session.title.as_str(),
             app.running,
             app.runtime_turn,
             app.approval.is_some(),

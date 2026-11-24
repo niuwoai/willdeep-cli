@@ -660,6 +660,7 @@ struct App {
     skill_hits: Vec<(u16, usize)>,
     approval_rect: Rect,
     approval_action_hits: Vec<(Rect, ApprovalDecision)>,
+    approval_view: human_gate_ui::ApprovalViewport,
     question_rect: Rect,
     question_hits: Vec<(u16, usize)>,
     question_view: human_gate_ui::QuestionViewport,
