@@ -641,6 +641,7 @@ fn clicking_sidebar_hits_toggles_sections_and_opens_task_detail() {
         run_id: None,
         id: "job_test".to_owned(),
         agent_id: None,
+        owner_session_id: None,
         kind: willdeep_core::BackgroundTaskKind::Shell,
         label: "Run tests".to_owned(),
         status: BackgroundTaskStatus::Completed,

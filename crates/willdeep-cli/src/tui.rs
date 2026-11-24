@@ -872,7 +872,8 @@ pub async fn run_with_splash(
         notifier: ui.7,
         skills,
         kernel,
-        detached_jobs: willdeep_core::DetachedJobStore::new(&kernel_store_home),
+        detached_jobs: willdeep_core::DetachedJobStore::new(&kernel_store_home)
+            .with_owner(session.id.to_string()),
         kernel_store,
         context_window: ui.2,
         background_tasks: ui.3,

@@ -57,6 +57,9 @@ pub struct BackgroundTaskSnapshot {
     pub run_id: Option<uuid::Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<uuid::Uuid>,
+    /// 发起该进程内后台任务的会话。广播完成事件时只应向此会话投递内核通知。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_session_id: Option<uuid::Uuid>,
     pub kind: BackgroundTaskKind,
     pub label: String,
     pub status: BackgroundTaskStatus,
@@ -127,6 +130,8 @@ pub struct BackgroundTaskRegistry {
     /// 监视器往事件内核发过几条事件、还没被前端看过。前端据此决定要不要唤醒
     /// 空闲会话；这样 TUI 与无头运行不必各自再接一条通道。
     monitor_signals: Arc<AtomicUsize>,
+    /// 当前 harness 绑定的执行会话；任务完成时写入 snapshot 供多 TUI 过滤。
+    broadcast_owner: Arc<Mutex<Option<uuid::Uuid>>>,
 }
 
 impl Default for BackgroundTaskRegistry {
@@ -144,11 +149,16 @@ impl Default for BackgroundTaskRegistry {
             events,
             lifecycle: None,
             monitor_signals: Arc::new(AtomicUsize::new(0)),
+            broadcast_owner: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl BackgroundTaskRegistry {
+    pub fn with_broadcast_owner(self, session_id: uuid::Uuid) -> Self {
+        *self.broadcast_owner.lock().expect("broadcast owner") = Some(session_id);
+        self
+    }
     pub(crate) fn claim_agent_team(&self) -> Result<(), String> {
         let mut owner = self
             .team_owner
@@ -790,10 +800,16 @@ impl BackgroundTaskRegistry {
                 )
             }
         };
+        let owner_session_id = self
+            .broadcast_owner
+            .lock()
+            .expect("broadcast owner")
+            .clone();
         let snapshot = BackgroundTaskSnapshot {
             id: id.clone(),
             run_id: run_request.as_ref().map(|request| request.request_id),
             agent_id,
+            owner_session_id,
             kind,
             label,
             status: if queued {

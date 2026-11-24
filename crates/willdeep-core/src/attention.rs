@@ -239,6 +239,7 @@ mod tests {
             run_id: None,
             id: "task_1".to_owned(),
             agent_id: None,
+            owner_session_id: None,
             kind,
             label: "Inspect repository".to_owned(),
             status,
