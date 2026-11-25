@@ -1032,6 +1032,34 @@ fn intake_public_url_is_optional_but_must_be_an_origin() {
     }
 }
 
+#[test]
+fn intake_tunnel_requires_https_and_a_fixed_loopback_port() {
+    let mut settings = IntakeSettings {
+        enabled: true,
+        ..IntakeSettings::default()
+    };
+    assert!(!settings.cloudflare_tunnel);
+    settings.public_url = "http://example.com".to_owned();
+    validate_intake(&settings).unwrap();
+    settings.cloudflare_tunnel = true;
+    for (listen, url, accepted) in [
+        ("127.0.0.1:9857", "", false),
+        ("127.0.0.1:9857", "http://example.com", false),
+        ("127.0.0.1:9857", "HTTPS://example.com/", true),
+        ("[::1]:9857", "https://example.com", true),
+        ("0.0.0.0:9857", "https://example.com", false),
+        ("127.0.0.1:0", "https://example.com", false),
+    ] {
+        settings.listen = listen.to_owned();
+        settings.public_url = url.to_owned();
+        assert_eq!(
+            validate_intake(&settings).is_ok(),
+            accepted,
+            "{listen} {url}"
+        );
+    }
+}
+
 /// 测试里的「绝对路径」必须是当前平台的绝对路径：Windows 上 `/srv/work`
 /// 既不是绝对路径也没有盘符，配置校验会拒绝它。
 fn platform_absolute(name: &str) -> PathBuf {

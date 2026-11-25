@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-25 | 当前版本：v0.156.0-rc4
+> 最后更新：2026-11-25 | 当前版本：v0.157.0-rc1
+
+团队控制轮次完成队列处理后单独报告子代理和工作流的结果状态。子代理报告保留在运行详情和父会话的宿主上下文，聊天历史投影跳过该证据收据。
 
 `run_command` 的临时预览复用后台任务和进程回收机制，默认期限为 600 秒。启动回执返回后，产生预览的会话可以结束当前回合。
 
@@ -261,6 +263,7 @@ Agent Loop 只理解：
 - 非交互审批失败时拒绝，不自动升级；
 - 会话分享是第三种对外面：Web（9847）只在回环开放创建/撤销 token（`shares.json`，0600，一条会话一个 token，重建即吊销旧链接），公开访问走 `[intake]` 监听（默认 9857）的 `/share/<token>` 与 `/api/share/<token>`。链接前缀取 `[intake] public_url`，未配置时按实际监听地址拼，管理页与分享面板共用同一条拼接规则。分享页使用 Vite 独立入口构建，产物随 Web 静态资源嵌入 CLI 后由 Intake 同源提供；Markdown 通过 `react-markdown` 和 GFM 插件呈现，原始 HTML 不渲染，CSP 限制脚本、连接和图像来源。页面只投影 `user`/`assistant` 正文，不列工作区、不读配置、不挂任何管理端点；`chat` 档的访客发言作为普通 Runtime 轮次按会话当前审批档位执行，另有 8 KiB 正文上限和每 token 每分钟 20 条的限流。这与插件宿主、Mobile Relay 一致：对外面只拿到一处刻意收窄的投影，管理面永远留在本机；
 - 公网 Intake 监听（默认 9857）只注册站点、表单、webhook、分享与健康检查路由；Web 管理接口 `/api/intake` 的配置读取和写入都限制为回环访问，远程 Web 监听不会返回表单/Webhook 配置、工作区路径、失败投递或会话绑定。浏览器表单页签发绑定 slug、有效期和随机 nonce 的 HMAC-SHA256 短时令牌，签名密钥只驻留在 Intake 进程内；POST 原子消费 nonce，拒绝过期和重放。令牌用于防盲跨站提交，不证明提交者身份，也不能阻止机器人获取新表单。
+- 可选的 Cloudflare 命名隧道由 Runtime 随公网 Intake 监听管理。Cloudflare 主机名指向独立的 Intake 回环端口，管理 Web 和 Runtime 控制面维持各自的监听边界。连接器优先使用 `[intake]` 的写入专用令牌配置，缺省时使用 Runtime 环境变量 `TUNNEL_TOKEN`。回环 Web 保存配置后重新应用 Intake，读取接口只返回令牌是否已配置。
 - 私有 Web 的失败 SSE 与历史 DTO 包含 Session/Turn/Task 引用、失败域和经过脱敏限长的具体原因；服务端读取诊断前验证工作区 allowlist 与 Task/Session/Turn 归属，只允许失败或中断任务。展开诊断沿用相同归属检查，不返回原始工具参数或输出；手机中继与公共 SSE 不携带原始诊断；
 - 默认远程单用户 Web 通过带认证的 HTTPS 反向代理访问。Web 仅监听节点回环地址；跨节点部署可由前置代理通过专用 SSH 本地隧道接入，隧道监听也仅限回环。入口认证配置只在服务器之间安全复用，不复制登录会话，不允许从公网直接绕过前置认证访问后端。
 - q3 于 2026-11-19 按用户明确要求采用独立部署例外：root Runtime 停止，willdeep 账号的 `willdeep-daemon.service` 托管 Web 于 `127.0.0.1:19847`，同账号的 `willdeep-web-listener.service` 使用 socat 将 `0.0.0.0:9847` 转发到内部 Web。外层覆盖全部 IPv4 网卡，以回环来源接入管理 Web，未增加应用鉴权；这不继承默认 HTTPS 认证代理的访问边界。Runtime 控制端口不转发，旧独立 Web 保持 disabled；listener 通过 Requires/After/PartOf 和就绪检查跟随 daemon 正常重启恢复。已验证 Tailscale 地址 `http://100.85.114.57:9847/` 的直接 HTTP 访问，未验证公网入口。该部署不改变 0.154.0-rc2 托管 Web 仅接受回环地址的应用约束，详见[部署验收与回滚](verification/0.154.0-rc2/q3-network.md)。

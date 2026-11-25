@@ -13,6 +13,7 @@ use willdeep_core::{
 struct Worker {
     calls: AtomicUsize,
     histories: Mutex<Vec<Vec<Message>>>,
+    truncated: bool,
 }
 
 #[async_trait::async_trait]
@@ -33,7 +34,7 @@ impl Provider for Worker {
             reasoning: None,
             content: "worker report".into(),
             tool_calls: Vec::new(),
-            finish_reason: Some("stop".into()),
+            finish_reason: Some(if self.truncated { "length" } else { "stop" }.into()),
             usage: Some(Usage::default()),
         })
     }
@@ -95,11 +96,23 @@ async fn idle_team_control_continues_child_and_commits_parent_receipts_without_p
     .unwrap();
     assert_eq!(first.turns, 0);
     assert_eq!(worker.calls.load(Ordering::SeqCst), 2);
-    assert!(first.final_text.contains("worker report"));
+    assert!(first.final_text.is_empty());
     let run = runs.get(request_id).unwrap().unwrap();
     assert!(run.delivered);
+    assert!(run.report.as_deref().unwrap().contains("worker report"));
     let committed = parent_store.load(parent.id).unwrap();
     assert!(committed.agent_reports_received.contains(&request_id));
+    let receipt = committed.messages.last().unwrap();
+    assert_eq!(
+        receipt.source,
+        Some(willdeep_core::types::MessageSource::HostInstruction)
+    );
+    assert!(receipt.content.contains("worker report"));
+    assert!(
+        !willdeep_core::conversation::project(&committed.messages, None)
+            .iter()
+            .any(|item| item.content.contains("worker report"))
+    );
     assert!(committed.agent_control_requests.contains(&request_id));
     assert_eq!(
         worker.histories.lock().unwrap()[1]
@@ -124,5 +137,72 @@ async fn idle_team_control_continues_child_and_commits_parent_receipts_without_p
     .unwrap();
     assert_eq!(worker.calls.load(Ordering::SeqCst), 2);
     assert_eq!(parent.messages.len(), count);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn recover_queue_retains_partial_child_report_without_parent_reply() {
+    let root = std::env::temp_dir().join(format!("team-recovery-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let store = willdeep_core::SessionStore::new(&root);
+    let mut parent = willdeep_core::Session::new(workspace.clone(), None, "parent");
+    store.save(&mut parent).unwrap();
+    let runs = willdeep_core::subagent::AgentRunStore::new(root.join("workers"), parent.id);
+    let background = Arc::new(BackgroundTaskRegistry::default().with_agent_run_store(runs.clone()));
+    let worker = Arc::new(Worker {
+        truncated: true,
+        ..Worker::default()
+    });
+    let catalog = SubagentCatalog::new(
+        &workspace,
+        willdeep_core::subagent::builtin_profiles(worker),
+        background.clone(),
+    )
+    .with_parent_session(parent.id)
+    .with_state_home(root.join("workers"));
+    let goal =
+        willdeep_core::GoalContinuation::with_default_budget(willdeep_core::GoalBudget::default());
+    let child = uuid::Uuid::new_v4();
+    let mut events = background.subscribe();
+    catalog
+        .spawn_external_read_only(child, "inspection".into(), None, Some("scout".into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let outcome = execute_team(
+        TeamRuntime {
+            subagents: &catalog,
+            background: &background,
+            goal: &goal,
+        },
+        &store,
+        &mut parent,
+        AgentTeamControl::RecoverQueue,
+        Language::ZhCn,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.turns, 0);
+    assert_eq!(
+        outcome.stop_reason,
+        willdeep_core::AgentStopReason::Incomplete
+    );
+    assert!(outcome.final_text.is_empty());
+    let run = runs.list(None, None, 64).unwrap().runs.pop().unwrap();
+    assert!(run.delivered);
+    assert_eq!(run.status, AgentStatus::Partial);
+    assert!(run.report.unwrap().contains("worker report"));
+    assert!(
+        store
+            .load(parent.id)
+            .unwrap()
+            .agent_reports_received
+            .contains(&run.id)
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

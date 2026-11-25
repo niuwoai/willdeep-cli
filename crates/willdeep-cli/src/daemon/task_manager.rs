@@ -679,6 +679,7 @@ impl TaskManager {
         // 用户在本轮进行中的插话由此送达：turn.steer 按会话找到这个收件箱。
         request.instruction_inbox = Some(self.steering.register(id, request.session_id));
         let independent_lane = request.execution_session_id.is_some();
+        let team_control = request.team_control.is_some();
         let task_prompt_excerpt = task.prompt_excerpt.clone();
         let schedule_timeout =
             super::schedule_engine::policy_for_origin(&home, request.origin_client.as_deref())?
@@ -795,10 +796,19 @@ impl TaskManager {
                             ),
                         );
                     }
+                    // A successful control task can collect incomplete worker results.
+                    // The Runtime turn completed even when one of its workers did not.
+                    let complete = team_control || outcome.stop_reason.is_complete();
+                    let stop_reason = if team_control {
+                        willdeep_core::AgentStopReason::Finished
+                    } else {
+                        outcome.stop_reason
+                    };
                     let completed = serde_json::json!({
-                        "type":if outcome.stop_reason.is_complete() { "completed" } else { "partial" },
-                        "stop_reason":outcome.stop_reason.as_str(),
+                        "type":if complete { "completed" } else { "partial" },
+                        "stop_reason":stop_reason.as_str(),
                         "turns":outcome.turns,
+                        "team_results_incomplete":team_control.then_some(!outcome.stop_reason.is_complete()),
                         "text":outcome.final_text,
                         "session_id":task.session_id.unwrap_or(outcome.session_id),
                         "execution_session_id":outcome.session_id,
@@ -807,7 +817,7 @@ impl TaskManager {
                         .events
                         .append("task.output", format!("task_id={id} {completed}"));
                     (
-                        if outcome.stop_reason.is_complete() {
+                        if complete {
                             RuntimeTaskStatus::Completed
                         } else {
                             RuntimeTaskStatus::Partial

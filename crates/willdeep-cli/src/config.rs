@@ -297,9 +297,22 @@ pub struct IntakeSettings {
     /// 分享、站点和表单链接都以它为准；前面的反向代理把域名转到这里。
     /// 留空时按实际监听地址拼——只适合本机自己打开的场景。
     pub public_url: String,
+    /// Run a Cloudflare named tunnel for this listener while intake is enabled.
+    pub cloudflare_tunnel: bool,
+    pub cloudflare_tunnel_token: Option<IntakeTunnelToken>,
     pub sites: Vec<IntakeSite>,
     pub forms: Vec<IntakeForm>,
     pub webhooks: Vec<IntakeWebhook>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(transparent)]
+pub struct IntakeTunnelToken(pub String);
+
+impl std::fmt::Debug for IntakeTunnelToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[redacted]")
+    }
 }
 
 impl Default for IntakeSettings {
@@ -308,6 +321,8 @@ impl Default for IntakeSettings {
             enabled: false,
             listen: "127.0.0.1:9857".to_owned(),
             public_url: String::new(),
+            cloudflare_tunnel: false,
+            cloudflare_tunnel_token: None,
             sites: Vec::new(),
             forms: Vec::new(),
             webhooks: Vec::new(),
@@ -1129,9 +1144,30 @@ pub(crate) fn resolve_web_listen(
 
 /// 公网入口的语义校验。`config check` 和入口启动都走这里，规则只写一份。
 pub(crate) fn validate_intake(settings: &IntakeSettings) -> Result<()> {
-    parse_listen_addr("intake.listen", &settings.listen)?;
-    if !settings.public_url.trim().is_empty() {
-        check_intake_public_url(&settings.public_url)?;
+    let listen = parse_listen_addr("intake.listen", &settings.listen)?;
+    let public_url = settings.public_url.trim();
+    if !public_url.is_empty() {
+        check_intake_public_url(public_url)?;
+    }
+    if let Some(token) = settings.cloudflare_tunnel_token.as_ref() {
+        let token = token.0.trim();
+        if token
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control())
+        {
+            bail!("intake.cloudflare_tunnel_token must be a single token without spaces");
+        }
+    }
+    if settings.enabled && settings.cloudflare_tunnel {
+        if !listen.ip().is_loopback() || listen.port() == 0 {
+            bail!("intake.cloudflare_tunnel needs a loopback intake.listen with a fixed port");
+        }
+        if !public_url
+            .split_once("://")
+            .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
+        {
+            bail!("intake.cloudflare_tunnel needs an HTTPS intake.public_url");
+        }
     }
     let mut slugs = HashSet::new();
     for site in &settings.sites {

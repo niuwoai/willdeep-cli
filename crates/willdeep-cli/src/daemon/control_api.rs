@@ -481,11 +481,13 @@ async fn dispatch(state: &ServerState, request: ApiRequest) -> UnifiedResponse {
                 state
                     .events
                     .read_after(params.after, params.limit.clamp(1, 1_000))
-                    .map(|events| {
-                        events
+                    .and_then(|events| {
+                        let task_ids = state.sessions.team_control_task_ids()?;
+                        Ok(events
                             .into_iter()
+                            .map(|event| event_stream::project_team_control_event(event, &task_ids))
                             .map(event_stream::public_event)
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>())
                     }),
             ),
             Err(error) => Err(error),

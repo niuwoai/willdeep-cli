@@ -169,6 +169,25 @@ fn legacy_explicit_provider_selection() -> bool {
 }
 
 impl Session {
+    // Older team-control runs saved internal evidence as operator input. Verify
+    // the durable receipt before reclassifying it and preserve message positions.
+    fn restore_subagent_report_sources(&mut self) {
+        if self.agent_reports_received.is_empty() {
+            return;
+        }
+        use crate::types::MessageSource;
+        let mut receipts = self.agent_reports_received.clone();
+        for message in &mut self.messages {
+            if message.runtime_turn_id.is_none()
+                && let Some(id) = message.subagent_report_run_id()
+                && receipts.remove(&id)
+                && message.source == Some(MessageSource::OperatorInput)
+            {
+                message.source = Some(MessageSource::HostInstruction);
+            }
+        }
+    }
+
     /// Fork the current history under a fresh identity. The source's optimistic
     /// save baseline cannot authorize writes to this new session.
     pub fn fork_snapshot(&self) -> Self {
@@ -382,6 +401,7 @@ impl SessionStore {
         if session.version != SESSION_VERSION {
             return Err(SessionError::Version(session.version));
         }
+        session.restore_subagent_report_sources();
         session.metadata_baseline = Some(if baseline {
             metadata::Metadata::capture(&session)?
         } else {
@@ -459,6 +479,7 @@ impl SessionStore {
             }
         }
         for session in &mut values {
+            session.restore_subagent_report_sources();
             session.metadata_baseline = Some(metadata::Metadata::capture_scalars(session));
         }
         values.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
@@ -1247,6 +1268,37 @@ mod iso8601_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_subagent_receipt_is_hidden_without_changing_user_quotations() {
+        use crate::types::MessageSource;
+        let root = std::env::temp_dir().join(format!("willdeep-report-{}", Uuid::new_v4()));
+        let store = SessionStore::new(&root);
+        let mut session = Session::new(root.clone(), None, "parent");
+        let agent_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let report = Message::subagent_report(agent_id, run_id, "private worker evidence");
+        let quoted = Message::user(&report.content);
+        session.messages = vec![Message::user(&report.content), quoted];
+        session.agent_reports_received.insert(run_id);
+        store.save(&mut session).unwrap();
+
+        let mut reopened = store.load_baselined(session.id).unwrap();
+        assert_eq!(reopened.messages[0].source, report.source);
+        assert_eq!(reopened.messages[0].content, report.content);
+        assert_eq!(
+            reopened.messages[1].source,
+            Some(MessageSource::OperatorInput)
+        );
+        let transcript = crate::conversation::project(&reopened.messages, None);
+        assert_eq!(transcript.len(), 1);
+        assert_eq!(transcript[0].content, report.content);
+        reopened.messages.push(Message::user("follow-up"));
+        store.save(&mut reopened).unwrap();
+        assert_eq!(store.load(session.id).unwrap().messages.len(), 3);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn stale_execution_save_preserves_newer_metadata() {
         let root = std::env::temp_dir().join(format!("willdeep-stale-{}", Uuid::new_v4()));
