@@ -58,18 +58,7 @@ fn policy_context_before_startup_selection(
 ) -> Result<ModelPolicyContext> {
     // The chooser has not run yet. Discovery must be safe for either a fresh
     // session or the latest eligible saved session, including a legacy child.
-    let latest = store
-        .digests()
-        .into_iter()
-        .filter(|digest| !digest.bridged && digest.has_user_input)
-        .filter(|digest| digest.workspace.is_absolute())
-        .filter(|digest| {
-            digest
-                .workspace
-                .canonicalize()
-                .is_ok_and(|root| root == workspace)
-        })
-        .max_by_key(|digest| (digest.updated_at, digest.id));
+    let latest = store.latest_project_digest(workspace);
     let mut roots = vec![workspace.to_path_buf()];
     if let Some(digest) = latest {
         let session = store.load(digest.id)?;

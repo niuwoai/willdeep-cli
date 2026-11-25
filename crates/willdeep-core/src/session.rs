@@ -13,6 +13,7 @@ use crate::types::{Message, Role, ToolCall, sanitize_tool_history};
 mod concurrency_tests;
 mod execution_state;
 mod metadata;
+mod project_lookup;
 #[cfg(test)]
 mod read_baseline_tests;
 
