@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-24 | 当前版本：v0.155.0-rc12
+> 最后更新：2026-11-24 | 当前版本：v0.156.0-rc1
+
+0.156.0-rc1 增加桌面接入。Tauri 桌面宿主启动随包的本地 Web 服务并接入现有 Runtime，页面和浏览器共用。桌面窗口管理与任务执行分属独立进程。
 
 0.155.0-rc12 修正默认分支 push 的路径分类基线。`.github/actions/ci-changes` 把 push 的 `before` 提交传给 paths-filter；不再传远程跟踪分支名。没有可比较父提交时仍跑全量。pull request 仍使用 base 提交。
 

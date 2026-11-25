@@ -211,6 +211,8 @@ struct Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 enum CliCommand {
+    #[command(hide = true)]
+    DesktopServe,
     /// Organize an autonomous three-episode screenplay through the Runtime.
     Screenplay {
         #[command(subcommand)]
@@ -771,6 +773,7 @@ async fn run() -> Result<()> {
             }
             CliCommand::Usage { action } => usage_cmd::run(action, &willdeep_home()?),
             CliCommand::Web => open_web_app(&cli).await,
+            CliCommand::DesktopServe => web::serve_desktop(cli.config.as_deref()).await,
             CliCommand::Identity { action } => {
                 identity_cmd::identity_command(action, &willdeep_home()?)
             }

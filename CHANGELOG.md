@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.156.0-rc1] - 2026-11-25
+### Added
+- 新增 WillDeep Desktop，复用 Web 工作台并接入本机 Runtime，提供原生目录选择和可收起的逐文件 Diff 面板。
+- 新增 macOS 桌面安装包构建入口，按包附带同版本的 Runtime。
+
 ## [0.155.0-rc15] - 2026-11-24
 ### Fixed
 - Clippy `clone_on_copy`（#220 / PR #222 后台 `owner_session_id`）。

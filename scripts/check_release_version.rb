@@ -20,9 +20,12 @@ lock = read.call('Cargo.lock')
 %w[willdeep willdeep-core willdeep-runtime-client willdeep-runtime-protocol].each do |name|
   check.call("Cargo.lock #{name}", lock[/^name = "#{Regexp.escape(name)}"\nversion = "([^"]+)"$/, 1])
 end
-%w[web/package.json npm/willdeep/package.json npm/willdeep/install-manifest.json].each do |path|
+%w[web/package.json npm/willdeep/package.json npm/willdeep/install-manifest.json
+   desktop/package.json desktop/tauri.conf.json].each do |path|
   check.call(path, JSON.parse(read.call(path)).fetch('version'))
 end
+check.call('desktop/Cargo.toml', read.call('desktop/Cargo.toml')[/^version = "([^"]+)"$/, 1])
+check.call('desktop/Cargo.lock', read.call('desktop/Cargo.lock')[/^name = "willdeep-desktop"\nversion = "([^"]+)"$/, 1])
 manifest = JSON.parse(read.call('npm/willdeep/install-manifest.json'))
 check.call('install manifest tag', manifest.fetch('tag'), "v#{version}")
 %w[PRODUCT_OVERVIEW.md docs/ARCHITECTURE.md].each do |path|

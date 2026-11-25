@@ -41,6 +41,10 @@ class InteractionProvider
     requests.fetch(index).fetch(:commands).push([:finish, nil])
   end
 
+  def tool(index, name, arguments)
+    requests.fetch(index).fetch(:commands).push([:tool, [index, name, arguments]])
+  end
+
   def close
     @server.close unless @server.closed?
     requests.each { |request| request.fetch(:commands).push([:close, nil]) }
@@ -75,6 +79,12 @@ class InteractionProvider
       if kind == :delta
         event = {choices: [{index: 0, delta: {content: text}}]}
         client.write("data: #{JSON.generate(event)}\n\n")
+      elsif kind == :tool
+        request_index, name, arguments = text
+        call = {index: 0, id: "fixture-tool-call-#{request_index}", type: 'function', function: {name: name, arguments: JSON.generate(arguments)}}
+        event = {choices: [{index: 0, delta: {tool_calls: [call]}, finish_reason: 'tool_calls'}]}
+        client.write("data: #{JSON.generate(event)}\n\ndata: [DONE]\n\n")
+        break
       else
         event = {choices: [{index: 0, delta: {}, finish_reason: 'stop'}],
           usage: {prompt_tokens: 1000, completion_tokens: 100, total_tokens: 1100}}

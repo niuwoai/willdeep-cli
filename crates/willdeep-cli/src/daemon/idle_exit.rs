@@ -8,7 +8,7 @@
 //! 判定要同时满足才算空闲，少一条都不退：
 //!
 //! - 没有排队、执行中或在等人回应的轮次，也没有还在跑的 Agent；
-//! - 没有开启的服务：Web 页、手机中继、公网入口；
+//! - 没有开启的服务：桌面窗口、Web 页、手机中继、公网入口；
 //! - 控制端点上没有任何连接。事件流是长连接，TUI 挂着它就一直算有人在用。
 //!
 //! 连接数取自传输层而不是应用层：请求一到来 axum 就先消费掉 body 再跑处理函数，
@@ -125,6 +125,9 @@ async fn runtime_is_idle(state: &ServerState) -> Result<bool> {
     if connections_open(&state.connections) {
         return Ok(false);
     }
+    if super::desktop_presence::active(&state.home)? {
+        return Ok(false);
+    }
     if service_enabled(state).await {
         return Ok(false);
     }
@@ -219,6 +222,19 @@ mod tests {
         let (root, state) = fresh();
         state.connections.fetch_add(1, Ordering::SeqCst);
         assert!(!runtime_is_idle(&state).await.unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn desktop_windows_keep_an_empty_runtime_until_the_last_owner_leaves() {
+        let (root, state) = fresh();
+        let first = super::super::desktop_presence::acquire(&root).unwrap();
+        let second = super::super::desktop_presence::acquire(&root).unwrap();
+        assert!(!runtime_is_idle(&state).await.unwrap());
+        drop(first);
+        assert!(!runtime_is_idle(&state).await.unwrap());
+        drop(second);
+        assert!(runtime_is_idle(&state).await.unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 
