@@ -39,7 +39,7 @@ fn clean_terminal_controls(value: &str) -> String {
         };
         match control {
             '\u{9b}' => {
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if ('\u{40}'..='\u{7e}').contains(&next) {
                         break;
                     }
