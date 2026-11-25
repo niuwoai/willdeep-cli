@@ -347,11 +347,25 @@ enum Transport {
     Http(Box<Mutex<http::HttpConnection>>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpStartupWarningKind {
+    Unavailable,
+    ToolListUnavailable,
+}
+
+fn print_startup_warning(kind: McpStartupWarningKind, name: &str, error: &McpError) {
+    let problem = match kind {
+        McpStartupWarningKind::Unavailable => "is unavailable",
+        McpStartupWarningKind::ToolListUnavailable => "has no usable tool list",
+    };
+    eprintln!("warning: MCP server {name} {problem}: {error}");
+}
+
 impl McpRegistry {
     /// 没有家目录上下文的连接：插件宿主用它连插件自带的 stdio 服务。
     /// 配了 OAuth 的 url 服务在这条路上连不上（token 在家目录里）。
     pub async fn connect(configs: &BTreeMap<String, McpServerConfig>) -> Result<Self, McpError> {
-        Self::connect_inner(None, configs, None).await
+        Self::connect_in(None, configs).await
     }
 
     /// 插件宿主的连接：stdio 服务可以反向请求宿主，`handler` 决定宣告哪些方法、
@@ -360,7 +374,7 @@ impl McpRegistry {
         configs: &BTreeMap<String, McpServerConfig>,
         handler: Arc<dyn HostRequestHandler>,
     ) -> Result<Self, McpError> {
-        Self::connect_inner(None, configs, Some(handler)).await
+        Self::connect_inner(None, configs, Some(handler), print_startup_warning).await
     }
 
     /// 带家目录的连接：OAuth token 从 `<home>/mcp-oauth/<name>.json` 取。
@@ -368,13 +382,23 @@ impl McpRegistry {
         home: Option<&Path>,
         configs: &BTreeMap<String, McpServerConfig>,
     ) -> Result<Self, McpError> {
-        Self::connect_inner(home, configs, None).await
+        Self::connect_in_with_warnings(home, configs, print_startup_warning).await
+    }
+
+    /// Connect with a caller-owned destination for recoverable startup warnings.
+    pub async fn connect_in_with_warnings(
+        home: Option<&Path>,
+        configs: &BTreeMap<String, McpServerConfig>,
+        warn: impl FnMut(McpStartupWarningKind, &str, &McpError),
+    ) -> Result<Self, McpError> {
+        Self::connect_inner(home, configs, None, warn).await
     }
 
     async fn connect_inner(
         home: Option<&Path>,
         configs: &BTreeMap<String, McpServerConfig>,
         handler: Option<Arc<dyn HostRequestHandler>>,
+        mut warn: impl FnMut(McpStartupWarningKind, &str, &McpError),
     ) -> Result<Self, McpError> {
         let mut registry = Self::configuration_only(configs);
         for (name, config) in configs.iter().filter(|(_, c)| c.enabled) {
@@ -395,9 +419,9 @@ impl McpRegistry {
             let server = match started {
                 Ok(server) => Arc::new(server),
                 // 远程服务连不上、没登录、对方 5xx：都不该让宿主起不来。
-                // 报到 stderr，跳过这一个，其余服务照常。
+                // 通知调用方，跳过这一个，其余服务照常。
                 Err(error) if kind == McpTransportKind::StreamableHttp => {
-                    eprintln!("warning: MCP server {name} is unavailable: {error}");
+                    warn(McpStartupWarningKind::Unavailable, name, &error);
                     continue;
                 }
                 Err(error) => return Err(error),
@@ -408,7 +432,7 @@ impl McpRegistry {
             let listed = match server.request("tools/list", json!({})).await {
                 Ok(listed) => listed,
                 Err(error) => {
-                    eprintln!("warning: MCP server {name} has no usable tool list: {error}");
+                    warn(McpStartupWarningKind::ToolListUnavailable, name, &error);
                     registry.servers.insert(name.clone(), server);
                     continue;
                 }

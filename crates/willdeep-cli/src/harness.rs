@@ -365,6 +365,7 @@ pub(crate) struct BuiltHarness {
     pub context_window: u64,
     pub provider_config: ProviderConfig,
     pub provider_profile: Option<String>,
+    pub startup_mcp_notices: Vec<String>,
     /// Built here so every frontend — TUI, headless run, runtime — shares one
     /// dispatcher and one set of `[notifications]` switches.
     pub notifier: crate::notify::Notifier,
@@ -1175,11 +1176,24 @@ pub(crate) async fn build(
         mcp_servers.retain(|name, _| allowed_mcp_servers.contains(name));
     }
     let mcp_home = home.to_path_buf();
-    let mcp_future = async move {
+    let interactive = matches!(&frontend, HarnessFrontend::Tui { .. });
+    let mut startup_mcp_notices = Vec::new();
+    let mcp_future = async {
         if delegation_read_only {
             // Preserve offline discovery without starting a stdio process or
             // connecting HTTP / loading OAuth credentials in a read-only child.
             Ok(willdeep_core::McpRegistry::configuration_only(&mcp_servers))
+        } else if interactive {
+            willdeep_core::McpRegistry::connect_in_with_warnings(
+                Some(&mcp_home),
+                &mcp_servers,
+                |kind, name, error| {
+                    startup_mcp_notices
+                        .push(crate::tui::mcp_startup_notice(language, kind, name, error));
+                },
+            )
+            .await
+            .context("initialize MCP servers")
         } else {
             willdeep_core::McpRegistry::connect_in(Some(&mcp_home), &mcp_servers)
                 .await
@@ -1794,6 +1808,7 @@ pub(crate) async fn build(
         context_window,
         provider_config: primary_provider_config,
         provider_profile,
+        startup_mcp_notices,
         notifier,
         _command_watcher: command_watcher,
     })

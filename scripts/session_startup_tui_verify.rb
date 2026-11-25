@@ -18,6 +18,7 @@ fresh = File.join(root, 'fresh')
 FileUtils.mkdir_p([File.join(home, 'sessions'), project, other, fresh])
 server = TCPServer.new('127.0.0.1', 0)
 requests = []
+metadata_request = ->(line) { line.start_with?('GET /v1/model-capabilities ', 'GET /v1/models ') }
 listener = Thread.new do
   loop do
     socket = server.accept
@@ -28,7 +29,7 @@ listener = Thread.new do
 rescue IOError, Errno::EBADF
 end
 config = File.join(home, 'config.toml')
-File.write(config, "version = 1\ndefault_provider = 'fixture'\n[agent]\nauto_title = false\ninput_suggestions = false\nsmall_model_routing = false\nauto_dispatch_read_only = false\n[providers.fixture]\nprovider = 'openai-compatible'\napi_base = 'http://127.0.0.1:#{server.addr[1]}/v1'\napi_key = 'local-fixture-only'\nmodel = 'fixture'\n")
+File.write(config, "version = 1\ndefault_provider = 'fixture'\n[agent]\napproval = 'strict'\nsandbox = false\nauto_title = false\ninput_suggestions = false\nsmall_model_routing = false\nauto_dispatch_read_only = false\n[providers.fixture]\nprovider = 'openai-compatible'\napi_base = 'http://127.0.0.1:#{server.addr[1]}/v1'\napi_key = 'local-fixture-only'\nmodel = 'fixture'\n")
 File.chmod(0600, config)
 ids = []
 [[project, 'Project A', 'STARTUP_HISTORY_A', 10], [other, 'Project B', 'STARTUP_HISTORY_B', 20], [project, 'Empty session', nil, 30]].each do |workspace, title, text, updated|
@@ -66,7 +67,7 @@ run_case = lambda do |name, args, actions, expected, chooser, minimum = 0|
           writer.write(actions[stage][1])
           stage += 1
         end
-        if bytes.include?(expected) && elapsed >= minimum
+        if bytes.include?(expected) && bytes.include?('Ready ') && elapsed >= minimum
           raise "#{name}: wrong chooser visibility" unless !!chosen_at == chooser
           raise "#{name}: restored another project's history" if bytes.include?('STARTUP_HISTORY_B') && expected != 'STARTUP_HISTORY_B'
           if name == 'timeout'
@@ -75,16 +76,25 @@ run_case = lambda do |name, args, actions, expected, chooser, minimum = 0|
           if name == 'paused-new'
             raise 'paused chooser resumed automatically' if bytes.include?('STARTUP_HISTORY_A')
           end
+          if name == 'mcp-warning-resume'
+            raise 'MCP warning hid the saved history' unless bytes.include?('STARTUP_HISTORY_A')
+            raise 'MCP warning bypassed the system message' unless bytes.include?('System:')
+          end
           # Prove crossterm's EventStream still reads input after the startup reader.
-          writer.write("#1983#\r")
+          # Paste one event and leave it in the composer without submitting a turn.
+          marker = 'STARTUP_INPUT_PROBE'
+          writer.write("\e[200~#{marker}\e[201~")
           deadline = elapsed + 4
           loop do
-            break if bytes.include?('confirmation') || bytes.include?('Confirmation')
+            break if bytes.include?(marker)
             raise "#{name}: main TUI did not receive input" if Process.clock_gettime(Process::CLOCK_MONOTONIC) - started > deadline
             if IO.select([reader], nil, nil, 0.05)
               part = reader.read_nonblock(1_000_000, exception: false)
               bytes << part if part.is_a?(String)
             end
+          end
+          if name == 'mcp-warning-resume' && bytes.include?('warning: MCP server probe')
+            raise 'raw MCP warning leaked to the terminal'
           end
           results << {name: name, passed: true, chooser: !!chosen_at, seconds: elapsed.round(2)}
           break
@@ -120,15 +130,21 @@ begin
   system(env, binary, '--config', config, 'config', 'startup', 'new', out: File::NULL) or raise 'save new failed'
   run_case.call('preference-new', [], [], 'Hello,', false)
   run_case.call('override-latest', ['--session-startup', 'latest'], [], 'STARTUP_HISTORY_A', false)
+  mcp_dir = File.join(home, '.mcp')
+  FileUtils.mkdir_p(mcp_dir)
+  env['WILLDEEP_PTY_MISSING_MCP_TOKEN'] = nil
+  File.write(File.join(mcp_dir, 'probe.toml'), "url = 'http://127.0.0.1:#{server.addr[1]}/mcp'\nbearer_token_env = 'WILLDEEP_PTY_MISSING_MCP_TOKEN'\n")
+  run_case.call('mcp-warning-resume', ['--resume', ids[0]], [], 'could not start and was skipped.', false)
   before.each { |path, messages| raise 'saved history changed' unless JSON.parse(File.read(path))['messages'] == messages }
-  raise 'startup issued inference or unexpected requests' unless requests.all? { |line| line.start_with?('GET /v1/model-capabilities ') }
+  unexpected = requests.reject(&metadata_request)
+  raise "startup issued inference or unexpected requests: #{unexpected.uniq.inspect}" unless unexpected.empty?
   raise 'startup created blank persisted sessions' unless Dir[File.join(home, 'sessions', '*.json')].size == 3
 ensure
   system(env, binary, 'daemon', 'stop', out: File::NULL, err: File::NULL)
   server.close
   listener.join
-  inference = requests.count { |line| !line.start_with?('GET /v1/model-capabilities ') }
-  report = {root: root, cases: results, metadata_requests: requests.size - inference, model_requests: inference, passed: results.size == 11 && inference.zero?}
+  inference = requests.count { |line| !metadata_request.call(line) }
+  report = {root: root, cases: results, metadata_requests: requests.size - inference, model_requests: inference, passed: results.size == 12 && inference.zero?}
   File.write(File.join(root, 'report.json'), JSON.pretty_generate(report))
   File.write(File.join(root, 'report.md'), "# Session startup verification\n\n" + results.map { |r| "- #{r[:name]}: PASS (#{r[:seconds]}s)" }.join("\n") + "\n\nModel inference requests: #{inference}\nMetadata GET requests: #{requests.size - inference}\n")
   puts report.to_json
