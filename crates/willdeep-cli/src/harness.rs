@@ -712,7 +712,7 @@ pub(crate) async fn execute_noninteractive(
         // 于是提前退出，最后那条结论永远到不了模型。
         let running = built.background_tasks.has_pending_tasks()
             || built.agent.workflows_pending()
-            || crate::detached_delivery::has_running_jobs(&built.detached_jobs, session.id);
+            || crate::detached_delivery::has_blocking_jobs(&built.detached_jobs, session.id);
         let events = built.background_tasks.drain_pending();
         // run_in_background 的命令是脱离作业，不在进程内注册表里：两边都要看，
         // 否则无头运行会在命令还没跑完时就退出，模型永远见不到结论。

@@ -983,6 +983,57 @@ pub(super) struct FoldedTranscript {
     /// 每条原始记录在折叠视图里的位置；被收起的工具行指向替它们说话的汇总行，
     /// 搜索跳转命中它们时就落在汇总上。
     pub(super) index_of: Vec<usize>,
+    /// Display row to original record range for each collapsed system group.
+    pub(super) system_groups: BTreeMap<usize, std::ops::Range<usize>>,
+}
+
+const SYSTEM_GROUP_PREFIX: &str = "System: ▸ ";
+
+fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
+    let mut rows = Vec::new();
+    let mut sources = Vec::new();
+    let mut targets = vec![0; folded.rows.len()];
+    let mut cursor = 0;
+    while cursor < folded.rows.len() {
+        let start = cursor;
+        cursor += 1;
+        if is_system_notice_row(&folded.rows[start]) && folded.sources[start].is_some() {
+            while cursor < folded.rows.len()
+                && is_system_notice_row(&folded.rows[cursor])
+                && folded.sources[cursor - 1]
+                    .zip(folded.sources[cursor])
+                    .is_some_and(|(previous, next)| next == previous + 1)
+            {
+                cursor += 1;
+            }
+        }
+        let count = cursor - start;
+        targets[start..cursor].fill(rows.len());
+        if count > 1
+            && let Some(source) = folded.sources[start]
+        {
+            folded
+                .system_groups
+                .insert(rows.len(), source..source + count);
+            rows.push(format!(
+                "{SYSTEM_GROUP_PREFIX}{}",
+                language.pick(
+                    format!("{count} 条系统消息 · 点击展开"),
+                    format!("{count} system messages · click to expand"),
+                    format!("システム通知 {count} 件 · クリックで展開"),
+                )
+            ));
+            sources.push(None);
+        } else {
+            rows.push(folded.rows[start].clone());
+            sources.push(folded.sources[start]);
+        }
+    }
+    for target in &mut folded.index_of {
+        *target = targets.get(*target).copied().unwrap_or(0);
+    }
+    folded.rows = rows;
+    folded.sources = sources;
 }
 
 /// 每段连续的活动行在显示层收起。活动行指工具行，以及夹在它们中间、当前
@@ -1129,6 +1180,7 @@ fn fold_tool_rows_preserving(
         rows,
         sources,
         index_of,
+        system_groups: BTreeMap::new(),
     }
 }
 
@@ -1295,6 +1347,9 @@ impl App {
                 .and_then(|entry| entry.checked_sub(shift))
                 .and_then(|entry| visible_indices.get(entry))
                 .map(|index| floor + index);
+        }
+        if self.active_search_query().is_none() {
+            fold_system_notices(&mut folded, self.language);
         }
         folded
     }
@@ -1623,6 +1678,92 @@ mod tests {
             })
     }
 
+    #[test]
+    fn consecutive_system_notices_fold_and_expand_without_hiding_errors() {
+        let original = vec![
+            "System: first notice".to_owned(),
+            "System: second notice".to_owned(),
+            "Error: keep this failure".to_owned(),
+            "System: single notice".to_owned(),
+        ];
+        let mut app = App::new(original.clone(), Language::En);
+        app.transcript_width = 100;
+        app.viewport_height = 40;
+        let folded = app.display_transcript();
+        assert_eq!(folded.rows.len(), 3);
+        assert!(folded.rows[0].contains("2 system messages"));
+        assert_eq!(folded.sources, vec![None, Some(2), Some(3)]);
+        assert_eq!(folded.index_of, vec![0, 0, 1, 2]);
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        assert!(
+            !app.transcript_rows
+                .iter()
+                .any(|row| row.contains("first notice"))
+        );
+        assert!(app.toggle_tool_row_at(screen_row(&app, 0, false)));
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("first notice"))
+        );
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("second notice"))
+        );
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("keep this failure"))
+        );
+        assert!(app.toggle_tool_row_at(screen_row(&app, 0, true)));
+        app.prepare_transcript_frame();
+        assert!(
+            !app.transcript_rows
+                .iter()
+                .any(|row| row.contains("first notice"))
+        );
+        assert_eq!(app.transcript, original);
+    }
+
+    #[test]
+    fn system_group_uses_original_notice_after_hidden_thought() {
+        let mut app = App::new(
+            vec![
+                format!("{THOUGHT_ENTRY_PREFIX}hidden thought"),
+                "System: first notice".to_owned(),
+                "System: second notice".to_owned(),
+            ],
+            Language::En,
+        );
+        app.ui.show_thinking = false;
+        app.transcript_width = 100;
+        app.viewport_height = 40;
+        let folded = app.display_transcript();
+        assert_eq!(folded.index_of, vec![0, 0, 0]);
+        assert_eq!(folded.system_groups.get(&0), Some(&(1..3)));
+
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        assert!(app.toggle_tool_row_at(screen_row(&app, 1, false)));
+        app.prepare_transcript_frame();
+        app.update_user_message_hits(0, 0);
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("first notice"))
+        );
+        assert!(
+            app.transcript_rows
+                .iter()
+                .any(|row| row.contains("second notice"))
+        );
+        assert!(app.toggle_tool_row_at(screen_row(&app, 1, true)));
+    }
+
     /// 交替的 run_command / read_file，每第三条失败。
     fn tool_rows(count: usize) -> Vec<String> {
         (0..count)
@@ -1919,8 +2060,11 @@ mod tests {
 
         assert!(app.handle_slash_command("/tools", &SkillCatalog::default()));
         assert!(!app.tool_rows_expanded);
-        // 再收起：一行汇总，加上两次 /tools 各自写的 System 行。
-        assert_eq!(app.display_transcript().rows.len(), 1 + 2);
+        let folded = app.display_transcript();
+        assert_eq!(app.transcript.len(), 9 + 2);
+        assert_eq!(folded.rows.len(), 2);
+        assert!(folded.rows[1].contains("2 system messages"));
+        assert_eq!(folded.system_groups.get(&1), Some(&(9..11)));
     }
 
     #[test]

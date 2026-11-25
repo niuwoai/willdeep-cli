@@ -54,6 +54,26 @@ it.each([null, { default_level: null, parameter: null, levels: {} }])("can clear
   await waitFor(() => expect(screen.queryByRole("combobox", { name: t.title })).toBeNull());
 });
 
+it.each([null, "deep"])("hides the inherited level on the trigger and lets users restore it (configured default: %s)", async (defaultLevel) => {
+  const { details, onChanged, updates } = mount({ default_level: defaultLevel, parameter: null, levels: { deep: "high" } }, false, {}, null);
+  const summary = details.querySelector("summary")!;
+  const select = await screen.findByRole<HTMLSelectElement>("combobox", { name: t.title });
+  const resetLabel = defaultLevel ? t.providerDefault.replace("{level}", defaultLevel) : t.followDefault;
+  expect(screen.getByRole("option", { name: resetLabel })).toBeTruthy();
+  expect(summary.textContent).toBe(t.title);
+  expect(summary.getAttribute("aria-label")).toBe(t.title);
+  expect(summary.getAttribute("title")).toBe(t.title);
+
+  fireEvent.change(select, { target: { value: "deep" } });
+  await waitFor(() => expect(summary.textContent).toBe("deep"));
+  expect(summary.getAttribute("aria-label")).toBe(`${t.title} · deep`);
+
+  fireEvent.change(select, { target: { value: "" } });
+  await waitFor(() => expect(summary.textContent).toBe(t.title));
+  expect(onChanged).toHaveBeenLastCalledWith(null);
+  expect(updates).toEqual([{ reasoning_level: "deep" }, { reasoning_level: null }]);
+});
+
 it("refreshes provider levels when reopening after configuration changes", async () => {
   const { details, setProfile } = mount({ default_level: "deep", parameter: null, levels: { deep: "high" } });
   await screen.findByRole("option", { name: "deep" });

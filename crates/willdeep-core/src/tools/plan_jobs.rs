@@ -4,7 +4,7 @@ use crate::conversation::{Plan, StepStatus};
 impl ToolRegistry {
     pub(crate) fn plan_job_status(&self, id: &str) -> Option<StepStatus> {
         if let Some(jobs) = &self.detached_jobs
-            && let Some(job) = jobs.get(id).filter(|job| jobs.owns(job))
+            && let Some(job) = jobs.get(id).filter(|job| !job.preview && jobs.owns(job))
         {
             return Some(match jobs.state(&job) {
                 crate::JobState::Running => StepStatus::InProgress,
@@ -98,6 +98,7 @@ mod tests {
                 started_marker: None,
                 created_at: 0,
                 owner: Some(owner.into()),
+                preview: false,
             };
             std::fs::write(path.join("meta.json"), serde_json::to_vec(&job).unwrap()).unwrap();
         };

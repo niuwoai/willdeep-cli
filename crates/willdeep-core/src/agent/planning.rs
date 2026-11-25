@@ -24,6 +24,9 @@ impl Agent {
             tool: call.name.clone(),
             source: <serde_json::Error as serde::de::Error>::custom(message),
         };
+        if args.get("preview").and_then(|value| value.as_bool()) == Some(true) {
+            return Err(invalid("preview commands cannot use plan_step_id"));
+        }
         let current = plan
             .as_ref()
             .ok_or_else(|| invalid("plan_step_id requires an existing plan"))?;

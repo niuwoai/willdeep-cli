@@ -63,6 +63,7 @@ async fn cancellation_exemption_requires_full_access_and_explicit_detached_owner
             started_marker: None,
             created_at: 1,
             owner: owner.map(str::to_owned),
+            preview: false,
         };
         let directory = jobs.directory().join(&job.id);
         std::fs::create_dir_all(&directory).unwrap();

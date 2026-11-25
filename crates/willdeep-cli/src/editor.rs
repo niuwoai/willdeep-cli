@@ -3,6 +3,73 @@ use std::ops::Range;
 use unicode_width::UnicodeWidthStr;
 use willdeep_core::MessageAttachment;
 
+fn clean_terminal_controls(value: &str) -> String {
+    let mut cleaned = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        let control = if character == '\u{1b}' {
+            // ESC sequence bytes are printable ASCII. Leave a following newline or
+            // Unicode character intact if a fragment ends with a stray Esc.
+            chars
+                .next_if(|next| ('\u{20}'..='\u{7e}').contains(next))
+                .map(|next| match next {
+                    '[' => '\u{9b}',
+                    ']' => '\u{9d}',
+                    'P' | 'X' | '^' | '_' => '\u{90}',
+                    '\u{20}'..='\u{2f}' => {
+                        while chars
+                            .peek()
+                            .is_some_and(|c| ('\u{20}'..='\u{2f}').contains(c))
+                        {
+                            chars.next();
+                        }
+                        if chars
+                            .peek()
+                            .is_some_and(|c| ('\u{30}'..='\u{7e}').contains(c))
+                        {
+                            chars.next();
+                        }
+                        '\u{1b}'
+                    }
+                    _ => '\u{1b}',
+                })
+                .unwrap_or('\u{1b}')
+        } else {
+            character
+        };
+        match control {
+            '\u{9b}' => {
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            '\u{90}' | '\u{98}' | '\u{9d}' | '\u{9e}' | '\u{9f}' => {
+                while let Some(next) = chars.next() {
+                    if next == '\u{9c}' || (control == '\u{9d}' && next == '\u{7}') {
+                        break;
+                    }
+                    if next == '\u{1b}' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                cleaned.push('\n');
+            }
+            '\n' | '\t' => cleaned.push(control),
+            other if !other.is_control() => cleaned.push(other),
+            _ => {}
+        }
+    }
+    cleaned
+}
+
 #[derive(Clone, Copy)]
 struct PromptSelection {
     anchor: usize,
@@ -18,6 +85,15 @@ pub struct PromptEditor {
 }
 
 impl PromptEditor {
+    /// Load existing content verbatim. New keyboard and paste input still goes through `insert`.
+    pub(crate) fn with_existing_text(text: String) -> Self {
+        Self {
+            cursor: text.len(),
+            text,
+            ..Self::default()
+        }
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -31,7 +107,8 @@ impl PromptEditor {
     }
     pub fn insert(&mut self, value: &str) {
         self.clear_selection();
-        self.text.insert_str(self.cursor, value);
+        let value = clean_terminal_controls(value);
+        self.text.insert_str(self.cursor, &value);
         self.cursor += value.len();
     }
     pub fn backspace(&mut self) {
@@ -376,6 +453,42 @@ mod tests {
         let short = text_preview("  https://hub-beta.example.com/v1  ");
         assert_eq!(short, "https://hub-beta.example.com/v1");
         assert_eq!(text_preview("\n\n"), "");
+    }
+
+    #[test]
+    fn input_strips_terminal_sequences_and_keeps_unicode_editing() {
+        let mut editor = PromptEditor::default();
+        editor.insert("中文\u{1b}[31m红色\u{1b}[0m\r\n\t🙂\0\u{7}\u{8}\u{b}\u{c}\u{7f}");
+        assert_eq!(editor.text(), "中文红色\n\t🙂");
+        editor.left();
+        editor.insert("\u{1b}]0;title\u{7}中\u{1b}Ppayload\u{1b}\\文");
+        assert_eq!(editor.text(), "中文红色\n\t中文🙂");
+        editor.backspace();
+        editor.delete();
+        assert_eq!(editor.text(), "中文红色\n\t中");
+    }
+
+    #[test]
+    fn input_drops_c1_controls_and_unterminated_escape_payloads() {
+        for (raw, expected) in [
+            ("a\u{9b}31mb\u{9b}0m", "ab"),
+            ("a\u{9d}title\u{9c}b", "ab"),
+            ("a\u{1b}_payload\u{1b}\\b", "ab"),
+            ("a\u{1b}(Bb", "ab"),
+            ("a\u{1b}[123", "a"),
+            ("a\u{1b}]title", "a"),
+            ("a\u{1b}", "a"),
+            ("a\u{1b}中\u{1b}\nb", "a中\nb"),
+            ("a\u{1b}[<35;49;20Mb", "ab"),
+            ("a\r\nb\rc", "a\nb\nc"),
+            (r"literal \\x1b[31m", r"literal \\x1b[31m"),
+        ] {
+            let mut editor = PromptEditor::default();
+            editor.insert(raw);
+            assert_eq!(editor.text(), expected, "{raw:?}");
+            editor.insert("尾");
+            assert_eq!(editor.text(), format!("{expected}尾"));
+        }
     }
 
     #[test]

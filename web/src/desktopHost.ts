@@ -1,5 +1,5 @@
 const currentQuery = () => new URLSearchParams(window.location.search);
-export const isDesktop = currentQuery().get("desktop") === "1";
+export const isDesktop = ("__willdeepDesktop" in window && window.__willdeepDesktop === true) || currentQuery().get("desktop") === "1";
 
 type Selection = { workspace: string | null; session: string | null };
 let selection: Selection | null = null;
@@ -49,12 +49,4 @@ export function saveDesktopSelection(workspace: string, session: string | null) 
 
 export function pickDesktopWorkspace() {
   window.location.assign("/__willdeep_native/open-folder");
-}
-
-export function openDesktopProjectWindow(workspace: string) {
-  const url = new URL("/", window.location.origin);
-  url.searchParams.set("desktop", "1");
-  url.searchParams.set("workspace", workspace);
-  url.searchParams.set("fresh", "1");
-  window.open(url, "_blank", "noopener");
 }

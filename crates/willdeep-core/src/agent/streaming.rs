@@ -225,6 +225,7 @@ mod tests {
                 started_marker: None,
                 created_at: 0,
                 owner: Some("session".into()),
+                preview: false,
             };
             std::fs::write(path.join("meta.json"), serde_json::to_vec(&job).unwrap()).unwrap();
         }

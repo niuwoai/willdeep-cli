@@ -287,9 +287,7 @@ impl App {
                     if let Some(item) = self.attachment_items(panel.target).get(panel.selected)
                         && let MessageAttachment::Text { content, .. } = &item.message
                     {
-                        let mut editor = PromptEditor::default();
-                        editor.insert(content);
-                        panel.editor = Some(editor);
+                        panel.editor = Some(PromptEditor::with_existing_text(content.clone()));
                     }
                 }
                 KeyCode::Enter => {
@@ -514,6 +512,28 @@ mod tests {
         assert_eq!(app.attachments.len(), 1);
         assert_eq!(app.attachments[0].id, second_id);
     }
+    #[test]
+    fn attachment_edit_preserves_existing_bytes_and_filters_new_input() {
+        let mut app = App::new(Vec::new(), Language::En);
+        let original = "first\r\n\t\u{1b}[31msecond\u{1b}[0m\0";
+        app.attachments = vec![text(original)];
+        app.open_attachments(Target::Draft);
+        app.handle_attachment_key(key(KeyCode::Char('e')));
+        app.handle_attachment_key(key(KeyCode::Enter));
+        assert!(matches!(
+            &app.attachments[0].message,
+            MessageAttachment::Text { content, .. } if content == original
+        ));
+
+        app.handle_attachment_key(key(KeyCode::Char('e')));
+        app.attachment_paste("\u{1b}[32m added\u{1b}[0m");
+        app.handle_attachment_key(key(KeyCode::Enter));
+        assert!(matches!(
+            &app.attachments[0].message,
+            MessageAttachment::Text { content, .. } if content == &format!("{original} added")
+        ));
+    }
+
     #[test]
     fn queued_edit_and_cancel_keep_draft_and_parent_queue() {
         let mut app = App::new(Vec::new(), Language::En);

@@ -190,7 +190,7 @@ impl App {
             .collect();
         // 点开的工具行按记录位置认。折叠视图里同一行可能对应好几条记录，
         // 只有用户点开的那条才展开，其余的照旧收着。
-        let tools = self
+        let mut tools: BTreeMap<_, _> = self
             .transcript
             .iter()
             .enumerate()
@@ -213,6 +213,13 @@ impl App {
                 ))
             })
             .collect();
+        for (&target, records) in &folded.system_groups {
+            let source = records.start;
+            let detail = self
+                .tool_row_open(source)
+                .then(|| self.transcript[records.clone()].join("\n"));
+            tools.insert(target, (source, detail, false));
+        }
         let queued_records = self.queued_user_records();
         let queued_users = users
             .iter()
@@ -258,6 +265,9 @@ impl App {
                 exact.insert(target);
             }
         }
+        for (&target, records) in folded.system_groups.range(..end) {
+            representatives.insert(target, records.start);
+        }
         for source in floor..self.transcript.len() {
             if let Some(&target) = folded.index_of.get(source - floor + shift)
                 && target < end
@@ -277,7 +287,9 @@ impl App {
             ids.insert(SourceId::Record(target), id);
             if !exact.contains(&target) {
                 for row in &mut frame.sources.rows {
-                    if row.fallback.id == SourceId::Record(target) {
+                    if row.fallback.id == SourceId::Record(target)
+                        && row.fallback.part != SourcePart::ToolDetail
+                    {
                         row.cells.clear();
                         row.fallback.part = SourcePart::Control;
                     }

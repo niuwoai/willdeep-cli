@@ -287,11 +287,25 @@ fn compression_timeouts_keep_the_total_at_least_as_long_as_one_candidate() {
 
     let below_range = accept("version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 14\n")
         .expect_err("14 seconds is below the candidate range");
-    assert!(below_range.to_string().contains("between 15 and 180"));
+    assert!(below_range.to_string().contains("between 15 and 600"));
 
-    let above_cap = accept("version = 1\n[agent]\ncompressor_timeout_seconds = 601\n")
-        .expect_err("a compression must not be allowed to run for many minutes");
-    assert!(above_cap.to_string().contains("at most 600"));
+    accept(
+        "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 600\ncompressor_timeout_seconds = 3600\n",
+    )
+    .expect("both timeout maxima are valid");
+    let above_candidate_cap = accept(
+        "version = 1\n[agent]\ncompressor_candidate_timeout_seconds = 601\ncompressor_timeout_seconds = 3600\n",
+    )
+    .expect_err("a candidate timeout above 600 seconds must be rejected");
+    assert!(
+        above_candidate_cap
+            .to_string()
+            .contains("between 15 and 600")
+    );
+
+    let above_total_cap = accept("version = 1\n[agent]\ncompressor_timeout_seconds = 3601\n")
+        .expect_err("a configured total timeout above 3600 seconds must be rejected");
+    assert!(above_total_cap.to_string().contains("at most 3600"));
 }
 
 #[test]

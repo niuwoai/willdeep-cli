@@ -329,9 +329,9 @@ fn dragging_maps_to_the_row_under_the_cursor_in_both_layouts() {
     for mode in [crate::config::UiMode::Compact, crate::config::UiMode::Full] {
         let mut app = App::new(
             vec![
-                "System: first line".to_owned(),
-                "System: second line".to_owned(),
-                "System: third line".to_owned(),
+                "Error: first line".to_owned(),
+                "Error: second line".to_owned(),
+                "Error: third line".to_owned(),
             ],
             Language::En,
         );

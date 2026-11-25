@@ -118,6 +118,7 @@ mod tests {
                 timeout_seconds: None,
                 label: Some("delayed check".into()),
                 run_in_background: Some(false),
+                preview: false,
                 network: None,
             }),
         )
@@ -152,6 +153,7 @@ mod tests {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;
@@ -180,6 +182,7 @@ mod tests {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;

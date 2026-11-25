@@ -46,6 +46,9 @@ pub struct DetachedJob {
     /// 按「无主」处理，不再补投。
     #[serde(default)]
     pub owner: Option<String>,
+    /// A temporary service whose exit is not required to finish the turn.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 /// [`DetachedJobStore::kill`] 的结果。
@@ -137,6 +140,18 @@ impl DetachedJobStore {
         sandbox: &crate::sandbox::SandboxSpec,
         timeout_seconds: u64,
     ) -> std::io::Result<DetachedJob> {
+        self.spawn_with_mode(command, label, workspace, sandbox, timeout_seconds, false)
+    }
+
+    pub(crate) fn spawn_with_mode(
+        &self,
+        command: &str,
+        label: &str,
+        workspace: &Path,
+        sandbox: &crate::sandbox::SandboxSpec,
+        timeout_seconds: u64,
+        preview: bool,
+    ) -> std::io::Result<DetachedJob> {
         use std::io::Write;
         // Validate before creating a job or starting any process.
         let _ = crate::execution::shell(command, sandbox)?;
@@ -193,6 +208,7 @@ impl DetachedJobStore {
             started_marker: process_start_marker(pid),
             created_at: now_seconds(),
             owner: self.owner.clone(),
+            preview,
         };
         // Journal before sending the command: a metadata failure cannot leave
         // an unrecorded side effect running in the background.

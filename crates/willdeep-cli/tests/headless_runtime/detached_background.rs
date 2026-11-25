@@ -1,21 +1,32 @@
 use super::*;
 
 const JOB_OUTPUT: &str = "detached-job-finished";
+const PREVIEW_SECONDS: u64 = 10;
 
 /// 第一轮起一条后台命令，其余请求正常收尾。安全裁判的请求按内容识别，不占
 /// 轮次序号——否则一次审批就会把后面的回复全部错位。
-pub(super) fn response(body: &[u8], request_index: usize) -> String {
+pub(super) fn response(body: &[u8], request_index: usize, preview: bool) -> String {
     let text = String::from_utf8_lossy(body);
     if text.contains("<verdict>") {
         return serde_json::json!({"choices":[{"message":{"content":"<verdict>YES</verdict>"},"finish_reason":"stop"}]}).to_string();
     }
     if request_index == 0 {
         // 命令行本身不能含完整标记：它会随工具调用回放进历史，断言就成了假绿。
-        let arguments = serde_json::json!({
-            "command": "sleep 1; printf 'detached-job-%s' finished",
-            "run_in_background": true,
-            "label": "detached regression",
-        });
+        let arguments = if preview {
+            serde_json::json!({
+                "command": "sleep 30",
+                "run_in_background": true,
+                "preview": true,
+                "timeout_seconds": PREVIEW_SECONDS,
+                "label": "preview regression",
+            })
+        } else {
+            serde_json::json!({
+                "command": "sleep 1; printf 'detached-job-%s' finished",
+                "run_in_background": true,
+                "label": "detached regression",
+            })
+        };
         return serde_json::json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"start_job","type":"function","function":{"name":"run_command","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}]}).to_string();
     }
     format!(
@@ -35,7 +46,8 @@ fn local_run_waits_for_a_detached_job_and_wakes_the_model_with_its_result() {
     let workspace = root.join("workspace");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    let provider = MockProvider::start_with_mode(MockMode::BackgroundJobThenSuccess);
+    let provider =
+        MockProvider::start_with_mode(MockMode::BackgroundJobThenSuccess { preview: false });
     let config = root.join("config.toml");
     write_private_config(&config, provider.api_base());
     let _guard = TestGuard::new(root, home.clone());
@@ -84,4 +96,61 @@ fn local_run_waits_for_a_detached_job_and_wakes_the_model_with_its_result() {
             .join("delivered")
             .exists()
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_turn_finishes_while_preview_lives_and_supervisor_stops_it_at_deadline() {
+    use willdeep_core::{DetachedJobStore, JobState};
+
+    let _serial = process_test_guard();
+    let root = temporary_root();
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    let provider =
+        MockProvider::start_with_mode(MockMode::BackgroundJobThenSuccess { preview: true });
+    let config = root.join("config.toml");
+    write_private_config(&config, provider.api_base());
+    let _guard = TestGuard::new(root, home.clone());
+
+    let output = willdeep(&home)
+        .args([
+            "run",
+            "--config",
+            path_text(&config),
+            "--workspace",
+            path_text(&workspace),
+            "--output",
+            "json",
+            "start a temporary preview and finish the turn",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&output, "Runtime turn with a detached preview");
+    let jobs = DetachedJobStore::new(&home);
+    let records = jobs.list();
+    assert_eq!(records.len(), 1);
+    let job = &records[0];
+    assert!(job.preview);
+    assert_eq!(jobs.state(job), JobState::Running);
+    assert!(
+        provider
+            .captured_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| {
+                request.to_string().contains(&format!(
+                    "preview will stop after at most {PREVIEW_SECONDS} seconds"
+                ))
+            })
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(PREVIEW_SECONDS + 5);
+    while jobs.state(job) == JobState::Running && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(jobs.state(job), JobState::Finished { exit_code: 124 });
 }

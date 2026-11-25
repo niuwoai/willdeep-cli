@@ -16,6 +16,14 @@ use willdeep_core::MessageAttachment;
 
 #[cfg(unix)]
 const OSC: &[u8] = b"\x1b]7771;";
+#[cfg(unix)]
+const SGR_MOUSE: &[u8] = b"\x1b[<";
+#[cfg(unix)]
+const PASTE_START: &[u8] = b"\x1b[200~";
+#[cfg(unix)]
+const PASTE_END: &[u8] = b"\x1b[201~";
+#[cfg(unix)]
+const INPUT_MARKERS: &[&[u8]] = &[OSC, SGR_MOUSE, PASTE_START];
 const VERSION: &str = "v=1";
 #[cfg(unix)]
 const MAX_FRAME: usize = 120_000;
@@ -126,6 +134,7 @@ struct PartialPaste {
 pub(crate) struct GalleryFilter {
     pending: Vec<u8>,
     pastes: Vec<PartialPaste>,
+    in_bracketed_paste: bool,
     /// When the bytes now held back first arrived. A suffix is held only while it could still
     /// become the marker, and a frame only while it could still finish.
     held_since: Option<std::time::Instant>,
@@ -137,6 +146,7 @@ impl GalleryFilter {
         Self {
             pending: Vec::new(),
             pastes: Vec::new(),
+            in_bracketed_paste: false,
             held_since: None,
         }
     }
@@ -147,17 +157,44 @@ impl GalleryFilter {
         let mut plain = Vec::new();
         let mut requests = Vec::new();
         loop {
+            if self.in_bracketed_paste {
+                if let Some(start) = self
+                    .pending
+                    .windows(PASTE_END.len())
+                    .position(|bytes| bytes == PASTE_END)
+                {
+                    plain.extend(self.pending.drain(..start + PASTE_END.len()));
+                    self.in_bracketed_paste = false;
+                    continue;
+                }
+                let drain = self.pending.len() - retained_suffix(&self.pending, &[PASTE_END]);
+                plain.extend(self.pending.drain(..drain));
+                break;
+            }
             let Some(start) = marker_start(&self.pending) else {
-                // Hold back only the tail that could still become the marker; a lone Esc is
-                // released by `flush_expired`. Everything before it is a keystroke, and making
-                // it wait for a frame that never comes swallows the arrow keys and Esc.
-                let keep = retained_suffix(&self.pending);
+                // Preserve trailing prefixes across reads, including Esc shared by both protocols.
+                let keep = retained_suffix(&self.pending, INPUT_MARKERS);
                 let drain = self.pending.len() - keep;
                 plain.extend(self.pending.drain(..drain));
                 break;
             };
-            if start > 0 {
-                plain.extend(self.pending.drain(..start));
+            plain.extend(self.pending.drain(..start));
+            if self.pending.starts_with(PASTE_START) {
+                plain.extend(self.pending.drain(..PASTE_START.len()));
+                self.in_bracketed_paste = true;
+                continue;
+            }
+            if self.pending.starts_with(SGR_MOUSE) {
+                // crossterm treats a lone Esc as a key, and an incomplete SGR report can
+                // swallow subsequent typing. Forward complete reports and recover before
+                // forwarding the first byte that doesn't belong to a malformed report.
+                match mouse_report(&self.pending) {
+                    MouseReport::Complete(end) => plain.extend(self.pending.drain(..end)),
+                    MouseReport::Invalid(end) => drop(self.pending.drain(..end)),
+                    MouseReport::Pending => break,
+                }
+                self.held_since = None;
+                continue;
             }
             let Some(end) = frame_end(&self.pending) else {
                 if self.pending.len() > MAX_FRAME {
@@ -187,6 +224,17 @@ impl GalleryFilter {
             return Vec::new();
         };
         let age = now.saturating_duration_since(since);
+        // A split paste end must stay buffered until the rest of the delimiter arrives.
+        if self.in_bracketed_paste {
+            return Vec::new();
+        }
+        if self.pending.starts_with(SGR_MOUSE) {
+            if age >= INCOMPLETE_FRAME_TTL {
+                self.pending.clear();
+                self.held_since = None;
+            }
+            return Vec::new();
+        }
         if self.pending.starts_with(OSC) {
             if age >= INCOMPLETE_FRAME_TTL {
                 self.pending.clear();
@@ -197,7 +245,12 @@ impl GalleryFilter {
         }
         if age >= PARTIAL_MARKER_TTL {
             self.held_since = None;
-            return std::mem::take(&mut self.pending);
+            let pending = std::mem::take(&mut self.pending);
+            // A standalone Esc is a real key, but an expired CSI prefix is not.
+            if pending == b"\x1b[" || pending.starts_with(SGR_MOUSE) {
+                return Vec::new();
+            }
+            return pending;
         }
         Vec::new()
     }
@@ -267,18 +320,75 @@ impl GalleryFilter {
 
 #[cfg(unix)]
 fn marker_start(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(OSC.len()).position(|window| window == OSC)
+    bytes.iter().enumerate().find_map(|(index, byte)| {
+        (*byte == b'\x1b'
+            && INPUT_MARKERS
+                .iter()
+                .any(|prefix| bytes[index..].starts_with(prefix)))
+        .then_some(index)
+    })
 }
 
-/// The longest tail of `bytes` that is a proper prefix of the marker. Only that tail can begin a
-/// frame, so only that tail may wait for more bytes.
+/// The longest tail that could still start a frame requiring inspection.
 #[cfg(unix)]
-fn retained_suffix(bytes: &[u8]) -> usize {
-    let limit = bytes.len().min(OSC.len() - 1);
-    (1..=limit)
-        .rev()
-        .find(|length| bytes.ends_with(&OSC[..*length]))
+fn retained_suffix(bytes: &[u8], markers: &[&[u8]]) -> usize {
+    markers
+        .iter()
+        .map(|prefix| {
+            (1..prefix.len())
+                .rev()
+                .find(|length| bytes.ends_with(&prefix[..*length]))
+                .unwrap_or(0)
+        })
+        .max()
         .unwrap_or(0)
+}
+
+#[cfg(unix)]
+enum MouseReport {
+    Complete(usize),
+    Invalid(usize),
+    Pending,
+}
+
+#[cfg(unix)]
+fn mouse_report(bytes: &[u8]) -> MouseReport {
+    // SGR encodes an 8-bit button field and two 1-based 16-bit coordinates.
+    let fields = [
+        (0, u32::from(u8::MAX)),
+        (1, u32::from(u16::MAX)),
+        (1, u32::from(u16::MAX)),
+    ];
+    let mut index = SGR_MOUSE.len();
+    let mut valid = true;
+    for (field, (min, max)) in fields.into_iter().enumerate() {
+        let start = index;
+        let mut value = 0;
+        while let Some(digit @ b'0'..=b'9') = bytes.get(index).copied() {
+            index += 1;
+            value = value * 10 + u32::from(digit - b'0');
+            // Bound waiting even when there are leading zeros.
+            if value > max || index - start > max.ilog10() as usize + 1 {
+                value = max + 1;
+            }
+        }
+        let last = field == fields.len() - 1;
+        valid &= index > start && (min..=max).contains(&value);
+        if !last && bytes.get(index) == Some(&b';') {
+            index += 1;
+            continue;
+        }
+        if last && bytes.get(index) == Some(&b';') {
+            index += 1;
+        }
+        return match bytes.get(index) {
+            None => MouseReport::Pending,
+            Some(b'M' | b'm') if last && valid => MouseReport::Complete(index + 1),
+            Some(b'M' | b'm') => MouseReport::Invalid(index + 1),
+            Some(_) => MouseReport::Invalid(index),
+        };
+    }
+    unreachable!("the final mouse field consumes the terminator")
 }
 
 #[cfg(unix)]
@@ -912,6 +1022,76 @@ mod tests {
     }
 
     /// 空列表是「收起这一列」，新进程启动后靠它清掉上一轮残留的缩略图。
+    #[cfg(unix)]
+    #[test]
+    fn fragmented_mouse_report_reaches_the_key_parser_as_one_packet() {
+        let report = b"\x1b[<35;49;20M";
+        for split in 1..report.len() {
+            let mut filter = GalleryFilter::new();
+            let (plain, requests) = filter.push(&report[..split]);
+            assert!(plain.is_empty(), "split {split}");
+            assert!(requests.is_empty());
+            let (plain, requests) = filter.push(&report[split..]);
+            assert_eq!(plain, report, "split {split}");
+            assert!(requests.is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn incomplete_mouse_reports_do_not_swallow_following_typing() {
+        let mut filter = GalleryFilter::new();
+        assert!(filter.push(b"\x1b[<35;49;").0.is_empty());
+        assert_eq!(
+            filter.push("打字\x1b[A".as_bytes()).0,
+            "打字\x1b[A".as_bytes()
+        );
+
+        assert!(filter.push(b"\x1b[<35;49;20").0.is_empty());
+        let expired = std::time::Instant::now() + PARTIAL_MARKER_TTL;
+        assert!(filter.flush_expired(expired).is_empty());
+        assert_eq!(filter.push(b"continue\r").0, b"continue\r");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_mouse_coordinates_are_discarded_before_key_decoding() {
+        let mut filter = GalleryFilter::new();
+        assert_eq!(filter.push(b"\x1b[<35;49;0Mtext").0, b"text");
+        assert_eq!(filter.push(b"\x1b[<35;49;65536Mtext").0, b"text");
+        assert_eq!(filter.push(b"\x1b[<35;0;20Mtext").0, b"text");
+        assert_eq!(filter.push(b"\x1b[<0;20;10;M").0, b"\x1b[<0;20;10;M");
+        assert_eq!(filter.push(b"[<35;49;20M").0, b"[<35;49;20M");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bracketed_paste_keeps_mouse_like_text_and_split_markers() {
+        let paste = b"\x1b[200~hello\x1b[<35;0;20M\x1b[201~";
+        for split in 1..paste.len() {
+            let mut filter = GalleryFilter::new();
+            let (mut plain, before) = filter.push(&paste[..split]);
+            let (after, requests) = filter.push(&paste[split..]);
+            plain.extend(after);
+            assert_eq!(plain, paste, "split {split}");
+            assert!(before.is_empty() && requests.is_empty());
+            assert_eq!(filter.push(b"\x1b[<35;0;20Mtext").0, b"text");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mouse_tail_can_arrive_after_the_short_escape_window() {
+        let mut filter = GalleryFilter::new();
+        assert!(filter.push(b"\x1b[<35;49;").0.is_empty());
+        assert!(
+            filter
+                .flush_expired(std::time::Instant::now() + PARTIAL_MARKER_TTL)
+                .is_empty()
+        );
+        assert_eq!(filter.push(b"20Mtext").0, b"\x1b[<35;49;20Mtext");
+    }
+
     #[test]
     fn an_empty_list_folds_the_column_away() {
         let mut out = Vec::new();

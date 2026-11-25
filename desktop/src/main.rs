@@ -5,7 +5,6 @@
 
 mod service;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, SubmenuBuilder};
@@ -21,12 +20,12 @@ const OPEN_FOLDER: &str = "open-folder";
 const NEW_SESSION: &str = "new-session";
 const TOGGLE_CHANGES: &str = "toggle-changes";
 const PICKER_ROUTE: &str = "/__willdeep_native/open-folder";
+const DESKTOP_MARKER: &str = "Object.defineProperty(window, '__willdeepDesktop', { value: true });";
 
 #[derive(Default)]
 struct Desktop {
     service: Mutex<Option<Service>>,
     origin: OnceLock<Url>,
-    window_count: AtomicUsize,
 }
 
 fn main() {
@@ -106,34 +105,58 @@ fn show_service(handle: &AppHandle, service: std::io::Result<Service>) {
 fn build_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<WebviewWindow> {
     let navigation = app.clone();
     let origin_window = label.to_owned();
-    let new_window = app.clone();
+    let popup = app.clone();
+    let popup_window = label.to_owned();
     WebviewWindowBuilder::new(app, label, url)
         .title(APP_NAME)
         .inner_size(1380.0, 900.0)
         .min_inner_size(650.0, 540.0)
+        .initialization_script(DESKTOP_MARKER)
         .on_navigation(move |url| can_navigate(&navigation, &origin_window, url))
         .on_new_window(move |url, _features| {
-            let handle = new_window.clone();
-            if trusted(&handle, &url) {
-                std::thread::spawn(move || open_conversation_window(&handle, url));
-            } else {
-                open_external(&url);
+            match destination(popup.state::<Desktop>().origin.get(), &url) {
+                Destination::CurrentWindow => {
+                    let handle = popup.clone();
+                    let label = popup_window.clone();
+                    // Defer until the WebView has returned from its popup callback.
+                    std::thread::spawn(move || navigate_current_window(&handle, &label, url));
+                }
+                Destination::ExternalBrowser => open_external(&url),
+                Destination::Blocked => {}
             }
             NewWindowResponse::Deny
         })
         .build()
 }
 
-fn trusted(app: &AppHandle, url: &Url) -> bool {
-    app.state::<Desktop>()
-        .origin
-        .get()
-        .is_some_and(|origin| origin.origin() == url.origin())
+#[derive(Debug, PartialEq, Eq)]
+enum Destination {
+    CurrentWindow,
+    ExternalBrowser,
+    Blocked,
+}
+
+fn destination(origin: Option<&Url>, url: &Url) -> Destination {
+    if !matches!(url.scheme(), "http" | "https") || url.host_str() == Some("tauri.localhost") {
+        Destination::Blocked
+    } else if origin.is_some_and(|origin| origin.origin() == url.origin()) {
+        Destination::CurrentWindow
+    } else {
+        Destination::ExternalBrowser
+    }
 }
 
 fn can_navigate(app: &AppHandle, label: &str, url: &Url) -> bool {
-    if trusted(app, url) {
-        if url.path() == PICKER_ROUTE {
+    let desktop = app.state::<Desktop>();
+    let origin = desktop.origin.get();
+    if origin.is_none()
+        && matches!(url.scheme(), "tauri" | "http" | "https")
+        && matches!(url.host_str(), Some("localhost" | "tauri.localhost"))
+    {
+        return true;
+    }
+    match destination(origin, url) {
+        Destination::CurrentWindow if url.path() == PICKER_ROUTE => {
             let handle = app.clone();
             let label = label.to_owned();
             let _ = app.run_on_main_thread(move || {
@@ -141,46 +164,30 @@ fn can_navigate(app: &AppHandle, label: &str, url: &Url) -> bool {
                     select_folder(window);
                 }
             });
-            return false;
+            false
         }
-        return true;
+        Destination::CurrentWindow => true,
+        Destination::ExternalBrowser => {
+            open_external(url);
+            false
+        }
+        Destination::Blocked => false,
     }
-    if matches!(url.scheme(), "tauri" | "http" | "https")
-        && matches!(url.host_str(), Some("localhost" | "tauri.localhost"))
-        && app.state::<Desktop>().origin.get().is_none()
-    {
-        return true;
-    }
-    open_external(url);
-    false
 }
 
 fn open_external(url: &Url) {
-    if matches!(url.scheme(), "http" | "https")
-        && url.host_str() != Some("tauri.localhost")
-        && let Err(error) = tauri_plugin_opener::open_url(url.as_str(), None::<&str>)
-    {
+    if let Err(error) = tauri_plugin_opener::open_url(url.as_str(), None::<&str>) {
         eprintln!("Could not open external link: {error}");
     }
 }
 
-fn open_conversation_window(app: &AppHandle, url: Url) {
-    let handle = app.clone();
-    let result = app.run_on_main_thread(move || {
-        let id = handle
-            .state::<Desktop>()
-            .window_count
-            .fetch_add(1, Ordering::Relaxed);
-        if let Err(error) = build_window(
-            &handle,
-            &format!("conversation-{id}"),
-            WebviewUrl::External(url),
-        ) {
-            eprintln!("Could not open conversation window: {error}");
+fn navigate_current_window(app: &AppHandle, label: &str, url: Url) {
+    if let Some(window) = app.get_webview_window(label) {
+        // Navigate from the document to keep the request same-site for the Strict cookie.
+        let target = serde_json::json!(url.as_str());
+        if let Err(error) = window.eval(format!("window.location.assign({target});")) {
+            eprintln!("Could not navigate the current desktop window: {error}");
         }
-    });
-    if let Err(error) = result {
-        eprintln!("Could not dispatch conversation window: {error}");
     }
 }
 
@@ -194,7 +201,11 @@ fn native_action(app: &AppHandle, action: &str) {
     else {
         return;
     };
-    if !window.url().is_ok_and(|url| trusted(app, &url)) {
+    let desktop = app.state::<Desktop>();
+    if !window
+        .url()
+        .is_ok_and(|url| destination(desktop.origin.get(), &url) == Destination::CurrentWindow)
+    {
         return;
     }
     match action {
@@ -282,4 +293,32 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()?;
     let view = SubmenuBuilder::new(app, "View").item(&changes).build()?;
     Menu::with_items(app, &[&application, &file, &edit, &view])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Destination, Url, destination};
+
+    #[test]
+    fn navigation_keeps_only_the_desktop_service_in_the_current_window() {
+        let origin = Url::parse("http://127.0.0.1:12345/").unwrap();
+        for (link, expected) in [
+            ("/?session=other#turn", Destination::CurrentWindow),
+            ("/share/example", Destination::CurrentWindow),
+            ("/__willdeep_native/open-folder", Destination::CurrentWindow),
+            ("https://example.com/docs", Destination::ExternalBrowser),
+            ("http://127.0.0.1:54321/", Destination::ExternalBrowser),
+            ("https://127.0.0.1:12345/", Destination::ExternalBrowser),
+            ("http://localhost:12345/", Destination::ExternalBrowser),
+            ("http://tauri.localhost/", Destination::Blocked),
+            ("tauri://localhost/", Destination::Blocked),
+            ("about:blank", Destination::Blocked),
+            ("blob:http://127.0.0.1:12345/example", Destination::Blocked),
+            ("file:///tmp/example", Destination::Blocked),
+        ] {
+            let url = origin.join(link).unwrap();
+            assert_eq!(destination(Some(&origin), &url), expected, "{link}");
+        }
+        assert_eq!(destination(None, &origin), Destination::ExternalBrowser);
+    }
 }

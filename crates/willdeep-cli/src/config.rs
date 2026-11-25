@@ -826,14 +826,13 @@ pub(crate) const MAX_TURNS_CEILING: usize = 1000;
 /// `[agent] token_budget` 的合法区间，与子 Agent 的预算区间一致。
 pub(crate) const TOKEN_BUDGET_MIN: u64 = 1_000;
 pub(crate) const TOKEN_BUDGET_MAX: u64 = 10_000_000;
-/// `[agent] compressor_candidate_timeout_seconds` 的缺省与区间。60 秒按托管小
-/// 压缩器定；上限 180 秒，再慢的模型不该占着这一段不放。
+/// `[agent] compressor_candidate_timeout_seconds` 的缺省与区间。托管压缩器默认
+/// 等待 60 秒，慢推理模型可配置为最多 10 分钟。
 pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_DEFAULT_SECONDS: u64 = 60;
 pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_MIN_SECONDS: u64 = 15;
-pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_MAX_SECONDS: u64 = 180;
-/// `[agent] compressor_timeout_seconds` 的上限。一次卡住的压缩不能把整个回合
-/// 冻住十几分钟；600 秒是普通请求原来的上限。
-pub(crate) const COMPRESSION_TIMEOUT_MAX_SECONDS: u64 = 600;
+pub(crate) const COMPRESSION_CANDIDATE_TIMEOUT_MAX_SECONDS: u64 = 600;
+/// 显式配置的 `[agent] compressor_timeout_seconds` 最多一小时。
+pub(crate) const COMPRESSION_TIMEOUT_MAX_SECONDS: u64 = 3_600;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

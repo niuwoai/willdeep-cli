@@ -81,7 +81,8 @@ export function ReasoningPicker({ sessionId, language, current, currentProviderI
   };
   const shown = stale
     ? `${levelName(stale)} · ${t.unavailableTag}`
-    : selected ? levelName(selected) : defaultLevel ? t.providerDefault.replace("{level}", levelName(defaultLevel)) : t.followDefault;
+    : selected ? levelName(selected) : null;
+  const summaryLabel = shown ? `${t.title} · ${shown}` : t.title;
   const stops: (string | null)[] = slider ? [null, ...slider] : [];
   // 不可用的旧覆盖单独成档，只用来显示和迁出。
   if (slider && selected && !slider.includes(selected)) stops.push(selected);
@@ -165,8 +166,8 @@ export function ReasoningPicker({ sessionId, language, current, currentProviderI
 
   return <aside className="conversation-permissions">
     <details ref={panel} className="conversation-disclosure" onToggle={(event) => { setOpen(event.currentTarget.open); if (event.currentTarget.open) setNotice(null); }}>
-      <summary aria-label={`${t.title} · ${shown}`} title={`${t.title} · ${shown}`}>
-        <Gauge size={16} /><span>{shown}</span><ChevronDown size={13} />
+      <summary aria-label={summaryLabel} title={summaryLabel}>
+        <Gauge size={16} /><span>{shown ?? t.title}</span><ChevronDown size={13} />
       </summary>
       <div className="conversation-inspector permissions-inspector model-inspector reasoning-inspector">
         <div className="inspector-heading">
