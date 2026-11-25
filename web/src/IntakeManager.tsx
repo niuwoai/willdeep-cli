@@ -44,7 +44,8 @@ type FieldRow = Omit<IntakeField, "min" | "max"> & {
 };
 type FormRow = Omit<IntakeForm, "fields"> & { key: string; slugAuto: boolean; fields: FieldRow[] };
 type HookRow = IntakeWebhook & { key: string };
-type Draft = { enabled: boolean; listen: string; publicUrl: string; sites: SiteRow[]; forms: FormRow[]; webhooks: HookRow[] };
+type Draft = { enabled: boolean; listen: string; publicUrl: string; cloudflareTunnel?: boolean; sites: SiteRow[]; forms: FormRow[]; webhooks: HookRow[] };
+const TUNNEL_STATUS_REFRESH_MS = 5000;
 type Tab = "sites" | "forms" | "webhooks" | "records" | "federation";
 type Picker = { target: "site" | "form" | "hook"; rowKey: string; path: string; data: BrowseView | null; error: string };
 type Copy = ReturnType<typeof intakeText>;
@@ -67,11 +68,12 @@ const fieldTypeGroups: Array<{ key: string; label: "typeGroupText" | "typeGroupC
 /// 这个字段名放令牌，不能给用户字段用。前端先挡，省得保存时才收到英文报错。
 const RESERVED_FIELD_NAME = "__willdeep_form_token";
 
-function fromView(view: Pick<IntakeView, "enabled" | "listen" | "public_url" | "sites" | "forms" | "webhooks">): Draft {
+function fromView(view: IntakeView): Draft {
   return {
     enabled: view.enabled,
     listen: view.listen,
     publicUrl: view.public_url ?? "",
+    cloudflareTunnel: view.cloudflare_tunnel,
     sites: view.sites.map((site) => ({ ...site, key: createRequestId() })),
     forms: view.forms.map((form) => ({
       ...form,
@@ -104,6 +106,7 @@ function payload(draft: Draft): IntakePayload {
     enabled: draft.enabled,
     listen: draft.listen.trim(),
     public_url: draft.publicUrl.trim(),
+    cloudflare_tunnel: draft.cloudflareTunnel,
     sites: draft.sites.map(({ slug, root }) => ({ slug: slug.trim(), root: root.trim() })),
     forms: draft.forms.map((form) => ({
       slug: form.slug.trim(),
@@ -135,11 +138,17 @@ function payload(draft: Draft): IntakePayload {
 export function IntakeManager({ language, onOpenSession }: { language: Language; onOpenSession: (sessionId: string) => void }) {
   const t = intakeText(language);
   const client = useQueryClient();
-  const view = useQuery({ queryKey: ["intake"], queryFn: ({ signal }) => loadIntake(signal) });
+  const view = useQuery({
+    queryKey: ["intake"],
+    queryFn: ({ signal }) => loadIntake(signal),
+    refetchInterval: ({ state: { data } }) =>
+      data?.runtime_managed && data.enabled && data.cloudflare_tunnel ? TUNNEL_STATUS_REFRESH_MS : false,
+  });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [baseline, setBaseline] = useState("");
   const [tab, setTab] = useState<Tab>("sites");
   const [saving, setSaving] = useState(false);
+  const [tunnelToken, setTunnelToken] = useState<string | undefined>();
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
 
@@ -151,7 +160,7 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
   }, [view.data, draft]);
 
   const update: Update = (change) => setDraft((current) => current ? change(current) : current);
-  const dirty = draft !== null && JSON.stringify(payload(draft)) !== baseline;
+  const dirty = draft !== null && (tunnelToken !== undefined || JSON.stringify(payload(draft)) !== baseline);
   const writable = view.data?.writable ?? false;
   const data = view.data ?? null;
 
@@ -162,10 +171,13 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
     setSaving(true);
     setNotice(null);
     try {
-      const next = await saveIntake(payload(draft));
+      await client.cancelQueries({ queryKey: ["intake"] });
+      const next = await saveIntake({ ...payload(draft), cloudflare_tunnel_token: tunnelToken?.trim() });
+      await client.cancelQueries({ queryKey: ["intake"] });
       const normalized = fromView(next);
       client.setQueryData(["intake"], next);
       setDraft(normalized);
+      setTunnelToken(undefined);
       setBaseline(JSON.stringify(payload(normalized)));
       setNotice({
         tone: "ok",
@@ -208,7 +220,7 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
   }
 
   if (view.isLoading) return <main className="intake-manager"><Text>{t.loading}</Text></main>;
-  if (view.error) return <main className="intake-manager"><Text role="alert">{t.loadFailed}: {view.error.message}</Text></main>;
+  if (view.error && !data) return <main className="intake-manager"><Text role="alert">{t.loadFailed}: {view.error.message}</Text></main>;
   if (!draft || !data) return <main className="intake-manager"><Text>{t.loading}</Text></main>;
 
   return <main className="intake-manager">
@@ -239,6 +251,35 @@ export function IntakeManager({ language, onOpenSession }: { language: Language;
         <input value={draft.publicUrl} disabled={!writable} placeholder="https://intake.example.com" onChange={(event) => update((current) => ({ ...current, publicUrl: event.target.value }))} />
         <span className="intake-hint">{t.publicUrlHint}</span>
       </label>
+      {draft.cloudflareTunnel !== undefined && <div className="intake-wide">
+        <label className="intake-checkbox">
+          <input type="checkbox" checked={draft.cloudflareTunnel} disabled={!writable} onChange={(event) => update((current) => ({ ...current, cloudflareTunnel: event.target.checked }))} />
+          {t.tunnelEnabled}
+        </label>
+        <p className="intake-hint">{t.tunnelHint}</p>
+        {draft.cloudflareTunnel && data.tunnel_token_configured !== undefined && <>
+          <label>{t.tunnelToken}
+            <input type="password" autoComplete="new-password" value={tunnelToken ?? ""} disabled={!writable || saving}
+              onChange={(event) => setTunnelToken(event.target.value.trim() ? event.target.value : undefined)} />
+          </label>
+          <p className="intake-hint" aria-live="polite">{tunnelToken === "" ? t.tunnelTokenClearPending : data.tunnel_token_configured ? t.tunnelTokenStored : t.tunnelTokenFallback}</p>
+          {writable && data.tunnel_token_configured && <button type="button" disabled={saving}
+            onClick={() => setTunnelToken(tunnelToken === "" ? undefined : "")}>
+            {tunnelToken === "" ? t.tunnelTokenKeep : t.tunnelTokenClear}
+          </button>}
+          <details className="intake-tunnel-guide">
+            <summary>{t.tunnelGuideTitle}</summary>
+            <ol>
+              <li><a href="https://dash.cloudflare.com/?to=/:account/tunnels" target="_blank" rel="noreferrer">Cloudflare</a>{t.tunnelGuideOpen}</li>
+              <li>{t.tunnelGuideCopy}</li>
+              <li>{t.tunnelGuideSave}</li>
+            </ol>
+          </details>
+        </>}
+        {data.cloudflare_tunnel && <p className="intake-hint" aria-live="polite">
+          {view.error ? t.tunnelStatusUnavailable : t.tunnelStatus[data.tunnel_status ?? "stopped"]}
+        </p>}
+      </div>}
       <div className="intake-listener-actions">
         <button type="button" className="intake-save" disabled={!writable || !dirty || saving} onClick={() => void save()}>
           {saving ? t.saving : t.save}
@@ -586,10 +627,27 @@ function validPublicUrl(value: string): boolean {
   }
 }
 
+function fixedLoopbackListen(value: string): boolean {
+  const match = /^(127(?:\.(?:0|[1-9]\d{0,2})){3}|\[[\da-f:]+\]):(\d+)$/i.exec(value.trim());
+  if (!match) return false;
+  const [, host, port] = match;
+  if (Number(port) < 1 || Number(port) > 65535) return false;
+  if (!host.startsWith("[")) return host.split(".").every((octet) => Number(octet) <= 255);
+  try {
+    return new URL(`http://${host}`).hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 /// 前端先挡掉后端一定会拒绝的输入，省得用户点了保存才看到一句英文报错。
 function validate(draft: Draft, t: Copy): string | null {
   if (!/^[^\s]+:\d+$/.test(draft.listen.trim())) return t.missingField.replace("{field}", t.listen);
   if (!validPublicUrl(draft.publicUrl)) return t.badPublicUrl;
+  if (draft.enabled && draft.cloudflareTunnel) {
+    if (!/^https:\/\//i.test(draft.publicUrl.trim())) return t.tunnelNeedsHttps;
+    if (!fixedLoopbackListen(draft.listen)) return t.tunnelNeedsLoopback;
+  }
   const groups: Array<[string, Array<{ slug: string }>, string]> = [
     ["site", draft.sites, t.sites],
     ["form", draft.forms, t.forms],

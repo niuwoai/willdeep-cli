@@ -535,12 +535,15 @@ impl App {
                 }
             }
         }
+        let mut reply_delta = false;
         if self.transient_kind == StreamKind::Reply
             && self.transient_thought.is_some()
             && let Some((_, id)) = self.viewport.stream
             && let Some(body) = frame.parts.get(&(id, SourcePart::Body))
         {
-            observed.insert((id, SourcePart::Body), body.clone());
+            let key = (id, SourcePart::Body);
+            reply_delta = !body.is_empty() && self.viewport.observed.get(&key) != Some(body);
+            observed.insert(key, body.clone());
         }
         if let Some(id) = self.viewport.held_stream
             && let Some(held) = self.held_narration.as_ref()
@@ -559,7 +562,7 @@ impl App {
             self.viewport.stream = None;
         }
         let max = self.max_scroll();
-        let offset = if self.follow_bottom {
+        let mut offset = if self.follow_bottom {
             max
         } else if let Some(anchor) = self.viewport.reading {
             frame
@@ -571,6 +574,21 @@ impl App {
         } else {
             max.saturating_sub(self.scroll_from_bottom)
         };
+        let remaining = max.saturating_sub(offset);
+        // A resize or collapsed row can bring a reading anchor back to the bottom.
+        // Keep the frame frozen while the user is selecting text, and allow an
+        // explicit upward scroll to remain one wheel tick from the bottom.
+        if !self.follow_bottom
+            && !self.selection_mode
+            && self.chat_selection.is_none()
+            && (max <= Self::NEAR_BOTTOM_LINES
+                || remaining == 0
+                || (reply_delta && remaining == 1)
+                || (remaining <= Self::NEAR_BOTTOM_LINES && remaining < self.scroll_from_bottom))
+        {
+            self.viewport_return_to_latest();
+            offset = max;
+        }
         self.scroll_from_bottom = max.saturating_sub(offset);
         self.transcript_render_offset = offset;
         if let Some(anchor) = self.viewport.reading.as_mut()
@@ -689,6 +707,7 @@ impl App {
     pub(super) fn render_reading_indicator(&mut self, frame: &mut Frame<'_>) {
         self.viewport.indicator = Rect::default();
         if self.follow_bottom
+            || self.scroll_from_bottom == 0
             || self.transcript_content.width == 0
             || self.transcript_content.height == 0
         {

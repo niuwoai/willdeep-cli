@@ -40,7 +40,7 @@ mod agent_control;
 mod agent_store;
 mod agent_team;
 mod intake;
-pub(crate) use intake::{IntakeService, pause_host_group, say_to_group};
+pub(crate) use intake::{IntakeService, TunnelStatus, pause_host_group, say_to_group};
 pub(crate) mod web_app;
 // 审计导出直接读 `agents.json`，不走 `AgentStore::open`：open 会把运行中的 Agent
 // 标成中断并落盘，一个只读命令不能有这种副作用。
@@ -1965,6 +1965,7 @@ async fn run_daemon_services(
     for session_id in sessions.schedulable_sessions()? {
         tasks.schedule_session(session_id)?;
     }
+    let intake_service = Arc::clone(&server_state.intake);
     let app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/capabilities", get(capabilities_handler))
@@ -2127,9 +2128,9 @@ async fn run_daemon_services(
         axum::serve(listener, app.clone()).with_graceful_shutdown(wait_for_shutdown(tcp_shutdown));
     let local_server =
         axum::serve(local_listener, app).with_graceful_shutdown(wait_for_shutdown(local_shutdown));
-    tokio::select! {
+    let control_result = tokio::select! {
         result = async { tokio::try_join!(tcp_server, local_server) } => {
-            result.context("run Runtime Daemon control servers")?;
+            result.map(|_| ()).context("run Runtime Daemon control servers")
         }
         _ = wait_for_shutdown_deadline(
             shutdown_deadline,
@@ -2139,8 +2140,11 @@ async fn run_daemon_services(
                 "Runtime Daemon control connections exceeded the {}s shutdown grace; forcing them closed",
                 CONTROL_SERVER_SHUTDOWN_GRACE_SECONDS,
             );
+            Ok(())
         }
-    }
+    };
+    intake_service.shutdown().await;
+    control_result?;
     tasks.cancel_all().await;
     events.append("daemon.stopped", format!("pid={}", std::process::id()))?;
     Ok(())

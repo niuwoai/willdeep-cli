@@ -1078,6 +1078,27 @@ pub(super) fn apply_runtime_output(app: &mut App, message: &str) -> Option<Messa
             } else {
                 turn_status::TurnOutcome::Completed
             });
+            if let Some(results_incomplete) = value
+                .get("team_results_incomplete")
+                .and_then(|value| value.as_bool())
+            {
+                let status = if results_incomplete {
+                    app.language.text(
+                        "子代理或工作流有未完成结果，可在详情中查看。",
+                        "Some child agent or workflow results are incomplete. See their details.",
+                        "サブエージェントまたはワークフローに未完了の結果があります。詳細を確認してください。",
+                    )
+                } else {
+                    app.language.text(
+                        "子代理队列处理完毕。",
+                        "Child agent queue processed.",
+                        "サブエージェントのキュー処理が完了しました。",
+                    )
+                };
+                app.append_transcript(format!("System: {status}"));
+                app.finish_turn();
+                return None;
+            }
             if partial {
                 let stop_reason = value
                     .get("stop_reason")
@@ -1144,6 +1165,56 @@ mod background_queue_tests {
         );
         assert_eq!(app.assistant_name(), "滚小滚");
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn team_control_reports_partial_child_results_as_system_activity() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "running".into());
+        let result = apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"completed","stop_reason":"finished","turns":0,"text":"","team_results_incomplete":true}"#,
+        );
+        assert!(result.is_none());
+        assert!(!app.running);
+        assert_eq!(
+            app.last_turn_outcome,
+            Some(turn_status::TurnOutcome::Completed)
+        );
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row == "System: 子代理或工作流有未完成结果，可在详情中查看。")
+        );
+        assert!(
+            !app.transcript
+                .iter()
+                .any(|row| row.contains("模型输出未完整结束"))
+        );
+    }
+
+    #[test]
+    fn incomplete_parent_output_still_displays_reply_and_warning() {
+        let mut app = App::new(Vec::new(), Language::ZhCn);
+        app.begin_turn(true, "running".into());
+        apply_runtime_output(
+            &mut app,
+            r#"task_id=test {"type":"partial","stop_reason":"incomplete","turns":1,"text":"部分正文 <worker-facts> 示例"}"#,
+        );
+        assert_eq!(
+            app.last_turn_outcome,
+            Some(turn_status::TurnOutcome::Partial)
+        );
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.starts_with("System: 模型输出未完整结束"))
+        );
+        assert!(
+            app.transcript
+                .iter()
+                .any(|row| row.contains("部分正文 <worker-facts> 示例"))
+        );
     }
 
     #[test]

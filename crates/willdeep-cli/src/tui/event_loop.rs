@@ -80,7 +80,7 @@ async fn handle_queue_action(
 }
 
 /// 滚轮事件不带位移量，一格按这么多行算。侧栏、弹层和聊天记录原来都是这个数。
-const SCROLL_LINES_PER_TICK: usize = 3;
+pub(super) const SCROLL_LINES_PER_TICK: usize = 3;
 
 /// 一次滚轮手势里已经到达的全部滚动事件，合成一份偏移。
 ///

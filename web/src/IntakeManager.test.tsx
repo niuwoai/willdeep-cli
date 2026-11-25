@@ -82,6 +82,69 @@ it("rejects a public address with a path before hitting the server", async () =>
   expect(calls).toEqual(["GET"]);
 });
 
+it("validates and saves the tunnel toggle, then shows connector startup errors", async () => {
+  const sent: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "PUT") {
+      sent.push(JSON.parse(String(init.body)));
+      return { ok: true, json: async () => view({
+        enabled: true, public_url: "https://intake.example.com", cloudflare_tunnel: true,
+        running: true, tunnel_status: "missing_token",
+      }) };
+    }
+    return { ok: true, json: async () => view({ enabled: true, cloudflare_tunnel: false }) };
+  }));
+  renderPage();
+  fireEvent.click(await screen.findByRole("checkbox", { name: t.tunnelEnabled }));
+  const save = screen.getByRole("button", { name: t.save });
+  fireEvent.click(save);
+  await screen.findByText(t.tunnelNeedsHttps);
+  expect(sent).toHaveLength(0);
+
+  fireEvent.change(screen.getByPlaceholderText("https://intake.example.com"), { target: { value: "https://intake.example.com" } });
+  const listen = screen.getByPlaceholderText("127.0.0.1:9857");
+  fireEvent.change(listen, { target: { value: "0.0.0.0:9857" } });
+  fireEvent.click(save);
+  await screen.findByText(t.tunnelNeedsLoopback);
+  expect(sent).toHaveLength(0);
+
+  fireEvent.change(listen, { target: { value: "127.0.0.1:9857" } });
+  fireEvent.click(save);
+  await screen.findByText(t.tunnelStatus.missing_token);
+  expect(sent).toEqual([{
+    enabled: true, listen: "127.0.0.1:9857", public_url: "https://intake.example.com",
+    cloudflare_tunnel: true, sites: [], forms: [], webhooks: [],
+  }]);
+});
+
+it("offers the token guide and clears the write-only field after saving", async () => {
+  const sent: unknown[] = [];
+  const initial = view({
+    enabled: true, public_url: "https://intake.example.com", cloudflare_tunnel: true,
+    tunnel_token_configured: false,
+  });
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method !== "PUT") return { ok: true, json: async () => initial };
+    sent.push(JSON.parse(String(init.body)));
+    return { ok: true, json: async () => ({ ...initial, running: true, tunnel_token_configured: sent.length === 1 }) };
+  }));
+  renderPage();
+  fireEvent.click(await screen.findByText(t.tunnelGuideTitle));
+  expect(screen.getByText(t.tunnelGuideCopy)).toBeTruthy();
+  const tokenField = screen.getByLabelText(t.tunnelToken) as HTMLInputElement;
+  expect(tokenField.type).toBe("password");
+  const dummy = "fixture-value";
+  fireEvent.change(tokenField, { target: { value: dummy } });
+  fireEvent.click(screen.getByRole("button", { name: t.save }));
+  await screen.findByText(t.tunnelTokenStored);
+  expect(sent[0]).toMatchObject({ cloudflare_tunnel_token: dummy });
+  expect(tokenField.value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: t.tunnelTokenClear }));
+  fireEvent.click(screen.getByRole("button", { name: t.save }));
+  await screen.findByText(t.tunnelTokenFallback);
+  expect(sent[1]).toMatchObject({ cloudflare_tunnel_token: "" });
+});
+
 it("blocks saving from a non-loopback page and says so", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => view({ writable: false }) })));
   renderPage();
