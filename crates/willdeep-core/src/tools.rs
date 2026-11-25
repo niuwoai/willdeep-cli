@@ -964,6 +964,7 @@ impl ToolRegistry {
                         "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
                         "label": {"type": "string", "description": "Optional concise action label; never include secrets."},
                         "run_in_background": {"type": "boolean", "description": "Return a job handle immediately and keep working. A completion notice is delivered automatically; do not poll or sleep."},
+                        "preview": {"type": "boolean", "description": "For a temporary local server the user wants to visit, set preview=true and run_in_background=true. The preview stops after at most 600 seconds (default 600), and the turn can finish while it is still running. Check readiness separately and report the URL. Do not use for builds, tests, verification, or plan_step_id."},
                         "plan_step_id": {"type":"string", "description":"Stable plan step id when this background command implements the entire step. Runtime binds the actual attempt and updates its terminal status immediately. Requires run_in_background=true."},
                         "network": {"type": "boolean", "description": "Set true only when the command must reach the network and the fence denied it (the previous result carried <sandbox-denied> about the network). The user is asked to allow this exact command with network access."}
                     },
@@ -1786,6 +1787,16 @@ impl ToolRegistry {
             )
         };
         let accepted_verification = self.accepts_verification(&args.command);
+        if args.preview
+            && (args.run_in_background != Some(true)
+                || self.detached_jobs.is_none()
+                || self.command_allowlist.is_some()
+                || self.write_targets.is_some()
+                || self.reviewed_subagent_shell
+                || accepted_verification)
+        {
+            return Err(ToolError::HookDenied("Preview requires an unscoped detached background command and cannot be used for verification.".into()));
+        }
         // 子目录命令的脚本路径相对 cwd，指纹则相对工作区；无法可靠映射时
         // 退回整库快照，避免将通过证据误写到未验证的脚本版本。
         let coverage_at_workspace_root = command_workspace == self.workspace;
@@ -1814,10 +1825,15 @@ impl ToolRegistry {
         }
         // Verification may run explicitly in the background, but only a terminal
         // result bound to its start/end snapshots counts; launching is not evidence.
-        let automatic_delay = (!accepted_verification && self.command_allowlist.is_none())
-            .then(|| command_wait::leading_sleep_seconds(&args.command))
-            .flatten();
-        let timeout = command_wait::timeout_seconds(args.timeout_seconds, automatic_delay);
+        let automatic_delay =
+            (!args.preview && !accepted_verification && self.command_allowlist.is_none())
+                .then(|| command_wait::leading_sleep_seconds(&args.command))
+                .flatten();
+        let timeout = command_wait::timeout_seconds(
+            args.timeout_seconds
+                .or(args.preview.then_some(MAX_COMMAND_TIMEOUT_SECS)),
+            automatic_delay,
+        );
         let command_duration = self
             .remaining_execution_time()
             .map_or(std::time::Duration::from_secs(timeout), |remaining| {
@@ -1851,12 +1867,13 @@ impl ToolRegistry {
                     accepted_verification,
                 );
                 let job = jobs
-                    .spawn_with_policy(
+                    .spawn_with_mode(
                         &args.command,
                         &description,
                         &command_workspace,
                         &sandbox,
                         timeout,
+                        args.preview,
                     )
                     .map_err(|error| {
                         self.report_detached_launch_failure(verification_start.as_ref(), &error);
@@ -1866,6 +1883,11 @@ impl ToolRegistry {
                     "Background job started: {} (pid {}). It survives a Runtime restart; read it with get_job_output.",
                     job.id, job.pid
                 );
+                if args.preview {
+                    return Ok(format!(
+                        "{notice}\nThis temporary preview will stop after at most {timeout} seconds. Starting the job does not prove readiness. Check readiness separately, then share the URL and finish the turn without waiting for the process to exit."
+                    ));
+                }
                 let verification_notice =
                     self.observe_detached_verification(jobs, job, verification_start, timeout);
                 return Ok(command_wait::started_notice(
@@ -2777,6 +2799,8 @@ struct CommandArgs {
     timeout_seconds: Option<u64>,
     label: Option<String>,
     run_in_background: Option<bool>,
+    #[serde(default)]
+    preview: bool,
     /// 网络围栏的逃生口：围栏断网时，模型声明这条命令必须联网，由人放行。
     network: Option<bool>,
 }

@@ -164,13 +164,15 @@ begin
   main = create.call('普通聊天与子会话提议')
   normal = submit.call(main, '普通聊天检查')
   wait.call('normal conversation') { api.call('turn.get', { id: normal.fetch('id') })['status'] == 'completed' }
-  failed = create.call('模型不可用的失败会话')
-  failure = submit.call(failed, '触发具体错误')
-  wait.call('failed conversation') { api.call('turn.get', { id: failure.fetch('id') })['status'] == 'failed' }
-  approval = create.call('等待确认的配置检查')
-  api.call('session.update_approval_mode', { id: approval, approval_mode: 'strict' })
-  submit.call(approval, '触发待处理审批')
-  wait.call('approval request') { !api.call('approval.list', {}).empty? }
+  unless ENV['WILLDEEP_PREVIEW_CHAT_ONLY'] == '1'
+    failed = create.call('模型不可用的失败会话')
+    failure = submit.call(failed, '触发具体错误')
+    wait.call('failed conversation') { api.call('turn.get', { id: failure.fetch('id') })['status'] == 'failed' }
+    approval = create.call('等待确认的配置检查')
+    api.call('session.update_approval_mode', { id: approval, approval_mode: 'strict' })
+    submit.call(approval, '触发待处理审批')
+    wait.call('approval request') { !api.call('approval.list', {}).empty? }
+  end
   metadata = { root: root, home: home, workspace: workspace, binary: binary, port: port,
     main: main, failed: failed, approval: approval, url: "http://#{LOOPBACK}:#{port}/?session=#{main}" }
   File.write(File.join(output, 'fixture.json'), JSON.pretty_generate(metadata) + "\n")

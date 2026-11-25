@@ -2726,7 +2726,9 @@ enum MockMode {
     /// 第一轮请求一个注定失败的工具（读不存在的文件），之后正常收尾。
     FailingToolThenSuccess,
     /// 第一轮起一条 `run_in_background` 命令，之后正常收尾。
-    BackgroundJobThenSuccess,
+    BackgroundJobThenSuccess {
+        preview: bool,
+    },
     /// 第一轮起一个 `monitor`，之后正常收尾。
     #[cfg_attr(not(unix), allow(dead_code))]
     MonitorThenSuccess,
@@ -2869,7 +2871,7 @@ async fn mock_provider_response(
         | MockMode::IncompleteThenSuccess
         | MockMode::DelayedSuccess(_)
         | MockMode::FailingToolThenSuccess
-        | MockMode::BackgroundJobThenSuccess
+        | MockMode::BackgroundJobThenSuccess { .. }
         | MockMode::MonitorThenSuccess
         | MockMode::IdleBackgroundThenSuccess { .. }
         | MockMode::LeadingSleepThenSuccess
@@ -2885,8 +2887,8 @@ async fn mock_provider_response(
         serde_json::json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"delegate-diagnosis","type":"function","function":{"name":"spawn_agent","arguments":serde_json::json!({"profile":"scout","prompt":"Inspect the task without editing files and report your diagnosis","run_in_background":false}).to_string()}}]},"finish_reason":"tool_calls"}]}).to_string()
     } else if matches!(state.mode, MockMode::FailingToolThenSuccess) && request_index == 0 {
         r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"read_missing","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"definitely-missing.txt\"}"}}]},"finish_reason":"tool_calls"}]}"#.to_owned()
-    } else if matches!(state.mode, MockMode::BackgroundJobThenSuccess) {
-        detached_background::response(&body, request_index)
+    } else if let MockMode::BackgroundJobThenSuccess { preview } = state.mode {
+        detached_background::response(&body, request_index, preview)
     } else if matches!(state.mode, MockMode::MonitorThenSuccess) {
         monitor_events::response(&body, request_index)
     } else if let MockMode::IdleBackgroundThenSuccess { monitor } = state.mode {

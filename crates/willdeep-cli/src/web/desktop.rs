@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -151,7 +151,13 @@ impl DesktopAccess {
             "{}={}; Path=/; HttpOnly; SameSite=Strict",
             self.cookie_name, self.cookie_secret
         );
-        let mut response = Redirect::to("/?desktop=1").into_response();
+        // A redirect from the native bootstrap can remain cross-site in WebKit,
+        // withholding the Strict cookie. Commit a loopback document first.
+        let mut response = Html(concat!(
+            "<!doctype html><meta charset=\"utf-8\">",
+            "<meta http-equiv=\"refresh\" content=\"0; url=/?desktop=1\">",
+        ))
+        .into_response();
         if let Ok(value) = HeaderValue::from_str(&cookie) {
             response.headers_mut().insert(header::SET_COOKIE, value);
         }
@@ -360,4 +366,44 @@ async fn changes_workspace(
         return Err(WebError::forbidden("workspace is unavailable"));
     }
     Ok(root.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn bootstrap_commits_a_document_before_navigating_with_the_strict_cookie() {
+        let access = DesktopAccess {
+            host: "127.0.0.1:12345".into(),
+            origin: "http://127.0.0.1:12345".into(),
+            bootstrap: format!("{BOOTSTRAP_PREFIX}test"),
+            claimed: AtomicBool::new(false),
+            cookie_name: "desktop_test".into(),
+            cookie_secret: "fixture".into(),
+        };
+
+        let response = access.claim(&Method::GET, &access.bootstrap);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        assert!(!response.headers().contains_key(header::LOCATION));
+        assert_eq!(
+            response.headers()[header::SET_COOKIE],
+            "desktop_test=fixture; Path=/; HttpOnly; SameSite=Strict"
+        );
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("url=/?desktop=1")
+        );
+        assert_eq!(
+            access.claim(&Method::GET, &access.bootstrap).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
 }

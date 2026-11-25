@@ -13,7 +13,7 @@
 | 底部输入区 | 工作区、模型、权限、附件与发送或停止 | 沿用 `/` 命令、`@` 引用和 `$` 技能。模型与权限提交后回显实际生效值，切会话保留各自草稿 |
 | 右侧检查面板 | 默认收起。打开后先显示变更文件和 Diff | 从会话中的文件或结果跳到对应 Diff。窄窗口切为独立面板。后续加入计划、Worker 与产物 |
 
-新会话打开后焦点直接落入输入框，主区留给选项目、继续最近会话和当前任务。Xedit 的账号概览、Token 热力图及月历移到独立「用量」入口。三端使用系统窗口、菜单、快捷键和目录选择，界面采用 WillDeep 自有字号、间距、图标和状态样式。Codex 提供项目分组、会话内 Diff 和 CLI 连续性的交互参考，Claude Code 提供可收起检查面板、逐文件审阅与权限选择的参考。[Codex 桌面版](https://openai.com/index/introducing-the-codex-app/) · [Claude Code 桌面文档](https://code.claude.com/docs/en/desktop)
+切换项目和会话、打开站内链接都在当前桌面窗口完成。外部 HTTP(S) 链接交由系统默认浏览器打开。新会话打开后焦点直接落入输入框，主区留给选项目、继续最近会话和当前任务。Xedit 的账号概览、Token 热力图及月历移到独立「用量」入口。三端使用系统窗口、菜单、快捷键和目录选择，界面采用 WillDeep 自有字号、间距、图标和状态样式。Codex 提供项目分组、会话内 Diff 和 CLI 连续性的交互参考，Claude Code 提供可收起检查面板、逐文件审阅与权限选择的参考。[Codex 桌面版](https://openai.com/index/introducing-the-codex-app/) · [Claude Code 桌面文档](https://code.claude.com/docs/en/desktop)
 
 「本机运行」指 Runtime 和工具在本机执行。模型选择器单独显示本地模型或远端 Provider，让用户在发送前看清执行位置和模型请求去向。
 

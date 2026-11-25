@@ -72,6 +72,11 @@ pub(crate) fn publish_finished_jobs(
         if !jobs.claim_delivery(&job).unwrap_or(false) {
             continue;
         }
+        // The preview's scheduled stop needs no follow-up turn. Its result
+        // remains available through get_job_output.
+        if jobs.is_expected_preview_expiry(&job, state) {
+            continue;
+        }
         let Some(notice) = jobs.notice(&job) else {
             continue;
         };
@@ -107,16 +112,80 @@ pub(crate) fn publish_finished_jobs(
     published
 }
 
-/// 会话名下还有没有在跑的作业。无头运行靠它决定要不要继续等。
-pub(crate) fn has_running_jobs(jobs: &DetachedJobStore, session_id: uuid::Uuid) -> bool {
+/// 普通后台作业需要交回退出结果。临时预览在服务就绪后即可结束前台轮次。
+pub(crate) fn has_blocking_jobs(jobs: &DetachedJobStore, session_id: uuid::Uuid) -> bool {
     jobs.owned_by(&session_id.to_string())
         .iter()
-        .any(|job| jobs.state(job) == JobState::Running)
+        .any(|job| !job.preview && jobs.state(job) == JobState::Running)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_recorded_preview_expiry_skips_failure_delivery() {
+        for (preview, status, expect_delivery) in [
+            (true, Some("timed_out"), false),
+            (true, Some("failed"), true),
+            (true, None, true),
+            (false, Some("timed_out"), true),
+        ] {
+            let session_id = uuid::Uuid::new_v4();
+            let home = std::env::temp_dir().join(format!("job-delivery-{session_id}"));
+            let jobs = DetachedJobStore::new(&home);
+            let job = willdeep_core::DetachedJob {
+                id: format!("job_{}", uuid::Uuid::new_v4().simple()),
+                command: "preview fixture".into(),
+                label: "preview fixture".into(),
+                workspace: home.clone(),
+                pid: std::process::id(),
+                started_marker: None,
+                created_at: 1,
+                owner: Some(session_id.to_string()),
+                preview,
+            };
+            let dir = jobs.directory().join(&job.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("meta.json"), serde_json::to_vec(&job).unwrap()).unwrap();
+            if let Some(status) = status {
+                let result = serde_json::json!({ "status": status, "finished_at": 2 });
+                std::fs::write(
+                    dir.join("result.json"),
+                    serde_json::to_vec(&result).unwrap(),
+                )
+                .unwrap();
+            }
+            // A command can also exit 124 on its own.
+            std::fs::write(dir.join("exit"), "124").unwrap();
+            let kernel = EventKernel::new();
+            assert_eq!(
+                publish_finished_jobs(&kernel, &jobs, session_id),
+                usize::from(expect_delivery),
+                "preview={preview}, status={status:?}"
+            );
+            assert!(dir.join("delivered").exists());
+            assert_eq!(
+                kernel.pending_wake_authority(session_id).is_some(),
+                expect_delivery
+            );
+            let events = kernel.snapshot();
+            if expect_delivery {
+                assert_eq!(events.len(), 1);
+                assert_eq!(events[0].kind, "job.failed");
+                assert_eq!(
+                    events[0].priority,
+                    willdeep_runtime_protocol::EventPriority::Urgent
+                );
+            } else {
+                assert!(events.is_empty());
+                let output = jobs.render_output(&job, None);
+                assert!(output.contains("status: timed_out"));
+            }
+            assert_eq!(publish_finished_jobs(&kernel, &jobs, session_id), 0);
+            std::fs::remove_dir_all(home).unwrap();
+        }
+    }
 
     #[test]
     fn active_executor_keeps_completion_and_idle_tui_delivers_once() {
@@ -136,6 +205,7 @@ mod tests {
             started_marker: None,
             created_at: 1,
             owner: Some(session.id.to_string()),
+            preview: false,
         };
         let dir = jobs.directory().join(&job.id);
         std::fs::create_dir_all(&dir).unwrap();

@@ -15,6 +15,7 @@ async fn deadline_prevents_expired_commands_and_bounds_running_commands() {
         timeout_seconds: Some(60),
         label: None,
         run_in_background: Some(background),
+        preview: false,
         network: None,
     };
     assert!(tools.run_command(command(false)).await.is_err());
@@ -31,6 +32,7 @@ async fn deadline_prevents_expired_commands_and_bounds_running_commands() {
             timeout_seconds: Some(60),
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         }),
     )
@@ -573,6 +575,7 @@ async fn smart_runs_read_only_shell_but_still_gates_effectful_commands() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await
@@ -591,6 +594,7 @@ async fn smart_runs_read_only_shell_but_still_gates_effectful_commands() {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;
@@ -641,6 +645,7 @@ async fn only_ambiguous_commands_reach_the_ai_judge() {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;
@@ -680,6 +685,7 @@ async fn judge_denial_falls_back_to_the_user() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;
@@ -713,6 +719,7 @@ async fn reviewed_child_never_sends_dangerous_or_sensitive_commands_to_the_judge
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;
@@ -733,6 +740,7 @@ async fn reviewed_child_never_sends_dangerous_or_sensitive_commands_to_the_judge
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;
@@ -767,6 +775,7 @@ async fn human_preapproval_is_exact_and_does_not_authorize_a_decorated_command()
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await
@@ -778,6 +787,7 @@ async fn human_preapproval_is_exact_and_does_not_authorize_a_decorated_command()
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;
@@ -1057,6 +1067,7 @@ async fn a_read_only_git_worker_composes_git_queries_and_nothing_else() {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await
@@ -1075,6 +1086,7 @@ async fn a_read_only_git_worker_composes_git_queries_and_nothing_else() {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await;
@@ -1142,6 +1154,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await
@@ -1153,6 +1166,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;
@@ -1170,6 +1184,7 @@ async fn a_command_allowlisted_worker_runs_only_its_verifier() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;
@@ -1217,6 +1232,7 @@ async fn a_failing_test_command_carries_a_delegation_hint_for_the_main_agent_onl
             timeout_seconds: Some(30),
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await
@@ -1233,6 +1249,7 @@ async fn a_failing_test_command_carries_a_delegation_hint_for_the_main_agent_onl
             timeout_seconds: Some(30),
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await
@@ -1265,6 +1282,7 @@ async fn approved_background_command_returns_handle_and_publishes_completion() {
             timeout_seconds: Some(10),
             label: Some("test command".to_owned()),
             run_in_background: Some(true),
+            preview: false,
             network: None,
         })
         .await
@@ -1560,6 +1578,7 @@ async fn verification_evidence_is_recorded_without_an_external_reporter() {
                 timeout_seconds: None,
                 label: None,
                 run_in_background: None,
+                preview: false,
                 network: None,
             })
             .await
@@ -1590,6 +1609,7 @@ async fn run_verification_summarizes_only_this_run() {
         timeout_seconds: None,
         label: None,
         run_in_background: None,
+        preview: false,
         network: None,
     };
     let start = tools.verification_count();
@@ -1640,6 +1660,7 @@ async fn a_verification_launch_error_invalidates_previous_success() {
         timeout_seconds: None,
         label: None,
         run_in_background: None,
+        preview: false,
         network: None,
     };
     tools.run_command(command()).await.unwrap();
@@ -1788,6 +1809,7 @@ async fn a_child_follows_the_parent_into_full_access_and_back_out() {
                     timeout_seconds: None,
                     label: None,
                     run_in_background: None,
+                    preview: false,
                     network: None,
                 })
                 .await
@@ -1835,6 +1857,7 @@ async fn full_access_does_not_widen_a_verifier_only_child() {
             timeout_seconds: None,
             label: None,
             run_in_background: None,
+            preview: false,
             network: None,
         })
         .await;

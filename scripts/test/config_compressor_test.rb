@@ -187,25 +187,29 @@ Dir.mktmpdir('wd-compressor-config-') do |home|
     assert.call(result['errors'].size == 2, 'missing semantic errors')
   end
 
-  check.call('compression timeouts round-trip and keep the total above one candidate') do
-    args = { 'confirm' => true, 'edits' => [
-      edit.call('compressor_candidate_timeout_seconds', 90),
-      edit.call('compressor_timeout_seconds', 240)] }
-    assert.call(box.call('config.apply', args)['ok'], 'in-range timeouts were refused')
-    root = TomlLite.parse(File.read(path))
-    assert.call(root['agent']['compressor_candidate_timeout_seconds'] == 90, 'candidate timeout mismatch')
-    assert.call(root['agent']['compressor_timeout_seconds'] == 240, 'total timeout mismatch')
-
-    before = File.read(path)
-    [14, 181, 1.5, '60'].each do |seconds|
-      invalid = { 'edits' => [edit.call('compressor_candidate_timeout_seconds', seconds)], 'confirm' => true }
-      %w[config.plan config.apply].each do |tool|
-        assert.call(box.call(tool, invalid)['ok'] == false, "#{tool} accepted candidate timeout #{seconds.inspect}")
-      end
-    end
-    shorter = { 'edits' => [edit.call('compressor_timeout_seconds', 30)], 'confirm' => true }
+  check.call('compression timeouts round-trip at their supported maxima') do
+    maxima = { 'compressor_candidate_timeout_seconds' => 600, 'compressor_timeout_seconds' => 3600 }
+    args = { 'confirm' => true, 'edits' => maxima.map { |key, seconds| edit.call(key, seconds) } }
     %w[config.plan config.apply].each do |tool|
-      assert.call(box.call(tool, shorter)['ok'] == false, "#{tool} accepted a total shorter than the candidate wait")
+      assert.call(box.call(tool, args)['ok'], "#{tool} refused the timeout maxima")
+    end
+    root = TomlLite.parse(File.read(path))
+    maxima.each { |key, seconds| assert.call(root['agent'][key] == seconds, "#{key} timeout mismatch") }
+  end
+
+  check.call('compression timeouts reject invalid values without writing') do
+    before = File.read(path)
+    invalid_cases = {
+      'compressor_candidate_timeout_seconds' => [14, 601, 1.5, '60'],
+      'compressor_timeout_seconds' => [599, 3601]
+    }
+    invalid_cases.each do |key, values|
+      values.each do |seconds|
+        invalid = { 'edits' => [edit.call(key, seconds)], 'confirm' => true }
+        %w[config.plan config.apply].each do |tool|
+          assert.call(box.call(tool, invalid)['ok'] == false, "#{tool} accepted #{key} = #{seconds.inspect}")
+        end
+      end
     end
     assert.call(File.read(path) == before, 'a refused timeout was written')
   end

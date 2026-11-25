@@ -12,6 +12,7 @@ import { markdownCopy } from "./markdownCopy";
 import { ConversationCard, type ConversationItem, type Plan } from "./ConversationCard";
 import { SidebarSettings } from "./SidebarSettings";
 import { QuickSettings } from "./QuickSettings";
+import { GoalModeControl } from "./GoalModeControl";
 import { applyThemeMode, storedThemeMode, useResolvedColorScheme, type ThemeMode } from "./theme";
 import { PluginCenter } from "./PluginCenter";
 import { ConfigurationSettings } from "./ConfigurationSettings";
@@ -74,7 +75,7 @@ import { WorkflowCard } from "./WorkflowCard";
 import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
 import { DesktopChangesPanel, DesktopChangesToggle, DesktopVersions } from "./DesktopChanges";
 import { useDesktopChanges } from "./useDesktopChanges";
-import { desktopDraftId, desktopLocation, isDesktop, openDesktopProjectWindow, pickDesktopWorkspace, saveDesktopSelection } from "./desktopHost";
+import { desktopDraftId, desktopLocation, isDesktop, pickDesktopWorkspace, saveDesktopSelection } from "./desktopHost";
 import { desktopText } from "./desktopMessages";
 
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
@@ -444,7 +445,26 @@ export function App() {
   const activeRunRef = useRef<string | null>(null);
   const activeTurnRef = useRef<string | null>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const pendingDesktopNavigation = useRef<(() => void) | null>(null);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState("");
+
+  function navigateInDesktop(action: () => void) {
+    const observation = abortRef.current;
+    if (!observation) {
+      action();
+      return;
+    }
+    pendingDesktopNavigation.current = action;
+    // Wait for the Runtime to acknowledge new submissions before detaching this client.
+    if (activeTurnRef.current) observation.abort();
+  }
+
+  useEffect(() => {
+    if (busy) return;
+    const navigate = pendingDesktopNavigation.current;
+    pendingDesktopNavigation.current = null;
+    navigate?.();
+  }, [busy]);
   async function enqueueDraft(content = prompt.trim() || t.attachmentPrompt) {
     const target = activeSessionRef.current || sessionId;
     // 没有会话就无处可入。不为了入队隐式建一个空会话：那会在历史列表里
@@ -857,9 +877,9 @@ export function App() {
       const nextSessionId = event.session_id || activeSessionRef.current || "";
       const nextTurnId = event.turn_id || activeTurnRef.current;
       setSessionId(nextSessionId);
-      if (event.type === "submitted" && nextSessionId) {
-        const preference = pendingGoalPreference.current ?? { text: goal, enabled: goalEnabled };
-        localStorage.setItem(`${goalPreferencePrefix}${nextSessionId}`, JSON.stringify(preference));
+      if (event.type === "submitted" && nextSessionId && pendingGoalPreference.current) {
+        // 仅迁移新会话的草稿，避免旧请求覆盖已有会话中刚修改的目标。
+        localStorage.setItem(`${goalPreferencePrefix}${nextSessionId}`, JSON.stringify(pendingGoalPreference.current));
         pendingGoalPreference.current = null;
       }
       setActiveRuntimeSessionId(nextSessionId);
@@ -875,6 +895,7 @@ export function App() {
       }
       if (nextSessionId && nextTurnId) saveRuntimeCursor(nextSessionId, nextTurnId, event.cursor);
       if (event.type === "submitted" && pendingStopRef.current && activeTurnRef.current) await stopRemoteTurn(activeTurnRef.current);
+      if (pendingDesktopNavigation.current && nextTurnId) abortRef.current?.abort();
       return { terminal: false as const };
     }
     const currentSessionId = event.session_id || activeSessionRef.current;
@@ -1152,6 +1173,7 @@ export function App() {
     } else if (!changed && entry.fresh) {
       sessionIdRef.current = "";
       setSessionId(""); setChat([]); setApprovalMode(workspaceDraftApprovalRef.current); setWorkspacePolicy(target.access);
+      setGoal(""); setGoalEnabled(false); pendingGoalPreference.current = null;
       setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
       setDraftModel(null); setModelOpen(false); setShareOpen(false);
     }
@@ -1196,6 +1218,10 @@ export function App() {
   function openRelatedSession(id: string, activeTurnId?: string | null) {
     setMobileSessionsOpen(false);
     if (id === sessionIdRef.current) return;
+    if (isDesktop) {
+      navigateInDesktop(() => void loadSessionRef.current(id, activeTurnId ?? sessions.find((item) => item.id === id)?.active_turn_id));
+      return;
+    }
     if (busy || prompt.trim() || attachmentsRef.current.length > 0) {
       // The current stream remains attached here; the independent conversation
       // opens with its own stream and approval controls.
@@ -1301,6 +1327,11 @@ export function App() {
   }
 
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
+  const [forkTarget, setForkTarget] = useState<Session | null>(null);
+  const [forkTitle, setForkTitle] = useState("");
+  const [forkPending, setForkPending] = useState(false);
+  const [forkFailure, setForkFailure] = useState("");
+  const forkTitleInput = useRef<HTMLInputElement>(null);
   // 「回到第 N 步」：步骤列表由服务端算（只有 Runtime 跑完的轮次才能回），
   // 前端只问两件事——回到哪一步、文件跟不跟着回。
   const [rewindPoints, setRewindPoints] = useState<RewindPoint[] | null>(null);
@@ -1319,8 +1350,9 @@ export function App() {
     try {
       const added = await workspaceApproval.addWorkspace(path);
       if (revision === workspaceEntryRevision.current) {
-        if (busy) openDesktopProjectWindow(added.path);
-        else requestWorkspaceEntry(added, { fresh: true, added: true });
+        const enter = () => requestWorkspaceEntry(added, { fresh: true, added: true });
+        if (isDesktop) navigateInDesktop(enter);
+        else enter();
       }
     } catch (reason) {
       if (revision === workspaceEntryRevision.current) setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
@@ -1328,8 +1360,9 @@ export function App() {
   }
 
   function startProjectSession(project: Workspace) {
-    if (isDesktop && busy) openDesktopProjectWindow(project.path);
-    else requestWorkspaceEntry(project, { fresh: true });
+    const enter = () => requestWorkspaceEntry(project, { fresh: true });
+    if (isDesktop) navigateInDesktop(enter);
+    else enter();
   }
 
   const desktopActionHandlers = useRef({ addWorkspace, startProjectSession });
@@ -1409,11 +1442,37 @@ export function App() {
     catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
   }
 
-  async function forkSelectedSession() {
-    if (!selectedSession) return;
-    const title = window.prompt(t.forkPrompt, `${selectedSession.title}`)?.trim(); if (!title) return;
-    try { const fork = await json<{ id: string }>(`/api/sessions/${encodeURIComponent(selectedSession.id)}/fork`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) }); await refreshSessions(); await loadSession(fork.id); }
-    catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+  function openForkDialog(target: Session) {
+    setForkTitle("");
+    setForkFailure("");
+    setForkTarget(target);
+  }
+
+  async function confirmFork() {
+    if (!forkTarget || forkPending || busy) return;
+    setForkPending(true);
+    setForkFailure("");
+    const title = forkTitle.trim() || undefined;
+    try {
+      let fork: { id: string };
+      try {
+        fork = await json<{ id: string }>(`/api/sessions/${encodeURIComponent(forkTarget.id)}/fork`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }),
+        });
+      } catch (reason) {
+        setForkFailure(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+        return;
+      }
+      setForkTarget(null);
+      try {
+        await refreshSessions();
+      } catch (reason) {
+        setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }
+      await loadSession(fork.id);
+    } finally {
+      setForkPending(false);
+    }
   }
 
   async function openRewindDialog() {
@@ -1663,13 +1722,15 @@ export function App() {
     } catch (reason) {
       const recoverSessionId = activeSessionRef.current;
       const recoverTurnId = activeTurnRef.current;
-      if (!(reason instanceof DOMException && reason.name === "AbortError") && recoverSessionId && recoverTurnId && !terminalFailure) {
+      if (controller.signal.aborted) {
+        if (pendingDesktopNavigation.current) void refreshSessions().catch((error: unknown) => console.warn("Could not refresh sessions after detaching the stream", error));
+      } else if (recoverSessionId && recoverTurnId && !terminalFailure) {
         if (abortRef.current === controller) abortRef.current = null;
         if (activeRunRef.current === runId) activeRunRef.current = null;
         setBusy(false);
         setActivity(t.reconnecting);
         await resumeTurn(recoverSessionId, recoverTurnId);
-      } else if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+      } else {
         keepInterruptedLine();
         setError(terminalFailureMessage || `${t.requestFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
       }
@@ -1814,7 +1875,7 @@ export function App() {
           </button>
           {showArchived && <VStack align="stretch" gap="1" className="archived-sessions">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
         </Box>}
-        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
+        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active || forkPending} onClick={() => openForkDialog(selectedSession)}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
         {rewindNotice && <Text mt="1" fontSize="xs" color="var(--text-dim)">{rewindNotice}</Text>}
       </Flex>
       {isDesktop ? <DesktopVersions language={language} version={version} /> : <Text as="footer" mt="5" pt="3" borderTop="1px solid" borderColor="var(--bg-panel-hover)" color="var(--text-ghost)" fontSize="2xs" textAlign="right">{t.version}: {version ? `v${version}` : "—"}</Text>}
@@ -1835,6 +1896,31 @@ export function App() {
                 <Button size="sm" variant="outline" borderColor="var(--border-strong)" color="var(--text)" onClick={() => setDeleteTarget(null)}>{t.cancel}</Button>
                 <Button size="sm" colorPalette="red" onClick={() => void confirmDeleteSession()}>{t.confirmDelete}</Button>
               </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+      <Dialog.Root open={forkTarget !== null} initialFocusEl={() => forkTitleInput.current} closeOnEscape={!forkPending} closeOnInteractOutside={!forkPending} onOpenChange={({ open }) => { if (!open && !forkPending) setForkTarget(null); }}>
+        <Portal>
+          <Dialog.Backdrop bg="var(--shadow)" />
+          <Dialog.Positioner>
+            <Dialog.Content bg="var(--bg-raised)" color="var(--text)" border="1px solid" borderColor="var(--border)" borderRadius="12px" maxW="360px">
+              <form onSubmit={(event) => { event.preventDefault(); void confirmFork(); }}>
+                <Dialog.Header><Dialog.Title fontSize="md">{t.forkDialogTitle}</Dialog.Title></Dialog.Header>
+                <Dialog.Body>
+                  <Text mb="3" fontSize="sm" color="var(--text-dim)" overflowWrap="anywhere">{forkTarget?.title}</Text>
+                  <label>
+                    <Text as="span" fontSize="sm">{t.forkTitleLabel}</Text>
+                    <Input ref={forkTitleInput} mt="1" size="sm" value={forkTitle} onChange={(event) => setForkTitle(event.target.value)} readOnly={forkPending} />
+                  </label>
+                  <Dialog.Description mt="2" fontSize="xs" color="var(--text-dim)">{t.forkTitleHint}</Dialog.Description>
+                  {forkFailure && <Text role="alert" mt="2" fontSize="sm">{forkFailure}</Text>}
+                </Dialog.Body>
+                <Dialog.Footer gap="2">
+                  <Button type="button" size="sm" variant="outline" borderColor="var(--border-strong)" color="var(--text)" disabled={forkPending} onClick={() => setForkTarget(null)}>{t.cancel}</Button>
+                  <Button type="submit" size="sm" loading={forkPending} loadingText={t.working} disabled={busy}>{t.forkConfirm}</Button>
+                </Dialog.Footer>
+              </form>
             </Dialog.Content>
           </Dialog.Positioner>
         </Portal>
@@ -1983,13 +2069,7 @@ export function App() {
           <ReasoningPicker key={`reasoning-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} current={sessionId ? sessionReasoningLevel : null} currentProviderId={sessionId ? sessionModelProviderId : draftModel?.providerId ?? null} onChanged={setSessionReasoningLevel} onApplied={showSelectionNotice} />
           <PermissionsPanel key={`permissions-${sessionId || "draft"}`} sessionId={sessionId || null} language={language} messages={t} override={approvalMode} workspaceAccess={workspacePolicy} open={permissionsOpen} onOpenChange={(open) => { setPermissionsOpen(open); if (open && sessionId) void refreshApprovalMode(sessionId); }} onSaved={setApprovalMode} onApplied={showSelectionNotice} />
         </div>
-        <div className="goal-mode-control">
-          <label className="goal-mode-toggle">
-            <input type="checkbox" checked={goalEnabled} onChange={(event) => updateGoalPreference(goal, event.target.checked)} />
-            <span>{t.goalMode}</span>
-          </label>
-          <Input className="goal-mode-input" size="sm" value={goal} onChange={(event) => updateGoalPreference(event.target.value, goalEnabled)} placeholder={t.goalModePlaceholder} aria-label={t.goalMode} title={t.goalModeHint} disabled={!goalEnabled} />
-        </div>
+        <GoalModeControl key={desktopDraftId(workspace, sessionId)} goal={goal} enabled={goalEnabled} messages={t} onChange={updateGoalPreference} />
       </div>
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />
     </Container>

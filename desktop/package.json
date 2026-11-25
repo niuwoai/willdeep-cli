@@ -1,7 +1,7 @@
 {
   "name": "willdeep-desktop",
   "private": true,
-  "version": "0.156.0-rc1",
+  "version": "0.156.0-rc3",
   "scripts": {
     "bundle": "ruby bundle.rb"
   },

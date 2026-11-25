@@ -39,6 +39,7 @@ impl Fixture {
             started_marker: None,
             created_at: 1,
             owner: Some("verification-session".into()),
+            preview: false,
         };
         let dir = self.jobs.directory().join(&job.id);
         std::fs::create_dir_all(&dir).unwrap();
@@ -113,6 +114,7 @@ fn args(command: &str) -> CommandArgs {
         timeout_seconds: Some(1),
         label: None,
         run_in_background: Some(true),
+        preview: false,
         network: None,
     }
 }

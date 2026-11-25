@@ -32,7 +32,11 @@ class DesktopService
 
   def authorize
     result = request(:get, boot.path, authenticate: false)
-    raise "Desktop bootstrap returned #{result.code}" unless result.code == "303"
+    raise "Desktop bootstrap returned #{result.code}" unless result.code == "200"
+    unless result.content_type == "text/html" && result["location"].nil? &&
+           result.body.include?('http-equiv="refresh" content="0; url=/?desktop=1"')
+      raise "Desktop bootstrap must navigate from a committed local document"
+    end
     raise "Desktop cookie flags missing" unless result["set-cookie"]&.match?(/HttpOnly; SameSite=Strict/)
 
     @cookie = result["set-cookie"].split(";").first

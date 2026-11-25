@@ -117,9 +117,9 @@ module ConfigSchema
           description: "把上下文压缩整套换到这个档案的端点、密钥与模型，主模型不变" },
         { key: "compressor_context_window", label: "压缩上下文窗口", type: "int", default: nil, min: 4000, max: 1_048_576, presets: TOKEN_PRESETS,
           description: "摘要器一次能吃下的原料上限；不写取压缩档案的 context_window，再没有就沿用会话窗口" },
-        { key: "compressor_candidate_timeout_seconds", label: "单段压缩等待（秒）", type: "int", default: nil, min: 15, max: 180,
+        { key: "compressor_candidate_timeout_seconds", label: "单段压缩等待（秒）", type: "int", default: nil, min: 15, max: 600,
           description: "每个候选模型一次摘要请求最多等这么久；不写是 60 秒。慢推理模型做兜底时调大" },
-        { key: "compressor_timeout_seconds", label: "整次压缩预算（秒）", type: "int", default: nil, min: 15, max: 600,
+        { key: "compressor_timeout_seconds", label: "整次压缩预算（秒）", type: "int", default: nil, min: 15, max: 3_600,
           description: "一次压缩全部分块、合并和二次压缩共用的时间；不写时按实际分块数计算，写了不能短于单段等待" }
       ]
     },

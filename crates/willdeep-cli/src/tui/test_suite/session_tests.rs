@@ -1022,6 +1022,7 @@ fn runtime_terminal_failure_stops_the_busy_indicator() {
     let mut session = Session::new(root.clone(), None, "failed runtime");
     let mut app = App::new(Vec::new(), Language::En);
     app.begin_turn(true, "Submitted to Runtime".to_owned());
+    app.edit_input(|input| input.insert("已有草稿"));
     let event = crate::daemon::RemoteRuntimeEvent {
         timestamp: 0,
         sequence: 1,
@@ -1040,6 +1041,9 @@ fn runtime_terminal_failure_stops_the_busy_indicator() {
 
     assert!(!app.running);
     assert!(app.last_elapsed.is_some());
+    assert_eq!(app.focus, FocusPane::Prompt);
+    app.edit_input(|input| input.insert("继续打字"));
+    assert_eq!(app.input.text(), "已有草稿继续打字");
     assert!(
         app.transcript
             .iter()

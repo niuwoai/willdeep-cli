@@ -11,6 +11,11 @@ import type { RuntimeActivity, RuntimeGate } from "./RuntimeSidebar";
 import { queueText } from "./queueMessages";
 
 // 保留 App 的导航、目录引导、请求与会话状态，只省略无关的侧栏与设置面板。
+const desktop = vi.hoisted(() => ({ enabled: false }));
+vi.mock("./desktopHost", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./desktopHost")>(),
+  get isDesktop() { return desktop.enabled; },
+}));
 vi.mock("./RuntimeSidebar", () => ({ RuntimeSidebar: () => null }));
 vi.mock("./WorkflowSidebar", () => ({ WorkflowSidebar: () => null }));
 vi.mock("./ChildSessions", () => ({ ChildSessions: () => null, ChildSessionOrigin: () => null }));
@@ -34,11 +39,13 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); desktop.enabled = false; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof restored[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number } = {}) {
+function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof restored[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number } = {}) {
   let workspaces = options.workspaces ?? [first, other];
   let queueFailures = options.queueFailures ?? 0;
+  let forkFailures = options.forkFailures ?? 0;
+  let fork: typeof restored | undefined;
   const posts: { url: string; body: Record<string, unknown> }[] = [];
   const requests: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -56,13 +63,24 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof res
         workspaces = workspaces.map((item) => item.path === updated.path ? updated : item);
         return Response.json(updated);
       }
+      if (url === "/api/sessions/restored/fork") {
+        if (forkFailures-- > 0) return Response.json({ error: "fork unavailable" }, { status: 503 });
+        fork = { ...restored, id: "forked", title: typeof body.title === "string" ? body.title : `${restored.title} (fork)` };
+        return Response.json({ id: fork.id }, { status: 201 });
+      }
       if (url === "/api/sessions/restored/queue" && queueFailures-- > 0) return Response.json({ error: "queue unavailable" }, { status: 503 });
-      if (url === "/api/chat/stream") return Response.json({ error: "test ends at request" }, { status: 400 });
+      if (url === "/api/chat/stream") {
+        if (typeof options.chatResponse === "function" && init.signal) return options.chatResponse(init.signal);
+        return options.chatResponse instanceof Promise ? options.chatResponse : Response.json({ error: "test ends at request" }, { status: 400 });
+      }
       return Response.json({});
     }
     if (url === "/api/workspaces") return Response.json(workspaces);
-    if (url === "/api/sessions") return Response.json(options.sessions ?? []);
+    if (url === "/api/sessions") return Response.json([...(options.sessions ?? []), ...(fork ? [fork] : [])]);
+    if (fork && url === `/api/sessions/${fork.id}`) return Response.json({ ...fork, messages: [] });
     if (url === "/api/sessions/restored") return Response.json({ ...restored, messages: [], approval_mode: options.override ?? "strict", workspace_access: workspaces.find((item) => item.path === "/other")?.access ?? "smart" });
+    const detail = options.sessions?.find((item) => url === `/api/sessions/${item.id}`);
+    if (detail) return Response.json({ ...detail, messages: [], workspace_access: "smart" });
     if (url.startsWith("/api/composer?")) return Response.json({ commands: [], skills: [] });
     if (url.startsWith("/api/runtime/activity?")) return Response.json(options.activity ?? { tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
     if (url.startsWith("/api/runtime/events?")) return Response.json([]);
@@ -183,6 +201,58 @@ it("cross-directory session navigation guides first and preserves the session ov
   expect(posts.map((item) => item.url)).toEqual(["/api/workspaces/approval-mode"]);
 });
 
+async function mountForkSource(forkFailures = 0, draft = "") {
+  const view = mount({ workspaces: [{ ...other, active: true, approval_mode_configured: true }], sessions: [restored], forkFailures });
+  await ready("/other");
+  fireEvent.click(await screen.findByRole("button", { name: restored.title, hidden: true }, { timeout: 5000 }));
+  await waitFor(() => expect(state().sessionId).toBe(restored.id), { timeout: 5000 });
+  if (draft) fireEvent.change(view.container.querySelector("textarea")!, { target: { value: draft } });
+  const open = () => fireEvent.click(screen.getByRole("button", { name: t.forkSession, hidden: true }));
+  open();
+  const dialog = await screen.findByRole("dialog", { name: t.forkDialogTitle });
+  return { ...view, dialog, open };
+}
+
+it("cancels a session fork without creating one and resets the title on reopen", async () => {
+  const { dialog, open, posts } = await mountForkSource();
+  expect(within(dialog).getByText(restored.title)).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole("textbox", { name: t.forkTitleLabel }), { target: { value: "Discard this title" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: t.cancel }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: t.forkDialogTitle })).toBeNull());
+  expect(posts).toEqual([]);
+  expect(state().sessionId).toBe(restored.id);
+  open();
+  const input = await screen.findByRole<HTMLInputElement>("textbox", { name: t.forkTitleLabel });
+  expect(input.value).toBe("");
+});
+
+it.each([
+  { input: "  Follow-up  ", body: { title: "Follow-up" }, name: "Follow-up" },
+  { input: "   ", body: {}, name: `${restored.title} (fork)` },
+])("creates and opens the session fork in the same window with title $name", async ({ input, body, name }) => {
+  const openWindow = vi.spyOn(window, "open").mockReturnValue(null);
+  const { dialog, posts } = await mountForkSource(0, "Parent draft");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: t.forkTitleLabel }), { target: { value: input } });
+  fireEvent.click(within(dialog).getByRole("button", { name: t.forkConfirm }));
+  await waitFor(() => expect(state().sessionId).toBe("forked"));
+  expect(posts).toEqual([{ url: "/api/sessions/restored/fork", body }]);
+  expect(screen.getByRole("button", { name, hidden: true })).toBeTruthy();
+  expect(openWindow).not.toHaveBeenCalled();
+});
+
+it("keeps the title in the dialog when creating a session fork fails", async () => {
+  const { dialog, posts } = await mountForkSource(1);
+  const input = within(dialog).getByRole<HTMLInputElement>("textbox", { name: t.forkTitleLabel });
+  fireEvent.change(input, { target: { value: "Retry title" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: t.forkConfirm }));
+  expect((await within(dialog).findByRole("alert")).textContent).toContain("fork unavailable");
+  expect(input.value).toBe("Retry title");
+  expect(state().sessionId).toBe(restored.id);
+  fireEvent.click(within(dialog).getByRole("button", { name: t.forkConfirm }));
+  await waitFor(() => expect(state().sessionId).toBe("forked"));
+  expect(posts).toHaveLength(2);
+});
+
 const runningActivity: RuntimeActivity = {
   tools: [{ id: "read", session_id: "restored", turn_id: "turn", task_id: "task", agent_id: "agent", name: "read_file", status: "completed", started_at_ms: 1, completed_at_ms: 2 },
     { id: "list", session_id: "restored", turn_id: "turn", task_id: "task", agent_id: "agent", name: "list_directory", status: "running", started_at_ms: 3, completed_at_ms: null }],
@@ -198,6 +268,47 @@ async function mountRunning(activity = runningActivity, queueFailures = 0) {
   await waitFor(() => expect(view.requests.some((url) => url.includes("/api/runtime/activity?"))).toBe(true));
   return { ...view, composer: view.container.querySelector("textarea")! };
 }
+
+it("switches Desktop sessions after submission without opening a window or losing the draft", async () => {
+  desktop.enabled = true;
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const second = { ...restored, id: "second", title: "Other conversation" };
+  const encoder = new TextEncoder();
+  let activeSignal: AbortSignal | undefined;
+  let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  const { container, posts } = mount({
+    workspaces: [{ ...other, active: true, approval_mode_configured: true }],
+    sessions: [restored, second],
+    chatResponse: (signal) => {
+      activeSignal = signal;
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        stream = controller;
+        signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+      } }));
+    },
+  });
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const composer = container.querySelector("textarea")!;
+  fireEvent.change(composer, { target: { value: "Submit a turn" } });
+  fireEvent.keyDown(composer, { key: "Enter" });
+  await waitFor(() => expect(activeSignal).toBeDefined());
+
+  fireEvent.change(composer, { target: { value: "Keep this new draft" } });
+  fireEvent.click(screen.getByRole("button", { name: second.title, hidden: true }));
+  expect(activeSignal?.aborted).toBe(false);
+  expect(state().sessionId).toBe(restored.id);
+  stream?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "submitted", session_id: restored.id, turn_id: "turn" })}\n\n`));
+  await waitFor(() => expect(state().sessionId).toBe(second.id));
+  expect(activeSignal?.aborted).toBe(true);
+  expect(composer.value).toBe("");
+
+  fireEvent.click(screen.getByRole("button", { name: restored.title, hidden: true }));
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  expect(composer.value).toBe("Keep this new draft");
+  expect(posts.map((post) => post.url)).toEqual(["/api/chat/stream"]);
+  expect(open).not.toHaveBeenCalled();
+});
 
 function withoutRandomUUID() {
   const platformCrypto = globalThis.crypto;
@@ -217,6 +328,32 @@ it.each(["Enter", "button"])("%s submits chat with attachments when randomUUID i
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toMatchObject({ url: "/api/chat/stream", body: { prompt: "HTTP send regression", workspace: "/first", attachments: [{ kind: "text", content: "attachment line one\nattachment line two" }] } });
   expect(posts[0].body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+it("keeps a goal set while a chat request is awaiting its submitted event", async () => {
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  let finishChat!: (response: Response) => void;
+  const chatResponse = new Promise<Response>((resolve) => { finishChat = resolve; });
+  const { posts, container } = mount({ workspaces: [{ ...other, active: true, approval_mode_configured: true }], sessions: [restored], chatResponse });
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const composer = container.querySelector("textarea")!;
+  fireEvent.change(composer, { target: { value: "开始聊天" } });
+  fireEvent.keyDown(composer, { key: "Enter" });
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(screen.getByRole("button", { name: t.stop })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: t.goalMode }));
+  const editor = screen.getByRole("textbox", { name: t.goalMode });
+  fireEvent.focus(editor);
+  fireEvent.change(editor, { target: { value: "持续检查测试" } });
+  fireEvent.blur(editor);
+  expect(screen.getByText("持续检查测试")).toBeTruthy();
+
+  const event = { session_id: restored.id, turn_id: "goal-turn" };
+  finishChat(new Response(`data: ${JSON.stringify({ ...event, type: "submitted" })}\n\ndata: ${JSON.stringify({ ...event, type: "completed", text: "本轮完成" })}\n\n`));
+  await screen.findByRole("button", { name: t.send });
+  expect(screen.getByText("持续检查测试")).toBeTruthy();
+  expect(JSON.parse(localStorage.getItem(`willdeep.web.goal.${restored.id}`) ?? "null")).toEqual({ text: "持续检查测试", enabled: true });
 });
 
 it.each([false, true])("ordinary Enter durably queues a running session (randomUUID missing: %s)", async (missingUUID) => {

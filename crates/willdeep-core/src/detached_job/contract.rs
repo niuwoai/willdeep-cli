@@ -23,7 +23,16 @@ struct RecordedResult {
     finished_at: Option<u64>,
 }
 
+const TIMED_OUT_STATUS: &str = "timed_out";
+
 impl DetachedJobStore {
+    /// A preview has reached its scheduled stop only when the supervisor recorded a timeout.
+    pub fn is_expected_preview_expiry(&self, job: &DetachedJob, state: JobState) -> bool {
+        job.preview
+            && matches!(state, JobState::Finished { .. })
+            && self.recorded(&job.id).status.as_deref() == Some(TIMED_OUT_STATUS)
+    }
+
     /// 结束通知的正文（合同 v1）。还在跑的作业没有通知可发，返回 `None`。
     pub fn notice(&self, job: &DetachedJob) -> Option<String> {
         let state = self.state(job);
@@ -126,7 +135,7 @@ impl DetachedJobStore {
         Some(match self.recorded(&job.id).status.as_deref() {
             Some("completed") => NoticeStatus::Completed,
             Some("killed") => NoticeStatus::Killed,
-            Some("timed_out") => NoticeStatus::TimedOut,
+            Some(TIMED_OUT_STATUS) => NoticeStatus::TimedOut,
             Some("launch_failed") => NoticeStatus::LaunchFailed,
             Some(_) => NoticeStatus::Failed,
             // 老记录没有 result.json 里的状态：只能按退出码推。

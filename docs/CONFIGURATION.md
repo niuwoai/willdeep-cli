@@ -113,8 +113,8 @@ willdeep --profile anthropic --workspace . "检查当前项目"
 | `compressor_model` | 上下文压缩模型。some.im 会话默认走网关托管压缩（固定指令由服务端注入），其它 Provider 默认取会话模型 |
 | `compressor_profile` | 压缩专用的 Provider 档案名（`[providers.<id>]`）。设了之后压缩整套换到该档案的端点、协议、密钥、模型与窗口，主模型仍留在会话 Provider 上——云端主模型配本机压缩器靠的就是这一项。`compressor_model` 仍可覆盖档案里的模型名 |
 | `compressor_context_window` | 摘要器一次能吃下的原料上限所用的窗口。不写取压缩档案的 `context_window`，再没有就沿用会话窗口。本地模型窗口远小于云端会话时必须写 |
-| `compressor_candidate_timeout_seconds` | 单个候选一次摘要请求的等待上限，15–180 秒，不写是 60 秒。同一次压缩里超时的候选不再重试后续分块 |
-| `compressor_timeout_seconds` | 一次压缩的总预算，全部分块、归并和二次压缩共用，上限 600 秒。不写时按实际分块数计算（每块一次候选等待，再加归并和二次压缩各一次）；写了不能短于单段等待 |
+| `compressor_candidate_timeout_seconds` | 单个候选一次摘要请求的等待上限，15–600 秒，不写是 60 秒。同一次压缩里超时的候选不再重试后续分块 |
+| `compressor_timeout_seconds` | 一次压缩的总预算，全部分块、归并和二次压缩共用。显式设置最多 3600 秒且不能短于单段等待。不写时按实际分块数计算（每块一次候选等待，再加归并和二次压缩各一次） |
 
 压缩失败会依次落到下一个候选，最后兜底会话模型；`compressor_profile` 指向不存在的档案、窗口超出 `4000..=1048576`、两个超时超出区间或总预算短于单段等待，都会在启动时校验报错。压缩链本身**不**读 `[local_model]`：那一段的模型做坏了摘要不可逆，所以本地压缩必须显式配一个档案。
 

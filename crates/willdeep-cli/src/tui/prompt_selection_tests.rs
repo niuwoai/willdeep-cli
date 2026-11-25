@@ -712,8 +712,7 @@ fn prompt_selection_esc_reaches_an_asynchronous_approval() {
 #[test]
 fn prompt_selection_preserves_tabs_and_crlf_in_original_coordinates() {
     let original = "\t中\r\n\t🙂x";
-    let mut editor = PromptEditor::default();
-    editor.insert(original);
+    let mut editor = PromptEditor::with_existing_text(original.to_owned());
     editor.begin_selection_visual(0, 0, 6);
     // 与 Ratatui 一致：单独 Tab/CR 的字符串宽度为一列，字节偏移仍保留原文。
     editor.extend_selection_visual(1, 4, 6);
