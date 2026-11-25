@@ -27,6 +27,7 @@ mod child_sessions;
 mod client_events;
 mod composer;
 mod configuration;
+mod desktop;
 pub(crate) use configuration::safe_provider_id;
 mod failures;
 mod federation;
@@ -440,19 +441,22 @@ enum WebRuntimeGate {
 }
 
 pub async fn serve(config: WebConfig) -> Result<()> {
-    serve_internal(config, None).await
+    serve_internal(config, None, false).await
 }
 
 pub(crate) async fn serve_managed(
     config: WebConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    serve_internal(config, Some(shutdown)).await
+    serve_internal(config, Some(shutdown), false).await
 }
+
+pub(crate) use desktop::serve_desktop;
 
 async fn serve_internal(
     config: WebConfig,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    desktop_mode: bool,
 ) -> Result<()> {
     // 内置插件安装、插件包发现与 MCP 网关启动都不在启动路径上：它们由
     // `PluginWebState` 的惰性访问器在首个插件请求里完成。端口绑定与
@@ -627,13 +631,18 @@ async fn serve_internal(
             state.workspaces.clone(),
         ),
     )));
-    let app = app
-        .layer(DefaultBodyLimit::max(1024 * 1024))
-        .layer(middleware::from_fn(server_version_header));
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("bind Web server at {}", config.listen))?;
     let address = listener.local_addr()?;
+    let app = if desktop_mode {
+        desktop::protect(app.merge(desktop::routes(state.clone())), address)?
+    } else {
+        app
+    };
+    let app = app
+        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(middleware::from_fn(server_version_header));
     println!("WillDeep Web: http://{address}");
     if config.open_setup && address.ip().is_loopback() {
         let url = format!("http://{address}/?setup=1#configuration");

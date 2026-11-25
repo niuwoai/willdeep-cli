@@ -48,6 +48,7 @@ pub(crate) use agent_store::{RuntimeAgent as StoredAgent, load_agents};
 mod approval_modes;
 mod child_sessions;
 mod control_api;
+pub(crate) mod desktop_presence;
 mod detached_spawn;
 pub(crate) mod diff_review;
 mod event_stream;
@@ -1066,6 +1067,21 @@ async fn require_running(home: &Path) -> Result<DaemonState> {
         .await
         .context("Runtime is unavailable or its state is stale; query left its state unchanged")?;
     Ok(state)
+}
+
+pub(crate) async fn desktop_capabilities(
+    home: &Path,
+    start: bool,
+) -> Result<willdeep_runtime_protocol::RuntimeCapabilities> {
+    let state = if start {
+        ensure_running(home).await?
+    } else {
+        require_running(home).await?
+    };
+    Ok(runtime_client(&state)?
+        .capabilities(None)
+        .await?
+        .into_result()?)
 }
 
 async fn state_for_operation(

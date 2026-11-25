@@ -104,6 +104,7 @@
 | 文档 | 内容 |
 |---|---|
 | [CLI / TUI / Runtime 路线图](CLI_TUI_RUNTIME_ROADMAP.md) | 分阶段实施记录与验收 |
+| [Rust 桌面版规划](product/desktop.md) | macOS、Windows、Linux 首版，Web 工作台复用、Runtime 接入及 Xedit 设计参考 |
 | [完整子会话补齐方案](decisions/2026-11-04-child-sessions.md) | P0/P1 历史分期、身份边界与故障恢复契约 |
 | [完整子会话 P2](decisions/2026-11-05-child-sessions-p2.md) | 用户控制权、脱离投影、三档通知与不可变任务依赖 |
 | [Goal Teams 引用与落地映射](GOAL_TEAMS.md) | 执行期角色 / 版本锚定里程碑 / 归档规范（canonical 在 Xedit 仓库） |

@@ -72,6 +72,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { WorkflowCard } from "./WorkflowCard";
 import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
+import { DesktopChangesPanel, DesktopChangesToggle, DesktopVersions } from "./DesktopChanges";
+import { useDesktopChanges } from "./useDesktopChanges";
+import { desktopDraftId, desktopLocation, isDesktop, openDesktopProjectWindow, pickDesktopWorkspace, saveDesktopSelection } from "./desktopHost";
+import { desktopText } from "./desktopMessages";
 
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
 
@@ -304,6 +308,9 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 export function App() {
   const workflowClient = useQueryClient();
   const [language, setLanguage] = useState<Language>(detectLanguage); const t = messages[language];
+  const desktop = desktopText(language);
+  const [projectsHidden, setProjectsHidden] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(storedThemeMode);
   // 主题写在根元素上，样式表按 data-theme 取变量；跟随系统那档不写属性，交给
   // prefers-color-scheme。用 layout effect：它先于所有子组件的 effect 落地，
@@ -321,7 +328,7 @@ export function App() {
   const workspaces = workspaceApproval.workspaces;
   const [sessions, setSessions] = useState<Session[]>([]); const [sessionId, setSessionId] = useState("");
   const [sessionRelation, setSessionRelation] = useState<{ id: string; parent: string | null; readOnly: boolean; detached: boolean } | null>(null);
-  const deepLinkSession = useRef(new URLSearchParams(window.location.search).get("session"));
+  const deepLinkSession = useRef(desktopLocation().session);
   const startupSessions = useQuery({ queryKey: ["sessions", "workspace-entry"], queryFn: () => json<Session[]>("/api/sessions"), enabled: Boolean(deepLinkSession.current) && !initialWorkspaceRequested.current });
   // 项目树的展开与每个项目已加载的条数。默认只展开最近更新的项目，其余收起。
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -340,6 +347,8 @@ export function App() {
   // 这台实例的名字与 UUID。只在回环 Web 上读得到；读到之前先不渲染，免得闪一下占位。
   const [identity, setIdentity] = useState<IdentityView | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]); const [prompt, setPrompt] = useState("");
+  const desktopDrafts = useRef(new Map<string, { prompt: string; attachments: Attachment[] }>());
+  const desktopDraftKey = useRef("");
   // 轮次收尾时要从运行卡片里数工具步，而会话重载会把卡片整个换掉，先照一份镜像。
   const chatRef = useRef<ChatMessage[]>([]);
   useEffect(() => { chatRef.current = chat; }, [chat]);
@@ -612,7 +621,7 @@ export function App() {
     {pluginMenuError && <Text className="plugin-error" position="fixed" bottom="3" right="3" zIndex="50" borderRadius="8px" onClick={() => setPluginMenuError("")}>{t.pluginCommandFailed}: {pluginMenuError}</Text>}
   </>;
 
-  useEffect(() => { document.title = t.documentTitle; document.documentElement.lang = language; localStorage.setItem("willdeep.language", language); }, [language, t.documentTitle]);
+  useEffect(() => { document.title = isDesktop ? t.appName : t.documentTitle; document.documentElement.lang = language; localStorage.setItem("willdeep.language", language); }, [language, t.appName, t.documentTitle]);
   useEffect(() => { json<Health>("/health").then((value) => setVersion(value.version)).catch(() => setVersion("")); }, []);
   useEffect(() => { loadIdentity().then(setIdentity).catch(() => setIdentity(null)); }, []);
   useEffect(() => {
@@ -624,11 +633,12 @@ export function App() {
     const linkedId = deepLinkSession.current;
     if (linkedId && startupSessions.isPending) return;
     const linked = startupSessions.data?.find((item) => item.id === linkedId);
-    const target = workspaces.find((item) => item.path === linked?.workspace) ?? workspaces[0];
+    const location = desktopLocation();
+    const target = workspaces.find((item) => item.path === (linked?.workspace ?? location.workspace)) ?? workspaces[0];
     if (!target) return;
     initialWorkspaceRequested.current = true;
     deepLinkSession.current = null;
-    workspaceApproval.requestEntry(target, linked ? { session: { id: linked.id, turnId: linked.active_turn_id } } : {});
+    workspaceApproval.requestEntry(target, linked ? { session: { id: linked.id, turnId: linked.active_turn_id } } : { fresh: location.fresh });
   }, [workspaces, workspaceApproval, startupSessions.data, startupSessions.isPending]);
   useEffect(() => {
     if (!workspace) return;
@@ -744,6 +754,7 @@ export function App() {
       .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0) || b.updated_at - a.updated_at);
   }, [sessions, workspace, sessionQuery]);
   const selectedSession = useMemo(() => sessions.find((item) => item.id === sessionId), [sessions, sessionId]);
+  const desktopChanges = useDesktopChanges(workspace, sessionId, selectedSession?.updated_at ?? 0, isDesktop);
   const childParentId = selectedSession?.parent_session_id ?? (sessionRelation?.id === sessionId ? sessionRelation.parent : null);
   const childReadOnly = selectedSession?.delegation_read_only ?? (sessionRelation?.id === sessionId && sessionRelation.readOnly);
   const childDetached = selectedSession?.delegation_detached ?? (sessionRelation?.id === sessionId && sessionRelation.detached);
@@ -788,6 +799,8 @@ export function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
+    switchDesktopDraft(detail.workspace, detail.id);
+    saveDesktopSelection(detail.workspace, detail.id);
     // 取消是正常的插队/停止控制流，不应从最近一轮状态恢复成持久错误横幅。
     const failure = detail.failure?.message === "turn.cancelled" ? null : detail.failure;
     setError(failure ? runtimeFailureMessage(failure, t) : "");
@@ -853,6 +866,13 @@ export function App() {
       activeSessionRef.current = nextSessionId || null;
       activeTurnRef.current = nextTurnId || null;
       if (nextSessionId) localStorage.setItem(`${lastSessionPrefix}${workspace}`, nextSessionId);
+      if (isDesktop && nextSessionId) {
+        if (event.type === "submitted") {
+          desktopDrafts.current.delete(desktopDraftKey.current);
+          desktopDraftKey.current = desktopDraftId(workspace, nextSessionId);
+        }
+        saveDesktopSelection(workspace, nextSessionId);
+      }
       if (nextSessionId && nextTurnId) saveRuntimeCursor(nextSessionId, nextTurnId, event.cursor);
       if (event.type === "submitted" && pendingStopRef.current && activeTurnRef.current) await stopRemoteTurn(activeTurnRef.current);
       return { terminal: false as const };
@@ -1114,6 +1134,9 @@ export function App() {
   function enterWorkspace(target: Workspace, entry: WorkspaceEntry) {
     ++workspaceEntryRevision.current;
     const changed = target.path !== workspaceRef.current;
+    if (changed || entry.fresh) switchDesktopDraft(target.path, entry.session?.id ?? "");
+    if (entry.fresh) saveDesktopSelection(target.path, null);
+    if (isDesktop) setError("");
     workspaceRef.current = target.path;
     workspaceDefaultRef.current = target.access;
     // 引导选择写入工作区默认；这里只恢复入口携带的会话覆盖值。
@@ -1132,6 +1155,19 @@ export function App() {
       setPermissionsOpen(false); setSessionModel(null); setSessionModelProviderId(null); setSessionReasoningLevel(null);
       setDraftModel(null); setModelOpen(false); setShareOpen(false);
     }
+    if (isDesktop && entry.fresh) requestAnimationFrame(() => promptRef.current?.focus());
+  }
+
+  function switchDesktopDraft(path: string, id: string) {
+    if (!isDesktop) return;
+    const key = desktopDraftId(path, id);
+    const previous = desktopDraftKey.current;
+    if (previous === key) return;
+    if (previous) desktopDrafts.current.set(previous, { prompt: promptRef.current?.value ?? prompt, attachments: attachmentsRef.current });
+    const draft = desktopDrafts.current.get(key);
+    desktopDraftKey.current = key;
+    setPrompt(draft?.prompt ?? "");
+    setAttachments(draft?.attachments ?? []);
   }
 
   async function loadSession(id: string, activeTurnId: string | null = null) {
@@ -1164,6 +1200,8 @@ export function App() {
       // The current stream remains attached here; the independent conversation
       // opens with its own stream and approval controls.
       const url = new URL(window.location.href);
+      url.searchParams.delete("workspace");
+      url.searchParams.delete("fresh");
       url.searchParams.set("session", id);
       url.hash = "";
       window.open(url.toString(), "_blank", "noopener");
@@ -1273,18 +1311,51 @@ export function App() {
 
   // 加进来的工作区只影响这个浏览器视图能看到什么，不改 Runtime 的全局默认。
   // 非回环监听时后端会拒绝并说明理由——那条边界留在启动命令里。
-  async function addWorkspace() {
-    const path = newWorkspacePath.trim();
-    if (!path || busy) return;
+  async function addWorkspace(requested = newWorkspacePath) {
+    const path = requested.trim();
+    if (!path || (busy && !isDesktop)) return;
     const revision = ++workspaceEntryRevision.current;
     setWorkspaceError("");
     try {
       const added = await workspaceApproval.addWorkspace(path);
-      if (revision === workspaceEntryRevision.current) requestWorkspaceEntry(added, { fresh: true, added: true });
+      if (revision === workspaceEntryRevision.current) {
+        if (busy) openDesktopProjectWindow(added.path);
+        else requestWorkspaceEntry(added, { fresh: true, added: true });
+      }
     } catch (reason) {
       if (revision === workspaceEntryRevision.current) setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
     }
   }
+
+  function startProjectSession(project: Workspace) {
+    if (isDesktop && busy) openDesktopProjectWindow(project.path);
+    else requestWorkspaceEntry(project, { fresh: true });
+  }
+
+  const desktopActionHandlers = useRef({ addWorkspace, startProjectSession });
+  desktopActionHandlers.current = { addWorkspace, startProjectSession };
+  useEffect(() => {
+    if (!isDesktop) return;
+    const openFolder = (event: Event) => {
+      if (event instanceof CustomEvent && typeof event.detail === "string") {
+        void desktopActionHandlers.current.addWorkspace(event.detail);
+      }
+    };
+    const newSession = () => {
+      const current = workspaces.find((item) => item.path === workspaceRef.current);
+      if (current) desktopActionHandlers.current.startProjectSession(current);
+      else pickDesktopWorkspace();
+    };
+    const toggleChanges = () => setChangesOpen((open) => !open);
+    window.addEventListener("willdeep-desktop-workspace", openFolder);
+    window.addEventListener("willdeep-desktop-new-session", newSession);
+    window.addEventListener("willdeep-desktop-toggle-changes", toggleChanges);
+    return () => {
+      window.removeEventListener("willdeep-desktop-workspace", openFolder);
+      window.removeEventListener("willdeep-desktop-new-session", newSession);
+      window.removeEventListener("willdeep-desktop-toggle-changes", toggleChanges);
+    };
+  }, [workspaces]);
 
   function sessionRow(item: Session, depth: number) {
     const selected = sessionId === item.id;
@@ -1295,7 +1366,10 @@ export function App() {
         event.preventDefault();
         setPopup({ entries: sessionContextEntries, x: event.clientX, y: event.clientY, args: { session: item.id } });
       }}>
-      <button type="button" className="session-title" disabled={busy} onClick={() => void loadSession(item.id, item.active_turn_id)}>
+      <button type="button" className="session-title" disabled={busy && !isDesktop} onClick={() => {
+        if (isDesktop && busy) openRelatedSession(item.id, item.active_turn_id);
+        else void loadSession(item.id, item.active_turn_id);
+      }}>
         {item.parent_session_id && !item.delegation_detached && <span className="session-pin" title={childSessionsText(language).title} aria-label={childSessionsText(language).title}><GitFork size={12} /></span>}{item.active && <span className="session-active-dot" aria-hidden="true" />}{item.pinned_at != null && <span className="session-pin" title={t.pinned} aria-label={t.pinned}><Pin size={12} /></span>}
         {/* 标题没生成时后端会带回首条用户消息。显示它而不是一排
             一模一样的 New session——那些会话是有内容的。 */}
@@ -1661,12 +1735,12 @@ export function App() {
     </Flex></Box>;
   }
 
-  return <Box>{setupGuide}<Flex className="chat-workspace" minH="100vh" bg="var(--bg-page)" color="var(--text)">
+  return <Box>{setupGuide}<Flex className={isDesktop ? "chat-workspace desktop-workspace" : "chat-workspace"} minH="100vh" bg="var(--bg-page)" color="var(--text)">
     {railNav}
     {/* 侧栏本身不滚动：只有会话列表滚。这样列表能吃掉全部剩余高度，
         而不是被上面几块设置挤到下半屏。 */}
     {mobileSessionsOpen && <button className="session-sidebar-backdrop" aria-label={t.cancel} onClick={() => setMobileSessionsOpen(false)} />}
-    <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileSessionsOpen(false); }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
+    <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}${projectsHidden ? " desktop-projects-hidden" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileSessionsOpen(false); }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
       <Flex justify="space-between" align="flex-start" mb="5">
         <Box minW="0">
           <Flex align="center" gap="2">
@@ -1679,7 +1753,7 @@ export function App() {
       </Flex>
       {/* 项目是一棵树，不再用下拉框切换。加号贴在树的右上角。 */}
       <Flex gap="1" align="center" justify="flex-end">
-        <button type="button" className={`workspace-add${addingWorkspace ? " active" : ""}`} title={addingWorkspace ? t.cancel : t.addWorkspace} aria-label={addingWorkspace ? t.cancel : t.addWorkspace} aria-expanded={addingWorkspace} onClick={() => { setAddingWorkspace((current) => !current); setWorkspaceError(""); }}>
+        <button type="button" className={`workspace-add${addingWorkspace ? " active" : ""}`} title={addingWorkspace ? t.cancel : t.addWorkspace} aria-label={addingWorkspace ? t.cancel : t.addWorkspace} aria-expanded={isDesktop ? undefined : addingWorkspace} onClick={() => { if (isDesktop) pickDesktopWorkspace(); else setAddingWorkspace((current) => !current); setWorkspaceError(""); }}>
           <SfIcon name={addingWorkspace ? "sf:x.mark" : "sf:plus.circle"} size={15} />
         </button>
       </Flex>
@@ -1688,8 +1762,8 @@ export function App() {
           onChange={(event) => setNewWorkspacePath(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") void addWorkspace(); if (event.key === "Escape") { setAddingWorkspace(false); setWorkspaceError(""); } }} />
         <Text fontSize="2xs" color="var(--text-faint)" mt="1">{t.addWorkspaceHint}</Text>
-        {workspaceError && <Text fontSize="xs" color="var(--danger-text)" mt="1">{workspaceError}</Text>}
       </Box>}
+      {workspaceError && <Text role="alert" fontSize="xs" color="var(--danger-text)" mt="1">{workspaceError}</Text>}
       <RuntimeSidebar language={language} onOpenSession={openRelatedSession} workflowPanel={<WorkflowSidebar key={sessionId} parentSessionId={sessionId} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} />} onLoadRuns={(id, after) => json(`/api/runtime/agents/${encodeURIComponent(id)}/runs?workspace=${encodeURIComponent(workspace)}${after === undefined ? "" : `&after=${after}`}`)} activity={{ ...runtimeActivity, gates: visibleHumanGates }} events={runtimeEvents} onIgnoreEvent={ignoreRuntimeEvent} messages={t} onOpenGate={openRuntimeGate} onAgentAction={runAgentAction} canSpawnAgent={Boolean(sessionId) && !childReadOnly && (selectedSession?.active === true || activeRuntimeSessionId === sessionId)} onSpawnAgent={spawnRuntimeAgent} />
       {/* 会话区吃掉剩余高度。minH=0 是必须的：没有它，flex 子项的最小高度是
           内容高度，列表撑破容器而不是内部滚动。 */}
@@ -1717,7 +1791,7 @@ export function App() {
                   <span className="project-name">{project.name}</span>
                   <span className="project-count">{matched.length}</span>
                 </button>
-                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy} onClick={() => requestWorkspaceEntry(project, { fresh: true })}><SfIcon name="sf:plus.circle" size={13} /></button>
+                <button type="button" className="project-new" title={t.newSessionIn} aria-label={t.newSessionIn} disabled={busy && !isDesktop} onClick={() => startProjectSession(project)}><SfIcon name="sf:plus.circle" size={13} /></button>
               </div>
               {open && <VStack align="stretch" gap="1" className="project-sessions">
                 {rows.map((entry) => sessionRow(entry.session, entry.depth))}
@@ -1743,7 +1817,7 @@ export function App() {
         {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active} onClick={() => void forkSelectedSession()}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
         {rewindNotice && <Text mt="1" fontSize="xs" color="var(--text-dim)">{rewindNotice}</Text>}
       </Flex>
-      <Text as="footer" mt="5" pt="3" borderTop="1px solid" borderColor="var(--bg-panel-hover)" color="var(--text-ghost)" fontSize="2xs" textAlign="right">{t.version}: {version ? `v${version}` : "—"}</Text>
+      {isDesktop ? <DesktopVersions language={language} version={version} /> : <Text as="footer" mt="5" pt="3" borderTop="1px solid" borderColor="var(--bg-panel-hover)" color="var(--text-ghost)" fontSize="2xs" textAlign="right">{t.version}: {version ? `v${version}` : "—"}</Text>}
       {/* closeOnInteractOutside 必须显式写：zag 对 role="alertdialog" 默认关掉外部点击，
           于是这个框只认 Esc，点旁边的输入框什么也不发生。删除仍要点「删除」才发生，
           点外面等同取消，没有误删风险。 */}
@@ -1800,14 +1874,32 @@ export function App() {
       </Dialog.Root>
     </Box>
     <Flex flex="1" minW="0" className="conversation-with-schedules">
-    <header className="conversation-toolbar"><button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button><div className="conversation-location"><span className="conversation-project"><FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}</span>{selectedSession?.started_by && <span className="session-lineage">{t.sessionLineage.replace("{parent}", sessions.find((item) => item.id === selectedSession.started_by)?.title || selectedSession.started_by.slice(0, 8)).replace("{time}", lineageTime(selectedSession.created_at, t))}</span>}<h1>{selectedSession?.title || t.newSession}</h1></div><div className="conversation-tools">
+    <header className="conversation-toolbar">
+      <button className="mobile-session-toggle" aria-label={t.session} title={t.session} aria-expanded={mobileSessionsOpen} aria-controls="chat-session-sidebar" onClick={() => setMobileSessionsOpen((open) => !open)}><PanelLeft size={18} /></button>
+      {isDesktop && <button type="button" className="desktop-toolbar-button desktop-project-toggle"
+        aria-label={projectsHidden ? desktop.expandProjects : desktop.collapseProjects}
+        title={projectsHidden ? desktop.expandProjects : desktop.collapseProjects}
+        aria-expanded={!projectsHidden} aria-controls="chat-session-sidebar" onClick={() => setProjectsHidden((hidden) => !hidden)}><PanelLeft size={17} /></button>}
+      <div className="conversation-location">
+        <span className="conversation-project">
+          <FolderGit2 size={14} />{workspaces.find((item) => item.path === workspace)?.name || t.appName}
+          {desktopChanges.data?.branch && <span className="desktop-branch" title={desktopChanges.data.branch}><GitFork size={12} />{desktopChanges.data.branch}</span>}
+        </span>
+        {selectedSession?.started_by && <span className="session-lineage">{t.sessionLineage.replace("{parent}", sessions.find((item) => item.id === selectedSession.started_by)?.title || selectedSession.started_by.slice(0, 8)).replace("{time}", lineageTime(selectedSession.created_at, t))}</span>}
+        <h1>{selectedSession?.title || t.newSession}</h1>
+      </div>
+      <div className="conversation-tools">
+      {isDesktop && <DesktopChangesToggle language={language} count={desktopChanges.data?.snapshot?.files.length ?? 0}
+        open={changesOpen} onToggle={() => setChangesOpen((open) => !open)} />}
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
       {sessionId && !childReadOnly && <SharePanel key={`share-${sessionId}`} sessionId={sessionId} language={language} open={shareOpen} onOpenChange={setShareOpen} />}
       {sessionId && <ConversationSchedules key={sessionId} sessionId={sessionId} workspace={selectedSession?.workspace ?? workspace} workspaces={workspaces} language={language} messages={t} onOpenSession={(id, turnId) => void loadSession(id, turnId ?? undefined)} />}
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       {sessionId && childParentId && <ChildSessionOrigin key={`origin-${sessionId}`} parentId={childParentId} parentTitle={sessions.find((item) => item.id === childParentId)?.title} childId={sessionId} readOnly={childReadOnly} detached={childDetached} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
-      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text></Box>}
+      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text>
+        {isDesktop && !workspace && <Button mt="5" variant="outline" onClick={pickDesktopWorkspace}><FolderGit2 size={15} />{t.addWorkspace}</Button>}
+      </Box>}
         <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant">{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <>{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
@@ -1902,6 +1994,8 @@ export function App() {
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />
     </Container>
     </Flex>
+    {isDesktop && changesOpen && <DesktopChangesPanel key={desktopDraftId(workspace, sessionId)}
+      workspace={workspace} session={sessionId} language={language} query={desktopChanges} onClose={() => setChangesOpen(false)} />}
     {pluginOverlays}
   </Flex></Box>;
 }

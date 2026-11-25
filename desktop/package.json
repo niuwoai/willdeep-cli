@@ -1,0 +1,11 @@
+{
+  "name": "willdeep-desktop",
+  "private": true,
+  "version": "0.156.0-rc1",
+  "scripts": {
+    "bundle": "ruby bundle.rb"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
