@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { DesktopChangesPanel, DesktopChangesToggle, useDesktopChanges } from "./DesktopChanges";
+import { DesktopChangesPanel, DesktopChangesToggle } from "./DesktopChanges";
+import { useDesktopChanges } from "./useDesktopChanges";
 
 const workspace = "/fixture/workspace";
 const session = "fixture-session";

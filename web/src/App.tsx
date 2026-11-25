@@ -72,7 +72,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { WorkflowCard } from "./WorkflowCard";
 import { cacheWorkflow, workflowFromEvent, type WorkflowRun } from "./workflowApi";
-import { DesktopChangesPanel, DesktopChangesToggle, DesktopVersions, useDesktopChanges } from "./DesktopChanges";
+import { DesktopChangesPanel, DesktopChangesToggle, DesktopVersions } from "./DesktopChanges";
+import { useDesktopChanges } from "./useDesktopChanges";
 import { desktopDraftId, desktopLocation, isDesktop, openDesktopProjectWindow, pickDesktopWorkspace, saveDesktopSelection } from "./desktopHost";
 import { desktopText } from "./desktopMessages";
 
