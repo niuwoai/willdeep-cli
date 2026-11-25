@@ -529,6 +529,7 @@ pub(super) async fn event_loop(
     store: &SessionStore,
     runtime: &mut TuiRuntime,
     language: Language,
+    startup_mcp_notices: Vec<String>,
 ) -> Result<()> {
     // 先跟运行时对齐，再渲染。`runtime_event_head` 会在 CLI 版本变化时停掉旧
     // 守护进程、起一个新的，而新守护在恢复阶段会重写会话文件；把这一步放在
@@ -584,6 +585,7 @@ pub(super) async fn event_loop(
     app.load_transcript(display.as_ref().unwrap_or(session));
     // 首次使用与旧写法都在开屏说清楚，不让配置静默改变行为。
     app.transcript.extend(startup_notices(runtime, language));
+    app.transcript.extend(startup_mcp_notices);
     app.transcript_attachments
         .resize_with(app.transcript.len(), Vec::new);
     app.transcript_models

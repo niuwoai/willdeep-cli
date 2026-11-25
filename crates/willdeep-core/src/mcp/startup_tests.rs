@@ -102,6 +102,32 @@ fn wrapped_http_authorization_failure_retains_status() {
     assert_eq!(status["servers"][0]["authentication"]["state"], "required");
 }
 
+#[tokio::test]
+async fn recoverable_http_failure_is_delivered_to_startup_warning_sink() {
+    let variable = format!("WILLDEEP_TEST_MCP_{}", uuid::Uuid::new_v4().simple());
+    let configs = BTreeMap::from([(
+        "remote".to_owned(),
+        McpServerConfig {
+            url: Some("http://127.0.0.1:1/mcp".to_owned()),
+            bearer_token_env: Some(variable.clone()),
+            ..McpServerConfig::default()
+        },
+    )]);
+    assert!(std::env::var_os(&variable).is_none());
+    let mut warnings = Vec::new();
+    let registry = McpRegistry::connect_in_with_warnings(None, &configs, |kind, name, error| {
+        warnings.push((kind, name.to_owned(), error.to_string()));
+    })
+    .await
+    .expect("a remote configuration failure is recoverable");
+    assert_eq!(warnings.len(), 1);
+    let (kind, name, detail) = &warnings[0];
+    assert_eq!(*kind, McpStartupWarningKind::Unavailable);
+    assert_eq!(name, "remote");
+    assert!(detail.contains(&format!("environment variable {variable} is not set")));
+    assert!(registry.servers.is_empty());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn remote_handshake_error_reports_named_server_and_protocol_stage() {

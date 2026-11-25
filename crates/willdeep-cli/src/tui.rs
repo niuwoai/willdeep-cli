@@ -819,6 +819,9 @@ fn approval_decisions(always: bool) -> &'static [ApprovalDecision] {
         &APPROVAL_DECISIONS
     }
 }
+mod mcp_startup;
+pub(crate) use mcp_startup::mcp_startup_notice;
+
 pub type TuiRuntimeInputs = (
     mpsc::UnboundedSender<UiMessage>,
     mpsc::UnboundedReceiver<UiMessage>,
@@ -848,6 +851,7 @@ pub async fn run_with_splash(
     skills: Arc<SkillCatalog>,
     kernel: willdeep_core::EventKernel,
     kernel_store: willdeep_core::kernel_store::KernelStore,
+    startup_mcp_notices: Vec<String>,
     ui: TuiRuntimeInputs,
 ) -> Result<()> {
     let mut term = match splash.and_then(StartupSplash::into_terminal) {
@@ -884,7 +888,16 @@ pub async fn run_with_splash(
         tx: ui.0,
         rx: ui.1,
     };
-    let result = event_loop(&mut term, agent, &mut session, &store, &mut runtime, ui.6).await;
+    let result = event_loop(
+        &mut term,
+        agent,
+        &mut session,
+        &store,
+        &mut runtime,
+        ui.6,
+        startup_mcp_notices,
+    )
+    .await;
     // 收尾的三行要打在真实终端上：先把它的模式还回去，换行才会被正常处理。
     crate::gallery::restore_terminal();
     terminal::disable_raw_mode()?;
