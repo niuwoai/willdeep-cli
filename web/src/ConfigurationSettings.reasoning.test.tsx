@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
 import { ConfigurationSettings } from "./ConfigurationSettings";
-import { messages } from "./i18n";
+import { messages, type Language } from "./i18n";
 import { reasoningText } from "./reasoningMessages";
 import type { ReasoningProfile } from "./modelApi";
 
@@ -11,7 +11,7 @@ const t = messages["zh-CN"];
 const reasoning = reasoningText("zh-CN");
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(profile: ReasoningProfile, compact = false) {
+function mount(profile: ReasoningProfile, compact = false, language: Language = "zh-CN") {
   const snapshot = {
     revision: "first", default_provider: "preview", config_path: "/fixture/config.toml",
     providers: [{ id: "preview", provider: "openai-compatible", api: "chat-completions", api_base: compact ? "https://provider.example/v1" : "", model: "test-model", api_key_configured: true, reasoning: profile }],
@@ -25,10 +25,25 @@ function mount(profile: ReasoningProfile, compact = false) {
     return Response.json(snapshot);
   }));
   render(<ChakraProvider value={defaultSystem}>
-    <ConfigurationSettings messages={t} language="zh-CN" reasoningOnly={!compact} compact={compact} />
+    <ConfigurationSettings messages={messages[language]} language={language} reasoningOnly={!compact} compact={compact} />
   </ChakraProvider>);
   return updates;
 }
+
+it.each(["zh-CN", "en", "ja"] as const)("describes default and new logical level fields in %s", async (language) => {
+  mount({ default_level: null, parameter: null, levels: {} }, false, language);
+  const copy = reasoningText(language);
+  const examples = "minimal, low, medium, high, xhigh, max";
+  expect(await screen.findByRole("textbox", {
+    name: copy.defaultLevel,
+    description: copy.defaultLevelHint.replace("{levels}", examples),
+  })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: copy.addLevel }));
+  expect(screen.getByRole<HTMLInputElement>("textbox", {
+    name: copy.levelName,
+    description: copy.levelNameHint.replace("{levels}", examples),
+  }).value).toBe("");
+});
 
 it.each(["balanced", "__proto__"])("preserves all existing scalar mappings with default %s in a reasoning-only save", async (defaultLevel) => {
   const profile: ReasoningProfile = {

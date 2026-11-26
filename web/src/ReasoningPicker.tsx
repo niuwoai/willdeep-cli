@@ -4,13 +4,10 @@ import { ChevronDown, Gauge, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { changeReasoningLevel, loadDefaultModel, loadReasoningProviders, loadSessionReasoningState } from "./modelApi";
 import type { ReasoningProfile } from "./modelApi";
+import { CANONICAL_REASONING_LEVELS } from "./reasoningLevels";
 import { reasoningText } from "./reasoningMessages";
 import { useInspectorDismiss } from "./useInspectorDismiss";
 import "./permissionsPanel.css";
-
-/// 可识别的上游等级词表：只用来决定拉杆的档位顺序，不参与请求值。
-/// 配置映射里的自定义名字若能按数字或这套词表排序就上拉杆，否则保留下拉。
-const CANONICAL_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 function sliderLevels(
   profile: ReasoningProfile | null,
@@ -24,8 +21,8 @@ function sliderLevels(
   if (levels.every((name) => typeof values[name] === "number")) {
     return [...levels].sort((a, b) => Number(values[a]) - Number(values[b]));
   }
-  if (levels.every((name) => CANONICAL_LEVELS.includes(name))) {
-    return [...levels].sort((a, b) => CANONICAL_LEVELS.indexOf(a) - CANONICAL_LEVELS.indexOf(b));
+  if (levels.every((name) => CANONICAL_REASONING_LEVELS.includes(name))) {
+    return [...levels].sort((a, b) => CANONICAL_REASONING_LEVELS.indexOf(a) - CANONICAL_REASONING_LEVELS.indexOf(b));
   }
   return null;
 }
