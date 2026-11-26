@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
-use crate::daemon::diff_review::{self, DiffArea, DiffSnapshot};
+use crate::daemon::diff_review::{self, DiffArea, DiffAttributionRecord, DiffSnapshot};
 
 use super::{WebConfig, WebError, WebState};
 
@@ -177,6 +177,12 @@ impl DesktopAccess {
     }
 }
 
+pub(super) fn workspace_changes_routes() -> Router<Arc<WebState>> {
+    Router::new()
+        .route("/api/workspaces/changes", get(changes))
+        .route("/api/workspaces/changes/file", get(change_file))
+}
+
 pub(super) fn routes(state: Arc<WebState>) -> Router {
     Router::new()
         .route("/api/desktop/runtime", get(runtime_status))
@@ -262,7 +268,7 @@ async fn changes(
     Query(query): Query<ChangesQuery>,
 ) -> Result<Json<WorkspaceChanges>, WebError> {
     let workspace = changes_workspace(&state, &query.workspace, query.session).await?;
-    let Some(branch) = git_branch(&workspace).await? else {
+    let Some(branch) = git_worktree_branch(&workspace).await? else {
         return Ok(Json(WorkspaceChanges {
             git: false,
             branch: None,
@@ -273,7 +279,33 @@ async fn changes(
     let snapshot = diff_review::remote_snapshot(&state.home, &workspace)
         .await
         .map_err(WebError::from_anyhow)?;
-    let session_paths = attributed_paths(&state, &workspace, &snapshot, query.session).await;
+    let session_paths = if let Some(session) = query.session {
+        let path = diff_review::attribution_store_path(&state.home);
+        let workspace = snapshot.workspace.clone();
+        let snapshot_id = snapshot.id.clone();
+        match tokio::task::spawn_blocking(move || {
+            diff_review::load_attributions(&path)
+                .map(|records| attributed_paths(&records, &workspace, &snapshot_id, session))
+        })
+        .await
+        {
+            Ok(Ok(mut paths)) => {
+                let visible = snapshot
+                    .files
+                    .iter()
+                    .map(|file| &file.path)
+                    .collect::<BTreeSet<_>>();
+                paths.retain(|path| visible.contains(path));
+                Some(paths)
+            }
+            Ok(Err(_)) | Err(_) => {
+                eprintln!(r#"{{"level":"warn","event":"workspace_attribution_read_failed"}}"#);
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Json(WorkspaceChanges {
         git: true,
         branch,
@@ -282,36 +314,70 @@ async fn changes(
     }))
 }
 
-async fn git_branch(workspace: &FilePath) -> Result<Option<Option<String>>, WebError> {
-    let result = tokio::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(workspace)
-        .output()
-        .await
-        .map_err(|error| WebError::internal(format!("cannot inspect Git worktree: {error}")))?;
+async fn is_git_worktree_root(workspace: &FilePath) -> Result<bool, WebError> {
+    let output = git_worktree_command(
+        workspace,
+        &["rev-parse", "--show-prefix", "--is-inside-work-tree"],
+    )
+    .await?;
+    // Git snapshots use repository-relative paths. An allowed subdirectory must not
+    // implicitly authorize the rest of the repository.
+    Ok(output.status.success() && output.stdout == b"\ntrue\n")
+}
+
+async fn git_worktree_branch(workspace: &FilePath) -> Result<Option<Option<String>>, WebError> {
+    if !is_git_worktree_root(workspace).await? {
+        return Ok(None);
+    }
+    let result = git_worktree_command(workspace, &["branch", "--show-current"]).await?;
     Ok(result.status.success().then(|| {
         let branch = String::from_utf8_lossy(&result.stdout).trim().to_owned();
         (!branch.is_empty()).then_some(branch)
     }))
 }
 
-async fn attributed_paths(
-    state: &WebState,
+async fn git_worktree_command(
     workspace: &FilePath,
-    snapshot: &DiffSnapshot,
-    session: Option<Uuid>,
-) -> Option<BTreeSet<String>> {
-    let session = session?;
-    match diff_review::remote_attributions(&state.home, workspace, &snapshot.id).await {
-        Ok(records) => Some(
-            records
-                .into_iter()
-                .filter(|record| record.session_id == Some(session))
-                .flat_map(|record| record.paths)
-                .collect(),
-        ),
-        Err(_) => None,
+    args: &[&str],
+) -> Result<std::process::Output, WebError> {
+    tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .await
+        .map_err(|error| WebError::internal(format!("cannot inspect Git worktree: {error}")))
+}
+
+fn attributed_paths(
+    records: &[DiffAttributionRecord],
+    workspace: &FilePath,
+    snapshot_id: &str,
+    session: Uuid,
+) -> BTreeSet<String> {
+    let mut cursor = snapshot_id;
+    let mut current = BTreeSet::new();
+    let mut other = BTreeSet::new();
+    // Follow only the continuous suffix in append order. An external edit or an
+    // overlapping tool window can break the chain. Never jump across that gap.
+    for record in records
+        .iter()
+        .rev()
+        .filter(|record| record.workspace == workspace)
+    {
+        if record.after_snapshot_id != cursor {
+            break;
+        }
+        cursor = &record.before_snapshot_id;
+        for path in &record.paths {
+            if record.session_id == Some(session) && record.confirmed_paths.contains(path) {
+                current.insert(path.clone());
+            } else {
+                other.insert(path);
+            }
+        }
     }
+    current.retain(|path| !other.contains(path));
+    current
 }
 
 #[derive(Deserialize)]
@@ -321,6 +387,8 @@ struct ChangeFileQuery {
     session: Option<Uuid>,
     snapshot_id: String,
     path: String,
+    #[serde(default)]
+    area: DiffArea,
 }
 
 async fn change_file(
@@ -328,15 +396,28 @@ async fn change_file(
     Query(query): Query<ChangeFileQuery>,
 ) -> Result<Json<serde_json::Value>, WebError> {
     let workspace = changes_workspace(&state, &query.workspace, query.session).await?;
+    if !is_git_worktree_root(&workspace).await? {
+        return Err(WebError::not_found("workspace is not a Git worktree root"));
+    }
     let content = diff_review::remote_content(
         &state.home,
         &workspace,
         &query.snapshot_id,
         &query.path,
-        DiffArea::Combined,
+        query.area,
     )
     .await
-    .map_err(WebError::from_anyhow)?;
+    .map_err(|error| {
+        use willdeep_runtime_protocol::{ApiError, ErrorCode};
+        match error.downcast_ref::<ApiError>().map(|error| error.code) {
+            Some(ErrorCode::StaleSnapshot) => WebError::conflict("refresh the workspace snapshot"),
+            Some(ErrorCode::NotFound) => {
+                WebError::not_found("file is not in the workspace snapshot")
+            }
+            Some(ErrorCode::Forbidden) => WebError::forbidden("workspace is unavailable"),
+            _ => WebError::from_anyhow(error),
+        }
+    })?;
     Ok(Json(serde_json::json!({ "content": content })))
 }
 
@@ -372,6 +453,82 @@ async fn changes_workspace(
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+
+    #[test]
+    fn workspace_attribution_uses_only_the_continuous_same_workspace_suffix() {
+        use diff_review::AttributionConfidence;
+        let workspace = FilePath::new("/workspace");
+        let selected = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let record = |root: &FilePath,
+                      session,
+                      before: &str,
+                      after: &str,
+                      paths: &[&str],
+                      confirmed: &[&str]| {
+            DiffAttributionRecord {
+                id: Uuid::new_v4(),
+                workspace: root.to_path_buf(),
+                session_id: Some(session),
+                turn_id: None,
+                task_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+                before_snapshot_id: before.to_owned(),
+                after_snapshot_id: after.to_owned(),
+                tool: "write_file".to_owned(),
+                paths: paths.iter().map(|path| path.to_string()).collect(),
+                confirmed_paths: confirmed.iter().map(|path| path.to_string()).collect(),
+                path_states: Vec::new(),
+                confidence: AttributionConfidence::ToolWindow,
+                created_at: 0,
+            }
+        };
+        let records = [
+            record(workspace, selected, "before", "s1", &["too-old.txt"], &[]),
+            record(
+                workspace,
+                selected,
+                "s2",
+                "s3",
+                &["ours.txt", "shared.txt", "then-unknown.txt", "external.txt"],
+                &["ours.txt", "shared.txt", "then-unknown.txt"],
+            ),
+            record(
+                workspace,
+                other,
+                "s3",
+                "s4",
+                &["theirs.txt", "shared.txt"],
+                &["theirs.txt", "shared.txt"],
+            ),
+            record(
+                workspace,
+                selected,
+                "s4",
+                "s5",
+                &["then-unknown.txt", "legacy.txt"],
+                &[],
+            ),
+            record(
+                FilePath::new("/different"),
+                selected,
+                "s4",
+                "s5",
+                &["different.txt"],
+                &["different.txt"],
+            ),
+        ];
+        assert_eq!(
+            attributed_paths(&records, workspace, "s5", selected),
+            BTreeSet::from(["ours.txt".to_owned()])
+        );
+        assert_eq!(
+            attributed_paths(&records, workspace, "s5", other),
+            BTreeSet::from(["theirs.txt".to_owned()])
+        );
+        assert!(attributed_paths(&records, workspace, "edited-outside-tools", selected).is_empty());
+        assert!(attributed_paths(&records, workspace, "s1", selected).is_empty());
+    }
 
     #[tokio::test]
     async fn bootstrap_commits_a_document_before_navigating_with_the_strict_cookie() {

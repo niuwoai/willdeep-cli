@@ -2103,6 +2103,7 @@ mod tests {
             tool: "edit_file".to_owned(),
             paths: vec![path.to_owned()],
             path_states: Vec::new(),
+            confirmed_paths: Vec::new(),
             confidence: AttributionConfidence::ToolWindow,
             created_at: 15,
         };
@@ -2275,6 +2276,7 @@ mod tests {
             tool: "edit_file".to_owned(),
             paths: paths.into_iter().map(str::to_owned).collect(),
             path_states: states,
+            confirmed_paths: Vec::new(),
             confidence: AttributionConfidence::ToolWindow,
             created_at: 15,
         };
@@ -2383,6 +2385,7 @@ mod tests {
                 AttributedPathState::Clean,
                 AttributedPathState::TrackedDirty,
             ],
+            confirmed_paths: Vec::new(),
             confidence: AttributionConfidence::ToolWindow,
             created_at: 15,
         };

@@ -22,6 +22,7 @@ async fn create_receipt_uses_written_content_preserves_summary_and_handles_empty
         assert_eq!(fixture.text(path), content);
         let receipt: Value = serde_json::from_str(&output).unwrap();
         assert_eq!(receipt["status"], "created");
+        assert_eq!(receipt["files_touched"], json!([path]));
         assert_eq!(
             receipt["message"],
             format!("created {requested} ({} bytes)", content.len())

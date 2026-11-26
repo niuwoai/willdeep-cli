@@ -2136,6 +2136,7 @@ impl ToolRegistry {
         )]);
         Ok(json!({
             "status": "created",
+            "files_touched": [reported_path],
             "message": format!("created {} ({} bytes)", args.path, args.content.len()),
             "edit_display": edit_display,
         })

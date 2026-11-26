@@ -743,7 +743,7 @@ export function App() {
       .sort((a, b) => (b.pinned_at ?? 0) - (a.pinned_at ?? 0) || b.updated_at - a.updated_at);
   }, [sessions, workspace, sessionQuery]);
   const selectedSession = useMemo(() => sessions.find((item) => item.id === sessionId), [sessions, sessionId]);
-  const desktopChanges = useDesktopChanges(workspace, sessionId, selectedSession?.updated_at ?? 0, isDesktop);
+  const desktopChanges = useDesktopChanges(workspace, sessionId, selectedSession?.updated_at ?? 0, isDesktop || changesOpen);
   const childParentId = selectedSession?.parent_session_id ?? (sessionRelation?.id === sessionId ? sessionRelation.parent : null);
   const childReadOnly = selectedSession?.delegation_read_only ?? (sessionRelation?.id === sessionId && sessionRelation.readOnly);
   const childDetached = selectedSession?.delegation_detached ?? (sessionRelation?.id === sessionId && sessionRelation.detached);
@@ -1946,7 +1946,7 @@ export function App() {
         <h1>{selectedSession?.title || t.newSession}</h1>
       </div>
       <div className="conversation-tools">
-      {isDesktop && <DesktopChangesToggle language={language} count={desktopChanges.data?.snapshot?.files.length ?? 0}
+      {workspace && <DesktopChangesToggle language={language} count={desktopChanges.data?.snapshot?.files.length ?? 0}
         open={changesOpen} onToggle={() => setChangesOpen((open) => !open)} />}
       {sessionId && <SessionCollaboration key={`peers-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={(id) => void loadSession(id)} />}
       {sessionId && !childReadOnly && <SharePanel key={`share-${sessionId}`} sessionId={sessionId} language={language} open={shareOpen} onOpenChange={setShareOpen} />}
@@ -2068,7 +2068,7 @@ export function App() {
       <QuickSettings messages={t} language={language} onLanguageChange={setLanguage} theme={theme} onThemeChange={setTheme} />
     </Container>
     </Flex>
-    {isDesktop && changesOpen && <DesktopChangesPanel key={desktopDraftId(workspace, sessionId)}
+    {workspace && changesOpen && <DesktopChangesPanel key={desktopDraftId(workspace, sessionId)}
       workspace={workspace} session={sessionId} language={language} query={desktopChanges} onClose={() => setChangesOpen(false)} />}
     {pluginOverlays}
   </Flex></Box>;

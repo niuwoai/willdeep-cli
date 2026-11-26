@@ -3,23 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { FileDiff, RefreshCw, X } from "lucide-react";
 import type { Language } from "./i18n";
 import { desktopText } from "./desktopMessages";
-import { useDesktopChanges } from "./useDesktopChanges";
+import { readDesktop, staleChanges, useDesktopChanges, useWorkspaceFileDiff, type ChangedFile, type DiffArea } from "./useDesktopChanges";
 import "./desktopWorkspace.css";
 
 type RuntimeVersion = { desktop_version: string; runtime_version: string; protocol_version: string };
-const changesEndpoint = "/api/desktop/changes";
-
-async function readDesktop<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal });
-  if (!response.ok) throw new Error(String(response.status));
-  return await response.json() as T;
-}
-
-function changesParams(workspace: string, session: string) {
-  const params = new URLSearchParams({ workspace });
-  if (session) params.set("session", session);
-  return params;
-}
 
 export function DesktopVersions({ language, version }: { language: Language; version: string }) {
   const t = desktopText(language);
@@ -51,19 +38,16 @@ export function DesktopChangesPanel({ language, workspace, session, query, onClo
 }) {
   const t = desktopText(language);
   const changes = query.data;
-  const [selectedPath, selectPath] = useState<string | null>(null);
-  const file = changes?.snapshot?.files.find((row) => row.path === selectedPath);
-  const snapshot = changes?.snapshot?.id;
-  const diff = useQuery({
-    queryKey: ["desktop-diff", workspace, session, snapshot, file?.path],
-    queryFn: ({ signal }) => {
-      const params = changesParams(workspace, session);
-      params.set("snapshot_id", snapshot ?? "");
-      params.set("path", file?.path ?? "");
-      return readDesktop<{ content: string }>(`${changesEndpoint}/file?${params}`, signal);
-    },
-    enabled: Boolean(file && !file.binary && snapshot),
-  });
+  const [selection, setSelection] = useState<{ path: string; area: DiffArea } | null>(null);
+  const files = changes?.snapshot?.files ?? [];
+  const attributedPaths = new Set(changes?.session_paths);
+  const sessionFiles = session ? files.filter((row) => attributedPaths.has(row.path)) : [];
+  const workspaceFiles = session ? files.filter((row) => !attributedPaths.has(row.path)) : files;
+  const file = files.find((row) => row.path === selection?.path);
+  const area = file?.staged && (!file.unstaged || selection?.area === "staged") ? "staged" : "unstaged";
+  const binary = file?.binary && !(file.staged && file.unstaged);
+  const diff = useWorkspaceFileDiff(workspace, session, changes?.snapshot?.id, binary ? undefined : file?.path, area);
+  const selectFile = (row: ChangedFile) => setSelection({ path: row.path, area: row.staged ? "staged" : "unstaged" });
   return <>
     <button type="button" className="desktop-changes-backdrop" aria-label={t.close} onClick={onClose} />
     <aside id="desktop-changes" className="desktop-changes" aria-label={t.changes}
@@ -80,24 +64,41 @@ export function DesktopChangesPanel({ language, workspace, session, query, onClo
         {query.isError && <p role="alert" className="desktop-changes-message">{t.failed}</p>}
         {changes && !changes.git && <p className="desktop-changes-message">{t.noGit}</p>}
         {changes?.snapshot?.files.length === 0 && <p className="desktop-changes-message">{t.empty}</p>}
-        {changes?.snapshot?.files.length ? <ul className="desktop-changes-list">
-          {changes.snapshot.files.map((row) => <li key={row.path}>
-            <button type="button" aria-pressed={row.path === file?.path} title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}
-              onClick={() => selectPath(row.path)}>
-              <span className="desktop-change-path">{row.path}</span>
-              <span className="desktop-change-add">+{row.additions}</span><span className="desktop-change-remove">−{row.deletions}</span>
-              {session && <small>{changes.session_paths?.includes(row.path) ? t.fromSession : changes.session_paths ? t.workspaceChange : t.attributionUnknown}</small>}
-            </button>
-          </li>)}
-        </ul> : null}
-        {changes?.snapshot?.files.length && !file ? <p className="desktop-changes-message">{t.pickFile}</p> : null}
-        {file?.binary && <p className="desktop-changes-message">{t.binary}</p>}
-        {file && !file.binary && diff.isPending && <p role="status" className="desktop-changes-message">{t.loading}</p>}
-        {diff.isError && <p role="alert" className="desktop-changes-message">{t.failed}</p>}
-        {diff.data && (diff.data.content ? <Patch content={diff.data.content} /> : <p className="desktop-changes-message">{t.noDiff}</p>)}
+        {sessionFiles.length > 0 && <ChangesList title={t.fromSession} rows={sessionFiles} selectedPath={file?.path} onSelect={selectFile} />}
+        {workspaceFiles.length > 0 && <ChangesList title={session ? t.otherChanges : undefined} rows={workspaceFiles} selectedPath={file?.path} onSelect={selectFile} />}
+        {files.length > 0 && !file && <p className="desktop-changes-message">{t.pickFile}</p>}
       </div>
+      {file && <section className="desktop-change-detail" aria-label={t.fileDiff}>
+        <h3 title={file.path}>{file.path}</h3>
+        {sessionFiles.some((row) => row.path === file.path) && <p className="desktop-change-scope">{t.attributionScope}</p>}
+        {file.staged && file.unstaged ? <div className="desktop-change-areas" role="group" aria-label={t.fileDiff}>
+          <button type="button" aria-pressed={area === "staged"} onClick={() => setSelection({ path: file.path, area: "staged" })}>{t.staged}</button>
+          <button type="button" aria-pressed={area === "unstaged"} onClick={() => setSelection({ path: file.path, area: "unstaged" })}>{t.unstaged}</button>
+        </div> : <p className="desktop-change-scope">{file.kind === "untracked" ? t.untracked : area === "staged" ? t.staged : t.unstaged}</p>}
+        {binary && <p className="desktop-changes-message">{t.binary}</p>}
+        {!binary && diff.isPending && <p role="status" className="desktop-changes-message">{t.loading}</p>}
+        {diff.isError ? <p role="alert" className="desktop-changes-message">{staleChanges(diff.error) ? t.staleSnapshot : t.failed}</p>
+          : diff.data && (diff.data.content ? <Patch content={diff.data.content} /> : <p className="desktop-changes-message">{t.noDiff}</p>)}
+      </section>}
     </aside>
   </>;
+}
+
+function ChangesList({ title, rows, selectedPath, onSelect }: {
+  title?: string; rows: ChangedFile[]; selectedPath?: string; onSelect: (row: ChangedFile) => void;
+}) {
+  return <section aria-label={title}>
+    {title && <h3 className="desktop-changes-group">{title}</h3>}
+    <ul className="desktop-changes-list">
+      {rows.map((row) => <li key={row.path}>
+        <button type="button" aria-pressed={row.path === selectedPath} title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}
+          onClick={() => onSelect(row)}>
+          <span className="desktop-change-path">{row.path}</span>
+          <span className="desktop-change-add">+{row.additions}</span><span className="desktop-change-remove">−{row.deletions}</span>
+        </button>
+      </li>)}
+    </ul>
+  </section>;
 }
 
 function Patch({ content }: { content: string }) {
