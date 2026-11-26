@@ -336,9 +336,18 @@ async fn runtime_sink_attributes_child_agent_file_changes_without_chat_metadata(
     sink.emit(willdeep_core::AgentEvent::ToolRequested(root_call.clone()))
         .await;
     std::fs::write(workspace.join("root.txt"), "root change\n").unwrap();
+    std::fs::write(
+        workspace.join("external.txt"),
+        "edited during tool execution\n",
+    )
+    .unwrap();
     sink.emit(willdeep_core::AgentEvent::ToolCompleted {
         call: root_call,
-        output: "created".to_owned(),
+        output: serde_json::json!({
+            "status": "applied",
+            "files_touched": ["root.txt", "absent.txt"],
+        })
+        .to_string(),
         is_error: false,
     })
     .await;
@@ -364,8 +373,10 @@ async fn runtime_sink_attributes_child_agent_file_changes_without_chat_metadata(
     assert_eq!(records[0].session_id, Some(session_id));
     assert_eq!(records[0].turn_id, Some(turn_id));
     assert_eq!(records[0].paths, vec!["child.txt"]);
+    assert!(records[0].confirmed_paths.is_empty());
     assert_eq!(records[1].agent_id, root_agent_id);
-    assert_eq!(records[1].paths, vec!["root.txt"]);
+    assert_eq!(records[1].paths, vec!["external.txt", "root.txt"]);
+    assert_eq!(records[1].confirmed_paths, vec!["root.txt"]);
     let tool_records = tools
         .list(willdeep_runtime_protocol::ListToolsParams {
             task_id: Some(task_id),

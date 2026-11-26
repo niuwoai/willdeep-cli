@@ -738,7 +738,7 @@ async fn download_image(target: &str) -> Result<Vec<u8>, String> {
     Err("image redirect limit exceeded".to_owned())
 }
 
-fn decode_image(bytes: &[u8]) -> Result<DynamicImage, String> {
+pub(super) fn decode_image(bytes: &[u8]) -> Result<DynamicImage, String> {
     let cursor = Cursor::new(bytes);
     let mut reader = image::ImageReader::new(cursor)
         .with_guessed_format()

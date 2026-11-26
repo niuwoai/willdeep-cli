@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ConversationItem } from "./ConversationCard";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { messages } from "./i18n";
@@ -9,6 +11,7 @@ import type { WorkspaceAccess } from "./accessModes";
 import type { WorkspaceSummary } from "./workspaceApprovalApi";
 import type { RuntimeActivity, RuntimeGate } from "./RuntimeSidebar";
 import { queueText } from "./queueMessages";
+import { appendSelectionQuote } from "./useChatSelection";
 
 // 保留 App 的导航、目录引导、请求与会话状态，只省略无关的侧栏与设置面板。
 const desktop = vi.hoisted(() => ({ enabled: false }));
@@ -41,7 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); desktop.enabled = false; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof restored[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number } = {}) {
+function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof restored[]; history?: ConversationItem[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number } = {}) {
   let workspaces = options.workspaces ?? [first, other];
   let queueFailures = options.queueFailures ?? 0;
   let forkFailures = options.forkFailures ?? 0;
@@ -78,7 +81,7 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof res
     if (url === "/api/workspaces") return Response.json(workspaces);
     if (url === "/api/sessions") return Response.json([...(options.sessions ?? []), ...(fork ? [fork] : [])]);
     if (fork && url === `/api/sessions/${fork.id}`) return Response.json({ ...fork, messages: [] });
-    if (url === "/api/sessions/restored") return Response.json({ ...restored, messages: [], approval_mode: options.override ?? "strict", workspace_access: workspaces.find((item) => item.path === "/other")?.access ?? "smart" });
+    if (url === "/api/sessions/restored") return Response.json({ ...restored, messages: options.history ?? [], approval_mode: options.override ?? "strict", workspace_access: workspaces.find((item) => item.path === "/other")?.access ?? "smart" });
     const detail = options.sessions?.find((item) => url === `/api/sessions/${item.id}`);
     if (detail) return Response.json({ ...detail, messages: [], workspace_access: "smart" });
     if (url.startsWith("/api/composer?")) return Response.json({ commands: [], skills: [] });
@@ -412,4 +415,189 @@ it.each([false, true])("failed queue submission preserves draft, attachments and
   expect(posts[1].body).toEqual(posts[0].body);
   expect(posts[0].body.attachments).toEqual([{ kind: "text", name: `${t.pastedText}-1.txt`, content: "attachment line one\nattachment line two" }]);
   expect(composer.value).toBe("");
+});
+
+const selectionReply = "Before read exactly after";
+const selectedPassage = " read exactly ";
+
+async function mountTranscript(chatResponse?: (signal: AbortSignal) => Response) {
+  const second = { ...restored, id: "other-chat", title: "Other conversation" };
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const view = mount({
+    workspaces: [{ ...other, active: true, approval_mode_configured: true }],
+    sessions: [restored, second], history: [{ role: "assistant", content: `${selectionReply}\n\n[Other link](#fixture)`, attachment_count: 0 }], chatResponse,
+  });
+  const message = await screen.findByText(selectionReply);
+  const viewport = screen.getByRole("region", { name: t.chatTranscript });
+  const composer = view.container.querySelector("textarea")!;
+  return { ...view, message, viewport, composer, second };
+}
+
+function selectPassage(message: HTMLElement) {
+  const range = document.createRange();
+  const start = selectionReply.indexOf(selectedPassage);
+  range.setStart(message.firstChild!, start);
+  range.setEnd(message.firstChild!, start + selectedPassage.length);
+  Object.defineProperty(range, "getBoundingClientRect", { value: () => new DOMRect() });
+  const selection = window.getSelection()!;
+  fireEvent(message, new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent(message, new MouseEvent("pointerup", { bubbles: true, button: 0 }));
+  return selection;
+}
+
+it("copies the exact selection without a plugin or removing the user's highlight", async () => {
+  const user = userEvent.setup();
+  const { message, posts } = await mountTranscript();
+  const selection = selectPassage(message);
+  await user.click(within(screen.getByRole("group", { name: t.chatSelectionActions })).getByRole("button", { name: t.copyCode }));
+  await screen.findByText(t.copiedCode);
+  expect(await navigator.clipboard.readText()).toBe(selectedPassage);
+  expect(selection.toString()).toBe(selectedPassage);
+  expect(posts).toEqual([]);
+});
+
+it("preserves indentation, blank lines, and long selections in Markdown quotes", () => {
+  const longLine = "x".repeat(4001);
+  expect(appendSelectionQuote("Original\n\n", `  first  \n\n${longLine}`)).toBe(`Original\n\n>   first  \n> \n> ${longLine}\n\n`);
+});
+
+it("allows keyboard activation and quotes the selection into the current draft without sending", async () => {
+  const user = userEvent.setup();
+  const { message, viewport, composer, posts } = await mountTranscript();
+  fireEvent.change(composer, { target: { value: "Keep this draft\n" } });
+  viewport.focus();
+  selectPassage(message);
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  const actions = within(screen.getByRole("group", { name: t.chatSelectionActions }));
+  expect(document.activeElement).toBe(actions.getByRole("button", { name: t.copyCode }));
+  await user.tab();
+  expect(document.activeElement).toBe(actions.getByRole("button", { name: t.chatAddToTask }));
+  await user.keyboard("{Enter}");
+  expect(composer.value).toBe(`Keep this draft\n\n> ${selectedPassage}\n\n`);
+  await waitFor(() => expect(document.activeElement).toBe(composer));
+  expect(composer.selectionStart).toBe(composer.value.length);
+  expect(state().sessionId).toBe(restored.id);
+  expect(posts).toEqual([]);
+});
+
+it.each(["/model local", "/name example", "/permissions smart", "/goal finish"])("submits a quoted %s draft as chat text", async (draft) => {
+  const { message, composer, posts } = await mountTranscript();
+  const quoted = appendSelectionQuote(draft, selectedPassage);
+  fireEvent.change(composer, { target: { value: draft } });
+  selectPassage(message);
+  fireEvent.click(screen.getByRole("button", { name: t.chatAddToTask }));
+  expect(composer.value).toBe(quoted);
+  expect(posts).toEqual([]);
+  fireEvent.keyDown(composer, { key: "Enter" });
+  await waitFor(() => expect(posts).toMatchObject([{ url: "/api/chat/stream", body: { prompt: quoted.trim(), session_id: restored.id } }]));
+});
+
+it("dismisses selection actions when the live range shrinks to whitespace", async () => {
+  const { message } = await mountTranscript();
+  const selection = selectPassage(message);
+  expect(screen.getByRole("group", { name: t.chatSelectionActions })).toBeTruthy();
+  const range = selection.getRangeAt(0);
+  range.setEnd(range.startContainer, range.startOffset + 1);
+  fireEvent(document, new Event("selectionchange"));
+  expect(selection.toString()).toBe(" ");
+  expect(screen.queryByRole("group", { name: t.chatSelectionActions })).toBeNull();
+});
+
+it("dismisses selection actions on nested scroll and keeps the highlight", async () => {
+  const { message } = await mountTranscript();
+  const selection = selectPassage(message);
+  expect(screen.getByRole("group", { name: t.chatSelectionActions })).toBeTruthy();
+  fireEvent.scroll(message);
+  expect(screen.queryByRole("group", { name: t.chatSelectionActions })).toBeNull();
+  expect(selection.toString()).toBe(selectedPassage);
+});
+
+it("preserves the native context menu of an unrelated link", async () => {
+  const { message } = await mountTranscript();
+  const link = screen.getByRole("link", { name: "Other link" });
+  link.focus();
+  const selection = selectPassage(message);
+  expect(selection.toString()).toBe(selectedPassage);
+  expect(fireEvent.keyDown(link, { shiftKey: true, key: "F10" })).toBe(true);
+  expect(fireEvent.contextMenu(link)).toBe(true);
+  expect(document.activeElement).toBe(link);
+  expect(fireEvent.contextMenu(message)).toBe(false);
+});
+
+it("dismisses selection controls on scroll, Escape, and session change", async () => {
+  const { message, viewport, second } = await mountTranscript();
+  const selection = selectPassage(message);
+  expect(screen.getByRole("group", { name: t.chatSelectionActions })).toBeTruthy();
+  fireEvent.scroll(viewport);
+  expect(screen.queryByRole("group", { name: t.chatSelectionActions })).toBeNull();
+  expect(selection.toString()).toBe(selectedPassage);
+
+  viewport.focus();
+  fireEvent.keyDown(viewport, { key: "F10", shiftKey: true });
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(document.activeElement).toBe(viewport);
+  expect(screen.queryByRole("group", { name: t.chatSelectionActions })).toBeNull();
+
+  selectPassage(message);
+  fireEvent.click(screen.getByRole("button", { name: second.title, hidden: true }));
+  await waitFor(() => expect(state().sessionId).toBe(second.id));
+  expect(screen.queryByRole("group", { name: t.chatSelectionActions })).toBeNull();
+});
+
+it("shows the rocket only away from the bottom and resumes following assistant output after a jump", async () => {
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const resizeCallbacks = new Map<Element, () => void>();
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(private callback: () => void) {}
+    observe(target: Element) { resizeCallbacks.set(target, this.callback); }
+    unobserve() {}
+    disconnect() {}
+  });
+  const { viewport, composer } = await mountTranscript(() => new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } })));
+  const content = viewport.querySelector(".chat-timeline")!.parentElement!;
+  let height = 1000;
+  let top = 600;
+  Object.defineProperties(viewport, {
+    scrollHeight: { get: () => height },
+    clientHeight: { value: 300 },
+    scrollTop: { get: () => top, set: (value: number) => { top = Math.min(value, height - viewport.clientHeight); } },
+  });
+  const latest = () => screen.queryByRole("button", { name: t.chatJumpToLatest });
+  fireEvent.scroll(viewport);
+  expect(latest()).toBeNull();
+
+  fireEvent.change(composer, { target: { value: "Continue the fixture reply" } });
+  fireEvent.click(screen.getByRole("button", { name: t.send }));
+  await waitFor(() => expect(stream).toBeDefined());
+  top = 400;
+  fireEvent.scroll(viewport);
+  expect(latest()).toBeTruthy();
+
+  const event = (payload: object) => stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`));
+  height = 1300;
+  event({ type: "assistant_text_delta", text: "While browsing history" });
+  await screen.findByText("While browsing history");
+  expect(top).toBe(400);
+
+  fireEvent.click(latest()!);
+  expect(top).toBe(1000);
+  expect(latest()).toBeNull();
+  expect(document.activeElement).toBe(viewport);
+
+  event({ type: "assistant_text_delta", text: " and after the jump" });
+  await screen.findByText("While browsing history and after the jump");
+  height = 1600;
+  act(() => resizeCallbacks.get(content)!());
+  expect(top).toBe(1300);
+  expect(latest()).toBeNull();
+
+  top = 950;
+  fireEvent.scroll(viewport);
+  height = 1900;
+  act(() => resizeCallbacks.get(content)!());
+  expect(top).toBe(950);
+  expect(latest()).toBeTruthy();
+  stream.close();
 });

@@ -2213,7 +2213,7 @@ pub(super) async fn event_loop(
                                     if let Some(goal)=runtime_ui::goal_command_to_start(&prompt) {
                                         match runtime_ui::submit_turn(&mut app,session,store,runtime,goal.to_owned(),submission_record).await {
                                             Ok(())=>{},
-                                            Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
+                                            Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"),runtime_ui::submission_error(language,&error)));},
                                         }
                                     }
                                     continue;
@@ -2227,7 +2227,7 @@ pub(super) async fn event_loop(
                             let PromptExecution::Runtime(remote_prompt)=prompt_execution(&prompt) else {unreachable!("local prompts were handled above")};
                             match runtime_ui::submit_turn(&mut app,session,store,runtime,remote_prompt,submission_record).await {
                                 Ok(())=>{},
-                                Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {error}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗")));},
+                                Err(error)=>{submitted_draft.restore(&mut app);app.append_transcript(format!("Error: {}: {}",language.text("提交 Runtime 轮次失败","Submit Runtime turn failed","Runtime ターンの送信に失敗"),runtime_ui::submission_error(language,&error)));},
                             }
                         }
                         // 走到这里说明没有任何弹层、焦点在输入框：Esc 就是「停下当前这轮」。

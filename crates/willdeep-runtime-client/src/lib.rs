@@ -859,6 +859,9 @@ async fn decode_response<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<ApiResponse<T>, ClientError> {
     let status = response.status();
+    if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        return Err(ClientError::PayloadTooLarge);
+    }
     let body = response.bytes().await?;
     serde_json::from_slice(&body).map_err(|source| ClientError::InvalidResponse {
         status: status.as_u16(),
@@ -922,6 +925,10 @@ pub enum ClientError {
     Http(#[from] reqwest::Error),
     #[error("serialize Runtime request: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(
+        "Runtime rejected the message as too large (HTTP 413). Reduce the prompt or remove or resize attachments."
+    )]
+    PayloadTooLarge,
     #[error("Runtime returned HTTP {0} without a usable stream")]
     HttpStatus(u16),
     #[error("Runtime returned an invalid response for HTTP {status}: {source}")]
@@ -946,6 +953,7 @@ pub enum ClientError {
 impl ClientError {
     pub fn status_code(&self) -> Option<u16> {
         match self {
+            Self::PayloadTooLarge => Some(reqwest::StatusCode::PAYLOAD_TOO_LARGE.as_u16()),
             Self::HttpStatus(status) | Self::InvalidResponse { status, .. } => Some(*status),
             Self::Http(error) => error.status().map(|status| status.as_u16()),
             _ => None,
@@ -974,6 +982,27 @@ mod tests {
         assert_eq!(invalid.status_code(), Some(404));
         assert_eq!(ClientError::HttpStatus(503).status_code(), Some(503));
         assert_eq!(ClientError::UnsafeEndpoint.status_code(), None);
+    }
+
+    #[tokio::test]
+    async fn plain_text_413_preserves_the_payload_error() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert_ne!(socket.read(&mut request).await.unwrap(), 0);
+            socket.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 9\r\nConnection: close\r\n\r\nToo large").await.unwrap();
+        });
+        let response = reqwest::get(format!("http://{addr}")).await.unwrap();
+        let error = decode_response::<serde_json::Value>(response)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ClientError::PayloadTooLarge));
+        assert_eq!(error.status_code(), Some(413));
+        server.await.unwrap();
     }
 
     #[cfg(unix)]

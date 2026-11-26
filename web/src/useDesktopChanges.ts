@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 
-type ChangedFile = { path: string; old_path: string | null; additions: number; deletions: number; binary: boolean };
+export type ChangedFile = {
+  path: string;
+  old_path: string | null;
+  kind: "added" | "modified" | "deleted" | "renamed" | "copied" | "unmerged" | "untracked";
+  staged: boolean;
+  unstaged: boolean;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+};
 type Changes = {
   git: boolean;
   branch: string | null;
@@ -8,12 +17,36 @@ type Changes = {
   session_paths: string[] | null;
 };
 
-const changesEndpoint = "/api/desktop/changes";
+const changesEndpoint = "/api/workspaces/changes";
+export type DiffArea = "staged" | "unstaged";
 
-async function readDesktop<T>(path: string, signal: AbortSignal): Promise<T> {
+class ChangesRequestError extends Error {
+  constructor(readonly status: number) { super(String(status)); }
+}
+
+export function staleChanges(error: unknown) {
+  return error instanceof ChangesRequestError && error.status === 409;
+}
+
+export async function readDesktop<T>(path: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(path, { signal });
-  if (!response.ok) throw new Error(String(response.status));
+  if (!response.ok) throw new ChangesRequestError(response.status);
   return await response.json() as T;
+}
+
+export function useWorkspaceFileDiff(workspace: string, session: string, snapshot: string | undefined, path: string | undefined, area: DiffArea | undefined) {
+  return useQuery({
+    queryKey: ["workspace-file-diff", workspace, session, snapshot, path, area],
+    queryFn: ({ signal }) => {
+      const params = changesParams(workspace, session);
+      params.set("snapshot_id", snapshot ?? "");
+      params.set("path", path ?? "");
+      params.set("area", area ?? "");
+      return readDesktop<{ content: string }>(`${changesEndpoint}/file?${params}`, signal);
+    },
+    enabled: Boolean(snapshot && path && area),
+    retry: false,
+  });
 }
 
 function changesParams(workspace: string, session: string) {

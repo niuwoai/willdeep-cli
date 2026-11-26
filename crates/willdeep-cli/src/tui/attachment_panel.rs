@@ -19,6 +19,21 @@ pub(super) struct AttachmentPanel {
     scroll: u16,
     confirm_clear: bool,
 }
+fn gallery_preview(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    const INLINE_PREVIEW_BYTES: usize = 192 * 1024;
+    const PREVIEW_EDGE: u32 = 384;
+    if bytes.len() <= INLINE_PREVIEW_BYTES {
+        return Ok(bytes);
+    }
+    let image = super::media_ui::decode_image(&bytes)?;
+    let mut preview = std::io::Cursor::new(Vec::new());
+    image
+        .thumbnail(PREVIEW_EDGE, PREVIEW_EDGE)
+        .write_to(&mut preview, image::ImageFormat::Png)
+        .map_err(|error| format!("encode gallery thumbnail: {error}"))?;
+    Ok(preview.into_inner())
+}
+
 impl App {
     pub(super) fn append_draft_attachment(&mut self, item: DraftAttachment) -> bool {
         const MAX_COUNT: usize = 12;
@@ -63,18 +78,36 @@ impl App {
             return;
         }
         let images = crate::gallery::gallery_images(&self.attachments);
-        let mut out = std::io::stdout();
-        if crate::gallery::announce_list(&mut out, &images).is_ok() {
-            let _ = out.flush();
+        let mut out = std::io::stdout().lock();
+        if let Err(error) =
+            crate::gallery::announce_list(&mut out, &images).and_then(|()| out.flush())
+        {
+            self.note_gallery_preview_error(&error.to_string());
+            return;
         }
-        // 终端自己粘贴进来的图片它手里有像素；TUI 自己读剪贴板或恢复来的草稿只进过 list，
-        // 终端画不出缩略图，得把像素补给它一次。
-        for (id, png) in self.pending_gallery_blobs() {
-            if crate::gallery::announce_blob(&mut out, &id.to_string(), &png).is_ok() {
-                self.gallery_blobbed.insert(id);
+        // 终端原生粘贴已经有原图。其余附件只在首次发布时补图。
+        for (id, bytes) in self.pending_gallery_blobs() {
+            let result = gallery_preview(bytes).and_then(|preview| {
+                crate::gallery::announce_blob(&mut out, &id.to_string(), &preview)
+                    .and_then(|()| out.flush())
+                    .map_err(|error| error.to_string())
+            });
+            match result {
+                Ok(()) => {
+                    self.gallery_blobbed.insert(id);
+                }
+                Err(error) => self.note_gallery_preview_error(&error),
             }
         }
-        let _ = out.flush();
+    }
+
+    fn note_gallery_preview_error(&mut self, error: &str) {
+        let hint = self.language.text(
+            "右侧图片预览暂不可用。按 F3 查看草稿附件。",
+            "Sidebar image preview unavailable. Press F3 to view draft attachments.",
+            "サイドバーで画像をプレビューできません。F3 で下書きの添付を確認してください。",
+        );
+        self.notice = Some(format!("{hint} ({error})"));
     }
 
     /// 像素还没有落到终端上的草稿图片。终端已经持有的、已经回传过的都跳过。
@@ -476,6 +509,24 @@ mod tests {
             },
         }
     }
+    #[test]
+    fn large_draft_image_preview_is_bounded_and_preserves_the_original() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1978, 1328)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let mut png = png.into_inner();
+        // PNG permits trailing bytes. Pad the fixture to the reported attachment size.
+        png.resize(2_900_000, 0);
+        let mut app = App::new(Vec::new(), Language::En);
+        app.attachments.push(image(&png));
+        let (_, original) = app.pending_gallery_blobs().pop().unwrap();
+        let preview = gallery_preview(original).unwrap();
+        let preview = image::load_from_memory(&preview).unwrap();
+        assert_eq!((preview.width(), preview.height()), (384, 258));
+        assert_eq!(app.pending_gallery_blobs()[0].1, png);
+    }
+
     #[test]
     fn only_draft_images_the_terminal_lacks_are_sent_once() {
         let mut app = App::new(Vec::new(), Language::En);

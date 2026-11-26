@@ -63,6 +63,20 @@ impl SubmissionDraft {
     }
 }
 
+pub(super) fn submission_error(language: Language, error: &anyhow::Error) -> String {
+    if matches!(
+        error.downcast_ref::<willdeep_runtime_client::ClientError>(),
+        Some(willdeep_runtime_client::ClientError::PayloadTooLarge)
+    ) {
+        return language.text(
+            "消息太大（HTTP 413）。草稿已保留。按 F3 删除过大的附件，或缩小图片后重发。",
+            "Message too large (HTTP 413). Draft kept. Use F3 to remove large attachments, or resize the image and resend.",
+            "メッセージが大きすぎます（HTTP 413）。下書きは保存されています。F3 で添付を削除するか、画像を縮小して再送信してください。",
+        ).to_owned();
+    }
+    format!("{error:#}")
+}
+
 pub(super) async fn submit_turn(
     app: &mut App,
     session: &mut Session,

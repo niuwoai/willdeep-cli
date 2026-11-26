@@ -176,17 +176,22 @@ impl RuntimeEventSink {
             return;
         }
         let completed = match event {
-            AgentEvent::ToolCompleted { call, .. } => Some((
+            AgentEvent::ToolCompleted {
+                call,
+                output,
+                is_error,
+            } => Some((
                 format!("root:{}", call.id),
                 self.root_agent_id,
                 call.name.clone(),
+                diff_review::confirmed_write_paths(&call.name, output, *is_error),
             )),
             AgentEvent::SubagentToolCompleted { id, name, .. } => {
-                Some((format!("child:{id}"), *id, name.clone()))
+                Some((format!("child:{id}"), *id, name.clone(), Vec::new()))
             }
             _ => None,
         };
-        let Some((key, agent_id, tool)) = completed else {
+        let Some((key, agent_id, tool, confirmed_paths)) = completed else {
             return;
         };
         if !tool_may_modify_workspace(&tool) {
@@ -205,6 +210,7 @@ impl RuntimeEventSink {
                 task_id: self.task_id,
                 agent_id,
                 tool,
+                confirmed_paths,
             },
         )
         .await
@@ -1969,7 +1975,7 @@ async fn run_daemon_services(
     let app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/capabilities", get(capabilities_handler))
-        .route("/v1/api", post(control_api::handler))
+        .route("/v1/api", control_api::route())
         .route("/v1/events", get(events_handler))
         .route(
             "/v1/events/stream",

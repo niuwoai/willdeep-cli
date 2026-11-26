@@ -4,7 +4,7 @@
 // React Fast Refresh 会失效。位置白名单本身在 Rust 侧（`plugin/manifest.rs` 的
 // PluginMenuLocation）定义，与 Xedit 共享同一份 schema。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { executePluginCommand, type CommandResponse, type PluginView } from "./plugins";
 
 export type MenuLocation =
@@ -46,60 +46,4 @@ export function usePluginCommandRunner(onNavigate: (qualifiedId: string) => void
     },
     [onNavigate]
   );
-}
-
-type SelectionState = { text: string; x: number; y: number } | null;
-
-/**
- * 监听一个容器里的文字选中。
- *
- * 在选择手势结束或右键时保存快照。菜单拥有快照直到明确关闭，不能因为
- * 浏览器焦点切换、轮询刷新或菜单按下造成 selectionchange 就销毁它。
- */
-export function useChatSelection(containerRef: React.RefObject<HTMLElement | null>, enabled: boolean) {
-  const [selection, setSelection] = useState<SelectionState>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      setSelection(null);
-      return;
-    }
-    const readSelection = (): SelectionState => {
-      const active = window.getSelection();
-      const container = containerRef.current;
-      if (!active || active.isCollapsed || active.rangeCount === 0 || !container) return null;
-      const range = active.getRangeAt(0);
-      if (!container.contains(range.commonAncestorContainer)) return null;
-      const text = active.toString().trim();
-      if (!text) return null;
-      const rect = range.getBoundingClientRect();
-      return { text: text.slice(0, 4000), x: rect.left, y: rect.bottom + 6 };
-    };
-    const onPointerUp = (event: PointerEvent) => {
-      if (event.button === 0 && containerRef.current?.contains(event.target as Node)) setSelection(readSelection());
-    };
-    const onContextMenu = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) return;
-      const selected = readSelection();
-      if (!selected) return;
-      event.preventDefault();
-      setSelection({ ...selected, x: event.clientX, y: event.clientY });
-    };
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key === "Shift" || event.shiftKey) {
-        const selected = readSelection();
-        if (selected) setSelection(selected);
-      }
-    };
-    document.addEventListener("pointerup", onPointerUp);
-    document.addEventListener("contextmenu", onContextMenu);
-    document.addEventListener("keyup", onKeyUp);
-    return () => {
-      document.removeEventListener("pointerup", onPointerUp);
-      document.removeEventListener("contextmenu", onContextMenu);
-      document.removeEventListener("keyup", onKeyUp);
-    };
-  }, [containerRef, enabled]);
-
-  return [selection, setSelection] as const;
 }

@@ -13,6 +13,9 @@ use willdeep_runtime_protocol::{
 const IDEMPOTENCY_CACHE_LIMIT: usize = 1_024;
 const MAX_TURN_PROMPT_BYTES: usize = 1024 * 1024;
 const MAX_TURN_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+// The request envelope also carries the prompt, metadata, and JSON escaping.
+// Keep the transport ceiling separate from the stricter per-turn attachment limit.
+pub(super) const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TURN_ATTACHMENTS: usize = 12;
 const MAX_TEXT_ATTACHMENT_CHARS: usize = 200_000;
 
@@ -79,11 +82,31 @@ impl IdempotencyStore {
     }
 }
 
-pub(super) async fn handler(
+pub(super) fn route() -> axum::routing::MethodRouter<Arc<ServerState>> {
+    post(handler).layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+}
+
+async fn handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Json(request): Json<ApiRequest>,
+    request: Result<Json<ApiRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::InvalidRequest,
+                format!(
+                    "Runtime request exceeds {} MiB. Shorten the prompt or remove or resize attachments.",
+                    MAX_REQUEST_BYTES / (1024 * 1024)
+                ),
+                false,
+                None,
+            );
+        }
+        Err(rejection) => return rejection.into_response(),
+    };
     if let Err(status) = authorize(&state, &headers) {
         return error_response(
             status,
@@ -2406,6 +2429,80 @@ fn error_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn large_image_turn_submission_and_oversize_recovery() {
+        use crate::daemon::tests::{test_runtime_session_store, test_server_state_with_scheduler};
+        use willdeep_runtime_protocol::{MessageAttachment, SubmitTurnParams};
+
+        let root =
+            std::env::temp_dir().join(format!("willdeep-large-image-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let sessions = test_runtime_session_store(&root);
+        let session_id = sessions
+            .create(session_store::CreateRuntimeSession {
+                id: None,
+                workspace: root.clone(),
+                profile: None,
+                model: None,
+                config: None,
+                title: None,
+            })
+            .unwrap()
+            .id;
+        let (schedule, mut scheduled) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(test_server_state_with_scheduler(&root, sessions, schedule));
+        let token = state.token.clone();
+        let app = Router::new().route("/v1/api", route()).with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
+                .await
+                .unwrap();
+        });
+        let client = willdeep_runtime_client::RuntimeClient::new(&base, &token).unwrap();
+        let submit = |size| {
+            let id = uuid::Uuid::new_v4();
+            let params = SubmitTurnParams {
+                session_id,
+                turn_request_id: id,
+                prompt: "read screenshot".to_owned(),
+                attachments: if size == 0 {
+                    Vec::new()
+                } else {
+                    vec![MessageAttachment::Image {
+                        name: "clipboard.png".to_owned(),
+                        media_type: "image/png".to_owned(),
+                        data: "A".repeat(size),
+                        width: 1978,
+                        height: 1328,
+                    }]
+                },
+                origin_client: None,
+                defer_until_released: true,
+            };
+            let client = &client;
+            async move { client.submit_turn(&params, id).await }
+        };
+        assert!(matches!(
+            submit(3_866_668).await.unwrap(),
+            ApiResponse::Ok { .. }
+        ));
+        let error = submit(MAX_REQUEST_BYTES).await.unwrap_err();
+        assert_eq!(error.status_code(), Some(413));
+        assert!(matches!(submit(0).await.unwrap(), ApiResponse::Ok { .. }));
+        assert_eq!(scheduled.try_recv().unwrap(), session_id);
+        assert_eq!(scheduled.try_recv().unwrap(), session_id);
+        assert!(scheduled.try_recv().is_err());
+        stop.send(()).unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// 诊断只认「失败的工具」。成功的工具事件不带参数，也不该被算成失败痕迹。
     #[test]

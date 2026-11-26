@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use super::*;
 
 mod fingerprints;
+mod snapshot_patch;
 use fingerprints::{
     content_fingerprint, repository_head, snapshot_id, submodule_fingerprint, untracked_fingerprint,
 };
@@ -92,6 +93,9 @@ pub(crate) struct DiffAttributionRecord {
     pub agent_id: uuid::Uuid,
     pub tool: String,
     pub paths: Vec<String>,
+    /// The subset of observed paths confirmed by a successful built-in write receipt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confirmed_paths: Vec<String>,
     /// 与 `paths` 一一对应的调用结束时状态。0.148.0-rc4 起写入；更早的记录
     /// 没有，缺省为空，不能据此判断改动还在不在。
     #[serde(default)]
@@ -111,6 +115,7 @@ pub(crate) struct AttributionContext {
     pub task_id: uuid::Uuid,
     pub agent_id: uuid::Uuid,
     pub tool: String,
+    pub confirmed_paths: Vec<String>,
 }
 
 static ATTRIBUTION_STORE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -296,9 +301,7 @@ fn public_decision(decision: ReviewDecision) -> willdeep_runtime_protocol::Revie
 fn runtime_api_data<T>(response: willdeep_runtime_protocol::ApiResponse<T>) -> Result<T> {
     match response {
         willdeep_runtime_protocol::ApiResponse::Ok { data, .. } => Ok(data),
-        willdeep_runtime_protocol::ApiResponse::Error { error, .. } => {
-            bail!("Runtime API error: {}", error.message)
-        }
+        willdeep_runtime_protocol::ApiResponse::Error { error, .. } => Err(error.into()),
     }
 }
 
@@ -463,8 +466,9 @@ fn local_attribution(
         agent_id: record.agent_id,
         tool: record.tool,
         paths: record.paths,
-        // 线上协议不带每个路径的状态，从 Runtime 读回的记录按旧记录处理。
+        // 线上协议只暴露工具窗口观察，不带逐路径状态或写入回执。
         path_states: Vec::new(),
+        confirmed_paths: Vec::new(),
         confidence: AttributionConfidence::ToolWindow,
         created_at: record.created_at,
     })
@@ -983,11 +987,7 @@ pub(super) async fn content_handler(
     if current.id != snapshot_id {
         return Err(StatusCode::CONFLICT);
     }
-    if !current.files.iter().any(|file| file.path == query.path) {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let content = file_diff(&workspace, &query.path, query.area)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let content = snapshot_patch::content(&workspace, &current, &query.path, query.area)?;
     Ok(Json(serde_json::json!({
         "snapshot_id": current.id,
         "path": query.path,
@@ -1181,12 +1181,8 @@ pub(super) async fn unified_content(
 ) -> Result<willdeep_runtime_protocol::DiffContent, StatusCode> {
     let workspace = authorized_workspace(state, Path::new(&params.workspace)).await?;
     let current = exact_snapshot(&workspace, &params.snapshot_id)?;
-    if !current.files.iter().any(|file| file.path == params.path) {
-        return Err(StatusCode::NOT_FOUND);
-    }
     let area = local_area(params.area);
-    let content =
-        file_diff(&workspace, &params.path, area).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let content = snapshot_patch::content(&workspace, &current, &params.path, area)?;
     Ok(willdeep_runtime_protocol::DiffContent {
         snapshot_id: current.id,
         path: params.path,
@@ -1864,6 +1860,28 @@ pub(crate) async fn capture_blocking(workspace: PathBuf) -> Result<DiffCapture> 
     tokio::task::spawn_blocking(move || capture(&workspace)).await?
 }
 
+/// Only built-in file tools can attest which paths they actually wrote. Output
+/// from commands, external tools, and subagent summaries is not a write receipt.
+pub(crate) fn confirmed_write_paths(tool: &str, output: &str, is_error: bool) -> Vec<String> {
+    if is_error {
+        return Vec::new();
+    }
+    let expected = match tool {
+        "create_file" => "created",
+        "edit_file" | "file_changes" => "applied",
+        _ => return Vec::new(),
+    };
+    #[derive(Deserialize)]
+    struct WriteReceipt {
+        status: String,
+        files_touched: Vec<String>,
+    }
+    serde_json::from_str::<WriteReceipt>(output)
+        .ok()
+        .filter(|receipt| receipt.status == expected)
+        .map_or_else(Vec::new, |receipt| receipt.files_touched)
+}
+
 pub(crate) async fn record_tool_attribution(
     home: &Path,
     before: DiffCapture,
@@ -1892,6 +1910,11 @@ pub(crate) async fn record_tool_attribution(
         .iter()
         .map(|path| path_state_after(&after.snapshot, path))
         .collect();
+    let confirmed_paths = paths
+        .iter()
+        .filter(|path| context.confirmed_paths.contains(path))
+        .cloned()
+        .collect();
     let record = DiffAttributionRecord {
         id: uuid::Uuid::new_v4(),
         before_snapshot_id: before.snapshot.id,
@@ -1903,6 +1926,7 @@ pub(crate) async fn record_tool_attribution(
         agent_id: context.agent_id,
         tool: context.tool,
         paths,
+        confirmed_paths,
         path_states,
         confidence: AttributionConfidence::ToolWindow,
         created_at: now(),
@@ -1969,9 +1993,12 @@ fn enrich_untracked(workspace: &Path, files: &mut BTreeMap<String, DiffFile>) {
         .filter(|file| file.kind == DiffFileKind::Untracked)
     {
         let path = workspace.join(&file.path);
-        let Ok(metadata) = std::fs::metadata(&path) else {
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        if !metadata.is_file() {
+            continue;
+        }
         if metadata.len() > UNTRACKED_SCAN_MAX_BYTES {
             file.binary = true;
             continue;
@@ -1990,7 +2017,7 @@ fn parse_status(status: &[u8]) -> BTreeMap<String, DiffFile> {
     let mut records = status
         .split(|byte| *byte == 0)
         .filter(|value| !value.is_empty());
-    let mut files = BTreeMap::new();
+    let mut files = BTreeMap::<String, DiffFile>::new();
     while let Some(record) = records.next() {
         if record.len() < 4 {
             continue;
@@ -2004,13 +2031,21 @@ fn parse_status(status: &[u8]) -> BTreeMap<String, DiffFile> {
             .flatten()
             .map(|value| String::from_utf8_lossy(value).into_owned());
         let kind = status_kind(x, y);
+        // Git emits a staged deletion followed by a separate untracked row
+        // if the same path is recreated outside the index. Preserve both areas
+        // and keep hashing the untracked replacement as part of the snapshot.
+        let staged = if kind == DiffFileKind::Untracked {
+            files.get(&path).is_some_and(|existing| existing.staged)
+        } else {
+            x != ' '
+        };
         files.insert(
             path.clone(),
             DiffFile {
                 path,
                 old_path,
                 kind,
-                staged: x != ' ' && x != '?',
+                staged,
                 unstaged: y != ' ' || x == '?',
                 binary: false,
                 additions: 0,
@@ -2046,15 +2081,22 @@ fn apply_numstat(
     staged: bool,
     files: &mut BTreeMap<String, DiffFile>,
 ) -> Result<()> {
-    let mut args = vec!["diff", "--numstat", "-z", "--no-ext-diff"];
+    let mut args = vec![
+        "diff",
+        "--numstat",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-relative",
+    ];
     if staged {
         args.push("--cached");
     }
     let output = git(workspace, &args)?;
-    for record in output
+    let mut records = output
         .split(|byte| *byte == 0)
-        .filter(|value| !value.is_empty())
-    {
+        .filter(|value| !value.is_empty());
+    while let Some(record) = records.next() {
         let Some(first_tab) = record.iter().position(|byte| *byte == b'\t') else {
             continue;
         };
@@ -2065,8 +2107,16 @@ fn apply_numstat(
             continue;
         };
         let second_tab = first_tab + 1 + second_relative;
-        let path = String::from_utf8_lossy(&record[second_tab + 1..]).into_owned();
-        let Some(file) = files.get_mut(&path) else {
+        let mut path = &record[second_tab + 1..];
+        if path.is_empty() {
+            // With -z a rename or copy has separate source and destination records.
+            let Some((_, destination)) = records.next().zip(records.next()) else {
+                break;
+            };
+            path = destination;
+        }
+        let path = String::from_utf8_lossy(path);
+        let Some(file) = files.get_mut(path.as_ref()) else {
             continue;
         };
         let additions = &record[..first_tab];
@@ -2168,6 +2218,7 @@ fn safe_workspace_path(workspace: &Path, path: &str) -> Result<PathBuf> {
     Ok(safe_path)
 }
 
+#[cfg(test)]
 fn file_diff(workspace: &Path, path: &str, area: DiffArea) -> Result<String> {
     file_diff_bounded(workspace, path, area, MAX_DIFF_BYTES, false)
 }
@@ -2816,6 +2867,26 @@ mod tests {
         assert!(!valid_release_tag("v1.2.3;push"));
     }
 
+    #[test]
+    fn confirmed_paths_accept_only_successful_builtin_write_receipts() {
+        let created = r#"{"status":"created","files_touched":["proof.txt"]}"#;
+        let applied = r#"{"status":"applied","files_touched":["proof.txt"]}"#;
+        let preview = r#"{"status":"preview","files_touched":["proof.txt"]}"#;
+        for (tool, output, is_error, confirmed) in [
+            ("create_file", created, false, true),
+            ("edit_file", applied, false, true),
+            ("file_changes", applied, false, true),
+            ("lsp", applied, false, false),
+            ("file_changes", preview, false, false),
+            ("file_changes", applied, true, false),
+            ("run_command", applied, false, false),
+            ("edit_file", "legacy text", false, false),
+        ] {
+            let expected: &[&str] = if confirmed { &["proof.txt"] } else { &[] };
+            assert_eq!(confirmed_write_paths(tool, output, is_error), expected);
+        }
+    }
+
     #[tokio::test]
     async fn tool_attribution_records_only_paths_changed_inside_the_tool_window() {
         let root =
@@ -2853,6 +2924,7 @@ mod tests {
                 task_id,
                 agent_id,
                 tool: "create_file".to_owned(),
+                confirmed_paths: vec!["created-by-agent.txt".to_owned()],
             },
         )
         .await
@@ -2879,6 +2951,7 @@ mod tests {
                 task_id,
                 agent_id,
                 tool: "edit_file".to_owned(),
+                confirmed_paths: Vec::new(),
             },
         )
         .await

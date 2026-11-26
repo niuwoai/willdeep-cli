@@ -313,6 +313,8 @@ Web 同源适配端点 `POST /api/workflows/{operation}` 先验证父 Session �
 
 稳定错误码包括：`invalid_request`、`unauthorized`、`forbidden`、`not_found`、`conflict`、`stale_snapshot`、`unsupported_operation`、`unsupported_protocol`、`rate_limited`、`unavailable`、`internal`。
 
+`POST /v1/api` 的完整 JSON 请求体上限为 16 MiB，包含 Base64、正文、JSON 转义及信封开销。超限返回 HTTP 413 和 `invalid_request`，请求未分派，因此不返回 `request_id`。`turn.submit` 仍单独校验最多 12 个附件、合计 10 MiB 的附件字段，以及 1 MiB 的正文。
+
 ## 6. 事件与流
 
 - 历史事件使用全局单调 `sequence` 和显式 `after` 游标；

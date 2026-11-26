@@ -611,6 +611,7 @@ async fn serve_internal(
             get(model_routing_settings).put(update_model_routing_settings),
         )
         .route("/api/composer", get(composer::get))
+        .merge(desktop::workspace_changes_routes())
         .merge(intake::routes())
         .merge(identity::routes())
         .merge(federation::routes())
