@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { Box, Button, Flex, Heading, Input, NativeSelect, Text } from "@chakra-ui/react";
 import { ModelRoutingSettings } from "./ModelRoutingSettings";
 import type { Language, Messages } from "./i18n";
 import { createRequestId } from "./requestId";
+import { CANONICAL_REASONING_LEVELS } from "./reasoningLevels";
 import { reasoningText } from "./reasoningMessages";
 
 type ReasoningValue = string | number | boolean;
@@ -51,6 +52,49 @@ function reasoningProfile(draft: ReasoningDraft, t: ReturnType<typeof reasoningT
   }
   return { default_level: defaultLevel || null, parameter: parameter || null, levels };
 }
+
+function ReasoningLevelInput({ label, hint, value, onChange }: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const inputId = useId();
+  const hintId = useId();
+  return <div className="configuration-reasoning-level">
+    <label>
+      <span>{label}</span>
+      <Input
+        id={inputId}
+        value={value}
+        aria-describedby={hintId}
+        onChange={event => onChange(event.target.value)}
+        {...control}
+      />
+    </label>
+    <Text id={hintId} fontSize="xs" color="var(--text-dim)" mt="1">{hint}</Text>
+    <Flex role="group" aria-label={label} gap="1" wrap="wrap" mt="1">
+      {CANONICAL_REASONING_LEVELS.map(level => (
+        <Button
+          key={level}
+          type="button"
+          size="2xs"
+          minH="6"
+          minW="6"
+          variant="outline"
+          color="var(--text)"
+          borderColor="var(--border-strong)"
+          aria-controls={inputId}
+          onClick={() => onChange(level)}
+        >
+          {level}
+        </Button>
+      ))}
+    </Flex>
+  </div>;
+}
+
+const control = { color: "var(--text)", bg: "var(--bg-raised)", borderColor: "var(--border-strong)" };
 
 export function ConfigurationSettings({ messages: t, language, compact = false, reasoningOnly = false, onDone }: { messages: Messages; language: Language; compact?: boolean; reasoningOnly?: boolean; onDone?: () => void }) {
   const reasoning = reasoningText(language);
@@ -121,7 +165,6 @@ export function ConfigurationSettings({ messages: t, language, compact = false, 
     setSaved(false);
   }
 
-  const control = { color: "var(--text)", bg: "var(--bg-raised)", borderColor: "var(--border-strong)" };
   return <Box className={`configuration-settings${compact ? " configuration-quick-setup" : ""}${reasoningOnly ? " configuration-reasoning-only" : ""}`}>
     {!compact && !reasoningOnly && <Flex justify="space-between" align="center" mb="5" wrap="wrap" gap="3"><Box><Heading size="md">{t.configTitle}</Heading><Text fontSize="sm" color="var(--text-dim)" mt="1">{snapshot?.config_path}</Text></Box><Button variant="outline" onClick={() => setRoutingOpen(true)}>{t.configAdvanced}</Button></Flex>}
     {compact && <Box mb="3"><Heading size="md">{t.setupTitle}</Heading><Text color="var(--text-dim)" mt="1">{t.setupConfigure}</Text><Text fontSize="sm" color="var(--text-faint)" mt="1">{t.setupSteps}</Text></Box>}
@@ -148,15 +191,33 @@ export function ConfigurationSettings({ messages: t, language, compact = false, 
         <Heading size="sm">{reasoning.configTitle}</Heading>
         <Text fontSize="sm" color="var(--text-dim)">{reasoning.configHint}</Text>
         <div className="configuration-reasoning-fields">
-          <label><span>{reasoning.defaultLevel}</span><Input value={draft.reasoning.default_level} onChange={event => { setDraft({ ...draft, reasoning: { ...draft.reasoning, default_level: event.target.value } }); setSaved(false); }} {...control} /></label>
+          <ReasoningLevelInput
+            label={reasoning.defaultLevel}
+            hint={reasoning.defaultLevelHint}
+            value={draft.reasoning.default_level}
+            onChange={value => {
+              setDraft({ ...draft, reasoning: { ...draft.reasoning, default_level: value } });
+              setSaved(false);
+            }}
+          />
           <label><span>{reasoning.parameter}</span><Input value={draft.reasoning.parameter} placeholder="reasoning_effort" onChange={event => { setDraft({ ...draft, reasoning: { ...draft.reasoning, parameter: event.target.value } }); setSaved(false); }} {...control} /></label>
         </div>
         <Flex direction="column" gap="2">
-          {draft.reasoning.levels.map((entry, index) => <Flex key={entry.id} className="configuration-reasoning-row" gap="2" align="end" wrap="wrap">
-            <label><span>{reasoning.levelName}</span><Input value={entry.level} onChange={event => { const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, level: event.target.value }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control} /></label>
+          {draft.reasoning.levels.map((entry, index) => <Flex key={entry.id} className="configuration-reasoning-row" gap="2" align="start" wrap="wrap">
+            <ReasoningLevelInput
+              label={reasoning.levelName}
+              hint={reasoning.levelNameHint}
+              value={entry.level}
+              onChange={level => {
+                const levels = [...draft.reasoning.levels];
+                levels[index] = { ...entry, level };
+                setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } });
+                setSaved(false);
+              }}
+            />
             <label><span>{reasoning.valueType}</span><NativeSelect.Root><NativeSelect.Field value={entry.kind} onChange={event => { const kind = event.target.value as ReasoningEntry["kind"]; const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, kind, value: kind === "boolean" ? "false" : kind === "number" ? "0" : "" }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control}><option value="string">{reasoning.string}</option><option value="number">{reasoning.number}</option><option value="boolean">{reasoning.boolean}</option></NativeSelect.Field><NativeSelect.Indicator /></NativeSelect.Root></label>
             {entry.kind === "boolean" ? <label><span>{reasoning.value}</span><NativeSelect.Root><NativeSelect.Field value={entry.value} onChange={event => { const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, value: event.target.value }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control}><option value="false">{reasoning.falseValue}</option><option value="true">{reasoning.trueValue}</option></NativeSelect.Field><NativeSelect.Indicator /></NativeSelect.Root></label> : <label><span>{reasoning.value}</span><Input type={entry.kind === "number" ? "number" : "text"} step={entry.kind === "number" ? "any" : undefined} value={entry.value} onChange={event => { const levels = [...draft.reasoning.levels]; levels[index] = { ...entry, value: event.target.value }; setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }} {...control} /> </label>}
-            <Button type="button" variant="ghost" onClick={() => { const levels = draft.reasoning.levels.filter((_, row) => row !== index); setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }}>{reasoning.remove}</Button>
+            <Button type="button" variant="ghost" className="configuration-reasoning-remove" onClick={() => { const levels = draft.reasoning.levels.filter((_, row) => row !== index); setDraft({ ...draft, reasoning: { ...draft.reasoning, levels } }); setSaved(false); }}>{reasoning.remove}</Button>
           </Flex>)}
           <Button type="button" variant="outline" alignSelf="start" onClick={() => { setDraft({ ...draft, reasoning: { ...draft.reasoning, levels: [...draft.reasoning.levels, { id: createRequestId(), level: "", kind: "string", value: "" }] } }); setSaved(false); }}>{reasoning.addLevel}</Button>
         </Flex>

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
+import userEvent from "@testing-library/user-event";
 import { ConfigurationSettings } from "./ConfigurationSettings";
-import { messages } from "./i18n";
+import { messages, type Language } from "./i18n";
 import { reasoningText } from "./reasoningMessages";
 import type { ReasoningProfile } from "./modelApi";
 
@@ -11,7 +12,7 @@ const t = messages["zh-CN"];
 const reasoning = reasoningText("zh-CN");
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mount(profile: ReasoningProfile, compact = false) {
+function mount(profile: ReasoningProfile, compact = false, language: Language = "zh-CN") {
   const snapshot = {
     revision: "first", default_provider: "preview", config_path: "/fixture/config.toml",
     providers: [{ id: "preview", provider: "openai-compatible", api: "chat-completions", api_base: compact ? "https://provider.example/v1" : "", model: "test-model", api_key_configured: true, reasoning: profile }],
@@ -25,10 +26,43 @@ function mount(profile: ReasoningProfile, compact = false) {
     return Response.json(snapshot);
   }));
   render(<ChakraProvider value={defaultSystem}>
-    <ConfigurationSettings messages={t} language="zh-CN" reasoningOnly={!compact} compact={compact} />
+    <ConfigurationSettings messages={messages[language]} language={language} reasoningOnly={!compact} compact={compact} />
   </ChakraProvider>);
   return updates;
 }
+
+it.each(["zh-CN", "en", "ja"] as const)("fills only the matching logical level field in %s", async (language) => {
+  const updates = mount({ default_level: "low", parameter: null, levels: { low: "low" } }, false, language);
+  const copy = reasoningText(language);
+  await screen.findByRole("button", { name: `preview · ${messages[language].configSetDefault}` });
+  const defaultInput = screen.getByRole<HTMLInputElement>("textbox", {
+    name: copy.defaultLevel,
+    description: copy.defaultLevelHint,
+  });
+  fireEvent.click(screen.getByRole("button", { name: copy.addLevel }));
+  const [existingInput, newInput] = screen.getAllByRole<HTMLInputElement>("textbox", {
+    name: copy.levelName,
+    description: copy.levelNameHint,
+  });
+  const defaults = within(screen.getByRole("group", { name: copy.defaultLevel }));
+  const newLevels = within(screen.getAllByRole("group", { name: copy.levelName })[1]);
+  expect(newLevels.getAllByRole("button").map(button => button.textContent)).toEqual([
+    "minimal", "low", "medium", "high", "xhigh", "max",
+  ]);
+  fireEvent.click(newLevels.getByRole("button", { name: "high" }));
+  expect([defaultInput.value, existingInput.value, newInput.value]).toEqual(["low", "low", "high"]);
+  fireEvent.click(defaults.getByRole("button", { name: "high" }));
+  expect(defaultInput.value).toBe("high");
+  const user = userEvent.setup();
+  newInput.focus();
+  await user.tab();
+  expect(document.activeElement).toBe(newLevels.getByRole("button", { name: "minimal" }));
+  await user.keyboard("{Enter}");
+  expect(newInput.value).toBe("minimal");
+  expect(updates).toEqual([]);
+  fireEvent.change(newInput, { target: { value: "custom" } });
+  expect(newInput.value).toBe("custom");
+});
 
 it.each(["balanced", "__proto__"])("preserves all existing scalar mappings with default %s in a reasoning-only save", async (defaultLevel) => {
   const profile: ReasoningProfile = {
