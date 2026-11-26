@@ -46,11 +46,14 @@ import { PluginRail, type RailSelection } from "./PluginRail";
 import { PluginSidebar } from "./PluginSidebar";
 import { fetchPlugins, orderedDestinations, type PluginFailureView, type PluginView } from "./plugins";
 import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
-import { menuEntries, useChatSelection, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
+import { menuEntries, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
+import { appendSelectionQuote, CHAT_SELECTION_ACTIONS, composerCommandText, useChatSelection } from "./useChatSelection";
+import { writeClipboard } from "./markdownClipboard";
+import chatScrollRocket from "./assets/chat-scroll-rocket.png";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
 import { enqueueButtonState, queueText, runningInputFeedback } from "./queueMessages";
-import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X } from "lucide-react";
+import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X, Copy, Quote } from "lucide-react";
 import { sessionTree } from "./sessionTree";
 import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
 import "./chatWorkspace.css";
@@ -135,6 +138,13 @@ function sessionChat(detail: SessionDetail, t: Messages): ChatMessage[] {
 /// 长会话只渲染最近这么多轮；更早的留在 chat 里，用户滚到顶再放回来。
 const CHAT_WINDOW_ROUNDS = 50;
 const CHAT_WINDOW_STEP = 50;
+const CHAT_FOLLOW_DISTANCE = 80;
+const CHAT_LATEST_BUTTON_DISTANCE = 160;
+const CHAT_LOAD_EARLIER_DISTANCE = 24;
+
+function distanceFromBottom(viewport: HTMLElement) {
+  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+}
 
 /** 按「轮」切出渲染窗口：分隔线就是轮次的终点。 */
 function windowChat(chat: ChatMessage[], rounds: number): { visible: ChatMessage[]; hiddenRounds: number } {
@@ -410,7 +420,7 @@ export function App() {
     composerEmptyRef.current = !prompt && !attachments.length;
     composerIdleRef.current = composerEmptyRef.current && !busy;
   }, [prompt, attachments.length, busy]);
-  const abortRef = useRef<AbortController | null>(null); const endRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const activeRunRef = useRef<string | null>(null);
   const activeTurnRef = useRef<string | null>(null);
   const activeSessionRef = useRef<string | null>(null);
@@ -469,6 +479,8 @@ export function App() {
   const pendingStopRef = useRef(false);
   const loadSessionRef = useRef<(id: string, activeTurnId?: string | null) => Promise<void>>(async () => undefined);
   const chatViewportRef = useRef<HTMLDivElement | null>(null); const followBottomRef = useRef(true);
+  const chatContentRef = useRef<HTMLDivElement | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   // 只影响渲染的窗口大小；会话数据仍是完整的一份。
   const [chatRounds, setChatRounds] = useState(CHAT_WINDOW_ROUNDS);
   const chatSessionRef = useRef<string | null>(null);
@@ -575,8 +587,83 @@ export function App() {
   const chatSelectionEntries = useMemo(() => menuEntries(plugins, "chat.selection"), [plugins]);
   const sessionContextEntries = useMemo(() => menuEntries(plugins, "session.context"), [plugins]);
   const composerEntries = useMemo(() => menuEntries(plugins, "composer.more"), [plugins]);
-  const [chatSelection, setChatSelection] = useChatSelection(chatViewportRef, chatSelectionEntries.length > 0);
-  useEffect(() => { setChatSelection(null); }, [sessionId, rail, setChatSelection]);
+  const chatScope = JSON.stringify([workspace, sessionId, rail.kind]);
+  const [chatSelection, setChatSelection] = useChatSelection(chatViewportRef, chatScope);
+  const chatScopeRef = useRef(chatScope);
+  useLayoutEffect(() => { chatScopeRef.current = chatScope; }, [chatScope]);
+
+  function focusChatViewport() {
+    chatViewportRef.current?.focus({ preventScroll: true });
+  }
+
+  async function copyChatSelection(text: string) {
+    if (document.activeElement?.closest(CHAT_SELECTION_ACTIONS)) focusChatViewport();
+    setChatSelection(null);
+    let notice = t.copiedCode;
+    try {
+      await writeClipboard(text);
+    } catch {
+      notice = t.copyFailed;
+    }
+    if (chatScopeRef.current === chatScope) showSelectionNotice(notice);
+  }
+
+  function addChatSelectionToTask(text: string) {
+    const field = promptRef.current;
+    if (!field) return;
+    const next = appendSelectionQuote(field.value, text);
+    setPrompt(next);
+    setComposerCursor(next.length);
+    references.dismiss();
+    setChatSelection(null);
+    requestAnimationFrame(() => {
+      if (chatScopeRef.current !== chatScope || promptRef.current !== field) return;
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(next.length, next.length);
+      field.scrollTop = field.scrollHeight;
+    });
+  }
+
+  useLayoutEffect(() => {
+    const viewport = chatViewportRef.current;
+    const content = chatContentRef.current;
+    if (!viewport || !content) {
+      setShowJumpToLatest(false);
+      return;
+    }
+    const syncLayout = () => {
+      // StreamingMarkdown can grow after the parent chat effect has already run.
+      if (followBottomRef.current && distanceFromBottom(viewport) > 0) viewport.scrollTop = viewport.scrollHeight;
+      setShowJumpToLatest(!followBottomRef.current && distanceFromBottom(viewport) >= CHAT_LATEST_BUTTON_DISTANCE);
+    };
+    syncLayout();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(syncLayout);
+    observer.observe(viewport);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [chatScope]);
+
+  function handleChatScroll() {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+    const distance = distanceFromBottom(viewport);
+    const atBottom = distance < CHAT_FOLLOW_DISTANCE;
+    followBottomRef.current = atBottom;
+    setShowJumpToLatest(distance >= CHAT_LATEST_BUTTON_DISTANCE);
+    if (atBottom) {
+      if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS);
+    } else if (viewport.scrollTop < CHAT_LOAD_EARLIER_DISTANCE && hiddenRounds > 0) loadEarlierChat();
+  }
+
+  function jumpToLatestChat() {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+    followBottomRef.current = true;
+    viewport.scrollTop = viewport.scrollHeight;
+    setShowJumpToLatest(false);
+    focusChatViewport();
+  }
 
   const runMenuEntry = useCallback(async (entry: MenuEntry, args: Record<string, string> = {}) => {
     setPopup(null);
@@ -699,7 +786,12 @@ export function App() {
     void refresh(); const timer = window.setInterval(refresh, 2000);
     return () => { active = false; window.clearInterval(timer); };
   }, [workspace, t]);
-  useEffect(() => { if (followBottomRef.current) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [chat, activity]);
+  useLayoutEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport || !followBottomRef.current) return;
+    if (distanceFromBottom(viewport) > 0) viewport.scrollTop = viewport.scrollHeight;
+    setShowJumpToLatest(false);
+  }, [chat, activity, chatScope]);
   // 状态行的已运行时长每秒跳一格。没有状态行时不转定时器。
   useEffect(() => {
     if (!chat.some((message) => message.role === "status")) return undefined;
@@ -749,7 +841,10 @@ export function App() {
   const childDetached = selectedSession?.delegation_detached ?? (sessionRelation?.id === sessionId && sessionRelation.detached);
   const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
   const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
-  const commandMatches = useMemo(() => prompt.startsWith("/") ? composer.commands.filter((item) => item.startsWith(prompt.split(/\s/)[0])).slice(0, 6) : [], [prompt, composer.commands]);
+  const commandMatches = useMemo(() => {
+    const command = composerCommandText(prompt).split(/\s/, 1)[0];
+    return command ? composer.commands.filter((item) => item.startsWith(command)).slice(0, 6) : [];
+  }, [prompt, composer.commands]);
   const skillMention = skillMentionAtCursor(prompt, composerCursor);
   const skillQuery = skillMention?.query;
   const skillMatches = useMemo(() => {
@@ -1518,7 +1613,8 @@ export function App() {
   async function send(override?: string, source: "composer" | "plugin" = "composer") {
     if (workspaceApproval.pending || !workspaceRef.current) return;
     const sendAttachments = attachmentsRef.current;
-    const typed = (override ?? prompt).trim();
+    const messageText = (override ?? prompt).trim();
+    const typed = composerCommandText(messageText);
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
     if (typed === "/clear") { setChat([]); setPrompt(""); return; }
     if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); setPrompt(""); return; }
@@ -1601,7 +1697,7 @@ export function App() {
       setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: `${t.goalSet}: ${goalToStart}` }]);
       if (busy) { setPrompt(""); return; }
     }
-    const content = goalToStart || typed || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
+    const content = goalToStart || messageText || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
     // 普通输入不是审批决定或工具提问的答案。恢复现有入口，并保留草稿。
     if (!typed.startsWith("/") && visibleHumanGates.length) {
       const feedback = runningInputFeedback(runtimeActivity, sessionId, language);
@@ -1610,7 +1706,7 @@ export function App() {
       return;
     }
     // 采用过的建议在真正发出去这一刻结算：原样 / 改过 / 重写由服务端判定。
-    inputSuggestion.settleSent(typed);
+    inputSuggestion.settleSent(messageText);
     // 旧 steer 仅内存入箱且无幂等键；保留 Runtime 持久队列，不能把入队说成模型已读。
     if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
     setSubmissionNotice(null);
@@ -1954,9 +2050,13 @@ export function App() {
     </div></header>
     <Container className="conversation-stage" flex="1" minW="0" minH="0" maxW="860px" px={{ base: "4", md: "8" }} py="6" display="flex" flexDir="column">
       {sessionId && childParentId && <ChildSessionOrigin key={`origin-${sessionId}`} parentId={childParentId} parentTitle={sessions.find((item) => item.id === childParentId)?.title} childId={sessionId} readOnly={childReadOnly} detached={childDetached} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
-      <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text>
-        {isDesktop && !workspace && <Button mt="5" variant="outline" onClick={pickDesktopWorkspace}><FolderGit2 size={15} />{t.addWorkspace}</Button>}
-      </Box>}
+      <div className="chat-scroll-frame">
+      <Box ref={chatViewportRef} className="chat-viewport" role="region" aria-label={t.chatTranscript} tabIndex={chat.length ? 0 : undefined}
+        flex="1" minH="0" overflowY="auto" pb="10" onScroll={handleChatScroll}>
+        {!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text>
+          {isDesktop && !workspace && <Button mt="5" variant="outline" onClick={pickDesktopWorkspace}><FolderGit2 size={15} />{t.addWorkspace}</Button>}
+        </Box>}
+        <div ref={chatContentRef}>
         <VStack className="chat-timeline" align="stretch" gap="3">
           {hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}
           {groupedChat.map((message, index, visible) => {
@@ -1984,19 +2084,32 @@ export function App() {
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {sessionId && !childParentId && !childReadOnly && <ChildSessions key={`children-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}
-        {error && <Box className="request-error"><Text role="alert">{error}</Text>{runtimeFailure && <RuntimeFailureDetails key={`${runtimeFailure.sessionId}:${runtimeFailure.taskId}`} sessionId={runtimeFailure.sessionId} taskId={runtimeFailure.taskId} messages={t} />}</Box>}<div ref={endRef} />
+        {error && <Box className="request-error"><Text role="alert">{error}</Text>{runtimeFailure && <RuntimeFailureDetails key={`${runtimeFailure.sessionId}:${runtimeFailure.taskId}`} sessionId={runtimeFailure.sessionId} taskId={runtimeFailure.taskId} messages={t} />}</Box>}
+        </div>
       </Box>
-      {/* 聊天正文选中气泡。插件拿到的 `text` 是用户真正看到的那段字，
-          `source` 固定 "chat.selection"，与 macOS 宿主传的两个参数一致。 */}
-      {chatSelection && chatSelectionEntries.length > 0 && (
+      {chatSelection && (
         <PluginMenuPopup
           entries={chatSelectionEntries}
           x={chatSelection.x}
           y={chatSelection.y}
-          onRun={(entry) => void runMenuEntry(entry, { text: chatSelection.text, source: "chat.selection" })}
+          selectionActions={{
+            label: t.chatSelectionActions,
+            focusFirst: chatSelection.focusFirst,
+            restoreFocus: focusChatViewport,
+            buttons: [
+              { label: t.copyCode, icon: <Copy size={14} aria-hidden="true" />, run: () => void copyChatSelection(chatSelection.text) },
+              { label: t.chatAddToTask, icon: <Quote size={14} aria-hidden="true" />, run: () => addChatSelectionToTask(chatSelection.text) },
+            ],
+          }}
+          onRun={(entry) => void runMenuEntry(entry, { text: chatSelection.text.trim().slice(0, 4000), source: "chat.selection" })}
           onClose={() => setChatSelection(null)}
         />
       )}
+      {chat.length > 0 && showJumpToLatest && <button type="button" className="chat-jump-latest"
+        aria-label={t.chatJumpToLatest} title={t.chatJumpToLatest} onClick={jumpToLatestChat}>
+        <img src={chatScrollRocket} alt="" draggable={false} />
+      </button>}
+      </div>
       <RuntimeQueue key={sessionId ?? "new"} sessionId={sessionId || null} language={language} />
       {selectionNotice && <Text className="selection-notice" role="status">{selectionNotice}</Text>}
       {submissionNotice?.sessionId === sessionId && <Text className="selection-notice" role="status">{submissionNotice.text}</Text>}

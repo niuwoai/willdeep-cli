@@ -7,6 +7,12 @@ export async function writeClipboard(text: string) {
   } catch {
     // 非安全上下文或被拒绝时改走选区复制。
   }
+  const selection = window.getSelection();
+  const anchor = selection?.anchorNode;
+  const focus = selection?.focusNode;
+  const anchorOffset = selection?.anchorOffset ?? 0;
+  const focusOffset = selection?.focusOffset ?? 0;
+  const active = document.activeElement;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
@@ -19,7 +25,12 @@ export async function writeClipboard(text: string) {
     ok = document.execCommand("copy");
   } catch {
     ok = false;
+  } finally {
+    area.remove();
+    if (active instanceof HTMLElement && active.isConnected && active !== document.activeElement) active.focus({ preventScroll: true });
+    if (selection && anchor?.isConnected && focus?.isConnected) {
+      selection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+    }
   }
-  area.remove();
   if (!ok) throw new Error("copy failed");
 }

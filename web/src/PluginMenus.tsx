@@ -83,10 +83,16 @@ type PopupProps = {
   y: number;
   onRun: (entry: MenuEntry) => void;
   onClose: () => void;
+  selectionActions?: {
+    label: string;
+    focusFirst?: boolean;
+    restoreFocus: () => void;
+    buttons: { label: string; icon: React.ReactNode; run: () => void }[];
+  };
 };
 
 /** 右键菜单与选中气泡共用的浮层。定位会夹到视口内，免得贴边时半截在屏幕外。 */
-export function PluginMenuPopup({ entries, x, y, onRun, onClose }: PopupProps) {
+export function PluginMenuPopup({ entries, x, y, onRun, onClose, selectionActions }: PopupProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState({ left: x, top: y });
 
@@ -98,7 +104,12 @@ export function PluginMenuPopup({ entries, x, y, onRun, onClose }: PopupProps) {
       left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
       top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
     });
-  }, [x, y]);
+  }, [x, y, entries.length]);
+
+  const focusFirst = selectionActions?.focusFirst;
+  useEffect(() => {
+    if (focusFirst) ref.current?.querySelector("button")?.focus({ preventScroll: true });
+  }, [focusFirst]);
 
   // onClose 在 App 里是内联箭头函数，每次渲染都是新的。存进 ref，
   // 免得下面那个 effect 每渲染一次就重新注册一轮监听。
@@ -109,7 +120,9 @@ export function PluginMenuPopup({ entries, x, y, onRun, onClose }: PopupProps) {
     const dismiss = (event: PointerEvent) => {
       if (!ref.current?.contains(event.target as Node)) closeRef.current();
     };
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeRef.current();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) closeRef.current();
+    };
     // 菜单由 pointerup/contextmenu 打开；只在下一次外部按下时关闭，
     // 避免同一次选中/右键手势末尾的 click 将它立即关掉。
     window.addEventListener("pointerdown", dismiss);
@@ -120,15 +133,28 @@ export function PluginMenuPopup({ entries, x, y, onRun, onClose }: PopupProps) {
     };
   }, []);
 
-  if (entries.length === 0) return null;
+  if (entries.length === 0 && !selectionActions) return null;
 
   return (
-    <Box ref={ref} className="plugin-popup" style={{ left: position.left, top: position.top }} role="menu" onMouseDown={(event) => event.preventDefault()} onContextMenu={(event) => event.preventDefault()}>
+    <Box ref={ref} className="plugin-popup" style={{ left: position.left, top: position.top }}
+      role={selectionActions ? "group" : "menu"} aria-label={selectionActions?.label}
+      data-chat-selection-actions={selectionActions ? "" : undefined}
+      onMouseDown={(event) => event.preventDefault()} onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (selectionActions && event.key === "Escape") {
+          event.preventDefault();
+          selectionActions.restoreFocus();
+          onClose();
+        }
+      }}>
+      {selectionActions?.buttons.map(({ label, icon, run }) => (
+        <button key={label} type="button" className="plugin-popup-item" onClick={run}>{icon}<span>{label}</span></button>
+      ))}
       {entries.map((entry) => (
         <button
           key={`${entry.pluginId}:${entry.commandId}`}
           type="button"
-          role="menuitem"
+          role={selectionActions ? undefined : "menuitem"}
           className="plugin-popup-item"
           onClick={() => onRun(entry)}
         >
