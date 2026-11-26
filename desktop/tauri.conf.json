@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WillDeep Desktop",
-  "version": "0.158.0-rc1",
+  "version": "0.158.0-rc2",
   "identifier": "im.some.willdeep.desktop",
   "build": {
     "frontendDist": "bootstrap"

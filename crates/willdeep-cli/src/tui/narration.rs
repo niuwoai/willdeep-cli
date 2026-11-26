@@ -699,7 +699,10 @@ impl App {
                 )
                 .to_owned()
         });
-        let mut report = format!("System: CLI {} · Runtime {runtime}", willdeep_core::VERSION);
+        let mut report = format!(
+            "{VERSION_REPORT_PREFIX}{} · Runtime {runtime}",
+            willdeep_core::VERSION
+        );
         if self.stale_runtime_version().is_some() {
             report.push_str(self.language.text(
                 " · 版本不一致：",
@@ -988,6 +991,12 @@ pub(super) struct FoldedTranscript {
 }
 
 const SYSTEM_GROUP_PREFIX: &str = "System: ▸ ";
+const VERSION_REPORT_PREFIX: &str = "System: CLI ";
+
+fn is_foldable_system_notice(row: &str) -> bool {
+    // `/version` 的直接查询结果要当场可见，之后仍按系统回执的规则淡出。
+    is_system_notice_row(row) && !row.starts_with(VERSION_REPORT_PREFIX)
+}
 
 fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
     let mut rows = Vec::new();
@@ -997,9 +1006,9 @@ fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
     while cursor < folded.rows.len() {
         let start = cursor;
         cursor += 1;
-        if is_system_notice_row(&folded.rows[start]) && folded.sources[start].is_some() {
+        if is_foldable_system_notice(&folded.rows[start]) && folded.sources[start].is_some() {
             while cursor < folded.rows.len()
-                && is_system_notice_row(&folded.rows[cursor])
+                && is_foldable_system_notice(&folded.rows[cursor])
                 && folded.sources[cursor - 1]
                     .zip(folded.sources[cursor])
                     .is_some_and(|(previous, next)| next == previous + 1)
@@ -1727,6 +1736,28 @@ mod tests {
                 .any(|row| row.contains("first notice"))
         );
         assert_eq!(app.transcript, original);
+    }
+
+    #[test]
+    fn version_report_stays_visible_between_folded_system_notices() {
+        let mut app = App::new(
+            vec![
+                "System: first notice".into(),
+                "System: second notice".into(),
+            ],
+            Language::En,
+        );
+        app.runtime_version = Some(willdeep_core::VERSION.to_owned());
+        assert!(app.handle_slash_command("/version", &SkillCatalog::default()));
+        app.append_transcript("System: third notice".into());
+        app.append_transcript("System: fourth notice".into());
+
+        let folded = app.display_transcript();
+        assert_eq!(folded.rows.len(), 3);
+        assert_eq!(folded.rows[1], app.version_report());
+        assert_eq!(folded.sources, vec![None, Some(2), None]);
+        assert_eq!(folded.system_groups.get(&0), Some(&(0..2)));
+        assert_eq!(folded.system_groups.get(&2), Some(&(3..5)));
     }
 
     #[test]
