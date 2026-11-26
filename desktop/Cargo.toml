@@ -1,6 +1,6 @@
 [package]
 name = "willdeep-desktop"
-version = "0.156.0-rc6"
+version = "0.157.0-rc4"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"

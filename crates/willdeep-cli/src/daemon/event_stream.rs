@@ -122,6 +122,50 @@ impl EventLog {
     }
 }
 
+/// Old daemons replayed team control results as model replies. Only rewrite events
+/// whose task is linked to a persisted control turn, without inspecting report prose.
+pub(super) fn project_team_control_event(
+    mut event: RuntimeEvent,
+    task_ids: &std::collections::HashSet<uuid::Uuid>,
+) -> RuntimeEvent {
+    if !matches!(
+        event.kind.as_str(),
+        "task.output" | "task.partial" | "turn.partial"
+    ) {
+        return event;
+    }
+    let id = event
+        .message
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("task_id=")?.parse::<uuid::Uuid>().ok());
+    if !id.is_some_and(|id| task_ids.contains(&id)) {
+        return event;
+    }
+    match event.kind.as_str() {
+        "task.partial" => event.kind = "task.completed".into(),
+        "turn.partial" => event.kind = "turn.completed".into(),
+        _ => {
+            if let Some((task, payload)) = event.message.split_once(' ')
+                && let Ok(mut value) = serde_json::from_str::<serde_json::Value>(payload)
+                && let Some(kind @ ("completed" | "partial")) =
+                    value.get("type").and_then(|v| v.as_str())
+                && value
+                    .get("team_results_incomplete")
+                    .and_then(|v| v.as_bool())
+                    .is_none()
+            {
+                let incomplete = kind == "partial";
+                value["type"] = "completed".into();
+                value["stop_reason"] = "finished".into();
+                value["text"] = "".into();
+                value["team_results_incomplete"] = incomplete.into();
+                event.message = format!("{task} {value}");
+            }
+        }
+    }
+    event
+}
+
 pub(super) fn public_event(mut event: RuntimeEvent) -> RuntimeEvent {
     if event.kind == "task.output" {
         event.message = redact_task_output(&event.message);
@@ -265,10 +309,15 @@ pub(super) async fn events_stream_handler(
         log: state.events.clone(),
         cursor: query.after,
     };
-    let events = stream::unfold(live, |mut state| async move {
-        next_event(&mut state)
-            .await
-            .map(|event| (Ok::<Event, Infallible>(sse_event(event)), state))
+    let task_ids = state
+        .sessions
+        .team_control_task_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let events = stream::unfold((live, task_ids), |(mut live, task_ids)| async move {
+        next_event(&mut live).await.map(|event| {
+            let event = project_team_control_event(event, &task_ids);
+            (Ok::<Event, Infallible>(sse_event(event)), (live, task_ids))
+        })
     });
     Ok(Sse::new(events)
         .keep_alive(
@@ -302,10 +351,15 @@ pub(super) async fn events_ndjson_handler(
         log: state.events.clone(),
         cursor: query.after,
     };
-    let events = stream::unfold(live, move |mut state| async move {
-        next_event(&mut state).await.map(|event| {
+    let task_ids = state
+        .sessions
+        .team_control_task_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let events = stream::unfold((live, task_ids), move |(mut live, task_ids)| async move {
+        next_event(&mut live).await.map(|event| {
+            let event = project_team_control_event(event, &task_ids);
             let line = Ok::<Bytes, Infallible>(ndjson_event(public_event(event), request_id));
-            (line, state)
+            (line, (live, task_ids))
         })
     });
     Ok(Response::builder()
@@ -556,6 +610,46 @@ mod tests {
         assert_eq!(value["status"], "ok");
         assert_eq!(value["data"]["sequence"], 42);
         assert_eq!(value["meta"]["request_id"], request_id.to_string());
+    }
+
+    #[test]
+    fn legacy_team_control_replay_hides_report_and_preserves_worker_status() {
+        let task = uuid::Uuid::new_v4();
+        let event = RuntimeEvent {
+            sequence: 1,
+            timestamp: 0,
+            kind: "task.output".into(),
+            message: format!(
+                "task_id={task} {}",
+                serde_json::json!({"type":"partial", "text":"<worker-facts>"})
+            ),
+        };
+        assert_eq!(
+            project_team_control_event(event.clone(), &Default::default()).message,
+            event.message,
+        );
+        let task_ids = std::collections::HashSet::from([task]);
+        let projected = project_team_control_event(event, &task_ids);
+        let (_, payload) = projected.message.split_once(' ').unwrap();
+        let value: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(value["type"], "completed");
+        assert_eq!(value["text"], "");
+        assert_eq!(value["team_results_incomplete"], true);
+        for (old, new) in [
+            ("task.partial", "task.completed"),
+            ("turn.partial", "turn.completed"),
+        ] {
+            let event = RuntimeEvent {
+                sequence: 2,
+                timestamp: 0,
+                kind: old.into(),
+                message: format!(
+                    "session_id={} task_id={task} exit_code=none",
+                    uuid::Uuid::nil()
+                ),
+            };
+            assert_eq!(project_team_control_event(event, &task_ids).kind, new);
+        }
     }
 
     #[test]

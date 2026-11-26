@@ -39,11 +39,18 @@ export type IntakeWebhook = {
 export type PendingRecord = { at: number; slug: string; kind: string; reason: string };
 export type BindingView = { slug: string; session_id: string };
 
+export type IntakeTunnelStatus =
+  | "stopped" | "running" | "listener_failed" | "missing_token"
+  | "cloudflared_not_found" | "spawn_failed" | "exited";
+
 export type IntakeView = {
   enabled: boolean;
   listen: string;
   /// 访客最终访问的地址（含协议）；空串表示按监听地址拼。
   public_url: string;
+  cloudflare_tunnel?: boolean;
+  tunnel_status?: IntakeTunnelStatus;
+  tunnel_token_configured?: boolean;
   running: boolean;
   running_listen?: string | null;
   runtime_managed: boolean;
@@ -59,6 +66,8 @@ export type IntakePayload = {
   enabled: boolean;
   listen: string;
   public_url: string;
+  cloudflare_tunnel?: boolean;
+  cloudflare_tunnel_token?: string;
   sites: IntakeSite[];
   forms: IntakeForm[];
   webhooks: IntakeWebhook[];

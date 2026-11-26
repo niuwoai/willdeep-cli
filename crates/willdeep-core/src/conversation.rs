@@ -261,6 +261,12 @@ pub fn project(messages: &[Message], current_plan: Option<&Plan>) -> Vec<Convers
             continue;
         }
         let role = match message.role {
+            Role::User
+                if message.source == Some(MessageSource::HostInstruction)
+                    && message.subagent_report_run_id().is_some() =>
+            {
+                continue;
+            }
             Role::User if message.source == Some(MessageSource::HostInstruction) => "system",
             Role::System if message.source == Some(MessageSource::FederationNotice) => "system",
             Role::User => "user",

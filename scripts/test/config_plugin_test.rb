@@ -288,7 +288,11 @@ Dir.mktmpdir("willdeep-config-test") do |dir|
     raise "no intake section" unless section
     assert_equal("static", section["kind"], "intake kind")
     assert_equal(true, section["editable"], "intake editable")
-    assert_equal(%w[enabled listen public_url], section["fields"].map { |field| field["key"] }, "intake fields")
+    assert_equal(%w[enabled listen public_url cloudflare_tunnel cloudflare_tunnel_token], section["fields"].map { |field| field["key"] }, "intake fields")
+    tunnel = section["fields"].find { |field| field["key"] == "cloudflare_tunnel" }
+    assert_equal(false, tunnel["value"], "Cloudflare Tunnel default")
+    token = section["fields"].find { |field| field["key"] == "cloudflare_tunnel_token" }
+    assert_equal(true, token["secret"], "Cloudflare Tunnel credential is masked")
     listen = section["fields"].find { |field| field["key"] == "listen" }
     assert_equal("127.0.0.1:9857", listen["value"], "listen value")
 

@@ -1527,6 +1527,15 @@ impl RuntimeSessionStore {
         Ok(turns)
     }
 
+    pub(super) fn team_control_task_ids(&self) -> Result<std::collections::HashSet<uuid::Uuid>> {
+        Ok(self
+            .turns_lock()?
+            .values()
+            .filter(|turn| turn.team_control.is_some())
+            .filter_map(|turn| turn.metadata.active_task_id)
+            .collect())
+    }
+
     pub fn get_turn(&self, id: uuid::Uuid) -> Result<Option<RuntimeTurn>> {
         Ok(self
             .turns_lock()?

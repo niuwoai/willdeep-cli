@@ -125,22 +125,7 @@ pub async fn prepare(
 }
 
 fn latest_project(store: &SessionStore, workspace: &Path) -> Option<SessionDigest> {
-    let workspace = workspace.canonicalize().ok()?;
-    store
-        .digests()
-        .into_iter()
-        .filter(|digest| !digest.bridged && digest.has_user_input)
-        // A relative stored path is interpreted against this process's current
-        // directory. That can make `.` sessions from unrelated launches appear
-        // to belong to whichever project starts the chooser now.
-        .filter(|digest| digest.workspace.is_absolute())
-        .filter(|digest| {
-            digest
-                .workspace
-                .canonicalize()
-                .is_ok_and(|path| path == workspace)
-        })
-        .max_by_key(|digest| (digest.updated_at, digest.id))
+    store.latest_project_digest(workspace)
 }
 
 pub fn select(

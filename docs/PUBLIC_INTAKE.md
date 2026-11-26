@@ -34,6 +34,19 @@
 
 端口可以改，但不支持运行中动态新增监听端口。改配置后需要重启 daemon 才生效。
 
+## Cloudflare Tunnel
+
+可以在「公网入口」使用 Cloudflare 命名隧道，开关默认为关闭。
+
+1. 在 Runtime 主机安装 `cloudflared`。在 Cloudflare 控制台为命名隧道配置公开主机名，服务地址用 `http://127.0.0.1:9857` 或实际的 Intake 回环监听地址。
+2. 在 Cloudflare 控制台进入 **Networking → Tunnels**。选择命名隧道，在 **Overview → Add a replica** 打开安装命令，复制其中以 `eyJ` 开头的令牌。新建隧道时，创建流程会直接提供安装命令。[Cloudflare 官方说明](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/remote-tunnel-permissions/#get-the-tunnel-token)
+3. 在本机 Web 的「公网入口」启用入口及命名隧道，保留固定的回环监听端口，填写该主机名的 HTTPS 地址和隧道令牌，然后保存。运行中的 Runtime 会应用配置，在成功绑定入口后启动或重启连接器。
+4. 用该主机名访问 `/health`，再检查所需的站点、表单或 webhook。公开主机名的访问限制在 Cloudflare 配置。
+
+也可在 `config.toml` 的 `[intake]` 段设置 `cloudflare_tunnel = true` 与 `cloudflare_tunnel_token`。手工编辑文件后重启 Runtime 以应用。配置令牌优先于 `TUNNEL_TOKEN` 环境变量。Web 只显示是否已保存，留空保留已配置令牌。选择「移除已保存的令牌」并保存后，会改用环境变量。配置文件及其备份包含令牌，请限制访问。
+
+关闭隧道开关会保留本地 Intake 监听。关闭公网入口或退出 Runtime 时，连接器随服务停止。
+
 ## 入口不能碰到管理面
 
 入口监听上只挂上面那几条路径，不挂 `/api/sessions`、设置、工作区管理。这样即使前面的反向代理配错、把入口端口直接暴露出去，外人也拿不到会话列表、改不了模型配置、加不了工作区。Web 管理接口 `/api/intake` 与入口监听分离；配置读取、修改和目录浏览都只允许从回环 Web 访问，非回环请求返回 403，不会泄露工作区路径、入口配置、失败投递记录或会话绑定。

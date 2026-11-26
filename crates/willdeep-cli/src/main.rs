@@ -1110,6 +1110,7 @@ async fn run() -> Result<()> {
             skills,
             built.kernel.clone(),
             built.kernel_store.clone(),
+            built.startup_mcp_notices,
             (
                 tui_tx,
                 tui_rx,

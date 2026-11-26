@@ -427,6 +427,84 @@ fn duplicate_records_keep_identity_when_a_preceding_record_is_removed() {
 }
 
 #[test]
+fn short_stream_delta_resumes_following_one_line_from_the_bottom() {
+    for mode in MODES {
+        let (mut app, mut terminal) =
+            fixture(mode, vec![format!("{ASSISTANT_ROW_PREFIX}{}", history())]);
+        app.stream_transient(StreamKind::Reply, "alpha");
+        paint(&mut app, &mut terminal);
+        app.scroll_up(1);
+        paint(&mut app, &mut terminal);
+        assert_eq!(app.scroll_from_bottom, 1);
+        assert!(!app.follow_bottom);
+        let height = app.transcript_height;
+
+        app.stream_transient(StreamKind::Reply, " beta");
+        paint(&mut app, &mut terminal);
+        assert_eq!(app.transcript_height, height);
+        assert!(app.follow_bottom);
+        assert_eq!(app.scroll_from_bottom, 0);
+        assert_eq!(app.viewport.new_content, 0);
+        assert_eq!(app.viewport.indicator, Rect::default());
+    }
+}
+
+#[test]
+fn near_bottom_scroll_resumes_following_without_blocking_upward_reading() {
+    let tick = super::super::event_loop::SCROLL_LINES_PER_TICK;
+    for mode in MODES {
+        let (mut app, mut terminal) =
+            fixture(mode, vec![format!("{ASSISTANT_ROW_PREFIX}{}", history())]);
+        paint(&mut app, &mut terminal);
+        app.scroll_up(tick);
+        paint(&mut app, &mut terminal);
+        assert_eq!(app.scroll_from_bottom, tick);
+        assert!(!app.follow_bottom);
+        assert!(app.viewport.indicator.width > 0);
+        app.scroll_up(tick);
+        paint(&mut app, &mut terminal);
+        assert_eq!(app.scroll_from_bottom, 2 * tick);
+        app.scroll_down(tick);
+        paint(&mut app, &mut terminal);
+        assert!(app.follow_bottom);
+        assert_eq!(app.viewport.indicator, Rect::default());
+        app.append_transcript("System: newest line".into());
+        paint(&mut app, &mut terminal);
+        assert_eq!(app.scroll_from_bottom, 0);
+    }
+}
+
+#[test]
+fn growing_the_viewport_clears_reading_when_the_transcript_fits() {
+    for mode in MODES {
+        let (mut app, mut terminal) =
+            fixture(mode, vec![format!("{ASSISTANT_ROW_PREFIX}{}", history())]);
+        paint(&mut app, &mut terminal);
+        app.scroll_up(10);
+        paint(&mut app, &mut terminal);
+        assert!(app.viewport.reading.is_some());
+        resize(&mut app, &mut terminal, 120, 100);
+        assert_eq!(app.max_scroll(), 0);
+        assert!(app.follow_bottom);
+        assert!(app.viewport.reading.is_none());
+        assert_eq!(app.viewport.indicator, Rect::default());
+
+        let tick = App::NEAR_BOTTOM_LINES;
+        for height in (24..100).rev() {
+            resize(&mut app, &mut terminal, 120, height);
+            if app.max_scroll() == tick {
+                break;
+            }
+        }
+        assert_eq!(app.max_scroll(), tick);
+        app.scroll_up(tick);
+        paint(&mut app, &mut terminal);
+        assert!(app.follow_bottom);
+        assert_eq!(app.viewport.indicator, Rect::default());
+    }
+}
+
+#[test]
 fn indicator_uses_the_separator_outside_the_body_and_the_whole_row_is_clickable() {
     for mode in MODES {
         for language in [Language::ZhCn, Language::En, Language::Ja] {
@@ -530,7 +608,8 @@ fn footer_keeps_its_complete_cells_during_click_drag_new_content_and_resize() {
                 "Down changed {mode:?}/{language:?} footer"
             );
             assert!(!app.follow_bottom);
-            assert!(app.viewport.indicator.y > y);
+            assert_eq!(app.scroll_from_bottom, 0);
+            assert_eq!(app.viewport.indicator, Rect::default());
             let up = mouse_at(&app, MouseEventKind::Up(MouseButton::Left), point);
             app.handle_chat_selection_mouse(up);
             paint(&mut app, &mut terminal);
@@ -556,7 +635,11 @@ fn footer_keeps_its_complete_cells_during_click_drag_new_content_and_resize() {
             for width in [84, 120] {
                 resize(&mut app, &mut terminal, width, 32);
                 assert_eq!(app.selected_chat_text(), copied);
-                assert!(app.viewport.indicator.y >= app.transcript_content.bottom());
+                if app.scroll_from_bottom == 0 {
+                    assert_eq!(app.viewport.indicator, Rect::default());
+                } else {
+                    assert!(app.viewport.indicator.y >= app.transcript_content.bottom());
+                }
             }
             assert_eq!(cells(&app, &terminal), before, "resize changed footer");
             app.stream_transient(StreamKind::Reply, "new content\n");

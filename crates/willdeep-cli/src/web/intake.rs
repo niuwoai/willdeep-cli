@@ -77,6 +77,9 @@ struct IntakeView {
     listen: String,
     /// 访客最终访问的地址（含协议）；空串表示按监听地址拼。
     public_url: String,
+    cloudflare_tunnel: bool,
+    tunnel_token_configured: bool,
+    tunnel_status: crate::daemon::TunnelStatus,
     /// 配置里开着，但监听起没起来要问 Runtime——端口被占、配置非法都会让它不在跑。
     running: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,9 +122,14 @@ struct BrowseView {
 struct IntakeRequest {
     enabled: bool,
     listen: String,
-    /// 访客最终访问的地址（含协议）。旧客户端不传时按空串处理。
     #[serde(default)]
-    public_url: String,
+    public_url: Option<String>,
+    /// 旧客户端没有这个字段，保留已有开关。
+    #[serde(default)]
+    cloudflare_tunnel: Option<bool>,
+    /// Omit to keep the stored token. An empty string removes it.
+    #[serde(default)]
+    cloudflare_tunnel_token: Option<String>,
     #[serde(default)]
     sites: Vec<SiteView>,
     #[serde(default)]
@@ -138,11 +146,28 @@ struct BrowseQuery {
 
 impl IntakeRequest {
     /// 页面上填的东西是给人看的，交给入口服务之前转成配置里那套类型。
-    fn settings(&self) -> IntakeSettings {
+    fn settings(&self, previous: &IntakeSettings) -> IntakeSettings {
+        let cloudflare_tunnel = self.cloudflare_tunnel.unwrap_or(previous.cloudflare_tunnel);
+        let default_url = if cloudflare_tunnel {
+            &previous.public_url
+        } else {
+            ""
+        };
         IntakeSettings {
             enabled: self.enabled,
             listen: self.listen.trim().to_owned(),
-            public_url: self.public_url.trim().to_owned(),
+            public_url: self
+                .public_url
+                .as_deref()
+                .unwrap_or(default_url)
+                .trim()
+                .to_owned(),
+            cloudflare_tunnel,
+            cloudflare_tunnel_token: match self.cloudflare_tunnel_token.as_deref().map(str::trim) {
+                None => previous.cloudflare_tunnel_token.clone(),
+                Some("") => None,
+                Some(token) => Some(crate::config::IntakeTunnelToken(token.to_owned())),
+            },
             sites: self
                 .sites
                 .iter()
@@ -299,14 +324,21 @@ async fn read(State(state): State<Arc<WebState>>) -> Result<Json<IntakeView>, We
         ));
     }
     let settings = load_settings(&state.config_path)?;
-    let running_listen = match state.intake.as_ref() {
-        Some(intake) => intake.status().await.map(|address| address.to_string()),
-        None => None,
+    let (running_listen, tunnel_status) = match state.intake.as_ref() {
+        Some(intake) => intake.runtime_status().await,
+        None => (None, crate::daemon::TunnelStatus::Stopped),
     };
+    let running_listen = running_listen.map(|address| address.to_string());
     Ok(Json(IntakeView {
         enabled: settings.enabled,
         listen: settings.listen.clone(),
         public_url: settings.public_url.clone(),
+        cloudflare_tunnel: settings.cloudflare_tunnel,
+        tunnel_token_configured: settings
+            .cloudflare_tunnel_token
+            .as_ref()
+            .is_some_and(|token| !token.0.trim().is_empty()),
+        tunnel_status,
         running: running_listen.is_some(),
         running_listen,
         runtime_managed: state.intake.is_some(),
@@ -328,7 +360,16 @@ async fn write(
             "public intake settings are available only from a loopback Web server",
         ));
     }
-    let settings = request.settings();
+    let guard = state.settings_write_lock.lock().await;
+    let needs_previous = request.cloudflare_tunnel.is_none()
+        || request.public_url.is_none()
+        || request.cloudflare_tunnel_token.is_none();
+    let previous = if needs_previous && state.config_path.exists() {
+        load_settings(&state.config_path)?
+    } else {
+        IntakeSettings::default()
+    };
+    let settings = request.settings(&previous);
     crate::config::validate_intake(&settings)
         .map_err(|error| WebError::bad_request(error.to_string()))?;
     // 站点目录必须是真实目录：配一个打不开的路径，入口服务会一直 404 而没有解释。
@@ -341,7 +382,6 @@ async fn write(
             )));
         }
     }
-    let guard = state.settings_write_lock.lock().await;
     save_settings(&state.config_path, &state.home, &settings).map_err(WebError::from_anyhow)?;
     if let Some(intake) = state.intake.as_ref() {
         // 配置已经生效了；重开监听失败时入口服务会自己打日志，页面状态照实反映。
@@ -544,6 +584,15 @@ fn settings_block(settings: &IntakeSettings) -> anyhow::Result<String> {
             toml::Value::String(public_url.to_owned()),
         );
     }
+    if settings.cloudflare_tunnel {
+        intake.insert("cloudflare_tunnel".to_owned(), toml::Value::Boolean(true));
+    }
+    if let Some(token) = &settings.cloudflare_tunnel_token {
+        intake.insert(
+            "cloudflare_tunnel_token".to_owned(),
+            toml::Value::String(token.0.clone()),
+        );
+    }
     if !sites.is_empty() {
         intake.insert("sites".to_owned(), toml::Value::Array(sites));
     }
@@ -580,7 +629,7 @@ fn save_settings(
     // 整个文件重新解析一遍：段外的内容一个字都没动，出错只可能是我们拼错了。
     crate::config::parse_config_text(&next)
         .map_err(|error| anyhow::anyhow!("the edited configuration would not parse: {error}"))?;
-    backup_config(config_path, home)?;
+    backup_config(config_path, home, &original)?;
     write_atomic(config_path, &next)
 }
 
@@ -590,17 +639,31 @@ fn write_atomic(path: &std::path::Path, text: &str) -> anyhow::Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("configuration path has no parent"))?;
     let temporary = directory.join(format!(".config-{}.tmp", uuid::Uuid::new_v4()));
-    std::fs::write(&temporary, text)?;
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    std::fs::rename(&temporary, path)?;
+    let mut file = options.open(&temporary)?;
+    let written = file.write_all(text.as_bytes());
+    drop(file);
+    if let Err(error) = written.and_then(|()| std::fs::rename(&temporary, path)) {
+        if let Err(cleanup) = std::fs::remove_file(&temporary) {
+            eprintln!("Intake: cannot clean up temporary configuration: {cleanup}");
+        }
+        return Err(error.into());
+    }
     Ok(())
 }
 
-fn backup_config(config_path: &std::path::Path, home: &std::path::Path) -> anyhow::Result<()> {
+fn backup_config(
+    config_path: &std::path::Path,
+    home: &std::path::Path,
+    original: &str,
+) -> anyhow::Result<()> {
     if !config_path.is_file() {
         return Ok(());
     }
@@ -616,7 +679,7 @@ fn backup_config(config_path: &std::path::Path, home: &std::path::Path) -> anyho
         .unwrap_or_else(|| "config.toml".to_owned());
     let target = directory.join(format!("{name}-{stamp}.bak"));
     if !target.exists() {
-        std::fs::copy(config_path, &target)?;
+        write_atomic(&target, original)?;
     }
     Ok(())
 }
@@ -636,6 +699,8 @@ mod tests {
             enabled: true,
             listen: "127.0.0.1:9857".to_owned(),
             public_url: "https://intake.example.com".to_owned(),
+            cloudflare_tunnel: false,
+            cloudflare_tunnel_token: None,
             sites: vec![IntakeSite {
                 slug: "blog".to_owned(),
                 root: absolute("willdeep-intake-site"),
@@ -697,6 +762,57 @@ mod tests {
     fn empty_file_gets_just_the_intake_block() {
         let block = "[intake]\nenabled = false\nlisten = \"127.0.0.1:9857\"";
         assert_eq!(splice_intake("", block), block);
+    }
+
+    #[test]
+    fn intake_tunnel_round_trips_and_legacy_requests_preserve_it() {
+        let mut previous = settings();
+        let legacy: IntakeRequest =
+            serde_json::from_str(r#"{"enabled":true,"listen":"127.0.0.1:9857"}"#).unwrap();
+        assert!(legacy.settings(&previous).public_url.is_empty());
+
+        previous.cloudflare_tunnel = true;
+        let updated = legacy.settings(&previous);
+        assert!(updated.cloudflare_tunnel);
+        assert_eq!(updated.public_url, previous.public_url);
+        let block = settings_block(&updated).unwrap();
+        let round_trip = crate::config::parse_config_text(&block).unwrap();
+        assert!(round_trip.intake.cloudflare_tunnel);
+        assert!(!block.contains("TUNNEL_TOKEN"));
+
+        let disable: IntakeRequest = serde_json::from_str(
+            r#"{"enabled":true,"listen":"127.0.0.1:9857","cloudflare_tunnel":false}"#,
+        )
+        .unwrap();
+        let block = settings_block(&disable.settings(&previous)).unwrap();
+        assert!(!block.contains("cloudflare_tunnel"));
+    }
+
+    #[test]
+    fn intake_tunnel_token_is_preserved_replaced_and_removed() {
+        let mut previous = settings();
+        let fake = uuid::Uuid::new_v4().to_string();
+        let replace: IntakeRequest = serde_json::from_value(serde_json::json!({
+            "enabled": true, "listen": previous.listen, "cloudflare_tunnel_token": fake,
+        }))
+        .unwrap();
+        previous = replace.settings(&previous);
+        assert!(!format!("{previous:?}").contains(&fake));
+        let omitted: IntakeRequest =
+            serde_json::from_str(r#"{"enabled":true,"listen":"127.0.0.1:9857"}"#).unwrap();
+        let block = settings_block(&omitted.settings(&previous)).unwrap();
+        let parsed = crate::config::parse_config_text(&block).unwrap().intake;
+        assert!(
+            parsed
+                .cloudflare_tunnel_token
+                .as_ref()
+                .is_some_and(|token| token.0 == fake)
+        );
+        let remove: IntakeRequest = serde_json::from_str(
+            r#"{"enabled":true,"listen":"127.0.0.1:9857","cloudflare_tunnel_token":""}"#,
+        )
+        .unwrap();
+        assert!(remove.settings(&parsed).cloudflare_tunnel_token.is_none());
     }
 
     #[test]

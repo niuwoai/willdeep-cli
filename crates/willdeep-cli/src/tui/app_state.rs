@@ -1776,24 +1776,18 @@ impl App {
     }
     pub(super) fn scroll_up(&mut self, n: usize) {
         let max = self.max_scroll();
-        if max == 0 {
-            if self.reveal_archived_rounds() {
-                self.follow_bottom = false;
-                return;
-            }
-            return self.scroll_to_bottom();
-        }
-        // 已经贴顶还继续往上：把归档的那批放回来。
-        if self.scroll_from_bottom >= max && self.reveal_archived_rounds() {
+        // 只有少量溢出时，向上优先展开归档。如果没有归档就保持贴底。
+        // 长历史仍允许一格一格往上，看到了顶再展开归档。
+        if (max <= Self::NEAR_BOTTOM_LINES || self.scroll_from_bottom >= max)
+            && self.reveal_archived_rounds()
+        {
             self.follow_bottom = false;
             return;
         }
-        self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(n).min(max);
-        // 离底部不到一行的抖动不算回看：否则轻微滚动或内容高度的舍入就会把
-        // 「正在回看」提示挂出来，哪怕用户根本没离开最新内容。
-        if self.scroll_from_bottom <= Self::NEAR_BOTTOM_LINES {
+        if max <= Self::NEAR_BOTTOM_LINES {
             return self.scroll_to_bottom();
         }
+        self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(n).min(max);
         self.follow_bottom = false;
         self.viewport_scrolled();
     }
@@ -1816,8 +1810,8 @@ impl App {
         self.scroll_from_bottom = 0;
         self.viewport_return_to_latest();
     }
-    /// 离底部不超过这么多行时仍算贴底：回看提示和自动跟随都不该被一两行的抖动触发。
-    const NEAR_BOTTOM_LINES: usize = 1;
+    /// 向下只剩一格滚轮的距离时直接贴底。
+    pub(super) const NEAR_BOTTOM_LINES: usize = super::event_loop::SCROLL_LINES_PER_TICK;
     /// 长会话只把最近这些轮次留在渲染循环里；更早的仍存在内存中，翻到顶再放回来。
     const LIVE_ROUNDS: usize = 100;
     const ARCHIVED_KEEP_ROUNDS: usize = 50;

@@ -170,14 +170,18 @@ module ConfigSchema
     },
     {
       id: "intake", section: "intake", title: "公网入口",
-      description: "站点、表单与 webhook 的对外监听；这几组数组表在 Web 的「公网入口」页维护，这里只改三个标量。",
+      description: "站点、表单与 webhook 的对外监听。站点、表单与 webhook 列表在 Web 的「公网入口」页维护。",
       fields: [
         { key: "enabled", label: "启用公网入口", type: "bool", default: false,
           description: "开启后按监听地址提供站点、表单和 webhook；实例联邦已启用时不能关，否则整份配置加载失败" },
         { key: "listen", label: "监听地址", type: "string", default: "127.0.0.1:9857", format: "socket_addr",
           description: "必须是 IP:PORT（如 127.0.0.1:9857、[::1]:9857），不能写 localhost；前面用反向代理按域名转发到这个端口" },
         { key: "public_url", label: "访客访问地址", type: "string", default: "", format: "intake_origin",
-          description: "访客实际打开的 http(s) origin，如 https://intake.example.com；不能带路径、查询、片段或账号密码，留空时按监听地址拼" }
+          description: "访客实际打开的 http(s) origin，如 https://intake.example.com；不能带路径、查询、片段或账号密码，留空时按监听地址拼" },
+        { key: "cloudflare_tunnel", label: "启用 Cloudflare 命名隧道", type: "bool", default: false,
+          description: "公网入口开启时生效。将 Cloudflare 控制台的公开主机名指向固定端口的回环监听，并填入 HTTPS 访客地址" },
+        { key: "cloudflare_tunnel_token", label: "Cloudflare 隧道令牌", type: "secret", default: nil, secret: true,
+          description: "可在 Web 的公网入口页保存并立即应用。未在配置中填写时使用 Runtime 的 TUNNEL_TOKEN 环境变量" }
       ]
     }
   ].freeze
