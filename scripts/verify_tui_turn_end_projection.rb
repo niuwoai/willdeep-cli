@@ -20,7 +20,7 @@ class TurnEndProjectionRun
       binary: binary, binary_sha256_before: Digest::SHA256.file(binary).hexdigest,
       fixture_root: @root, real_model_requests: false, layouts: %w[full compact],
       version: nil,
-      scope: 'real Runtime/full+compact PTY; committed create_file diff while running, automatic fold after the final result, click-to-reopen',
+      scope: 'real Runtime/full+compact PTY; committed create_file diff while running, /version during a live reply, automatic fold after the final result, click-to-reopen',
       isolation: 'Private HOME/WILLDEEP_HOME/XDG/temp/workspace; allowlisted child environment; synthetic loopback Provider; OSC52 captured in owned PTY.',
       boundary: 'Synthetic loopback Provider only; no real model or user Runtime. Session-switch, failed-send and manual-expansion persistence are covered by Rust native regressions, not this PTY.'}
   end
@@ -123,6 +123,29 @@ class TurnEndProjectionRun
       snapshot(tui, directory, '01-running-diff')
     end
 
+    check(mode, '/version shows both versions after one Enter during a live reply') do
+      tui.paste('/tools')
+      tui.write("\r")
+      tui.wait('first local command feedback') { |screen| A.chat(screen).match?(/tool-call rows (folded|expanded)/i) }
+      tui.paste('/tools')
+      tui.write("\r")
+      tui.wait('adjacent System notices fold') { |screen| A.chat(screen).include?('2 system messages') }
+      provider.delta(1, "TURN_END_STREAMING_REPLY\n")
+      tui.wait('model reply is streaming') { |screen| A.chat(screen).include?('TURN_END_STREAMING_REPLY') }
+      tui.paste('/version')
+      tui.wait('exact /version suggestion is visible') do |screen|
+        screen.fetch('lines').any? { |line| line.include?('/version') && line.include?('Runtime') }
+      end
+      tui.write("\r")
+      version = @report.fetch(:version).split.last
+      tui.wait('CLI and Runtime versions in chat', seconds: 5) do |screen|
+        A.chat(screen).include?("CLI #{version} · Runtime #{version}")
+      end
+      A.assert(provider.requests.length == 2, '/version triggered a Provider request')
+      A.assert(!A.chat(tui.screen).include?('turn finished'), '/version appeared only after the turn finished')
+      snapshot(tui, directory, '02-version-during-reply')
+    end
+
     provider.delta(1, "TURN_END_FINAL_ANSWER\n")
     provider.finish(1)
     check(mode, 'the final result folds the intermediate diff and keeps the tool receipt') do
@@ -136,7 +159,7 @@ class TurnEndProjectionRun
       A.assert(!A.chat_lines(tui.screen).any? { |line| line.include?(FILE) }, 'diff file summary survived the final result')
       A.assert(chat.include?('✓ create_file'), 'tool receipt row disappeared with the diff')
       A.assert(provider.requests.length == 2, 'final result triggered an unexpected Provider request')
-      snapshot(tui, directory, '02-after-final-result')
+      snapshot(tui, directory, '03-after-final-result')
     end
 
     check(mode, 'clicking the retained tool row reopens the committed diff') do
@@ -146,7 +169,7 @@ class TurnEndProjectionRun
       wait_diff(tui)
       A.assert_diff(tui.screen, FILE, added: LINES.length, removed: 0, rows: diff_rows)
       A.assert(provider.requests.length == 2, 'reopening the diff triggered a Provider request')
-      snapshot(tui, directory, '03-reopened-diff')
+      snapshot(tui, directory, '04-reopened-diff')
     end
   rescue StandardError => error
     @report[:errors] << "#{mode}: #{error.class}: #{error.message}"
@@ -187,7 +210,7 @@ class TurnEndProjectionRun
 
       SHA256 后：#{@report[:binary_sha256_after] || '未取得'}
 
-      取证：full/compact 目录保留运行中、最终结果后和点击重开三个状态的原始 ANSI、屏幕 JSON（含逐格颜色）与私有 Provider 请求。
+      取证：full/compact 目录保留运行中、版本回执、最终结果后和点击重开的原始 ANSI、屏幕 JSON（含逐格颜色）与私有 Provider 请求。
 
       隔离：#{@report[:isolation]}
 
