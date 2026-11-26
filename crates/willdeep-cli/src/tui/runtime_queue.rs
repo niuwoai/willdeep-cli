@@ -394,8 +394,9 @@ fn finish_input_submission(
             app.dismiss_awaiting_reply();
             app.composer_expanded = expanded;
             let message = format!(
-                "{}: {error:#}",
-                delivery_echo::DeliveryStatus::Unconfirmed.feedback(app.language)
+                "{}: {}",
+                delivery_echo::DeliveryStatus::Unconfirmed.feedback(app.language),
+                super::runtime_ui::submission_error(app.language, error)
             );
             app.transcript[row] =
                 terminal_safe_text(&format!("Error: {message}\n{}", app.input.text()));

@@ -1969,7 +1969,7 @@ async fn run_daemon_services(
     let app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/capabilities", get(capabilities_handler))
-        .route("/v1/api", post(control_api::handler))
+        .route("/v1/api", control_api::route())
         .route("/v1/events", get(events_handler))
         .route(
             "/v1/events/stream",

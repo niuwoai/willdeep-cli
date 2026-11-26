@@ -101,7 +101,10 @@ pub(crate) fn confirm_removed(out: &mut impl Write, id: &str) -> io::Result<()> 
 /// the column can draw a thumbnail even though it never saw the bytes itself.
 pub(crate) fn announce_blob(out: &mut impl Write, id: &str, png: &[u8]) -> io::Result<()> {
     if !is_identifier(id) || png.is_empty() || png.len() > MAX_IMAGE_BYTES {
-        return Ok(());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid gallery image",
+        ));
     }
     let encoded = base64::engine::general_purpose::STANDARD.encode(png);
     let piece_budget = 40_000;
