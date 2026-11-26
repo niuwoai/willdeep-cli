@@ -160,6 +160,7 @@ impl App {
             transcript_rows: Vec::new(),
             transcript_selection_bounds: Vec::new(),
             transcript_render_cache: None,
+            streaming_markdown: None,
             transcript_render_offset: 0,
             skill_selected: 0,
             references: None,

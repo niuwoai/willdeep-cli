@@ -16,4 +16,9 @@ describe("copyFieldFromPre", () => {
     const field = copyFieldFromPre(preChild);
     expect(field).toEqual({ mode: "input", text: "npm run dev" });
   });
+
+  it("keeps multiline content visible even when it was labeled input", () => {
+    const preChild = createElement("code", { className: "language-input" }, "one\n\n  two\n");
+    expect(copyFieldFromPre(preChild)).toEqual({ mode: "textarea", text: "one\n\n  two" });
+  });
 });

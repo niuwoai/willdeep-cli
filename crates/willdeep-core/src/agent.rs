@@ -825,15 +825,37 @@ impl Agent {
     /// 把第一轮问答压成一行短标题。没绑标题 Provider、调用失败或模型返回
     /// 垃圾时一律 `None`——标题是装饰，不值得为它中断任何东西。
     pub async fn summarize_title(&self, first_user: &str, first_assistant: &str) -> Option<String> {
+        Self::summarize_title_with(&self.titlers, first_user, first_assistant, Some(self)).await
+    }
+
+    /// A detached title request owns just the providers and cannot emit events for a settled turn.
+    pub fn background_title_summary(
+        &self,
+        first_user: String,
+        first_assistant: String,
+    ) -> impl Future<Output = Option<String>> + Send + 'static + use<> {
+        let providers = self.titlers.clone();
+        async move { Self::summarize_title_with(&providers, &first_user, &first_assistant, None).await }
+    }
+
+    async fn summarize_title_with(
+        providers: &[Arc<dyn Provider>],
+        first_user: &str,
+        first_assistant: &str,
+        reporter: Option<&Self>,
+    ) -> Option<String> {
         let mut skipped = Vec::new();
-        for (index, provider) in self.titlers.iter().enumerate() {
+        for (index, provider) in providers.iter().enumerate() {
             let model = crate::provider::provider_model(provider.as_ref())
                 .unwrap_or_else(|| format!("candidate #{}", index + 1));
             if let Some(title) =
                 crate::session_title::summarize(provider.clone(), first_user, first_assistant).await
             {
-                self.report_model_fallback("title", &skipped, Some(model))
-                    .await;
+                if let Some(reporter) = reporter {
+                    reporter
+                        .report_model_fallback("title", &skipped, Some(model))
+                        .await;
+                }
                 return Some(title);
             }
             skipped.push((
@@ -841,7 +863,11 @@ impl Agent {
                 "request failed or the answer was not a usable title".to_owned(),
             ));
         }
-        self.report_model_fallback("title", &skipped, None).await;
+        if let Some(reporter) = reporter {
+            reporter
+                .report_model_fallback("title", &skipped, None)
+                .await;
+        }
         None
     }
 

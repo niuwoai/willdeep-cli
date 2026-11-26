@@ -2,6 +2,8 @@
 
 use super::*;
 
+const OPEN_LINK_ICON: &str = "↗";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LinkOnRow {
     pub(super) row: usize,
@@ -39,15 +41,6 @@ impl LinkOpenState {
         }
     }
 
-    fn badge_label(language: Language) -> String {
-        let core = language.text("↗ 打开", "↗ Open", "↗ 開く");
-        format!("╭ {core} ╮")
-    }
-
-    fn badge_width(label: &str) -> u16 {
-        UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16
-    }
-
     fn badge_rect(app: &App, row: usize, label_width: u16) -> Option<Rect> {
         let content = app.transcript_content;
         const MARGIN: u16 = 1;
@@ -83,17 +76,14 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     if !app.link_open.hosted || app.link_open.links.is_empty() {
         return;
     }
-    let label = LinkOpenState::badge_label(app.language);
-    let label_width = LinkOpenState::badge_width(&label);
-    let style = Style::default()
-        .fg(Color::Rgb(255, 255, 255))
-        .bg(Color::Rgb(29, 78, 216));
+    let label_width = UnicodeWidthStr::width(OPEN_LINK_ICON) as u16;
+    let style = Style::default().fg(Color::Cyan);
     let buffer = frame.buffer_mut();
     for (index, link) in app.link_open.links.iter().enumerate() {
         let Some(rect) = LinkOpenState::badge_rect(app, link.row, label_width) else {
             continue;
         };
-        buffer.set_string(rect.x, rect.y, label.as_str(), style);
+        buffer.set_string(rect.x, rect.y, OPEN_LINK_ICON, style);
         app.link_open.badges.push((rect, index));
     }
 }
@@ -164,10 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn badge_label_uses_pill_corners_and_open_text() {
-        let label = LinkOpenState::badge_label(Language::ZhCn);
-        assert!(label.starts_with('╭'));
-        assert!(label.ends_with('╮'));
-        assert!(label.contains("打开"));
+    fn open_link_icon_occupies_one_terminal_cell() {
+        assert_eq!(UnicodeWidthStr::width(OPEN_LINK_ICON), 1);
     }
 }

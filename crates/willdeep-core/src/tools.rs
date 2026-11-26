@@ -37,6 +37,7 @@ mod peer_sessions;
 mod plan_jobs;
 mod search;
 pub use browser::BrowserConfig;
+pub use file_changes::read_workspace_preview;
 pub use goal_evidence::{GoalEvidenceRecord, GoalEvidenceSource, GoalEvidenceStore};
 pub use host_tools::{
     AgentDefinitionHost, ConfigurationHost, GroupConversationHost, WorkflowHost, WorkflowNotice,

@@ -55,6 +55,57 @@ impl Drop for Fixture {
     }
 }
 
+#[test]
+fn workspace_preview_reads_current_text_and_refuses_non_workspace_or_non_text_paths() {
+    let workspace = Fixture::new();
+    let outside = Fixture::new();
+    workspace.write("report.md", "# Report\n");
+    outside.write("outside.md", "outside");
+    workspace.write("binary.txt", "\0");
+    workspace.write(".env.txt", "hidden");
+    std::fs::write(workspace.0.join("invalid.txt"), [0xff]).unwrap();
+    std::fs::write(
+        workspace.0.join("large.txt"),
+        vec![b'a'; crate::tools::MAX_READ_BYTES + 1],
+    )
+    .unwrap();
+    let absolute = workspace.0.join("report.md");
+    for path in [Path::new("./report.md"), &absolute] {
+        assert_eq!(
+            read_workspace_preview(&workspace.0, path).unwrap(),
+            "# Report\n"
+        );
+    }
+    let outside_path = outside.0.join("outside.md");
+    for path in [
+        Path::new("../outside.md"),
+        &outside_path,
+        Path::new(".env.txt"),
+        Path::new("binary.txt"),
+        Path::new("invalid.txt"),
+        Path::new("large.txt"),
+        Path::new("missing.md"),
+        Path::new("."),
+    ] {
+        assert!(
+            read_workspace_preview(&workspace.0, path).is_err(),
+            "{path:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_preview_does_not_follow_file_or_directory_symlinks() {
+    let workspace = Fixture::new();
+    let outside = Fixture::new();
+    outside.write("report.md", "outside");
+    std::os::unix::fs::symlink(outside.0.join("report.md"), workspace.0.join("escape.md")).unwrap();
+    std::os::unix::fs::symlink(&outside.0, workspace.0.join("escape")).unwrap();
+    assert!(read_workspace_preview(&workspace.0, Path::new("escape.md")).is_err());
+    assert!(read_workspace_preview(&workspace.0, Path::new("escape/report.md")).is_err());
+}
+
 fn edit(old: &str, new: &str, expected: Option<String>) -> EditArgs {
     EditArgs {
         path: "a.txt".to_owned(),

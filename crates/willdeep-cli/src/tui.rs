@@ -575,6 +575,7 @@ struct App {
     /// 用户显示行的正文列范围；复制时排除靠右布局产生的空白。
     transcript_selection_bounds: Vec<Option<std::ops::Range<usize>>>,
     transcript_render_cache: Option<rendering::TranscriptRenderCache>,
+    streaming_markdown: Option<rendering::StreamingMarkdown>,
     transcript_render_offset: usize,
     skill_selected: usize,
     references: Option<Vec<crate::composer_references::Reference>>,

@@ -31,6 +31,7 @@ mod desktop;
 pub(crate) use configuration::safe_provider_id;
 mod failures;
 mod federation;
+mod file_preview;
 mod identity;
 mod intake;
 mod mcp_tokens;
@@ -525,6 +526,7 @@ async fn serve_internal(
             get(session_detail).delete(delete_session),
         )
         .route("/api/sessions/{id}/stream", get(resume_session_stream))
+        .route("/api/sessions/{id}/file-preview", get(file_preview::get))
         .route(
             "/api/sessions/{id}/tasks/{task_id}/diagnostics",
             get(task_diagnostics),

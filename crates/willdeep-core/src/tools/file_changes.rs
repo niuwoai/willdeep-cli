@@ -8,7 +8,7 @@
 //! cancelled: a missing receipt remains an unknown effect, never a safe retry.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,60 @@ const MAX_ALL_DIFF_BYTES: usize = 64 * 1024;
 const DIFF_CONTEXT_LINES: usize = 3;
 
 static WRITE_COORDINATOR: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Read a regular UTF-8 file in an already-authorized Workspace without
+/// changing edit baselines. Never follow symlinks within the Workspace.
+pub fn read_workspace_preview(workspace: &Path, requested: &Path) -> std::io::Result<String> {
+    let invalid = || std::io::Error::other("not a regular workspace text file");
+    let root = workspace.canonicalize()?;
+    // Session roots are canonical when registered. A root replaced with a
+    // symlink must not extend the Workspace allowlist.
+    if root != workspace {
+        return Err(invalid());
+    }
+    #[cfg(windows)]
+    let ordinary_root = root
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+        .map(Path::new);
+    #[cfg(not(windows))]
+    let ordinary_root: Option<&Path> = None;
+    let path = if requested.is_absolute() {
+        requested
+            .strip_prefix(&root)
+            .ok()
+            .or_else(|| ordinary_root.and_then(|root| requested.strip_prefix(root).ok()))
+            .ok_or_else(invalid)?
+    } else {
+        requested
+    };
+    let mut destination = root.clone();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::Normal(name) => {
+                let name = name.to_str().ok_or_else(invalid)?;
+                if name.starts_with('.')
+                    || name.contains([':', '\\'])
+                    || name.chars().any(char::is_control)
+                    || (cfg!(windows) && name.ends_with(['.', ' ']))
+                {
+                    return Err(invalid());
+                }
+                destination.push(name);
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    if path.file_name().is_none() {
+        return Err(invalid());
+    }
+    let bytes = disk::read_under(&root, &destination, super::MAX_READ_BYTES)?.bytes;
+    if bytes.contains(&0) {
+        return Err(invalid());
+    }
+    String::from_utf8(bytes).map_err(|_| invalid())
+}
 
 /// Other cooperating writers (notably create_file) must take the same lock,
 /// after approval and before touching the filesystem.

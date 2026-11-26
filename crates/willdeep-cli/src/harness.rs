@@ -393,6 +393,7 @@ pub(crate) struct ExecutionOptions {
     pub allow_compress_command: bool,
     pub replay_existing_user_message: bool,
     pub continue_task: bool,
+    pub defer_title: bool,
     pub ownership: Option<willdeep_core::checkpoint::ClaimedSessionCheckpointSink>,
 }
 
@@ -403,6 +404,8 @@ pub(crate) async fn execute_runtime(
     sink: Arc<dyn EventSink>,
     prepare_execution: impl FnOnce(&willdeep_core::Session) -> Result<()>,
 ) -> Result<RuntimeHarnessOutcome> {
+    use willdeep_core::usage_ledger::ClientKind;
+
     let mut preparation = willdeep_core::preparation::PreparationTrace::new("runtime_execution");
     let loaded = LoadedConfig::load_runtime(request.config.as_deref())?;
     let language = Language::parse(loaded.file.agent.language.as_deref())?;
@@ -530,6 +533,8 @@ pub(crate) async fn execute_runtime(
             replay_existing_user_message: request.replay_existing_user_message,
             continue_task: request.origin_client.as_deref()
                 == Some(crate::daemon::CONTINUE_TASK_ORIGIN),
+            defer_title: ClientKind::parse_origin(request.origin_client.as_deref()).0
+                != ClientKind::Cli,
             ownership,
         },
     )
@@ -804,9 +809,11 @@ pub(crate) async fn execute_noninteractive(
         store.save(session)?;
         willdeep_core::kernel_store::flush(&built.kernel, &built.kernel_store);
     }
-    // L2：第一轮问答落地后跑一次摘要。放在通知之前，好让 webhook 带上的是
-    // 整理过的标题而不是提示词前缀。
-    if crate::titling::apply_summarized_title(&built.agent, session).await {
+    if options.defer_title {
+        // 持久 Runtime 的轮次终态不等待标题模型。通知使用本轮保存的标题。
+        crate::titling::spawn_runtime_summary(&built.agent, store, session);
+    } else if crate::titling::apply_summarized_title(&built.agent, session).await {
+        // 一次性 CLI 必须在通知和退出之前保存摘要。
         store.save(session)?;
     }
     // A headless run is exactly the case where nobody is watching the

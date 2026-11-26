@@ -39,9 +39,7 @@ export function CopyFieldCard({ mode, text }: { mode: CopyFieldMode; text: strin
           {feedback}
         </span>
       </button>
-      <div className={`markdown-copy-field-body${mode === "textarea" ? " is-multiline" : ""}`} tabIndex={0} role="group" aria-label={text}>
-        {text}
-      </div>
+      <div className="markdown-copy-field-body" tabIndex={0}>{text}</div>
     </div>
   );
 }

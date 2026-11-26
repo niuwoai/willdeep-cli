@@ -1147,6 +1147,7 @@ async fn run() -> Result<()> {
             allow_compress_command,
             replay_existing_user_message: false,
             continue_task: run_args.as_ref().is_some_and(|args| args.continue_task),
+            defer_title: false,
             ownership: None,
         },
     )
