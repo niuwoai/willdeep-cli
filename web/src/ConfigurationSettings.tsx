@@ -14,7 +14,6 @@ type Provider = { id: string; provider: string; api: string; api_base: string; m
 type Snapshot = { revision: string; default_provider: string | null; providers: Provider[]; config_path: string };
 type Draft = { id: string; provider: string; api: string; api_base: string; api_key: string; model: string; set_default: boolean; reasoning: ReasoningDraft };
 
-const reasoningLevelExamples = CANONICAL_REASONING_LEVELS.join(", ");
 const emptyReasoning = (): ReasoningDraft => ({ default_level: "", parameter: "", levels: [] });
 const emptyDraft = (): Draft => ({ id: "default", provider: "openai-compatible", api: "chat-completions", api_base: "https://api.openai.com/v1", api_key: "", model: "", set_default: true, reasoning: emptyReasoning() });
 
@@ -60,11 +59,13 @@ function ReasoningLevelInput({ label, hint, value, onChange }: {
   value: string;
   onChange: (value: string) => void;
 }) {
+  const inputId = useId();
   const hintId = useId();
   return <div className="configuration-reasoning-level">
     <label>
       <span>{label}</span>
       <Input
+        id={inputId}
         value={value}
         aria-describedby={hintId}
         onChange={event => onChange(event.target.value)}
@@ -72,6 +73,24 @@ function ReasoningLevelInput({ label, hint, value, onChange }: {
       />
     </label>
     <Text id={hintId} fontSize="xs" color="var(--text-dim)" mt="1">{hint}</Text>
+    <Flex role="group" aria-label={label} gap="1" wrap="wrap" mt="1">
+      {CANONICAL_REASONING_LEVELS.map(level => (
+        <Button
+          key={level}
+          type="button"
+          size="2xs"
+          minH="6"
+          minW="6"
+          variant="outline"
+          color="var(--text)"
+          borderColor="var(--border-strong)"
+          aria-controls={inputId}
+          onClick={() => onChange(level)}
+        >
+          {level}
+        </Button>
+      ))}
+    </Flex>
   </div>;
 }
 
@@ -174,7 +193,7 @@ export function ConfigurationSettings({ messages: t, language, compact = false, 
         <div className="configuration-reasoning-fields">
           <ReasoningLevelInput
             label={reasoning.defaultLevel}
-            hint={reasoning.defaultLevelHint.replace("{levels}", reasoningLevelExamples)}
+            hint={reasoning.defaultLevelHint}
             value={draft.reasoning.default_level}
             onChange={value => {
               setDraft({ ...draft, reasoning: { ...draft.reasoning, default_level: value } });
@@ -187,7 +206,7 @@ export function ConfigurationSettings({ messages: t, language, compact = false, 
           {draft.reasoning.levels.map((entry, index) => <Flex key={entry.id} className="configuration-reasoning-row" gap="2" align="start" wrap="wrap">
             <ReasoningLevelInput
               label={reasoning.levelName}
-              hint={reasoning.levelNameHint.replace("{levels}", reasoningLevelExamples)}
+              hint={reasoning.levelNameHint}
               value={entry.level}
               onChange={level => {
                 const levels = [...draft.reasoning.levels];

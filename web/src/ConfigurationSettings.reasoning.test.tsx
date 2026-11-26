@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
+import userEvent from "@testing-library/user-event";
 import { ConfigurationSettings } from "./ConfigurationSettings";
 import { messages, type Language } from "./i18n";
 import { reasoningText } from "./reasoningMessages";
@@ -30,19 +31,37 @@ function mount(profile: ReasoningProfile, compact = false, language: Language = 
   return updates;
 }
 
-it.each(["zh-CN", "en", "ja"] as const)("describes default and new logical level fields in %s", async (language) => {
-  mount({ default_level: null, parameter: null, levels: {} }, false, language);
+it.each(["zh-CN", "en", "ja"] as const)("fills only the matching logical level field in %s", async (language) => {
+  const updates = mount({ default_level: "low", parameter: null, levels: { low: "low" } }, false, language);
   const copy = reasoningText(language);
-  const examples = "minimal, low, medium, high, xhigh, max";
-  expect(await screen.findByRole("textbox", {
+  await screen.findByRole("button", { name: `preview · ${messages[language].configSetDefault}` });
+  const defaultInput = screen.getByRole<HTMLInputElement>("textbox", {
     name: copy.defaultLevel,
-    description: copy.defaultLevelHint.replace("{levels}", examples),
-  })).toBeTruthy();
+    description: copy.defaultLevelHint,
+  });
   fireEvent.click(screen.getByRole("button", { name: copy.addLevel }));
-  expect(screen.getByRole<HTMLInputElement>("textbox", {
+  const [existingInput, newInput] = screen.getAllByRole<HTMLInputElement>("textbox", {
     name: copy.levelName,
-    description: copy.levelNameHint.replace("{levels}", examples),
-  }).value).toBe("");
+    description: copy.levelNameHint,
+  });
+  const defaults = within(screen.getByRole("group", { name: copy.defaultLevel }));
+  const newLevels = within(screen.getAllByRole("group", { name: copy.levelName })[1]);
+  expect(newLevels.getAllByRole("button").map(button => button.textContent)).toEqual([
+    "minimal", "low", "medium", "high", "xhigh", "max",
+  ]);
+  fireEvent.click(newLevels.getByRole("button", { name: "high" }));
+  expect([defaultInput.value, existingInput.value, newInput.value]).toEqual(["low", "low", "high"]);
+  fireEvent.click(defaults.getByRole("button", { name: "high" }));
+  expect(defaultInput.value).toBe("high");
+  const user = userEvent.setup();
+  newInput.focus();
+  await user.tab();
+  expect(document.activeElement).toBe(newLevels.getByRole("button", { name: "minimal" }));
+  await user.keyboard("{Enter}");
+  expect(newInput.value).toBe("minimal");
+  expect(updates).toEqual([]);
+  fireEvent.change(newInput, { target: { value: "custom" } });
+  expect(newInput.value).toBe("custom");
 });
 
 it.each(["balanced", "__proto__"])("preserves all existing scalar mappings with default %s in a reasoning-only save", async (defaultLevel) => {
