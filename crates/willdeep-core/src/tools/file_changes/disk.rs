@@ -151,6 +151,29 @@ impl Directory {
         }
     }
 
+    #[cfg(unix)]
+    fn open_child_directory(&self, name: &OsStr) -> io::Result<Self> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let child = c_name(name)?;
+        // SAFETY: The parent descriptor stays live and child is NUL-terminated.
+        let fd = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                child.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a uniquely owned descriptor.
+        let file = unsafe { File::from_raw_fd(fd) };
+        Ok(Self {
+            path: self.path.join(name),
+            file,
+        })
+    }
+
     #[cfg(not(unix))]
     fn open_file(&self, name: &OsStr, create: bool) -> io::Result<File> {
         let path = self.path.join(name);
@@ -256,6 +279,76 @@ fn syscall_result(result: libc::c_int) -> io::Result<()> {
 pub(super) fn read(path: &Path, identity: &DirectoryIdentity, cap: usize) -> io::Result<Snapshot> {
     let directory = Directory::open(path, identity)?;
     let file = directory.open_file(filename(path)?, false)?;
+    let snapshot = read_bounded(file, path, cap)?;
+    identity.check(path)?;
+    Ok(snapshot)
+}
+
+#[cfg(unix)]
+pub(super) fn read_under(root: &Path, path: &Path, cap: usize) -> io::Result<Snapshot> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut directory = Directory {
+        path: root.to_path_buf(),
+        file: std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(root)?,
+    };
+    let relative = path.strip_prefix(root).map_err(io::Error::other)?;
+    if let Some(parent) = relative.parent() {
+        for part in parent.components() {
+            directory = directory.open_child_directory(part.as_os_str())?;
+        }
+    }
+    read_bounded(directory.open_file(filename(path)?, false)?, path, cap)
+}
+
+#[cfg(not(unix))]
+pub(super) fn read_under(_root: &Path, path: &Path, cap: usize) -> io::Result<Snapshot> {
+    if path.canonicalize()? != path {
+        return Err(io::Error::other("file path is no longer canonical"));
+    }
+    let identity = DirectoryIdentity::capture(path)?;
+    let directory = Directory::open(path, &identity)?;
+    let file = directory.open_file(filename(path)?, false)?;
+    // On Windows a parent reparse point could be swapped around open().
+    // Verify the actual file handle before reading any bytes.
+    #[cfg(windows)]
+    if final_windows_path(&file)? != path {
+        return Err(io::Error::other("file handle is outside its expected path"));
+    }
+    let snapshot = read_bounded(file, path, cap)?;
+    identity.check(path)?;
+    Ok(snapshot)
+}
+
+#[cfg(windows)]
+fn final_windows_path(file: &File) -> io::Result<PathBuf> {
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, VOLUME_NAME_DOS};
+
+    let handle = file.as_raw_handle();
+    // SAFETY: a zero buffer length asks Windows for the required size and
+    // file owns the live handle throughout both calls.
+    let size =
+        unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, VOLUME_NAME_DOS) };
+    if size == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut path = vec![0u16; size as usize];
+    // SAFETY: path is writable for size UTF-16 code units.
+    let written =
+        unsafe { GetFinalPathNameByHandleW(handle, path.as_mut_ptr(), size, VOLUME_NAME_DOS) };
+    if written == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if written >= size {
+        return Err(io::Error::other("file handle path changed while resolving"));
+    }
+    Ok(OsString::from_wide(&path[..written as usize]).into())
+}
+
+fn read_bounded(file: File, path: &Path, cap: usize) -> io::Result<Snapshot> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(io::Error::other(format!(
@@ -277,7 +370,6 @@ pub(super) fn read(path: &Path, identity: &DirectoryIdentity, cap: usize) -> io:
             path.display()
         )));
     }
-    identity.check(path)?;
     Ok(Snapshot {
         bytes,
         permissions: metadata.permissions(),

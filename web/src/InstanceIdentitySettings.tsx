@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Language } from "./i18n";
 import { IdentityFailure, loadIdentity, renameIdentity, type IdentityView } from "./identityApi";
 import { identityText } from "./identityMessages";
-import "./InstanceIdentitySettings.css";
 
 const identityQueryKey = ["instance-identity"] as const;
 
@@ -39,26 +38,21 @@ export function InstanceIdentitySettings({ language, onIdentityChange }: {
   const failure = error ? loopbackOnly ? t.loopbackOnly
     : `${identity.error ? t.loadFailed : t.saveFailed}: ${error.message}` : null;
 
-  return <section className="instance-identity-settings" aria-labelledby={`${id}-title`}>
-    <div className="instance-identity-heading">
-      <h2 id={`${id}-title`}>{t.title}</h2>
-      <p>{t.description}</p>
+  return <form className="row builtin-identity-row" data-search={`${t.title} instance name`.toLowerCase()} aria-label={t.title} onSubmit={event => {
+    event.preventDefault();
+    if (canSave) rename.mutate(name.trim());
+  }}>
+    <label className="row-label" htmlFor={`${id}-name`}>{t.title}</label>
+    <div className="row-control">
+      <input id={`${id}-name`} type="text" aria-describedby={`${id}-hint`} aria-invalid={rename.isError || undefined}
+        value={name} disabled={unavailable || rename.isPending} autoComplete="off" spellCheck={false}
+        onChange={event => { setDraft(event.target.value); rename.reset(); }} />
+      <button className="btn btn-sm" type="submit" disabled={!canSave}>{rename.isPending ? t.saving : t.save}</button>
     </div>
-    <form aria-label={t.title} onSubmit={(event) => {
-      event.preventDefault();
-      if (canSave) rename.mutate(name.trim());
-    }}>
-      <div className="instance-identity-controls">
-        <input id={`${id}-name`} aria-label={t.title} aria-describedby={`${id}-hint`} aria-invalid={rename.isError || undefined}
-          value={name} disabled={unavailable || rename.isPending} autoComplete="off" spellCheck={false}
-          onChange={(event) => { setDraft(event.target.value); rename.reset(); }} />
-        <button type="submit" disabled={!canSave}>{rename.isPending ? t.saving : t.save}</button>
-      </div>
-      <p id={`${id}-hint`} className="instance-identity-hint">{t.nameHint}</p>
-      {identity.isPending && <p role="status">{t.loading}</p>}
-      {failure && <p className="instance-identity-error" role="alert">{failure}</p>}
-      {identity.isError && !loopbackOnly && <button className="instance-identity-retry" type="button" disabled={identity.isFetching} onClick={() => void identity.refetch()}>{t.retry}</button>}
-      {rename.isSuccess && <p className="instance-identity-success" role="status">{t.saved}</p>}
-    </form>
-  </section>;
+    <div className="row-help" id={`${id}-hint`}><span>{t.description}</span> <span>{t.nameHint}</span></div>
+    {identity.isPending && <div className="row-help" role="status">{t.loading}</div>}
+    {failure && <div className="row-help error" role="alert">{failure}</div>}
+    {identity.isError && !loopbackOnly && <div className="row-help"><button className="btn btn-sm" type="button" disabled={identity.isFetching} onClick={() => void identity.refetch()}>{t.retry}</button></div>}
+    {rename.isSuccess && <div className="row-help" role="status">{t.saved}</div>}
+  </form>;
 }

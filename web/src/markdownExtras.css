@@ -1,10 +1,33 @@
 .markdown-body .markdown-copy-field{position:relative;margin:.6em 0}
 .markdown-copy-field-body{background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:8px;padding:10px 44px 10px 12px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;line-height:1.45;color:var(--text);overflow-x:auto}
-.markdown-copy-field-input .markdown-copy-field-body{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.markdown-copy-field-textarea .markdown-copy-field-body.is-multiline{white-space:pre-wrap;min-height:3.2em;max-height:14em;overflow-y:auto}
-.markdown-copy-field .markdown-copy{position:absolute;top:6px;right:6px}
-@media(hover:hover) and (pointer:fine){.markdown-copy-field:not(:hover):not(:focus-within) .markdown-copy{opacity:0}}
-.markdown-body a.markdown-file-chip{display:inline-flex;align-items:center;gap:6px;max-width:min(100%,280px);padding:2px 8px 2px 4px;margin:0 2px;border:1px solid var(--border-subtle);border-radius:999px;background:var(--bg-panel);color:var(--text);text-decoration:none;font-size:.92em;vertical-align:baseline;line-height:1.35}
-.markdown-body a.markdown-file-chip:hover{background:var(--bg-panel-hover);color:var(--text-strong)}
+.markdown-copy-field-input .markdown-copy-field-body { white-space: pre; }
+.markdown-copy-field-textarea .markdown-copy-field-body { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.2em; max-height: 14em; overflow-y: auto; }
+.markdown-body .markdown-copy-field:not(.has-feedback) .markdown-copy-feedback { display: none; }
+@media (hover: none), (pointer: coarse) {
+  .markdown-body .markdown-codeblock:not(:hover):not(:focus-within) .markdown-copy { opacity: 1; }
+}
+.markdown-body .markdown-link-open {
+  display: inline-block;
+  margin-inline-start: .25em;
+  vertical-align: -.16em;
+}
+.markdown-body button.markdown-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(100%, 280px);
+  padding: 2px 8px 2px 4px;
+  margin: 0 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: .92em;
+  vertical-align: baseline;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.markdown-body button.markdown-file-chip:hover { background: var(--bg-panel-hover); color: var(--text-strong); }
+.markdown-artifact-dialog .markdown-artifact-document { margin-top: 16px; padding: 4px; }
 .markdown-file-chip-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:18px;padding:0 4px;border-radius:4px;background:var(--bg-elevated);font-size:9px;font-weight:700;letter-spacing:-.02em;color:var(--text-dim)}
 .markdown-file-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

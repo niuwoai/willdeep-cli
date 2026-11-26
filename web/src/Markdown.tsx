@@ -1,9 +1,12 @@
 import { memo, useContext, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { type MarkdownCopyLabels } from "./markdownCopy";
-import { CopyLabelsContext } from "./markdownCopyContext";
+import { CopyLabelsContext, MarkdownMessageContext } from "./markdownCopyContext";
+import { markdownMessages } from "./markdownMessages";
+import type { Language } from "./i18n";
+import { fileArtifactFromHref, isBrowserLink } from "./fileArtifactLink";
 import { copyFieldFromPre } from "./copyField";
 import { CopyFieldCard } from "./CopyFieldCard";
 import { MarkdownLink } from "./FileArtifactChip";
@@ -22,16 +25,30 @@ const components: Components = {
   },
 };
 
-// 长会话里一次轮询会让整个聊天区重渲染；正文没变就别重新解析 Markdown。
-// `copy` 由 markdownCopy 按语言缓存，引用稳定时这里才能真正跳过。
-export const Markdown = memo(function Markdown({ content, copy }: { content: string; copy: MarkdownCopyLabels }) {
+const markdownUrl: UrlTransform = (href, key, node) => {
+  if (key !== "href" || node.tagName !== "a") return defaultUrlTransform(href);
+  if (fileArtifactFromHref(href)) return href;
+  if (/^https?:/i.test(href)) return isBrowserLink(href) ? href : "";
+  // Local paths are rendered only as preview buttons, never browser navigations.
+  return /^(?:#|[a-z][a-z\d+.-]*:)/i.test(href) ? defaultUrlTransform(href) : "";
+};
+
+// `copy` is cached by language so long transcripts can skip polling updates.
+export const Markdown = memo(function Markdown({ content, copy, language, sessionId }: {
+  content: string;
+  copy: MarkdownCopyLabels;
+  language?: Language;
+  sessionId?: string | null;
+}) {
   return (
     <CopyLabelsContext.Provider value={copy}>
-      <div className="markdown-body">
-        <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-          {content}
-        </ReactMarkdown>
-      </div>
+      <MarkdownMessageContext.Provider value={{ sessionId, labels: markdownMessages[language ?? copy.language ?? "en"] }}>
+        <div className="markdown-body">
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={components} urlTransform={markdownUrl}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      </MarkdownMessageContext.Provider>
     </CopyLabelsContext.Provider>
   );
 });

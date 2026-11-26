@@ -518,6 +518,24 @@ impl SessionStore {
         self.update_locked(id, change)
     }
 
+    /// Publish a background title only if its original derived title still owns the slot.
+    /// This metadata-only write preserves both the current execution and last activity time.
+    pub fn set_summarized_title(
+        &self,
+        id: Uuid,
+        expected: &str,
+        title: String,
+    ) -> Result<(), SessionError> {
+        let _guard = self.lock_session(id)?;
+        let mut session = self.load(id)?;
+        if session.title_source == TitleSource::Derived && session.title == expected {
+            session.title = title;
+            session.title_source = TitleSource::Summarized;
+            self.write(&session)?;
+        }
+        Ok(())
+    }
+
     /// 同 [`SessionStore::update`]，但先确认没有轮次正在执行。
     ///
     /// 执行中的快照会在落盘时整段替换消息，这时候插进去的内容会被盖掉。

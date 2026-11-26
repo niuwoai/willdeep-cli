@@ -69,6 +69,7 @@ pub(super) async fn page(
         r#"<script>
 window.willdeep = {{
   capabilities: [],
+  builtinSettings: true,
   getContext: function () {{ return {{ locale: {locale}, colorScheme: {scheme} }}; }},
   executeCommand: async function (commandID, args) {{
     const response = await fetch('/api/settings/config-command', {{

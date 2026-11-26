@@ -46,6 +46,69 @@ pub(super) struct TranscriptRenderCache {
     text: Text<'static>,
 }
 
+const STREAM_MARKDOWN_REFRESH: Duration = Duration::from_millis(100);
+
+pub(super) struct StreamingMarkdown {
+    id: source::SourceId,
+    name: String,
+    label: &'static str,
+    width: usize,
+    body: String,
+    rendered_at: Instant,
+    text: Text<'static>,
+    lines: Vec<source::SourceLine>,
+}
+
+impl StreamingMarkdown {
+    fn update_needed(
+        &self,
+        id: source::SourceId,
+        name: &str,
+        label: &str,
+        width: usize,
+        body: &str,
+        now: Instant,
+    ) -> bool {
+        self.id != id
+            || self.name != name
+            || self.label != label
+            || self.width != width
+            || (self.body != body
+                && (!body.starts_with(&self.body)
+                    || now.duration_since(self.rendered_at) >= STREAM_MARKDOWN_REFRESH))
+    }
+
+    fn render(
+        id: source::SourceId,
+        name: String,
+        label: &'static str,
+        width: usize,
+        body: &str,
+        now: Instant,
+    ) -> Self {
+        let prefix = format!("{name} · {label}");
+        let (mut output, _, lines) = source::assistant(body, width, &prefix, id);
+        if let Some(line) = output.first_mut()
+            && let [first, separator, ..] = line.spans.as_mut_slice()
+            && first.content == prefix
+            && separator.content == ": "
+        {
+            *first = assistant_name_span(&name);
+            *separator = Span::styled(format!(" · {label}: "), Style::default().fg(Color::Yellow));
+        }
+        Self {
+            id,
+            name,
+            label,
+            width,
+            body: body.to_owned(),
+            rendered_at: now,
+            text: Text::from(output),
+            lines,
+        }
+    }
+}
+
 /// 在 `at` 处插入 `inserted` 行后，平移代码块的行号。
 fn shift_code_block_rows(blocks: &mut [CodeBlockLines], at: usize, inserted: usize) {
     if inserted == 0 {
@@ -187,75 +250,66 @@ impl App {
         );
         self.link_open.refresh(&self.transcript_rows);
         let stream_id = self.viewport_stream_id();
+        if self.compression.is_none()
+            && self.transient_kind == StreamKind::Reply
+            && let Some(body) = self.transient_thought.as_deref()
+        {
+            let now = Instant::now();
+            let name = self.assistant_name();
+            let label = self.transient_label();
+            let width = self.transcript_width;
+            // A reply delta should immediately restore following one line from the bottom.
+            let near_follow = !self.follow_bottom
+                && self.scroll_from_bottom == 1
+                && !self.selection_mode
+                && self.chat_selection.is_none();
+            if self.streaming_markdown.as_ref().is_none_or(|cache| {
+                (near_follow && cache.body != body)
+                    || cache.update_needed(stream_id, &name, label, width, body, now)
+            }) {
+                self.streaming_markdown = Some(StreamingMarkdown::render(
+                    stream_id, name, label, width, body, now,
+                ));
+            }
+        } else {
+            self.streaming_markdown = None;
+        }
         let transient = self
             .live_transcript_row()
             .map_or_else(Text::default, |row| {
-                let mut colored = colored_transcript_at_width(&[row], None, self.transcript_width);
-                if self.compression.is_none()
-                    && self.transient_kind == StreamKind::Reply
-                    && self.transient_thought.is_some()
-                    && let Some(line) = colored.lines.first_mut()
-                {
-                    let label = self.assistant_name();
-                    if let Some(suffix) = line.to_string().strip_prefix(&label) {
-                        *line = Line::from(vec![
-                            assistant_name_span(&label),
-                            Span::styled(suffix.to_owned(), line.style),
-                        ]);
-                    }
-                }
+                let (mut colored, mappings) = if let Some(cache) = &self.streaming_markdown {
+                    sources
+                        .parts
+                        .insert((stream_id, source::SourcePart::Body), cache.body.clone());
+                    (cache.text.clone(), cache.lines.clone())
+                } else {
+                    let colored = if self.compression.is_none()
+                        && self.transient_thought.is_none()
+                        && self.held_narration.is_some()
+                    {
+                        Text::from(Line::from(render_inline_markdown(
+                            &row,
+                            Style::default().fg(Color::Yellow),
+                        )))
+                    } else {
+                        colored_transcript_at_width(&[row], None, self.transcript_width)
+                    };
+                    let mappings = colored
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            source::SourceLine::synthetic(
+                                stream_id,
+                                source::SourcePart::Decoration,
+                                &line.to_string(),
+                            )
+                        })
+                        .collect();
+                    (colored, mappings)
+                };
                 if let Some(query) = search.as_deref() {
                     highlight_matches(&mut colored, query);
                 }
-                let mappings =
-                    if self.compression.is_none() && self.transient_kind == StreamKind::Reply {
-                        if let Some(body) = self.transient_thought.as_deref() {
-                            sources
-                                .parts
-                                .insert((stream_id, source::SourcePart::Body), body.to_owned());
-                            let prefix =
-                                format!("{} · {}: ", self.assistant_name(), self.transient_label());
-                            let mut mappings =
-                                source::literal_lines(stream_id, source::SourcePart::Body, body);
-                            if let Some(first) = mappings.first_mut() {
-                                let mut chars = source::SourceLine::literal(
-                                    stream_id,
-                                    source::SourcePart::Prefix,
-                                    &prefix,
-                                    0,
-                                )
-                                .chars;
-                                chars.append(&mut first.chars);
-                                first.chars = chars;
-                            }
-                            mappings.truncate(colored.lines.len());
-                            mappings
-                        } else {
-                            colored
-                                .lines
-                                .iter()
-                                .map(|line| {
-                                    source::SourceLine::synthetic(
-                                        stream_id,
-                                        source::SourcePart::Decoration,
-                                        &line.to_string(),
-                                    )
-                                })
-                                .collect()
-                        }
-                    } else {
-                        colored
-                            .lines
-                            .iter()
-                            .map(|line| {
-                                source::SourceLine::synthetic(
-                                    stream_id,
-                                    source::SourcePart::Decoration,
-                                    &line.to_string(),
-                                )
-                            })
-                            .collect()
-                    };
                 let (mut transient, mut mapped) =
                     wrap_styled_text_sourced(colored, self.transcript_width, &mappings);
                 if self
@@ -712,6 +766,37 @@ mod tool_row_style_tests {
         assert_eq!(line.spans[0].content, "滚小滚");
         assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
         assert_eq!(line.spans[1].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn streaming_markdown_keeps_source_offsets_and_refreshes_during_append() {
+        let id = source::SourceId::Stream(1);
+        let now = Instant::now();
+        let body = "**ready** and `live`";
+        let cache = StreamingMarkdown::render(id, "demo".to_owned(), "replying", 80, body, now);
+        assert_eq!(
+            cache.text.lines[0].to_string(),
+            "demo · replying: ready and live"
+        );
+        let first_body_character = cache.lines[0]
+            .chars
+            .iter()
+            .flatten()
+            .find(|character| character.point.part == source::SourcePart::Body)
+            .unwrap();
+        assert_eq!(first_body_character.point.byte, 2);
+        let appended = "**ready** and `live`!";
+        assert!(!cache.update_needed(id, "demo", "replying", 80, appended, now));
+        assert!(cache.update_needed(
+            id,
+            "demo",
+            "replying",
+            80,
+            appended,
+            now + STREAM_MARKDOWN_REFRESH
+        ));
+        assert!(cache.update_needed(id, "demo", "replying", 40, appended, now));
+        assert!(cache.update_needed(id, "demo", "replying", 80, "replaced", now));
     }
 
     #[test]

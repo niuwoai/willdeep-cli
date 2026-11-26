@@ -13,9 +13,12 @@
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use willdeep_core::session_title::{self, TitleSource};
-use willdeep_core::{Agent, Message, Role, Session};
+use willdeep_core::{Agent, Message, Role, Session, SessionStore};
+
+const BACKGROUND_TITLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 本进程内已经试过摘要的会话。
 ///
@@ -74,7 +77,7 @@ pub(crate) fn claim_summary_attempt(session: &Session) -> bool {
 /// 所以那边把这一步扔进后台任务，只把结果送回主循环。
 pub(crate) async fn summarized_title(agent: &Agent, messages: &[Message]) -> Option<String> {
     let (first_user, last_assistant) = summarizable_exchange(messages)?;
-    agent.summarize_title(&first_user, &last_assistant).await
+    agent.summarize_title(first_user, last_assistant).await
 }
 
 /// 把摘要结果写回会话并落锁。`None`（失败）不落锁：这条会话在下次进程启动
@@ -100,6 +103,33 @@ pub(crate) async fn apply_summarized_title(agent: &Agent, session: &mut Session)
     adopt_summarized_title(session, title)
 }
 
+/// Claim the attempt before the next turn can run. The spawned work owns no execution lock.
+pub(crate) fn spawn_runtime_summary(agent: &Agent, store: &SessionStore, session: &Session) {
+    if !claim_summary_attempt(session) {
+        return;
+    }
+    let Some((user, assistant)) = summarizable_exchange(&session.messages) else {
+        return;
+    };
+    let summary = agent.background_title_summary(user.to_owned(), assistant.to_owned());
+    let store = store.clone();
+    let id = session.id;
+    let expected = session.title.clone();
+    tokio::spawn(async move {
+        let Ok(Some(title)) = tokio::time::timeout(BACKGROUND_TITLE_TIMEOUT, summary).await else {
+            return;
+        };
+        let saved =
+            tokio::task::spawn_blocking(move || store.set_summarized_title(id, &expected, title))
+                .await;
+        match saved {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("save background title for Session {id}: {error}"),
+            Err(error) => eprintln!("join background title write for Session {id}: {error}"),
+        }
+    });
+}
+
 fn has_summarizable_exchange(session: &Session) -> bool {
     summarizable_exchange(&session.messages).is_some()
 }
@@ -109,14 +139,14 @@ fn has_summarizable_exchange(session: &Session) -> bool {
 /// 用户侧取**第一条**（这段对话在说什么由它定调），助手侧取**最后一条**非空
 /// 回复——一轮里模型常常先发几条只带工具调用、正文为空的消息，取第一条会拿到
 /// 空字符串，摘要就失去了对照面。
-fn summarizable_exchange(messages: &[Message]) -> Option<(String, String)> {
+fn summarizable_exchange(messages: &[Message]) -> Option<(&str, &str)> {
     let first_user = messages
         .iter()
         .find(|message| message.role == Role::User && !message.content.trim().is_empty())?;
     let last_assistant = messages
         .iter()
         .rfind(|message| message.role == Role::Assistant && !message.content.trim().is_empty())?;
-    Some((first_user.content.clone(), last_assistant.content.clone()))
+    Some((&first_user.content, &last_assistant.content))
 }
 
 #[cfg(test)]

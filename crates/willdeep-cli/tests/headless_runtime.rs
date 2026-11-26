@@ -42,6 +42,8 @@ mod readonly_queries;
 mod retry_wait;
 #[path = "headless_runtime/runtime_parameters.rs"]
 mod runtime_parameters;
+#[path = "headless_runtime/runtime_titling.rs"]
+mod runtime_titling;
 
 const MOCK_REPLY: &str = "headless runtime reply";
 static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -2471,6 +2473,7 @@ default_provider = "mock"
 max_turns = 4
 approval = "smart"
 auto_title = true
+title_model = "mock-title"
 
 [providers.mock]
 provider = "openai-compatible"
@@ -2716,6 +2719,7 @@ enum MockMode {
     WaitRootThenRetryChild,
     RetryRoot,
     StreamingUntilReleased,
+    TitleUntilReleased,
     FederationReply(&'static str),
     FederationReplySequence(&'static str, &'static str),
     FederationReplyAfterFirstWait(&'static str, &'static str),
@@ -2767,10 +2771,17 @@ async fn mock_provider_response(
     axum::extract::State(state): axum::extract::State<MockProviderState>,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
-    state.captured_requests.lock().unwrap().push(
-        serde_json::from_slice::<serde_json::Value>(&body).expect("parse Provider request JSON"),
-    );
+    let request =
+        serde_json::from_slice::<serde_json::Value>(&body).expect("parse Provider request JSON");
+    let block_title =
+        matches!(state.mode, MockMode::TitleUntilReleased) && request["model"] == "mock-title";
+    state.captured_requests.lock().unwrap().push(request);
     let request_index = state.requests.fetch_add(1, Ordering::Relaxed);
+    if block_title {
+        while !state.release_stream.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
     if matches!(state.mode, MockMode::DeferredHumanWait) {
         let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
         if request["messages"].as_array().is_some_and(|messages| {
@@ -2865,6 +2876,7 @@ async fn mock_provider_response(
         | MockMode::WaitRootThenRetryChild
         | MockMode::RetryRoot
         | MockMode::StreamingUntilReleased
+        | MockMode::TitleUntilReleased
         | MockMode::FederationReply(_)
         | MockMode::FederationReplySequence(..)
         | MockMode::FederationReplyAfterFirstWait(..)

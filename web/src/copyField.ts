@@ -31,5 +31,5 @@ export function copyFieldFromPre(children: ReactNode): { mode: CopyFieldMode; te
   if (!mode) return null;
   const text = markdownNodeText(props.children).replace(/\n$/, "");
   if (!text.trim()) return null;
-  return { mode, text };
+  return { mode: mode === "input" && text.includes("\n") ? "textarea" : mode, text };
 }

@@ -7,8 +7,10 @@ import { detectLanguage, messages, type Language, type Messages } from "./i18n";
 import { loadIdentity, renameIdentity, type IdentityView } from "./identityApi";
 import { RuntimeSidebar, type AgentSpawnProfile, type RuntimeActivity, type RuntimeEvent } from "./RuntimeSidebar";
 import { Markdown } from "./Markdown";
+import { StreamingMarkdown } from "./StreamingMarkdown";
 import { UserMessage } from "./UserMessage";
 import { markdownCopy } from "./markdownCopy";
+import { readEventStream } from "./readEventStream";
 import { ConversationCard, type ConversationItem, type Plan } from "./ConversationCard";
 import { SidebarSettings } from "./SidebarSettings";
 import { QuickSettings } from "./QuickSettings";
@@ -263,39 +265,6 @@ function savedRuntimeCursor(sessionId: string, turnId: string) {
 function saveRuntimeCursor(sessionId: string, turnId: string, cursor: number | undefined) {
   if (cursor === undefined || !Number.isSafeInteger(cursor) || cursor < 0) return;
   localStorage.setItem(runtimeCursorKey(sessionId, turnId), String(cursor));
-}
-
-function nextSseFrame(buffer: string): { frame: string; rest: string } | null {
-  const lf = buffer.indexOf("\n\n");
-  const crlf = buffer.indexOf("\r\n\r\n");
-  if (lf < 0 && crlf < 0) return null;
-  const useCrlf = crlf >= 0 && (lf < 0 || crlf < lf);
-  const index = useCrlf ? crlf : lf;
-  const width = useCrlf ? 4 : 2;
-  return { frame: buffer.slice(0, index), rest: buffer.slice(index + width) };
-}
-
-async function readSse(response: Response, onEvent: (event: RuntimeStreamEvent) => Promise<void>) {
-  if (!response.ok || !response.body) throw new Error(await response.text());
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    for (;;) {
-      const next = nextSseFrame(buffer);
-      if (!next) break;
-      buffer = next.rest;
-      const data = next.frame
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (data) await onEvent(JSON.parse(data) as RuntimeStreamEvent);
-    }
-  }
 }
 
 function waitForReconnect(delay: number, signal: AbortSignal) {
@@ -1088,7 +1057,7 @@ export function App() {
             terminal = true;
             break;
           }
-          await readSse(response, async (event) => {
+          await readEventStream<RuntimeStreamEvent>(response, async (event) => {
             if (event.cursor !== undefined) cursor = Math.max(cursor, event.cursor);
             const result = await applyStreamEvent(event, runId);
             if (result.terminal && result.error && event.turn_id) {
@@ -1099,6 +1068,7 @@ export function App() {
             } else if (result.terminal) {
               terminal = true;
             }
+            return terminal;
           });
           retryDelay = 500;
         } catch {
@@ -1677,7 +1647,7 @@ export function App() {
       let completedSessionId = sessionId;
       let completedTurnId: string | null = null;
       let terminal = false;
-      await readSse(response, async (event) => {
+      await readEventStream<RuntimeStreamEvent>(response, async (event) => {
         if (event.type === "submitted" && event.turn_id) {
           draftSendRequest.current = null;
           if (override === undefined) setPrompt((current) => current === outgoingPrompt ? "" : current);
@@ -1695,6 +1665,7 @@ export function App() {
           terminal = true;
           answer = result.text || t.emptyReply;
         }
+        return terminal;
       });
       if (!terminal) throw new Error(t.streamDisconnected);
       updateRun(runId, (steps) => settleActiveSteps(steps, Date.now()));
@@ -1986,7 +1957,30 @@ export function App() {
       <Box ref={chatViewportRef} className="chat-viewport" flex="1" minH="0" overflowY="auto" pb="10" onScroll={() => { const node = chatViewportRef.current; if (node) { const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; followBottomRef.current = atBottom; if (atBottom) { if (chatRounds !== CHAT_WINDOW_ROUNDS) setChatRounds(CHAT_WINDOW_ROUNDS); } else if (node.scrollTop < 24 && hiddenRounds > 0) loadEarlierChat(); } }}>{!chat.length && <Box className="chat-welcome" py="24"><span className="welcome-icon"><MessageSquare size={25} /></span><Heading size="2xl" mb="4">{t.welcomeTitle}</Heading><Text color="var(--text-dim)">{t.welcomeBody}</Text>
         {isDesktop && !workspace && <Button mt="5" variant="outline" onClick={pickDesktopWorkspace}><FolderGit2 size={15} />{t.addWorkspace}</Button>}
       </Box>}
-        <VStack className="chat-timeline" align="stretch" gap="3">{hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}{groupedChat.map((message, index, visible) => message.role === "workflow" && message.workflow ? <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} /> : message.role === "plan" || message.role === "system" ? <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} /> : message.role === "divider" ? <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text> : message.role === "status" && message.concise ? <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text> : message.role === "activity" ? <Box key={message.id}><RunCard steps={message.steps ?? []} messages={t} />{message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}{message.content &&<Box className="message assistant">{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></Box>}</Box>: <Box key={message.id} className={`message ${message.role}`}>{message.role === "assistant" ? <>{messageModelLabel(message.model, t)}<Markdown content={message.content} copy={markdownCopy(t)} /></> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}{message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={(item) => appendAttachment(attachmentPayload(item))} />}</Box>)}</VStack>
+        <VStack className="chat-timeline" align="stretch" gap="3">
+          {hiddenRounds > 0 && <button type="button" className="chat-archive" onClick={loadEarlierChat}>{t.chatArchive.replace("{count}", String(hiddenRounds))}</button>}
+          {groupedChat.map((message, index, visible) => {
+            if (message.role === "workflow" && message.workflow) return <WorkflowCard key={message.id} workflow={message.workflow} language={language} messages={t} canControl={identity !== null && workspacePolicy !== "read_only"} />;
+            if (message.role === "plan" || message.role === "system") return <ConversationCard key={message.id} plan={message.plan} details={message.details} messages={t} />;
+            if (message.role === "divider") return <Text key={message.id} className="turn-divider">{turnDividerText(message.content, t.yourTurn, index === visible.length - 1)}</Text>;
+            if (message.role === "status" && message.concise) return <Text key={message.id} className="concise-status" role="status"><span className="thinking-pulse" aria-hidden="true" />{message.concise.text} · {formatStepElapsed(Math.max(0, conciseNow - message.concise.startedAt))}</Text>;
+            if (message.role === "activity") return <Box key={message.id}>
+              <RunCard steps={message.steps ?? []} messages={t} />
+              {message.thought?.text && <ThoughtCard thought={message.thought} messages={t} />}
+              {message.content && <Box className="message assistant">
+                {messageModelLabel(message.model, t)}
+                <StreamingMarkdown content={message.content} copy={markdownCopy(t)} language={language} sessionId={sessionId} live={busy && message.id === activeRunRef.current} />
+              </Box>}
+            </Box>;
+            return <Box key={message.id} className={`message ${message.role}`}>
+              {message.role === "assistant" ? <>
+                {messageModelLabel(message.model, t)}
+                <Markdown content={message.content} copy={markdownCopy(t)} language={language} sessionId={sessionId} />
+              </> : <UserMessage key={sessionId} content={message.content} messages={t} onToggle={() => { followBottomRef.current = false; }} />}
+              {message.attachmentReference && sessionId && <SentAttachments sessionId={sessionId} reference={message.attachmentReference} language={language} onCopy={item => appendAttachment(attachmentPayload(item))} />}
+            </Box>;
+          })}
+        </VStack>
         <RuntimeHumanGates gates={visibleHumanGates} messages={t} language={language} onApproval={resolveRuntimeApproval} onAnswer={answerRuntimeQuestion} />
         <IndependentTasks sessionId={sessionId || null} language={language} />
         {sessionId && !childParentId && !childReadOnly && <ChildSessions key={`children-${sessionId}`} sessionId={sessionId} language={language} onOpenSession={openRelatedSession} onRelationshipChanged={childRelationshipChanged} />}

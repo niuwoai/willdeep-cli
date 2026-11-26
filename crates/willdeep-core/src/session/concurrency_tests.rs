@@ -61,6 +61,42 @@ fn fixture() -> (PathBuf, SessionStore, Session) {
 }
 
 #[test]
+fn background_title_preserves_current_history_and_later_user_title() {
+    let (root, store, session) = fixture();
+    assert_eq!(session.title_source, TitleSource::Derived);
+    let latest = store
+        .update(session.id, |current| {
+            current.messages.push(Message::user("new message"));
+            current.runtime_event_cursor = 7;
+        })
+        .unwrap();
+    let history = serde_json::to_value(&latest.messages).unwrap();
+    store
+        .set_summarized_title(session.id, &session.title, session.title.clone())
+        .unwrap();
+    let updated = store.load(session.id).unwrap();
+    assert_eq!(updated.title_source, TitleSource::Summarized);
+    assert_eq!(updated.updated_at, latest.updated_at);
+    assert_eq!(serde_json::to_value(&updated.messages).unwrap(), history);
+    assert_eq!(updated.runtime_event_cursor, 7);
+
+    // Even renaming to identical text changes the title's owner.
+    store
+        .update(session.id, |current| {
+            current.title_source = TitleSource::User
+        })
+        .unwrap();
+    store
+        .set_summarized_title(session.id, &session.title, "late summary".into())
+        .unwrap();
+    let updated = store.load(session.id).unwrap();
+    assert_eq!(updated.title_source, TitleSource::User);
+    assert_eq!(updated.title, session.title);
+    assert_eq!(serde_json::to_value(&updated.messages).unwrap(), history);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stale_metadata_save_preserves_the_entire_new_execution_snapshot() {
     let (root, store, mut stale) = fixture();
     store

@@ -190,6 +190,21 @@ input:disabled, select:disabled, textarea:disabled { opacity: 0.55; }
 .secret-view input { flex: 1 1 auto; width: auto; min-width: 0; }
 .secret-view .mono { color: var(--secondary); }
 
+.builtin-identity-row .row-control button { white-space: nowrap; }
+.builtin-reasoning-row > details { grid-column: 1 / -1; min-width: 0; }
+.builtin-reasoning > summary { cursor: pointer; padding: 4px 0; }
+.builtin-reasoning > form { display: grid; gap: 8px; margin-top: 8px; }
+.builtin-reasoning p { margin: 0; }
+.builtin-setting-error { color: var(--danger); }
+.builtin-reasoning .configuration-reasoning-fields { display: grid; gap: 8px; min-width: 0; border: 0; margin: 0; padding: 0; }
+.builtin-reasoning .configuration-reasoning-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.builtin-reasoning .configuration-reasoning-row > :is(label, div) { flex: 1 1 150px; min-width: 0; }
+.builtin-reasoning .configuration-reasoning-row label { display: block; font-size: 0.8rem; }
+.builtin-reasoning .configuration-reasoning-row :is(input, select) { display: block; margin-top: 3px; }
+.builtin-reasoning input[type="number"] { width: 100%; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--bg); font-size: 0.93rem; }
+.builtin-reasoning .configuration-reasoning-remove { margin-top: calc(1.2em + 3px); }
+.builtin-reasoning .configuration-reasoning-fields > button { justify-self: start; }
+
 /* ---------- 底部保存栏 ---------- */
 .savebar {
   position: fixed; left: 16px; right: 16px; bottom: 14px; z-index: 30;
@@ -1418,7 +1433,13 @@ function renderCard(sec) {
   if (desc) html += '<div class="card-desc">' + esc(desc) + '</div>';
   if (sec.isNew && addedWithoutFields().indexOf(sec.name) >= 0) html += '<div class="card-note">' + esc(t('card.emptyNew')) + '</div>';
   if (sec.kind === 'collection' && !sec.editable) html += '<div class="card-note">' + esc(t('card.readonlyName')) + '</div>';
+  if (window.willdeep?.builtinSettings && sec.kind === 'static' && sec.name === '') {
+    html += '<div data-builtin-setting="identity"></div>';
+  }
   for (const f of sec.fields || []) html += renderRow(sec, f);
+  if (window.willdeep?.builtinSettings && sec.kind === 'collection' && sec.groupID === 'providers' && sec.editable && !sec.isNew && !removing && !parseLocked()) {
+    html += '<div data-builtin-setting="reasoning" data-provider="' + esc(sec.name.slice('providers.'.length)) + '"></div>';
+  }
   return html + '</section>';
 }
 
@@ -1470,6 +1491,7 @@ function renderMain() {
 
 function renderSavebar() {
   const bar = document.getElementById('savebar');
+  document.documentElement.toggleAttribute('data-config-pending', S.busy || S.loading || hasUnsaved());
   const n = dirtyCount();
   const bad = drafts.size + incompatibleProtocols().length;
   const empties = addedWithoutFields();
@@ -1637,16 +1659,19 @@ function resetEdits() {
 async function loadSnapshot() {
   S.loading = true;
   renderChrome();
+  renderSavebar();
   const result = await callCommand('config.snapshot', {});
   S.loading = false;
   if (!result || !result.ok) {
     toast('error', t('toast.loadFailed', { msg: (result && result.message) || '?' }));
     renderChrome();
     renderMain();
+    renderSavebar();
     return;
   }
   S.snapshot = result;
   resetEdits();
+  document.dispatchEvent(new Event('willdeep:config-loaded'));
   renderAll();
   loadLibraries();
 }
@@ -2300,6 +2325,10 @@ function onKeydown(event) {
 }
 
 function init() {
+  document.addEventListener('willdeep:reasoning-saved', () => {
+    if (!S.busy && !S.loading && !hasUnsaved()) void loadSnapshot();
+  });
+  document.addEventListener('willdeep:setting-mounted', applyFilter);
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
   document.addEventListener('input', onInput);

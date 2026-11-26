@@ -1658,7 +1658,7 @@ fn scan_sensitive_staged_files(workspace: &Path, files: &[DiffFile]) -> Vec<Sens
     findings
 }
 
-fn sensitive_path(path: &str) -> bool {
+pub(crate) fn sensitive_path(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     (name == ".env"
         || (name.starts_with(".env.") && !name.ends_with(".example") && !name.ends_with(".sample")))
