@@ -183,7 +183,7 @@ mod tests {
         app.input.insert("Draft 中文 remains");
         app.input.begin_selection_visual(0, 0, 40);
         app.selection_mode = true;
-        app.pending_chat_click = Some(2);
+        app.pending_chat_click = Some((2, None));
         let _receiver = question(&mut app);
         let mut input = TerminalInput::default();
         input.prepare_frame(&mut Vec::new(), &mut app).unwrap();

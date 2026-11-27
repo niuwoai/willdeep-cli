@@ -102,7 +102,10 @@ impl App {
                     self.viewport_clear_selection();
                     // 没拖动就是一次单击：按下时先记下那一行，到松手才点开，
                     // 这样从用户消息或工具行上起手拖选不会被点开动作打断。
-                    if let Some(y) = self.pending_chat_click.take() {
+                    if let Some((y, projection_hit)) = self.pending_chat_click.take()
+                        && y == mouse.row
+                        && projection_hit == self.tool_row_hit_at(y)
+                    {
                         // 附件标签优先：点它是查看，不是折叠。
                         if let Some(action) = self.open_attachment_at(y) {
                             self.pending_media_action = Some(action);

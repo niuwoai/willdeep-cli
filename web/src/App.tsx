@@ -53,7 +53,8 @@ import chatScrollRocket from "./assets/chat-scroll-rocket.png";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
 import { enqueueButtonState, queueText, runningInputFeedback } from "./queueMessages";
-import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, PinOff, Pencil, Archive, ArchiveRestore, X, Copy, Quote } from "lucide-react";
+import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, Copy, Quote } from "lucide-react";
+import { SessionActionMenu } from "./SessionActionMenu";
 import { sessionTree } from "./sessionTree";
 import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
 import "./chatWorkspace.css";
@@ -1391,7 +1392,9 @@ export function App() {
     }
   }
 
+  const [sessionActionError, setSessionActionError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [forkTitle, setForkTitle] = useState("");
   const [forkPending, setForkPending] = useState(false);
@@ -1473,12 +1476,25 @@ export function App() {
             一模一样的 New session——那些会话是有内容的。 */}
         {item.preview ? <span className="session-untitled">{item.preview}</span> : item.title}
       </button>
-      <Flex className="session-actions">
-        <button type="button" title={t.renameSession} aria-label={t.renameSession} disabled={busy || item.active} onClick={() => void renameSession(item)}><Pencil size={12} /></button>
-        <button type="button" title={item.pinned_at != null ? t.unpinSession : t.pinSession} aria-label={item.pinned_at != null ? t.unpinSession : t.pinSession} disabled={busy} onClick={() => void togglePinSession(item)}>{item.pinned_at != null ? <PinOff size={12} /> : <Pin size={12} />}</button>
-        <button type="button" title={item.archived ? t.unarchiveSession : t.archiveSession} aria-label={item.archived ? t.unarchiveSession : t.archiveSession} disabled={busy || item.active} onClick={() => void toggleArchiveSession(item)}>{item.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}</button>
-        <button type="button" className="danger" title={t.deleteSession} aria-label={t.deleteSession} disabled={busy || item.active} onClick={() => setDeleteTarget(item)}><X size={12} /></button>
-      </Flex>
+      <SessionActionMenu
+        title={item.preview || item.title}
+        messages={t}
+        pinned={item.pinned_at != null}
+        archived={item.archived}
+        busy={busy || deletePending}
+        active={item.active || activeRuntimeSessionId === item.id}
+        forkDisabled={cannotForkSession(item)}
+        onAction={(action) => {
+          setSessionActionError("");
+          switch (action) {
+            case "pin": void togglePinSession(item); break;
+            case "rename": void renameSession(item); break;
+            case "fork": openForkDialog(item); break;
+            case "archive": void toggleArchiveSession(item); break;
+            case "delete": setDeleteTarget(item); break;
+          }
+        }}
+      />
     </Flex>;
   }
 
@@ -1495,26 +1511,42 @@ export function App() {
     }
   }
 
+  function reportSessionActionError(reason: unknown) {
+    setSessionActionError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
+  }
+
   async function renameSession(target: Session) {
-    const title = window.prompt(t.renamePrompt, target.title)?.trim(); if (!title) return;
+    const title = window.prompt(t.renamePrompt, target.title)?.trim();
+    if (!title || title === target.title) return;
     try { await mutate(`/api/sessions/${encodeURIComponent(target.id)}/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) }); await refreshSessions(); }
-    catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+    catch (reason) { reportSessionActionError(reason); }
   }
 
   async function togglePinSession(target: Session) {
-    const action = target.pinned_at ? "unpin" : "pin";
+    const action = target.pinned_at != null ? "unpin" : "pin";
     try { await mutate(`/api/sessions/${encodeURIComponent(target.id)}/${action}`, { method: "POST" }); await refreshSessions(); }
-    catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+    catch (reason) { reportSessionActionError(reason); }
+  }
+
+  function sessionIsRunning(target: Session | null) {
+    return target !== null && (activeRuntimeSessionId === target.id || (sessions.find((item) => item.id === target.id)?.active ?? target.active));
+  }
+
+  function cannotForkSession(target: Session) {
+    const current = sessions.find((item) => item.id === target.id) ?? target;
+    return busy || forkPending || activeRuntimeSessionId === current.id || current.active
+      || current.parent_session_id != null || current.delegation_read_only === true;
   }
 
   function openForkDialog(target: Session) {
+    if (cannotForkSession(target)) return;
     setForkTitle("");
     setForkFailure("");
     setForkTarget(target);
   }
 
   async function confirmFork() {
-    if (!forkTarget || forkPending || busy) return;
+    if (!forkTarget || cannotForkSession(forkTarget)) return;
     setForkPending(true);
     setForkFailure("");
     const title = forkTitle.trim() || undefined;
@@ -1534,6 +1566,7 @@ export function App() {
       } catch (reason) {
         setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`);
       }
+      setMobileSessionsOpen(false);
       await loadSession(fork.id);
     } finally {
       setForkPending(false);
@@ -1570,18 +1603,19 @@ export function App() {
   async function toggleArchiveSession(target: Session) {
     const action = target.archived ? "unarchive" : "archive";
     try { await mutate(`/api/sessions/${encodeURIComponent(target.id)}/${action}`, { method: "POST" }); await refreshSessions(); }
-    catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
+    catch (reason) { reportSessionActionError(reason); }
   }
 
   async function confirmDeleteSession() {
     const target = deleteTarget;
-    if (!target) return;
+    if (!target || deletePending || busy || sessionIsRunning(target)) return;
+    setDeletePending(true);
     try {
       await mutate(`/api/sessions/${encodeURIComponent(target.id)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmation: target.id }) });
-      if (sessionId === target.id) { setSessionId(""); setChat([]); setGoal(""); setGoalEnabled(false); pendingGoalPreference.current = null; setRuntimeFailure(null); }
+      if (sessionIdRef.current === target.id) { setSessionId(""); setChat([]); setGoal(""); setGoalEnabled(false); pendingGoalPreference.current = null; setRuntimeFailure(null); }
       await refreshSessions();
-    } catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
-    finally { setDeleteTarget(null); }
+    } catch (reason) { reportSessionActionError(reason); }
+    finally { setDeleteTarget(null); setDeletePending(false); }
   }
 
   async function exportSelectedSession() {
@@ -1868,7 +1902,10 @@ export function App() {
     {/* 侧栏本身不滚动：只有会话列表滚。这样列表能吃掉全部剩余高度，
         而不是被上面几块设置挤到下半屏。 */}
     {mobileSessionsOpen && <button className="session-sidebar-backdrop" aria-label={t.cancel} onClick={() => setMobileSessionsOpen(false)} />}
-    <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}${projectsHidden ? " desktop-projects-hidden" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileSessionsOpen(false); }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
+    <Box as="aside" id="chat-session-sidebar" aria-label={t.session} className={`chat-sidebar${mobileSessionsOpen ? " mobile-open" : ""}${projectsHidden ? " desktop-projects-hidden" : ""}`} onKeyDown={(event) => {
+      // Menu and dialog events bubble through the React portal, but Escape closes only that top layer.
+      if (event.key === "Escape" && !event.defaultPrevented && event.target instanceof Node && event.currentTarget.contains(event.target)) setMobileSessionsOpen(false);
+    }} onClick={(event) => { if (event.target instanceof Element && event.target.closest(".session-title")) setMobileSessionsOpen(false); }} w={{ base: "0", md: "260px" }} display={{ base: "none", md: "flex" }} flexDir="column" borderRight="1px solid" borderColor="var(--border-subtle)" p="5" bg="var(--bg-surface)" overflow="hidden">
       <Flex justify="space-between" align="flex-start" mb="5">
         <Box minW="0">
           <Flex align="center" gap="2">
@@ -1897,6 +1934,7 @@ export function App() {
           内容高度，列表撑破容器而不是内部滚动。 */}
       <Flex direction="column" flex="1" minH="0" mt="4">
         <div className="session-search"><Search size={15} /><Input size="sm" mb="2" flex="0 0 auto" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder={t.searchSessions} aria-label={t.searchSessions} color="var(--text)" _placeholder={{ color: "var(--text-ghost)" }} bg="var(--bg-raised)" borderColor="var(--border-strong)" /></div>
+        {sessionActionError && <Text role="alert" className="session-action-error">{sessionActionError}</Text>}
         <Box className="session-list" flex="1" minH="0">
           {!orderedProjects.length && <Text color="var(--text-faint)" fontSize="sm">{t.noSessions}</Text>}
           {searching && !orderedProjects.some((project) => (projectSessions.get(project.path) ?? []).some((item) => matchesSessionQuery(item, sessionQuery))) && <Text color="var(--text-faint)" fontSize="sm">{t.noSessionMatch}</Text>}
@@ -1942,26 +1980,26 @@ export function App() {
           </button>
           {showArchived && <VStack align="stretch" gap="1" className="archived-sessions">{sessionTree(archivedSessions).map((entry) => sessionRow(entry.session, entry.depth))}</VStack>}
         </Box>}
-        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={busy || selectedSession.active || forkPending} onClick={() => openForkDialog(selectedSession)}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
+        {selectedSession && <Flex mt="2" gap="1" wrap="wrap" flex="0 0 auto"><Button size="xs" variant="ghost" title={t.forkSession} aria-label={t.forkSession} disabled={cannotForkSession(selectedSession)} onClick={() => openForkDialog(selectedSession)}><GitFork size={15} /></Button><Button size="xs" variant="ghost" title={t.rewindSession} aria-label={t.rewindSession} disabled={busy || selectedSession.active} onClick={() => void openRewindDialog()}><History size={15} /></Button><Button size="xs" variant="ghost" title={t.exportSession} aria-label={t.exportSession} disabled={busy} onClick={() => void exportSelectedSession()}><Download size={15} /></Button></Flex>}
         {rewindNotice && <Text mt="1" fontSize="xs" color="var(--text-dim)">{rewindNotice}</Text>}
       </Flex>
       {isDesktop ? <DesktopVersions language={language} version={version} /> : <Text as="footer" mt="5" pt="3" borderTop="1px solid" borderColor="var(--bg-panel-hover)" color="var(--text-ghost)" fontSize="2xs" textAlign="right">{t.version}: {version ? `v${version}` : "—"}</Text>}
       {/* closeOnInteractOutside 必须显式写：zag 对 role="alertdialog" 默认关掉外部点击，
           于是这个框只认 Esc，点旁边的输入框什么也不发生。删除仍要点「删除」才发生，
           点外面等同取消，没有误删风险。 */}
-      <Dialog.Root role="alertdialog" closeOnInteractOutside open={deleteTarget !== null} onOpenChange={(details) => { if (!details.open) setDeleteTarget(null); }}>
+      <Dialog.Root role="alertdialog" closeOnEscape={!deletePending} closeOnInteractOutside={!deletePending} open={deleteTarget !== null} onOpenChange={(details) => { if (!details.open && !deletePending) setDeleteTarget(null); }}>
         <Portal>
           <Dialog.Backdrop bg="var(--shadow)" />
           <Dialog.Positioner>
             <Dialog.Content bg="var(--bg-raised)" color="var(--text)" border="1px solid" borderColor="var(--border)" borderRadius="12px" maxW="360px">
               <Dialog.Header><Dialog.Title fontSize="md">{t.deleteDialogTitle}</Dialog.Title></Dialog.Header>
               <Dialog.Body>
-                <Text fontWeight="600" mb="2" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{deleteTarget?.title}</Text>
+                <Text fontWeight="600" mb="2" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{deleteTarget?.preview || deleteTarget?.title}</Text>
                 <Text fontSize="sm" color="var(--text-dim)">{t.deleteConfirm}</Text>
               </Dialog.Body>
               <Dialog.Footer gap="2">
-                <Button size="sm" variant="outline" borderColor="var(--border-strong)" color="var(--text)" onClick={() => setDeleteTarget(null)}>{t.cancel}</Button>
-                <Button size="sm" colorPalette="red" onClick={() => void confirmDeleteSession()}>{t.confirmDelete}</Button>
+                <Button size="sm" variant="outline" borderColor="var(--border-strong)" color="var(--text)" disabled={deletePending} onClick={() => setDeleteTarget(null)}>{t.cancel}</Button>
+                <Button size="sm" colorPalette="red" loading={deletePending} loadingText={t.working} disabled={busy || sessionIsRunning(deleteTarget)} onClick={() => void confirmDeleteSession()}>{t.confirmDelete}</Button>
               </Dialog.Footer>
             </Dialog.Content>
           </Dialog.Positioner>
@@ -1975,7 +2013,7 @@ export function App() {
               <form onSubmit={(event) => { event.preventDefault(); void confirmFork(); }}>
                 <Dialog.Header><Dialog.Title fontSize="md">{t.forkDialogTitle}</Dialog.Title></Dialog.Header>
                 <Dialog.Body>
-                  <Text mb="3" fontSize="sm" color="var(--text-dim)" overflowWrap="anywhere">{forkTarget?.title}</Text>
+                  <Text mb="3" fontSize="sm" color="var(--text-dim)" overflowWrap="anywhere">{forkTarget?.preview || forkTarget?.title}</Text>
                   <label>
                     <Text as="span" fontSize="sm">{t.forkTitleLabel}</Text>
                     <Input ref={forkTitleInput} mt="1" size="sm" value={forkTitle} onChange={(event) => setForkTitle(event.target.value)} readOnly={forkPending} />
@@ -1985,7 +2023,7 @@ export function App() {
                 </Dialog.Body>
                 <Dialog.Footer gap="2">
                   <Button type="button" size="sm" variant="outline" borderColor="var(--border-strong)" color="var(--text)" disabled={forkPending} onClick={() => setForkTarget(null)}>{t.cancel}</Button>
-                  <Button type="submit" size="sm" loading={forkPending} loadingText={t.working} disabled={busy}>{t.forkConfirm}</Button>
+                  <Button type="submit" size="sm" loading={forkPending} loadingText={t.working} disabled={!!forkTarget && cannotForkSession(forkTarget)}>{t.forkConfirm}</Button>
                 </Dialog.Footer>
               </form>
             </Dialog.Content>

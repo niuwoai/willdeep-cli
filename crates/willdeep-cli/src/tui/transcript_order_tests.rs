@@ -164,7 +164,7 @@ fn row_keyed_state_follows_its_record_and_search_keeps_the_selected_match() {
         app.tool_row_hits.push((4, 2, false));
         app.attachment_hit_rows.push((5, 0, 0));
         app.thought_hit_rows.push((6, 0));
-        app.pending_chat_click = Some(4);
+        app.pending_chat_click = Some((4, app.tool_row_hit_at(4)));
 
         assert_eq!(app.move_transcript_row_to_end(moved), 3);
         assert_eq!(app.archive_floor, 1);

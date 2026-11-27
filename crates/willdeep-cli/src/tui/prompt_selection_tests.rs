@@ -401,7 +401,7 @@ fn prompt_selection_highlights_unicode_in_full_and_compact_layouts_without_chang
             anchor: ChatSelectionPoint { row: 0, column: 0 },
             head: ChatSelectionPoint { row: 0, column: 1 },
         });
-        app.pending_chat_click = Some(app.transcript_content.y);
+        app.pending_chat_click = Some((app.transcript_content.y, None));
         for (kind, x) in [
             (MouseEventKind::Down(MouseButton::Left), body.x),
             (MouseEventKind::Drag(MouseButton::Left), body.x + 6),

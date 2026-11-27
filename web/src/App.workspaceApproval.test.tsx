@@ -33,7 +33,7 @@ vi.mock("./PermissionsPanel", () => ({ PermissionsPanel: (props: { override: Wor
 
 const first: WorkspaceSummary = { id: "a", path: "/first", name: "First project", active: true, access: "smart", approval_mode_configured: true };
 const other: WorkspaceSummary = { ...first, id: "b", path: "/other", name: "Other project", active: false, approval_mode_configured: false };
-const restored = { id: "restored", title: "Remembered conversation", workspace: "/other", created_at: 1, updated_at: 1, pinned_at: null, archived: false, active: false, active_turn_id: null };
+const restored = { id: "restored", title: "Remembered conversation", workspace: "/other", created_at: 1, updated_at: 1, pinned_at: null as number | null, archived: false, active: false, active_turn_id: null };
 const t = messages["zh-CN"];
 
 beforeEach(() => {
@@ -44,17 +44,41 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); desktop.enabled = false; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof restored[]; history?: ConversationItem[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number } = {}) {
+function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: (typeof restored & { parent_session_id?: string })[]; history?: ConversationItem[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number; sessionActionFailure?: boolean } = {}) {
   let workspaces = options.workspaces ?? [first, other];
+  let sessions = options.sessions ?? [];
   let queueFailures = options.queueFailures ?? 0;
   let forkFailures = options.forkFailures ?? 0;
   let fork: typeof restored | undefined;
   const posts: { url: string; body: Record<string, unknown> }[] = [];
+  const deletes: { url: string; body: Record<string, unknown> }[] = [];
   const requests: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     requests.push(url);
-    if (init?.method === "POST") {
+    if (init?.method === "DELETE") {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      deletes.push({ url, body });
+      sessions = sessions.filter(({ id }) => url !== `/api/sessions/${id}`);
+      return new Response(null, { status: 204 });
+    }
+    if (init?.method === "POST") {
+      const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+      const sessionAction = /^\/api\/sessions\/([^/]+)\/(rename|pin|unpin|archive|unarchive)$/.exec(url);
+      if (sessionAction) {
+        posts.push({ url, body });
+        if (options.sessionActionFailure) return new Response("session store unavailable", { status: 503 });
+        const [, id, action] = sessionAction;
+        sessions = sessions.map((item) => {
+          if (item.id !== id) return item;
+          switch (action) {
+            case "rename": return { ...item, title: String(body.title) };
+            case "pin": return { ...item, pinned_at: 2 };
+            case "unpin": return { ...item, pinned_at: null };
+            default: return { ...item, archived: action === "archive" };
+          }
+        });
+        return new Response(null, { status: 204 });
+      }
       posts.push({ url, body });
       if (url === "/api/workspaces") {
         workspaces = [...workspaces, other];
@@ -79,10 +103,10 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof res
       return Response.json({});
     }
     if (url === "/api/workspaces") return Response.json(workspaces);
-    if (url === "/api/sessions") return Response.json([...(options.sessions ?? []), ...(fork ? [fork] : [])]);
+    if (url === "/api/sessions") return Response.json([...sessions, ...(fork ? [fork] : [])]);
     if (fork && url === `/api/sessions/${fork.id}`) return Response.json({ ...fork, messages: [] });
     if (url === "/api/sessions/restored") return Response.json({ ...restored, messages: options.history ?? [], approval_mode: options.override ?? "strict", workspace_access: workspaces.find((item) => item.path === "/other")?.access ?? "smart" });
-    const detail = options.sessions?.find((item) => url === `/api/sessions/${item.id}`);
+    const detail = sessions.find((item) => url === `/api/sessions/${item.id}`);
     if (detail) return Response.json({ ...detail, messages: [], workspace_access: "smart" });
     if (url.startsWith("/api/composer?")) return Response.json({ commands: [], skills: [] });
     if (url.startsWith("/api/runtime/activity?")) return Response.json(options.activity ?? { tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
@@ -94,7 +118,7 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: typeof res
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   const view = render(<QueryClientProvider client={client}><ChakraProvider value={defaultSystem}><App /></ChakraProvider></QueryClientProvider>);
-  return { ...view, posts, requests };
+  return { ...view, posts, deletes, requests };
 }
 
 function state() { return JSON.parse(screen.getByTestId("approval-state").textContent ?? "{}") as { override: WorkspaceAccess | null; workspaceAccess: WorkspaceAccess; sessionId: string | null }; }
@@ -254,6 +278,101 @@ it("keeps the title in the dialog when creating a session fork fails", async () 
   fireEvent.click(within(dialog).getByRole("button", { name: t.forkConfirm }));
   await waitFor(() => expect(state().sessionId).toBe("forked"));
   expect(posts).toHaveLength(2);
+});
+
+function rowActions(title: string) {
+  return screen.getByRole("button", { name: t.sessionActionsFor.replace("{title}", title), hidden: true });
+}
+
+async function openRowActions(title: string) {
+  const trigger = rowActions(title);
+  fireEvent.click(trigger);
+  // jsdom gives the clipping ancestor a zero-sized rectangle. Resolve this trigger's own portal.
+  const menu = within(await waitFor(() => {
+    const content = document.getElementById(trigger.getAttribute("aria-controls") ?? "");
+    if (!content || content.hidden) throw new Error(`Menu did not open for ${title}`);
+    return content;
+  }));
+  return (name: string) => menu.getByText(name).closest('[role="menuitem"]')!;
+}
+
+it("routes actions to a nested row and requires confirmation to delete it", async () => {
+  const child = { ...restored, id: "child", title: "Nested conversation", workspace: "/first", parent_session_id: "root" };
+  const root = { ...child, id: "root", title: "Root conversation", parent_session_id: undefined };
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue("  Renamed child  ");
+  const { posts, deletes, requests } = mount({ workspaces: [first], sessions: [root, child] });
+  await ready();
+  await screen.findByRole("button", { name: t.sessionActionsFor.replace("{title}", child.title), hidden: true });
+  expect(rowActions(child.title).closest(".session-row")?.classList.contains("nested")).toBe(true);
+
+  const actions = await openRowActions(child.title);
+  const fork = actions(t.forkSession);
+  expect(fork.getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(fork);
+  expect(posts).toEqual([]);
+  fireEvent.click(actions(t.renameSession));
+  expect(prompt).toHaveBeenCalledWith(t.renamePrompt, child.title);
+  const renamed = "Renamed child";
+  await screen.findByRole("button", { name: t.sessionActionsFor.replace("{title}", renamed), hidden: true });
+
+  fireEvent.click((await openRowActions(renamed))(t.pinSession));
+  await waitFor(() => expect(rowActions(renamed).closest(".session-row")?.querySelector(`[aria-label="${t.pinned}"]`)).toBeTruthy());
+  fireEvent.click((await openRowActions(renamed))(t.unpinSession));
+  await waitFor(() => expect(rowActions(renamed).closest(".session-row")?.querySelector(`[aria-label="${t.pinned}"]`)).toBeNull());
+
+  fireEvent.click((await openRowActions(renamed))(t.archiveSession));
+  fireEvent.click((await screen.findByText(`${t.showArchived} (1)`)).closest("button")!);
+  expect(rowActions(renamed).closest(".archived-sessions")).toBeTruthy();
+  fireEvent.click((await openRowActions(renamed))(t.unarchiveSession));
+  await waitFor(() => expect(rowActions(renamed).closest(".archived-sessions")).toBeNull());
+
+  fireEvent.click((await openRowActions(renamed))(t.deleteSession));
+  const dialog = within(await screen.findByRole("alertdialog", { name: t.deleteDialogTitle }));
+  expect(dialog.getByText(renamed)).toBeTruthy();
+  expect(deletes).toEqual([]);
+  fireEvent.click(dialog.getByRole("button", { name: t.cancel }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  fireEvent.click((await openRowActions(renamed))(t.deleteSession));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: t.confirmDelete }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: t.sessionActionsFor.replace("{title}", renamed), hidden: true })).toBeNull());
+  expect(deletes).toEqual([{ url: "/api/sessions/child", body: { confirmation: "child" } }]);
+  expect(posts).toEqual([
+    { url: "/api/sessions/child/rename", body: { title: renamed } },
+    ...["pin", "unpin", "archive", "unarchive"].map((action) => ({ url: `/api/sessions/child/${action}`, body: {} })),
+  ]);
+  expect(requests.filter((url) => url === "/api/sessions/child")).toHaveLength(1);
+});
+
+it("forks the clicked row while a different conversation is selected", async () => {
+  const selected = { ...restored, id: "selected", title: "Selected conversation" };
+  const { posts } = mount({ workspaces: [{ ...other, approval_mode_configured: true }], sessions: [selected, restored] });
+  await ready("/other");
+  fireEvent.click(await screen.findByRole("button", { name: selected.title, hidden: true }));
+  await waitFor(() => expect(state().sessionId).toBe(selected.id));
+  fireEvent.click((await openRowActions(restored.title))(t.forkSession));
+  const dialog = within(await screen.findByRole("dialog", { name: t.forkDialogTitle }));
+  expect(dialog.getByText(restored.title)).toBeTruthy();
+  expect(state().sessionId).toBe(selected.id);
+  fireEvent.click(dialog.getByRole("button", { name: t.forkConfirm }));
+  await waitFor(() => expect(state().sessionId).toBe("forked"));
+  expect(posts).toEqual([{ url: "/api/sessions/restored/fork", body: {} }]);
+});
+
+it("keeps running-session restrictions separate from failures returned by the API", async () => {
+  const active = { ...restored, workspace: "/first", active: true };
+  const { posts } = mount({ workspaces: [first], sessions: [active], sessionActionFailure: true });
+  await ready();
+  const menu = await openRowActions(active.title);
+  for (const name of [t.renameSession, t.forkSession, t.archiveSession, t.deleteSession]) {
+    const item = menu(name);
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(item);
+  }
+  expect(posts).toEqual([]);
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(menu(t.pinSession));
+  expect((await screen.findByRole("alert", { hidden: true })).textContent).toBe(`${t.sessionActionFailed}: session store unavailable`);
+  expect(posts).toEqual([{ url: "/api/sessions/restored/pin", body: {} }]);
 });
 
 const runningActivity: RuntimeActivity = {

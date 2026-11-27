@@ -87,7 +87,6 @@
 .chat-workspace .chat-viewport, .chat-workspace .session-list { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .chat-workspace .chat-viewport::-webkit-scrollbar, .chat-workspace .session-list::-webkit-scrollbar { width: 6px; }
 .chat-workspace .chat-viewport::-webkit-scrollbar-thumb, .chat-workspace .session-list::-webkit-scrollbar-thumb { background: var(--border); border: 0; }
-.chat-workspace .session-actions button { display: grid; place-items: center; }
 .chat-workspace .message.user { padding: 13px 19px; background: var(--bg-panel); border: 0; border-radius: 16px 16px 4px 16px; max-width: 86%; }
 .chat-workspace .message.assistant { padding: 2px; }
 
