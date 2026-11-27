@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ConversationItem } from "./ConversationCard";
@@ -12,6 +12,8 @@ import type { WorkspaceSummary } from "./workspaceApprovalApi";
 import type { RuntimeActivity, RuntimeGate } from "./RuntimeSidebar";
 import { queueText } from "./queueMessages";
 import { appendSelectionQuote } from "./useChatSelection";
+import type { Reference } from "./useComposerReferences";
+import type { PluginView } from "./plugins";
 
 // 保留 App 的导航、目录引导、请求与会话状态，只省略无关的侧栏与设置面板。
 const desktop = vi.hoisted(() => ({ enabled: false }));
@@ -44,7 +46,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); desktop.enabled = false; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: (typeof restored & { parent_session_id?: string })[]; history?: ConversationItem[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number; sessionActionFailure?: boolean } = {}) {
+function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: (typeof restored & { parent_session_id?: string })[]; history?: ConversationItem[]; override?: WorkspaceAccess; saveFailure?: boolean; activity?: RuntimeActivity; queueFailures?: number; chatResponse?: Promise<Response> | ((signal: AbortSignal) => Response); forkFailures?: number; sessionActionFailure?: boolean; references?: Reference[]; plugins?: PluginView[] } = {}) {
   let workspaces = options.workspaces ?? [first, other];
   let sessions = options.sessions ?? [];
   let queueFailures = options.queueFailures ?? 0;
@@ -63,6 +65,7 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: (typeof re
     }
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+      if (/^\/api\/plugins\/[^/]+\/host\/chatSend$/.test(url)) return Response.json({ text: body.text });
       const sessionAction = /^\/api\/sessions\/([^/]+)\/(rename|pin|unpin|archive|unarchive)$/.exec(url);
       if (sessionAction) {
         posts.push({ url, body });
@@ -108,10 +111,10 @@ function mount(options: { workspaces?: WorkspaceSummary[]; sessions?: (typeof re
     if (url === "/api/sessions/restored") return Response.json({ ...restored, messages: options.history ?? [], approval_mode: options.override ?? "strict", workspace_access: workspaces.find((item) => item.path === "/other")?.access ?? "smart" });
     const detail = sessions.find((item) => url === `/api/sessions/${item.id}`);
     if (detail) return Response.json({ ...detail, messages: [], workspace_access: "smart" });
-    if (url.startsWith("/api/composer?")) return Response.json({ commands: [], skills: [] });
+    if (url.startsWith("/api/composer?")) return Response.json({ commands: [], skills: [], references: options.references ?? [] });
     if (url.startsWith("/api/runtime/activity?")) return Response.json(options.activity ?? { tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
     if (url.startsWith("/api/runtime/events?")) return Response.json([]);
-    if (url.startsWith("/api/plugins")) return Response.json({ plugins: [], failures: [] });
+    if (url.startsWith("/api/plugins")) return Response.json({ plugins: options.plugins ?? [], failures: [] });
     if (url === "/api/setup") return Response.json({ ready: true });
     if (url === "/health") return Response.json({ version: "test" });
     return Response.json({}, { status: 404 });
@@ -432,6 +435,191 @@ it("switches Desktop sessions after submission without opening a window or losin
   expect(open).not.toHaveBeenCalled();
 });
 
+const referenceFile: Reference = { kind: "file", name: "src/中文 file.rs", value: '@file:"src/中文 file.rs"' };
+const referenceAgent: Reference = { kind: "agent", name: "Reviewer", value: "@agent:reviewer" };
+
+async function selectReferenceAt(composer: HTMLTextAreaElement, text: string, cursor: number, entry: Reference, byKeyboard = false) {
+  fireEvent.change(composer, { target: { value: text, selectionStart: cursor, selectionEnd: cursor } });
+  const option = await screen.findByRole("option", { name: entry.name });
+  if (byKeyboard) fireEvent.keyDown(composer, { key: "Enter" });
+  else fireEvent.click(option);
+  await screen.findByRole("button", { name: t.removeReference.replace("{name}", entry.name) });
+}
+
+it("removes a selected file as one unit with Backspace, then sends the full reference in place", async () => {
+  const { posts, container } = mount({ workspaces: [first], references: [referenceFile] });
+  await ready();
+  const composer = container.querySelector("textarea")!;
+  const text = "比较 @src 后文";
+  const cursor = text.indexOf(" 后文");
+  await selectReferenceAt(composer, text, cursor, referenceFile, true);
+  expect(composer.value).toBe("比较  后文");
+  composer.setSelectionRange(3, 3);
+  expect(fireEvent.keyDown(composer, { key: "Backspace" })).toBe(false);
+  expect(screen.queryByRole("button", { name: t.removeReference.replace("{name}", referenceFile.name) })).toBeNull();
+  expect(composer.value).toBe("比较  后文");
+  await selectReferenceAt(composer, text, cursor, referenceFile);
+  fireEvent.click(screen.getByRole("button", { name: t.send }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.prompt).toBe(`比较 ${referenceFile.value} 后文`);
+});
+
+it("keeps a reference-only draft through queue failure and clears it when accepted", async () => {
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const { container, posts } = mount({ workspaces: [{ ...other, active: true, approval_mode_configured: true }], sessions: [restored], queueFailures: 1, references: [referenceAgent] });
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const composer = container.querySelector("textarea")!;
+  await selectReferenceAt(composer, "@rev", 4, referenceAgent);
+  expect(composer.value).toBe("");
+  fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });
+  await screen.findByText(/queue unavailable/);
+  expect(screen.getByRole("button", { name: t.removeReference.replace("{name}", referenceAgent.name) })).toBeTruthy();
+  fireEvent.keyDown(composer, { key: "Enter", ctrlKey: true });
+  await screen.findByText(/已保存到待发队列/);
+  expect(posts).toHaveLength(2);
+  expect(posts[0].body.prompt).toBe(referenceAgent.value);
+  expect(posts[1].body).toEqual(posts[0].body);
+  expect(screen.queryByRole("button", { name: t.removeReference.replace("{name}", referenceAgent.name) })).toBeNull();
+});
+
+const videoPlugin: PluginView = {
+  id: "fixture-video", name: "Video plugin", version: "1.0.0", description: null, source: "fixture", enabled: true,
+  approval_gap: null, permissions: [], inferred_permissions: [], mcp_servers: [], destinations: [], settings: [], unsupported: [], file_pickers: [],
+  commands: [{ id: "open", title: "Open fixture video studio", icon: null, handler: "host" }], menus: { "composer.more": ["open"] },
+};
+
+it("refreshes the desktop plugin menu when returning from another window", async () => {
+  desktop.enabled = true;
+  const plugins: PluginView[] = [];
+  const { requests } = mount({ workspaces: [first], plugins });
+  await ready();
+  await waitFor(() => expect(requests).toContain("/api/plugins?locale=zh-CN"));
+  expect(screen.queryByRole("button", { name: t.pluginComposerMore })).toBeNull();
+  try {
+    act(() => focusManager.setFocused(false));
+    plugins.push(videoPlugin);
+    act(() => focusManager.setFocused(true));
+    await screen.findByRole("button", { name: t.pluginComposerMore });
+  } finally {
+    act(() => focusManager.setFocused(undefined));
+  }
+});
+
+it.each([false, true])("the composer plus opens the filtered file picker with a plugin installed (Desktop: %s)", async (desktopEnabled) => {
+  desktop.enabled = desktopEnabled;
+  const { posts, container } = mount({ workspaces: [first], plugins: [videoPlugin] });
+  await ready();
+  const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const open = vi.spyOn(picker, "click").mockImplementation(() => undefined);
+  await screen.findByRole("button", { name: t.pluginComposerMore });
+  fireEvent.click(screen.getByRole("button", { name: t.composerAddFiles }));
+  expect(open).toHaveBeenCalledOnce();
+  expect(picker.accept.split(",")).toEqual(expect.arrayContaining([".png", ".jpg", ".pdf"]));
+  expect(picker.multiple).toBe(true);
+  expect(screen.queryByText("Open fixture video studio")).toBeNull();
+  const oversized = new File([new Uint8Array(700 * 1024 + 1)], "large.pdf", { type: "application/pdf" });
+  fireEvent.change(picker, { target: { files: [oversized] } });
+  const error = await screen.findByText(/large\.pdf.*700 KiB/);
+  expect(error.closest(".composer-shell")).not.toBeNull();
+
+  const content = "Selected from disk";
+  const file = new File([content], "notes.txt", { type: "text/plain" });
+  Object.defineProperty(file, "arrayBuffer", { value: () => Promise.resolve(new TextEncoder().encode(content).buffer) });
+  fireEvent.change(picker, { target: { files: [file] } });
+  await screen.findByText("notes.txt");
+  fireEvent.click(screen.getByRole("button", { name: t.send }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.attachments).toEqual([{ kind: "text", name: "notes.txt", content }]);
+});
+
+it("releases the new session's file picker while the old read is pending", async () => {
+  const second = { ...restored, id: "second-draft", title: "Second draft" };
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const { container } = mount({ workspaces: [{ ...other, active: true, approval_mode_configured: true }], sessions: [restored, second] });
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const content = new TextEncoder().encode("Notes for a conversation").buffer;
+  let finishOld!: (bytes: ArrayBuffer) => void;
+  let finishNew!: (bytes: ArrayBuffer) => void;
+  const oldFile = new File([content], "old.txt", { type: "text/plain" });
+  const newFile = new File([content], "new.txt", { type: "text/plain" });
+  Object.defineProperty(oldFile, "arrayBuffer", { value: () => new Promise<ArrayBuffer>((resolve) => { finishOld = resolve; }) });
+  Object.defineProperty(newFile, "arrayBuffer", { value: () => new Promise<ArrayBuffer>((resolve) => { finishNew = resolve; }) });
+  fireEvent.change(picker, { target: { files: [oldFile] } });
+  await screen.findByText(t.composerReadingFiles);
+  fireEvent.click(screen.getByRole("button", { name: second.title, hidden: true }));
+  await waitFor(() => expect(state().sessionId).toBe(second.id));
+  expect((screen.getByRole("button", { name: t.composerAddFiles }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.change(picker, { target: { files: [newFile] } });
+  await act(async () => finishOld(content));
+  expect(screen.getByText(t.composerReadingFiles)).toBeTruthy();
+  await act(async () => finishNew(content));
+  await screen.findByText("new.txt");
+  expect(screen.queryByText("old.txt")).toBeNull();
+});
+
+it.each([false, true])("keeps a user's draft when a plugin sends a message (running: %s)", async (active) => {
+  const destination = {
+    id: "studio", qualified_id: `${videoPlugin.id}:studio`, title: "Fixture studio", icon: null,
+    main_page: "index.html", page_runtime: "localWeb" as const, page_url: "about:blank", page_server: null,
+    sidebar: null, toolbar_commands: [], default_pinned: true, pinned_order: null,
+  };
+  const plugin = { ...videoPlugin, destinations: [destination] };
+  const event = { session_id: restored.id, turn_id: "plugin-turn" };
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const { container, posts } = mount({
+    workspaces: [{ ...other, active: true, approval_mode_configured: true }],
+    sessions: [{ ...restored, active }], plugins: [plugin], chatResponse: () => new Response(
+      `data: ${JSON.stringify({ ...event, type: "submitted" })}\n\ndata: ${JSON.stringify({ ...event, type: "completed", text: "Fixture complete" })}\n\n`,
+    ),
+  });
+  await ready("/other");
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const draft = "My own draft";
+  const composer = container.querySelector("textarea")!;
+  fireEvent.change(composer, { target: { value: draft } });
+  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => pastedAttachmentText } });
+  const attachmentName = `${t.pastedText}-1.txt`;
+  await screen.findByText(attachmentName);
+  fireEvent.click(await screen.findByRole("button", { name: destination.title }));
+  const frame = container.querySelector<HTMLIFrameElement>("iframe.plugin-frame");
+  if (!frame) throw new Error("Expected the plugin frame to be mounted");
+  expect(frame.title).toBe(destination.title);
+  const text = "Summarize the studio notes";
+  act(() => {
+    window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow, origin: "null", data: { __willdeep: 1, type: "chatSend", requestID: "fixture", text },
+    }));
+  });
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toMatchObject({ url: active ? `/api/sessions/${restored.id}/queue` : "/api/chat/stream", body: { prompt: text, attachments: [] } });
+  await screen.findByText(attachmentName);
+  expect(container.querySelector("textarea")?.value).toBe(draft);
+});
+
+it.each([false, true])("checks the full UTF-8 request before submission (queue: %s)", async (queue) => {
+  localStorage.setItem("willdeep.web.last-session./other", restored.id);
+  const { container, posts } = mount({ workspaces: [{ ...other, active: true, approval_mode_configured: true }], sessions: [restored] });
+  await waitFor(() => expect(state().sessionId).toBe(restored.id));
+  const composer = container.querySelector("textarea")!;
+  fireEvent.change(composer, { target: { value: "字".repeat(350_000) } });
+  fireEvent.keyDown(composer, { key: "Enter", ctrlKey: queue });
+  await screen.findByText(/请求大小上限/);
+  expect(posts).toHaveLength(0);
+  expect(composer.value).toHaveLength(350_000);
+});
+
+const inlinePastedText = "😀\n字\n".repeat(25);
+const pastedAttachmentText = `${inlinePastedText}字`;
+
+it("lets the browser paste 100 Unicode characters directly into the composer", async () => {
+  const { container } = mount({ workspaces: [first] });
+  await ready();
+  const composer = container.querySelector("textarea")!;
+  expect(fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => inlinePastedText } })).toBe(true);
+  expect(screen.queryByText(`${t.pastedText}-1.txt`)).toBeNull();
+});
+
 function withoutRandomUUID() {
   const platformCrypto = globalThis.crypto;
   vi.stubGlobal("crypto", { getRandomValues: platformCrypto.getRandomValues.bind(platformCrypto) });
@@ -444,11 +632,11 @@ it.each(["Enter", "button"])("%s submits chat with attachments when randomUUID i
   await ready();
   const composer = container.querySelector("textarea")!;
   fireEvent.change(composer, { target: { value: "HTTP send regression" } });
-  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => "attachment line one\nattachment line two" } });
+  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => pastedAttachmentText } });
   if (trigger === "Enter") fireEvent.keyDown(composer, { key: "Enter" });
   else fireEvent.click(screen.getByRole("button", { name: t.send }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toMatchObject({ url: "/api/chat/stream", body: { prompt: "HTTP send regression", workspace: "/first", attachments: [{ kind: "text", content: "attachment line one\nattachment line two" }] } });
+  expect(posts[0]).toMatchObject({ url: "/api/chat/stream", body: { prompt: "HTTP send regression", workspace: "/first", attachments: [{ kind: "text", content: pastedAttachmentText }] } });
   expect(posts[0].body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
@@ -523,7 +711,7 @@ it.each([false, true])("failed queue submission preserves draft, attachments and
   if (missingUUID) withoutRandomUUID();
   const { posts, composer } = await mountRunning(runningActivity, 1);
   fireEvent.change(composer, { target: { value: "带附件检查进度" } });
-  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => "attachment line one\nattachment line two" } });
+  fireEvent.paste(composer, { clipboardData: { files: [], items: [], getData: () => pastedAttachmentText } });
   fireEvent.keyDown(composer, { key: "Enter" });
   await screen.findByText(/queue unavailable/);
   expect(composer.value).toBe("带附件检查进度");
@@ -532,7 +720,7 @@ it.each([false, true])("failed queue submission preserves draft, attachments and
   await screen.findByText(/已保存到待发队列，尚未交给当前模型/);
   expect(posts).toHaveLength(2);
   expect(posts[1].body).toEqual(posts[0].body);
-  expect(posts[0].body.attachments).toEqual([{ kind: "text", name: `${t.pastedText}-1.txt`, content: "attachment line one\nattachment line two" }]);
+  expect(posts[0].body.attachments).toEqual([{ kind: "text", name: `${t.pastedText}-1.txt`, content: pastedAttachmentText }]);
   expect(composer.value).toBe("");
 });
 

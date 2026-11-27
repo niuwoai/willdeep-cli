@@ -590,8 +590,7 @@ pub(crate) async fn net_fetch(
     Json(request): Json<FetchRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.permits(&plugin, PluginPermission::NetworkAccess)?;
-    let package = host.package(&plugin)?;
+    let package = host.permitted_package(&plugin, PluginPermission::NetworkAccess)?;
     // 权限只是开关，真正的门是清单里的这份名单。没写就等于没开。
     let domains = package
         .manifest

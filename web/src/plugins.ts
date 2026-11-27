@@ -71,6 +71,11 @@ export type PluginView = {
 export type PluginFailureView = { path: string; reason: string };
 export type PluginsResponse = { plugins: PluginView[]; failures: PluginFailureView[] };
 
+/** 升级等待重新审批期间，保留用户的启用设置，但暂停插件贡献的运行入口。 */
+export function isPluginRunnable(plugin: PluginView): boolean {
+  return plugin.enabled && plugin.approval_gap === null;
+}
+
 export type DeclarativeComponent = {
   id: string;
   kind: string;
@@ -305,7 +310,7 @@ export const MAX_PINNED_DESTINATIONS = 5;
 
 export function orderedDestinations(plugins: PluginView[]): Array<{ plugin: PluginView; destination: PluginDestinationView }> {
   const items = plugins
-    .filter((plugin) => plugin.enabled)
+    .filter(isPluginRunnable)
     .flatMap((plugin) => plugin.destinations.map((destination) => ({ plugin, destination })));
   return items.sort((left, right) => {
     if (left.destination.default_pinned !== right.destination.default_pinned) {

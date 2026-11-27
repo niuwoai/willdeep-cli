@@ -3,10 +3,9 @@ import { useEffect, useRef, useState } from "react";
 export type Reference = { kind: "peer" | "mcp" | "agent" | "file"; name: string; value: string };
 export function referenceQuery(text: string, cursor: number) {
   const match = text.slice(0, cursor).match(/(?:^|\s)@([^\s@"]*)$/u);
-  return match ? { start: cursor - match[1].length - 1, cursor, query: match[1] } : undefined;
-}
-export function insertReference(text: string, query: { start: number; cursor: number }, value: string) {
-  return text.slice(0, query.start) + value + " " + text.slice(query.cursor);
+  if (!match) return;
+  const suffix = text.slice(cursor).match(/^[^\s@"]*/u)?.[0] ?? "";
+  return { start: cursor - match[1].length - 1, end: cursor + suffix.length, cursor, query: match[1] };
 }
 
 const SEARCH_DELAY_MS = 150;

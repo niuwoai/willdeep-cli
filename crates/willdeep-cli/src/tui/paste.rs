@@ -219,14 +219,22 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_paste_keeps_existing_composer_and_attachment_semantics() {
+    fn ordinary_paste_keeps_selection_behavior_and_uses_the_character_limit() {
         let mut app = App::new(Vec::new(), Language::En);
         select_draft(&mut app);
         assert_eq!(route(&mut app, "new".to_owned()), PasteAction::Done);
         // Existing composer semantics clear the selection and insert at its cursor.
         assert_eq!(app.input.text(), "newdraft stays here");
         assert!(app.input.selected_text().is_none());
-        route(&mut app, "one\ntwo\nthree\nfour".to_owned());
+
+        let short = "中🙂\n字".repeat(25);
+        assert_eq!(route(&mut app, short.clone()), PasteAction::Done);
+        let expected = format!("new{short}draft stays here");
+        assert_eq!(app.input.text(), expected);
+        assert!(app.attachments.is_empty());
+
+        assert_eq!(route(&mut app, format!("{short}字")), PasteAction::Done);
+        assert_eq!(app.input.text(), expected);
         assert_eq!(app.attachments.len(), 1);
     }
 

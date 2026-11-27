@@ -54,6 +54,31 @@ it("pins default and explicitly pinned destinations, including order zero, witho
   expect(screen.queryByRole("group", { name: text.pluginSectionTitle })).toBeNull();
 });
 
+it("removes pinned and menu destinations while an enabled plugin upgrade awaits approval", () => {
+  const text = messages.en;
+  const select = vi.fn();
+  const plugin = fixturePlugin("Fixture", true);
+  plugin.destinations.push({
+    ...plugin.destinations[0], id: "details", qualified_id: "Fixture:details", title: "Fixture details", default_pinned: false,
+  });
+  const selection: RailSelection = { kind: "plugin", qualifiedId: "Fixture:home" };
+  const rail = (plugins: PluginView[]) => <ChakraProvider value={defaultSystem}><PluginRail
+    entries={orderedDestinations(plugins)} selection={selection} messages={text} schedulesLabel="Schedules" onSelect={select}
+  /></ChakraProvider>;
+  const view = render(rail([plugin]));
+  const toggle = screen.getByRole("button", { name: text.pluginSectionTitle });
+  expect(screen.getByRole("button", { name: "Fixture" }).getAttribute("aria-current")).toBe("page");
+  fireEvent.click(toggle);
+  expect(screen.getByRole("button", { name: "Fixture details" })).toBeTruthy();
+
+  view.rerender(rail([{ ...plugin, version: "2.0.0", approval_gap: { reason: "version-changed", detail: null } }]));
+  expect(screen.queryByRole("button", { name: "Fixture" })).toBeNull();
+  const menu = screen.getByRole("group", { name: text.pluginSectionTitle });
+  expect(within(menu).queryByRole("button", { name: "Fixture details" })).toBeNull();
+  fireEvent.click(within(menu).getByRole("button", { name: text.pluginCenter }));
+  expect(select).toHaveBeenCalledWith({ kind: "center" });
+});
+
 it.each<Language>(["zh-CN", "en", "ja"])("keeps configuration destinations under their own first-level entry in %s", language => {
   const select = vi.fn();
   const text = messages[language];

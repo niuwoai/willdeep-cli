@@ -627,19 +627,20 @@ async fn serve_internal(
     // 首个插件请求才安装内置插件、发现包并启动网关。这样端口绑定与 /health
     // 不受插件准备时间影响；宿主没准备好时，插件接口会给出明确的 500，
     // 而不是像以前那样整个路由树缺失、看起来像 404。
-    let app = app.merge(crate::plugin_web::router(Arc::new(
-        crate::plugin_web::PluginWebState::lazy(
-            state.config_path.clone(),
-            state.home.clone(),
-            state.workspaces.clone(),
-        ),
-    )));
+    let plugins = Arc::new(crate::plugin_web::PluginWebState::lazy(
+        state.config_path.clone(),
+        state.home.clone(),
+        state.workspaces.clone(),
+        desktop_mode,
+    ));
+    let app = app.merge(crate::plugin_web::router(plugins.clone()));
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("bind Web server at {}", config.listen))?;
     let address = listener.local_addr()?;
     let app = if desktop_mode {
         desktop::protect(app.merge(desktop::routes(state.clone())), address)?
+            .merge(crate::plugin_web::desktop_assets::router(plugins, address))
     } else {
         app
     };

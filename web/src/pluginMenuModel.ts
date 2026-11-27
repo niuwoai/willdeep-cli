@@ -5,7 +5,7 @@
 // PluginMenuLocation）定义，与 Xedit 共享同一份 schema。
 
 import { useCallback } from "react";
-import { executePluginCommand, type CommandResponse, type PluginView } from "./plugins";
+import { executePluginCommand, isPluginRunnable, type CommandResponse, type PluginView } from "./plugins";
 
 export type MenuLocation =
   | "commandPalette"
@@ -22,10 +22,10 @@ export type MenuEntry = {
   icon: string | null;
 };
 
-/** 某个位置上，所有已启用插件贡献的命令，按插件安装顺序排列。 */
+/** 某个位置上，所有可运行插件贡献的命令，按插件安装顺序排列。 */
 export function menuEntries(plugins: PluginView[], location: MenuLocation): MenuEntry[] {
   return plugins
-    .filter((plugin) => plugin.enabled)
+    .filter(isPluginRunnable)
     .flatMap((plugin) =>
       (plugin.menus[location] ?? []).flatMap((commandId) => {
         const command = plugin.commands.find((item) => item.id === commandId);

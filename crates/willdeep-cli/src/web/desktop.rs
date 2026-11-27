@@ -531,6 +531,346 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn opaque_plugin_frame_loads_only_its_granted_static_assets() {
+        use crate::plugin_web::{self, PluginWebState};
+        use willdeep_core::plugin::PluginHost;
+
+        let home = std::env::temp_dir().join(format!("desktop-plugin-test-{}", Uuid::new_v4()));
+        let root = home.join("plugins/demo/1.0.0");
+        for (path, body) in [
+            (
+                ".codex-plugin/plugin.json",
+                r#"{"name":"demo","version":"1.0.0"}"#,
+            ),
+            (
+                ".willdeep-plugin/plugin.json",
+                r#"{"schemaVersion":1,"contributes":{"pages":[{"id":"main","runtime":"localWeb","entryPath":"./ui/index.html"}],"destinations":[{"id":"main","titleKey":"main","mainPage":"main","icon":"./art/nav.svg"}]}}"#,
+            ),
+            (".willdeep-plugin/locales/en.json", r#"{"main":"Main"}"#),
+            (
+                "art/nav.svg",
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16"/></svg>"#,
+            ),
+            (
+                "ui/index.html",
+                r#"<html><head><script type="module" crossorigin src="./assets/main.js"></script><link rel="stylesheet" crossorigin href="./assets/main.css"></head></html>"#,
+            ),
+            ("ui/assets/main.js", r#"import "./chunk.js";"#),
+            ("ui/assets/chunk.js", "export const ready = true;"),
+            ("ui/assets/main.css", "body { color: red; }"),
+            ("ui/other.html", "undeclared page"),
+            ("ui/data.json", "{}"),
+            ("outside.js", "outside the entry directory"),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        }
+        crate::video_studio_plugin::ensure_installed(&home)
+            .await
+            .unwrap();
+        let host = Arc::new(PluginHost::discover_live(&home).unwrap());
+        let other_host = PluginHost::discover(&home).unwrap();
+        let studio = crate::video_studio_plugin::ID;
+        other_host.approve(studio, 1).await.unwrap();
+        other_host.set_enabled(studio, true).await.unwrap().unwrap();
+        other_host.approve("demo", 1).await.unwrap();
+        other_host.set_enabled("demo", true).await.unwrap().unwrap();
+        let state = Arc::new(
+            PluginWebState::new(
+                host,
+                home.join("config.toml"),
+                home,
+                Arc::new(std::sync::RwLock::new(Vec::new())),
+            )
+            .with_desktop_assets(),
+        );
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://{address}");
+        let access = Arc::new(DesktopAccess {
+            host: address.to_string(),
+            origin: origin.clone(),
+            bootstrap: format!("{BOOTSTRAP_PREFIX}test"),
+            claimed: AtomicBool::new(true),
+            cookie_name: "desktop_test".into(),
+            cookie_secret: "fixture".into(),
+        });
+        let cookie = format!("{}={}", access.cookie_name, access.cookie_secret);
+        let router = plugin_web::router(state.clone())
+            .layer(middleware::from_fn_with_state(access, authorize))
+            .merge(plugin_web::desktop_assets::router(state, address));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let entry = format!("{origin}/plugin-host/demo/ui/index.html");
+        let cookie = cookie.as_str();
+        assert_eq!(
+            client.get(&entry).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let icon = format!("{origin}/plugin-host/demo/art/nav.svg");
+        assert_eq!(
+            client.get(&icon).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let response = client
+            .get(&icon)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        assert_eq!(
+            response.headers()["cross-origin-resource-policy"],
+            "same-origin"
+        );
+        assert!(response.text().await.unwrap().starts_with("<svg "));
+        let plugins: serde_json::Value = client
+            .get(format!("{origin}/api/plugins"))
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let demo = plugins["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["id"] == "demo")
+            .unwrap();
+        assert_eq!(
+            demo["destinations"][0]["page_url"],
+            "/plugin-host/demo/ui/index.html"
+        );
+        let page = client
+            .get(&entry)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let csp = page.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(csp.contains("sandbox allow-scripts"));
+        assert!(csp.contains("connect-src 'none'"));
+        let html = page.text().await.unwrap();
+        let base = html
+            .split_once("<base href=\"")
+            .unwrap()
+            .1
+            .split_once('"')
+            .unwrap()
+            .0;
+        assert!(csp.contains(&format!("base-uri {origin}{base}")));
+        assert!(csp.contains(&format!("{origin}/plugin-media/")));
+        assert_eq!(
+            client
+                .get(format!("{origin}/plugin-media/demo/fixture.png"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED,
+        );
+        let asset_base = reqwest::Url::parse(&entry).unwrap().join(base).unwrap();
+        let asset = |path: &str| asset_base.join(path).unwrap();
+        let script = asset("./assets/main.js");
+        let nested_chunk = script.join("./chunk.js").unwrap();
+        for (url, mime) in [
+            (script.clone(), "text/javascript; charset=utf-8"),
+            (nested_chunk, "text/javascript; charset=utf-8"),
+            (asset("./assets/main.css"), "text/css; charset=utf-8"),
+        ] {
+            let response = client
+                .get(url.clone())
+                .header(header::ORIGIN, "null")
+                .header("sec-fetch-site", "cross-site")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{}", url.path());
+            assert_eq!(response.headers()[header::CONTENT_TYPE], mime);
+            assert_eq!(
+                response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+                "null"
+            );
+            assert!(
+                !response
+                    .headers()
+                    .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            );
+        }
+        let response = client.head(asset("assets/main.js")).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.bytes().await.unwrap().is_empty());
+
+        for path in ["index.html", "data.json", "%2e%2e%2foutside.js"] {
+            let response = client
+                .get(asset(path))
+                .header(header::ORIGIN, "null")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        let script = script.as_str();
+        let other_plugin = script.replace("/demo/", "/other/");
+        assert_eq!(
+            client.get(other_plugin).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            client
+                .get(script)
+                .header(header::ORIGIN, "https://example.invalid")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .get(script)
+                .header(header::HOST, "example.invalid")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client.post(script).send().await.unwrap().status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            client
+                .get(format!("{origin}/api/plugins"))
+                .header(header::ORIGIN, "null")
+                .header(header::COOKIE, cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .get(format!("{origin}/plugin-host/demo/ui/other.html"))
+                .header(header::COOKIE, cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+
+        let edited = root.join("ui/assets/main.css");
+        let original = std::fs::read(&edited).unwrap();
+        std::fs::write(&edited, "body { color: tan; }").unwrap();
+        assert_eq!(
+            client
+                .get(asset("assets/main.css"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND,
+        );
+        assert_eq!(
+            client
+                .get(&entry)
+                .header(header::COOKIE, cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT,
+        );
+        std::fs::write(&edited, original).unwrap();
+        other_host
+            .set_enabled("demo", false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            client.get(script).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        other_host.set_enabled("demo", true).await.unwrap().unwrap();
+        assert_eq!(
+            client.get(script).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        let page = client
+            .get(&entry)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        assert!(!page.text().await.unwrap().contains(base));
+
+        let studio_entry = format!("{origin}/plugin-host/{studio}/ui/dist/index.html");
+        let studio_page = client
+            .get(&studio_entry)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(studio_page.status(), StatusCode::OK);
+        assert!(
+            studio_page.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("sandbox allow-scripts allow-downloads")
+        );
+        let studio_html = studio_page.text().await.unwrap();
+        let studio_base = studio_html
+            .split_once("<base href=\"")
+            .unwrap()
+            .1
+            .split_once('"')
+            .unwrap()
+            .0;
+        let studio_base = reqwest::Url::parse(&studio_entry)
+            .unwrap()
+            .join(studio_base)
+            .unwrap();
+        for (attribute, mime) in [
+            ("src", "text/javascript; charset=utf-8"),
+            ("href", "text/css; charset=utf-8"),
+        ] {
+            let marker = format!("crossorigin {attribute}=\"");
+            let relative = studio_html
+                .split_once(&marker)
+                .unwrap()
+                .1
+                .split_once('"')
+                .unwrap()
+                .0;
+            let asset = client
+                .get(studio_base.join(relative).unwrap())
+                .header(header::ORIGIN, "null")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(asset.status(), StatusCode::OK);
+            assert_eq!(asset.headers()[header::CONTENT_TYPE], mime);
+            assert_eq!(asset.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+            assert!(!asset.bytes().await.unwrap().is_empty());
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn bootstrap_commits_a_document_before_navigating_with_the_strict_cookie() {
         let access = DesktopAccess {
             host: "127.0.0.1:12345".into(),

@@ -53,7 +53,7 @@ willdeep plugin builtin install scheduler     # 同样要 approve + enable，或
 
 **批准与启用是两步**，不是啰嗦：批准是对**内容**的判断（这个 digest、这些权限、
 这个来源），启用是对**此刻要不要跑**的判断。两者失效的条件也不同——插件更新后
-审批自动失效，启用状态不会。
+审批自动失效，启用状态保留。等待重新审批时，工作台会收起该插件的页面和命令入口，插件中心仍可查看并批准更新。
 
 审批绑定四样东西：版本、内容 digest、来源、权限集合。任何一样变了都要重新确认。
 权限差异排在 digest 之前报，因为改权限必然改 digest，先说"内容变了"只会淹掉
@@ -107,7 +107,7 @@ ID 唯一、命令引用必须存在、progress 必须落在 0…1。
 | `commandPalette` | ⌘K / Ctrl+K 命令面板，按插件分组显示来源 |
 | `chat.selection` | 聊天正文选中后浮出的气泡。宿主固定传两个参数：`text`（选中原文）与 `source="chat.selection"` |
 | `session.context` | 会话列表行右键。没有插件贡献这个位置时不劫持右键，浏览器自带菜单照常可用 |
-| `composer.more` | Composer 左下角的「更多」按钮 |
+| `composer.more` | 输入框左下角加号旁的「插件动作」按钮，图标为省略号 |
 | `plugin.sidebar.row.context` | 声明式侧栏行右键；行自己声明的 `contextCommands` 优先，为空时退回该插件在这个位置贡献的全部命令 |
 | `plugin.page.toolbar` | 插件页面顶部工具栏 |
 
@@ -126,6 +126,9 @@ ID 唯一、命令引用必须存在、progress 必须落在 0…1。
    带 crossorigin 的请求走 CORS，opaque origin 报的正是 `Origin: null`；不给
    `Access-Control-Allow-Origin` 就整个被拒、页面白屏，而且 CSP 面板上什么都看不到。
    放行只限 `null`，不写 `*`：普通网页有真实 origin，读不到本机插件包的内容。
+   Tauri Desktop 的入口仍需本地会话 Cookie。已批准的清单页面会取得一个限当前启用周期、
+   限入口目录的只读静态资源地址，供相对路径加载脚本、样式和媒体。宿主 API 仍要求鉴权。
+   插件页面应使用相对于入口目录的资源路径。
 5. **每个插件一套 MCP 连接。** 隔离靠实例边界，不是名字前缀——两个插件的服务重名
    也串不到一起。MCP App 页面报上来的 server 名不作数，只用清单里声明的那一个。
 6. **停用即断连。** 被停用的插件不再有活着的子进程，静态资源也一并停供。

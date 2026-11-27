@@ -53,9 +53,13 @@ impl PluginHost {
         locale: &str,
     ) -> Result<Vec<RegisteredCommand>, CommandError> {
         let mut commands = Vec::new();
+        let registry = self.registry_snapshot().map_err(HostError::from)?;
         for package in self.packages() {
-            if !self.is_enabled(&package.id).await
-                || self.approval_gap(&package.id).await?.is_some()
+            if !registry.is_enabled(&package.id)
+                || registry
+                    .approval_gap(&package)
+                    .map_err(HostError::from)?
+                    .is_some()
             {
                 continue;
             }
@@ -85,13 +89,12 @@ impl PluginHost {
         if !arguments.is_object() {
             return Err(CommandError::InvalidArguments);
         }
-        let package = self.package(plugin_id)?;
-        if !self.is_enabled(plugin_id).await {
-            return Err(HostError::NotEnabled(plugin_id.to_owned()).into());
-        }
-        if self.approval_gap(plugin_id).await?.is_some() {
-            return Err(CommandError::ApprovalRequired(plugin_id.to_owned()));
-        }
+        let package = self
+            .approved_package(plugin_id)
+            .map_err(|error| match error {
+                HostError::PluginChanged(_) => CommandError::ApprovalRequired(plugin_id.to_owned()),
+                other => CommandError::Host(other),
+            })?;
         let command = package
             .manifest
             .as_ref()
@@ -105,7 +108,7 @@ impl PluginHost {
             return Err(CommandError::RequiresUi);
         }
         Ok(self
-            .execute_command(plugin_id, command_id, arguments)
+            .execute_command_for_package(package, command_id, arguments)
             .await?)
     }
 }

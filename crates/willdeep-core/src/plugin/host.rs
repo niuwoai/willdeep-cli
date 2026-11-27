@@ -6,7 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -21,7 +22,9 @@ use super::manifest::{
 use super::package::{
     MAX_MANIFEST_BYTES, MAX_PAGE_BYTES, PackageError, PluginPackage, PluginSource, discover,
 };
-use super::registry::{ApprovalGap, PluginRegistry, RegistryError, inferred_permissions};
+use super::registry::{
+    ApprovalGap, PluginApproval, PluginRegistry, RegistryError, inferred_permissions,
+};
 use super::tool_catalog::PluginToolCatalog;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +33,8 @@ pub enum HostError {
     UnknownPlugin(String),
     #[error("plugin `{0}` is not enabled")]
     NotEnabled(String),
+    #[error("plugin `{0}` changed since it was approved or while connecting")]
+    PluginChanged(String),
     #[error("plugin `{plugin}` has no {kind} `{id}`")]
     UnknownContribution {
         plugin: String,
@@ -94,14 +99,32 @@ pub struct PluginLoadFailure {
     pub reason: String,
 }
 
+const PACKAGE_RESCAN_INTERVAL: Duration = Duration::from_secs(2);
+const CONNECTION_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+struct PackageCatalog {
+    packages: Vec<Arc<PluginPackage>>,
+    failures: Vec<PluginLoadFailure>,
+    next_scan: Instant,
+}
+
+#[derive(PartialEq, Eq)]
+struct ConnectionIdentity {
+    package_root: PathBuf,
+    approval: PluginApproval,
+    activation: Option<uuid::Uuid>,
+    settings: BTreeMap<String, String>,
+}
+
+type Connections = BTreeMap<String, (ConnectionIdentity, Arc<McpRegistry>)>;
+
 pub struct PluginHost {
     home: PathBuf,
-    packages: Vec<PluginPackage>,
-    failures: Vec<PluginLoadFailure>,
-    registry: Mutex<PluginRegistry>,
+    packages: RwLock<PackageCatalog>,
+    live_discovery: bool,
     /// pluginID → 该插件自己的 MCP 注册表。隔离靠实例边界：一个插件永远
     /// 拿不到另一个插件的连接，哪怕两边的 server 重名。
-    connections: Mutex<BTreeMap<String, Arc<McpRegistry>>>,
+    connections: Arc<Mutex<Connections>>,
     /// pluginID → 建连锁。页面、网关、聊天可能同时第一次用同一个插件，
     /// 不锁就会各拉起一个进程，两个进程抢着写同一份数据文件。
     connecting: Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
@@ -122,7 +145,30 @@ impl PluginHost {
 
     /// 扫描全部来源并载入注册状态。Codex 缓存按用户主目录推断，找不到就跳过。
     pub fn discover(home: &Path) -> Result<Self, RegistryError> {
-        let mut packages = Vec::new();
+        Self::discover_with_refresh(home, false)
+    }
+
+    /// A long-lived host observes installs and removals made by other processes.
+    pub fn discover_live(home: &Path) -> Result<Self, RegistryError> {
+        Self::discover_with_refresh(home, true)
+    }
+
+    fn discover_with_refresh(home: &Path, live_discovery: bool) -> Result<Self, RegistryError> {
+        PluginRegistry::load(&PluginRegistry::default_path(home))?;
+        Ok(Self {
+            home: home.to_path_buf(),
+            packages: RwLock::new(Self::scan_packages(home)),
+            live_discovery,
+            connections: Arc::default(),
+            connecting: Mutex::new(BTreeMap::new()),
+            host_requests: RwLock::new(None),
+            config_path: RwLock::new(None),
+            catalog: PluginToolCatalog::new(home),
+        })
+    }
+
+    fn scan_packages(home: &Path) -> PackageCatalog {
+        let mut packages: Vec<Arc<PluginPackage>> = Vec::new();
         let mut failures = Vec::new();
         let mut sources = vec![
             (Self::shared_root(home), PluginSource::Shared),
@@ -140,15 +186,14 @@ impl PluginHost {
                     Ok(package) => {
                         // 同一个 ID 被多个来源提供时，共享安装目录优先：
                         // 它是用户明确装过的那一份。
-                        if let Some(existing) = packages
-                            .iter()
-                            .position(|item: &PluginPackage| item.id == package.id)
+                        if let Some(existing) =
+                            packages.iter().position(|item| item.id == package.id)
                         {
                             if packages[existing].source != PluginSource::Shared {
-                                packages[existing] = package;
+                                packages[existing] = Arc::new(package);
                             }
                         } else {
-                            packages.push(package);
+                            packages.push(Arc::new(package));
                         }
                     }
                     Err(error) => failures.push(PluginLoadFailure {
@@ -159,18 +204,53 @@ impl PluginHost {
             }
         }
         packages.sort_by(|left, right| left.id.cmp(&right.id));
-        let registry = PluginRegistry::load(&PluginRegistry::default_path(home))?;
-        Ok(Self {
-            home: home.to_path_buf(),
+        PackageCatalog {
             packages,
             failures,
-            registry: Mutex::new(registry),
-            connections: Mutex::new(BTreeMap::new()),
-            connecting: Mutex::new(BTreeMap::new()),
-            host_requests: std::sync::RwLock::new(None),
-            config_path: std::sync::RwLock::new(None),
-            catalog: PluginToolCatalog::new(home),
-        })
+            next_scan: Instant::now() + PACKAGE_RESCAN_INTERVAL,
+        }
+    }
+
+    fn package_catalog(&self) -> std::sync::RwLockReadGuard<'_, PackageCatalog> {
+        let catalog = self
+            .packages
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
+        if !self.live_discovery || Instant::now() < catalog.next_scan {
+            return catalog;
+        }
+        drop(catalog);
+        let mut catalog = self
+            .packages
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        if Instant::now() >= catalog.next_scan {
+            *catalog = Self::scan_packages(&self.home);
+        }
+        drop(catalog);
+        self.packages
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub fn registry_snapshot(&self) -> Result<PluginRegistry, RegistryError> {
+        PluginRegistry::load(&PluginRegistry::default_path(&self.home))
+    }
+
+    async fn update_registry<T: Send + 'static>(
+        &self,
+        update: impl FnOnce(&mut PluginRegistry) -> Result<T, RegistryError> + Send + 'static,
+    ) -> Result<T, HostError> {
+        let path = PluginRegistry::default_path(&self.home);
+        tokio::task::spawn_blocking(move || update(&mut PluginRegistry::load(&path)?))
+            .await
+            .map_err(|error| RegistryError::Write {
+                path: PluginRegistry::default_path(&self.home)
+                    .display()
+                    .to_string(),
+                reason: format!("plugin registry task failed: {error}"),
+            })?
+            .map_err(HostError::from)
     }
 
     pub fn home(&self) -> &Path {
@@ -206,12 +286,15 @@ impl PluginHost {
     /// 插件声明的权限。没有 WillDeep 清单的 Codex 兼容包按 `mcp.json` 推断，
     /// 与安装预览、macOS 宿主同一口径。
     pub fn declared_permissions(&self, plugin_id: &str) -> Vec<PluginPermission> {
-        match self.package(plugin_id) {
-            Ok(package) => match &package.manifest {
-                Some(manifest) => manifest.permissions.iter().copied().collect(),
-                None => inferred_permissions(package),
-            },
-            Err(_) => Vec::new(),
+        self.package(plugin_id)
+            .map(|package| Self::permissions_for(&package))
+            .unwrap_or_default()
+    }
+
+    fn permissions_for(package: &PluginPackage) -> Vec<PluginPermission> {
+        match &package.manifest {
+            Some(manifest) => manifest.permissions.iter().copied().collect(),
+            None => inferred_permissions(package),
         }
     }
 
@@ -224,10 +307,11 @@ impl PluginHost {
         let Ok(package) = self.package(plugin_id) else {
             return Vec::new();
         };
-        if !self
-            .declared_permissions(plugin_id)
-            .contains(&PluginPermission::ProcessExecute)
-        {
+        Self::runnable_servers_for(&package)
+    }
+
+    fn runnable_servers_for(package: &PluginPackage) -> Vec<String> {
+        if !Self::permissions_for(package).contains(&PluginPermission::ProcessExecute) {
             return Vec::new();
         }
         package
@@ -245,11 +329,14 @@ impl PluginHost {
     /// 与聊天工具目录都按它过滤。
     pub async fn enabled_servers(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        for package in &self.packages {
-            if !self.registry.lock().await.is_enabled(&package.id) {
+        let Ok(registry) = self.registry_snapshot() else {
+            return out;
+        };
+        for package in self.packages() {
+            if Self::require_approval(&package, &registry).is_err() {
                 continue;
             }
-            for server in self.runnable_servers(&package.id) {
+            for server in Self::runnable_servers_for(&package) {
                 out.push((package.id.clone(), server));
             }
         }
@@ -259,9 +346,8 @@ impl PluginHost {
     /// 确保插件在跑，并刷新某个服务的工具目录：经宿主平时那条 MCP 连接发一次
     /// `tools/list`（插件没在运行就按平常的方式拉起）。返回原始结果。
     pub async fn refresh_tools(&self, plugin_id: &str, server: &str) -> Result<Value, HostError> {
-        self.require_enabled(plugin_id).await?;
-        if !self
-            .runnable_servers(plugin_id)
+        let package = self.package(plugin_id)?;
+        if !Self::runnable_servers_for(&package)
             .iter()
             .any(|item| item == server)
         {
@@ -270,7 +356,7 @@ impl PluginHost {
                 server: server.to_owned(),
             });
         }
-        let mcp = self.mcp(plugin_id).await?;
+        let mcp = self.mcp_for_package(package).await?;
         let listed = mcp
             .request(server, "tools/list", serde_json::json!({}))
             .await?;
@@ -278,29 +364,39 @@ impl PluginHost {
         Ok(listed)
     }
 
-    pub fn packages(&self) -> &[PluginPackage] {
-        &self.packages
+    pub fn packages(&self) -> Vec<Arc<PluginPackage>> {
+        self.package_catalog().packages.clone()
     }
 
-    pub fn failures(&self) -> &[PluginLoadFailure] {
-        &self.failures
+    pub fn failures(&self) -> Vec<PluginLoadFailure> {
+        self.package_catalog().failures.clone()
     }
 
-    pub fn package(&self, plugin_id: &str) -> Result<&PluginPackage, HostError> {
-        self.packages
+    pub fn package(&self, plugin_id: &str) -> Result<Arc<PluginPackage>, HostError> {
+        self.package_catalog()
+            .packages
             .iter()
             .find(|item| item.id == plugin_id)
+            .cloned()
             .ok_or_else(|| HostError::UnknownPlugin(plugin_id.to_owned()))
     }
 
     pub async fn is_enabled(&self, plugin_id: &str) -> bool {
-        self.registry.lock().await.is_enabled(plugin_id)
+        match self.registry_snapshot() {
+            Ok(registry) => registry.is_enabled(plugin_id),
+            Err(error) => {
+                eprintln!(
+                    "warning: plugin_enablement_read_failed plugin={plugin_id} error={error}"
+                );
+                false
+            }
+        }
     }
 
     /// 权威审批检查：摘要比较读取当前包字节。
     pub async fn approval_gap(&self, plugin_id: &str) -> Result<Option<ApprovalGap>, HostError> {
         let package = self.package(plugin_id)?;
-        Ok(self.registry.lock().await.approval_gap(package)?)
+        Ok(self.registry_snapshot()?.approval_gap(&package)?)
     }
 
     /// 仅供展示与能力提示，可能复用旧摘要。实际放行须再次检查 `approval_gap`。
@@ -309,13 +405,13 @@ impl PluginHost {
         plugin_id: &str,
     ) -> Result<Option<ApprovalGap>, HostError> {
         let package = self.package(plugin_id)?;
-        Ok(self.registry.lock().await.approval_gap_preview(package)?)
+        Ok(self.registry_snapshot()?.approval_gap_preview(&package)?)
     }
 
     pub async fn approve(&self, plugin_id: &str, now: u64) -> Result<(), HostError> {
         let package = self.package(plugin_id)?;
-        self.registry.lock().await.approve(package, now)?;
-        Ok(())
+        self.update_registry(move |registry| registry.approve(&package, now))
+            .await
     }
 
     pub async fn set_enabled(
@@ -324,7 +420,9 @@ impl PluginHost {
         enabled: bool,
     ) -> Result<Result<(), ApprovalGap>, HostError> {
         let package = self.package(plugin_id)?;
-        let outcome = self.registry.lock().await.set_enabled(package, enabled)?;
+        let outcome = self
+            .update_registry(move |registry| registry.set_enabled(&package, enabled))
+            .await?;
         if !enabled {
             // 停用即断连：一个被停用的插件不该还留着一个活着的子进程。
             // 工具目录里它的条目一并作废，聊天不再看到这些工具。
@@ -337,9 +435,11 @@ impl PluginHost {
     /// 忘掉一个插件的全部授权与运行状态。包文件由调用方删除——
     /// 这里只负责状态，好让"删文件失败"不会留下一份仍然有效的审批。
     pub async fn forget(&self, plugin_id: &str) -> Result<(), HostError> {
+        let id = plugin_id.to_owned();
+        self.update_registry(move |registry| registry.forget(&id))
+            .await?;
         self.connections.lock().await.remove(plugin_id);
         self.catalog.invalidate(plugin_id);
-        self.registry.lock().await.forget(plugin_id)?;
         Ok(())
     }
 
@@ -349,19 +449,18 @@ impl PluginHost {
         order: Option<u32>,
     ) -> Result<(), HostError> {
         self.package(plugin_id)?;
-        self.registry
-            .lock()
+        let plugin_id = plugin_id.to_owned();
+        self.update_registry(move |registry| registry.set_pinned_order(&plugin_id, order))
             .await
-            .set_pinned_order(plugin_id, order)?;
-        Ok(())
     }
 
     pub async fn setting(&self, plugin_id: &str, key: &str) -> Option<String> {
-        self.registry
-            .lock()
-            .await
-            .state(plugin_id)
-            .and_then(|state| state.settings.get(key).cloned())
+        self.registry_snapshot()
+            .ok()?
+            .state(plugin_id)?
+            .settings
+            .get(key)
+            .cloned()
     }
 
     pub async fn set_setting(
@@ -370,32 +469,42 @@ impl PluginHost {
         key: &str,
         value: Option<&str>,
     ) -> Result<(), HostError> {
-        self.package(plugin_id)?;
-        self.registry
-            .lock()
-            .await
-            .set_setting(plugin_id, key, value)?;
+        let package = self.package(plugin_id)?;
+        let key = key.to_owned();
+        let value = value.map(str::to_owned);
+        self.update_registry(move |registry| {
+            registry.set_setting(&package, &key, value.as_deref())
+        })
+        .await?;
         // 设置变了，MCP 服务的环境变量可能也变了，下次用时重连。
         self.connections.lock().await.remove(plugin_id);
         Ok(())
     }
 
     pub async fn pinned_order(&self, plugin_id: &str) -> Option<u32> {
-        self.registry
-            .lock()
-            .await
-            .state(plugin_id)
-            .and_then(|state| state.pinned_order)
+        self.registry_snapshot()
+            .ok()?
+            .state(plugin_id)?
+            .pinned_order
     }
 
     pub fn permits(&self, plugin_id: &str, permission: PluginPermission) -> Result<(), HostError> {
-        let package = self.package(plugin_id)?;
+        self.permitted_package(plugin_id, permission).map(|_| ())
+    }
+
+    /// Authorize once and return the same package for package-specific capability data.
+    pub fn permitted_package(
+        &self,
+        plugin_id: &str,
+        permission: PluginPermission,
+    ) -> Result<Arc<PluginPackage>, HostError> {
+        let package = self.approved_package(plugin_id)?;
         let granted = package
             .manifest
             .as_ref()
             .is_some_and(|manifest| manifest.permissions.contains(&permission));
         if granted {
-            Ok(())
+            Ok(package)
         } else {
             Err(HostError::PermissionDenied {
                 plugin: plugin_id.to_owned(),
@@ -404,12 +513,24 @@ impl PluginHost {
         }
     }
 
-    async fn require_enabled(&self, plugin_id: &str) -> Result<&PluginPackage, HostError> {
+    /// Resolve a single package snapshot and check its actual bytes before using it.
+    pub fn approved_package(&self, plugin_id: &str) -> Result<Arc<PluginPackage>, HostError> {
         let package = self.package(plugin_id)?;
-        if !self.registry.lock().await.is_enabled(plugin_id) {
-            return Err(HostError::NotEnabled(plugin_id.to_owned()));
-        }
+        Self::require_approval(&package, &self.registry_snapshot()?)?;
         Ok(package)
+    }
+
+    fn require_approval(
+        package: &PluginPackage,
+        registry: &PluginRegistry,
+    ) -> Result<(), HostError> {
+        if !registry.is_enabled(&package.id) {
+            return Err(HostError::NotEnabled(package.id.clone()));
+        }
+        if registry.approval_gap(package)?.is_some() {
+            return Err(HostError::PluginChanged(package.id.clone()));
+        }
+        Ok(())
     }
 
     /// 取（必要时建立）某个插件的 MCP 连接。
@@ -420,10 +541,21 @@ impl PluginHost {
     /// 缓存的连接里有 stdio 进程已经退出（被结束、崩溃），就丢掉重连：插件进程
     /// 没了，下一条请求会重新拉起它，与 macOS 宿主一致。
     pub async fn mcp(&self, plugin_id: &str) -> Result<Arc<McpRegistry>, HostError> {
-        let package = self.require_enabled(plugin_id).await?;
-        if let Some(existing) = self.live_connection(plugin_id).await {
-            return Ok(existing);
-        }
+        let package = match self.package(plugin_id) {
+            Ok(package) => package,
+            Err(error) => {
+                self.connections.lock().await.remove(plugin_id);
+                return Err(error);
+            }
+        };
+        self.mcp_for_package(package).await
+    }
+
+    pub async fn mcp_for_package(
+        &self,
+        package: Arc<PluginPackage>,
+    ) -> Result<Arc<McpRegistry>, HostError> {
+        let plugin_id = package.id.as_str();
         let gate = self
             .connecting
             .lock()
@@ -432,21 +564,29 @@ impl PluginHost {
             .or_default()
             .clone();
         let _connecting = gate.lock().await;
-        // 排队期间别人可能已经连好了。
-        if let Some(existing) = self.live_connection(plugin_id).await {
+        // Another process can change the package or registry while we queue.
+        let current_package = self.package(plugin_id)?;
+        if !package.same_snapshot(&current_package) {
+            return Err(HostError::PluginChanged(plugin_id.to_owned()));
+        }
+        let approval = self.registry_snapshot()?;
+        let identity = match Self::require_approval(&package, &approval)
+            .and_then(|()| Self::connection_identity(&package, &approval))
+        {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.connections.lock().await.remove(plugin_id);
+                return Err(error);
+            }
+        };
+        if let Some(existing) = self.live_connection(plugin_id, &identity).await {
             return Ok(existing);
         }
         let root = package.root.display().to_string();
-        let settings = self
-            .registry
-            .lock()
-            .await
-            .state(plugin_id)
-            .map(|state| state.settings.clone())
-            .unwrap_or_default();
+        let settings = &identity.settings;
         let mut configs = BTreeMap::new();
         for (name, spec) in &package.mcp_servers {
-            let expand = |value: &str| expand_variables(value, &root, &settings);
+            let expand = |value: &str| expand_variables(value, &root, settings);
             let mut env: BTreeMap<String, String> = spec
                 .env
                 .iter()
@@ -506,7 +646,7 @@ impl PluginHost {
                 let scoped = Arc::new(ScopedHostRequests {
                     context: PluginRequestContext {
                         plugin_id: plugin_id.to_owned(),
-                        permissions: self.declared_permissions(plugin_id),
+                        permissions: Self::permissions_for(&package),
                     },
                     inner,
                 });
@@ -514,8 +654,16 @@ impl PluginHost {
             }
             None => McpRegistry::connect(&configs).await?,
         });
+        let current_package = self.package(plugin_id)?;
+        let current_state = self.registry_snapshot()?;
+        if !package.same_snapshot(&current_package)
+            || Self::connection_identity(&package, &current_state)? != identity
+        {
+            return Err(HostError::PluginChanged(plugin_id.to_owned()));
+        }
+        Self::require_approval(&package, &current_state)?;
         // 连接时已经列过一遍工具，顺手刷新聊天用的目录（只记能运行的服务）。
-        for server in self.runnable_servers(plugin_id) {
+        for server in Self::runnable_servers_for(&package) {
             if let Some(listed) = registry.listed_tools(&server) {
                 self.catalog.record(plugin_id, &server, listed);
             }
@@ -523,17 +671,88 @@ impl PluginHost {
         self.connections
             .lock()
             .await
-            .insert(plugin_id.to_owned(), registry.clone());
+            .insert(plugin_id.to_owned(), (identity, registry.clone()));
+        self.watch_connection(plugin_id, &registry);
         Ok(registry)
     }
 
-    async fn live_connection(&self, plugin_id: &str) -> Option<Arc<McpRegistry>> {
+    fn watch_connection(&self, plugin_id: &str, connection: &Arc<McpRegistry>) {
+        let path = PluginRegistry::default_path(&self.home);
+        let connections = Arc::downgrade(&self.connections);
+        let connection = Arc::downgrade(connection);
+        let plugin_id = plugin_id.to_owned();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(CONNECTION_RECHECK_INTERVAL).await;
+                let Some(connections) = connections.upgrade() else {
+                    return;
+                };
+                let mut current = connections.lock().await;
+                let Some((identity, active)) = current.get(&plugin_id) else {
+                    return;
+                };
+                if !connection.ptr_eq(&Arc::downgrade(active)) {
+                    return;
+                }
+                let state = match PluginRegistry::load(&path) {
+                    Ok(registry) => registry,
+                    Err(error) => {
+                        eprintln!(
+                            "warning: plugin_connection_registry_read_failed plugin={plugin_id} error={error}"
+                        );
+                        current.remove(&plugin_id);
+                        return;
+                    }
+                };
+                if !state.state(&plugin_id).is_some_and(|state| {
+                    state.enabled
+                        && state.activation == identity.activation
+                        && state.approval.as_ref() == Some(&identity.approval)
+                        && state.settings == identity.settings
+                }) {
+                    current.remove(&plugin_id);
+                    return;
+                }
+            }
+        });
+    }
+
+    fn connection_identity(
+        package: &PluginPackage,
+        registry: &PluginRegistry,
+    ) -> Result<ConnectionIdentity, HostError> {
+        let state = registry
+            .state(&package.id)
+            .filter(|state| state.enabled)
+            .ok_or_else(|| HostError::NotEnabled(package.id.clone()))?;
+        let approval = state
+            .approval
+            .as_ref()
+            .filter(|approval| {
+                approval.version == package.version && approval.source == package.source.as_str()
+            })
+            .ok_or_else(|| HostError::PluginChanged(package.id.clone()))?;
+        Ok(ConnectionIdentity {
+            package_root: package.root.clone(),
+            approval: approval.clone(),
+            activation: state.activation,
+            settings: state.settings.clone(),
+        })
+    }
+
+    async fn live_connection(
+        &self,
+        plugin_id: &str,
+        identity: &ConnectionIdentity,
+    ) -> Option<Arc<McpRegistry>> {
         let mut connections = self.connections.lock().await;
-        let existing = connections.get(plugin_id)?.clone();
-        if existing.is_alive() {
-            return Some(existing);
+        let (previous, connection) = connections.get(plugin_id)?;
+        if previous == identity && connection.is_alive() {
+            return Some(connection.clone());
         }
-        eprintln!("warning: plugin_mcp_reconnect plugin={plugin_id} reason=process_exited");
+        if previous == identity {
+            eprintln!("warning: plugin_mcp_reconnect plugin={plugin_id} reason=process_exited");
+        }
         connections.remove(plugin_id);
         None
     }
@@ -546,7 +765,19 @@ impl PluginHost {
         command_id: &str,
         arguments: Value,
     ) -> Result<CommandOutcome, HostError> {
-        let package = self.require_enabled(plugin_id).await?;
+        let package = self.package(plugin_id)?;
+        self.execute_command_for_package(package, command_id, arguments)
+            .await
+    }
+
+    pub async fn execute_command_for_package(
+        &self,
+        package: Arc<PluginPackage>,
+        command_id: &str,
+        arguments: Value,
+    ) -> Result<CommandOutcome, HostError> {
+        Self::require_approval(&package, &self.registry_snapshot()?)?;
+        let plugin_id = package.id.as_str();
         let command = package
             .manifest
             .as_ref()
@@ -591,7 +822,7 @@ impl PluginHost {
                         server: server.clone(),
                     });
                 }
-                let mcp = self.mcp(plugin_id).await?;
+                let mcp = self.mcp_for_package(package.clone()).await?;
                 Ok(CommandOutcome::Tool(
                     mcp.call_tool_on(server, tool, arguments).await?,
                 ))
@@ -606,7 +837,7 @@ impl PluginHost {
         plugin_id: &str,
         page_id: &str,
     ) -> Result<String, HostError> {
-        let package = self.require_enabled(plugin_id).await?;
+        let package = self.approved_package(plugin_id)?;
         let page = package
             .manifest
             .as_ref()
@@ -624,7 +855,7 @@ impl PluginHost {
             PageRuntime::McpApp => {
                 let server = page.server.clone().unwrap_or_default();
                 let uri = page.resource_uri.clone().unwrap_or_default();
-                let mcp = self.mcp(plugin_id).await?;
+                let mcp = self.mcp_for_package(package.clone()).await?;
                 let payload = mcp.read_resource(&server, &uri).await?;
                 let (text, mime) = crate::mcp::resource_text(&payload, &uri)
                     .ok_or_else(|| HostError::EmptyResource { uri: uri.clone() })?;
@@ -653,7 +884,18 @@ impl PluginHost {
         plugin_id: &str,
         sidebar_id: &str,
     ) -> Result<(DeclarativeDocument, Option<String>), HostError> {
-        let package = self.require_enabled(plugin_id).await?;
+        let package = self.package(plugin_id)?;
+        self.sidebar_document_for_package(&package, sidebar_id)
+            .await
+    }
+
+    pub async fn sidebar_document_for_package(
+        &self,
+        package: &Arc<PluginPackage>,
+        sidebar_id: &str,
+    ) -> Result<(DeclarativeDocument, Option<String>), HostError> {
+        Self::require_approval(package, &self.registry_snapshot()?)?;
+        let plugin_id = package.id.as_str();
         let manifest = package.manifest.as_ref();
         let sidebar = manifest
             .and_then(|manifest| manifest.sidebar(sidebar_id))
@@ -681,7 +923,7 @@ impl PluginHost {
         let mut degraded = None;
         if let Some(resource) = &sidebar.resource {
             match self
-                .read_sidebar_resource(plugin_id, resource, &commands)
+                .read_sidebar_resource(package.clone(), resource, &commands)
                 .await
             {
                 Ok(document) => return Ok((document, None)),
@@ -695,17 +937,18 @@ impl PluginHost {
                 id: sidebar_id.to_owned(),
             });
         };
+        Self::require_approval(&package, &self.registry_snapshot()?)?;
         let source = package.read_resource_text(schema, MAX_MANIFEST_BYTES)?;
         Ok((DeclarativeDocument::parse(&source, &commands)?, degraded))
     }
 
     async fn read_sidebar_resource(
         &self,
-        plugin_id: &str,
+        package: Arc<PluginPackage>,
         resource: &super::manifest::McpResourceRef,
         commands: &BTreeSet<String>,
     ) -> Result<DeclarativeDocument, HostError> {
-        let mcp = self.mcp(plugin_id).await?;
+        let mcp = self.mcp_for_package(package).await?;
         let payload = mcp.read_resource(&resource.server, &resource.uri).await?;
         let (text, _) = crate::mcp::resource_text(&payload, &resource.uri).ok_or_else(|| {
             HostError::EmptyResource {
@@ -735,9 +978,9 @@ impl PluginHost {
         locale: &str,
         color_scheme: &str,
     ) -> DestinationContext {
-        let permissions = self
-            .package(plugin_id)
-            .ok()
+        let package = self.package(plugin_id).ok();
+        let permissions = package
+            .as_ref()
             .and_then(|package| package.manifest.as_ref())
             .map(|manifest| manifest.permissions.clone())
             .unwrap_or_default();
@@ -765,8 +1008,11 @@ impl PluginHost {
         location: PluginMenuLocation,
     ) -> Vec<(String, String, Option<String>)> {
         let mut out = Vec::new();
-        for package in &self.packages {
-            if !self.registry.lock().await.is_enabled(&package.id) {
+        let Ok(registry) = self.registry_snapshot() else {
+            return out;
+        };
+        for package in self.packages() {
+            if Self::require_approval(&package, &registry).is_err() {
                 continue;
             }
             let Some(manifest) = &package.manifest else {
@@ -834,8 +1080,10 @@ mod tests {
     use std::fs;
 
     fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("willdeep-host-test-{name}"));
-        let _ = fs::remove_dir_all(&root);
+        let root = std::env::temp_dir().join(format!(
+            "willdeep-host-test-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&root).expect("scratch directory");
         root
     }
@@ -871,6 +1119,50 @@ mod tests {
             &root.join("ui/index.html"),
             "<html><body>page</body></html>",
         );
+    }
+
+    #[tokio::test]
+    async fn live_host_observes_install_enable_and_disable_from_another_host() {
+        let home = scratch("live-cross-host");
+        let desktop = PluginHost::discover_live(&home).unwrap();
+        assert!(desktop.package("demo").is_err());
+        let staging = PluginHost::shared_root(&home).join("demo/.staging-2.0.0");
+        write(
+            &staging.join(".codex-plugin/plugin.json"),
+            r#"{"name":"demo","version":"2.0.0"}"#,
+        );
+        desktop.packages.write().unwrap().next_scan = Instant::now();
+        assert!(desktop.package("demo").is_err());
+        install(&home, "demo", "[]");
+        let web = PluginHost::discover(&home).unwrap();
+        web.approve("demo", 1).await.unwrap();
+        web.set_enabled("demo", true).await.unwrap().unwrap();
+        web.set_pinned_order("demo", Some(2)).await.unwrap();
+        web.set_setting("demo", "theme", Some("dark"))
+            .await
+            .unwrap();
+
+        // Expire the catalog deterministically instead of waiting in the test.
+        desktop.packages.write().unwrap().next_scan = Instant::now();
+        assert_eq!(desktop.package("demo").unwrap().version, "1.0.0");
+        assert!(desktop.is_enabled("demo").await);
+        assert_eq!(desktop.approval_gap_preview("demo").await.unwrap(), None);
+        assert_eq!(desktop.pinned_order("demo").await, Some(2));
+        assert_eq!(
+            desktop.setting("demo", "theme").await.as_deref(),
+            Some("dark")
+        );
+
+        web.set_enabled("demo", false).await.unwrap().unwrap();
+        assert!(!desktop.is_enabled("demo").await);
+        assert!(matches!(
+            desktop.read_page_resource("demo", "main.page").await,
+            Err(HostError::NotEnabled(_)),
+        ));
+        web.forget("demo").await.unwrap();
+        fs::remove_dir_all(PluginHost::shared_root(&home).join("demo")).unwrap();
+        desktop.packages.write().unwrap().next_scan = Instant::now();
+        assert!(desktop.package("demo").is_err());
     }
 
     #[tokio::test]
@@ -1012,6 +1304,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replaces_cached_mcp_after_external_reenable_or_package_switch() {
+        use crate::plugin::test_support::{install_fake_plugin, python_available, scratch_home};
+        if !python_available() {
+            return;
+        }
+        let home = scratch_home("cross-host-reconnect");
+        install_fake_plugin(&home, "demo", r#"["process.execute"]"#, r#"["srv"]"#);
+        let desktop = PluginHost::discover_live(&home).unwrap();
+        let web = PluginHost::discover_live(&home).unwrap();
+        web.approve("demo", 1).await.unwrap();
+        web.set_enabled("demo", true).await.unwrap().unwrap();
+
+        let first = desktop.mcp("demo").await.unwrap();
+        web.set_enabled("demo", false).await.unwrap().unwrap();
+        web.set_enabled("demo", true).await.unwrap().unwrap();
+        let reenabled = desktop.mcp("demo").await.unwrap();
+        assert!(!Arc::ptr_eq(&first, &reenabled));
+
+        let old_package = web.package("demo").unwrap();
+        let new_root = old_package.root.with_file_name("2.0.0");
+        write(
+            &new_root.join(".codex-plugin/plugin.json"),
+            r#"{"name":"demo","version":"2.0.0"}"#,
+        );
+        for relative in [".willdeep-plugin/plugin.json", "mcp.json", "server.py"] {
+            let source = fs::read_to_string(old_package.root.join(relative)).unwrap();
+            write(&new_root.join(relative), &source);
+        }
+        desktop.packages.write().unwrap().next_scan = Instant::now();
+        assert!(matches!(
+            desktop.mcp("demo").await,
+            Err(HostError::PluginChanged(_))
+        ));
+        web.packages.write().unwrap().next_scan = Instant::now();
+        web.approve("demo", 2).await.unwrap();
+        let upgraded = desktop.mcp("demo").await.unwrap();
+        assert!(!Arc::ptr_eq(&reenabled, &upgraded));
+        assert!(Arc::ptr_eq(&upgraded, &desktop.mcp("demo").await.unwrap()));
+    }
+
+    #[tokio::test]
+    async fn current_package_approval_gates_capabilities_commands_and_sidebars() {
+        let home = scratch("current-approval");
+        install(&home, "demo", r#"["ai.chat"]"#);
+        let root = home.join("plugins/demo/1.0.0");
+        let manifest_path = root.join(".willdeep-plugin/plugin.json");
+        let mut manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["contributes"]["sidebars"] = serde_json::json!([
+            {"id":"overview", "mode":"declarative", "schema":"ui/sidebar.json"}
+        ]);
+        write(&manifest_path, &manifest.to_string());
+        write(
+            &root.join("ui/sidebar.json"),
+            r#"{"schemaVersion":1,"components":[]}"#,
+        );
+        let host = PluginHost::discover_live(&home).unwrap();
+        host.approve("demo", 1).await.unwrap();
+        host.set_enabled("demo", true).await.unwrap().unwrap();
+        assert!(host.permits("demo", PluginPermission::AiChat).is_ok());
+        assert!(host.sidebar_document("demo", "overview").await.is_ok());
+        let previous = host.package("demo").unwrap();
+
+        manifest["permissions"] = serde_json::json!(["ai.chat", "workspace.read"]);
+        write(&manifest_path, &manifest.to_string());
+        host.packages.write().unwrap().next_scan = Instant::now();
+        assert!(matches!(
+            host.permits("demo", PluginPermission::AiChat),
+            Err(HostError::PluginChanged(_))
+        ));
+        assert!(matches!(
+            host.execute_command("demo", "main.refresh", serde_json::json!({}))
+                .await,
+            Err(HostError::PluginChanged(_))
+        ));
+        assert!(matches!(
+            host.sidebar_document("demo", "overview").await,
+            Err(HostError::PluginChanged(_))
+        ));
+        assert!(
+            host.menu_commands(PluginMenuLocation::CommandPalette)
+                .await
+                .is_empty()
+        );
+
+        host.approve("demo", 2).await.unwrap();
+        assert!(matches!(
+            host.sidebar_document_for_package(&previous, "overview")
+                .await,
+            Err(HostError::PluginChanged(_))
+        ));
+        assert!(
+            host.permits("demo", PluginPermission::WorkspaceRead)
+                .is_ok()
+        );
+        assert!(
+            host.execute_command("demo", "main.refresh", serde_json::json!({}))
+                .await
+                .is_ok()
+        );
+        assert!(host.sidebar_document("demo", "overview").await.is_ok());
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_disablement_and_removal_release_idle_connections() {
+        use crate::plugin::test_support::{install_fake_plugin, python_available, scratch_home};
+        if !python_available() {
+            return;
+        }
+        let home = scratch_home("cross-host-idle-revocation");
+        install_fake_plugin(&home, "demo", r#"["process.execute"]"#, r#"["srv"]"#);
+        let desktop = PluginHost::discover_live(&home).unwrap();
+        let web = PluginHost::discover(&home).unwrap();
+        web.approve("demo", 1).await.unwrap();
+        for uninstall in [false, true] {
+            web.set_enabled("demo", true).await.unwrap().unwrap();
+            let connection = Arc::downgrade(&desktop.mcp("demo").await.unwrap());
+            if uninstall {
+                web.forget("demo").await.unwrap();
+            } else {
+                web.set_enabled("demo", false).await.unwrap().unwrap();
+            }
+            tokio::time::timeout(CONNECTION_RECHECK_INTERVAL * 4, async {
+                while connection.strong_count() != 0 {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("idle connection released after registry update");
+        }
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[tokio::test]
     async fn connecting_records_tools_and_a_dead_process_is_restarted() {
         use crate::plugin::test_support::{
             events, install_fake_plugin, python_available, scratch_home,
@@ -1148,6 +1575,12 @@ mod tests {
         let home = scratch("permits");
         install(&home, "demo", r#"["ai.chat"]"#);
         let host = PluginHost::discover(&home).expect("host");
+        assert!(matches!(
+            host.permits("demo", PluginPermission::AiChat),
+            Err(HostError::NotEnabled(_))
+        ));
+        host.approve("demo", 1).await.unwrap();
+        host.set_enabled("demo", true).await.unwrap().unwrap();
         assert!(host.permits("demo", PluginPermission::AiChat).is_ok());
         assert!(matches!(
             host.permits("demo", PluginPermission::NetworkAccess),

@@ -19,25 +19,28 @@ type PaletteProps = {
   onClose: () => void;
 };
 
+function entryKey(entry: MenuEntry) {
+  return JSON.stringify([entry.pluginId, entry.commandId]);
+}
+
+function matchesQuery(entry: MenuEntry, query: string) {
+  return `${entry.title} ${entry.pluginName} ${entry.commandId}`.toLowerCase().includes(query.trim().toLowerCase());
+}
+
 export function PluginCommandPalette({ entries, messages, onRun, onClose }: PaletteProps) {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  const [activeKey, setActiveKey] = useState<string | null>(() => entries[0] ? entryKey(entries[0]) : null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return entries;
-    return entries.filter((entry) =>
-      `${entry.title} ${entry.pluginName} ${entry.commandId}`.toLowerCase().includes(needle)
-    );
-  }, [entries, query]);
+  const matches = useMemo(() => entries.filter((entry) => matchesQuery(entry, query)), [entries, query]);
+  const activeIndex = matches.findIndex((entry) => entryKey(entry) === activeKey);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
-  useEffect(() => {
-    setActive(0);
-  }, [query]);
+
+  function select(entry: MenuEntry | undefined) {
+    setActiveKey(entry ? entryKey(entry) : null);
+  }
 
   return (
     <Box className="plugin-palette-backdrop" onMouseDown={onClose}>
@@ -48,21 +51,31 @@ export function PluginCommandPalette({ entries, messages, onRun, onClose }: Pale
           value={query}
           placeholder={messages.pluginPalettePlaceholder}
           aria-label={messages.pluginPalette}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            const nextQuery = event.target.value;
+            setQuery(nextQuery);
+            select(entries.find((entry) => matchesQuery(entry, nextQuery)));
+          }}
           onKeyDown={(event) => {
             if (event.key === "Escape") { onClose(); return; }
-            if (event.key === "ArrowDown") { event.preventDefault(); setActive((current) => Math.min(current + 1, matches.length - 1)); }
-            if (event.key === "ArrowUp") { event.preventDefault(); setActive((current) => Math.max(current - 1, 0)); }
-            if (event.key === "Enter" && matches[active]) { event.preventDefault(); onRun(matches[active]); }
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const nextIndex = activeIndex + (event.key === "ArrowDown" ? 1 : -1);
+              select(matches[Math.max(0, Math.min(nextIndex, matches.length - 1))]);
+            }
+            if (event.key === "Enter" && matches[activeIndex]) {
+              event.preventDefault();
+              onRun(matches[activeIndex]);
+            }
           }}
         />
         <Box className="plugin-palette-list">
           {matches.map((entry, index) => (
             <button
-              key={`${entry.pluginId}:${entry.commandId}`}
+              key={entryKey(entry)}
               type="button"
-              className={`plugin-palette-item${index === active ? " active" : ""}`}
-              onMouseEnter={() => setActive(index)}
+              className={`plugin-palette-item${index === activeIndex ? " active" : ""}`}
+              onMouseEnter={() => select(entry)}
               onClick={() => onRun(entry)}
             >
               <PluginIcon pluginId={entry.pluginId} icon={entry.icon} kind="command" size={15} />

@@ -9,7 +9,7 @@
 //! 一个别人可写的审批记录，能让任意插件在下次启动时变成已批准。
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -53,14 +53,20 @@ pub struct PluginApproval {
 pub struct PluginState {
     #[serde(default)]
     pub enabled: bool,
+    /// A new enable cycle must not make previously issued asset grants valid again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<PluginApproval>,
     /// 固定入口的顺序；未固定的插件没有这个值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_order: Option<u32>,
-    /// 非 secret 的插件设置。secret 不进这里（见下方 `SecretStore` 说明）。
+    /// Values live in the private registry and are used for MCP interpolation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: BTreeMap<String, String>,
+    /// Classify stored values independently of the currently discovered manifest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    setting_secrecy: BTreeMap<String, bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -170,7 +176,17 @@ impl PluginRegistry {
         &self,
         package: &PluginPackage,
     ) -> Result<Option<ApprovalGap>, RegistryError> {
-        self.approval_gap_with_digest(package, PluginPackage::digest)
+        self.approval_gap_with_contents(package, |_, _| {})
+    }
+
+    /// Like `approval_gap`, with access to the current bytes used for the digest.
+    /// The caller may use observed bytes only if this returns `Ok(None)`.
+    pub fn approval_gap_with_contents(
+        &self,
+        package: &PluginPackage,
+        observe: impl FnMut(&str, &[u8]),
+    ) -> Result<Option<ApprovalGap>, RegistryError> {
+        self.approval_gap_with_digest(package, |package| package.digest_with_contents(observe))
     }
 
     /// 仅用于展示或能力提示的审批预览。可能复用旧摘要，不能据此放行操作；
@@ -218,25 +234,33 @@ impl PluginRegistry {
             }));
         }
         // 最后才获取摘要。权威入口必读当前字节，展示预览才允许复用缓存。
-        if approval.digest != digest(package)? {
-            return Ok(Some(ApprovalGap::DigestChanged));
+        match digest(package) {
+            Ok(current) if current == approval.digest => Ok(None),
+            Ok(_) | Err(PackageError::StaleMetadata(_)) => Ok(Some(ApprovalGap::DigestChanged)),
+            Err(error) => Err(error.into()),
         }
-        Ok(None)
     }
 
     /// 记录一次审批。调用方必须已经把权限清单摆给用户看过——这个函数只负责落盘。
     pub fn approve(&mut self, package: &PluginPackage, now: u64) -> Result<(), RegistryError> {
         // 审批要绑定内容指纹，所以这一步必须真的读一遍包。
-        let digest = package.digest()?;
-        let entry = self.file.plugins.entry(package.id.clone()).or_default();
-        entry.approval = Some(PluginApproval {
-            version: package.version.clone(),
-            digest,
-            source: package.source.as_str().to_owned(),
-            permissions: permission_names(package),
-            approved_at: now,
-        });
-        self.persist()
+        let digest = package.digest_with_contents(|_, _| {})?;
+        self.update(|latest| {
+            let entry = latest.file.plugins.entry(package.id.clone()).or_default();
+            for key in entry.settings.keys() {
+                if setting_is_declared_secret(package, key) {
+                    entry.setting_secrecy.insert(key.clone(), true);
+                }
+            }
+            entry.approval = Some(PluginApproval {
+                version: package.version.clone(),
+                digest,
+                source: package.source.as_str().to_owned(),
+                permissions: permission_names(package),
+                approved_at: now,
+            });
+            Ok(((), true))
+        })
     }
 
     /// 启用一个插件。审批不齐时拒绝并说明差在哪，不静默放行。
@@ -245,13 +269,17 @@ impl PluginRegistry {
         package: &PluginPackage,
         enabled: bool,
     ) -> Result<Result<(), ApprovalGap>, RegistryError> {
-        if enabled && let Some(gap) = self.approval_gap(package)? {
-            return Ok(Err(gap));
-        }
-        let entry = self.file.plugins.entry(package.id.clone()).or_default();
-        entry.enabled = enabled;
-        self.persist()?;
-        Ok(Ok(()))
+        self.update(|latest| {
+            if enabled && let Some(gap) = latest.approval_gap(package)? {
+                return Ok((Err(gap), false));
+            }
+            let entry = latest.file.plugins.entry(package.id.clone()).or_default();
+            if entry.enabled != enabled {
+                entry.activation = enabled.then(uuid::Uuid::new_v4);
+            }
+            entry.enabled = enabled;
+            Ok((Ok(()), true))
+        })
     }
 
     pub fn set_pinned_order(
@@ -259,29 +287,63 @@ impl PluginRegistry {
         plugin_id: &str,
         order: Option<u32>,
     ) -> Result<(), RegistryError> {
-        let entry = self.file.plugins.entry(plugin_id.to_owned()).or_default();
-        entry.pinned_order = order;
-        self.persist()
+        self.update(|latest| {
+            let entry = latest.file.plugins.entry(plugin_id.to_owned()).or_default();
+            entry.pinned_order = order;
+            Ok(((), true))
+        })
+    }
+
+    /// Older registries did not record the type at the time a value was saved.
+    /// Keep those values available to MCP, but do not display them in settings.
+    pub fn setting_is_secret(&self, package: &PluginPackage, key: &str) -> bool {
+        setting_is_declared_secret(package, key)
+            || self.state(&package.id).is_some_and(|entry| {
+                entry.settings.contains_key(key)
+                    && entry.setting_secrecy.get(key).copied().unwrap_or(true)
+            })
     }
 
     pub fn set_setting(
         &mut self,
-        plugin_id: &str,
+        package: &PluginPackage,
         key: &str,
         value: Option<&str>,
     ) -> Result<(), RegistryError> {
-        let entry = self.file.plugins.entry(plugin_id.to_owned()).or_default();
-        match value {
-            Some(value) => entry.settings.insert(key.to_owned(), value.to_owned()),
-            None => entry.settings.remove(key),
-        };
-        self.persist()
+        self.update(|latest| {
+            let secret = latest.setting_is_secret(package, key);
+            let entry = latest.file.plugins.entry(package.id.clone()).or_default();
+            if let Some(value) = value {
+                entry.settings.insert(key.to_owned(), value.to_owned());
+                entry.setting_secrecy.insert(key.to_owned(), secret);
+            } else {
+                entry.settings.remove(key);
+                entry.setting_secrecy.remove(key);
+            }
+            Ok(((), true))
+        })
     }
 
     /// 卸载：移除该插件的全部授权与运行状态。包文件由调用方删除。
     pub fn forget(&mut self, plugin_id: &str) -> Result<(), RegistryError> {
-        self.file.plugins.remove(plugin_id);
-        self.persist()
+        self.update(|latest| Ok(((), latest.file.plugins.remove(plugin_id).is_some())))
+    }
+
+    fn update<T>(
+        &mut self,
+        apply: impl FnOnce(&mut Self) -> Result<(T, bool), RegistryError>,
+    ) -> Result<T, RegistryError> {
+        let _lock = lock_state_file(&self.path).map_err(|error| RegistryError::Write {
+            path: self.path.display().to_string(),
+            reason: format!("cannot lock registry: {error}"),
+        })?;
+        let mut latest = Self::load(&self.path)?;
+        let (result, changed) = apply(&mut latest)?;
+        if changed {
+            latest.persist()?;
+        }
+        self.file = latest.file;
+        Ok(result)
     }
 
     fn persist(&self) -> Result<(), RegistryError> {
@@ -291,26 +353,28 @@ impl PluginRegistry {
                 path: self.path.display().to_string(),
                 reason: error.to_string(),
             })?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| RegistryError::Write {
-                path: parent.display().to_string(),
-                reason: error.to_string(),
-            })?;
-        }
-        // 先写临时文件再改名：审批记录写到一半被打断，剩下的应该是旧的完整状态，
-        // 而不是半截 JSON——后者会在下次启动时把整个存储判为损坏。
+        // The sidecar lock stays on the same inode while the registry is replaced atomically.
         let temporary = self.path.with_extension("json.tmp");
-        fs::write(&temporary, source.as_bytes()).map_err(|error| RegistryError::Write {
-            path: temporary.display().to_string(),
-            reason: error.to_string(),
+        super::gateway::write_private(&temporary, source.as_bytes()).map_err(|error| {
+            RegistryError::Write {
+                path: temporary.display().to_string(),
+                reason: error.to_string(),
+            }
         })?;
-        restrict_permissions(&temporary)?;
         fs::rename(&temporary, &self.path).map_err(|error| RegistryError::Write {
             path: self.path.display().to_string(),
             reason: error.to_string(),
         })?;
         Ok(())
     }
+}
+
+fn setting_is_declared_secret(package: &PluginPackage, key: &str) -> bool {
+    package.manifest.as_ref().is_some_and(|manifest| {
+        manifest.settings.iter().any(|setting| {
+            setting.id == key && setting.setting_type == super::manifest::SettingType::Secret
+        })
+    })
 }
 
 fn permission_names(package: &PluginPackage) -> Vec<String> {
@@ -358,20 +422,28 @@ fn check_permissions(_path: &Path) -> Result<(), RegistryError> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), RegistryError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-        RegistryError::Write {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), RegistryError> {
-    Ok(())
+fn lock_state_file(path: &Path) -> std::io::Result<File> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path.with_added_extension("lock"))?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("lock path is not a regular file"));
+    }
+    file.lock()?;
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -440,6 +512,109 @@ mod tests {
 
         let reloaded = PluginRegistry::load(&path).expect("reload");
         assert!(reloaded.is_enabled("demo"));
+    }
+
+    #[test]
+    fn secret_and_unclassified_settings_stay_private_after_type_change() {
+        let home = scratch("setting-secrecy");
+        let root = home.join("pkg");
+        package(&root, "[]");
+        let manifest = root.join(".willdeep-plugin/plugin.json");
+        let write_settings = |kind: &str| {
+            write(
+                &manifest,
+                &serde_json::json!({
+                    "schemaVersion": 1,
+                    "contributes": { "settings": [
+                        {"id":"access", "type":kind, "titleKey":"access"},
+                        {"id":"imported", "type":kind, "titleKey":"imported"},
+                        {"id":"theme", "type":"string", "titleKey":"theme"}
+                    ]}
+                })
+                .to_string(),
+            );
+        };
+        write(
+            &root.join(".willdeep-plugin/locales/en.json"),
+            r#"{"access":"Access", "imported":"Imported", "theme":"Theme"}"#,
+        );
+        write_settings("secret");
+        let original = load_package(&root, PluginSource::Shared).unwrap();
+        let path = PluginRegistry::default_path(&home);
+        let mut registry = PluginRegistry::load(&path).unwrap();
+        registry.approve(&original, 1).unwrap();
+        registry
+            .set_setting(&original, "access", Some("fixture-value"))
+            .unwrap();
+        registry
+            .set_setting(&original, "theme", Some("dark"))
+            .unwrap();
+        registry
+            .update(|latest| {
+                latest
+                    .file
+                    .plugins
+                    .get_mut("demo")
+                    .unwrap()
+                    .settings
+                    .insert("imported".to_owned(), "legacy-value".to_owned());
+                Ok(((), true))
+            })
+            .unwrap();
+
+        write_settings("string");
+        let updated = load_package(&root, PluginSource::Shared).unwrap();
+        for approve in [false, true] {
+            if approve {
+                registry.approve(&updated, 2).unwrap();
+            }
+            let current = PluginRegistry::load(&path).unwrap();
+            assert!(current.setting_is_secret(&updated, "access"));
+            assert!(current.setting_is_secret(&updated, "imported"));
+            assert!(!current.setting_is_secret(&updated, "theme"));
+            assert_eq!(
+                current.state("demo").unwrap().settings["imported"],
+                "legacy-value"
+            );
+        }
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn stale_writers_merge_changes_without_restoring_removed_approval() {
+        let home = scratch("writers");
+        let installed = package(&home.join("pkg"), "[]");
+        let path = PluginRegistry::default_path(&home);
+        let mut web = PluginRegistry::load(&path).expect("web registry");
+        let mut desktop = PluginRegistry::load(&path).expect("desktop registry");
+
+        web.approve(&installed, 1).expect("approve");
+        assert_eq!(
+            desktop.set_enabled(&installed, true).expect("enable"),
+            Ok(())
+        );
+        let activation = desktop.state("demo").unwrap().activation;
+        assert!(activation.is_some());
+
+        std::thread::scope(|threads| {
+            threads.spawn(|| web.set_setting(&installed, "theme", Some("dark")).unwrap());
+            threads.spawn(|| desktop.set_pinned_order("demo", Some(1)).unwrap());
+        });
+        let read = PluginRegistry::load(&path).expect("reopen");
+        let state = read.state("demo").expect("plugin state");
+        assert_eq!(state.approval.as_ref().unwrap().approved_at, 1);
+        assert_eq!(state.activation, activation);
+        assert_eq!(state.pinned_order, Some(1));
+        assert_eq!(state.settings["theme"], "dark");
+
+        web.forget("demo").expect("uninstall");
+        assert_eq!(
+            desktop
+                .set_enabled(&installed, true)
+                .expect("check fresh state"),
+            Err(ApprovalGap::NeverApproved),
+        );
+        assert!(PluginRegistry::load(&path).unwrap().state("demo").is_none());
     }
 
     #[test]
