@@ -289,6 +289,24 @@ pub(super) async fn handle(
 ) -> Result<String> {
     let language = app.language;
     let (action, rest) = word(arguments);
+    if action == "proposals" && rest.is_empty() {
+        return Ok(
+            if child_session_proposals::open(app, runtime, session.id).await? {
+                language.text(
+                    "请选择如何处理子会话提议",
+                    "Review the child conversation proposal",
+                    "子セッションの提案を確認してください",
+                )
+            } else {
+                language.text(
+                    "没有待确认的子会话提议",
+                    "No pending child conversation proposals",
+                    "確認待ちの子セッションの提案はありません",
+                )
+            }
+            .to_owned(),
+        );
+    }
     if action == "parent" && rest.is_empty() {
         anyhow::ensure!(
             !session.delegation_detached,

@@ -1154,7 +1154,20 @@ pub(super) async fn event_loop(
                 }
                 let failures: Vec<uuid::Uuid> = events.iter().filter(|event| event.sequence > app.runtime_event_cursor && event.visible && event.session_id == Some(session.id) && event.kind == "task.failed")
                     .filter_map(|event| event.message.split_whitespace().find_map(|part| part.strip_prefix("task_id=")).and_then(|id| id.parse().ok())).collect();
+                let refresh_proposals = events.iter().any(|event| {
+                    event.sequence > app.runtime_event_cursor
+                        && event.visible
+                        && event.session_id == Some(session.id)
+                        && child_session_proposals::proposal_may_have_arrived(event)
+                });
                 runtime_ui::apply_runtime_events(&mut app,events,session,store)?;
+                if refresh_proposals
+                    && let Err(error) = child_session_proposals::open(&mut app, runtime, session.id).await
+                {
+                    app.notice = Some(format!("{}: {error}", language.text(
+                        "无法读取子会话提议", "Could not load child conversation proposals", "子セッションの提案を取得できません",
+                    )));
+                }
                 task_diagnostics::surface_failures(
                     runtime.tx.clone(),
                     runtime.home.clone(),
@@ -1177,6 +1190,7 @@ pub(super) async fn event_loop(
             // 晚一圈处理会让按键看起来像丢了。
             event=next_terminal_event(&mut events, &mut deferred_events)=>if let Some(event)=event { match event {
                 Event::Paste(value)=>{
+                    if app.child_proposals.is_open() { continue; }
                     if paste::route(&mut app, value) == paste::PasteAction::RefreshSessionPicker {
                         refresh_session_picker(&mut app,runtime,session).await;
                     }
@@ -1185,6 +1199,7 @@ pub(super) async fn event_loop(
                     app.prompt_history = None;
                     interrupt_esc_deadline = None;
                     if human_gate_ui::handle_mouse(&mut app, mouse) { continue; }
+                    if app.child_proposals.is_open() { continue; }
                     if app.permission_picker.is_some() { continue; }
                     if app.attachment_panel.is_some() { continue; }
                     if app.prompt_queue.is_some() {
@@ -1358,6 +1373,7 @@ pub(super) async fn event_loop(
                         continue;
                     }
                     if human_gate_ui::handle_key(&mut app, key) { continue; }
+                    if child_session_proposals::handle_key(&mut app, runtime, session.id, key).await { continue; }
                     if app.handle_prompt_selection_key(key) {
                         continue;
                     }

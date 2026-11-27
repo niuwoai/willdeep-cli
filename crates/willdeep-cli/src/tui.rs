@@ -53,6 +53,7 @@ mod agent_worktree_ui;
 mod attachment_panel;
 mod banner;
 mod child_session_commands;
+mod child_session_proposals;
 mod code_copy;
 mod command_catalog;
 mod composer_attention;
@@ -619,6 +620,7 @@ struct App {
     /// 打开的会话是从哪条分凉出来的，以及来源的标题。`None` 表示没有来源。
     session_lineage: Option<(uuid::Uuid, String)>,
     child_request_ids: std::collections::HashMap<String, uuid::Uuid>,
+    child_proposals: child_session_proposals::Panel,
     palette: Option<PaletteState>,
     palette_rect: Rect,
     palette_hits: Vec<(u16, usize)>,
@@ -2374,6 +2376,7 @@ pub(super) fn draw<B: ratatui::backend::Backend>(
         prompt_queue::render(f, app);
         attachment_panel::render(f, app);
         render_media_overlay(f, app);
+        child_session_proposals::render(f, app);
         human_gate_ui::render(f, app);
     })?;
     Ok(())
