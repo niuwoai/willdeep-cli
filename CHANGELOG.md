@@ -2,7 +2,7 @@
 
 ## [0.164.0-rc1] - 2026-11-27
 ### Added
-- MCP 的 Streamable HTTP 服务可以在 `$WILLDEEP_HOME/.mcp/<name>.toml` 里用 `token` 直接写静态 Bearer token。它与 `bearer_token_env`、`[oauth]` 三选一。`willdeep mcp list`、doctor 和调试输出只报告已配置明文，不回显 token 本身。
+- MCP 的 Streamable HTTP 服务可以在 `$WILLDEEP_HOME/.mcp/<name>.toml` 里用 `token` 直接写静态 Bearer token。新文件默认用这种明文；`bearer_token_env` 仍可用，但不再是示例的默认写法。它与 `token`、`[oauth]` 三选一。`willdeep mcp list`、doctor 和调试输出只报告已配置明文，不回显 token 本身。
 
 ## [0.163.0-rc2] - 2026-11-27
 ### Fixed

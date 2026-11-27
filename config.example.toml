@@ -359,8 +359,8 @@ context_window = 32768
 
 # MCP servers live beside this file, one per file: .mcp/<name>.toml.
 # A server is either stdio (`command`) or Streamable HTTP (`url`); never both.
-# Prefer credentials in environment variables. A remote server may instead set
-# `token` to the bearer value itself; that value lands in a 0600 file.
+# A new remote-server file defaults to `token` (the bearer value, mode 0600).
+# Use `bearer_token_env` only when the value must stay out of the file.
 # A field this file does not understand cannot take the model configuration
 # down with it. See docs/SKILLS_AND_MCP.md.
 #
@@ -374,7 +374,7 @@ context_window = 32768
 #
 # .mcp/remote.toml
 #   url = "https://mcp.example.com/mcp"
-#   bearer_token_env = "REMOTE_MCP_TOKEN"   # or `token = "..."`, or [oauth] then `willdeep mcp login remote`
+#   token = "paste-the-bearer-token-here"   # default; or bearer_token_env = "REMOTE_MCP_TOKEN", or [oauth] then `willdeep mcp login remote`
 #   startup_timeout_seconds = 30
 #   enabled = false
 #   [headers]

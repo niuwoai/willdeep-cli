@@ -67,13 +67,12 @@ enabled = true
 [env]
 NODE_NO_WARNINGS = "1"
 
-# $WILLDEEP_HOME/.mcp/issues.toml — Streamable HTTP：静态 token 从环境变量来
-url = "https://mcp.example.com/mcp"
-bearer_token_env = "ISSUES_MCP_TOKEN"
+# $WILLDEEP_HOME/.mcp/panel.toml — Streamable HTTP：新文件默认把静态 token 明文写在这里
+url = "https://panel.example.com/mcp"
+token = "paste-the-bearer-token-here"     # 与 bearer_token_env、[oauth] 三选一
 
-# $WILLDEEP_HOME/.mcp/panel.toml — 同一个静态 token，明文写在文件里
-# url = "https://panel.example.com/mcp"
-# token = "paste-the-bearer-token-here"     # 与 bearer_token_env、[oauth] 三选一
+# 不想把值放进文件时，改写环境变量名（不要和 token 同时留）：
+# bearer_token_env = "PANEL_MCP_TOKEN"
 
 [headers]
 X-Trace = "willdeep"                 # 静态头；值可写 ${env:NAME}
@@ -116,10 +115,10 @@ mcp__filesystem__write_file
 
 ### 凭据与 OAuth
 
-stdio 服务的敏感值由子进程继承环境变量，或在 `[env]` 里引用已有变量。HTTP 服务的
-静态 Bearer 二选一：`bearer_token_env` 写环境变量名，或者 `token` 把值直接写进这个
-`0600` 的服务文件。`token` 会进磁盘、进备份、进 `git` 历史（如果有人把 `.mcp` 纳入版本库），
-能用环境变量就用环境变量。`willdeep mcp list` 与 doctor 只报告「已配置明文」，不回显值。
+stdio 服务的敏感值由子进程继承环境变量，或在 `[env]` 里引用已有变量。HTTP 服务新写的
+文件默认用 `token` 把静态 Bearer 明文放进这个 `0600` 的服务文件。不想把值落盘时改用
+`bearer_token_env`（只写环境变量名）。两者与 `[oauth]` 三选一。明文会进磁盘、进备份、进 `git` 历史
+（如果有人把 `.mcp` 纳入版本库）。`willdeep mcp list` 与 doctor 只报告「已配置明文」，不回显值。
 名字像凭据的请求头仍必须写成 `${env:NAME}`。Runtime 控制 Token 不会传给任何 MCP 服务。
 
 需要用户授权的远程服务在自己的文件里配 `[oauth]`，然后：

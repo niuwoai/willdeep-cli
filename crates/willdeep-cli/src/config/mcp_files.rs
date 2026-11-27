@@ -273,6 +273,8 @@ pub(crate) fn extract_legacy(
 
 fn render_server(config: &McpServerConfig) -> Result<String> {
     // 交给 toml 序列化，布尔、数字和字符串的写法只此一份，不再手拼。
+    // 新文件的默认凭据是调用方放进 `token` 的明文。这里不把 `bearer_token_env` 展开：
+    // 迁移时用户明确写的是环境变量名，就原样写回去，不把当时环境里的值落进文件。
     let mut table = toml::map::Map::new();
     if let Some(command) = &config.command {
         table.insert("command".to_owned(), toml::Value::String(command.clone()));
