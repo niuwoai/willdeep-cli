@@ -931,8 +931,6 @@ pub(crate) async fn build(
     resumed: Option<&willdeep_core::Session>,
     frontend: HarnessFrontend,
 ) -> Result<BuiltHarness> {
-    let web_child_proposals = matches!(&frontend, HarnessFrontend::Runtime { usage_origin, .. }
-        if usage_origin.origin_client.as_deref().is_some_and(|origin| origin == "web" || origin.starts_with("web:")));
     let mut preparation = willdeep_core::preparation::PreparationTrace::new("harness");
     // Resolve before gateway/provider requests. Invalid explicit profiles never
     // silently run with legacy defaults.
@@ -1137,16 +1135,15 @@ pub(crate) async fn build(
             ..
         }
     );
-    let web_child_proposals = web_child_proposals
-        || !independent_execution
-            && turn_id
-                .map(|turn| {
-                    crate::daemon::session_store::child_start_confirmation_for_turn(
-                        home, session_id, turn,
-                    )
-                })
-                .transpose()?
-                .unwrap_or(false);
+    let child_proposals = !independent_execution
+        && turn_id
+            .map(|turn| {
+                crate::daemon::session_store::child_start_confirmation_for_turn(
+                    home, session_id, turn,
+                )
+            })
+            .transpose()?
+            .unwrap_or(false);
     let (runtime_access, runtime_approval_handle, runtime_inbox) = match &frontend {
         HarnessFrontend::Runtime {
             workspace_access,
@@ -1464,8 +1461,8 @@ pub(crate) async fn build(
     let configured_rules = loaded.file.rules.as_ref().map(|rules| rules.files.clone());
     let global_rules = willdeep_core::prompt::global_user_instructions(configured_rules.as_deref());
     let mut stable = willdeep_core::prompt::stable_prefix(global_rules.as_deref());
-    if web_child_proposals {
-        stable.push_str("\n\n# Web child conversations\nOnly use start_session when the user explicitly asks for a separate child conversation. Derive its full title, brief, context and workspace options from the conversation. This creates a filled proposal card, not running work: the user must click Start. Do not ask them to retype the brief, call another tool to bypass confirmation, or show a proposal for ordinary chat.\n");
+    if child_proposals {
+        stable.push_str("\n\n# Child conversation proposals\nUse start_session when the user explicitly asks for a separate conversation, or proactively propose one for a new task with a distinct goal and acceptance criteria that can be delivered independently. Keep corrections, quick tasks, ordinary chat and follow-ups that depend on the current investigation in this conversation. For an independent task, prefer fresh context and provide a title and a short brief covering the goal, baseline, relevant paths, constraints and acceptance checks. Use a worktree for edits or command-based verification, and shared_read_only for inspection only. A pending proposal requires the user to confirm before execution. Do not ask the user to retype the brief or use another tool to bypass confirmation.\n");
     }
     if delegation_read_only {
         stable.push_str(delegation::READ_ONLY_CONTRACT);

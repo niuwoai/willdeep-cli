@@ -30,10 +30,11 @@ fn confirmation_for_turn(
 
 fn requires_confirmation(turn: &StoredRuntimeTurn) -> bool {
     turn.child_start_confirmation
-        || turn
-            .origin_client
-            .as_deref()
-            .is_some_and(|origin| origin == "web" || origin.starts_with("web:"))
+        || turn.origin_client.as_deref().is_some_and(|origin| {
+            matches!(origin, "web" | "tui")
+                || origin.starts_with("web:")
+                || origin.starts_with("tui:")
+        })
 }
 
 /// Called while the coordinator owns the ledger and Turn locks. A wake inherits

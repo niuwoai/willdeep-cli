@@ -202,6 +202,7 @@ impl App {
             workspace: None,
             session_lineage: None,
             child_request_ids: std::collections::HashMap::new(),
+            child_proposals: child_session_proposals::Panel::default(),
             palette: None,
             palette_rect: Rect::default(),
             palette_hits: Vec::new(),
@@ -271,6 +272,7 @@ impl App {
         submitted
     }
     pub(super) fn load_session(&mut self, session: &Session) {
+        self.child_proposals = child_session_proposals::Panel::default();
         self.active_remote_gate = None;
         self.remote_gate_waiters.clear();
         self.parked_remote_dialogs.clear();
