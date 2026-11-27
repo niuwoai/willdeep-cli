@@ -11,6 +11,8 @@
 pub(crate) mod roundtable;
 pub(crate) mod scheduler;
 pub(crate) mod stdio_server;
+pub(crate) mod token_stats;
+mod token_stats_package;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,7 +57,12 @@ pub(crate) const PACKAGES: &[BuiltinPackage] = &[
         permissions: &["process.execute", "ai.chat"],
         timeout_seconds: 120,
     },
+    token_stats_package::PACKAGE,
 ];
+
+pub(crate) fn ensure_token_stats_installed(home: &Path) -> Result<()> {
+    token_stats_package::ensure_installed(home)
+}
 
 pub(crate) fn package(name: &str) -> Option<&'static BuiltinPackage> {
     PACKAGES
@@ -82,16 +89,27 @@ pub(crate) fn write_package(package: &BuiltinPackage, dir: &Path) -> Result<()> 
             "interface": {"displayName": package.display_name},
         }),
     )?;
+    let has_stats_page = package.id == token_stats_package::PACKAGE.id;
+    let contributions = if has_stats_page {
+        token_stats_package::write_assets(dir)?;
+        let labels = token_stats_package::locales();
+        write(".willdeep-plugin/locales/zh-Hans.json", labels.clone())?;
+        // The host falls back to en.json for locales without resources.
+        write(".willdeep-plugin/locales/en.json", labels)?;
+        token_stats_package::contributions()
+    } else {
+        write(".willdeep-plugin/locales/en.json", json!({}))?;
+        json!({"destinations": [], "pages": [], "commands": []})
+    };
     write(
         ".willdeep-plugin/plugin.json",
         json!({
             "schemaVersion": 1,
             "permissions": package.permissions,
             "dependencies": {"mcpServers": [package.server]},
-            "contributes": {"destinations": [], "pages": [], "commands": []},
+            "contributes": contributions,
         }),
     )?;
-    write(".willdeep-plugin/locales/en.json", json!({}))?;
     write(
         "mcp.json",
         json!({
@@ -173,6 +191,7 @@ pub(crate) async fn serve(id: &str, home: PathBuf) -> Result<()> {
                     .map(PathBuf::from)
                     .unwrap_or_else(|| willdeep_core::plugin::host::plugin_data_dir(&home, id)),
             )),
+            Some("token-stats") => Arc::new(token_stats::TokenStats::new(home)),
             _ => bail!("unknown built-in plugin {id}"),
         };
     stdio_server::serve(plugin, tokio::io::stdin(), tokio::io::stdout()).await;

@@ -121,8 +121,8 @@ impl PluginWebState {
     }
 
     /// 插件宿主的惰性访问器。第一次调用依次完成：
-    /// 1. 安装随包分发的 favorites / video-studio（已装时是快速路径）；
-    /// 2. `PluginHost::discover` 扫描共享、草案与 Codex 缓存；
+    /// 1. 安装随包分发的 favorites、video-studio 和用量统计插件；
+    /// 2. `PluginHost::discover_live` 扫描共享、草案与 Codex 缓存；
     /// 3. 启动插件 MCP 网关。
     ///
     /// `OnceCell::get_or_try_init` 保证同一时刻只有一个任务执行初始化，其余
@@ -146,6 +146,10 @@ impl PluginWebState {
                             "video studio plugin installation failed: {error}"
                         ))
                     })?;
+                if let Err(error) = crate::builtin_plugins::ensure_token_stats_installed(&self.home)
+                {
+                    eprintln!("warning: token_stats_install_failed error={error:#}");
+                }
                 let host = PluginHost::discover_live(&self.home).map_err(|error| {
                     PluginWebError::Internal(format!("plugin host unavailable: {error}"))
                 })?;
