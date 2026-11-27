@@ -9,14 +9,27 @@ pub(super) fn redact_inline_secrets(value: &mut toml::Value) {
             redact_field(provider, "api_key");
         }
     }
-    let Some(channels) = value
+    if let Some(channels) = value
         .get_mut("notifications")
         .and_then(toml::Value::as_table_mut)
         .and_then(|notifications| notifications.get_mut("channels"))
         .and_then(toml::Value::as_array_mut)
-    else {
-        return;
-    };
+    {
+        redact_channels(channels);
+    }
+    // MCP 段通常已经迁出主配置。迁不走的段仍留在 config.toml 里，
+    // `config show` 按原文打印，明文 token 要先换掉。
+    if let Some(servers) = value
+        .get_mut("mcp_servers")
+        .and_then(toml::Value::as_table_mut)
+    {
+        for (_, server) in servers.iter_mut() {
+            redact_field(server, "token");
+        }
+    }
+}
+
+fn redact_channels(channels: &mut Vec<toml::Value>) {
     for channel in channels {
         redact_field(channel, "secret");
         let Some(table) = channel.as_table_mut() else {

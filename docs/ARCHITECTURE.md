@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-27 | 当前版本：v0.163.0-rc2
+> 最后更新：2026-11-27 | 当前版本：v0.164.0-rc1
 
 Web、桌面和 TUI 聊天允许 Agent 为独立任务主动填写子会话提议。TUI 通过当前会话的 Runtime 工具完成事件刷新持久提议列表。各端确认时，Runtime 按既有流程复核权限、创建会话并排队。
 
@@ -295,7 +295,7 @@ Runtime 侧每个轮次在 `runtime/turns.json` 里记着自己在会话消息�
 
 Skill Catalog 只扫描配置根目录的直接子目录，读取入口固定为 `SKILL.md`；附属资源 canonicalize 后必须仍位于 Skill 根目录，单次读取最多 48,000 字符。
 
-MCP server 由 TOML 声明：stdio 服务给 command、args、env，Streamable HTTP 服务给 url、静态 headers 与鉴权方式（`bearer_token_env` 或 `oauth`），两者二选一，规则在 `willdeep-core::mcp::McpServerConfig::validate` 里只定一份，配置校验与连接共用。stdio 建长连接；HTTP 每条 JSON-RPC 一个 POST，JSON 与 SSE 响应都认，维护 `Mcp-Session-Id` 与协商到的协议版本头，会话过期重握手一次，退出时 DELETE。OAuth 由 `mcp::oauth` 实现（授权码 + PKCE、回环回调、RFC 9728 / 8414 / 7591 / 8707），token 存 `$WILLDEEP_HOME/mcp-oauth/`，连接时自动带上并刷新。两种传输都执行 initialize/initialized/tools/list，并以 `mcp__<server>__<tool>` 建立内部索引；远程服务连不上只警告跳过，本地 stdio 配置错误直接失败。Provider 侧只常驻 `list_mcp_tools` / `call_mcp_tool` 两个固定工具，匹配 Schema 按需加载，避免全量目录占满小上下文。MCP 调用在 `strict`、`smart`、`workspace-write` 三种模式下都进入审批链（后两种仅对符合工作区及写集约束的文件创建、版本化编辑与多文件应用免除人工审批）；`full-access` 下免审并记审计。stdio 服务进程的 stderr 继承到宿主终端，stdout 仅作为 JSON-RPC 通道。
+MCP server 由 TOML 声明：stdio 服务给 command、args、env，Streamable HTTP 服务给 url、静态 headers 与鉴权方式（`token` 明文、`bearer_token_env` 或 `oauth`，三者互斥），规则在 `willdeep-core::mcp::McpServerConfig::validate` 里只定一份，配置校验与连接共用。明文 token 只存在服务文件里，`Debug`、`mcp list` 与 doctor 只报告「已配置」，不回显。stdio 建长连接；HTTP 每条 JSON-RPC 一个 POST，JSON 与 SSE 响应都认，维护 `Mcp-Session-Id` 与协商到的协议版本头，会话过期重握手一次，退出时 DELETE。OAuth 由 `mcp::oauth` 实现（授权码 + PKCE、回环回调、RFC 9728 / 8414 / 7591 / 8707），token 存 `$WILLDEEP_HOME/mcp-oauth/`，连接时自动带上并刷新。两种传输都执行 initialize/initialized/tools/list，并以 `mcp__<server>__<tool>` 建立内部索引；远程服务连不上只警告跳过，本地 stdio 配置错误直接失败。Provider 侧只常驻 `list_mcp_tools` / `call_mcp_tool` 两个固定工具，匹配 Schema 按需加载，避免全量目录占满小上下文。MCP 调用在 `strict`、`smart`、`workspace-write` 三种模式下都进入审批链（后两种仅对符合工作区及写集约束的文件创建、版本化编辑与多文件应用免除人工审批）；`full-access` 下免审并记审计。stdio 服务进程的 stderr 继承到宿主终端，stdout 仅作为 JSON-RPC 通道。
 
 MCP 注册表通过调用方提供的回调报告可恢复的启动告警。交互式 CLI 在加载会话历史后将告警追加到界面的系统消息中，仅展示必要的本地配置线索。其他调用方默认将告警写到 stderr。
 

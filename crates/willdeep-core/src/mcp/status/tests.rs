@@ -76,6 +76,21 @@ fn configuration_status_preserves_disabled_invalid_and_unknown_authentication() 
         assert!(!text.contains("example.invalid"));
         assert!(!text.contains("/private/"));
     }
+
+    let inline = BTreeMap::from([(
+        "panel".into(),
+        McpServerConfig {
+            url: Some("https://panel.example.com/mcp".into()),
+            token: Some(private.into()),
+            ..McpServerConfig::default()
+        },
+    )]);
+    let inline_status = McpRegistry::configuration_only(&inline).configuration_status();
+    assert_eq!(
+        inline_status["servers"][0]["authentication"]["mode"],
+        "bearer_inline"
+    );
+    assert!(!inline_status.to_string().contains(private));
     assert!(registry.server_names().is_empty());
 }
 

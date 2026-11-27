@@ -93,6 +93,64 @@ pub(crate) fn load_directory(directory: &Path) -> McpLoad {
     loaded
 }
 
+/// 明文 token 所在的文件必须只有属主可读。我们写出的文件是 0600；用户
+/// 手写后放到共享目录里的，在读到 token 时就拒绝，而不是等发出去。
+fn ensure_token_file_is_private(path: &Path, config: &McpServerConfig) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if config
+            .token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+        {
+            let mode = fs::metadata(path)?.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                bail!(
+                    "{} holds a token but permissions are {mode:o}; run `chmod 600 {}` or move the token to bearer_token_env",
+                    path.display(),
+                    path.display()
+                );
+            }
+        }
+    }
+    let _ = (path, config);
+    Ok(())
+}
+
+/// 报错文本里凡是 `token = ...` 的赋值，值换成占位。行内可能夹着文件原文。
+fn redact_token_lines(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("token") {
+        let (head, after) = rest.split_at(at + "token".len());
+        output.push_str(head);
+        let trimmed = after.trim_start();
+        if let Some(stripped) = trimmed.strip_prefix('=') {
+            let value = stripped.trim_start();
+            let end = if let Some(quoted) = value.strip_prefix('"') {
+                quoted
+                    .find('"')
+                    .map(|offset| value.len() - quoted.len() + offset + 1)
+            } else if let Some(quoted) = value.strip_prefix('\'') {
+                quoted
+                    .find('\'')
+                    .map(|offset| value.len() - quoted.len() + offset + 1)
+            } else {
+                Some(value.find([',', '\n', '}']).unwrap_or(value.len()))
+            };
+            if let Some(end) = end {
+                output.push_str(" = [REDACTED]");
+                rest = &value[end..];
+                continue;
+            }
+        }
+        rest = after;
+    }
+    output.push_str(rest);
+    output
+}
+
 fn load_file(path: &Path) -> Result<(String, McpServerConfig)> {
     let name = path
         .file_stem()
@@ -106,15 +164,18 @@ fn load_file(path: &Path) -> Result<(String, McpServerConfig)> {
     }
     let contents = fs::read_to_string(path)
         .with_context(|| format!("read MCP server file: {}", path.display()))?;
-    let config: McpServerConfig = toml::from_str(&contents).with_context(|| {
-        format!(
-            "parse MCP server file {}: a field here is not part of an MCP server (command, args, env, url, headers, bearer_token_env, oauth, startup_timeout_seconds, enabled)",
-            path.display()
+    let config: McpServerConfig = toml::from_str(&contents).map_err(|error| {
+        // toml 的报错会引用出错那一行的原文。token 行写错时不能把值带出去。
+        anyhow::anyhow!(
+            "parse MCP server file {}: {} — a field here is not part of an MCP server (command, args, env, url, headers, token, bearer_token_env, oauth, startup_timeout_seconds, enabled)",
+            path.display(),
+            redact_token_lines(&error.to_string())
         )
     })?;
     config
         .validate(name)
         .with_context(|| format!("validate MCP server file: {}", path.display()))?;
+    ensure_token_file_is_private(path, &config)?;
     Ok((name.to_owned(), config))
 }
 
@@ -238,6 +299,9 @@ fn render_server(config: &McpServerConfig) -> Result<String> {
     if !config.headers.is_empty() {
         table.insert("headers".to_owned(), string_table(&config.headers));
     }
+    if let Some(token) = &config.token {
+        table.insert("token".to_owned(), toml::Value::String(token.clone()));
+    }
     if let Some(variable) = &config.bearer_token_env {
         table.insert(
             "bearer_token_env".to_owned(),
@@ -353,8 +417,14 @@ mod tests {
             headers: BTreeMap::from([("X-Trace".to_owned(), "willdeep".to_owned())]),
             ..McpServerConfig::default()
         };
+        let inline = McpServerConfig {
+            url: Some("https://panel.example.com/mcp".to_owned()),
+            token: Some("inline-secret-value".to_owned()),
+            ..McpServerConfig::default()
+        };
         write_server(&directory, "filesystem", &stdio).unwrap();
         write_server(&directory, "issues", &http).unwrap();
+        write_server(&directory, "panel", &inline).unwrap();
 
         let loaded = load_directory(&directory);
         assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
@@ -376,6 +446,54 @@ mod tests {
             loaded.servers["issues"].bearer_token_env.as_deref(),
             Some("ISSUES_TOKEN")
         );
+        assert_eq!(
+            loaded.servers["panel"].token.as_deref(),
+            Some("inline-secret-value")
+        );
+        let written = fs::read_to_string(directory.join("panel.toml")).unwrap();
+        assert!(
+            written.contains("token = \"inline-secret-value\""),
+            "{written}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_broken_token_line_does_not_echo_the_value() {
+        let root = scratch();
+        let directory = root.join(DIRECTORY_NAME);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("panel.toml"),
+            "url = \"https://panel.example.com/mcp\"\ntoken = \"super-secret-value\"\nnot_a_field = true\n",
+        )
+        .unwrap();
+        let loaded = load_directory(&directory);
+        assert!(loaded.servers.is_empty());
+        let skipped = loaded.skipped.join("\n");
+        assert!(!skipped.contains("super-secret-value"), "{skipped}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_token_file_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch();
+        let directory = root.join(DIRECTORY_NAME);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("panel.toml");
+        fs::write(
+            &path,
+            "url = \"https://panel.example.com/mcp\"\ntoken = \"super-secret-value\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let loaded = load_directory(&directory);
+        assert!(loaded.servers.is_empty());
+        let skipped = loaded.skipped.join("\n");
+        assert!(skipped.contains("644"), "{skipped}");
+        assert!(!skipped.contains("super-secret-value"), "{skipped}");
         let _ = fs::remove_dir_all(&root);
     }
 

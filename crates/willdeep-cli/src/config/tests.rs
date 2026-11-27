@@ -856,6 +856,28 @@ resend = { api_key = "re-secret", api_key_env = "RESEND_API_KEY" }
 }
 
 #[test]
+fn redacts_an_unmigrated_mcp_token_and_keeps_the_env_name() {
+    let mut value: toml::Value = toml::from_str(
+        r#"
+[mcp_servers.panel]
+url = "https://panel.example.com/mcp"
+token = "inline-secret-value"
+bearer_token_env = "PANEL_TOKEN"
+"#,
+    )
+    .unwrap();
+    redact_inline_secrets(&mut value);
+    assert_eq!(
+        value["mcp_servers"]["panel"]["token"].as_str(),
+        Some("[REDACTED]")
+    );
+    assert_eq!(
+        value["mcp_servers"]["panel"]["bearer_token_env"].as_str(),
+        Some("PANEL_TOKEN")
+    );
+}
+
+#[test]
 fn inline_secrets_are_accepted_for_every_secret_slot() {
     let parsed: ConfigFile = toml::from_str(&channels_config(
         r#"
