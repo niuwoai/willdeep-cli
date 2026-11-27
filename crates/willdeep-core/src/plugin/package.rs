@@ -50,6 +50,8 @@ pub enum PackageError {
     },
     #[error("plugin `{server}` declares a plaintext credential in mcp.json under `{key}`")]
     PlaintextCredential { server: String, key: String },
+    #[error("plugin package `{0}` changed after discovery")]
+    StaleMetadata(String),
 }
 
 /// 插件包的来源。审批记录绑定来源：来源变了就要重新确认，
@@ -86,6 +88,7 @@ pub struct PluginPackage {
     pub manifest: Option<PluginManifest>,
     pub locales: BTreeMap<String, BTreeMap<String, String>>,
     pub mcp_servers: BTreeMap<String, McpServerSpec>,
+    metadata_hashes: BTreeMap<String, [u8; 32]>,
 }
 
 /// 插件自带的 MCP 服务定义（包内 `mcp.json`）。
@@ -137,10 +140,41 @@ impl PluginPackage {
         package_digest(&self.root)
     }
 
+    /// Observe the exact bytes used by the authoritative digest, for callers that
+    /// need to pin a subset of files to the approval without hashing the package twice.
+    pub fn digest_with_contents(
+        &self,
+        mut observe: impl FnMut(&str, &[u8]),
+    ) -> Result<String, PackageError> {
+        let files = digest_files(&self.root)?;
+        let mut current = BTreeMap::new();
+        let digest = hash_package_files(
+            &self.root,
+            &files,
+            |path| fs::read(path),
+            |path, bytes| {
+                if is_package_metadata(path) {
+                    current.insert(path.to_owned(), Sha256::digest(bytes).into());
+                }
+                observe(path, bytes);
+            },
+        )?;
+        if current != self.metadata_hashes {
+            return Err(PackageError::StaleMetadata(self.id.clone()));
+        }
+        Ok(digest)
+    }
+
     /// 仅供展示或能力提示的摘要预览，按路径、大小与 mtime 复用进程内缓存。
     /// 等长改写并恢复 mtime 时可能过期，不能据此批准、启用或使用插件。
     pub fn cached_digest(&self) -> Result<String, PackageError> {
         cached_package_digest(&self.root, |path| fs::read(path))
+    }
+
+    pub(super) fn same_snapshot(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.source == other.source
+            && self.metadata_hashes == other.metadata_hashes
     }
 
     /// 包内相对路径 → 绝对路径，逐项做规范化、符号链接解析与包根前缀校验。
@@ -303,19 +337,28 @@ pub fn safe_resource_path(root: &Path, relative: &str) -> Result<PathBuf, Packag
     Ok(resolved)
 }
 
+const CODEX_MANIFEST: &str = ".codex-plugin/plugin.json";
+const WILLDEEP_MANIFEST: &str = ".willdeep-plugin/plugin.json";
+const MCP_MANIFEST: &str = "mcp.json";
+
+fn is_package_metadata(path: &str) -> bool {
+    matches!(path, CODEX_MANIFEST | WILLDEEP_MANIFEST | MCP_MANIFEST)
+}
+
 /// 扫描并解析一个插件包目录。
 pub fn load_package(root: &Path, source: PluginSource) -> Result<PluginPackage, PackageError> {
-    let codex_path = root.join(".codex-plugin").join("plugin.json");
-    let codex_source = read_text(&codex_path, MAX_MANIFEST_BYTES)
+    let mut metadata_hashes = BTreeMap::new();
+    let mut read_metadata = |relative: &str| -> Result<String, PackageError> {
+        let text = read_text(&root.join(relative), MAX_MANIFEST_BYTES)?;
+        metadata_hashes.insert(relative.to_owned(), Sha256::digest(text.as_bytes()).into());
+        Ok(text)
+    };
+    let codex_source = read_metadata(CODEX_MANIFEST)
         .map_err(|_| PackageError::MissingCodexManifest(root.display().to_string()))?;
     let codex = CodexManifest::parse(&codex_source)?;
 
-    let willdeep_path = root.join(".willdeep-plugin").join("plugin.json");
-    let manifest = if willdeep_path.is_file() {
-        Some(PluginManifest::parse(&read_text(
-            &willdeep_path,
-            MAX_MANIFEST_BYTES,
-        )?)?)
+    let manifest = if root.join(WILLDEEP_MANIFEST).is_file() {
+        Some(PluginManifest::parse(&read_metadata(WILLDEEP_MANIFEST)?)?)
     } else {
         None
     };
@@ -326,7 +369,12 @@ pub fn load_package(root: &Path, source: PluginSource) -> Result<PluginPackage, 
         manifest.validate_localization(&english)?;
     }
 
-    let mcp_servers = load_mcp_servers(root)?;
+    let mcp_path = root.join(MCP_MANIFEST);
+    let mcp_servers = if mcp_path.is_file() {
+        parse_mcp_servers(&mcp_path, &read_metadata(MCP_MANIFEST)?)?
+    } else {
+        BTreeMap::new()
+    };
 
     // 这里刻意**不**算 digest：算它要把包内容整个读一遍，而发现阶段只需要
     // 知道「装了什么」。本机 30 MB 的插件目录，光是列个清单就为此花掉数秒，
@@ -340,6 +388,7 @@ pub fn load_package(root: &Path, source: PluginSource) -> Result<PluginPackage, 
         manifest,
         locales,
         mcp_servers,
+        metadata_hashes,
     })
 }
 
@@ -409,15 +458,13 @@ fn is_plaintext_credential(key: &str, value: &str) -> bool {
     !(trimmed.starts_with("${setting:") || trimmed.starts_with("${keychain:"))
 }
 
-fn load_mcp_servers(root: &Path) -> Result<BTreeMap<String, McpServerSpec>, PackageError> {
+fn parse_mcp_servers(
+    path: &Path,
+    source: &str,
+) -> Result<BTreeMap<String, McpServerSpec>, PackageError> {
     let mut servers = BTreeMap::new();
-    let path = root.join("mcp.json");
-    if !path.is_file() {
-        return Ok(servers);
-    }
-    let source = read_text(&path, MAX_MANIFEST_BYTES)?;
     let value: serde_json::Value =
-        serde_json::from_str(&source).map_err(|error| PackageError::Unreadable {
+        serde_json::from_str(source).map_err(|error| PackageError::Unreadable {
             path: path.display().to_string(),
             reason: error.to_string(),
         })?;
@@ -513,7 +560,7 @@ struct FileEntry {
 /// 这不是整个目录的原子快照，读取过程中并发修改仍由调用方约束。
 pub fn package_digest(root: &Path) -> Result<String, PackageError> {
     let files = digest_files(root)?;
-    hash_package_files(root, &files, |path| fs::read(path))
+    hash_package_files(root, &files, |path| fs::read(path), |_, _| {})
 }
 
 fn digest_files(root: &Path) -> Result<Vec<FileEntry>, PackageError> {
@@ -538,13 +585,14 @@ fn cached_package_digest(
     {
         return Ok(cached.digest.clone());
     }
-    hash_package_files(root, &files, read)
+    hash_package_files(root, &files, read, |_, _| {})
 }
 
 fn hash_package_files(
     root: &Path,
     files: &[FileEntry],
     mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+    mut observe: impl FnMut(&str, &[u8]),
 ) -> Result<String, PackageError> {
     let mut hasher = Sha256::new();
     for file in files {
@@ -556,6 +604,7 @@ fn hash_package_files(
         })?;
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(&bytes);
+        observe(&file.relative, &bytes);
     }
     let digest = format!("sha256:{:x}", hasher.finalize());
     digest_cache()
@@ -666,7 +715,14 @@ pub fn discover(root: &Path, source: PluginSource) -> Vec<Result<PluginPackage, 
         let mut candidates: Vec<PathBuf> = versions
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.join(".codex-plugin").join("plugin.json").is_file())
+            .filter(|path| {
+                // A live scan can run while install is still populating a staging directory.
+                !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".staging-"))
+                    && path.join(".codex-plugin").join("plugin.json").is_file()
+            })
             .collect();
         let version_name = |path: &PathBuf| {
             path.file_name()

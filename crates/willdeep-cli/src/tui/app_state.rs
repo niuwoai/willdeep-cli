@@ -1922,12 +1922,10 @@ impl App {
         self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
     }
 
-    /// 两三行的短文本直接进输入框，方便改完再发；再长的才收成附件。
-    /// 行数按换行计，单行超长（没有换行但很大）同样收成附件，避免把输入框撑爆。
+    /// 与 Web / 桌面输入区一致，最多 100 个 Unicode 字符直接粘贴。
     pub(super) fn paste_goes_inline(value: &str) -> bool {
-        const MAX_INLINE_LINES: usize = 3;
-        const MAX_INLINE_CHARS: usize = 2_000;
-        value.lines().count() <= MAX_INLINE_LINES && value.chars().count() <= MAX_INLINE_CHARS
+        const MAX_INLINE_PASTE_CHARACTERS: usize = 100;
+        value.chars().nth(MAX_INLINE_PASTE_CHARACTERS).is_none()
     }
 
     pub(super) fn handle_paste(&mut self, value: String) {

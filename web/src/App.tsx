@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ComposerReferences } from "./ComposerReferences";
+import { ComposerReferenceChips, ComposerReferences } from "./ComposerReferences";
+import { backspaceDraftReference, editComposerText, EMPTY_COMPOSER_DRAFT, selectDraftReference, serializeComposerDraft, type ComposerDraft, type DraftReference } from "./composerDraft";
 import { createRequestId } from "./requestId";
-import { insertReference, useComposerReferences, type Reference } from "./useComposerReferences";
+import { useComposerReferences, type Reference } from "./useComposerReferences";
 import { Box, Button, Container, Dialog, Flex, Heading, Input, Portal, Text, Textarea, VStack } from "@chakra-ui/react";
 import { detectLanguage, messages, type Language, type Messages } from "./i18n";
 import { loadIdentity, renameIdentity, type IdentityView } from "./identityApi";
@@ -44,7 +45,7 @@ import { modelText } from "./modelMessages";
 import { scheduleText } from "./scheduleMessages";
 import { PluginRail, type RailSelection } from "./PluginRail";
 import { PluginSidebar } from "./PluginSidebar";
-import { fetchPlugins, orderedDestinations, type PluginFailureView, type PluginView } from "./plugins";
+import { fetchPlugins, isPluginRunnable, orderedDestinations, type PluginFailureView, type PluginView } from "./plugins";
 import { PluginCommandPalette, PluginMenuPopup } from "./PluginMenus";
 import { menuEntries, usePluginCommandRunner, type MenuEntry } from "./pluginMenuModel";
 import { appendSelectionQuote, CHAT_SELECTION_ACTIONS, composerCommandText, useChatSelection } from "./useChatSelection";
@@ -53,7 +54,7 @@ import chatScrollRocket from "./assets/chat-scroll-rocket.png";
 import { SfIcon } from "./sfSymbols";
 import { replayToolState } from "./replayTools";
 import { enqueueButtonState, queueText, runningInputFeedback } from "./queueMessages";
-import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, Copy, Quote } from "lucide-react";
+import { FolderGit2, ListPlus, MessageSquare, Search, GitFork, History, Download, PanelLeft, Pin, Copy, Quote, Plus, Ellipsis } from "lucide-react";
 import { SessionActionMenu } from "./SessionActionMenu";
 import { sessionTree } from "./sessionTree";
 import { afterShowMore, listedSessionCount, matchesSessionQuery, orderWorkspaces, PROJECT_CAP, PROJECT_PREVIEW } from "./workspaceTree";
@@ -65,7 +66,8 @@ import { RuntimeHumanGates } from "./RuntimeHumanGates";
 import { SentAttachments } from "./SentAttachments";
 import { AttachmentManager } from "./AttachmentManager";
 import { attachmentText } from "./attachmentMessages";
-import { attachmentError, attachmentPayload, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, MAX_CHAT_BODY_BYTES, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
+import { COMPOSER_FILE_ACCEPT, ComposerFileError, readComposerFile } from "./composerFileUpload";
+import { attachmentError, attachmentPayload, chatBodyFits, draftAttachmentsFit, shouldAttachPastedText, MAX_ATTACHMENTS, MAX_IMAGE_BASE64, type DraftAttachment, type AttachmentPayload } from "./attachmentModel";
 import { useInputSuggestion } from "./inputSuggestion";
 import { conciseHistory, interruptedReply, narrationDecision, unshownReply, usesShortStyle, type ConciseLine, type ReplyStyle } from "./conciseTurn";
 import { formatStepElapsed, groupActivityMessages, needsActivityStrip, turnDividerText, type RunStep, type ThoughtRecord } from "./runActivity";
@@ -83,6 +85,10 @@ import { DesktopChangesPanel, DesktopChangesToggle, DesktopVersions } from "./De
 import { useDesktopChanges } from "./useDesktopChanges";
 import { desktopDraftId, desktopLocation, isDesktop, pickDesktopWorkspace, saveDesktopSelection } from "./desktopHost";
 import { desktopText } from "./desktopMessages";
+
+const DESKTOP_PLUGIN_REFRESH_MS = 15_000;
+const EMPTY_PLUGINS: PluginView[] = [];
+const EMPTY_PLUGIN_FAILURES: PluginFailureView[] = [];
 
 type Session = { id: string; title: string; preview?: string; workspace: string; created_at: number; updated_at: number; pinned_at: number | null; started_by?: string | null; parent_session_id?: string | null; delegation_read_only?: boolean; delegation_detached?: boolean; archived: boolean; active: boolean; active_turn_id: string | null };
 
@@ -327,9 +333,23 @@ export function App() {
   const [version, setVersion] = useState("");
   // 这台实例的名字与 UUID。只在回环 Web 上读得到；读到之前先不渲染，免得闪一下占位。
   const [identity, setIdentity] = useState<IdentityView | null>(null);
-  const [chat, setChat] = useState<ChatMessage[]>([]); const [prompt, setPrompt] = useState("");
-  const desktopDrafts = useRef(new Map<string, { prompt: string; attachments: Attachment[] }>());
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [composerDraft, setComposerDraft] = useState(EMPTY_COMPOSER_DRAFT);
+  const { text: prompt, references: draftReferences } = composerDraft;
+  const setPrompt = (text: string, caret?: number) => setComposerDraft((draft) => editComposerText(draft, text, caret));
+  const composerDraftRef = useRef(composerDraft);
+  useLayoutEffect(() => { composerDraftRef.current = composerDraft; }, [composerDraft]);
+  const desktopDrafts = useRef(new Map<string, { composer: ComposerDraft; attachments: Attachment[] }>());
   const desktopDraftKey = useRef("");
+  const composerScopeRevision = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileBatchRef = useRef<AbortController | null>(null);
+  const [readingFiles, setReadingFiles] = useState(false);
+  useEffect(() => () => {
+    fileBatchRef.current?.abort();
+    fileBatchRef.current = null;
+  }, []);
+  const [fileUploadError, setFileUploadError] = useState("");
   // 轮次收尾时要从运行卡片里数工具步，而会话重载会把卡片整个换掉，先照一份镜像。
   const chatRef = useRef<ChatMessage[]>([]);
   useEffect(() => { chatRef.current = chat; }, [chat]);
@@ -372,11 +392,16 @@ export function App() {
     const next = typeof value === "function" ? value(attachmentsRef.current) : value;
     attachmentsRef.current = next; updateAttachments(next);
   };
-  const appendAttachment = (payload: AttachmentPayload) => {
+  const appendAttachment = (payload: AttachmentPayload, onError = setError) => {
     const reason = attachmentError(payload);
-    if (reason) { setError(attachmentText(reason, language)); return; }
-    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) { setError(attachmentText("limit", language)); return; }
-    setAttachments([...attachmentsRef.current, { ...payload, id: createRequestId() }]);
+    if (reason) { onError(attachmentText(reason, language)); return; }
+    const current = attachmentsRef.current;
+    if (current.length >= MAX_ATTACHMENTS) { onError(attachmentText("limit", language)); return; }
+    if (!draftAttachmentsFit([...current.map(attachmentPayload), payload])) {
+      onError(attachmentText("batchTooLarge", language));
+      return;
+    }
+    setAttachments([...current, { ...payload, id: createRequestId() }]);
   };
   const [goal, setGoal] = useState("");
   const [goalEnabled, setGoalEnabled] = useState(false);
@@ -396,20 +421,30 @@ export function App() {
   const [runtimeFailure, setRuntimeFailure] = useState<RuntimeFailureReference | null>(null);
   const references = useComposerReferences(workspace, sessionId, prompt, t.loadFailed, setError);
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  function chooseReference(entry: Reference) {
-    if (!references.query) return;
-    const cursor = references.query.start + entry.value.length + 1;
-    setPrompt(insertReference(prompt, references.query, entry.value));
-    setComposerCursor(cursor);
-    setSkillPickerDismissed(false);
+  function focusComposer(cursor?: number) {
+    const field = promptRef.current;
+    field?.focus({ preventScroll: true });
+    if (cursor !== undefined) field?.setSelectionRange(cursor, cursor);
+  }
+  function addReference(start: number, end: number, entry: Pick<DraftReference, "kind" | "name" | "value">) {
+    setComposerDraft(selectDraftReference(composerDraft, start, end, { ...entry, id: createRequestId() }));
+    setComposerCursor(start);
+    setSkillPickerDismissed(true);
     references.dismiss();
-    requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(cursor, cursor); });
+    requestAnimationFrame(() => focusComposer(start));
+  }
+  function chooseReference(entry: Reference) {
+    if (references.query) addReference(references.query.start, references.query.end, entry);
+  }
+  function removeReference(id: string) {
+    setComposerDraft((draft) => ({ ...draft, references: draft.references.filter((item) => item.id !== id) }));
   }
   const [runtimeActivity, setRuntimeActivity] = useState<RuntimeActivity>({ tools: [], artifacts: [], agents: [], tasks: [], gates: [], attention_count: 0 });
   const visibleHumanGates = runtimeActivity.gates.filter((gate) => runtimeActivity.tasks.some((task) =>
     task.id === gate.task_id && (task.session_id === null || task.session_id === sessionId)));
   const [busy, setBusy] = useState(false); const [activity, setActivity] = useState("");
   const draftSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
+  const pluginSendRequest = useRef<{ fingerprint: string; id: string } | null>(null);
   const queueSubmitting = useRef(false);
   const [submissionNotice, setSubmissionNotice] = useState<{ sessionId: string; text: string } | null>(null);
   useEffect(() => { setSubmissionNotice(null); }, [sessionId]);
@@ -418,9 +453,9 @@ export function App() {
   const composerEmptyRef = useRef(true);
   const composerIdleRef = useRef(true);
   useEffect(() => {
-    composerEmptyRef.current = !prompt && !attachments.length;
+    composerEmptyRef.current = !prompt && !attachments.length && !draftReferences.length;
     composerIdleRef.current = composerEmptyRef.current && !busy;
-  }, [prompt, attachments.length, busy]);
+  }, [prompt, attachments.length, draftReferences.length, busy]);
   const abortRef = useRef<AbortController | null>(null);
   const activeRunRef = useRef<string | null>(null);
   const activeTurnRef = useRef<string | null>(null);
@@ -445,30 +480,48 @@ export function App() {
     pendingDesktopNavigation.current = null;
     navigate?.();
   }, [busy]);
-  async function enqueueDraft(content = prompt.trim() || t.attachmentPrompt) {
+  function captureSubmission(source: "composer" | "plugin") {
+    const fromComposer = source === "composer";
+    const outgoingDraft = composerDraft;
+    const outgoingAttachments = fromComposer ? attachmentsRef.current : [];
+    const revision = composerScopeRevision.current;
+    return {
+      attachments: outgoingAttachments.map(attachmentPayload),
+      hasAttachments: outgoingAttachments.length > 0,
+      request: fromComposer ? draftSendRequest : pluginSendRequest,
+      accepted: () => {
+        if (!fromComposer || composerScopeRevision.current !== revision) return;
+        setComposerDraft((current) => current === outgoingDraft ? EMPTY_COMPOSER_DRAFT : current);
+        if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+      },
+    };
+  }
+
+  async function enqueueDraft(override?: string, source: "composer" | "plugin" = "composer") {
     const target = activeSessionRef.current || sessionId;
     // 没有会话就无处可入。不为了入队隐式建一个空会话：那会在历史列表里
     // 留下一条谁也没发过言的记录。
     if (!target) { setError(queueText("enqueueNeedsSession", language)); return; }
-    if (queueSubmitting.current || (!content && !attachmentsRef.current.length)) return;
-    const outgoingPrompt = prompt;
-    const outgoingAttachments = attachmentsRef.current;
+    if ((source === "composer" && fileBatchRef.current) || queueSubmitting.current) return;
+    const outgoing = captureSubmission(source);
+    const content = override ?? (serializeComposerDraft(composerDraft) || (outgoing.hasAttachments ? t.attachmentPrompt : ""));
+    if (!content && !outgoing.hasAttachments) return;
     // 空闲时入队要暂缓，否则服务端会在会话空闲的一瞬间把它领走，等于立即发送。
     // 忙时不暂缓：这一轮本来就占着会话，消息按原顺序等它结束。
-    const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), defer_until_released: !busy };
+    const payload = { prompt: content, session_id: target, workspace, language, attachments: outgoing.attachments, defer_until_released: !busy };
     const fingerprint = JSON.stringify(payload);
-    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: createRequestId() };
-    const body = JSON.stringify({ ...payload, request_id: draftSendRequest.current.id });
-    if (new TextEncoder().encode(body).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
+    const request = outgoing.request.current?.fingerprint === fingerprint ? outgoing.request.current : { fingerprint, id: createRequestId() };
+    const body = JSON.stringify({ ...payload, request_id: request.id });
+    if (!chatBodyFits(body)) { setError(attachmentText("batchTooLarge", language)); return; }
+    outgoing.request.current = request;
     queueSubmitting.current = true;
     const running = busy || selectedSession?.active || activeRuntimeSessionId === target;
     const progress = running || visibleHumanGates.length ? runningInputFeedback(runtimeActivity, target, language).text : "";
     setSubmissionNotice({ sessionId: target, text: [progress, queueText("sending", language)].filter(Boolean).join(" · ") });
     try {
       await queueRequest(`/api/sessions/${encodeURIComponent(target)}/queue`, { method: "POST", headers: { "content-type": "application/json" }, body });
-      draftSendRequest.current = null;
-      setPrompt((current) => current === outgoingPrompt ? "" : current);
-      if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+      if (outgoing.request.current === request) outgoing.request.current = null;
+      outgoing.accepted();
       setSubmissionNotice({ sessionId: target, text: [progress, queueText("saved", language)].filter(Boolean).join(" · ") });
       setError("");
     } catch (reason) {
@@ -510,9 +563,20 @@ export function App() {
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [newWorkspacePath, setNewWorkspacePath] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
-  const [plugins, setPlugins] = useState<PluginView[]>([]);
-  const [pluginFailures, setPluginFailures] = useState<PluginFailureView[]>([]);
+  const pluginsQuery = useQuery({
+    queryKey: ["plugins", language],
+    queryFn: () => fetchPlugins(language),
+    refetchOnWindowFocus: "always",
+    refetchInterval: isDesktop ? DESKTOP_PLUGIN_REFRESH_MS : false,
+  });
+  const plugins = pluginsQuery.data?.plugins ?? EMPTY_PLUGINS;
+  const pluginFailures = pluginsQuery.data?.failures ?? EMPTY_PLUGIN_FAILURES;
   const [rail, setRail] = useState<RailSelection>(railFromHash);
+  const pluginReviewQuery = useQuery({
+    queryKey: ["plugins", language, "review"],
+    queryFn: () => fetchPlugins(language, true),
+    enabled: rail.kind === "center",
+  });
   const scheduleDirtyRef = useRef(false);
   const agentDirtyRef = useRef(false);
   const trackAgentDirty = useCallback((dirty: boolean) => {agentDirtyRef.current = dirty;}, []);
@@ -536,13 +600,11 @@ export function App() {
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
-  const refreshPlugins = useCallback(() => {
-    fetchPlugins(language)
-      .then((value) => { setPlugins(value.plugins); setPluginFailures(value.failures); })
-      // 插件宿主没起来不该让聊天界面报错——那是两件独立的事。
-      .catch(() => { setPlugins([]); setPluginFailures([]); });
-  }, [language]);
-  useEffect(() => { refreshPlugins(); }, [refreshPlugins, pluginReloadToken]);
+  const { refetch: refetchPlugins } = pluginsQuery;
+  const refreshPluginViews = useCallback(() => {
+    void refetchPlugins();
+    setPluginReloadToken((current) => current + 1);
+  }, [refetchPlugins]);
 
   const pluginEntries = useMemo(() => orderedDestinations(plugins), [plugins]);
   const activePlugin = useMemo(
@@ -550,10 +612,10 @@ export function App() {
     [rail, pluginEntries]
   );
   // 选中的插件被停用或卸载时回到对话，而不是停在一个已经不存在的目的地上。
-  // 插件清单还没加载完时先别动——否则从一个 #plugin/... 链接进来会被立刻踢走。
+  // 等首次成功加载后再判断插件是否还可用，避免启动时丢掉直接打开的插件链接。
   useEffect(() => {
-    if (rail.kind === "plugin" && plugins.length > 0 && !activePlugin) setRail({ kind: showSetup ? "center" : "conversation" });
-  }, [rail, activePlugin, plugins.length, showSetup]);
+    if (rail.kind === "plugin" && pluginsQuery.isSuccess && !activePlugin) setRail({ kind: showSetup ? "center" : "conversation" });
+  }, [rail, activePlugin, pluginsQuery.isSuccess, showSetup]);
 
   useEffect(() => {
     const target = hashForRail(rail);
@@ -674,11 +736,11 @@ export function App() {
     try {
       await runPluginCommand(entry, args);
       // 命令可能改了插件自己的数据，让当前目的地的侧栏与页面重取一次。
-      setPluginReloadToken((current) => current + 1);
+      refreshPluginViews();
     } catch (reason) {
       setPluginMenuError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [runPluginCommand, setChatSelection]);
+  }, [runPluginCommand, setChatSelection, refreshPluginViews]);
 
   useEffect(() => {
     if (!paletteEntries.length) return;
@@ -692,9 +754,17 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [paletteEntries.length]);
 
+  const popupEntries = popup?.entries.filter((entry) => plugins.some((plugin) =>
+    plugin.id === entry.pluginId && isPluginRunnable(plugin) && plugin.commands.some((command) => command.id === entry.commandId),
+  )) ?? [];
+  useEffect(() => {
+    if (popup && popupEntries.length !== popup.entries.length) {
+      setPopup((current) => current === popup ? null : current);
+    }
+  }, [popup, popupEntries.length]);
   const pluginOverlays = <>
     {showPalette && <PluginCommandPalette entries={paletteEntries} messages={t} onRun={(entry) => void runMenuEntry(entry)} onClose={() => setShowPalette(false)} />}
-    {popup && <PluginMenuPopup entries={popup.entries} x={popup.x} y={popup.y} onRun={(entry) => void runMenuEntry(entry, popup.args)} onClose={() => setPopup(null)} />}
+    {popup && popupEntries.length > 0 && <PluginMenuPopup entries={popupEntries} x={popup.x} y={popup.y} onRun={(entry) => void runMenuEntry(entry, popup.args)} onClose={() => setPopup(null)} />}
     {pluginMenuError && <Text className="plugin-error" position="fixed" bottom="3" right="3" zIndex="50" borderRadius="8px" onClick={() => setPluginMenuError("")}>{t.pluginCommandFailed}: {pluginMenuError}</Text>}
   </>;
 
@@ -840,8 +910,9 @@ export function App() {
   const childParentId = selectedSession?.parent_session_id ?? (sessionRelation?.id === sessionId ? sessionRelation.parent : null);
   const childReadOnly = selectedSession?.delegation_read_only ?? (sessionRelation?.id === sessionId && sessionRelation.readOnly);
   const childDetached = selectedSession?.delegation_detached ?? (sessionRelation?.id === sessionId && sessionRelation.detached);
-  const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !prompt && !attachments.length && !busy ? inputSuggestion.suggestion.text : null;
-  const enqueueButton = enqueueButtonState({ hasDraft: Boolean(prompt.trim() || attachments.length), hasSession: Boolean(sessionId) });
+  const hasComposerDraft = Boolean(prompt.trim() || attachments.length || draftReferences.length);
+  const ghostSuggestion = inputSuggestion.suggestion && inputSuggestion.suggestion.sessionId === sessionId && !hasComposerDraft && !busy ? inputSuggestion.suggestion.text : null;
+  const enqueueButton = enqueueButtonState({ hasDraft: hasComposerDraft, hasSession: Boolean(sessionId) });
   const commandMatches = useMemo(() => {
     const command = composerCommandText(prompt).split(/\s/, 1)[0];
     return command ? composer.commands.filter((item) => item.startsWith(command)).slice(0, 6) : [];
@@ -857,13 +928,7 @@ export function App() {
   useEffect(() => { setSkillSelected((current) => Math.min(current, Math.max(0, skillMatches.length - 1))); }, [skillMatches.length]);
 
   function chooseSkill(skill: ComposerSkill) {
-    if (!skillMention) return;
-    const insertion = `$${skill.identifier} `;
-    const cursor = skillMention.start + insertion.length;
-    setPrompt(`${prompt.slice(0, skillMention.start)}${insertion}${prompt.slice(skillMention.end)}`);
-    setComposerCursor(cursor);
-    setSkillPickerDismissed(true);
-    requestAnimationFrame(() => { promptRef.current?.focus(); promptRef.current?.setSelectionRange(cursor, cursor); });
+    if (skillMention) addReference(skillMention.start, skillMention.end, { kind: "skill", name: skill.name, value: `$${skill.identifier}` });
   }
 
   function updateRun(runId: string, updater: (steps: RunStep[]) => RunStep[]) {
@@ -951,7 +1016,7 @@ export function App() {
       activeSessionRef.current = nextSessionId || null;
       activeTurnRef.current = nextTurnId || null;
       if (nextSessionId) localStorage.setItem(`${lastSessionPrefix}${workspace}`, nextSessionId);
-      if (isDesktop && nextSessionId) {
+      if (nextSessionId) {
         if (event.type === "submitted") {
           desktopDrafts.current.delete(desktopDraftKey.current);
           desktopDraftKey.current = desktopDraftId(workspace, nextSessionId);
@@ -1247,14 +1312,24 @@ export function App() {
   }
 
   function switchDesktopDraft(path: string, id: string) {
-    if (!isDesktop) return;
     const key = desktopDraftId(path, id);
     const previous = desktopDraftKey.current;
     if (previous === key) return;
-    if (previous) desktopDrafts.current.set(previous, { prompt: promptRef.current?.value ?? prompt, attachments: attachmentsRef.current });
-    const draft = desktopDrafts.current.get(key);
     desktopDraftKey.current = key;
-    setPrompt(draft?.prompt ?? "");
+    composerScopeRevision.current++;
+    const batch = fileBatchRef.current;
+    fileBatchRef.current = null;
+    batch?.abort();
+    setReadingFiles(false);
+    setFileUploadError("");
+    if (!isDesktop) {
+      // Preserve the existing Web text draft, but never carry an old workspace's references across.
+      setComposerDraft((draft) => draft.references.length ? { text: draft.text, references: [] } : draft);
+      return;
+    }
+    if (previous) desktopDrafts.current.set(previous, { composer: composerDraftRef.current, attachments: attachmentsRef.current });
+    const draft = desktopDrafts.current.get(key);
+    setComposerDraft(draft?.composer ?? EMPTY_COMPOSER_DRAFT);
     setAttachments(draft?.attachments ?? []);
   }
 
@@ -1288,7 +1363,7 @@ export function App() {
       navigateInDesktop(() => void loadSessionRef.current(id, activeTurnId ?? sessions.find((item) => item.id === id)?.active_turn_id));
       return;
     }
-    if (busy || prompt.trim() || attachmentsRef.current.length > 0) {
+    if (busy || hasComposerDraft) {
       // The current stream remains attached here; the independent conversation
       // opens with its own stream and approval controls.
       const url = new URL(window.location.href);
@@ -1624,6 +1699,44 @@ export function App() {
     catch (reason) { setError(`${t.sessionActionFailed}: ${reason instanceof Error ? reason.message : String(reason)}`); }
   }
 
+  async function attachSelectedFiles(event: React.ChangeEvent<HTMLInputElement>) {
+    const { files } = event.currentTarget;
+    const selected = Array.from(files ?? []);
+    // Clear the picker so the same file can be selected again after removal.
+    event.currentTarget.value = "";
+    if (!selected.length || fileBatchRef.current) return;
+    const batch = new AbortController();
+    fileBatchRef.current = batch;
+    setReadingFiles(true);
+    setFileUploadError("");
+    const failures: string[] = [];
+    try {
+      for (const file of selected.slice(0, MAX_ATTACHMENTS)) {
+        if (batch.signal.aborted) return;
+        if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
+          failures.push(attachmentText("limit", language));
+          break;
+        }
+        try {
+          const attachment = await readComposerFile(file, batch.signal);
+          if (batch.signal.aborted) return;
+          appendAttachment(attachment, (message) => failures.push(`${file.name}: ${message}`));
+        } catch (reason) {
+          if (batch.signal.aborted) return;
+          const key = reason instanceof ComposerFileError ? reason.messageKey : "fileReadFailed";
+          failures.push(`${file.name}: ${attachmentText(key, language)}`);
+        }
+      }
+      if (selected.length > MAX_ATTACHMENTS && failures.length === 0) failures.push(attachmentText("limit", language));
+      if (!batch.signal.aborted && failures.length) setFileUploadError(failures.join("\n"));
+    } finally {
+      if (fileBatchRef.current === batch) {
+        fileBatchRef.current = null;
+        setReadingFiles(false);
+      }
+    }
+  }
+
   function attachImage(file: File) {
     if (file.size > MAX_IMAGE_BASE64 * 3 / 4) { setError(attachmentText("imageTooLarge", language)); return; }
     const reader = new FileReader(); reader.onerror = () => setError(attachmentText("imageFailed", language)); reader.onload = () => {
@@ -1638,24 +1751,25 @@ export function App() {
     const imageFile = clipboardImageFile(event.clipboardData);
     if (imageFile) { event.preventDefault(); attachImage(imageFile); return; }
     const text = event.clipboardData.getData("text/plain");
-    if (text.includes("\n") || text.length > 200) { event.preventDefault(); appendAttachment({ kind: "text", name: `${t.pastedText}-${attachmentsRef.current.length + 1}.txt`, content: text }); }
+    if (shouldAttachPastedText(text)) { event.preventDefault(); appendAttachment({ kind: "text", name: `${t.pastedText}-${attachmentsRef.current.length + 1}.txt`, content: text }); }
   }
 
   // `override` 给插件的 `window.willdeep.chat.send` 用：它递进来的文本要
   // 立刻起一个回合，而 setPrompt 是异步的——读 state 会读到上一轮的值。
   // 走的是与用户敲回车完全相同的这条路：审批档位与沙箱一个都不绕。
   async function send(override?: string, source: "composer" | "plugin" = "composer") {
-    if (workspaceApproval.pending || !workspaceRef.current) return;
-    const sendAttachments = attachmentsRef.current;
-    const messageText = (override ?? prompt).trim();
+    const fromComposer = source === "composer";
+    if ((fromComposer && fileBatchRef.current) || workspaceApproval.pending || !workspaceRef.current) return;
+    const messageText = override === undefined ? serializeComposerDraft(composerDraft) : override.trim();
     const typed = composerCommandText(messageText);
+    const clearCommandText = () => { if (fromComposer) setPrompt(""); };
     if (selectedSession?.archived) { setError(`${t.requestFailed}: ${t.archived}`); return; }
-    if (typed === "/clear") { setChat([]); setPrompt(""); return; }
-    if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); setPrompt(""); return; }
-    if (typed === "/skills") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: composer.skills.length ? composer.skills.map((skill) => `$${skill.identifier} · ${skill.name}\n${skill.description}`).join("\n\n") : t.noSkills }]); setPrompt(""); return; }
-    if (typed === "/goal off") { updateGoalPreference("", false); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); setPrompt(""); return; }
+    if (typed === "/clear") { setChat([]); clearCommandText(); return; }
+    if (typed === "/help") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.helpText }]); clearCommandText(); return; }
+    if (typed === "/skills") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: composer.skills.length ? composer.skills.map((skill) => `$${skill.identifier} · ${skill.name}\n${skill.description}`).join("\n\n") : t.noSkills }]); clearCommandText(); return; }
+    if (typed === "/goal off") { updateGoalPreference("", false); setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.goalOff }]); clearCommandText(); return; }
     if (typed === "/short" || typed === "/verbose") {
-      setPrompt("");
+      clearCommandText();
       // 风格记在会话上。还没有会话时无处可记，先说清楚，不假装已经切过去了。
       if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.shortNeedsSession }]); return; }
       const detailed = typed === "/verbose";
@@ -1667,7 +1781,7 @@ export function App() {
       return;
     }
     if (typed === "/name" || typed.startsWith("/name ")) {
-      setPrompt("");
+      clearCommandText();
       // 改名是本机管理动作：插件页面不能替用户改这台机器的身份。
       if (source === "plugin") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: t.instancePluginBlocked }]); return; }
       const argument = typed.slice("/name".length).trim();
@@ -1684,7 +1798,7 @@ export function App() {
     }
     // 审批档位是本机管理动作：面板是主入口，这条命令只是同一条路的口令版。
     if (typed === "/permissions" || typed.startsWith("/permissions ")) {
-      setPrompt("");
+      clearCommandText();
       const copy = permissionsText(language);
       // 插件页面也能调 send()。档位只认用户亲手敲的字——否则一个页面就能
       // 替用户把会话升到完全访问。
@@ -1708,7 +1822,7 @@ export function App() {
     }
     // 换模型同样是本机管理动作：面板是主入口，这条命令是同一件事的口令版。
     if (typed === "/model" || typed.startsWith("/model ")) {
-      setPrompt("");
+      clearCommandText();
       const copy = modelText(language);
       if (source === "plugin") { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.pluginBlocked }]); return; }
       if (!sessionId) { setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: copy.noSession }]); return; }
@@ -1729,9 +1843,10 @@ export function App() {
     if (goalToStart) {
       updateGoalPreference(goalToStart, true);
       setChat((current) => [...current, { id: nextId("assistant"), role: "assistant", content: `${t.goalSet}: ${goalToStart}` }]);
-      if (busy) { setPrompt(""); return; }
+      if (busy) { clearCommandText(); return; }
     }
-    const content = goalToStart || messageText || (sendAttachments.length ? t.attachmentPrompt : ""); if (!content || !workspace) return;
+    const outgoing = captureSubmission(source);
+    const content = goalToStart || messageText || (outgoing.hasAttachments ? t.attachmentPrompt : ""); if (!content || !workspace) return;
     // 普通输入不是审批决定或工具提问的答案。恢复现有入口，并保留草稿。
     if (!typed.startsWith("/") && visibleHumanGates.length) {
       const feedback = runningInputFeedback(runtimeActivity, sessionId, language);
@@ -1740,14 +1855,12 @@ export function App() {
       return;
     }
     // 采用过的建议在真正发出去这一刻结算：原样 / 改过 / 重写由服务端判定。
-    inputSuggestion.settleSent(messageText);
+    if (fromComposer) inputSuggestion.settleSent(messageText);
     // 旧 steer 仅内存入箱且无幂等键；保留 Runtime 持久队列，不能把入队说成模型已读。
-    if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content); return; }
+    if (busy || selectedSession?.active || activeRuntimeSessionId === sessionId && Boolean(sessionId)) { await enqueueDraft(content, source); return; }
     setSubmissionNotice(null);
     const activeGoal = goalToStart || (goalEnabled ? goal : "");
     const harnessPrompt = activeGoal && content !== "/compress" ? `<goal>\n${activeGoal}\n</goal>\nContinue until this goal is genuinely complete.\n\n${content}` : content;
-    const outgoingAttachments = sendAttachments;
-    const outgoingPrompt = prompt;
     // 新会话第一条消息顺便把开局选好的模型与档位带上：会话是这条消息建的，
     // 不带上它们就只能等建好之后再补一次，中间那一轮已经按默认跑掉了。
     const draftChoices = sessionId ? {} : {
@@ -1757,18 +1870,19 @@ export function App() {
       // 升到完全访问要在请求里显式确认；面板上的勾选就是那次确认。
       approval_confirm: approvalMode ? isDangerousAccess(approvalMode) : false,
     };
-    const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoingAttachments.map(attachmentPayload), ...draftChoices };
+    const payload = { prompt: harnessPrompt, session_id: sessionId || null, workspace, language, attachments: outgoing.attachments, ...draftChoices };
     const fingerprint = JSON.stringify(payload);
-    if (draftSendRequest.current?.fingerprint !== fingerprint) draftSendRequest.current = { fingerprint, id: createRequestId() };
-    const requestBody = JSON.stringify({ ...payload, request_id: draftSendRequest.current?.id });
-    if (new TextEncoder().encode(requestBody).length > MAX_CHAT_BODY_BYTES) { setError(attachmentText("batchTooLarge", language)); return; }
+    const request = outgoing.request.current?.fingerprint === fingerprint ? outgoing.request.current : { fingerprint, id: createRequestId() };
+    const requestBody = JSON.stringify({ ...payload, request_id: request.id });
+    if (!chatBodyFits(requestBody)) { setError(attachmentText("batchTooLarge", language)); return; }
+    outgoing.request.current = request;
     const runId = nextId("run"); const controller = new AbortController(); abortRef.current = controller;
     const startedAt = Date.now();
     activeRunRef.current = runId;
     followBottomRef.current = true;
     setError(""); setRuntimeFailure(null); setActivity(t.thinking); setBusy(true);
     inputSuggestion.clear();
-    setChat((current) => [...current, { id: nextId("user"), role: "user", content: `${content}${outgoingAttachments.length ? `\n[${outgoingAttachments.length} ${t.attachmentCount}]` : ""}` }, { id: runId, role: "activity", content: "", steps: [] }]);
+    setChat((current) => [...current, { id: nextId("user"), role: "user", content: `${content}${outgoing.hasAttachments ? `\n[${outgoing.attachments.length} ${t.attachmentCount}]` : ""}` }, { id: runId, role: "activity", content: "", steps: [] }]);
     let terminalFailure = false;
     let terminalFailureMessage = "";
     try {
@@ -1779,9 +1893,8 @@ export function App() {
       let terminal = false;
       await readEventStream<RuntimeStreamEvent>(response, async (event) => {
         if (event.type === "submitted" && event.turn_id) {
-          draftSendRequest.current = null;
-          if (override === undefined) setPrompt((current) => current === outgoingPrompt ? "" : current);
-          if (attachmentsRef.current === outgoingAttachments) setAttachments([]);
+          if (outgoing.request.current === request) outgoing.request.current = null;
+          outgoing.accepted();
         }
         if (event.session_id) completedSessionId = event.session_id;
         if (event.turn_id) completedTurnId = event.turn_id;
@@ -1874,7 +1987,17 @@ export function App() {
   if (rail.kind === "center") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">
       {railNav}
-      <PluginCenter plugins={plugins} failures={pluginFailures} messages={t} onChanged={() => setPluginReloadToken((current) => current + 1)} />
+      <PluginCenter
+        plugins={pluginReviewQuery.data?.plugins ?? plugins}
+        failures={pluginReviewQuery.data?.failures ?? pluginFailures}
+        messages={t}
+        reviewAvailable={pluginReviewQuery.isSuccess && !pluginReviewQuery.isFetching}
+        reviewFetching={pluginReviewQuery.isFetching}
+        onChanged={async () => {
+          refreshPluginViews();
+          await pluginReviewQuery.refetch();
+        }}
+      />
       {pluginOverlays}
     </Flex></Box>;
   }
@@ -2156,11 +2279,18 @@ export function App() {
         {busy && needsActivityStrip(activity || t.thinking, chat.find((message) => message.id === activeRunRef.current)?.steps ?? [], t.thinking) && <Flex className="thinking-strip"><Box className="thinking-pulse" /><Text title={activity}>{activity || t.thinking}</Text></Flex>}
         {commandMatches.length > 0 && <Box className="suggestions"><Text className="suggestion-title">{t.commands}</Text>{commandMatches.map((command) => <button key={command} type="button" onMouseDown={(event) => { event.preventDefault(); if (command === "/permissions" || command === "/model") void send(command); else setPrompt(command); }}>{command}</button>)}</Box>}
         {skillQuery !== undefined && !skillPickerDismissed && <Box className="suggestions"><Text className="suggestion-title">{t.skills}</Text><Input className="skill-search" size="sm" value={skillSearch} onChange={(event) => setSkillSearch(event.target.value)} placeholder={t.searchSkills} aria-label={t.searchSkills} />{skillMatches.length ? skillMatches.map((skill, index) => <button key={skill.identifier} type="button" aria-selected={index === skillSelected} onMouseDown={(event) => { event.preventDefault(); chooseSkill(skill); }}><strong>${skill.identifier}</strong><small>{skill.name} · {skill.description}</small></button>) : <Text className="suggestion-empty">{t.noSkills}</Text>}</Box>}
-        {enqueueButton.visible && <button type="button" className="queue-enqueue" title={enqueueButton.enabled ? queueText("enqueue", language) : queueText("enqueueNeedsSession", language)} disabled={!enqueueButton.enabled} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
+        {enqueueButton.visible && <button type="button" className="queue-enqueue" title={enqueueButton.enabled ? queueText("enqueue", language) : queueText("enqueueNeedsSession", language)} disabled={!enqueueButton.enabled || readingFiles} onClick={() => { void enqueueDraft(); }}><ListPlus size={15} />{queueText("enqueue", language)}</button>}
         <AttachmentManager items={attachments} onChange={setAttachments} language={language} />
+        {fileUploadError && <Text role="alert" className="composer-file-error">{fileUploadError}</Text>}
+        <ComposerReferenceChips items={draftReferences} messages={t} remove={(id) => { removeReference(id); focusComposer(); }} />
         {ghostSuggestion && <Box className="input-suggestion" aria-hidden="true" pt={attachments.length ? "2" : "4"}><Text as="span">{ghostSuggestion}</Text><Text as="span" className="input-suggestion-hint">{t.inputSuggestionAccept}</Text></Box>}
-        <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value); setComposerCursor(event.target.selectionStart); setSkillPickerDismissed(false); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; setComposerCursor(field.selectionStart); setSkillPickerDismissed(false); if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
+        <Textarea ref={promptRef} value={prompt} onPaste={handlePaste} onChange={(event) => { setPrompt(event.target.value, event.target.selectionEnd); setComposerCursor(event.target.selectionStart); setSkillPickerDismissed(false); references.update(event.target.value, event.target.selectionStart); }} onSelect={(event) => { const field = event.currentTarget; setComposerCursor(field.selectionStart); setSkillPickerDismissed(false); if (!references.query || field.selectionStart !== references.query.cursor) references.update(field.value, field.selectionStart); }} onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
+          if (event.key === "Backspace" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            const field = event.currentTarget;
+            const selected = backspaceDraftReference(composerDraft, field.selectionStart, field.selectionEnd);
+            if (selected) { event.preventDefault(); removeReference(selected.id); return; }
+          }
           if (skillMention && !skillPickerDismissed) {
             if (event.key === "Escape") { event.preventDefault(); setSkillPickerDismissed(true); setSkillSearch(""); return; }
             if (skillMatches.length && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
@@ -2189,23 +2319,21 @@ export function App() {
           // ⌘Enter（macOS）与 Ctrl+Enter 都是「先入队、以后再发」，普通 Enter 仍立即发送。
           if (event.key === "Enter" && !event.shiftKey && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void enqueueDraft(); return; }
           if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
-        }} aria-description={ghostSuggestion ? `${ghostSuggestion} · ${t.inputSuggestionAccept}` : undefined} placeholder={ghostSuggestion ? "" : busy ? t.steerPlaceholder : t.promptPlaceholder} minH="104px" maxH="240px" resize="vertical" border="0" outline="none" lineHeight="1.5" _focus={{ boxShadow: "none", outline: "none" }} _focusVisible={{ boxShadow: "none", outline: "none" }} px="4" pt={attachments.length ? "2" : "4"} pb="12" />
-        {composerEntries.length > 0 && (
-          <button
-            type="button"
-            className="composer-more"
-            title={t.pluginComposerMore}
-            aria-label={t.pluginComposerMore}
+        }} aria-description={ghostSuggestion ? `${ghostSuggestion} · ${t.inputSuggestionAccept}` : undefined} placeholder={ghostSuggestion ? "" : busy ? t.steerPlaceholder : t.promptPlaceholder} minH="104px" maxH="240px" resize="vertical" border="0" outline="none" lineHeight="1.5" _focus={{ boxShadow: "none", outline: "none" }} _focusVisible={{ boxShadow: "none", outline: "none" }} px="4" pt={attachments.length || draftReferences.length ? "2" : "4"} pb="12" />
+        <input ref={fileInputRef} type="file" accept={COMPOSER_FILE_ACCEPT} multiple hidden onChange={(event) => void attachSelectedFiles(event)} />
+        <div className="composer-tools">
+          <button type="button" className="composer-tool" title={t.composerAddFiles} aria-label={t.composerAddFiles}
+            disabled={readingFiles || attachments.length >= MAX_ATTACHMENTS || selectedSession?.archived}
+            onClick={() => fileInputRef.current?.click()}><Plus size={17} aria-hidden="true" /></button>
+          {composerEntries.length > 0 && <button type="button" className="composer-tool" title={t.pluginComposerMore} aria-label={t.pluginComposerMore}
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
               setPopup({ entries: composerEntries, x: rect.left, y: rect.top - 8, args: {} });
-            }}
-          >
-            <SfIcon name="sf:plus.circle" size={16} />
-          </button>
-        )}
-        <Text className={`send-hint ${busy ? "busy" : "idle"}`}>{busy ? attachments.length ? queueText("composerHint", language) : t.hintBusy : t.hintIdle}</Text>
-        <Button aria-label={busy ? t.stop : t.send} title={busy ? t.stop : t.send} className={`send-button ${busy ? "stop" : ""}`} onClick={busy ? () => void stop() : () => void send()} disabled={!busy && ((!prompt.trim() && !attachments.length) || selectedSession?.archived)}>{busy ? <Box className="stop-icon" /> : <Text className="send-icon">↑</Text>}</Button>
+            }}><Ellipsis size={17} aria-hidden="true" /></button>}
+          {readingFiles ? <Text role="status" className="composer-file-status">{t.composerReadingFiles}</Text>
+            : <Text className={`send-hint ${busy ? "busy" : "idle"}`}>{busy ? attachments.length ? queueText("composerHint", language) : t.hintBusy : t.hintIdle}</Text>}
+        </div>
+        <Button aria-label={busy ? t.stop : t.send} title={busy ? t.stop : t.send} className={`send-button ${busy ? "stop" : ""}`} onClick={busy ? () => void stop() : () => void send()} disabled={!busy && (!hasComposerDraft || readingFiles || selectedSession?.archived)}>{busy ? <Box className="stop-icon" /> : <Text className="send-icon">↑</Text>}</Button>
       </Box>
       <div className="composer-control-row">
         <div className="composer-control-items">

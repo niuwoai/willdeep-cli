@@ -103,7 +103,52 @@
 .chat-workspace .composer-shell textarea { font-size: 14px; }
 .chat-workspace .composer-shell textarea::placeholder { color: var(--text-faint); opacity: 1; }
 .chat-workspace .send-button { border-radius: 11px !important; }
-.chat-workspace .send-hint { color: var(--text-dim); font-size: 10px; }
+.composer-tools {
+  position: absolute;
+  inset-inline-start: 10px;
+  inset-inline-end: 54px;
+  bottom: 9px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.composer-tool {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-raised);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.composer-tool:not(:disabled):hover { background: var(--bg-panel-hover); color: var(--text); }
+.composer-tool:disabled { opacity: .5; cursor: default; }
+.composer-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.composer-tools .send-hint, .composer-file-status {
+  position: static;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-file-error {
+  margin: 8px 16px 0;
+  max-height: 6em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  color: var(--danger-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .composer-control-row { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 4px 0; }
 .composer-control-items { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .composer-control-row .conversation-permissions { position: relative; }

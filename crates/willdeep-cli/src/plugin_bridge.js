@@ -15,6 +15,22 @@
   var PENDING = Object.create(null);
   var HOST = window.parent;
 
+  // Desktop's injected base resolves imports against the asset URL. Keep local
+  // fragment navigation on the current document, including dynamically added links.
+  if (window.__WILLDEEP_ASSET_BASE__) {
+    window.addEventListener('click', function (event) {
+      if (event.defaultPrevented || event.button !== 0 || event.altKey ||
+          event.ctrlKey || event.metaKey || event.shiftKey) return;
+      var link = event.target instanceof Element && event.target.closest('a[href], area[href]');
+      if (!link || link.hasAttribute('download')) return;
+      var target = link.getAttribute('target') || '_self';
+      var href = link.getAttribute('href').trim();
+      if (target.toLowerCase() !== '_self' || href.charAt(0) !== '#') return;
+      event.preventDefault();
+      window.location.assign(window.location.href.split('#')[0] + href);
+    });
+  }
+
   function newRequestID() {
     if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
     return String(Date.now()) + '-' + String(Math.random()).slice(2);

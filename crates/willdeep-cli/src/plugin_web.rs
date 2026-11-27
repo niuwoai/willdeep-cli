@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
 use willdeep_core::plugin::{
     ApprovalGap, CommandOutcome, HostError, PluginHost, PluginPermission, PluginSource,
-    qualified_destination,
+    qualified_destination, registry::PluginApprovalReview,
 };
 use willdeep_core::{Message, build_provider};
 
@@ -44,7 +44,10 @@ const MAX_AI_OUTPUT_TOKENS: u32 = 4_096;
 
 const BRIDGE_SCRIPT: &str = include_str!("plugin_bridge.js");
 
+pub(crate) mod desktop_assets;
+
 pub(crate) struct PluginWebState {
+    desktop_assets: Option<desktop_assets::DesktopAssets>,
     /// 惰性插件宿主。Web 启动时不再抢在 `TcpListener::bind` 之前安装内置插件、
     /// 扫描插件包或启动网关；这些工作在首个真正用到插件的请求里由
     /// [`Self::host`] 一次性完成，`/health` 因此可以先随服务可达。
@@ -78,7 +81,13 @@ impl PluginWebState {
     ) -> Self {
         let cell = OnceCell::new();
         let _ = cell.set(host);
-        Self::with_host_cell(cell, config_path, home, workspaces)
+        Self::with_host_cell(cell, config_path, home, workspaces, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_desktop_assets(mut self) -> Self {
+        self.desktop_assets = Some(desktop_assets::DesktopAssets::default());
+        self
     }
 
     /// Web 启动路径：构造时**不做**任何插件工作。端口可以先绑、`/health`
@@ -87,8 +96,9 @@ impl PluginWebState {
         config_path: PathBuf,
         home: PathBuf,
         workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+        desktop_mode: bool,
     ) -> Self {
-        Self::with_host_cell(OnceCell::new(), config_path, home, workspaces)
+        Self::with_host_cell(OnceCell::new(), config_path, home, workspaces, desktop_mode)
     }
 
     fn with_host_cell(
@@ -96,8 +106,10 @@ impl PluginWebState {
         config_path: PathBuf,
         home: PathBuf,
         workspaces: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+        desktop_mode: bool,
     ) -> Self {
         Self {
+            desktop_assets: desktop_mode.then(desktop_assets::DesktopAssets::default),
             host,
             config_path,
             home,
@@ -109,8 +121,8 @@ impl PluginWebState {
     }
 
     /// 插件宿主的惰性访问器。第一次调用依次完成：
-    /// 1. 安装随包分发的 favorites / video-studio（已装时是快速路径）；
-    /// 2. `PluginHost::discover` 扫描共享、草案与 Codex 缓存；
+    /// 1. 安装随包分发的 favorites、video-studio 和用量统计插件；
+    /// 2. `PluginHost::discover_live` 扫描共享、草案与 Codex 缓存；
     /// 3. 启动插件 MCP 网关。
     ///
     /// `OnceCell::get_or_try_init` 保证同一时刻只有一个任务执行初始化，其余
@@ -138,7 +150,7 @@ impl PluginWebState {
                 {
                     eprintln!("warning: token_stats_install_failed error={error:#}");
                 }
-                let host = PluginHost::discover(&self.home).map_err(|error| {
+                let host = PluginHost::discover_live(&self.home).map_err(|error| {
                     PluginWebError::Internal(format!("plugin host unavailable: {error}"))
                 })?;
                 let host = Arc::new(host);
@@ -398,6 +410,8 @@ struct PluginsResponse {
 struct LocaleQuery {
     #[serde(default)]
     locale: Option<String>,
+    #[serde(default)]
+    review: bool,
 }
 
 fn gap_view(gap: ApprovalGap) -> ApprovalGapView {
@@ -417,14 +431,49 @@ async fn list_plugins(
     State(state): State<Arc<PluginWebState>>,
     Query(query): Query<LocaleQuery>,
 ) -> Result<Json<PluginsResponse>, PluginWebError> {
-    let locale = query.locale.as_deref().unwrap_or("en");
     let host = state.host().await?;
+    tokio::task::spawn_blocking(move || plugin_views(&host, query))
+        .await
+        .map_err(|error| PluginWebError::Internal(format!("plugin listing failed: {error}")))?
+        .map(Json)
+}
+
+fn plugin_views(host: &PluginHost, query: LocaleQuery) -> Result<PluginsResponse, PluginWebError> {
+    let locale = query.locale.as_deref().unwrap_or("en");
+    let registry = host.registry_snapshot().map_err(HostError::from)?;
+    let (packages, failures) = if query.review {
+        host.packages_for_review()
+    } else {
+        (host.packages(), host.failures())
+    };
     let mut plugins = Vec::new();
-    for package in host.packages() {
-        let enabled = host.is_enabled(&package.id).await;
-        let gap = host.approval_gap_preview(&package.id).await?;
-        let never_approved = matches!(gap, Some(ApprovalGap::NeverApproved));
-        let stored_settings = package_settings(&host, package).await;
+    for package in packages {
+        let plugin_state = registry.state(&package.id);
+        let (gap, digest) = if query.review {
+            match package.digest_with_contents(|_, _| {}) {
+                Ok(digest) => (
+                    registry.reviewed_approval_gap(&package, &digest),
+                    Some(digest),
+                ),
+                Err(error) => {
+                    eprintln!(
+                        "warning: plugin_review_unavailable plugin={} error={error}",
+                        package.id
+                    );
+                    (Ok(Some(ApprovalGap::DigestChanged)), None)
+                }
+            }
+        } else {
+            let gap = registry.approval_gap_preview(&package);
+            let digest = if matches!(&gap, Ok(None)) {
+                package.cached_digest().ok()
+            } else {
+                None
+            };
+            (gap, digest)
+        };
+        let gap = gap.map_err(HostError::from)?;
+        let enabled = plugin_state.is_some_and(|state| state.enabled);
         let manifest = package.manifest.as_ref();
 
         let commands: Vec<PluginCommandView> = manifest
@@ -465,13 +514,13 @@ async fn list_plugins(
                 .map(|page| page.runtime.as_str().to_owned())
                 .unwrap_or_else(|| "unknown".to_owned());
             let page_url = page.and_then(|page| {
-                page.entry_path.as_ref().map(|entry| {
-                    format!(
-                        "/plugin-host/{}/{}",
-                        urlencoding(&package.id),
-                        entry.trim_start_matches('/')
-                    )
-                })
+                let entry = package_url_path(page.entry_path.as_deref()?)?;
+                let entry = entry
+                    .split('/')
+                    .map(urlencoding)
+                    .collect::<Vec<_>>()
+                    .join("/");
+                Some(format!("/plugin-host/{}/{entry}", urlencoding(&package.id)))
             });
             let sidebar = destination
                 .companion_sidebar
@@ -503,7 +552,7 @@ async fn list_plugins(
                     })
                     .collect(),
                 default_pinned: destination.default_pinned,
-                pinned_order: host.pinned_order(&package.id).await,
+                pinned_order: plugin_state.and_then(|state| state.pinned_order),
             });
         }
 
@@ -513,12 +562,19 @@ async fn list_plugins(
                     .settings
                     .iter()
                     .map(|setting| {
-                        let stored = stored_settings.get(&setting.id).cloned();
-                        let is_secret =
-                            setting.setting_type == willdeep_core::plugin::SettingType::Secret;
+                        let stored = plugin_state
+                            .and_then(|state| state.settings.get(&setting.id))
+                            .cloned();
+                        let is_secret = registry.setting_is_secret(&package, &setting.id);
                         PluginSettingView {
                             id: setting.id.clone(),
-                            setting_type: setting.setting_type.as_str().to_owned(),
+                            setting_type: if is_secret {
+                                willdeep_core::plugin::SettingType::Secret
+                            } else {
+                                setting.setting_type
+                            }
+                            .as_str()
+                            .to_owned(),
                             title: package.localized(&setting.title_key, locale),
                             description: setting
                                 .description_key
@@ -560,7 +616,7 @@ async fn list_plugins(
                         .collect()
                 })
                 .unwrap_or_default(),
-            inferred_permissions: willdeep_core::plugin::registry::inferred_permissions(package)
+            inferred_permissions: willdeep_core::plugin::registry::inferred_permissions(&package)
                 .into_iter()
                 .map(|item| item.as_str().to_owned())
                 .collect(),
@@ -601,41 +657,19 @@ async fn list_plugins(
                         .collect()
                 })
                 .unwrap_or_default(),
-            // 仅展示缓存预览；未审批包不读取 payload，实际操作另做权威校验。
-            digest: if never_approved {
-                None
-            } else {
-                package.cached_digest().ok()
-            },
+            digest,
         });
     }
-    Ok(Json(PluginsResponse {
+    Ok(PluginsResponse {
         plugins,
-        failures: host
-            .failures()
-            .iter()
+        failures: failures
+            .into_iter()
             .map(|failure| PluginFailureView {
                 path: failure.path.display().to_string(),
-                reason: failure.reason.clone(),
+                reason: failure.reason,
             })
             .collect(),
-    }))
-}
-
-async fn package_settings(
-    host: &PluginHost,
-    package: &willdeep_core::plugin::PluginPackage,
-) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let Some(manifest) = &package.manifest else {
-        return out;
-    };
-    for setting in &manifest.settings {
-        if let Some(value) = host.setting(&package.id, &setting.id).await {
-            out.insert(setting.id.clone(), value);
-        }
-    }
-    out
+    })
 }
 
 // ---------------------------------------------------------------- 生命周期
@@ -654,9 +688,11 @@ struct EnabledResponse {
 async fn approve_plugin(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
+    Json(review): Json<PluginApprovalReview>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.approve(&plugin, now_seconds()).await?;
+    host.approve_reviewed(&plugin, review, now_seconds())
+        .await?;
     Ok(Json(json!({"approved": true})))
 }
 
@@ -796,11 +832,13 @@ async fn sidebar_document(
     Query(query): Query<LocaleQuery>,
 ) -> Result<Json<SidebarResponse>, PluginWebError> {
     let host = state.host().await?;
-    let (document, degraded) = host.sidebar_document(&plugin, &sidebar).await?;
     let package = host.package(&plugin)?;
+    let (document, degraded) = host
+        .sidebar_document_for_package(&package, &sidebar)
+        .await?;
     let locale = query.locale.as_deref().unwrap_or("en");
     Ok(Json(SidebarResponse {
-        strings: collect_strings(&document.to_value(), package, locale),
+        strings: collect_strings(&document.to_value(), &package, locale),
         document: document.to_value(),
         degraded,
     }))
@@ -874,13 +912,19 @@ async fn execute_command(
     // 然后一直等到超时。浏览器选好、上传落地之后，宿主要么直接合成那个
     // 工具本该返回的结果，要么带着 `path` 把调用转给它（见 `PickerDelivery`）。
     let host = state.host().await?;
-    let picker = command_file_picker(host.package(&plugin)?, &plugin, &command);
+    let package = host.approved_package(&plugin)?;
+    let picker = command_file_picker(&package, &plugin, &command);
     let outcome = match picker {
         Some(picker) if picker.delivery == PickerDelivery::Synthesize => {
             return Ok(Json(file_picker_response(&state, &plugin, &arguments)?));
         }
-        Some(picker) => forward_picked_file(&state, &plugin, &command, arguments, picker).await?,
-        None => host.execute_command(&plugin, &command, arguments).await?,
+        Some(picker) => {
+            forward_picked_file(&state, &host, package, &command, arguments, picker).await?
+        }
+        None => {
+            host.execute_command_for_package(package, &command, arguments)
+                .await?
+        }
     };
     Ok(Json(match outcome {
         CommandOutcome::Host(action) => CommandResponse {
@@ -930,7 +974,7 @@ async fn call_plugin_tool(
             server: request.server.clone(),
         }));
     }
-    let mcp = host.mcp(&plugin).await?;
+    let mcp = host.mcp_for_package(package).await?;
     let arguments = if request.arguments.is_null() {
         json!({})
     } else {
@@ -962,7 +1006,7 @@ async fn read_plugin_resource(
             server: request.server.clone(),
         }));
     }
-    let mcp = host.mcp(&plugin).await?;
+    let mcp = host.mcp_for_package(package).await?;
     Ok(Json(
         mcp.read_resource(&request.server, &request.uri)
             .await
@@ -1148,7 +1192,7 @@ async fn ai_complete(
     Json(request): Json<AiCompleteRequest>,
 ) -> Result<Json<Value>, PluginWebError> {
     let plugin_host = state.host().await?;
-    plugin_host.permits(&plugin, PluginPermission::AiChat)?;
+    let package = plugin_host.permitted_package(&plugin, PluginPermission::AiChat)?;
     let host = crate::plugin_capabilities::PluginAiHost {
         home: &state.home,
         config_path: &state.config_path,
@@ -1161,7 +1205,19 @@ async fn ai_complete(
             .clone(),
     };
     let permits = |permission: PluginPermission| -> Result<(), PluginWebError> {
-        plugin_host.permits(&plugin, permission).map_err(Into::into)
+        if package
+            .manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.permissions.contains(&permission))
+        {
+            Ok(())
+        } else {
+            Err(HostError::PermissionDenied {
+                plugin: plugin.clone(),
+                permission: permission.as_str().to_owned(),
+            }
+            .into())
+        }
     };
     complete(&host, &plugin, request, &permits, Some(&state.ai_streams))
         .await
@@ -1475,7 +1531,7 @@ async fn read_plugin_storage(
     Query(query): Query<StorageQuery>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.package(&plugin)?;
+    host.approved_package(&plugin)?;
     let data = read_storage(&state.home, &plugin);
     match query.key {
         Some(key) => {
@@ -1501,8 +1557,8 @@ async fn write_plugin_storage(
     Json(request): Json<StorageWrite>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.package(&plugin)?;
     let _guard = state.storage_lock.lock().await;
+    host.approved_package(&plugin)?;
     let mut data = read_storage(&state.home, &plugin);
     let structured = request.scope.as_deref() == Some("store");
     let key = if structured {
@@ -1537,8 +1593,8 @@ async fn clear_plugin_storage(
     Path(plugin): Path<String>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.package(&plugin)?;
     let _guard = state.storage_lock.lock().await;
+    host.approved_package(&plugin)?;
     write_storage(&state.home, &plugin, &BTreeMap::new())?;
     Ok(Json(json!({"cleared": true})))
 }
@@ -1690,12 +1746,14 @@ fn is_forwardable_upload(path: &FsPath, picker: &FilePickerTool) -> bool {
 /// 转交型选文件：把上传件的服务端路径作为 `path` 参数交给原工具。
 async fn forward_picked_file(
     state: &PluginWebState,
-    plugin: &str,
+    host: &PluginHost,
+    package: Arc<willdeep_core::plugin::PluginPackage>,
     command: &str,
     mut arguments: Value,
     picker: &FilePickerTool,
 ) -> Result<CommandOutcome, PluginWebError> {
-    let upload = uploaded_selection(state, plugin, &arguments)?;
+    let plugin = package.id.clone();
+    let upload = uploaded_selection(state, &plugin, &arguments)?;
     if !is_forwardable_upload(&upload, picker) {
         return Err(PluginWebError::BadRequest("invalidSelection".to_owned()));
     }
@@ -1703,10 +1761,8 @@ async fn forward_picked_file(
         .as_object_mut()
         .ok_or_else(|| PluginWebError::BadRequest("invalidArguments".to_owned()))?
         .insert("path".to_owned(), json!(upload.display().to_string()));
-    let outcome = state
-        .host()
-        .await?
-        .execute_command(plugin, command, arguments)
+    let outcome = host
+        .execute_command_for_package(package, command, arguments)
         .await;
     if let Err(error) = tokio::fs::remove_file(&upload).await {
         eprintln!(
@@ -1758,8 +1814,8 @@ async fn upload_plugin_file(
     body: Body,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    let package = host.package(&plugin)?;
-    let picker = command_file_picker(package, &plugin, &query.command)
+    let package = host.approved_package(&plugin)?;
+    let picker = command_file_picker(&package, &plugin, &query.command)
         .ok_or_else(|| PluginWebError::BadRequest("notFilePicker".to_owned()))?;
     let extension = upload_extension(&query.name, picker)
         .ok_or_else(|| PluginWebError::BadRequest("unsupportedFileType".to_owned()))?;
@@ -1876,15 +1932,19 @@ async fn serve_plugin_media(
 /// 所以这里用请求 Host 推出来的显式 origin。`connect-src 'none'` 是关键的一条：
 /// 页面因此够不着任何网络端点，包括宿主自己的 API——想让宿主做事只能走 bridge。
 fn content_security_policy(origin: &str) -> String {
+    content_security_policy_for(origin, origin, "'none'", "")
+}
+
+fn content_security_policy_for(assets: &str, media: &str, base: &str, extra: &str) -> String {
     format!(
         "default-src 'none'; \
-         script-src {origin} 'unsafe-inline' blob: data:; \
-         style-src {origin} 'unsafe-inline' blob: data:; \
-         img-src {origin} data: blob:; \
-         font-src {origin} data: blob:; \
-         media-src {origin} data: blob:; \
+         script-src {assets} 'unsafe-inline' blob: data:; \
+         style-src {assets} 'unsafe-inline' blob: data:; \
+         img-src {media} data: blob:; \
+         font-src {assets} data: blob:; \
+         media-src {media} data: blob:; \
          connect-src 'none'; frame-src 'none'; child-src 'none'; \
-         object-src 'none'; base-uri 'none'; form-action 'none'"
+         object-src 'none'; base-uri {base}; form-action 'none'{extra}"
     )
 }
 
@@ -1915,14 +1975,19 @@ fn request_origin(headers: &HeaderMap) -> String {
 }
 
 fn html_response(body: String, headers: &HeaderMap) -> Response {
+    html_response_with_policy(
+        body,
+        headers,
+        content_security_policy(&request_origin(headers)),
+    )
+}
+
+fn html_response_with_policy(body: String, headers: &HeaderMap, policy: String) -> Response {
     let mut response = (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (
-                header::CONTENT_SECURITY_POLICY,
-                content_security_policy(&request_origin(headers)),
-            ),
+            (header::CONTENT_SECURITY_POLICY, policy),
             (header::CACHE_CONTROL, "no-store".to_owned()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
         ],
@@ -1959,6 +2024,14 @@ a { color: var(--willdeep-accent); }\n\
 </style>";
 
 fn compose_page(source: &str, storage: &BTreeMap<String, String>) -> String {
+    compose_page_with_base(source, storage, None)
+}
+
+fn compose_page_with_base(
+    source: &str,
+    storage: &BTreeMap<String, String>,
+    base: Option<&str>,
+) -> String {
     // 只把垫片自己的键注进快照：结构化存储走异步 API，塞进 localStorage
     // 快照只会让同名的两份数据互相打架。
     let shim: BTreeMap<&str, &str> = storage
@@ -1967,8 +2040,11 @@ fn compose_page(source: &str, storage: &BTreeMap<String, String>) -> String {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
     let storage_json = serde_json::to_string(&shim).unwrap_or_else(|_| "{}".to_owned());
+    let base_tag = base.map_or_else(String::new, |base| {
+        format!("<base href=\"{base}\"><script>window.__WILLDEEP_ASSET_BASE__ = true;</script>")
+    });
     let bootstrap = format!(
-        "{DEFAULT_THEME_STYLE}\n<script>window.__WILLDEEP_STORAGE__ = {storage_json};</script>\n<script>{BRIDGE_SCRIPT}</script>"
+        "{base_tag}{DEFAULT_THEME_STYLE}\n<script>window.__WILLDEEP_STORAGE__ = {storage_json};</script>\n<script>{BRIDGE_SCRIPT}</script>"
     );
     let lowered = source.to_ascii_lowercase();
     if let Some(start) = lowered.find("<head")
@@ -2002,11 +2078,14 @@ async fn serve_plugin_asset(
     headers: HeaderMap,
 ) -> Result<Response, PluginWebError> {
     let host = state.host().await?;
-    // 停用的插件连静态资源都不给：一个被停掉的插件不该还能在页面里活着。
-    if !host.is_enabled(&plugin).await {
-        return Err(PluginWebError::Host(HostError::NotEnabled(plugin)));
+    if let Some(assets) = &state.desktop_assets {
+        let package = host.package(&plugin)?;
+        if mime_for(&path).starts_with("image/") {
+            return desktop_assets::navigation_icon(&host, package, &path).await;
+        }
+        return desktop_assets::page(&state, assets, &host, package, &path, &headers).await;
     }
-    let package = host.package(&plugin)?;
+    let package = host.approved_package(&plugin)?;
     let bytes = package
         .read_resource(&path, willdeep_core::plugin::package::MAX_PAGE_BYTES)
         .map_err(|error| PluginWebError::Host(HostError::Package(error)))?;
@@ -2068,14 +2147,29 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
+fn package_url_path(path: &str) -> Option<String> {
+    if path.contains(['\\', ':']) || path.starts_with('/') {
+        return None;
+    }
+    let parts: Vec<_> = path.split('/').filter(|part| *part != ".").collect();
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || part.starts_with('.'))
+    {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
 fn urlencoding(value: &str) -> String {
     value
-        .chars()
+        .bytes()
         .map(|item| {
-            if item.is_ascii_alphanumeric() || matches!(item, '-' | '_' | '.' | '~') {
-                item.to_string()
+            if item.is_ascii_alphanumeric() || matches!(item, b'-' | b'_' | b'.' | b'~') {
+                char::from(item).to_string()
             } else {
-                format!("%{:02X}", item as u32)
+                format!("%{item:02X}")
             }
         })
         .collect()
@@ -2125,7 +2219,7 @@ impl IntoResponse for PluginWebError {
             Self::Host(HostError::UnknownContribution { .. }) => {
                 (StatusCode::NOT_FOUND, "unknown contribution".to_owned())
             }
-            Self::Host(error @ HostError::NotEnabled(_)) => {
+            Self::Host(error @ (HostError::NotEnabled(_) | HostError::PluginChanged(_))) => {
                 (StatusCode::CONFLICT, error.to_string())
             }
             Self::Host(error @ HostError::PermissionDenied { .. }) => {
@@ -2149,6 +2243,111 @@ fn configure_metered_request(config: &mut willdeep_core::provider::ProviderConfi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn approval_accepts_only_the_reviewed_package() {
+        const ID: &str = "approval-fixture";
+        const MANIFEST: &str = ".codex-plugin/plugin.json";
+        let home = std::env::temp_dir().join(format!("plugin-review-{}", uuid::Uuid::new_v4()));
+        let package = PluginHost::shared_root(&home).join(ID).join("1.0.0");
+        std::fs::create_dir_all(package.join(".codex-plugin")).unwrap();
+        std::fs::write(
+            package.join(MANIFEST),
+            r#"{"name":"approval-fixture","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let content = package.join("readme.txt");
+        std::fs::write(&content, "initial content").unwrap();
+        let host = Arc::new(PluginHost::discover(&home).unwrap());
+        let state = Arc::new(PluginWebState::new(
+            host.clone(),
+            home.join("config.toml"),
+            home.clone(),
+            Arc::new(std::sync::RwLock::new(Vec::new())),
+        ));
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server =
+            tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let review = || async {
+            let response: Value = client
+                .get(format!("{origin}/api/plugins?locale=en&review=true"))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let plugin = &response["plugins"][0];
+            assert_eq!(plugin["id"], ID);
+            json!({"version": plugin["version"], "source": plugin["source"], "digest": plugin["digest"]})
+        };
+        let approve = |body: Value| {
+            let request = client
+                .post(format!("{origin}/api/plugins/{ID}/approve"))
+                .json(&body);
+            async move { request.send().await.unwrap().status() }
+        };
+        let saved = || {
+            host.registry_snapshot()
+                .unwrap()
+                .state(ID)
+                .and_then(|state| state.approval.clone())
+        };
+
+        let initial = review().await;
+        for field in ["version", "source", "digest"] {
+            let mut incomplete = initial.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert_eq!(approve(incomplete).await, StatusCode::UNPROCESSABLE_ENTITY);
+            assert_eq!(saved(), None);
+        }
+        assert_eq!(approve(initial.clone()).await, StatusCode::OK);
+        let approved = saved().unwrap();
+        assert_eq!(approved.digest, initial["digest"].as_str().unwrap());
+
+        std::fs::write(&content, "changed content").unwrap();
+        assert_eq!(approve(initial.clone()).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let changed = review().await;
+        assert_ne!(changed["digest"], initial["digest"]);
+
+        let draft = PluginHost::draft_root(&home).join(ID);
+        std::fs::create_dir_all(draft.parent().unwrap()).unwrap();
+        std::fs::rename(&package, &draft).unwrap();
+        assert_eq!(approve(changed.clone()).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let moved = review().await;
+        assert_eq!(moved["source"], "draft");
+        assert_eq!(moved["digest"], changed["digest"]);
+
+        std::fs::write(
+            draft.join(MANIFEST),
+            r#"{"name":"approval-fixture","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(approve(moved).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let upgraded = review().await;
+        assert_eq!(upgraded["version"], "2.0.0");
+        assert_eq!(approve(upgraded.clone()).await, StatusCode::OK);
+        let approved = saved().unwrap();
+        assert_eq!(approved.version, "2.0.0");
+        assert_eq!(approved.source, "draft");
+        assert_eq!(approved.digest, upgraded["digest"].as_str().unwrap());
+
+        std::fs::rename(draft, home.join("removed-plugin")).unwrap();
+        assert_eq!(approve(upgraded).await, StatusCode::CONFLICT);
+        assert_eq!(saved(), Some(approved));
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn metered_requests_disable_transport_replay_without_changing_normal_requests() {

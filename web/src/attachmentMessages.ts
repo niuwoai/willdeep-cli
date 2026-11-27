@@ -16,6 +16,15 @@ const messages = {
   textTooLarge: ["文本附件不能超过 200000 个字符。", "Text attachments cannot exceed 200000 characters.", "テキストは 200000 文字までです。"],
   imageTooLarge: ["图片过大，请缩小后再添加。", "The image is too large. Resize it before adding.", "画像が大きすぎます。縮小して追加してください。"],
   imageFailed: ["无法读取图片，请检查格式或文件是否损坏。", "Cannot read the image. Check its format and contents.", "画像を読み込めません。形式と内容を確認してください。"],
+  fileUnsupported: ["请选择 PNG、JPEG、GIF、WebP、TXT、Markdown 或 PDF 文件。", "Choose a PNG, JPEG, GIF, WebP, TXT, Markdown, or PDF file.", "PNG、JPEG、GIF、WebP、TXT、Markdown、PDF のいずれかを選択してください。"],
+  fileTooLarge: ["每个文件最多 700 KiB，请缩小后再添加。", "Each file can be up to 700 KiB. Make it smaller before adding it.", "ファイルは 1 件あたり 700 KiB までです。小さくしてから追加してください。"],
+  fileEmpty: ["文件没有内容，请选择其他文件。", "The file is empty. Choose another file.", "ファイルが空です。別のファイルを選択してください。"],
+  fileReadFailed: ["无法读取文件，请重新选择。", "Cannot read the file. Try selecting it again.", "ファイルを読み込めません。選択し直してください。"],
+  fileInvalidText: ["此文件不是有效的 UTF-8 文本，请转为 UTF-8 后再添加。", "This file is not valid UTF-8 text. Save it as UTF-8 before adding it.", "有効な UTF-8 テキストではありません。UTF-8 で保存してから追加してください。"],
+  filePdfFailed: ["无法读取 PDF，请确认文件可以正常打开。", "Cannot read the PDF. Check that it opens correctly.", "PDF を読み込めません。正常に開けることを確認してください。"],
+  filePdfNoText: ["PDF 没有可提取的文字。如果是扫描件，请先做文字识别再添加。", "This PDF has no extractable text. If it is a scan, run text recognition before adding it.", "PDF に抽出できる文字がありません。スキャンした文書は文字認識をしてから追加してください。"],
+  filePdfLocked: ["PDF 受密码保护，请解除保护后再添加。", "This PDF is locked. Unlock it before adding it.", "PDF はパスワードで保護されています。保護を解除してから追加してください。"],
+  filePdfLimit: ["PDF 页数过多或读取超时，请拆分后再添加。", "The PDF has too many pages or took too long to read. Split it before adding it.", "PDF のページ数が多すぎるか、読み込みに時間がかかりすぎました。分割してから追加してください。"],
   copy: ["引用到新草稿", "Copy to a new draft", "新しい下書きに引用"], readonly: ["已发送附件只读", "Sent attachments are read-only", "送信済みの添付は読み取り専用"],
 } as const;
 export function attachmentText(key: keyof typeof messages, language: Language) { return messages[key][index[language]]; }
