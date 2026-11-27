@@ -1007,7 +1007,15 @@ fn is_foldable_system_notice(row: &str) -> bool {
     is_system_notice_row(row) && !row.starts_with(VERSION_REPORT_PREFIX)
 }
 
-fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
+fn fold_system_notices(
+    folded: &mut FoldedTranscript,
+    language: Language,
+    latest_notice: Option<usize>,
+) {
+    let is_foldable = |index: usize| {
+        folded.sources[index].is_some_and(|source| Some(source) != latest_notice)
+            && is_foldable_system_notice(&folded.rows[index])
+    };
     let mut rows = Vec::new();
     let mut sources = Vec::new();
     let mut targets = vec![0; folded.rows.len()];
@@ -1015,9 +1023,9 @@ fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
     while cursor < folded.rows.len() {
         let start = cursor;
         cursor += 1;
-        if is_foldable_system_notice(&folded.rows[start]) && folded.sources[start].is_some() {
+        if is_foldable(start) {
             while cursor < folded.rows.len()
-                && is_foldable_system_notice(&folded.rows[cursor])
+                && is_foldable(cursor)
                 && folded.sources[cursor - 1]
                     .zip(folded.sources[cursor])
                     .is_some_and(|(previous, next)| next == previous + 1)
@@ -1367,7 +1375,15 @@ impl App {
                 .map(|index| floor + index);
         }
         if self.active_search_query().is_none() {
-            fold_system_notices(&mut folded, self.language);
+            // 工具活动和待发送占位不算新对话，不能把最新回执提前收进汇总。
+            let latest_notice = self
+                .transcript
+                .iter()
+                .enumerate()
+                .rev()
+                .take_while(|(_, row)| !counts_as_fade_message(row))
+                .find_map(|(index, row)| is_system_notice_row(row).then_some(index));
+            fold_system_notices(&mut folded, self.language, latest_notice);
         }
         folded
     }
@@ -1760,11 +1776,12 @@ mod tests {
         assert!(app.handle_slash_command("/version", &SkillCatalog::default()));
         app.append_transcript("System: third notice".into());
         app.append_transcript("System: fourth notice".into());
+        app.append_transcript("You: next request".into());
 
         let folded = app.display_transcript();
-        assert_eq!(folded.rows.len(), 3);
+        assert_eq!(folded.rows.len(), 4);
         assert_eq!(folded.rows[1], app.version_report());
-        assert_eq!(folded.sources, vec![None, Some(2), None]);
+        assert_eq!(folded.sources, vec![None, Some(2), None, Some(5)]);
         assert_eq!(folded.system_groups.get(&0), Some(&(0..2)));
         assert_eq!(folded.system_groups.get(&2), Some(&(3..5)));
     }
@@ -1776,6 +1793,7 @@ mod tests {
                 format!("{THOUGHT_ENTRY_PREFIX}hidden thought"),
                 "System: first notice".to_owned(),
                 "System: second notice".to_owned(),
+                "You: next request".to_owned(),
             ],
             Language::En,
         );
@@ -1783,7 +1801,7 @@ mod tests {
         app.transcript_width = 100;
         app.viewport_height = 40;
         let folded = app.display_transcript();
-        assert_eq!(folded.index_of, vec![0, 0, 0]);
+        assert_eq!(folded.index_of, vec![0, 0, 0, 1]);
         assert_eq!(folded.system_groups.get(&0), Some(&(1..3)));
 
         app.prepare_transcript_frame();
@@ -2102,9 +2120,9 @@ mod tests {
         assert!(!app.tool_rows_expanded);
         let folded = app.display_transcript();
         assert_eq!(app.transcript.len(), 9 + 2);
-        assert_eq!(folded.rows.len(), 2);
-        assert!(folded.rows[1].contains("2 system messages"));
-        assert_eq!(folded.system_groups.get(&1), Some(&(9..11)));
+        assert_eq!(folded.rows.len(), 3);
+        assert_eq!(folded.rows.last(), app.transcript.last());
+        assert!(folded.system_groups.is_empty());
     }
 
     #[test]
