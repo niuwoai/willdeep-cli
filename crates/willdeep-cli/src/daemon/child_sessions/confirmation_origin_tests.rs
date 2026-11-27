@@ -197,13 +197,18 @@ fn web_confirmation_survives_auto_wake_and_proposes_again() {
 }
 
 #[test]
-fn non_web_direct_start_and_auto_wake_keep_executing() {
-    for origin in [
-        None,
-        Some("cli:fixture"),
-        Some("tui:fixture"),
-        Some("mobile:fixture"),
-    ] {
+fn tui_child_start_waits_for_operator_confirmation() {
+    for origin in ["tui", "tui:fixture"] {
+        let fixture = fixture();
+        let turn = parent_turn(&fixture, Some(origin));
+        assert!(child_start_confirmation_for_turn(&fixture.root, fixture.parent, turn).unwrap());
+        propose_again(&fixture, turn);
+    }
+}
+
+#[test]
+fn non_interactive_clients_keep_direct_start_and_auto_wake() {
+    for origin in [None, Some("cli:fixture"), Some("mobile:fixture")] {
         let fixture = fixture();
         let turn = parent_turn(&fixture, origin);
         let child: ChildSessionTask = serde_json::from_value(
