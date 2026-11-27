@@ -3,7 +3,8 @@
 //! - stdio：TOML 给 `command`，宿主拉起子进程，stdout 走 JSON-RPC、stderr 继承到终端。
 //!   本地工具，配置错了直接失败——那是用户机器上的事，早报比晚报好。
 //! - Streamable HTTP：TOML 给 `url`，每条消息一个 POST（见 `http` 子模块）。凭据走
-//!   `bearer_token_env` 或 OAuth（`willdeep mcp login <name>`，见 `oauth` 子模块）。
+//!   `token`（明文）、`bearer_token_env`（环境变量名）或 OAuth（`willdeep mcp login <name>`，
+//!   见 `oauth` 子模块），三者只能留一个。
 //!   远程服务连不上不该让整个宿主起不来：连接失败只警告、跳过这一个。
 //!
 //! 工具名统一成 `mcp__<server>__<tool>`；模型看到的是 `list_mcp_tools` / `call_mcp_tool`
@@ -104,7 +105,7 @@ pub trait LazyToolSource: Send + Sync {
     async fn call(&self, name: &str, arguments: Value) -> Result<String, McpError>;
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpServerConfig {
     /// stdio 传输：要启动的命令。与 `url` 二选一。
@@ -121,7 +122,11 @@ pub struct McpServerConfig {
     /// （token / key / secret …）的头必须这么写，明文不收。
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// 静态 Bearer token 所在的环境变量名。与 `oauth` 二选一。
+    /// 静态 Bearer token，明文写在这个服务自己的 toml 里。与 `bearer_token_env`、
+    /// `oauth` 三者只能留一个。文件是 `0600`，但 `Debug` 不打印这个值。
+    #[serde(default)]
+    pub token: Option<String>,
+    /// 静态 Bearer token 所在的环境变量名。与 `token`、`oauth` 三者只能留一个。
     #[serde(default)]
     pub bearer_token_env: Option<String>,
     /// OAuth 2.1 授权码 + PKCE；用 `willdeep mcp login <name>` 登录，token 存在
@@ -142,6 +147,7 @@ impl Default for McpServerConfig {
             env: BTreeMap::new(),
             url: None,
             headers: BTreeMap::new(),
+            token: None,
             bearer_token_env: None,
             oauth: None,
             startup_timeout_seconds: default_timeout(),
@@ -201,9 +207,14 @@ impl McpServerConfig {
             ));
         }
         if kind == McpTransportKind::Stdio {
-            if !self.headers.is_empty() || self.bearer_token_env.is_some() || self.oauth.is_some() {
+            if !self.headers.is_empty()
+                || self.token.is_some()
+                || self.bearer_token_env.is_some()
+                || self.oauth.is_some()
+            {
                 return Err(invalid(
-                    "headers, bearer_token_env and oauth only apply to url servers".to_owned(),
+                    "headers, token, bearer_token_env and oauth only apply to url servers"
+                        .to_owned(),
                 ));
             }
             return Ok(kind);
@@ -224,15 +235,36 @@ impl McpServerConfig {
                 "url must be https (plain http is only allowed for loopback hosts)".to_owned(),
             ));
         }
-        if self.bearer_token_env.is_some() && self.oauth.is_some() {
+        let declared = [
+            self.token.is_some(),
+            self.bearer_token_env.is_some(),
+            self.oauth.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        if declared > 1 {
             return Err(invalid(
-                "bearer_token_env and oauth are exclusive".to_owned(),
+                "token, bearer_token_env and oauth are mutually exclusive; keep one".to_owned(),
             ));
+        }
+        if let Some(token) = self.token.as_deref() {
+            let token = token.trim();
+            if token.is_empty() {
+                return Err(invalid(
+                    "token is empty; remove it or write the bearer token".to_owned(),
+                ));
+            }
+            // reqwest 对非法字节只在 send 时失败，错误文本可能带上被拒的值。
+            if reqwest::header::HeaderValue::from_str(token).is_err() {
+                return Err(invalid("token is not a valid HTTP header value".to_owned()));
+            }
         }
         for (header, value) in &self.headers {
             if header.eq_ignore_ascii_case("authorization") {
                 return Err(invalid(
-                    "do not put Authorization in headers; use bearer_token_env or oauth".to_owned(),
+                    "do not put Authorization in headers; use token, bearer_token_env or oauth"
+                        .to_owned(),
                 ));
             }
             if reqwest::header::HeaderName::from_bytes(header.as_bytes()).is_err() {
@@ -251,6 +283,25 @@ impl McpServerConfig {
 
     pub fn validate(&self, name: &str) -> Result<(), McpError> {
         self.validated_transport(name).map(|_| ())
+    }
+}
+
+impl std::fmt::Debug for McpServerConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `token` 是明文凭据：日志、断言失败的 Debug 输出里只留「写了没有」。
+        formatter
+            .debug_struct("McpServerConfig")
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("env", &self.env)
+            .field("url", &self.url)
+            .field("headers", &self.headers)
+            .field("token", &self.token.as_ref().map(|_| "[redacted]"))
+            .field("bearer_token_env", &self.bearer_token_env)
+            .field("oauth", &self.oauth)
+            .field("startup_timeout_seconds", &self.startup_timeout_seconds)
+            .field("enabled", &self.enabled)
+            .finish()
     }
 }
 
@@ -888,6 +939,22 @@ mod tests {
                 json!({"url": "https://a/b", "bearer_token_env": "T", "oauth": {}}),
             ),
             (
+                "inline token and env",
+                json!({"url": "https://a/b", "token": "secret", "bearer_token_env": "T"}),
+            ),
+            (
+                "inline token and oauth",
+                json!({"url": "https://a/b", "token": "secret", "oauth": {}}),
+            ),
+            (
+                "blank inline token",
+                json!({"url": "https://a/b", "token": "  "}),
+            ),
+            (
+                "token with a raw newline",
+                json!({"url": "https://a/b", "token": "secret\nrest"}),
+            ),
+            (
                 "stdio with headers",
                 json!({"command": "x", "headers": {"X": "y"}}),
             ),
@@ -903,6 +970,17 @@ mod tests {
         let loopback: McpServerConfig =
             serde_json::from_value(json!({"url": "http://127.0.0.1:8080/mcp"})).unwrap();
         assert!(loopback.validate("local").is_ok());
+
+        let secret = "inline-secret-value";
+        let inline: McpServerConfig = serde_json::from_value(json!({
+            "url": "https://mcp.example.com/mcp",
+            "token": secret
+        }))
+        .unwrap();
+        assert!(inline.validate("inline").is_ok());
+        let dumped = format!("{inline:?}");
+        assert!(!dumped.contains(secret), "{dumped}");
+        assert!(dumped.contains("[redacted]"));
         let unknown: Result<McpServerConfig, _> =
             serde_json::from_value(json!({"url": "https://a/b", "transport": "sse"}));
         assert!(unknown.is_err(), "unknown keys stay rejected");

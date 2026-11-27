@@ -66,7 +66,13 @@ impl HttpConnection {
                     .map_err(|_| invalid(format!("header {name} has a non-ASCII value")))?,
             );
         }
-        let auth = if let Some(variable) = &config.bearer_token_env {
+        let auth = if let Some(token) = config
+            .token
+            .as_deref()
+            .filter(|token| !token.trim().is_empty())
+        {
+            McpAuth::Bearer(token.trim().to_owned())
+        } else if let Some(variable) = &config.bearer_token_env {
             let token = std::env::var(variable)
                 .ok()
                 .filter(|token| !token.trim().is_empty())
@@ -442,6 +448,48 @@ mod tests {
                 Some("2025-03-26")
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_inline_token_is_trimmed_and_sent_as_bearer() {
+        let seen: Arc<Mutex<Vec<Request>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let (address, _server) = spawn_http_server(move |request: Request| {
+            log.lock().unwrap().push(request.clone());
+            let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+            let mut response = json_response(
+                200,
+                json!({"jsonrpc":"2.0","id":body["id"],"result":initialize_result()}),
+            );
+            response
+                .headers
+                .push(("mcp-session-id".to_owned(), "sess-2".to_owned()));
+            response
+        })
+        .await;
+        let secret = "inline-secret-value";
+        let mut inline = HttpConnection::open(
+            None,
+            "inline",
+            &McpServerConfig {
+                url: Some(format!("http://{address}/mcp")),
+                token: Some(format!("  {secret}  ")),
+                ..McpServerConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        inline
+            .request("initialize", super::super::initialize_params())
+            .await
+            .unwrap();
+        assert_eq!(
+            seen.lock().unwrap()[0]
+                .headers
+                .get("authorization")
+                .map(String::as_str),
+            Some(format!("Bearer {secret}").as_str())
+        );
     }
 
     #[tokio::test]

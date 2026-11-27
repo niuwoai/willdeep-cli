@@ -44,6 +44,13 @@ impl ServerStatus {
         // OAuth files and remote authentication are never probed here.
         let authentication = if config.oauth.is_some() {
             "oauth"
+        } else if config
+            .token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+        {
+            // 只声明「写了明文」，不带 token 是否有效的判断，更不带值。
+            "bearer_inline"
         } else if config.bearer_token_env.is_some() {
             "bearer_environment"
         } else if !config.headers.is_empty() {

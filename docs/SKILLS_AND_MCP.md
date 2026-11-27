@@ -67,9 +67,12 @@ enabled = true
 [env]
 NODE_NO_WARNINGS = "1"
 
-# $WILLDEEP_HOME/.mcp/issues.toml — Streamable HTTP：静态 token 从环境变量来
-url = "https://mcp.example.com/mcp"
-bearer_token_env = "ISSUES_MCP_TOKEN"
+# $WILLDEEP_HOME/.mcp/panel.toml — Streamable HTTP：新文件默认把静态 token 明文写在这里
+url = "https://panel.example.com/mcp"
+token = "paste-the-bearer-token-here"     # 与 bearer_token_env、[oauth] 三选一
+
+# 不想把值放进文件时，改写环境变量名（不要和 token 同时留）：
+# bearer_token_env = "PANEL_MCP_TOKEN"
 
 [headers]
 X-Trace = "willdeep"                 # 静态头；值可写 ${env:NAME}
@@ -85,7 +88,7 @@ scopes = []                          # 空则用资源元数据里 scopes_suppor
 
 服务名是文件名（不含 `.toml`）：1 到 64 个 ASCII 字母、数字、`_` 或 `-`。
 `url` 必须是 `https`，只有回环地址允许 `http`。名字看着像凭据的头（`X-Api-Key`、`*-Token` …）
-必须写成 `${env:NAME}`，`Authorization` 头一律不收——凭据只走 `bearer_token_env` 或 `oauth`。
+必须写成 `${env:NAME}`，`Authorization` 头一律不收——凭据只走 `token`、`bearer_token_env` 或 `oauth`，三者只能留一个。
 
 旧的 `config.toml` 里如果还留着 `[mcp_servers.*]`，启动时会迁进 `.mcp/<name>.toml`，
 迁完从主配置里删掉。读不懂的段留在原处并告警，不参与解析，也不挡住其余配置。
@@ -112,9 +115,11 @@ mcp__filesystem__write_file
 
 ### 凭据与 OAuth
 
-**不要把 Token 写进配置文件。** stdio 服务的敏感值由子进程继承环境变量，或在
-`[env]` 里引用已有变量；HTTP 服务用 `bearer_token_env` 或头里的 `${env:NAME}`。
-Runtime 控制 Token 不会传给任何 MCP 服务。
+stdio 服务的敏感值由子进程继承环境变量，或在 `[env]` 里引用已有变量。HTTP 服务新写的
+文件默认用 `token` 把静态 Bearer 明文放进这个 `0600` 的服务文件。不想把值落盘时改用
+`bearer_token_env`（只写环境变量名）。两者与 `[oauth]` 三选一。明文会进磁盘、进备份、进 `git` 历史
+（如果有人把 `.mcp` 纳入版本库）。`willdeep mcp list` 与 doctor 只报告「已配置明文」，不回显值。
+名字像凭据的请求头仍必须写成 `${env:NAME}`。Runtime 控制 Token 不会传给任何 MCP 服务。
 
 需要用户授权的远程服务在自己的文件里配 `[oauth]`，然后：
 

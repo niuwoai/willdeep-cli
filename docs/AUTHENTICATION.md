@@ -164,7 +164,8 @@ Daemon 同时监听随机 `127.0.0.1` 端口和一个本地传输通道。客户
 | `WILLDEEP_CLIENT_LOGIN_SECRET` | some.im 浏览器登录的客户端密钥，构建时注入 |
 | `WILLDEEP_HOME` | 配置与运行时目录，默认 `~/.willdeep` |
 | `WILLDEEP_CONFIG` | 显式配置文件路径 |
-| `$WILLDEEP_HOME/.mcp/<name>.toml` 的 `bearer_token_env` 指向的变量 | 远程 MCP 服务的静态 Bearer token，变量名由配置指定 |
+| 同一文件的 `token` | 远程 MCP 服务的静态 Bearer token，新文件的默认写法：明文放在 `0600` 的服务文件里。列表与诊断只报「已配置」，不回显。与 `bearer_token_env`、`[oauth]` 三选一 |
+| `$WILLDEEP_HOME/.mcp/<name>.toml` 的 `bearer_token_env` 指向的变量 | 同一个静态 Bearer token，不想落盘时改用；这里只写变量名 |
 | 同一文件 `[oauth].client_secret_env` 指向的变量 | 机密 OAuth 客户端的 client_secret，公共客户端不需要 |
 
 完整环境变量清单见 [配置指南](CONFIGURATION.md)。

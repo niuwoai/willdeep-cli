@@ -82,6 +82,20 @@ fn server<'a>(
 }
 
 fn auth_label(home: &Path, name: &str, config: &McpServerConfig, language: Language) -> String {
+    if config
+        .token
+        .as_deref()
+        .is_some_and(|token| !token.trim().is_empty())
+    {
+        // 只说「写了明文」，token 本身不进列表、也不进 --json。
+        return language
+            .text(
+                "bearer 明文（已配置）",
+                "bearer inline (set)",
+                "bearer 平文（設定済み）",
+            )
+            .to_owned();
+    }
     if let Some(variable) = &config.bearer_token_env {
         let present = std::env::var(variable).is_ok_and(|value| !value.trim().is_empty());
         return format!(
@@ -214,9 +228,9 @@ async fn login(
         bail!(
             "{}",
             language.text(
-                "这个服务没有配置 oauth；静态 token 请用 bearer_token_env。",
-                "this server has no oauth section; use bearer_token_env for a static token.",
-                "このサーバーには oauth の設定がありません。静的トークンは bearer_token_env を使ってください。"
+                "这个服务没有配置 oauth；静态 token 请用 token 或 bearer_token_env。",
+                "this server has no oauth section; use token or bearer_token_env for a static token.",
+                "このサーバーには oauth の設定がありません。静的トークンは token または bearer_token_env を使ってください。"
             )
         );
     };
