@@ -134,6 +134,10 @@ impl PluginWebState {
                             "video studio plugin installation failed: {error}"
                         ))
                     })?;
+                if let Err(error) = crate::builtin_plugins::ensure_token_stats_installed(&self.home)
+                {
+                    eprintln!("warning: token_stats_install_failed error={error:#}");
+                }
                 let host = PluginHost::discover(&self.home).map_err(|error| {
                     PluginWebError::Internal(format!("plugin host unavailable: {error}"))
                 })?;
