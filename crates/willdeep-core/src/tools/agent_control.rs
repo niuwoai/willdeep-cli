@@ -34,7 +34,7 @@ pub const MAX_AWAIT_SECONDS: u64 = 1_800;
 pub(crate) fn update_plan_definition() -> ToolDefinition {
     definition(
         "update_plan",
-        "Create or update a dependency-aware session plan. Returns ready, running and waiting step ids. \
+        "Create or update a dependency-aware session plan when requested or when substantive milestones need coordination or tracking. Skip this tool for routine operations like a scoped Git commit, even if they take several commands. Returns ready, running and waiting step ids. \
 Use merge=true for partial updates by stable id; omitted fields keep their values. New steps require a title. \
 Start independent ready steps concurrently using available background workers/read tools, subject to permissions, budgets and resource conflicts. \
 Mark work in_progress when starting it, and done only after verifying its result. Dependencies must all be done before a step starts or finishes. \

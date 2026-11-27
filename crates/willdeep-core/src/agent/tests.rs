@@ -1017,6 +1017,22 @@ fn kernel_agent(provider: Arc<dyn Provider>, kernel: crate::kernel::EventKernel)
     .with_event_kernel(kernel)
 }
 
+#[tokio::test]
+async fn parent_request_distinguishes_routine_git_from_planned_work() {
+    let provider = RecordingProvider::new(&["done"]);
+    let agent = kernel_agent(provider.clone(), crate::kernel::EventKernel::new());
+    agent.run("这些都提交一下吧").await.expect("run");
+
+    let requests = provider.requests.lock().expect("requests");
+    let prompt = &requests[0][0].content;
+    assert_eq!(requests[0][0].role, crate::types::Role::System);
+    assert!(prompt.contains("Execute bounded, routine requests directly"));
+    assert!(prompt.contains("A local Git commit of known changes"));
+    assert!(prompt.contains("Create a plan when the user asks for one"));
+    assert!(prompt.contains("Keep active /goal criteria and already-running planned work current"));
+    assert!(!prompt.contains("For multi-step work use update_plan"));
+}
+
 /// `await_agents` 已经把报告交给了模型的 Worker：它的完成通知在 turn 边界
 /// 被直接结账为已处理，不再作为材料注入第二遍。
 #[tokio::test]
