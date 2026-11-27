@@ -569,13 +569,15 @@ mod tests {
         crate::video_studio_plugin::ensure_installed(&home)
             .await
             .unwrap();
+        crate::builtin_plugins::ensure_token_stats_installed(&home).unwrap();
         let host = Arc::new(PluginHost::discover_live(&home).unwrap());
         let other_host = PluginHost::discover(&home).unwrap();
         let studio = crate::video_studio_plugin::ID;
-        other_host.approve(studio, 1).await.unwrap();
-        other_host.set_enabled(studio, true).await.unwrap().unwrap();
-        other_host.approve("demo", 1).await.unwrap();
-        other_host.set_enabled("demo", true).await.unwrap().unwrap();
+        let stats = "willdeep-token-stats";
+        for id in [studio, stats, "demo"] {
+            other_host.approve(id, 1).await.unwrap();
+            other_host.set_enabled(id, true).await.unwrap().unwrap();
+        }
         let state = Arc::new(
             PluginWebState::new(
                 host,
@@ -658,7 +660,7 @@ mod tests {
             .to_str()
             .unwrap()
             .to_owned();
-        assert!(csp.contains("sandbox allow-scripts"));
+        assert!(csp.contains("sandbox allow-scripts;"));
         assert!(csp.contains("connect-src 'none'"));
         let html = page.text().await.unwrap();
         let base = html
@@ -817,6 +819,20 @@ mod tests {
             .unwrap();
         assert_eq!(page.status(), StatusCode::OK);
         assert!(!page.text().await.unwrap().contains(base));
+
+        let stats_page = client
+            .get(format!("{origin}/plugin-host/{stats}/ui/index.html"))
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stats_page.status(), StatusCode::OK);
+        assert!(
+            stats_page.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("sandbox allow-scripts allow-downloads;")
+        );
 
         let studio_entry = format!("{origin}/plugin-host/{studio}/ui/dist/index.html");
         let studio_page = client

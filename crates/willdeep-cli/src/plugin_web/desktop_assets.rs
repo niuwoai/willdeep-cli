@@ -199,7 +199,10 @@ pub(super) async fn page(
     let media_sources =
         format!("{asset_source} {origin}/plugin-media/ {origin}/plugin-production/");
     // Keep the same explicit download grant as the parent iframe.
-    let sandbox = if plugin == "willdeep-video-studio" {
+    let sandbox = if matches!(
+        plugin.as_str(),
+        "willdeep-video-studio" | "willdeep-token-stats"
+    ) {
         "allow-scripts allow-downloads"
     } else {
         "allow-scripts"
