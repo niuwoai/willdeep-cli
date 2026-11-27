@@ -15,7 +15,7 @@ use clap::Subcommand;
 use serde_json::Value;
 use willdeep_core::plugin::{
     ApprovalGap, CommandOutcome, PluginHost, PluginSource, commands, installed_versions,
-    load_package,
+    load_package, registry::PluginApprovalReview,
 };
 
 #[derive(Clone, Debug, Subcommand)]
@@ -564,9 +564,14 @@ async fn approve(home: &Path, id: &str) -> Result<()> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    println!("Approving {} {}", package.id, package.version);
-    println!("  digest:      {}", package.digest()?);
-    println!("  source:      {}", package.source.as_str());
+    let review = PluginApprovalReview {
+        version: package.version.clone(),
+        source: package.source.as_str().to_owned(),
+        digest: package.digest_with_contents(|_, _| {})?,
+    };
+    println!("Approving {} {}", package.id, review.version);
+    println!("  digest:      {}", review.digest);
+    println!("  source:      {}", review.source);
     println!(
         "  permissions: {}",
         if permissions.is_empty() {
@@ -591,7 +596,7 @@ async fn approve(home: &Path, id: &str) -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or_default();
-    host.approve(id, now).await?;
+    host.approve_reviewed(id, review, now).await?;
     println!("Approved.");
     Ok(())
 }

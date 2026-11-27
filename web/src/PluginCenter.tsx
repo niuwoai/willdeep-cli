@@ -10,6 +10,7 @@ import { Box, Button, Flex, Heading, Text } from "@chakra-ui/react";
 import type { Messages } from "./i18n";
 import {
   approvePlugin,
+  PluginRequestError,
   setPluginEnabled,
   uninstallPlugin,
   type PluginFailureView,
@@ -21,7 +22,9 @@ type Props = {
   plugins: PluginView[];
   failures: PluginFailureView[];
   messages: Messages;
-  onChanged: () => void;
+  reviewAvailable: boolean;
+  reviewFetching: boolean;
+  onChanged: () => Promise<void>;
 };
 
 function permissionLabel(messages: Messages, permission: string): string {
@@ -54,7 +57,7 @@ function gapLabel(messages: Messages, reason: string): string {
   return table[reason] ?? reason;
 }
 
-export function PluginCenter({ plugins, failures, messages, onChanged }: Props) {
+export function PluginCenter({ plugins, failures, messages, reviewAvailable, reviewFetching, onChanged }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -64,12 +67,25 @@ export function PluginCenter({ plugins, failures, messages, onChanged }: Props) 
     setError(null);
     try {
       await work();
-      onChanged();
+      await onChanged();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(null);
     }
+  };
+
+  const approve = (plugin: PluginView) => {
+    const { id, version, source, digest } = plugin;
+    if (busy || !reviewAvailable || !digest) return;
+    void act(id, async () => {
+      try {
+        await approvePlugin(id, { version, source, digest });
+      } catch (reason) {
+        if (!(reason instanceof PluginRequestError) || reason.status !== 409) throw reason;
+        setError(messages.pluginReviewChanged);
+      }
+    });
   };
 
   return (
@@ -84,7 +100,13 @@ export function PluginCenter({ plugins, failures, messages, onChanged }: Props) 
         </Text>
       )}
 
-      {plugins.length === 0 && (
+      {!reviewFetching && !reviewAvailable && (
+        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void onChanged()}>
+          {messages.pluginRefreshReview}
+        </Button>
+      )}
+
+      {reviewAvailable && plugins.length === 0 && (
         <Box className="plugin-card">
           <Text color="var(--text-dim)">{messages.pluginNoneInstalled}</Text>
           <code className="plugin-code">willdeep plugin import</code>
@@ -146,11 +168,16 @@ export function PluginCenter({ plugins, failures, messages, onChanged }: Props) 
                     <Button
                       size="sm"
                       className="plugin-primary-button"
-                      disabled={isBusy}
-                      onClick={() => void act(plugin.id, () => approvePlugin(plugin.id))}
+                      disabled={busy !== null || !reviewAvailable || !plugin.digest}
+                      onClick={() => approve(plugin)}
                     >
                       {messages.pluginApprove}
                     </Button>
+                    {reviewAvailable && !plugin.digest && (
+                      <Button size="sm" variant="outline" disabled={isBusy} onClick={() => void onChanged()}>
+                        {messages.pluginRefreshReview}
+                      </Button>
+                    )}
                   </>
                 ) : (
                   <Button

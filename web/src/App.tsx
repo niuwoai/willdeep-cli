@@ -572,6 +572,11 @@ export function App() {
   const plugins = pluginsQuery.data?.plugins ?? EMPTY_PLUGINS;
   const pluginFailures = pluginsQuery.data?.failures ?? EMPTY_PLUGIN_FAILURES;
   const [rail, setRail] = useState<RailSelection>(railFromHash);
+  const pluginReviewQuery = useQuery({
+    queryKey: ["plugins", language, "review"],
+    queryFn: () => fetchPlugins(language, true),
+    enabled: rail.kind === "center",
+  });
   const scheduleDirtyRef = useRef(false);
   const agentDirtyRef = useRef(false);
   const trackAgentDirty = useCallback((dirty: boolean) => {agentDirtyRef.current = dirty;}, []);
@@ -1982,7 +1987,17 @@ export function App() {
   if (rail.kind === "center") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">
       {railNav}
-      <PluginCenter plugins={plugins} failures={pluginFailures} messages={t} onChanged={refreshPluginViews} />
+      <PluginCenter
+        plugins={pluginReviewQuery.data?.plugins ?? plugins}
+        failures={pluginReviewQuery.data?.failures ?? pluginFailures}
+        messages={t}
+        reviewAvailable={pluginReviewQuery.isSuccess && !pluginReviewQuery.isFetching}
+        reviewFetching={pluginReviewQuery.isFetching}
+        onChanged={async () => {
+          refreshPluginViews();
+          await pluginReviewQuery.refetch();
+        }}
+      />
       {pluginOverlays}
     </Flex></Box>;
   }

@@ -64,7 +64,7 @@ export type PluginView = {
   unsupported: string[];
   /** 要由浏览器弹文件框、而不是让 MCP 服务弹原生框的命令。 */
   file_pickers: PluginFilePickerView[];
-  /** 从没批准过的包没有这一项——算它要读遍包内容，那是「点批准」时才做的事。 */
+  /** 插件中心批准前会获取与所展示清单一致的摘要。 */
   digest?: string;
 };
 
@@ -113,11 +113,17 @@ export type DestinationContext = {
   colorScheme: string;
 };
 
+export class PluginRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const text = await response.text();
   const value = text ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(value.error ?? response.statusText);
+  if (!response.ok) throw new PluginRequestError(response.status, value.error ?? response.statusText);
   return value as T;
 }
 
@@ -125,12 +131,13 @@ function jsonBody(body: unknown): RequestInit {
   return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }
 
-export function fetchPlugins(locale: string) {
-  return request<PluginsResponse>(`/api/plugins?locale=${encodeURIComponent(locale)}`);
+export function fetchPlugins(locale: string, review = false) {
+  const suffix = review ? "&review=true" : "";
+  return request<PluginsResponse>(`/api/plugins?locale=${encodeURIComponent(locale)}${suffix}`);
 }
 
-export function approvePlugin(pluginId: string) {
-  return request(`/api/plugins/${encodeURIComponent(pluginId)}/approve`, { method: "POST" });
+export function approvePlugin(pluginId: string, review: { version: string; source: string; digest: string }) {
+  return request(`/api/plugins/${encodeURIComponent(pluginId)}/approve`, jsonBody(review));
 }
 
 export function setPluginEnabled(pluginId: string, enabled: boolean) {

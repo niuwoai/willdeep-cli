@@ -23,7 +23,8 @@ use super::package::{
     MAX_MANIFEST_BYTES, MAX_PAGE_BYTES, PackageError, PluginPackage, PluginSource, discover,
 };
 use super::registry::{
-    ApprovalGap, PluginApproval, PluginRegistry, RegistryError, inferred_permissions,
+    ApprovalGap, PluginApproval, PluginApprovalReview, PluginRegistry, RegistryError,
+    inferred_permissions,
 };
 use super::tool_catalog::PluginToolCatalog;
 
@@ -368,6 +369,11 @@ impl PluginHost {
         self.package_catalog().packages.clone()
     }
 
+    pub fn packages_for_review(&self) -> (Vec<Arc<PluginPackage>>, Vec<PluginLoadFailure>) {
+        let catalog = Self::scan_packages(&self.home);
+        (catalog.packages, catalog.failures)
+    }
+
     pub fn failures(&self) -> Vec<PluginLoadFailure> {
         self.package_catalog().failures.clone()
     }
@@ -412,6 +418,34 @@ impl PluginHost {
         let package = self.package(plugin_id)?;
         self.update_registry(move |registry| registry.approve(&package, now))
             .await
+    }
+
+    pub async fn approve_reviewed(
+        &self,
+        plugin_id: &str,
+        review: PluginApprovalReview,
+        now: u64,
+    ) -> Result<(), HostError> {
+        let plugin = plugin_id.to_owned();
+        let home = self.home.clone();
+        let approved = self
+            .update_registry(move |registry| {
+                registry.approve_reviewed(
+                    || {
+                        Self::scan_packages(&home)
+                            .packages
+                            .into_iter()
+                            .find(|package| package.id == plugin)
+                    },
+                    &review,
+                    now,
+                )
+            })
+            .await?;
+        if !approved {
+            return Err(HostError::PluginChanged(plugin_id.to_owned()));
+        }
+        Ok(())
     }
 
     pub async fn set_enabled(
@@ -937,7 +971,7 @@ impl PluginHost {
                 id: sidebar_id.to_owned(),
             });
         };
-        Self::require_approval(&package, &self.registry_snapshot()?)?;
+        Self::require_approval(package, &self.registry_snapshot()?)?;
         let source = package.read_resource_text(schema, MAX_MANIFEST_BYTES)?;
         Ok((DeclarativeDocument::parse(&source, &commands)?, degraded))
     }

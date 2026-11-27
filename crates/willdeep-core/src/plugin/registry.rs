@@ -38,6 +38,14 @@ pub enum RegistryError {
     Package(#[from] super::package::PackageError),
 }
 
+/// 用户在插件中心查看的版本、来源及经过校验的包内容。
+#[derive(Debug, Deserialize)]
+pub struct PluginApprovalReview {
+    pub version: String,
+    pub source: String,
+    pub digest: String,
+}
+
 /// 一次权限审批的记录。绑定四样东西：版本、内容 digest、来源与权限集合。
 /// 任何一样变了都要重新确认——"我批准的是那个东西"必须可核对。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -198,6 +206,14 @@ impl PluginRegistry {
         self.approval_gap_with_digest(package, PluginPackage::cached_digest)
     }
 
+    pub fn reviewed_approval_gap(
+        &self,
+        package: &PluginPackage,
+        digest: &str,
+    ) -> Result<Option<ApprovalGap>, RegistryError> {
+        self.approval_gap_with_digest(package, |_| Ok(digest.to_owned()))
+    }
+
     fn approval_gap_with_digest(
         &self,
         package: &PluginPackage,
@@ -246,21 +262,54 @@ impl PluginRegistry {
         // 审批要绑定内容指纹，所以这一步必须真的读一遍包。
         let digest = package.digest_with_contents(|_, _| {})?;
         self.update(|latest| {
-            let entry = latest.file.plugins.entry(package.id.clone()).or_default();
-            for key in entry.settings.keys() {
-                if setting_is_declared_secret(package, key) {
-                    entry.setting_secrecy.insert(key.clone(), true);
-                }
-            }
-            entry.approval = Some(PluginApproval {
-                version: package.version.clone(),
-                digest,
-                source: package.source.as_str().to_owned(),
-                permissions: permission_names(package),
-                approved_at: now,
-            });
+            latest.record_approval(package, digest, now);
             Ok(((), true))
         })
+    }
+
+    pub(super) fn approve_reviewed(
+        &mut self,
+        find_package: impl FnOnce() -> Option<std::sync::Arc<PluginPackage>>,
+        review: &PluginApprovalReview,
+        now: u64,
+    ) -> Result<bool, RegistryError> {
+        self.update(|latest| {
+            // Resolve and verify after acquiring the same lock used to persist the approval.
+            let Some(package) = find_package() else {
+                return Ok((false, false));
+            };
+            if review.version != package.version || review.source != package.source.as_str() {
+                return Ok((false, false));
+            }
+            let digest = match package.digest_with_contents(|_, _| {}) {
+                Ok(digest) => digest,
+                Err(PackageError::StaleMetadata(_) | PackageError::Unreadable { .. }) => {
+                    return Ok((false, false));
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if digest != review.digest {
+                return Ok((false, false));
+            }
+            latest.record_approval(&package, digest, now);
+            Ok((true, true))
+        })
+    }
+
+    fn record_approval(&mut self, package: &PluginPackage, digest: String, now: u64) {
+        let entry = self.file.plugins.entry(package.id.clone()).or_default();
+        for key in entry.settings.keys() {
+            if setting_is_declared_secret(package, key) {
+                entry.setting_secrecy.insert(key.clone(), true);
+            }
+        }
+        entry.approval = Some(PluginApproval {
+            version: package.version.clone(),
+            digest,
+            source: package.source.as_str().to_owned(),
+            permissions: permission_names(package),
+            approved_at: now,
+        });
     }
 
     /// 启用一个插件。审批不齐时拒绝并说明差在哪，不静默放行。

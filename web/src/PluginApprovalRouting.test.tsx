@@ -21,7 +21,7 @@ const plugin: PluginView = {
   }],
   commands: [command], menus: Object.fromEntries(menuLocations.map((location) => [location, [command.id]])),
 };
-const upgraded: PluginView = { ...plugin, version: "2.0.0", approval_gap: { reason: "version-changed", detail: null } };
+const upgraded: PluginView = { ...plugin, version: "2.0.0", digest: "sha256:reviewed", approval_gap: { reason: "version-changed", detail: null } };
 const destination = plugin.destinations[0];
 const messagesEn = messages.en;
 
@@ -68,7 +68,9 @@ it("unmounts an open plugin on upgrade and restores its entry after approval in 
       current = { ...upgraded, approval_gap: null };
       return Response.json({});
     }
-    if (path === "/api/plugins?locale=en") return Response.json({ plugins: [current], failures: [] });
+    if (path === "/api/plugins?locale=en" || path === "/api/plugins?locale=en&review=true") {
+      return Response.json({ plugins: [current], failures: [] });
+    }
     if (path === `/api/plugins/${plugin.id}/sidebars/side?locale=en`) {
       return Response.json({ document: { schemaVersion: 1, components: [{ id: "sidebar-label", kind: "label", value: "Fixture sidebar" }] }, degraded: null, strings: {} });
     }
@@ -95,9 +97,70 @@ it("unmounts an open plugin on upgrade and restores its entry after approval in 
   fireEvent.click(screen.getByRole("button", { name: messagesEn.pluginSectionTitle }));
   fireEvent.click(screen.getByRole("button", { name: messagesEn.pluginCenter }));
   expect(screen.getByText(messagesEn.pluginGapVersionChanged)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: messagesEn.pluginApprove }));
+  const approve = screen.getByRole<HTMLButtonElement>("button", { name: messagesEn.pluginApprove });
+  await waitFor(() => expect(approve.disabled).toBe(false));
+  fireEvent.click(approve);
   expect(await screen.findByRole("button", { name: messagesEn.pluginDisable })).toBeTruthy();
-  expect(fetchMock).toHaveBeenCalledWith(approvePath, { method: "POST" });
+  expect(fetchMock).toHaveBeenCalledWith(approvePath, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ version: upgraded.version, source: upgraded.source, digest: upgraded.digest }),
+  });
   fireEvent.click(screen.getByRole("button", { name: destination.title }));
   await waitFor(() => expect(container.querySelector("iframe")?.title).toBe(destination.title));
+});
+
+it.each([false, true])("requires another click after a stale approval (refresh fails: %s)", async (failRefresh) => {
+  localStorage.setItem("willdeep.language", "en");
+  const replacement = { ...upgraded, version: "3.0.0", digest: "sha256:replacement", permissions: ["workspace.write"] };
+  const submissions: string[] = [];
+  let reviewLoads = 0;
+  let restored = !failRefresh;
+  const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === `/api/plugins/${plugin.id}/approve` && init?.method === "POST") {
+      submissions.push(String(init.body));
+      return submissions.length === 1
+        ? Response.json({ error: "Plugin changed" }, { status: 409 })
+        : Response.json({ approved: true });
+    }
+    if (path === "/api/plugins?locale=en&review=true") {
+      reviewLoads += 1;
+      if (submissions.length === 0) return Response.json({ plugins: [upgraded], failures: [] });
+      if (!restored) return Response.json({ error: "Review unavailable" }, { status: 503 });
+      const current = submissions.length === 1 ? replacement : { ...replacement, approval_gap: null };
+      return Response.json({ plugins: [current], failures: [] });
+    }
+    if (path === "/api/plugins?locale=en") return Response.json({ plugins: [upgraded], failures: [] });
+    if (path === "/api/setup") return Response.json({ ready: true });
+    if (path === "/api/workspaces") return Response.json([]);
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><ChakraProvider value={defaultSystem}><App /></ChakraProvider></QueryClientProvider>);
+  const approveButton = () => screen.getByRole<HTMLButtonElement>("button", { name: messagesEn.pluginApprove });
+  fireEvent.click(screen.getByRole("button", { name: messagesEn.pluginSectionTitle }));
+  fireEvent.click(screen.getByRole("button", { name: messagesEn.pluginCenter }));
+  await waitFor(() => expect(approveButton().disabled).toBe(false));
+  fireEvent.click(approveButton());
+  expect((await screen.findByRole("alert")).textContent).toBe(messagesEn.pluginReviewChanged);
+
+  if (failRefresh) {
+    const refresh = await screen.findByRole("button", { name: messagesEn.pluginRefreshReview });
+    expect(approveButton().disabled).toBe(true);
+    fireEvent.click(approveButton());
+    expect(submissions).toHaveLength(1);
+    restored = true;
+    fireEvent.click(refresh);
+  }
+  expect(await screen.findByText(replacement.version)).toBeTruthy();
+  expect(screen.getByText(messagesEn.pluginPermWorkspaceWrite)).toBeTruthy();
+  expect(reviewLoads).toBeGreaterThanOrEqual(failRefresh ? 3 : 2);
+  expect(submissions).toHaveLength(1);
+  await waitFor(() => expect(approveButton().disabled).toBe(false));
+  fireEvent.click(approveButton());
+  expect(await screen.findByRole("button", { name: messagesEn.pluginDisable })).toBeTruthy();
+  expect(submissions.map((body) => JSON.parse(body))).toEqual(
+    [upgraded, replacement].map(({ version, source, digest }) => ({ version, source, digest })),
+  );
 });

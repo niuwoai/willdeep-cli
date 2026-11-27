@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
 use willdeep_core::plugin::{
     ApprovalGap, CommandOutcome, HostError, PluginHost, PluginPermission, PluginSource,
-    qualified_destination,
+    qualified_destination, registry::PluginApprovalReview,
 };
 use willdeep_core::{Message, build_provider};
 
@@ -410,6 +410,8 @@ struct PluginsResponse {
 struct LocaleQuery {
     #[serde(default)]
     locale: Option<String>,
+    #[serde(default)]
+    review: bool,
 }
 
 fn gap_view(gap: ApprovalGap) -> ApprovalGapView {
@@ -429,17 +431,49 @@ async fn list_plugins(
     State(state): State<Arc<PluginWebState>>,
     Query(query): Query<LocaleQuery>,
 ) -> Result<Json<PluginsResponse>, PluginWebError> {
-    let locale = query.locale.as_deref().unwrap_or("en");
     let host = state.host().await?;
+    tokio::task::spawn_blocking(move || plugin_views(&host, query))
+        .await
+        .map_err(|error| PluginWebError::Internal(format!("plugin listing failed: {error}")))?
+        .map(Json)
+}
+
+fn plugin_views(host: &PluginHost, query: LocaleQuery) -> Result<PluginsResponse, PluginWebError> {
+    let locale = query.locale.as_deref().unwrap_or("en");
     let registry = host.registry_snapshot().map_err(HostError::from)?;
+    let (packages, failures) = if query.review {
+        host.packages_for_review()
+    } else {
+        (host.packages(), host.failures())
+    };
     let mut plugins = Vec::new();
-    for package in host.packages() {
+    for package in packages {
         let plugin_state = registry.state(&package.id);
-        let gap = registry
-            .approval_gap_preview(&package)
-            .map_err(HostError::from)?;
+        let (gap, digest) = if query.review {
+            match package.digest_with_contents(|_, _| {}) {
+                Ok(digest) => (
+                    registry.reviewed_approval_gap(&package, &digest),
+                    Some(digest),
+                ),
+                Err(error) => {
+                    eprintln!(
+                        "warning: plugin_review_unavailable plugin={} error={error}",
+                        package.id
+                    );
+                    (Ok(Some(ApprovalGap::DigestChanged)), None)
+                }
+            }
+        } else {
+            let gap = registry.approval_gap_preview(&package);
+            let digest = if matches!(&gap, Ok(None)) {
+                package.cached_digest().ok()
+            } else {
+                None
+            };
+            (gap, digest)
+        };
+        let gap = gap.map_err(HostError::from)?;
         let enabled = plugin_state.is_some_and(|state| state.enabled);
-        let never_approved = matches!(gap, Some(ApprovalGap::NeverApproved));
         let manifest = package.manifest.as_ref();
 
         let commands: Vec<PluginCommandView> = manifest
@@ -623,25 +657,19 @@ async fn list_plugins(
                         .collect()
                 })
                 .unwrap_or_default(),
-            // 仅展示缓存预览；未审批包不读取 payload，实际操作另做权威校验。
-            digest: if never_approved {
-                None
-            } else {
-                package.cached_digest().ok()
-            },
+            digest,
         });
     }
-    Ok(Json(PluginsResponse {
+    Ok(PluginsResponse {
         plugins,
-        failures: host
-            .failures()
-            .iter()
+        failures: failures
+            .into_iter()
             .map(|failure| PluginFailureView {
                 path: failure.path.display().to_string(),
-                reason: failure.reason.clone(),
+                reason: failure.reason,
             })
             .collect(),
-    }))
+    })
 }
 
 // ---------------------------------------------------------------- 生命周期
@@ -660,9 +688,11 @@ struct EnabledResponse {
 async fn approve_plugin(
     State(state): State<Arc<PluginWebState>>,
     Path(plugin): Path<String>,
+    Json(review): Json<PluginApprovalReview>,
 ) -> Result<Json<Value>, PluginWebError> {
     let host = state.host().await?;
-    host.approve(&plugin, now_seconds()).await?;
+    host.approve_reviewed(&plugin, review, now_seconds())
+        .await?;
     Ok(Json(json!({"approved": true})))
 }
 
@@ -2213,6 +2243,111 @@ fn configure_metered_request(config: &mut willdeep_core::provider::ProviderConfi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn approval_accepts_only_the_reviewed_package() {
+        const ID: &str = "approval-fixture";
+        const MANIFEST: &str = ".codex-plugin/plugin.json";
+        let home = std::env::temp_dir().join(format!("plugin-review-{}", uuid::Uuid::new_v4()));
+        let package = PluginHost::shared_root(&home).join(ID).join("1.0.0");
+        std::fs::create_dir_all(package.join(".codex-plugin")).unwrap();
+        std::fs::write(
+            package.join(MANIFEST),
+            r#"{"name":"approval-fixture","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let content = package.join("readme.txt");
+        std::fs::write(&content, "initial content").unwrap();
+        let host = Arc::new(PluginHost::discover(&home).unwrap());
+        let state = Arc::new(PluginWebState::new(
+            host.clone(),
+            home.join("config.toml"),
+            home.clone(),
+            Arc::new(std::sync::RwLock::new(Vec::new())),
+        ));
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server =
+            tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let review = || async {
+            let response: Value = client
+                .get(format!("{origin}/api/plugins?locale=en&review=true"))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let plugin = &response["plugins"][0];
+            assert_eq!(plugin["id"], ID);
+            json!({"version": plugin["version"], "source": plugin["source"], "digest": plugin["digest"]})
+        };
+        let approve = |body: Value| {
+            let request = client
+                .post(format!("{origin}/api/plugins/{ID}/approve"))
+                .json(&body);
+            async move { request.send().await.unwrap().status() }
+        };
+        let saved = || {
+            host.registry_snapshot()
+                .unwrap()
+                .state(ID)
+                .and_then(|state| state.approval.clone())
+        };
+
+        let initial = review().await;
+        for field in ["version", "source", "digest"] {
+            let mut incomplete = initial.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert_eq!(approve(incomplete).await, StatusCode::UNPROCESSABLE_ENTITY);
+            assert_eq!(saved(), None);
+        }
+        assert_eq!(approve(initial.clone()).await, StatusCode::OK);
+        let approved = saved().unwrap();
+        assert_eq!(approved.digest, initial["digest"].as_str().unwrap());
+
+        std::fs::write(&content, "changed content").unwrap();
+        assert_eq!(approve(initial.clone()).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let changed = review().await;
+        assert_ne!(changed["digest"], initial["digest"]);
+
+        let draft = PluginHost::draft_root(&home).join(ID);
+        std::fs::create_dir_all(draft.parent().unwrap()).unwrap();
+        std::fs::rename(&package, &draft).unwrap();
+        assert_eq!(approve(changed.clone()).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let moved = review().await;
+        assert_eq!(moved["source"], "draft");
+        assert_eq!(moved["digest"], changed["digest"]);
+
+        std::fs::write(
+            draft.join(MANIFEST),
+            r#"{"name":"approval-fixture","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(approve(moved).await, StatusCode::CONFLICT);
+        assert_eq!(saved().as_ref(), Some(&approved));
+        let upgraded = review().await;
+        assert_eq!(upgraded["version"], "2.0.0");
+        assert_eq!(approve(upgraded.clone()).await, StatusCode::OK);
+        let approved = saved().unwrap();
+        assert_eq!(approved.version, "2.0.0");
+        assert_eq!(approved.source, "draft");
+        assert_eq!(approved.digest, upgraded["digest"].as_str().unwrap());
+
+        std::fs::rename(draft, home.join("removed-plugin")).unwrap();
+        assert_eq!(approve(upgraded).await, StatusCode::CONFLICT);
+        assert_eq!(saved(), Some(approved));
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn metered_requests_disable_transport_replay_without_changing_normal_requests() {
