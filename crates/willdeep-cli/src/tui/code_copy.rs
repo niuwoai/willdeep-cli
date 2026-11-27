@@ -505,8 +505,8 @@ fn copy_success_message(language: Language, lines: usize, route: ClipboardRoute)
     template.replace("{n}", &lines.to_string())
 }
 
-/// 先写本机系统剪贴板；MuseTerm 和 SSH 会话再发 OSC 52，让终端把代码写进用户
-/// 本机的剪贴板。SSH 上不碰远端 arboard——那通常只会失败，对用户也没有意义。
+/// MuseTerm 和 SSH 会话优先发 OSC 52，由终端写入用户本机的剪贴板。
+/// 其他会话优先写系统剪贴板。SSH 会话只使用 OSC 52。
 /// OSC 52 没有回执，成功返回 `Terminal`，调用方据此说「已发送」而不是「已复制」。
 fn write_code_clipboard(text: &str, hosted: bool) -> Result<ClipboardRoute, String> {
     let ssh = ["SSH_CONNECTION", "SSH_TTY"]
@@ -530,24 +530,24 @@ fn write_clipboard_with(
     text: &str,
     hosted: bool,
     ssh: bool,
-    mut write_terminal: impl FnMut(&str) -> bool,
-    mut write_local: impl FnMut(&str) -> Result<(), String>,
+    write_terminal: impl FnOnce(&str) -> bool,
+    write_local: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<ClipboardRoute, String> {
-    let mut terminal = (hosted || ssh) && write_terminal(text);
-    let local = if ssh { None } else { Some(write_local(text)) };
-    if let Some(Ok(())) = &local {
-        return Ok(ClipboardRoute::Local);
+    if hosted || ssh {
+        if write_terminal(text) {
+            // MuseTerm 会写同一个系统剪贴板，不能再用 arboard 写一次。
+            return Ok(ClipboardRoute::Terminal);
+        }
+        if ssh {
+            return Err("terminal clipboard unavailable".to_owned());
+        }
+        return write_local(text).map(|()| ClipboardRoute::Local);
     }
-    if !terminal && !hosted {
-        // 普通终端里 arboard 失败时也试一次 OSC 52；写不出去就明确报错。
-        terminal = write_terminal(text);
-    }
-    if terminal {
-        return Ok(ClipboardRoute::Terminal);
-    }
-    match local {
-        Some(Err(error)) => Err(error.to_string()),
-        _ => Err("terminal clipboard unavailable".to_owned()),
+
+    match write_local(text) {
+        Ok(()) => Ok(ClipboardRoute::Local),
+        Err(_) if write_terminal(text) => Ok(ClipboardRoute::Terminal),
+        Err(error) => Err(error),
     }
 }
 
@@ -621,6 +621,15 @@ mod tests {
             );
             assert_eq!(route, Ok(ClipboardRoute::Terminal));
             assert_eq!(sent, vec![original]);
+
+            let route = write_clipboard_with(
+                original,
+                hosted,
+                true,
+                |_| false,
+                |_| panic!("a failed OSC 52 write must not touch the SSH host clipboard"),
+            );
+            assert_eq!(route, Err("terminal clipboard unavailable".into()));
         }
     }
 
@@ -662,14 +671,6 @@ mod tests {
         );
         assert_eq!(sent, vec![original]);
         assert_eq!(
-            write_clipboard_with(original, true, false, |_| true, |_| Ok(()),),
-            Ok(ClipboardRoute::Local)
-        );
-        assert_eq!(
-            write_clipboard_with(original, true, true, |_| false, |_| unreachable!()),
-            Err("terminal clipboard unavailable".into())
-        );
-        assert_eq!(
             write_clipboard_with(
                 original,
                 false,
@@ -679,6 +680,34 @@ mod tests {
             ),
             Err("fixture local clipboard failure".into())
         );
+    }
+
+    #[test]
+    fn museterm_clipboard_uses_local_only_if_terminal_send_fails() {
+        let original = "中🙂  \n\n  tail ";
+        for terminal_sent in [true, false] {
+            let mut local = Vec::new();
+            let route = write_clipboard_with(
+                original,
+                true,
+                false,
+                |value| {
+                    assert_eq!(value, original);
+                    terminal_sent
+                },
+                |value| {
+                    local.push(value.to_owned());
+                    Ok(())
+                },
+            );
+            if terminal_sent {
+                assert_eq!(route, Ok(ClipboardRoute::Terminal));
+                assert!(local.is_empty());
+            } else {
+                assert_eq!(route, Ok(ClipboardRoute::Local));
+                assert_eq!(local, vec![original]);
+            }
+        }
     }
 
     #[test]
