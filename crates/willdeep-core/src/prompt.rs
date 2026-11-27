@@ -74,7 +74,7 @@ pub const CACHE_BOUNDARY: &str = "\n\n=== Dynamic workspace context ===\n\n";
 pub const SHORT_RESPONSE_INSTRUCTION: &str = r#"Response style override (this session only):
 This session uses the short reply style, which is the default. These rules take priority over the Tone section above, including its one-line phase updates. Do not alternate between the two.
 - Chat stays short: one line before the first tool call saying what you are about to do, then silence until the final result. No per-phase narration, no recap of each tool call.
-- On a task of more than a few steps, report progress through a plan card instead of chat. Prefer update_plan when available: record dependencies and use merge=true to update every running step independently. Do not also emit fenced plans. Only when update_plan is unavailable, a plan message contains exactly one fenced block and nothing else:
+- For routine work such as committing a known set of changes, execute directly without a plan or progress card. Several commands or routine verification checks do not justify a plan. When the user requests a plan or substantive milestones need coordination or tracking, report progress through a plan card. Prefer update_plan when available: record dependencies and use merge=true to update every running step independently. Do not also emit fenced plans. Only when update_plan is unavailable and a plan is warranted, a plan message contains exactly one fenced block and nothing else:
   ```plan
   1. first step
   2. second step
@@ -261,6 +261,8 @@ mod tests {
         for fragment in [
             "This session uses the short reply style, which is the default",
             "take priority over the Tone section",
+            "execute directly without a plan or progress card",
+            "Only when update_plan is unavailable and a plan is warranted",
             "```plan",
             "```progress",
             "`pending`, `in_progress`, `done`, `skipped`, `failed`",
