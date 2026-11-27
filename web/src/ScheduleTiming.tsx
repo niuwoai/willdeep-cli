@@ -1,12 +1,14 @@
+import { useId } from "react";
 import type { Language } from "./i18n";
 import { scheduleText } from "./scheduleMessages";
 import type { ScheduleDraft, ScheduleSpec } from "./scheduleTypes";
 
-export function ScheduleTiming({ draft, timezoneOptions, onceTime, onOnceTime, onChange, language, disabled }: {
+export function ScheduleTiming({ draft, timezoneOptions, onceTime, onOnceTime, onChange, language, disabled, sectioned = false }: {
   draft: ScheduleDraft; timezoneOptions: string[]; onceTime: string; onOnceTime: (value: string) => void;
-  onChange: (draft: ScheduleDraft) => void; language: Language; disabled: boolean;
+  onChange: (draft: ScheduleDraft) => void; language: Language; disabled: boolean; sectioned?: boolean;
 }) {
   const s = (key: Parameters<typeof scheduleText>[0]) => scheduleText(key, language);
+  const timezoneId = useId();
   const spec = draft.schedule;
   const time = "hour" in spec ? `${String(spec.hour).padStart(2, "0")}:${String(spec.minute).padStart(2, "0")}` : "09:00";
   const changeKind = (kind: ScheduleSpec["kind"]) => {
@@ -20,11 +22,13 @@ export function ScheduleTiming({ draft, timezoneOptions, onceTime, onOnceTime, o
   };
   const zones = Array.from(new Set([draft.timezone, ...timezoneOptions])).filter(Boolean);
   return <fieldset disabled={disabled} className="schedule-fields">
-    <label>{s("time")}<select value={spec.kind} onChange={(event) => changeKind(event.target.value as ScheduleSpec["kind"])}>
+    {sectioned && <legend>{s("conversationTiming")}</legend>}
+    <label>{s(sectioned ? "conversationFrequency" : "time")}<select value={spec.kind} onChange={(event) => changeKind(event.target.value as ScheduleSpec["kind"])}>
       {(["interval", "dailyAt", "weekdaysAt", "weeklyAt", "onceAt"] as const).map((kind) => <option key={kind} value={kind}>{s(kind)}</option>)}
     </select></label>
-    <label>{s("timezone")}<input list="schedule-timezones" value={draft.timezone} onChange={(event) => onChange({ ...draft, timezone: event.target.value })} required />
-      <datalist id="schedule-timezones">{zones.map((zone) => <option key={zone} value={zone} />)}</datalist>
+    <label>{s("timezone")}<input list={timezoneId} value={draft.timezone} onChange={(event) => onChange({ ...draft, timezone: event.target.value })} required />
+      <datalist id={timezoneId}>{zones.map((zone) => <option key={zone} value={zone} />)}</datalist>
+
     </label>
     {spec.kind === "interval" && <label>{s("minutes")}<input type="number" min="1" value={spec.minutes} onChange={(event) => onChange({ ...draft, schedule: { ...spec, minutes: Number(event.target.value) } })} required /></label>}
     {"hour" in spec && <label>{s("time")}<input type="time" value={time} onChange={(event) => changeTime(event.target.value)} required /></label>}

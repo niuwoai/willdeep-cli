@@ -614,30 +614,39 @@ impl App {
         self.transient_thought = None;
     }
 
-    /// 点工具行展开，点它下面的「收起」收回。
+    pub(super) fn tool_row_hit_at(&self, y: u16) -> Option<(usize, bool)> {
+        // 窄屏折行时两段可能挤到一行，「收起」优先。
+        self.tool_row_hits
+            .iter()
+            .filter(|(row, _, _)| *row == y)
+            .max_by_key(|(_, _, collapse)| *collapse)
+            .map(|(_, source, collapse)| (*source, *collapse))
+    }
+
+    /// 点工具行或系统消息汇总展开，点它下面的「收起」收回。
     ///
     /// 展开只记在显示层：记录里那行原样不动。完整命令在发起时就记在
     /// `tool_expansions` 里，点开直接取；没有记下的（比如重开会话回放出来的）
     /// 点开只多一行「收起」。点在别的地方返回 `false`，让点击继续走原来的处理。
     pub(super) fn toggle_tool_row_at(&mut self, y: u16) -> bool {
-        // 同一个屏幕行上「收起」优先于工具行本身：窄屏折行时两段会挤到一行，
-        // 点下去应该收回而不是再展开一次。
-        let Some((_, source, _collapse)) = self
-            .tool_row_hits
-            .iter()
-            .filter(|(row, _, _)| *row == y)
-            .max_by_key(|(_, _, collapse)| *collapse)
-        else {
+        let Some((source, _collapse)) = self.tool_row_hit_at(y) else {
             return false;
         };
-        let source = *source;
-        // 点「收起」，或者点一行已经展开的工具行，都收回；点收着的工具行才展开。
-        // 上面已经按「收起优先」挑过命中，这里不用再分两种收回。
+        // 系统消息组沿用工具行的命中表。只有展开系统消息组才显式回到最新。
+        let opening_system_group = !self.tool_row_open(source)
+            && self
+                .transcript
+                .get(source)
+                .is_some_and(|row| is_foldable_system_notice(row));
         self.toggle_tool_projection(source);
         self.transcript_render_cache = None;
         self.tool_row_hits.clear();
         self.refresh_transcript_height();
-        self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+        if opening_system_group {
+            self.scroll_to_bottom();
+        } else {
+            self.scroll_from_bottom = self.scroll_from_bottom.min(self.max_scroll());
+        }
         true
     }
 

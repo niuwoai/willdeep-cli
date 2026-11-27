@@ -1,0 +1,85 @@
+.session-row {
+  --session-menu-target-width: 28px;
+}
+
+.session-menu-trigger {
+  position: absolute;
+  inset-inline-end: 3px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  inline-size: var(--session-menu-target-width);
+  block-size: 26px;
+  border-radius: 6px;
+  background: var(--row-bg);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+}
+
+.session-row:is(:hover, :focus-within, :has(.session-menu-trigger[aria-expanded="true"])) .session-title {
+  padding-inline-end: calc(var(--session-menu-target-width) + 6px);
+}
+
+.session-row:is(:hover, :focus-within) .session-menu-trigger,
+.session-menu-trigger[aria-expanded="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-menu-trigger:is(:hover, [aria-expanded="true"]) {
+  background: var(--bg-elevated);
+}
+
+.session-menu-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The portal puts the popup outside both sidebar scroll containers. */
+.session-menu {
+  min-width: min(194px, var(--available-width, calc(100vw - 16px)));
+  max-width: var(--available-width, calc(100vw - 16px));
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-raised);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--shadow-soft);
+  animation: none;
+}
+
+.session-menu [role="menuitem"] {
+  min-height: 30px;
+  gap: 9px;
+  border-radius: 5px;
+  padding: 4px 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.session-menu [role="menuitem"] svg { flex: none; color: var(--text-dim); }
+.session-menu [role="menuitem"][data-highlighted] { background: var(--bg-panel-hover); }
+.session-menu [role="menuitem"][data-disabled] { cursor: default; opacity: .45; }
+.session-menu [data-value="delete"],
+.session-menu [data-value="delete"] svg { color: var(--danger-text); }
+.session-menu [data-value="delete"][data-highlighted] { background: var(--danger-surface); }
+.session-menu [role="separator"] { margin: 3px 0; background: var(--border-subtle); }
+.session-menu kbd { padding-inline-start: 8px; color: var(--text-dim); opacity: 1; }
+
+.session-action-error {
+  flex: 0 0 auto;
+  margin-block: 0 6px;
+  color: var(--danger-text);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+@media (hover: none), (any-pointer: coarse) {
+  .session-row { --session-menu-target-width: 40px; min-height: 40px; }
+  .session-row .session-title { padding-inline-end: calc(var(--session-menu-target-width) + 6px); }
+  .session-menu-trigger { block-size: 40px; opacity: 1; pointer-events: auto; }
+  .session-menu [role="menuitem"] { min-height: 40px; }
+}

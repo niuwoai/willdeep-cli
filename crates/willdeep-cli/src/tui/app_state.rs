@@ -2056,7 +2056,7 @@ impl App {
         } else if self.transcript_rect.contains((x, y).into()) {
             self.focus = FocusPane::Chat;
             // 松手时才决定要不要点开：从这一行起手拖选不会被展开打断。
-            self.pending_chat_click = Some(y);
+            self.pending_chat_click = Some((y, self.tool_row_hit_at(y)));
         } else if self.activity_rect.contains((x, y).into()) {
             self.focus = FocusPane::Activity;
         } else if self.prompt_rect.contains((x, y).into()) {

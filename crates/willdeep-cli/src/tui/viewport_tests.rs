@@ -505,6 +505,126 @@ fn growing_the_viewport_clears_reading_when_the_transcript_fits() {
 }
 
 #[test]
+fn mouse_expanding_system_notices_returns_to_latest_in_both_layouts() {
+    let dispatch = |app: &mut App, kind, y| {
+        let x = app.transcript_content.x + 2;
+        if !app.handle_chat_selection_mouse(mouse(kind, x, y))
+            && matches!(kind, MouseEventKind::Down(_))
+        {
+            app.handle_mouse(
+                x,
+                y,
+                &BackgroundTaskRegistry::default(),
+                &SkillCatalog::default(),
+            );
+        }
+    };
+    let down = MouseEventKind::Down(MouseButton::Left);
+    let up = MouseEventKind::Up(MouseButton::Left);
+    let control = |app: &App, source, collapse| {
+        app.tool_row_hits
+            .iter()
+            .find(|(_, record, close)| (*record, *close) == (source, collapse))
+            .expect("disclosure control is visible")
+            .0
+    };
+    const SYSTEM_SOURCE: usize = 1;
+    const TOOL_SOURCE: usize = 3;
+
+    for mode in MODES {
+        for was_reading in [false, true] {
+            let (mut app, mut terminal) = fixture(
+                mode,
+                vec![
+                    format!("{ASSISTANT_ROW_PREFIX}{}", history()),
+                    "System: model changed".into(),
+                    "System: settings saved".into(),
+                    narration::tool_line(narration::TOOL_DONE, "read_file", None),
+                    format!(
+                        "{ASSISTANT_ROW_PREFIX}{}latest reply",
+                        "reply line\n".repeat(10)
+                    ),
+                ],
+            );
+            app.tool_expansions
+                .insert(TOOL_SOURCE, "tool detail".into());
+            resize(&mut app, &mut terminal, 80, 32);
+            const SCROLL_DISTANCE: usize = App::NEAR_BOTTOM_LINES + 5;
+            if was_reading {
+                app.scroll_up(SCROLL_DISTANCE);
+                paint(&mut app, &mut terminal);
+                assert!(app.viewport.indicator.height > 0);
+            }
+            assert_eq!(app.follow_bottom, !was_reading);
+
+            // A repaint can replace the tool hit with the system group at the same y.
+            let row = control(&app, TOOL_SOURCE, false);
+            dispatch(&mut app, down, row);
+            app.tool_row_hits.retain(|(hit_row, _, _)| *hit_row != row);
+            app.tool_row_hits.push((row, SYSTEM_SOURCE, false));
+            dispatch(&mut app, up, row);
+            assert!(!app.tool_row_open(SYSTEM_SOURCE));
+            assert!(!app.follow_bottom);
+            paint(&mut app, &mut terminal);
+
+            let row = control(&app, SYSTEM_SOURCE, false);
+            dispatch(&mut app, down, row);
+            app.append_transcript("New output between mouse events".into());
+            paint(&mut app, &mut terminal);
+            assert!(!app.tool_row_open(SYSTEM_SOURCE));
+            assert_eq!(control(&app, SYSTEM_SOURCE, false), row);
+            assert!(!app.follow_bottom);
+            assert!(app.viewport.new_content > 0);
+
+            dispatch(&mut app, up, row);
+            assert!(app.tool_row_open(SYSTEM_SOURCE));
+            assert!(app.follow_bottom, "{mode:?}, was_reading={was_reading}");
+            assert!(app.viewport.reading.is_none());
+            assert_eq!(app.viewport.new_content, 0);
+            paint(&mut app, &mut terminal);
+            assert_eq!(app.transcript_render_offset, app.max_scroll());
+            assert_eq!(app.viewport.indicator, Rect::default());
+            control(&app, SYSTEM_SOURCE, true);
+
+            let before = app.transcript_render_offset;
+            app.append_transcript("Output after expansion".into());
+            paint(&mut app, &mut terminal);
+            assert!(app.transcript_render_offset > before);
+            assert_eq!(app.transcript_render_offset, app.max_scroll());
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+                    .contains("Output after expansion")
+            );
+
+            app.scroll_up(SCROLL_DISTANCE);
+            paint(&mut app, &mut terminal);
+            let reading_offset = app.transcript_render_offset;
+            let row = control(&app, SYSTEM_SOURCE, true);
+            dispatch(&mut app, down, row);
+            dispatch(&mut app, up, row);
+            paint(&mut app, &mut terminal);
+            assert!(!app.tool_row_open(SYSTEM_SOURCE));
+            assert!(!app.follow_bottom);
+            assert_eq!(app.transcript_render_offset, reading_offset);
+
+            let row = control(&app, TOOL_SOURCE, false);
+            dispatch(&mut app, down, row);
+            dispatch(&mut app, up, row);
+            paint(&mut app, &mut terminal);
+            assert!(app.tool_row_open(TOOL_SOURCE));
+            assert!(!app.follow_bottom);
+            assert_eq!(app.transcript_render_offset, reading_offset);
+        }
+    }
+}
+
+#[test]
 fn indicator_uses_the_separator_outside_the_body_and_the_whole_row_is_clickable() {
     for mode in MODES {
         for language in [Language::ZhCn, Language::En, Language::Ja] {
@@ -535,11 +655,18 @@ fn indicator_uses_the_separator_outside_the_body_and_the_whole_row_is_clickable(
                 }
             );
             let expected = language.text(
-                "有新内容 · End 返回最新",
-                "New content · End to latest",
-                "新しい内容 · End で最新へ",
+                "有新内容 · 点击返回最新 (End)",
+                "New content · Click for latest (End)",
+                "新しい内容 · クリックで最新へ (End)",
             );
-            let tail = indicator.x + UnicodeWidthStr::width(expected) as u16;
+            let mut tail = indicator.x;
+            for character in expected.chars() {
+                assert_eq!(
+                    terminal.backend().buffer()[(tail, y)].symbol(),
+                    character.to_string()
+                );
+                tail += unicode_width::UnicodeWidthChar::width(character).unwrap() as u16;
+            }
             for x in tail..indicator.right() {
                 assert_eq!(terminal.backend().buffer()[(x, y)].symbol(), " ");
             }

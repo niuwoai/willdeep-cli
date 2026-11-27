@@ -364,8 +364,8 @@ struct App {
     /// 聊天区按下时落在哪一行，等松手再决定要不要点开。
     ///
     /// 按下就展开会让「从这一行起手拖选」直接失效：展开会重排记录，选区坐标
-    /// 对不上，而用户本意只是选字。现在按下只记行号，拖了就作废，没拖才点开。
-    pending_chat_click: Option<u16>,
+    /// 对不上，而用户本意只是选字。按下同时记录折叠控件，防止重绘后点中另一行。
+    pending_chat_click: Option<(u16, Option<(usize, bool)>)>,
     tools: ToolActivity,
     tools_expanded: bool,
     activity_rect: Rect,

@@ -2,6 +2,14 @@ import type { Language } from "./i18n";
 const languageIndex: Record<Language, number> = { "zh-CN": 0, en: 1, ja: 2 };
 const text = {
   conversationTasks: ["会话定时任务", "Conversation schedules", "会話の定期タスク"],
+  conversationTaskCount: ["{count} 项", "Tasks: {count}", "{count} 件"],
+  conversationBackToList: ["返回列表", "Back to list", "一覧に戻る"],
+  conversationLastRun: ["上次运行", "Last run", "前回の実行"],
+  conversationTaskUnavailable: ["此任务已不在会话列表中", "This task is no longer in the conversation list", "このタスクは会話の一覧にありません"],
+  conversationTaskContent: ["任务内容", "Task content", "タスクの内容"],
+  conversationTiming: ["运行计划", "Run schedule", "実行スケジュール"],
+  conversationFrequency: ["运行频率", "Frequency", "実行頻度"],
+  conversationPreview: ["预览时间", "Preview runs", "日時を確認"],
   conversationHint: ["到时继续本会话；忙碌时跳过。关闭网页后由 Runtime 继续计时。", "Continue this conversation when due; skip when busy. Runtime keeps scheduling after the page closes.", "時刻になるとこの会話を続行します。使用中はスキップし、ページを閉じても Runtime が予定を管理します。"],
   source_session_busy: ["原会话正在执行或等待处理，本次已跳过", "Source conversation is active or waiting; this run was skipped", "元の会話が実行中・応答待ちのためスキップしました"],
   loadingTasks: ["正在加载定时任务…", "Loading schedules…", "定期タスクを読み込み中…"],

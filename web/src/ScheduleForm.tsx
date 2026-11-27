@@ -7,9 +7,10 @@ import { ScheduleOptions } from "./ScheduleOptions";
 import { scheduleText } from "./scheduleMessages";
 import { ScheduleRequestError, scheduleJson, scheduleWrite, type ScheduleDraft, type ScheduleView, type ScheduleWorkspace } from "./scheduleTypes";
 
-export function ScheduleForm({ initial, id, revision, workspaces, writable, language, messages, onSaved, onDirty }: {
+export function ScheduleForm({ initial, id, revision, workspaces, writable, language, messages, onSaved, onDirty, conversationPanel }: {
   initial: ScheduleDraft; id: string | null; revision: number; workspaces: ScheduleWorkspace[]; writable: boolean;
   language: Language; messages: Messages; onSaved: (view: ScheduleView) => void; onDirty: (dirty: boolean) => void;
+  conversationPanel?: { onCancel: () => void };
 }) {
   const s = (key: Parameters<typeof scheduleText>[0]) => scheduleText(key, language);
   const [draft, setDraft] = useState(initial);
@@ -17,7 +18,7 @@ export function ScheduleForm({ initial, id, revision, workspaces, writable, lang
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [uncertain, setUncertain] = useState(false);
-  const [preview, setPreview] = useState<number[]>([]);
+  const [preview, setPreview] = useState<number[] | null>(null);
   const [onceTime, setOnceTime] = useState("");
   const onceAt = initial.schedule.kind === "onceAt" ? initial.schedule.at : null;
   const originalTime = useQuery({ queryKey: ["schedule-format-time", onceAt, initial.timezone], enabled: onceAt !== null,
@@ -55,9 +56,11 @@ export function ScheduleForm({ initial, id, revision, workspaces, writable, lang
     catch (value) { setError(failure(value)); }
   };
   const date = (at: number) => new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(at * 1000));
-  const change = (next: ScheduleDraft) => { setDraft(next); setPreview([]); onDirty(true); };
-  return <form className="schedule-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    <fieldset disabled={!writable || saving || uncertain} className="schedule-fields">
+  const change = (next: ScheduleDraft) => { setDraft(next); setPreview(null); onDirty(true); };
+  const fieldsDisabled = !writable || saving || uncertain;
+  const fields = <>
+    <fieldset disabled={fieldsDisabled} className="schedule-fields">
+      {conversationPanel && <legend>{s("conversationTaskContent")}</legend>}
       <label>{s("name")}<input value={draft.name} maxLength={120} onChange={(event) => change({ ...draft, name: event.target.value })} required /></label>
       <label>{messages.workspace}<select value={draft.workspace} onChange={(event) => change({ ...draft, workspace: event.target.value })} required>
         <option value="">{messages.workspace}</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.path}>{workspace.name}</option>)}
@@ -65,11 +68,42 @@ export function ScheduleForm({ initial, id, revision, workspaces, writable, lang
       <label className="schedule-wide">{s("prompt")}<textarea rows={5} value={draft.prompt} onChange={(event) => change({ ...draft, prompt: event.target.value })} required /></label>
       <label className="schedule-wide">{s("goal")}<textarea rows={2} value={draft.goal ?? ""} onChange={(event) => change({ ...draft, goal: event.target.value || null })} /></label>
     </fieldset>
-    <ScheduleTiming draft={draft} timezoneOptions={zones.data ?? []} onceTime={onceTime} onOnceTime={(value) => { setOnceTime(value); onDirty(true); }} onChange={change} language={language} disabled={!writable || saving || uncertain} />
-    <ScheduleOptions draft={draft} onChange={change} language={language} messages={messages} disabled={!writable || saving || uncertain} />
+    <ScheduleTiming draft={draft} timezoneOptions={zones.data ?? []} onceTime={onceTime} onOnceTime={(value) => {
+      setOnceTime(value);
+      if (conversationPanel) setPreview(null);
+      onDirty(true);
+    }} onChange={change} language={language} disabled={fieldsDisabled} sectioned={!!conversationPanel} />
+    <ScheduleOptions draft={draft} onChange={change} language={language} messages={messages} disabled={fieldsDisabled} />
+  </>;
+  const feedback = <>
     {uncertain && <p role="alert">{s("uncertain")}</p>}
     {error && <p role="alert" className="schedule-error">{error}</p>}
-    <div className="schedule-actions"><button type="submit" className="schedule-primary" disabled={!writable || saving}>{saving ? s("saving") : s("save")}</button><button type="button" onClick={() => void showPreview()}>{s("preview")}</button></div>
-    {preview.length > 0 && <ul className="schedule-preview">{preview.map((at) => <li key={at}>{date(at)} · {"UTC"}</li>)}</ul>}
+  </>;
+  const saveButton = <button type="submit" className="schedule-primary" disabled={!writable || saving}>{s(saving ? "saving" : "save")}</button>;
+  const previewButton = <button type="button" disabled={!!conversationPanel && saving} onClick={() => void showPreview()}>{s(conversationPanel ? "conversationPreview" : "preview")}</button>;
+  const previewTimes = !!preview?.length && <ul className="schedule-preview">{preview.map((at) => <li key={at}>{date(at)} · UTC</li>)}</ul>;
+  return <form className={conversationPanel ? "schedule-form schedule-form--conversation" : "schedule-form"} onSubmit={(event) => {
+    event.preventDefault();
+    if (writable && !saving) void save();
+  }}>
+    {conversationPanel ? <>
+      <div className="conversation-schedule-scroll conversation-schedule-fields">{fields}</div>
+      <div className="conversation-schedule-footer">
+        {(uncertain || error || preview !== null) && <div className="conversation-schedule-feedback">
+          {feedback}
+          {preview !== null && <div role="status">{previewTimes || <p>{s("noNext")}</p>}</div>}
+        </div>}
+        <div className="schedule-actions">
+          <button type="button" disabled={saving} onClick={conversationPanel.onCancel}>{messages.cancel}</button>
+          {previewButton}
+          {saveButton}
+        </div>
+      </div>
+    </> : <>
+      {fields}
+      {feedback}
+      <div className="schedule-actions">{saveButton}{previewButton}</div>
+      {previewTimes}
+    </>}
   </form>;
 }

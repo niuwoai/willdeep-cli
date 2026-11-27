@@ -725,18 +725,34 @@ impl App {
         if rect.y < self.transcript_content.bottom() || rect.y >= frame.area().bottom() {
             return;
         }
-        let text = if self.viewport.new_content > 0 {
+        let full_hint = if self.viewport.new_content > 0 {
             self.language.text(
-                "有新内容 · End 返回最新",
-                "New content · End to latest",
-                "新しい内容 · End で最新へ",
+                "有新内容 · 点击返回最新 (End)",
+                "New content · Click for latest (End)",
+                "新しい内容 · クリックで最新へ (End)",
             )
         } else {
             self.language.text(
-                "正在回看 · End 返回最新",
-                "Reading history · End to latest",
-                "履歴を表示中 · End で最新へ",
+                "正在回看 · 点击返回最新 (End)",
+                "Reading history · Click for latest (End)",
+                "履歴を表示中 · クリックで最新へ (End)",
             )
+        };
+        let short_hint = self.language.text(
+            "点击返回最新 (End)",
+            "Click for latest (End)",
+            "クリックで最新へ (End)",
+        );
+        let text = if self.native_selection_mode {
+            self.language.text(
+                "Esc 恢复鼠标",
+                "Esc restores mouse",
+                "Esc でマウス操作を再開",
+            )
+        } else if UnicodeWidthStr::width(full_hint) > rect.width as usize {
+            short_hint
+        } else {
+            full_hint
         };
         // Paragraph only writes its own characters; clear old border cells too,
         // including the continuation cells of wide glyphs.
