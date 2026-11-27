@@ -505,6 +505,63 @@ fn growing_the_viewport_clears_reading_when_the_transcript_fits() {
 }
 
 #[test]
+fn new_runtime_upgrade_result_renders_in_both_layouts() {
+    const UPGRADE_RESULT: &str = "Runtime Daemon already runs version";
+    let chat_contains = |app: &App, terminal: &Terminal<TestBackend>, text: &str| {
+        let area = app.transcript_content;
+        let buffer = terminal.backend().buffer();
+        (area.top()..area.bottom()).any(|y| {
+            (area.left()..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains(text)
+        })
+    };
+    for mode in MODES {
+        let (mut app, mut terminal) = fixture(mode, Vec::new());
+        app.append_transcript("System: Runtime action submitted · /daemon upgrade".into());
+        task_diagnostics::record_runtime_result(
+            &mut app,
+            format!("System: {UPGRADE_RESULT} {}.", willdeep_core::VERSION),
+        );
+        paint(&mut app, &mut terminal);
+        assert!(
+            chat_contains(&app, &terminal, UPGRADE_RESULT),
+            "upgrade result was hidden in {mode:?}"
+        );
+
+        // Pending input and tool activity do not start a new conversation turn.
+        app.append_transcript(app.queued_prompt_row("follow-up"));
+        app.append_transcript(narration::tool_line(
+            narration::TOOL_DONE,
+            "read_file",
+            None,
+        ));
+        paint(&mut app, &mut terminal);
+        assert!(
+            chat_contains(&app, &terminal, UPGRADE_RESULT),
+            "activity hid the upgrade result in {mode:?}"
+        );
+
+        app.mark_queued_prompt_sent("follow-up");
+        paint(&mut app, &mut terminal);
+        assert!(app.display_transcript().system_groups.is_empty());
+        assert!(
+            chat_contains(&app, &terminal, UPGRADE_RESULT),
+            "a sent message hid the upgrade result in {mode:?}"
+        );
+
+        app.append_transcript("System: Settings saved".into());
+        paint(&mut app, &mut terminal);
+        assert_eq!(
+            app.display_transcript().system_groups.get(&0),
+            Some(&(0..2))
+        );
+        assert!(chat_contains(&app, &terminal, "Settings saved"));
+    }
+}
+
+#[test]
 fn mouse_expanding_system_notices_returns_to_latest_in_both_layouts() {
     let dispatch = |app: &mut App, kind, y| {
         let x = app.transcript_content.x + 2;
@@ -544,6 +601,7 @@ fn mouse_expanding_system_notices_returns_to_latest_in_both_layouts() {
                         "{ASSISTANT_ROW_PREFIX}{}latest reply",
                         "reply line\n".repeat(10)
                     ),
+                    "System: Latest response".into(),
                 ],
             );
             app.tool_expansions

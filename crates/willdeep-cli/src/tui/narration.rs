@@ -74,10 +74,7 @@ fn is_thought_row(line: &str) -> bool {
     line.starts_with(THOUGHT_ENTRY_PREFIX) || line.starts_with(THOUGHT_EXPANDED_PREFIX)
 }
 
-/// 系统回执行（`System: ` 开头：模型已切换、工具行已展开、开屏提示这些）只在刚发生
-/// 时有用。它后面又落了这么多条用户/助手消息之后就不再画：记录本身不动，只是
-/// 不占屏幕。三条是「下一次问答里还看得见、再下一句发出就收」：用户问一句、模型答一句还在，
-/// 用户再开口才收——正好是聊天区本来就要滚动的时刻，不会在用户看着的时候消失。
+/// 较早的系统回执之后再出现这么多条用户或助手消息，就从聊天区淡出。
 pub(super) const SYSTEM_NOTICE_FADE_MESSAGES: usize = 3;
 
 /// 这行是不是系统回执。错误行（`Error: `）不算：失败要一直看得见。
@@ -85,19 +82,23 @@ fn is_system_notice_row(line: &str) -> bool {
     line.starts_with("System: ")
 }
 
-/// 可见区里哪些系统回执已经过时：它后面落了至少 `SYSTEM_NOTICE_FADE_MESSAGES` 条消息。
-/// 从后往前数一遍就行，不用每行再往后扫。
-fn faded_system_rows(rows: &[String]) -> Vec<bool> {
+/// 由后往前一次找出淡出的回执，以及始终单独显示的最新回执。
+fn system_notice_visibility(rows: &[String]) -> (Vec<bool>, Option<usize>) {
     let mut faded = vec![false; rows.len()];
+    let mut latest_notice = None;
     let mut messages_after = 0;
     for (index, row) in rows.iter().enumerate().rev() {
         if counts_as_fade_message(row) {
             messages_after += 1;
         } else if is_system_notice_row(row) {
-            faded[index] = messages_after >= SYSTEM_NOTICE_FADE_MESSAGES;
+            if latest_notice.is_none() {
+                latest_notice = Some(index);
+            } else {
+                faded[index] = messages_after >= SYSTEM_NOTICE_FADE_MESSAGES;
+            }
         }
     }
-    faded
+    (faded, latest_notice)
 }
 
 /// 淡出计数只认已经落地的对话轮次：用户消息（真正发出去的）、助手回复，以及
@@ -1007,7 +1008,15 @@ fn is_foldable_system_notice(row: &str) -> bool {
     is_system_notice_row(row) && !row.starts_with(VERSION_REPORT_PREFIX)
 }
 
-fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
+fn fold_system_notices(
+    folded: &mut FoldedTranscript,
+    language: Language,
+    latest_notice: Option<usize>,
+) {
+    let is_foldable = |index: usize| {
+        folded.sources[index].is_some_and(|source| Some(source) != latest_notice)
+            && is_foldable_system_notice(&folded.rows[index])
+    };
     let mut rows = Vec::new();
     let mut sources = Vec::new();
     let mut targets = vec![0; folded.rows.len()];
@@ -1015,9 +1024,9 @@ fn fold_system_notices(folded: &mut FoldedTranscript, language: Language) {
     while cursor < folded.rows.len() {
         let start = cursor;
         cursor += 1;
-        if is_foldable_system_notice(&folded.rows[start]) && folded.sources[start].is_some() {
+        if is_foldable(start) {
             while cursor < folded.rows.len()
-                && is_foldable_system_notice(&folded.rows[cursor])
+                && is_foldable(cursor)
                 && folded.sources[cursor - 1]
                     .zip(folded.sources[cursor])
                     .is_some_and(|(previous, next)| next == previous + 1)
@@ -1306,10 +1315,11 @@ impl App {
         // 系统回执过时与否按整份记录算，不按可见区：归档线在哪不该影响一条提示还显不显。
         // 正在搜索时全部放回来：搜索匹配的是整份记录，命中了却看不见那行就是坐进了黑屋。
         // 按「有没有搜索词」判，和渲染缓存的键一致：只开面板不打字，缓存不会重算。
-        let faded = if self.active_search_query().is_some() {
-            vec![false; self.transcript.len()]
+        let searching = self.active_search_query().is_some();
+        let (faded, latest_notice) = if searching {
+            (vec![false; self.transcript.len()], None)
         } else {
-            faded_system_rows(&self.transcript)
+            system_notice_visibility(&self.transcript)
         };
         // 淡出的回执先留在 entries 里：它虽然不画，但仍是工具行之间的分段边界。
         // 先删再折叠会让夹在两条工具行中间的回执把两段并成一段，而旧轮次里整段
@@ -1366,8 +1376,8 @@ impl App {
                 .and_then(|entry| visible_indices.get(entry))
                 .map(|index| floor + index);
         }
-        if self.active_search_query().is_none() {
-            fold_system_notices(&mut folded, self.language);
+        if !searching {
+            fold_system_notices(&mut folded, self.language, latest_notice);
         }
         folded
     }
@@ -1760,11 +1770,13 @@ mod tests {
         assert!(app.handle_slash_command("/version", &SkillCatalog::default()));
         app.append_transcript("System: third notice".into());
         app.append_transcript("System: fourth notice".into());
+        app.append_transcript("You: next request".into());
+        app.append_transcript("System: latest notice".into());
 
         let folded = app.display_transcript();
-        assert_eq!(folded.rows.len(), 3);
+        assert_eq!(folded.rows.len(), 5);
         assert_eq!(folded.rows[1], app.version_report());
-        assert_eq!(folded.sources, vec![None, Some(2), None]);
+        assert_eq!(folded.sources, vec![None, Some(2), None, Some(5), Some(6)]);
         assert_eq!(folded.system_groups.get(&0), Some(&(0..2)));
         assert_eq!(folded.system_groups.get(&2), Some(&(3..5)));
     }
@@ -1776,6 +1788,8 @@ mod tests {
                 format!("{THOUGHT_ENTRY_PREFIX}hidden thought"),
                 "System: first notice".to_owned(),
                 "System: second notice".to_owned(),
+                "You: next request".to_owned(),
+                "System: latest notice".to_owned(),
             ],
             Language::En,
         );
@@ -1783,7 +1797,7 @@ mod tests {
         app.transcript_width = 100;
         app.viewport_height = 40;
         let folded = app.display_transcript();
-        assert_eq!(folded.index_of, vec![0, 0, 0]);
+        assert_eq!(folded.index_of, vec![0, 0, 0, 1, 2]);
         assert_eq!(folded.system_groups.get(&0), Some(&(1..3)));
 
         app.prepare_transcript_frame();
@@ -2102,9 +2116,9 @@ mod tests {
         assert!(!app.tool_rows_expanded);
         let folded = app.display_transcript();
         assert_eq!(app.transcript.len(), 9 + 2);
-        assert_eq!(folded.rows.len(), 2);
-        assert!(folded.rows[1].contains("2 system messages"));
-        assert_eq!(folded.system_groups.get(&1), Some(&(9..11)));
+        assert_eq!(folded.rows.len(), 3);
+        assert_eq!(folded.rows.last(), app.transcript.last());
+        assert!(folded.system_groups.is_empty());
     }
 
     #[test]
@@ -2670,10 +2684,9 @@ mod tests {
         );
     }
 
-    /// 系统回执后面落了三条消息就不再画；记录本身一条不动。工具行、分隔线、别的
-    /// 系统行都不算「消息」，错误行永远不收。
+    /// 最新回执不随对话淡出。它成为较早的回执后，再按消息条数判断是否淡出。
     #[test]
-    fn system_notices_fade_after_three_messages_but_errors_stay() {
+    fn latest_system_notice_survives_three_messages_until_replaced() {
         let mut app = App::new(Vec::new(), Language::En);
         app.append_transcript("System: Model switched: qwen".into());
         app.append_transcript("Error: Switch failed: boom".into());
@@ -2689,8 +2702,12 @@ mod tests {
         );
 
         app.append_transcript("You: three".into());
-        // 第三条消息落下：系统行收起，错误行留着，记录不动。
+        let rows = app.display_transcript().rows;
+        assert!(rows.iter().any(|row| row.contains("Model switched")));
+
+        app.append_transcript("System: Settings saved".into());
         let folded = app.display_transcript();
+        assert!(folded.rows.iter().any(|row| row.contains("Settings saved")));
         assert!(
             !folded.rows.iter().any(|row| row.contains("Model switched")),
             "{:?}",
@@ -2732,8 +2749,11 @@ mod tests {
             "WillDeep: 2".to_owned(),
         ];
         assert_eq!(
-            faded_system_rows(&rows),
-            vec![true, false, false, false, false, false, false]
+            system_notice_visibility(&rows),
+            (
+                vec![true, false, false, false, false, false, false],
+                Some(3)
+            )
         );
         let mut app = App::new(rows, Language::En);
         app.archive_floor = 1;
@@ -2843,7 +2863,7 @@ mod tests {
     /// 过期后，两侧的单工具行不能被并成一段（旧轮次里那样会两条一起消失）。
     #[test]
     fn fading_a_notice_between_tool_rows_keeps_both_visible() {
-        let app = App::new(
+        let mut app = App::new(
             vec![
                 "You: q".to_owned(),
                 "· ✓ run_command · ls".to_owned(),
@@ -2855,7 +2875,8 @@ mod tests {
             ],
             Language::En,
         );
-        // 回执后面落了三条消息：回执收起，但两条工具行各自成段，都得留着。
+        // 有了较新的回执后，较早的回执淡出，但两条工具行各自成段。
+        app.append_transcript("System: Settings saved".into());
         let folded = app.display_transcript();
         assert!(
             !folded
@@ -2887,6 +2908,7 @@ mod tests {
                 "Plan: {\"summary\":\"a\"}".to_owned(),
                 "You: two".to_owned(),
                 "Plan: {\"summary\":\"b\"}".to_owned(),
+                "System: Settings saved".to_owned(),
             ],
             Language::En,
         );
@@ -2909,6 +2931,7 @@ mod tests {
                 "You: ［待发］ a".to_owned(),
                 "You: ［待发］ b".to_owned(),
                 "You: ［待发］ c".to_owned(),
+                "System: Settings saved".to_owned(),
             ],
             Language::En,
         );
