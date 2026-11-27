@@ -28,6 +28,12 @@ willdeep plugin builtin install roundtable --enable   # 或者一步批准并启
 `mcp__scheduler__schedule_task`、`mcp__roundtable__roundtable_start` 这样的形式。
 和其他插件工具一样，调用前会按当前审批档位询问。
 
+## 用量统计 `willdeep-token-stats`
+
+Web 插件宿主首次加载插件列表时安装随包版本。在插件管理页面批准并启用后，从侧栏的插件入口打开「用量统计」。也可以显式执行 `willdeep plugin builtin install token-stats`。
+
+权限为 `process.execute`，用于启动同一个 `willdeep` 二进制中的统计服务。统计只读取本机用量账本，页面包含八个月的 Token 活动热力图、近 90 天的子代理使用情况、费用月历和单日模型用量。热力图的日期提示展示请求数、Token、来源和已知的缓存命中率。旧记录缺少运行 ID 时显示未归属调用。当前账本没有可用计价，相关记录显示「未定价」。
+
 ## 定时任务 `willdeep-scheduler`
 
 **权限**：`process.execute`、`conversation.write`、`workspace.read`。

@@ -91,7 +91,7 @@ pub enum BuiltinAction {
     List,
     /// Install a built-in plugin as an ordinary plugin package.
     Install {
-        /// favorites, scheduler or roundtable.
+        /// favorites, scheduler, roundtable or token-stats.
         name: String,
         /// Approve the declared permissions and enable it immediately.
         #[arg(long)]
