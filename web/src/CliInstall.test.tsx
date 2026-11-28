@@ -54,7 +54,8 @@ it("桌面版列出可执行的安装方式，点安装只提交管理器 id", a
   fireEvent.click(buttons[0]);
   expect(await screen.findByRole("status")).toBeTruthy();
   const posted = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/install"));
-  expect(JSON.parse(String(posted?.[1].body))).toEqual({ manager: "brew" });
+  expect(posted).toBeTruthy();
+  expect(JSON.parse(String(posted?.[1]?.body))).toEqual({ manager: "brew" });
 });
 
 it("Windows 只展示命令，没有安装按钮", async () => {

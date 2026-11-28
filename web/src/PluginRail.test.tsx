@@ -15,7 +15,7 @@ function fixturePlugin(id: string, defaultPinned: boolean, pinnedOrder: number |
     destinations: [{
       id: "home", qualified_id: `${id}:home`, title: id, icon: null,
       main_page: "home", page_runtime: "localWeb", page_url: null, page_server: null, sidebar: null,
-      toolbar_commands: [], default_pinned: defaultPinned, pinned_order: pinnedOrder,
+      toolbar_commands: [], default_pinned: defaultPinned, pinned_order: pinnedOrder, show_in_rail: null,
     }],
   };
 }

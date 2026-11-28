@@ -48,7 +48,8 @@ it("添加时只按所选传输和认证提交字段", async () => {
   fireEvent.click(screen.getByRole("button", { name: text.mcpServersSave }));
   await screen.findByRole("button", { name: text.mcpServersAdd });
   const posted = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
-  const body = JSON.parse(String(posted?.[1].body)) as Record<string, unknown>;
+  expect(posted).toBeTruthy();
+  const body = JSON.parse(String(posted?.[1]?.body)) as Record<string, unknown>;
   expect(body).toEqual({ name: "docs", url: "https://docs.example.com/mcp", headers: {}, token: "super-secret-value" });
   expect(body).not.toHaveProperty("command");
   expect(body).not.toHaveProperty("bearer_token_env");

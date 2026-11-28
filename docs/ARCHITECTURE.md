@@ -1,6 +1,6 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-28 | 当前版本：v0.166.0-rc1
+> 最后更新：2026-11-28 | 当前版本：v0.166.0-rc2
 
 桌面壳通过 Web 适配器 stdout 上的 JSON 行接收系统通知，再用系统通知发出。每个 TUI 进程在 `$WILLDEEP_HOME/runtime/tui-presence/<pid>` 持有一把共享锁并写入当前会话；macOS 和 Linux 上桌面端看到同一会话有活着的 TUI 就不再发，Windows 不看这份记录。
 
