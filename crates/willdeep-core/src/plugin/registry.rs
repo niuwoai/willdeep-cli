@@ -69,6 +69,9 @@ pub struct PluginState {
     /// 固定入口的顺序；未固定的插件没有这个值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_order: Option<u32>,
+    /// 是否在左侧栏给出入口。`None` 表示用户没表过态，按插件清单的默认值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_in_rail: Option<bool>,
     /// Values live in the private registry and are used for MCP interpolation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: BTreeMap<String, String>,
@@ -339,6 +342,19 @@ impl PluginRegistry {
         self.update(|latest| {
             let entry = latest.file.plugins.entry(plugin_id.to_owned()).or_default();
             entry.pinned_order = order;
+            Ok(((), true))
+        })
+    }
+
+    /// 记下用户对左栏入口的选择。`None` 是撤销选择，回到清单的默认值。
+    pub fn set_show_in_rail(
+        &mut self,
+        plugin_id: &str,
+        visible: Option<bool>,
+    ) -> Result<(), RegistryError> {
+        self.update(|latest| {
+            let entry = latest.file.plugins.entry(plugin_id.to_owned()).or_default();
+            entry.show_in_rail = visible;
             Ok(((), true))
         })
     }

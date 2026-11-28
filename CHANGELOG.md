@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.166.0-rc1] - 2026-11-28
+### Added
+- 桌面版在一轮做完、做到一半停下、或有操作与问题等你处理时发系统通知，macOS、Linux 和 Windows 都走系统通知。macOS 和 Linux 上若这个会话正开着 TUI，终端已经响过铃，桌面就不再发；Windows 终端不响铃，所以照发。通知只带会话名和一句话，不含失败原因原文（#262）。
+- `willdeep mcp add` 与 `willdeep mcp remove` 从命令行增删 MCP 服务。`add` 支持 stdio 与 Streamable HTTP，认证在 `token`、`--bearer-env` 与 `--oauth` 里三选一；`--bearer-env` 只记录变量名（#266）。
+- 桌面版配置菜单增加「命令行 willdeep」。macOS 有 Homebrew 时用 `brew install willdeep-cli`，否则用 npm、cnpm 或 pnpm 全局安装；Linux 只用 npm；Windows 只展示命令，不代为执行（#264）。
+- Web 与桌面的 MCP 接入页给出 Claude Code、willdeep 与 Codex 的接入片段。配置了公网入口且域名不是回环地址时用公网地址，否则标明这是内网地址（#265）。
+- 配置页可以直接增删 MCP 服务，支持 stdio 与 Streamable HTTP，以及 token、环境变量与 OAuth 三种认证。环境变量必须在 runtime 启动时就存在，新建的服务文件下次启动才生效（#267）。
+- 插件可以各自选择是否在左栏显示入口。待办、收藏和用量统计三个内置插件默认开启（#263）。
+
 ## [0.165.0-rc1] - 2026-11-28
 ### Added
 - 用量统计的子代理按实际调用的模型分行，并显示去重后的执行次数。账本只保存子代理的不透明标识，不显示调度档案名。单日详情额外列出该日会话里读取 Skill 的次数，不受来源筛选影响。

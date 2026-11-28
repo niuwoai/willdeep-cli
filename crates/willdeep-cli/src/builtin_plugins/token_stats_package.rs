@@ -26,7 +26,7 @@ pub(super) fn contributions() -> Value {
     json!({
         "destinations": [{
             "id": "token-stats", "titleKey": "destination.stats", "icon": "sf:chart.bar.xaxis",
-            "mainPage": "token-stats.main"
+            "mainPage": "token-stats.main", "defaultPinned": true
         }],
         "pages": [{"id": "token-stats.main", "runtime": "localWeb", "entryPath": "ui/index.html"}],
         "commands": [

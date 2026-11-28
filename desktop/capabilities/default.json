@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The desktop shell posts system notifications from Rust when a turn finishes or waits on the user.",
+  "windows": ["main"],
+  "permissions": ["notification:default"]
+}

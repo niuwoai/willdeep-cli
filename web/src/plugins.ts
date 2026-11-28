@@ -27,6 +27,8 @@ export type PluginDestinationView = {
   toolbar_commands: PluginCommandView[];
   default_pinned: boolean;
   pinned_order: number | null;
+  /// 用户对左栏入口的选择。null 表示没表过态，按 default_pinned。
+  show_in_rail: boolean | null;
 };
 
 /** 一条由浏览器选文件的命令：`accept` 直接给文件框，`max_bytes` 用来在上传前拦超大文件。 */
@@ -138,6 +140,11 @@ export function fetchPlugins(locale: string, review = false) {
 
 export function approvePlugin(pluginId: string, review: { version: string; source: string; digest: string }) {
   return request(`/api/plugins/${encodeURIComponent(pluginId)}/approve`, jsonBody(review));
+}
+
+/// `visible` 传 null 是撤销选择，回到插件清单的默认值。
+export function setPluginRail(pluginId: string, visible: boolean | null) {
+  return request(`/api/plugins/${encodeURIComponent(pluginId)}/rail`, jsonBody({ visible }));
 }
 
 export function setPluginEnabled(pluginId: string, enabled: boolean) {
@@ -310,10 +317,16 @@ export function pageUrl(plugin: PluginView, destination: PluginDestinationView):
 }
 
 /**
- * 目的地排序：声明了 defaultPinned 的排在前面，其余按用户钉的顺序，
- * 最后按标题。入口栏最多展示 5 个默认或用户固定的目的地，其余留在插件菜单。
+ * 目的地排序：清单默认固定的排在前面，其次是用户后来放进左栏的，其余按用户钉的顺序，
+ * 最后按标题。入口栏最多展示 5 个，其余留在插件菜单。
+ *
+ * 左栏入口看 `show_in_rail`：用户表过态就以它为准，没表过态才退回 `default_pinned`。
  */
 export const MAX_PINNED_DESTINATIONS = 5;
+
+export function shownInRail(destination: PluginDestinationView): boolean {
+  return destination.show_in_rail ?? destination.default_pinned;
+}
 
 export function orderedDestinations(plugins: PluginView[]): Array<{ plugin: PluginView; destination: PluginDestinationView }> {
   const items = plugins
@@ -322,6 +335,9 @@ export function orderedDestinations(plugins: PluginView[]): Array<{ plugin: Plug
   return items.sort((left, right) => {
     if (left.destination.default_pinned !== right.destination.default_pinned) {
       return left.destination.default_pinned ? -1 : 1;
+    }
+    if (shownInRail(left.destination) !== shownInRail(right.destination)) {
+      return shownInRail(left.destination) ? -1 : 1;
     }
     const leftOrder = left.destination.pinned_order ?? Number.MAX_SAFE_INTEGER;
     const rightOrder = right.destination.pinned_order ?? Number.MAX_SAFE_INTEGER;

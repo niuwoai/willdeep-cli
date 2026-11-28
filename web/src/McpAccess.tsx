@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { Box, Button, Dialog, Flex, Input, Portal, Text } from "@chakra-ui/react";
 import type { Messages } from "./i18n";
+import { intakeBase, intakeBaseIsLoopback, loadIntake, type IntakeView } from "./intakeApi";
 import "./intake.css";
 
 type TokenRecord = {
@@ -24,15 +25,38 @@ type Issued = { id: string; label: string; token: string };
 
 const control = { color: "var(--text)", bg: "var(--bg-raised)", borderColor: "var(--border-strong)" };
 
-function installSnippets(token: string) {
-  const url = `${window.location.origin}/mcp`;
+/// 安装片段用的端点。公网入口开着且配了对外域名时用它，否则退回当前页面的
+/// 地址——那种情况下只有本机能连，页面要说清楚。
+export function mcpEndpoint(intake: IntakeView | null): { url: string; public: boolean } {
+  const base = intake && intake.running ? intakeBase(intake) : null;
+  const usable = base && !intakeBaseIsLoopback(base) ? base : null;
+  return { url: `${usable ?? window.location.origin}/mcp`, public: usable !== null };
+}
+
+/// 三段安装片段。token 只在刚签发时拿得到，所以命令也只在那一次拼得出来。
+export function installSnippets(token: string, url: string) {
   const claudeCode = JSON.stringify(
     { mcpServers: { willdeep: { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } },
     null,
     2,
   );
+  // willdeep 的服务文件默认把静态 token 明文写在自己的 toml 里，与这里展示的一致。
+  const willdeep = [
+    "# $WILLDEEP_HOME/.mcp/willdeep.toml",
+    `url = "${url}"`,
+    `token = "${token}"`,
+  ].join("\n");
+  // Codex 不收明文 token，只收环境变量名，值在它自己的进程里读。
+  const codex = [
+    "# ~/.codex/config.toml",
+    "[mcp_servers.willdeep]",
+    `url = "${url}"`,
+    "bearer_token_env_var = \"WILLDEEP_MCP_TOKEN\"",
+    "",
+    "# export WILLDEEP_MCP_TOKEN='<上面显示的 token>' 后再启动 Codex",
+  ].join("\n");
   const chatGpt = `${url}\nAuthorization: Bearer ${token}`;
-  return { url, claudeCode, chatGpt };
+  return { claudeCode, willdeep, codex, chatGpt };
 }
 
 export function McpAccess({ messages: t, open, onOpenChange }: { messages: Messages; open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -69,6 +93,7 @@ function McpBody({ messages: t, active = true }: { messages: Messages; active?: 
   const [issued, setIssued] = useState<Issued | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [intake, setIntake] = useState<IntakeView | null>(null);
 
   // 对话框每打开一次刷新一遍；整页挂载时 active 恒为 true，只拉一次。
   useEffect(() => {
@@ -78,6 +103,11 @@ function McpBody({ messages: t, active = true }: { messages: Messages; active?: 
       .then((response) => response.json())
       .then((value: TokenRecord[]) => { if (!cancelled) setTokens(value); })
       .catch((reason: unknown) => { if (!cancelled) setError(String(reason)); });
+    // 公网入口读不到（比如不在本机打开）就退回当前页面的地址，不挡住 token 管理。
+    void loadIntake().then(
+      (view) => { if (!cancelled) setIntake(view); },
+      () => { if (!cancelled) setIntake(null); },
+    );
     return () => { cancelled = true; };
   }, [active]);
 
@@ -111,8 +141,10 @@ function McpBody({ messages: t, active = true }: { messages: Messages; active?: 
     }
   }
 
-  const snippets = issued ? installSnippets(issued.token) : null;
+  const endpoint = mcpEndpoint(intake);
+  const snippets = issued ? installSnippets(issued.token, endpoint.url) : null;
   return <>
+    <Text fontSize="sm" color="var(--text-dim)" mb="3">{t.mcpDirection}</Text>
     {error && <Text role="alert" color="var(--danger-text)" mb="3">{error}</Text>}
     <Flex gap="2" mb="4">
       <Input value={label} placeholder={t.mcpLabelPlaceholder} onChange={(event) => setLabel(event.target.value)} {...control} />
@@ -122,8 +154,11 @@ function McpBody({ messages: t, active = true }: { messages: Messages; active?: 
       <Box className="mcp-issued" mb="4">
         <Text fontSize="sm" color="var(--danger-text)" mb="2">{t.mcpShownOnce}</Text>
         <Text fontSize="xs" color="var(--text-dim)" mb="1">{t.mcpEndpoint}</Text>
-        <Text fontSize="sm" mb="3">{snippets.url}</Text>
+        <Text fontSize="sm" mb="1">{endpoint.url}</Text>
+        <Text fontSize="xs" color="var(--text-dim)" mb="3">{endpoint.public ? t.mcpPublicHint : t.mcpLocalHint}</Text>
         <Snippet label={t.mcpClaudeCode} text={snippets.claudeCode} copied={copied === "claude"} onCopy={() => void copy(snippets.claudeCode, "claude")} copyLabel={t.mcpCopy} copiedLabel={t.mcpCopied} />
+        <Snippet label={t.mcpWilldeep} text={snippets.willdeep} copied={copied === "willdeep"} onCopy={() => void copy(snippets.willdeep, "willdeep")} copyLabel={t.mcpCopy} copiedLabel={t.mcpCopied} />
+        <Snippet label={t.mcpCodex} text={snippets.codex} copied={copied === "codex"} onCopy={() => void copy(snippets.codex, "codex")} copyLabel={t.mcpCopy} copiedLabel={t.mcpCopied} />
         <Snippet label={t.mcpChatGpt} text={snippets.chatGpt} copied={copied === "chatgpt"} onCopy={() => void copy(snippets.chatGpt, "chatgpt")} copyLabel={t.mcpCopy} copiedLabel={t.mcpCopied} />
       </Box>
     )}

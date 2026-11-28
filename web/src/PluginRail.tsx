@@ -3,14 +3,14 @@
 
 import { Box, Flex, Portal, Text } from "@chakra-ui/react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { FlaskConical, Globe, Library, Plug, Settings2, Users, Waypoints } from "lucide-react";
+import { FlaskConical, Globe, Library, Plug, Settings2, Terminal, Users, Waypoints } from "lucide-react";
 import brandIcon from "./assets/willdeep-app-icon.png";
 
 import type { Messages } from "./i18n";
 import { PluginIcon, SfIcon } from "./sfSymbols";
-import { MAX_PINNED_DESTINATIONS, type PluginDestinationView, type PluginView } from "./plugins";
+import { MAX_PINNED_DESTINATIONS, shownInRail, type PluginDestinationView, type PluginView } from "./plugins";
 
-export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "federation" } | { kind: "intake" } | { kind: "mcp" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
+export type RailSelection = { kind: "conversation" } | { kind: "agents" } | { kind: "agent-experiments" } | { kind: "schedules" } | { kind: "federation" } | { kind: "intake" } | { kind: "mcp" } | { kind: "mcp-servers" } | { kind: "cli" } | { kind: "configuration" } | { kind: "center" } | { kind: "plugin"; qualifiedId: string };
 
 type Props = {
   entries: Array<{ plugin: PluginView; destination: PluginDestinationView }>;
@@ -21,23 +21,24 @@ type Props = {
   experimentsLabel?: string;
   agentsGroupLabel?: string;
   brandLabel?: string;
+  showCli?: boolean;
   onSelect: (selection: RailSelection) => void;
 };
 
 type OpenMenu = "configuration" | "plugins" | null;
 type ButtonOptions = { current?: boolean; expanded?: boolean; controls?: string };
 
-export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, experimentsLabel, agentsGroupLabel, brandLabel, onSelect }: Props) {
+export function PluginRail({ entries, selection, messages, schedulesLabel, agentsLabel, experimentsLabel, agentsGroupLabel, brandLabel, showCli = false, onSelect }: Props) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const configurationTriggerRef = useRef<HTMLDivElement>(null);
   const configurationMenuRef = useRef<HTMLDivElement>(null);
   const pluginsTriggerRef = useRef<HTMLDivElement>(null);
   const pluginsMenuRef = useRef<HTMLDivElement>(null);
-  const pinned = entries.filter(({ destination }) => destination.default_pinned || destination.pinned_order !== null).slice(0, MAX_PINNED_DESTINATIONS);
+  const pinned = entries.filter(({ destination }) => shownInRail(destination)).slice(0, MAX_PINNED_DESTINATIONS);
   const pinnedIds = new Set(pinned.map(({ destination }) => destination.qualified_id));
   const menuEntries = entries.filter(({ destination }) => !pinnedIds.has(destination.qualified_id));
   const activeId = selection.kind === "plugin" ? selection.qualifiedId : null;
-  const configurationActive = selection.kind === "configuration" || selection.kind === "intake" || selection.kind === "mcp"
+  const configurationActive = selection.kind === "configuration" || selection.kind === "intake" || selection.kind === "mcp" || selection.kind === "mcp-servers" || selection.kind === "cli"
     || selection.kind === "agents" || selection.kind === "agent-experiments";
   const pluginsActive = selection.kind === "center" || (selection.kind === "plugin" && !pinnedIds.has(selection.qualifiedId));
 
@@ -149,6 +150,8 @@ export function PluginRail({ entries, selection, messages, schedulesLabel, agent
             {menuItem("configuration-page", messages.configTitle, <Settings2 size={16} />, selection.kind === "configuration", () => onSelect({ kind: "configuration" }))}
             {menuItem("intake", messages.intakeEntry, <Globe size={16} />, selection.kind === "intake", () => onSelect({ kind: "intake" }))}
             {menuItem("mcp", messages.mcpAccess, <Plug size={16} />, selection.kind === "mcp", () => onSelect({ kind: "mcp" }))}
+            {menuItem("mcp-servers", messages.mcpServersEntry, <Waypoints size={16} />, selection.kind === "mcp-servers", () => onSelect({ kind: "mcp-servers" }))}
+            {showCli && menuItem("cli", messages.cliEntry, <Terminal size={16} />, selection.kind === "cli", () => onSelect({ kind: "cli" }))}
             {(agentsLabel || experimentsLabel) && <>
               <Box className="rail-menu-divider" />
               {agentsGroupLabel && <Text className="rail-menu-group-label"><Users size={14} />{agentsGroupLabel}</Text>}

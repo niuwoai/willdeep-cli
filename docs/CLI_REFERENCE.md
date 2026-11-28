@@ -247,12 +247,23 @@ willdeep doctor --bundle ./willdeep-diagnostic.zip
 
 ```bash
 willdeep mcp list [--json]              # 传输（stdio / http）、启用状态、鉴权与登录状态
+willdeep mcp add <name> [--transport stdio|http] [-e KEY=VALUE]... \
+    [-H 'Name: value']... [--bearer-env ENV] [--startup-timeout-seconds 30] \
+    [--disabled] -- <command> [args...]
+willdeep mcp add <name> [--transport http] <url>   # 只给一个 URL 时按 http 记
+willdeep mcp remove <name>
 willdeep mcp login <name> [--timeout 300] [--no-browser]
 willdeep mcp logout <name>
 willdeep mcp tools <name> [--json]      # 连上去列工具；--json 带完整输入 schema
 ```
 
 服务定义在 `$WILLDEEP_HOME/.mcp/<name>.toml`，一个服务一个文件，不在 `config.toml` 里。
+`add` 写这个文件：stdio 用 `command` 与 `args`，`--env` 原样进 `env`；http 只收一个 URL，
+`--header` 进 `headers`，`--bearer-env` 只记环境变量名，token 本身不进文件也不进命令行。
+看着像凭据的头（名字含 key、token、secret 等）必须写成 `${env:NAME}`，明文直接拒绝。
+`--transport sse` 不存在，远程服务一律是 Streamable HTTP。同名文件已在时拒绝覆盖。
+新文件要等 runtime 下次启动才连上；凭据走环境变量的，变量得在启动 runtime 的环境里，
+启动之后再 export 进不了已经在跑的进程。`remove` 只删这个文件，登录状态用 `logout` 清。
 `login` 只对配了 `url` 与 `[oauth]` 的服务有效：授权码 + PKCE，本机 `127.0.0.1`
 随机端口收一次回调，token 存 `$WILLDEEP_HOME/mcp-oauth/<name>.json`；`--no-browser` 只打印授权
 URL。登完立刻连一次并报告工具数。详见 [Skills 与 MCP](SKILLS_AND_MCP.md) 与 [认证与凭据](AUTHENTICATION.md)。

@@ -221,6 +221,7 @@ pub(crate) fn router(state: Arc<PluginWebState>) -> Router {
         .route("/api/plugins/{plugin}/approve", post(approve_plugin))
         .route("/api/plugins/{plugin}/enabled", post(set_plugin_enabled))
         .route("/api/plugins/{plugin}/pin", post(pin_plugin))
+        .route("/api/plugins/{plugin}/rail", post(set_plugin_rail))
         .route("/api/plugins/{plugin}", delete(uninstall_plugin))
         .route(
             "/api/plugins/{plugin}/settings/{key}",
@@ -306,6 +307,8 @@ struct PluginDestinationView {
     toolbar_commands: Vec<PluginCommandView>,
     default_pinned: bool,
     pinned_order: Option<u32>,
+    /// 用户是否要它出现在左栏。`None` 是没表过态，前端按 `default_pinned` 处理。
+    show_in_rail: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -553,6 +556,7 @@ fn plugin_views(host: &PluginHost, query: LocaleQuery) -> Result<PluginsResponse
                     .collect(),
                 default_pinned: destination.default_pinned,
                 pinned_order: plugin_state.and_then(|state| state.pinned_order),
+                show_in_rail: plugin_state.and_then(|state| state.show_in_rail),
             });
         }
 
@@ -720,6 +724,22 @@ async fn set_plugin_enabled(
 #[derive(Deserialize)]
 struct PinRequest {
     order: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct RailRequest {
+    /// `true` 放进左栏，`false` 收回，缺省（JSON null）回到清单的默认值。
+    visible: Option<bool>,
+}
+
+async fn set_plugin_rail(
+    State(state): State<Arc<PluginWebState>>,
+    Path(plugin): Path<String>,
+    Json(request): Json<RailRequest>,
+) -> Result<Json<Value>, PluginWebError> {
+    let host = state.host().await?;
+    host.set_show_in_rail(&plugin, request.visible).await?;
+    Ok(Json(json!({"visible": request.visible})))
 }
 
 async fn pin_plugin(

@@ -1012,6 +1012,50 @@ impl LoadedConfig {
     }
 }
 
+/// 服务名能否做文件名：1 到 64 个 ASCII 字母、数字、`_` 或 `-`。
+pub(crate) fn mcp_name_is_valid(name: &str) -> bool {
+    mcp_files::valid_name(name)
+}
+
+/// 把一个服务写成 `$WILLDEEP_HOME/.mcp/<name>.toml`。持目录锁期间写入，
+/// 同名文件已存在时拒绝，不覆盖用户改过的那一份。
+pub(crate) fn add_mcp_server(
+    config_path: Option<&Path>,
+    name: &str,
+    server: &McpServerConfig,
+) -> Result<PathBuf> {
+    server
+        .validate(name)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let directory = mcp_files::directory_for(config_path)?;
+    let _guard = mcp_files::lock(&directory)?;
+    let path = mcp_files::file_for(&directory, name)?;
+    if path.exists() {
+        bail!(
+            "MCP server {name} already exists at {}; remove it first",
+            path.display()
+        );
+    }
+    mcp_files::write_server(&directory, name, server)
+}
+
+/// 读出 `$WILLDEEP_HOME/.mcp/` 里的全部服务。目录不存在就是一份空名单。
+/// `skipped` 是读到了但没采用的文件，文本里的 token 值已经换成占位。
+pub(crate) fn list_mcp_servers(
+    config_path: Option<&Path>,
+) -> Result<(BTreeMap<String, McpServerConfig>, Vec<String>)> {
+    let directory = mcp_files::directory_for(config_path)?;
+    let loaded = mcp_files::load_directory(&directory);
+    Ok((loaded.servers, loaded.skipped))
+}
+
+/// 删掉 `$WILLDEEP_HOME/.mcp/<name>.toml`。文件本来就不在，返回 `Ok(false)`。
+pub(crate) fn remove_mcp_server(config_path: Option<&Path>, name: &str) -> Result<bool> {
+    let directory = mcp_files::directory_for(config_path)?;
+    let _guard = mcp_files::lock(&directory)?;
+    mcp_files::remove_server(&directory, name)
+}
+
 pub fn default_config_path() -> Result<PathBuf> {
     if let Some(home) = std::env::var_os("WILLDEEP_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(home).join("config.toml"));
