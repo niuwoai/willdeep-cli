@@ -25,6 +25,8 @@ import { ScheduleManager } from "./ScheduleManager";
 import { IntakeManager } from "./IntakeManager";
 import { FederationPanel } from "./FederationPanel";
 import { McpPage } from "./McpAccess";
+import { CliInstall } from "./CliInstall";
+import { McpServers } from "./McpServers";
 import { ConversationSchedules } from "./ConversationSchedules";
 import { SessionCollaboration } from "./SessionCollaboration";
 import { ChildSessions, ChildSessionOrigin } from "./ChildSessions";
@@ -240,6 +242,8 @@ function railFromHash(): RailSelection {
   if (hash === "federation") return { kind: "federation" };
   if (hash === "intake") return { kind: "intake" };
   if (hash === "mcp") return { kind: "mcp" };
+  if (hash === "mcp-servers") return { kind: "mcp-servers" };
+  if (hash === "cli") return { kind: "cli" };
   if (hash === "configuration") return { kind: "configuration" };
   if (hash === "plugins") return { kind: "center" };
   const plugin = hash.startsWith("plugin/") ? hash.slice("plugin/".length) : "";
@@ -253,6 +257,8 @@ function hashForRail(selection: RailSelection): string {
   if (selection.kind === "federation") return "#federation";
   if (selection.kind === "intake") return "#intake";
   if (selection.kind === "mcp") return "#mcp";
+  if (selection.kind === "mcp-servers") return "#mcp-servers";
+  if (selection.kind === "cli") return "#cli";
   if (selection.kind === "configuration") return "#configuration";
   if (selection.kind === "center") return "#plugins";
   if (selection.kind === "plugin") return `#plugin/${encodeURIComponent(selection.qualifiedId)}`;
@@ -1954,7 +1960,7 @@ export function App() {
   // 一级入口栏之后，右侧要么是对话（原有侧栏 + 聊天），要么是一个插件目的地
   // （它的配套侧栏 + 页面），要么是插件中心。入口、侧栏与中央页永远来自
   // 同一个 descriptor，不会出现入口属于 A、侧栏属于 B 的半切换状态。
-  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
+  const railNav = <PluginRail entries={pluginEntries} selection={rail} messages={t} brandLabel={agentText("brand", language)} schedulesLabel={scheduleText("title", language)} agentsLabel={agentText("title", language)} experimentsLabel={agentText("experimentTitle", language)} agentsGroupLabel={agentText("navigationGroup", language)} showCli={isDesktop} onSelect={(next) => { if (hashForRail(next) === hashForRail(rail)) return; if (!allowAgentNavigation(agentDirtyRef.current, language)) return; if (rail.kind === "schedules" && scheduleDirtyRef.current && !window.confirm(scheduleText("discard", language))) return; scheduleDirtyRef.current = false; setPluginSelectedItem(null); setRail(next); }} />;
   const setupGuide = <>
     {workspaceApproval.pending && <WorkspaceApprovalGuide key={workspaceApproval.pending.revision} path={workspaceApproval.pending.workspace.path} language={language} messages={t} onSave={workspaceApproval.apply} onCancel={cancelWorkspaceEntry} />}
     {showSetup ? <ConfigurationSettings compact messages={t} language={language} onDone={finishSetup} /> : setupLoadFailed ? <Box role="alert" className="provider-setup">{t.setupCheckFailed}</Box> : null}
@@ -1982,6 +1988,14 @@ export function App() {
 
   if (rail.kind === "mcp") {
     return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<McpPage messages={t} />{pluginOverlays}</Flex></Box>;
+  }
+
+  if (rail.kind === "cli") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<CliInstall messages={t} />{pluginOverlays}</Flex></Box>;
+  }
+
+  if (rail.kind === "mcp-servers") {
+    return <Box>{setupGuide}<Flex minH="100vh" bg="var(--bg-page)" color="var(--text)">{railNav}<McpServers messages={t} />{pluginOverlays}</Flex></Box>;
   }
 
   if (rail.kind === "center") {

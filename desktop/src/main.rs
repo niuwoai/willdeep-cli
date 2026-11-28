@@ -11,8 +11,9 @@ use tauri::menu::{AboutMetadata, Menu, MenuItem, SubmenuBuilder};
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
 
-use service::Service;
+use service::{Notice, Service};
 
 const APP_NAME: &str = "WillDeep Desktop";
 const MAIN: &str = "main";
@@ -31,6 +32,7 @@ struct Desktop {
 fn main() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Desktop::default())
         .menu(menu)
         .on_menu_event(|app, event| native_action(app, event.id().as_ref()))
@@ -87,19 +89,49 @@ fn show_service(handle: &AppHandle, service: std::io::Result<Service>) {
         return;
     };
     let desktop = handle.state::<Desktop>();
-    if let Ok(service) = service {
-        if let Ok(mut slot) = desktop.service.lock() {
-            let url = service.url.clone();
-            let _ = desktop
-                .origin
-                .set(url.join("/").expect("valid local service URL"));
-            *slot = Some(service);
-            if window.navigate(url).is_ok() {
-                return;
-            }
+    if let Ok(mut service) = service
+        && let Ok(mut slot) = desktop.service.lock()
+    {
+        let url = service.url.clone();
+        let _ = desktop
+            .origin
+            .set(url.join("/").expect("valid local service URL"));
+        if let Some(notices) = service.notices.take() {
+            watch_notices(handle, notices);
+        }
+        *slot = Some(service);
+        if window.navigate(url).is_ok() {
+            return;
         }
     }
     let _ = window.eval("window.willdeepStartupFailed()");
+}
+
+/// The adapter's stdout is read on its own thread. This one only forwards each
+/// notice onto the main thread, which is where the windowing system is talked to.
+fn watch_notices(handle: &AppHandle, notices: std::sync::mpsc::Receiver<Notice>) {
+    let handle = handle.clone();
+    std::thread::spawn(move || {
+        while let Ok(notice) = notices.recv() {
+            let posted = handle.clone();
+            if handle
+                .run_on_main_thread(move || post_notice(&posted, &notice))
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+}
+
+fn post_notice(handle: &AppHandle, notice: &Notice) {
+    let mut builder = handle.notification().builder().body(&notice.body);
+    if !notice.title.is_empty() {
+        builder = builder.title(&notice.title);
+    }
+    if let Err(error) = builder.show() {
+        eprintln!("Could not post desktop notification: {error}");
+    }
 }
 
 fn build_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<WebviewWindow> {

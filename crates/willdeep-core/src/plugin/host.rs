@@ -488,6 +488,17 @@ impl PluginHost {
             .await
     }
 
+    pub async fn set_show_in_rail(
+        &self,
+        plugin_id: &str,
+        visible: Option<bool>,
+    ) -> Result<(), HostError> {
+        self.package(plugin_id)?;
+        let plugin_id = plugin_id.to_owned();
+        self.update_registry(move |registry| registry.set_show_in_rail(&plugin_id, visible))
+            .await
+    }
+
     pub async fn setting(&self, plugin_id: &str, key: &str) -> Option<String> {
         self.registry_snapshot()
             .ok()?

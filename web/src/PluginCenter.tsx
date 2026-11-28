@@ -12,6 +12,8 @@ import {
   approvePlugin,
   PluginRequestError,
   setPluginEnabled,
+  setPluginRail,
+  shownInRail,
   uninstallPlugin,
   type PluginFailureView,
   type PluginView,
@@ -189,6 +191,19 @@ export function PluginCenter({ plugins, failures, messages, reviewAvailable, rev
                     onClick={() => void act(plugin.id, () => setPluginEnabled(plugin.id, !plugin.enabled))}
                   >
                     {plugin.enabled ? messages.pluginDisable : messages.pluginEnable}
+                  </Button>
+                )}
+                {plugin.destinations.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    borderColor="var(--border-strong)"
+                    color="var(--text)"
+                    disabled={isBusy}
+                    aria-pressed={plugin.destinations.some(shownInRail)}
+                    onClick={() => void act(plugin.id, () => setPluginRail(plugin.id, !plugin.destinations.some(shownInRail)))}
+                  >
+                    {plugin.destinations.some(shownInRail) ? messages.pluginRailShown : messages.pluginRailHidden}
                   </Button>
                 )}
                 {plugin.source === "shared" &&

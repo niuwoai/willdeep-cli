@@ -17,7 +17,7 @@ const plugin: PluginView = {
   destinations: [{
     id: "home", qualified_id: "approval-fixture:home", title: "Fixture destination", icon: null,
     main_page: "home", page_runtime: "localWeb", page_url: "/plugin-host/approval-fixture/home.html", page_server: null,
-    sidebar: { id: "side", mode: "declarative" }, toolbar_commands: [command], default_pinned: true, pinned_order: null,
+    sidebar: { id: "side", mode: "declarative" }, toolbar_commands: [command], default_pinned: true, pinned_order: null, show_in_rail: null,
   }],
   commands: [command], menus: Object.fromEntries(menuLocations.map((location) => [location, [command.id]])),
 };

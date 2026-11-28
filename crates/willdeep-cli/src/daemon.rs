@@ -66,6 +66,7 @@ mod peer_client;
 mod plugin_workflow;
 pub(crate) mod production;
 mod screenplay;
+pub(crate) mod tui_presence;
 pub(crate) use child_sessions::{
     ASSIGNMENT_ORIGIN as CHILD_ASSIGNMENT_ORIGIN, WAKE_ORIGIN as CHILD_RESULT_WAKE_ORIGIN,
     prepare_child_workspace_for_user_open,
@@ -2807,6 +2808,13 @@ fn load_state(path: &Path) -> Result<DaemonState> {
     let data = std::fs::read(path)
         .with_context(|| format!("read Runtime Daemon state at {}", path.display()))?;
     serde_json::from_slice(&data).context("parse Runtime Daemon state")
+}
+
+/// The desktop adapter follows the local event stream from outside the daemon
+/// module. The state file holds the token, so it stays behind this module and
+/// only the client comes out.
+pub(crate) fn desktop_event_client(home: &Path) -> Result<willdeep_runtime_client::RuntimeClient> {
+    runtime_client(&load_state(&DaemonPaths::new(home).state)?)
 }
 
 fn write_state(path: &Path, state: &DaemonState) -> Result<()> {

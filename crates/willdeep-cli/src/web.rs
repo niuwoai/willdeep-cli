@@ -28,6 +28,7 @@ mod client_events;
 mod composer;
 mod configuration;
 mod desktop;
+mod desktop_notify;
 pub(crate) use configuration::safe_provider_id;
 mod failures;
 mod federation;

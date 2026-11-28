@@ -16,6 +16,15 @@ const SERVICE: &str = if cfg!(windows) {
 pub(super) struct Service {
     child: Child,
     pub(super) url: Url,
+    pub(super) notices: Option<mpsc::Receiver<Notice>>,
+}
+
+/// One line the Web adapter printed after the launch URL. The body is the
+/// sentence; the title is the session name and may be empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Notice {
+    pub(super) title: String,
+    pub(super) body: String,
 }
 
 impl Service {
@@ -34,9 +43,13 @@ impl Service {
             command.creation_flags(CREATE_NO_WINDOW);
         }
         let mut child = command.spawn()?;
-        let result = wait_for_url(&mut child);
+        let result = connect(&mut child);
         match result {
-            Ok(url) => Ok(Self { child, url }),
+            Ok((url, notices)) => Ok(Self {
+                child,
+                url,
+                notices: Some(notices),
+            }),
             Err(error) => {
                 stop(&mut child);
                 Err(error)
@@ -45,25 +58,33 @@ impl Service {
     }
 }
 
-fn wait_for_url(child: &mut Child) -> io::Result<Url> {
+fn connect(child: &mut Child) -> io::Result<(Url, mpsc::Receiver<Notice>)> {
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| io::Error::other("missing Web service pipe"))?;
-    let (sender, receiver) = mpsc::sync_channel(1);
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    // A burst of finished tasks must not stall the reader, or the adapter's
+    // stdout pipe fills and its event loop blocks. Drop the oldest instead.
+    let (notice_tx, notice_rx) = mpsc::sync_channel(32);
     thread::spawn(move || {
-        let mut sender = Some(sender);
+        let mut ready_tx = Some(ready_tx);
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if let Some(url) = ready_url(&line)
-                && let Some(sender) = sender.take()
+                && let Some(sender) = ready_tx.take()
             {
                 let _ = sender.send(url);
+            } else if let Some(notice) = notice_line(&line) {
+                // Full means the window is behind. Drop this one rather than
+                // block: a blocked reader fills the pipe and stalls the adapter.
+                let _ = notice_tx.try_send(notice);
             }
         }
     });
-    receiver
+    let url = ready_rx
         .recv_timeout(READY_TIMEOUT)
-        .map_err(|error| io::Error::other(format!("Web service could not start: {error}")))
+        .map_err(|error| io::Error::other(format!("Web service could not start: {error}")))?;
+    Ok((url, notice_rx))
 }
 
 fn ready_url(line: &str) -> Option<Url> {
@@ -76,6 +97,26 @@ fn ready_url(line: &str) -> Option<Url> {
     .then_some(url)
 }
 
+/// A notification frame. Anything that is not one — a log line, a repeat of the
+/// launch URL — is ignored, so ordinary output can never become a notification.
+fn notice_line(line: &str) -> Option<Notice> {
+    let frame: serde_json::Value = serde_json::from_str(line).ok()?;
+    let notice = frame.get("willdeep_desktop_notice")?;
+    let body = notice.get("body")?.as_str()?.trim();
+    if body.is_empty() {
+        return None;
+    }
+    Some(Notice {
+        title: notice
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_owned(),
+        body: body.to_owned(),
+    })
+}
+
 fn stop(child: &mut Child) {
     // Stop only our Web adapter. The daemon owns tasks and can be shared with CLI users.
     drop(child.stdin.take());
@@ -86,5 +127,46 @@ fn stop(child: &mut Child) {
 impl Drop for Service {
     fn drop(&mut self) {
         stop(&mut self.child);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Notice, notice_line, ready_url};
+
+    const LAUNCH: &str =
+        "{\"willdeep_desktop_url\":\"http://127.0.0.1:43123/__willdeep_desktop/abc\"}";
+
+    #[test]
+    fn the_launch_line_is_a_local_url_and_not_a_notice() {
+        let url = ready_url(LAUNCH).unwrap();
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+        assert!(notice_line(LAUNCH).is_none());
+    }
+
+    #[test]
+    fn a_notice_line_never_reads_as_the_launch_url() {
+        let line = "{\"willdeep_desktop_notice\":{\"kind\":\"completed\",\"title\":\"修登录\",\"body\":\"这一轮做完了\"}}";
+        assert!(ready_url(line).is_none());
+        assert_eq!(
+            notice_line(line),
+            Some(Notice {
+                title: "修登录".to_owned(),
+                body: "这一轮做完了".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn ordinary_output_and_an_empty_body_are_dropped() {
+        for line in [
+            "listening on 127.0.0.1:43123",
+            "{\"willdeep_desktop_notice\":{\"title\":\"x\",\"body\":\"  \"}}",
+            "{\"willdeep_desktop_url\":\"https://example.com/\"}",
+            "",
+        ] {
+            assert!(ready_url(line).is_none(), "{line}");
+            assert!(notice_line(line).is_none(), "{line}");
+        }
     }
 }

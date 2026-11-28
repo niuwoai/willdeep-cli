@@ -1,6 +1,8 @@
 # CLI Harness 架构
 
-> 最后更新：2026-11-28 | 当前版本：v0.165.0-rc2
+> 最后更新：2026-11-28 | 当前版本：v0.166.0-rc2
+
+桌面壳通过 Web 适配器 stdout 上的 JSON 行接收系统通知，再用系统通知发出。每个 TUI 进程在 `$WILLDEEP_HOME/runtime/tui-presence/<pid>` 持有一把共享锁并写入当前会话；macOS 和 Linux 上桌面端看到同一会话有活着的 TUI 就不再发，Windows 不看这份记录。
 
 Web、桌面和 TUI 聊天允许 Agent 为独立任务主动填写子会话提议。TUI 通过当前会话的 Runtime 工具完成事件刷新持久提议列表。各端确认时，Runtime 按既有流程复核权限、创建会话并排队。
 

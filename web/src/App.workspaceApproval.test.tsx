@@ -562,7 +562,7 @@ it.each([false, true])("keeps a user's draft when a plugin sends a message (runn
   const destination = {
     id: "studio", qualified_id: `${videoPlugin.id}:studio`, title: "Fixture studio", icon: null,
     main_page: "index.html", page_runtime: "localWeb" as const, page_url: "about:blank", page_server: null,
-    sidebar: null, toolbar_commands: [], default_pinned: true, pinned_order: null,
+    sidebar: null, toolbar_commands: [], default_pinned: true, pinned_order: null, show_in_rail: null,
   };
   const plugin = { ...videoPlugin, destinations: [destination] };
   const event = { session_id: restored.id, turn_id: "plugin-turn" };

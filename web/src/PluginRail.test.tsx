@@ -15,7 +15,7 @@ function fixturePlugin(id: string, defaultPinned: boolean, pinnedOrder: number |
     destinations: [{
       id: "home", qualified_id: `${id}:home`, title: id, icon: null,
       main_page: "home", page_runtime: "localWeb", page_url: null, page_server: null, sidebar: null,
-      toolbar_commands: [], default_pinned: defaultPinned, pinned_order: pinnedOrder,
+      toolbar_commands: [], default_pinned: defaultPinned, pinned_order: pinnedOrder, show_in_rail: null,
     }],
   };
 }
@@ -23,7 +23,9 @@ function fixturePlugin(id: string, defaultPinned: boolean, pinnedOrder: number |
 it("pins default and explicitly pinned destinations, including order zero, without pinning ordinary entries", () => {
   const text = messages["zh-CN"];
   const select = vi.fn();
-  const plugins = [fixturePlugin("Ordinary", false), fixturePlugin("Manual", false, 0), fixturePlugin("Default", true), { ...fixturePlugin("Disabled", true), enabled: false }];
+  const manual = fixturePlugin("Manual", false, 0);
+  manual.destinations[0].show_in_rail = true;
+  const plugins = [fixturePlugin("Ordinary", false), manual, fixturePlugin("Default", true), { ...fixturePlugin("Disabled", true), enabled: false }];
   const renderRail = (items: PluginView[], selection: RailSelection) => <ChakraProvider value={defaultSystem}><PluginRail
     entries={orderedDestinations(items)} selection={selection} messages={text} schedulesLabel="定时任务" onSelect={select}
   /></ChakraProvider>;
@@ -109,6 +111,8 @@ it.each<Language>(["zh-CN", "en", "ja"])("keeps configuration destinations under
   expect(screen.getByRole("button", { name: text.configTitle })).toBeTruthy();
   expect(screen.getByRole("button", { name: text.intakeEntry })).toBeTruthy();
   expect(screen.getByRole("button", { name: text.mcpAccess })).toBeTruthy();
+  expect(screen.getByRole("button", { name: text.mcpServersEntry })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: text.cliEntry })).toBeNull();
   expect(screen.getByRole("button", { name: agentText("title", language) })).toBeTruthy();
   const experiment = screen.getByRole("button", { name: agentText("experimentTitle", language) });
   expect(experiment.getAttribute("aria-current")).toBe("page");
@@ -117,6 +121,50 @@ it.each<Language>(["zh-CN", "en", "ja"])("keeps configuration destinations under
   expect(select).toHaveBeenLastCalledWith({ kind: "agent-experiments" });
   expect(screen.queryByRole("group", { name: text.configEntry })).toBeNull();
   expect(screen.getByRole("img", { name: agentText("brand", language) })).toBeTruthy();
+});
+
+it("shows the command-line entry only in the desktop shell, after MCP access", () => {
+  const text = messages["zh-CN"];
+  const select = vi.fn();
+  const view = render(<ChakraProvider value={defaultSystem}><PluginRail
+    entries={[]} selection={{ kind: "conversation" }} messages={text} schedulesLabel="定时任务" showCli onSelect={select}
+  /></ChakraProvider>);
+  fireEvent.click(screen.getByRole("button", { name: text.configEntry }));
+  const menu = screen.getByRole("group", { name: text.configEntry });
+  const labels = within(menu).getAllByRole("button").map(button => button.textContent);
+  expect(labels.indexOf(text.mcpServersEntry)).toBe(labels.indexOf(text.mcpAccess) + 1);
+  expect(labels.indexOf(text.cliEntry)).toBe(labels.indexOf(text.mcpServersEntry) + 1);
+  fireEvent.click(within(menu).getByRole("button", { name: text.cliEntry }));
+  expect(select).toHaveBeenLastCalledWith({ kind: "cli" });
+  view.rerender(<ChakraProvider value={defaultSystem}><PluginRail
+    entries={[]} selection={{ kind: "cli" }} messages={text} schedulesLabel="定时任务" showCli onSelect={select}
+  /></ChakraProvider>);
+  expect(screen.getByRole("button", { name: text.configEntry }).classList.contains("active")).toBe(true);
+});
+
+it("lets the user hide a default-pinned destination and show one that is not", () => {
+  const text = messages["zh-CN"];
+  const plugin: PluginView = {
+    id: "fixture", name: "Fixture", version: "1.0.0", description: null, source: "fixture", enabled: true,
+    approval_gap: null, permissions: [], inferred_permissions: [], mcp_servers: [], destinations: [], commands: [], menus: {}, settings: [], unsupported: [], file_pickers: [],
+  };
+  const destination = (title: string, qualifiedId: string, defaultPinned: boolean, shown: boolean | null): PluginDestinationView => ({
+    id: qualifiedId, qualified_id: qualifiedId, title, icon: null, main_page: "fixture", page_runtime: "localWeb",
+    page_url: null, page_server: null, sidebar: null, toolbar_commands: [], default_pinned: defaultPinned, pinned_order: null, show_in_rail: shown,
+  });
+  const entries = [
+    { plugin, destination: destination("默认显示", "fixture:default", true, null) },
+    { plugin, destination: destination("用户收回", "fixture:hidden", true, false) },
+    { plugin, destination: destination("用户放出", "fixture:shown", false, true) },
+  ];
+  render(<ChakraProvider value={defaultSystem}><PluginRail entries={entries} selection={{ kind: "conversation" }} messages={text} schedulesLabel="定时任务" onSelect={vi.fn()} /></ChakraProvider>);
+  const labels = within(screen.getByRole("navigation")).getAllByRole("button").map(button => button.getAttribute("aria-label"));
+  expect(labels).toContain("默认显示");
+  expect(labels).toContain("用户放出");
+  expect(labels).not.toContain("用户收回");
+  fireEvent.click(screen.getByRole("button", { name: text.pluginSectionTitle }));
+  const menu = screen.getByRole("group", { name: text.pluginSectionTitle });
+  expect(within(menu).getByRole("button", { name: "用户收回" })).toBeTruthy();
 });
 
 it("places pinned destinations below schedules and keeps overflow in the Plugins menu", () => {
@@ -130,7 +178,7 @@ it("places pinned destinations below schedules and keeps overflow in the Plugins
     const destination: PluginDestinationView = {
       id: String(index), qualified_id: `fixture:${index}`, title: `Fixture ${index}`, icon: null,
       main_page: "fixture", page_runtime: "localWeb", page_url: null, page_server: null, sidebar: null,
-      toolbar_commands: [], default_pinned: true, pinned_order: index,
+      toolbar_commands: [], default_pinned: true, pinned_order: index, show_in_rail: null,
     };
     return { plugin, destination };
   });
@@ -163,7 +211,7 @@ it("keeps the same compact top-level navigation across every page", () => {
     agentsLabel: "智能体库", experimentsLabel: "RSI 实验", agentsGroupLabel: "智能体", onSelect: vi.fn(),
   };
   const selections: RailSelection[] = [
-    { kind: "conversation" }, { kind: "schedules" }, { kind: "intake" }, { kind: "mcp" },
+    { kind: "conversation" }, { kind: "schedules" }, { kind: "intake" }, { kind: "mcp" }, { kind: "mcp-servers" }, { kind: "cli" },
     { kind: "agents" }, { kind: "agent-experiments" }, { kind: "configuration" }, { kind: "center" },
     { kind: "plugin", qualifiedId: "fixture:home" },
   ];

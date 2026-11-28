@@ -662,6 +662,11 @@ pub(super) async fn event_loop(
         runtime.runtime_submit.workspace.clone(),
         runtime_event_tx.clone(),
     );
+    // 桌面通知靠这份登记判断「这个会话有没有 TUI 在看」。拿不到锁只是少一次
+    // 去重，响铃本身不依赖它。会话在三种切换里都会换，响铃之前更新一次。
+    let mut presence = crate::daemon::tui_presence::TuiPresence::acquire(&runtime.home, session.id)
+        .inspect_err(|error| eprintln!("TUI presence record unavailable: {error:#}"))
+        .ok();
     let mut qterm = crate::qterm::ViewState::from_env();
     loop {
         qterm.observe(
@@ -965,6 +970,11 @@ pub(super) async fn event_loop(
                 }
             }
             continue;
+        }
+        // 三种切换都在这一圈的前半段换掉会话，响铃之前把在场记录跟上，
+        // 桌面端才不会在 TUI 已经响过之后再补一条通知。
+        if let Some(presence) = presence.as_mut() {
+            presence.set_session(session.id).ok();
         }
         // 本轮刚结束：响一声铃，盯着别处的用户也知道轮到自己了。
         app.ring_turn_bell(term.backend_mut())?;
