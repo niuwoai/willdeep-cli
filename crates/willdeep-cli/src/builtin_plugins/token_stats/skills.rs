@@ -62,7 +62,7 @@ pub(super) fn read(
             continue;
         };
         for message in messages {
-            for call in tool_calls(&message) {
+            for call in tool_calls(message) {
                 if call.0 != READ_SKILL {
                     continue;
                 }
