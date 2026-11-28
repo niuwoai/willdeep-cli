@@ -4,6 +4,8 @@
 mod aggregate;
 #[path = "token_stats/shards.rs"]
 mod shards;
+#[path = "token_stats/skills.rs"]
+mod skills;
 #[cfg(test)]
 #[path = "token_stats/tests.rs"]
 mod tests;
@@ -18,6 +20,7 @@ use serde_json::{Value, json};
 use willdeep_core::usage_ledger::{ClientKind, ledger_dir};
 
 use self::aggregate::{Report, ReportBuilder};
+use self::skills::SkillActivity;
 use super::stdio_server::{BuiltinPlugin, HostClient};
 
 const QUERY: &str = "query";
@@ -69,9 +72,9 @@ impl BuiltinPlugin for TokenStats {
             return Err("Unknown token statistics tool".to_owned());
         }
         let query = Query::parse(arguments)?;
-        let dir = ledger_dir(&self.home);
+        let home = self.home.clone();
         tokio::task::spawn_blocking(move || {
-            let report = read_report(&dir, query)?;
+            let report = read_report(&ledger_dir(&home), &home, query)?;
             serde_json::to_string(&report)
                 .map_err(|error| format!("Encode token statistics: {error}"))
         })
@@ -167,7 +170,7 @@ fn parse_date(raw: &str, field: &str) -> Result<NaiveDate, String> {
         .ok_or_else(|| format!("Expected {field} as YYYY-MM-DD"))
 }
 
-fn read_report(dir: &Path, query: Query) -> Result<Report, String> {
+fn read_report(dir: &Path, home: &Path, query: Query) -> Result<Report, String> {
     let mut report = ReportBuilder::new(query.start, query.end, query.detail);
     let skipped_rows = shards::visit(dir, query.start, query.end, |record, ts| {
         let local_date = ts.with_timezone(&query.timezone).date_naive();
@@ -175,5 +178,12 @@ fn read_report(dir: &Path, query: Query) -> Result<Report, String> {
             report.record(local_date, record);
         }
     })?;
-    Ok(report.finish(skipped_rows))
+    // Skill reads live in session history, which has no client attribution, so the
+    // source filter does not apply to them. A failure here is reported, not hidden.
+    let skills = if query.detail == Detail::Day {
+        skills::read(home, query.start, query.end, query.timezone)?
+    } else {
+        SkillActivity::default()
+    };
+    Ok(report.finish(skipped_rows, skills))
 }

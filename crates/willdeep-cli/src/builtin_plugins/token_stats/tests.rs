@@ -20,11 +20,11 @@ async fn mcp_query_reads_only_the_configured_home_ledger() {
 
     let home = Fixture::new();
     let record = row("2026-09-15T12:00:00Z", UsageKind::Main);
-    append_record(&ledger_dir(&home.0), &record).unwrap();
+    append_record(&ledger_dir(&home.home), &record).unwrap();
     let (client, server) = duplex(64 * 1024);
     let (server_read, server_write) = split(server);
     let task = tokio::spawn(serve(
-        Arc::new(TokenStats::new(home.0.clone())),
+        Arc::new(TokenStats::new(home.home.clone())),
         server_read,
         server_write,
     ));
@@ -50,40 +50,55 @@ async fn mcp_query_reads_only_the_configured_home_ledger() {
     task.await.unwrap();
 }
 
-struct Fixture(PathBuf);
+struct Fixture {
+    home: PathBuf,
+    ledger: PathBuf,
+}
 
 impl Fixture {
     fn new() -> Self {
-        let dir =
+        let home =
             std::env::temp_dir().join(format!("willdeep-token-stats-test-{}", Uuid::new_v4()));
-        fs::create_dir(&dir).unwrap();
-        Self(dir)
+        let ledger = home.join("usage");
+        fs::create_dir_all(&ledger).unwrap();
+        Self { home, ledger }
     }
 
     fn add(&self, record: &UsageLedgerRecord) {
-        append_record(&self.0, record).unwrap();
+        append_record(&self.ledger, record).unwrap();
     }
 
     fn raw(&self, shard: &str, contents: &[u8]) {
         OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.0.join(shard))
+            .open(self.ledger.join(shard))
             .unwrap()
             .write_all(contents)
             .unwrap();
     }
 
+    fn session(&self, updated_at: u64, messages: Value) {
+        let sessions = self.home.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let body = json!({"version": 1, "updated_at": updated_at, "messages": messages});
+        fs::write(
+            sessions.join(format!("{}.json", Uuid::new_v4())),
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn report(&self, start: &str, end: &str, timezone: &str, source: &str, detail: &str) -> Value {
         let query = Query::parse(args(start, end, timezone, source, detail)).unwrap();
-        let report = read_report(&self.0, query).unwrap();
+        let report = read_report(&self.ledger, &self.home, query).unwrap();
         serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap()
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
+        if let Err(error) = fs::remove_dir_all(&self.home) {
             eprintln!("Could not clean up the token statistics test fixture: {error}");
         }
     }
@@ -299,7 +314,88 @@ fn attributes_worker_auxiliary_and_compression_without_inventing_runs() {
     assert_eq!(result["agents"][0]["totals"]["calls"], 3);
     assert_eq!(result["agents"][0]["totals"]["unknown_run_calls"], 2);
     assert_eq!(result["agents"][1]["totals"]["worker_runs"], 1);
+    assert_eq!(result["agents"][0]["agent"], "model-a");
     assert_eq!(result["models"], json!([]));
+    assert_eq!(result["skills"], json!([]));
+}
+
+#[test]
+fn day_detail_lists_subagents_and_skill_reads() {
+    let fixture = Fixture::new();
+    let run = Uuid::new_v4();
+    let mut reader = row("2026-09-02T00:30:00Z", UsageKind::Subagent);
+    reader.run_id = Some(run);
+    reader.model = Some("model-reader".into());
+    fixture.add(&reader);
+    let mut repeated = row("2026-09-02T01:00:00Z", UsageKind::Subagent);
+    repeated.run_id = Some(run);
+    repeated.model = Some("model-reader".into());
+    fixture.add(&repeated);
+    let mut unnamed = row("2026-09-02T02:00:00Z", UsageKind::Subagent);
+    unnamed.model = None;
+    fixture.add(&unnamed);
+    fixture.add(&row("2026-09-02T03:00:00Z", UsageKind::Main));
+    let read = |name: &str| {
+        json!({"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call-1", "name": "read_skill", "arguments": serde_json::to_string(&json!({"name": name})).unwrap()}
+        ]})
+    };
+    // 2026-09-02T12:00:00Z. A later session must not be counted for this UTC day.
+    fixture.session(
+        1_788_350_400,
+        json!([
+            read("image-processing"),
+            read("image-processing"),
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "browse", "name": "list_skills", "arguments": "{\"name\":\"image-processing\"}"}
+            ]},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "bad-json", "name": "read_skill", "arguments": "not json"},
+                {"id": "bad-name", "name": "read_skill", "arguments": "{\"name\":\"../secret\"}"}
+            ]},
+            {"role": "assistant", "content": "", "toolCalls": [
+                {"id": "swift", "toolName": "read_skill", "argumentsJSON": "{\"name\":\"lark-doc\"}"}
+            ]}
+        ]),
+    );
+    fixture.session(1_788_393_600, json!([read("next-day")]));
+    let result = fixture.report("2026-09-02", "2026-09-02", "UTC", "all", "day");
+    assert_eq!(result["totals"]["calls"], 4);
+    assert_eq!(result["models"].as_array().unwrap().len(), 3);
+    assert_eq!(result["agents"].as_array().unwrap().len(), 2);
+    let reader = result["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["agent"] == "model-reader")
+        .unwrap();
+    assert_eq!(reader["totals"]["calls"], 2);
+    assert_eq!(reader["totals"]["worker_runs"], 1);
+    assert_eq!(reader["provider"], "provider-a");
+    let unnamed = result["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["agent"] == "unknown")
+        .unwrap();
+    assert_eq!(unnamed["totals"]["unknown_run_calls"], 1);
+    assert_eq!(
+        result["skills"],
+        json!([
+            {"name": "", "executions": 2},
+            {"name": "image-processing", "executions": 2},
+            {"name": "lark-doc", "executions": 1}
+        ])
+    );
+    let agents = fixture.report("2026-09-02", "2026-09-02", "UTC", "all", "agents");
+    assert_eq!(agents["skills"], json!([]));
+    let runs: u64 = agents["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|group| group["totals"]["worker_runs"].as_u64().unwrap())
+        .sum();
+    assert_eq!(runs, 1);
 }
 
 #[test]
@@ -308,8 +404,10 @@ fn missing_shards_are_empty_and_unreadable_shards_return_errors() {
     let result = fixture.report("2026-09-15", "2026-09-15", "UTC", "mobile", "summary");
     assert_eq!(result["totals"]["calls"], 0);
     assert!(result["totals"]["tokens"].is_null());
-    fs::create_dir(fixture.0.join("2026-09.jsonl")).unwrap();
+    fs::create_dir(fixture.ledger.join("2026-09.jsonl")).unwrap();
     let query = Query::parse(args("2026-09-15", "2026-09-15", "UTC", "all", "summary")).unwrap();
-    let error = read_report(&fixture.0, query).err().unwrap();
+    let error = read_report(&fixture.ledger, &fixture.home, query)
+        .err()
+        .unwrap();
     assert!(error.contains("2026-09.jsonl"));
 }

@@ -11,7 +11,7 @@ pub(super) const PACKAGE: BuiltinPackage = BuiltinPackage {
     id: "willdeep-token-stats",
     short: "token-stats",
     server: "token_stats",
-    version: "0.1.0-rc2",
+    version: "0.1.0-rc3",
     display_name: "用量统计",
     description: "查看本机 Token 活动、子代理用量、费用日历和单日明细。",
     permissions: &["process.execute"],
