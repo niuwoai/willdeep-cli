@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.165.0-rc1] - 2026-11-28
+### Added
+- 用量统计的子代理按实际调用的模型分行，并显示去重后的执行次数。账本只保存子代理的不透明标识，不显示调度档案名。单日详情额外列出该日会话里读取 Skill 的次数，不受来源筛选影响。
+
 ## [0.164.0-rc1] - 2026-11-27
 ### Added
 - MCP 的 Streamable HTTP 服务可以在 `$WILLDEEP_HOME/.mcp/<name>.toml` 里用 `token` 直接写静态 Bearer token。新文件默认用这种明文；`bearer_token_env` 仍可用，但不再是示例的默认写法。它与 `token`、`[oauth]` 三选一。`willdeep mcp list`、doctor 和调试输出只报告已配置明文，不回显 token 本身。

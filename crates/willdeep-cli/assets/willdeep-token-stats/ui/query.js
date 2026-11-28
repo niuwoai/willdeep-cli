@@ -65,7 +65,8 @@ const tokenStats = (() => {
       result = JSON.parse(text);
     }
     if (result?.ok === false) throw new QueryError(DENIED.test(result.error || '') ? 'denied' : 'error');
-    if (!result?.totals || !Array.isArray(result.days) || !Array.isArray(result.agents) || !Array.isArray(result.models)) {
+    if (!result?.totals || !Array.isArray(result.days) || !Array.isArray(result.agents) || !Array.isArray(result.models)
+      || !Array.isArray(result.skills)) {
       throw new QueryError('error');
     }
     return result;

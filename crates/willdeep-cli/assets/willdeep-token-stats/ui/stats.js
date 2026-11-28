@@ -341,9 +341,20 @@
   const groupName = (group) => node('span', 'identity', group.model || t('modelUnknown'),
     node('small', 'muted identity', group.provider || t('providerUnknown')));
 
+  // The ledger keeps no sub-agent name, so the model a run called is its label.
+  const agentName = (group) => node('span', 'identity', group.agent || group.model || t('agentUnknown'),
+    node('small', 'muted identity', group.provider || t('providerUnknown')));
+
+  function agentTable(rows, label) {
+    const columns = ['agent', 'calls', 'worker_runs', 'sessions', 'unknown_run_calls', 'errors', 'cancelled'];
+    return table(label, columns, rows.map((row) => [
+      agentName(row), ...columns.slice(1).map((key) => num(row.totals[key])),
+    ]));
+  }
+
   function agents(response) {
-    const columns = ['model', 'calls', 'worker_runs', 'sessions', 'unknown_run_calls', 'errors', 'cancelled'];
-    const rows = [...response.agents].sort((a, b) => b.totals.calls - a.totals.calls);
+    const rows = [...response.agents].sort((a, b) => b.totals.worker_runs - a.totals.worker_runs
+      || b.totals.calls - a.totals.calls);
     const section = region(t('agents'));
     if (!rows.length) {
       section.append(node('div', 'panel', notice(t('noAgents'))));
@@ -351,9 +362,14 @@
     }
     const missing = rows.reduce((sum, row) => sum + (row.totals.unknown_run_calls ?? 0), 0);
     if (missing) section.append(notice(t('runCoverage', { count: num(missing) })));
-    section.append(notice(t('runOutcome')), node('div', 'panel', table(t('agents'), columns,
-      rows.map((row) => [groupName(row), ...columns.slice(1).map((key) => num(row.totals[key]))]))));
+    section.append(notice(t('runOutcome')), node('div', 'panel', agentTable(rows, t('agents'))));
     return [section];
+  }
+
+  function skillTable(rows) {
+    return table(t('skills'), ['skill', 'executions'], rows.map((row) => [
+      row.name || t('skillUnknown'), num(row.executions),
+    ]));
   }
 
   function shareImage(date, source, totals) {
@@ -417,14 +433,28 @@
     const pricing = totals.unpriced_calls > 0 ? t('unpricedCount', { count: num(totals.unpriced_calls) }) : null;
     section.append(metrics(metric('tokens', num(totals.tokens)), metric('sessions', num(totals.sessions)),
       metric('calls', num(totals.calls)), metric('cost', cost(totals), pricing)), sharePanel);
+    const parts = [section];
     const columns = ['model', 'input', 'output', 'cache_read', 'cache_rate', 'calls', 'cost'];
     if (response.models.length) {
       const rows = [...response.models].sort((a, b) => (b.totals.tokens ?? -1) - (a.totals.tokens ?? -1))
         .map((row) => [groupName(row), num(row.totals.input), num(row.totals.output), num(row.totals.cache_read),
           rate(row.totals.cache_rate), num(row.totals.calls), cost(row.totals)]);
-      return [section, region(t('modelDetails'), node('div', 'panel', table(t('modelDetails'), columns, rows)), notice(t('cacheHelp')))];
+      parts.push(region(t('modelDetails'), node('div', 'panel', table(t('modelDetails'), columns, rows)), notice(t('cacheHelp'))));
     }
-    return [section];
+    const agentRows = [...response.agents].sort((a, b) => b.totals.worker_runs - a.totals.worker_runs
+      || b.totals.calls - a.totals.calls);
+    const agentsSection = region(t('subagents'));
+    agentsSection.append(agentRows.length
+      ? node('div', 'panel', agentTable(agentRows, t('subagents')))
+      : node('div', 'panel', notice(t('noSubagents'))));
+    parts.push(agentsSection);
+    const skillRows = [...response.skills].sort((a, b) => b.executions - a.executions);
+    const skillsSection = region(t('skills'), notice(t('skillHelp')));
+    skillsSection.append(skillRows.length
+      ? node('div', 'panel', skillTable(skillRows))
+      : node('div', 'panel', notice(t('noSkills'))));
+    parts.push(skillsSection);
+    return parts;
   }
 
   const renderers = { overview, calendar, day, agents };

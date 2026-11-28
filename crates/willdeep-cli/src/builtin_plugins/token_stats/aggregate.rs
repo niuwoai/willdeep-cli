@@ -6,14 +6,16 @@ use uuid::Uuid;
 use willdeep_core::usage_ledger::{ClientKind, Outcome, UsageKind};
 
 use super::shards::Row;
+use super::skills::SkillActivity;
 use super::{DATE_FORMAT, Detail};
 
 #[derive(Serialize)]
 pub(super) struct Report {
     days: Vec<Day>,
     totals: Totals,
-    agents: Vec<Group>,
+    agents: Vec<AgentGroup>,
     models: Vec<Group>,
+    skills: Vec<SkillCount>,
     skipped_rows: u64,
 }
 
@@ -48,6 +50,20 @@ struct Group {
     model: Option<String>,
     provider: Option<String>,
     totals: Totals,
+}
+
+#[derive(Serialize)]
+struct AgentGroup {
+    agent: String,
+    model: Option<String>,
+    provider: Option<String>,
+    totals: Totals,
+}
+
+#[derive(Serialize)]
+struct SkillCount {
+    name: String,
+    executions: u64,
 }
 
 #[derive(Default, Serialize)]
@@ -146,12 +162,20 @@ struct ModelKey {
     provider: Option<String>,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct AgentKey {
+    agent: String,
+    model: Option<String>,
+    provider: Option<String>,
+}
+
 pub(super) struct ReportBuilder {
     detail: Detail,
     seen: HashSet<Uuid>,
     days: BTreeMap<NaiveDate, DailyBucket>,
     period: Bucket,
     groups: BTreeMap<ModelKey, Bucket>,
+    agents: BTreeMap<AgentKey, Bucket>,
 }
 
 impl ReportBuilder {
@@ -166,6 +190,7 @@ impl ReportBuilder {
                 .collect(),
             period: Bucket::default(),
             groups: BTreeMap::new(),
+            agents: BTreeMap::new(),
         }
     }
 
@@ -178,7 +203,7 @@ impl ReportBuilder {
         if let Some(day) = self.days.get_mut(&date) {
             day.record(date, &record, worker);
         }
-        if self.detail == Detail::Day || (self.detail == Detail::Agents && worker) {
+        if self.detail == Detail::Day {
             let key = ModelKey {
                 model: record.model.clone(),
                 provider: record.provider.clone(),
@@ -188,18 +213,49 @@ impl ReportBuilder {
                 .or_default()
                 .record(date, &record, worker);
         }
+        if worker && matches!(self.detail, Detail::Day | Detail::Agents) {
+            let key = AgentKey {
+                agent: agent_name(&record),
+                model: record.model.clone(),
+                provider: record.provider.clone(),
+            };
+            self.agents
+                .entry(key)
+                .or_default()
+                .record(date, &record, true);
+        }
     }
 
-    pub(super) fn finish(self, skipped_rows: u64) -> Report {
-        let groups = self.groups.into_iter().map(|(key, bucket)| Group {
-            model: key.model,
-            provider: key.provider,
-            totals: bucket.finish(),
-        });
-        let (agents, models) = match self.detail {
-            Detail::Summary => (Vec::new(), Vec::new()),
-            Detail::Day => (Vec::new(), groups.collect()),
-            Detail::Agents => (groups.collect(), Vec::new()),
+    pub(super) fn finish(self, skipped_rows: u64, skills: SkillActivity) -> Report {
+        let agents = self
+            .agents
+            .into_iter()
+            .map(|(key, bucket)| AgentGroup {
+                agent: key.agent,
+                model: key.model,
+                provider: key.provider,
+                totals: bucket.finish(),
+            })
+            .collect();
+        let models = match self.detail {
+            Detail::Day => self
+                .groups
+                .into_iter()
+                .map(|(key, bucket)| Group {
+                    model: key.model,
+                    provider: key.provider,
+                    totals: bucket.finish(),
+                })
+                .collect(),
+            Detail::Summary | Detail::Agents => Vec::new(),
+        };
+        let skills = match self.detail {
+            Detail::Day => skills
+                .by_name
+                .into_iter()
+                .map(|(name, executions)| SkillCount { name, executions })
+                .collect(),
+            Detail::Summary | Detail::Agents => Vec::new(),
         };
         Report {
             days: self
@@ -214,7 +270,20 @@ impl ReportBuilder {
             totals: self.period.finish(),
             agents,
             models,
+            skills,
             skipped_rows,
         }
     }
+}
+
+/// The ledger stores an opaque agent id, never the sub-agent's name, so the
+/// only stable label it can offer is the model the run actually called.
+fn agent_name(record: &Row) -> String {
+    record
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("unknown")
+        .to_owned()
 }
