@@ -2,7 +2,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { McpServers, draftToRequest, emptyDraft } from "./McpServers";
+import { McpServers } from "./McpServers";
+import { draftToRequest, emptyDraft } from "./mcpServerDraft";
 import { messages } from "./i18n";
 
 afterEach(() => {

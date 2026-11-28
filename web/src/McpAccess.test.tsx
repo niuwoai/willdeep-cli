@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ChakraProvider, defaultSystem } from "@chakra-ui/react";
 import { describe, expect, it } from "vitest";
-import { McpAccess, installSnippets, mcpEndpoint } from "./McpAccess";
+import { McpAccess } from "./McpAccess";
+import { installSnippets, mcpEndpoint } from "./mcpAccessSnippets";
 import type { IntakeView } from "./intakeApi";
 import { messages } from "./i18n";
 
